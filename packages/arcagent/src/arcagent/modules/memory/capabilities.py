@@ -610,7 +610,7 @@ async def knowledge_search(query: str) -> str:
         "everything, or pass a name from connected_sources to narrow it."
     ),
 )
-async def document_search(query: str, source: str | None = None, top_k: int = 10) -> str:
+async def document_search(query: str, source: str | None = None, top_k: int | None = None) -> str:
     """Query a connected document source, boundary-marked. Graceful when none is wired."""
     st = _runtime.state()
     if not st.active:

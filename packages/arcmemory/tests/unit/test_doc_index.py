@@ -103,6 +103,41 @@ async def test_document_search_scoped_to_one_source_never_returns_another_source
     )
 
 
+async def test_config_top_k_bounds_search_when_caller_does_not_override(
+    workspace: Path, db: MemoryDB, config: MemoryConfig, embedder
+) -> None:
+    """The operator's retrieval setting (k) is the default when the caller omits it.
+
+    Both dropbox chunks match "revenue"; with the config floor at 1 and no
+    explicit top_k, exactly one comes back — proving the setting is the source
+    of the default rather than the old hardcoded 10.
+    """
+    tight = config.model_copy(update={"doc_search_top_k": 1})
+    index = DocIndex(db, workspace, tight, embedder=embedder)
+    await index.index_source("dropbox", _AGENT_DID, _DROPBOX_CHUNKS)
+
+    hits = await index.document_search("revenue", _AGENT_DID, source_id="dropbox")
+
+    assert len(hits) == 1
+
+
+async def test_config_min_score_floor_drops_hits_below_threshold(
+    workspace: Path, db: MemoryDB, config: MemoryConfig, embedder
+) -> None:
+    """A similarity floor above any real score removes every hit.
+
+    Proves the operator's min-score setting actually gates retrieval; the
+    default of 0.0 keeps today's behavior (every other test still passes).
+    """
+    floored = config.model_copy(update={"doc_search_min_score": 999.0})
+    index = DocIndex(db, workspace, floored, embedder=embedder)
+    await index.index_source("dropbox", _AGENT_DID, _DROPBOX_CHUNKS)
+
+    hits = await index.document_search("revenue", _AGENT_DID, source_id="dropbox", top_k=10)
+
+    assert hits == []
+
+
 async def test_dochit_carries_pointer_and_provenance_and_only_chunk_text(
     workspace: Path, db: MemoryDB, config: MemoryConfig, embedder
 ) -> None:

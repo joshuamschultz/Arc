@@ -156,15 +156,18 @@ class DocIndex:
         agent_did: str,
         *,
         source_id: str | None = None,
-        top_k: int = 10,
+        top_k: int | None = None,
     ) -> list[DocHit]:
         """Search one source's doc pool via ``SurfaceIndex.search`` (SEARCH only).
 
+        ``top_k`` falls back to the operator's ``doc_search_top_k`` setting when
+        the caller omits it, and hits below ``doc_search_min_score`` are dropped.
         ``[]`` when ``doc_search_enabled`` is off or no ``source_id`` is given
         (there is no pool to search without one).
         """
         if not self._cfg.doc_search_enabled or source_id is None:
             return []
+        k = self._cfg.doc_search_top_k if top_k is None else top_k
         scope = doc_scope(agent_did, source_id)
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
         surface = SurfaceIndex(
@@ -175,8 +178,10 @@ class DocIndex:
             embedder=self._embedder,
             audit_sink=self._audit,
         )
-        result = await surface.search(query, top_k=top_k)
-        hits = [await self._to_hit(backend, scope, source_id, recall) for recall in result.recalls]
+        result = await surface.search(query, top_k=k)
+        floor = self._cfg.doc_search_min_score
+        recalls = [recall for recall in result.recalls if recall.score >= floor]
+        hits = [await self._to_hit(backend, scope, source_id, recall) for recall in recalls]
         return await self._maybe_rerank(query, hits)
 
     async def list_documents(

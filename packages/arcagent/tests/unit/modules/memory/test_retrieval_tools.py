@@ -117,8 +117,10 @@ async def test_document_search_calls_brain_with_source_and_returns_rendered_resu
 
     out = await document_search("find the sprocket spec", source="dropbox-1")
 
+    # top_k defers to the operator's configured doc_search_top_k (resolved in the
+    # index) when the caller omits it, rather than a hardcoded default here.
     assert spy.document_search_calls == [
-        {"query": "find the sprocket spec", "source_id": "dropbox-1", "top_k": 10}
+        {"query": "find the sprocket spec", "source_id": "dropbox-1", "top_k": None}
     ]
     assert out.strip() != ""
     assert "find the sprocket spec" in out

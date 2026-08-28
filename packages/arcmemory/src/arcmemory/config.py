@@ -190,6 +190,15 @@ class MemoryConfig(BaseModel):
     doc_rerank_margin: float = Field(
         default=0.05, description="doc-index rerank gate (distinct from recall rerank_margin)"
     )
+    # Connected-knowledge retrieval knobs — the operator's home for how much and
+    # how relevant a document_search returns. top_k is the default chunk count
+    # when a caller omits it; min_score is a fused-relevance floor (0.0 keeps all).
+    doc_search_top_k: int = Field(
+        default=10, ge=1, description="default chunks returned by document_search"
+    )
+    doc_search_min_score: float = Field(
+        default=0.0, ge=0.0, description="drop document_search hits below this fused score"
+    )
 
     # Ingest caps — zero-trust boundary re-validated at ingest_batch (LLM10).
     ingest_max_batch: int = Field(

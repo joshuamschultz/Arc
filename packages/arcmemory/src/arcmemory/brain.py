@@ -700,7 +700,7 @@ class ArcMemoryBrain:
         *,
         source_id: str | None = None,
         clearance: str = "unclassified",
-        top_k: int = 10,
+        top_k: int | None = None,
         caller_did: str = "",
         session_id: str | None = None,
     ) -> list[DocHit]:

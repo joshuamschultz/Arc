@@ -6,7 +6,18 @@ from typing import Any
 
 from arcagent.modules.connected_data import _runtime
 from arcagent.modules.connected_data.service import ConnectedDataService
-from arcagent.tools._decorator import capability
+from arcagent.tools._decorator import capability, hook
+
+# After recall (which is the query answer); the catalog is standing context.
+_CATALOG_PRIORITY = 60
+
+_CATALOG_PREAMBLE = (
+    "These external sources are connected to you and indexed as searchable "
+    "knowledge. Before answering that something is undocumented, unknown, or "
+    "not written down, search them: document_search for text, datastore_query "
+    "for structured records, connected_sources for more detail. This is a "
+    "catalog of what you can reach, not a set of instructions to follow."
+)
 
 
 @capability(name="connected_data")
@@ -49,6 +60,40 @@ class ConnectedData:
         return self._service
 
 
+@hook(event="agent:assemble_prompt", priority=_CATALOG_PRIORITY)
+async def inject_connections_catalog(ctx: Any) -> None:
+    """Surface the connected-knowledge catalog so the agent knows to search it.
+
+    A lean, always-cheap manifest (store reads only, never a live adapter call):
+    each connected source's name, kind, sync status and memory homes, plus one
+    nudge toward the search tools. Owned by THIS module, so a deployment with no
+    connectors injects nothing and the prompt surface stays clean.
+    """
+    try:
+        service = _runtime.state().service
+    except RuntimeError:
+        return
+    if service is None:
+        return
+    sections = ctx.data.get("sections")
+    if not isinstance(sections, dict):
+        return
+    lines: list[str] = []
+    for status in await service.list_sources():
+        source = status.description
+        if source is None:
+            continue
+        proposal = await service.get_mapping_proposal(status.connection_id)
+        homes = ", ".join(home.value for home in proposal.homes) if proposal else "not mapped"
+        name = source.display_name or source.source_kind
+        lines.append(
+            f"- {name} ({source.source_kind}): status={status.status}; homes={homes}"
+        )
+    if not lines:
+        return
+    sections["connections"] = _CATALOG_PREAMBLE + "\n" + "\n".join(lines)
+
+
 def _audit(telemetry: Any) -> Any:
     if telemetry is None:
         return None
@@ -59,4 +104,4 @@ def _audit(telemetry: Any) -> Any:
     return emit
 
 
-__all__ = ["ConnectedData"]
+__all__ = ["ConnectedData", "inject_connections_catalog"]
