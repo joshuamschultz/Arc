@@ -48,6 +48,8 @@ import {
   useAgentInboxSearch,
   useAgentInboxThread,
   useAgentConfig,
+  useAgentFileRead,
+  useSaveAgentFile,
   useAgentPolicy,
   useAgentPolicyStats,
   useAgentPrompts,
@@ -593,6 +595,96 @@ function OverviewTab({ agentId }: { agentId: string }) {
   )
 }
 
+// The agent's immutable goal/persona charter (ASI01 goal-hijack mitigation).
+// Reads and edits go through the SAME `/files/read` chokepoint the Workspace
+// file browser uses (files_write.py): operator-gated, secret-scanned, audited,
+// and written with direct filesystem I/O to the agent's workspace (ADR-029) —
+// never through the agent's own write/edit tools. The agent itself has no
+// surface here; this card is the operator-only edit path H-009 asked for.
+function IdentityDocumentCard({ agentId }: { agentId: string }) {
+  const [operatorMode] = useOperatorMode()
+  const file = useAgentFileRead(agentId, 'identity.md')
+  const save = useSaveAgentFile(agentId)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const startEdit = () => {
+    setDraft(file.data?.content ?? '')
+    setNotice(null)
+    save.reset()
+    setEditing(true)
+  }
+
+  const onSave = () => {
+    save.mutate(
+      { path: 'identity.md', content: draft },
+      {
+        onSuccess: (res) => {
+          setNotice(res.message)
+          setEditing(false)
+        },
+      },
+    )
+  }
+
+  return (
+    <InfoCard
+      title="identity.md"
+      extra={
+        editing ? (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={save.isPending}
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" disabled={save.isPending} onClick={onSave}>
+              {save.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        ) : operatorMode ? (
+          <Button variant="ghost" size="sm" onClick={startEdit}>
+            <Pencil className="size-3.5" /> Edit
+          </Button>
+        ) : undefined
+      }
+    >
+      <p className="mb-3 text-xs text-muted-foreground">
+        The agent's immutable goal charter. Read-only to the agent (ASI01 goal-hijack) — only an
+        operator can edit it, and every save is audited.
+      </p>
+      {save.isError && (
+        <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {save.error instanceof ApiError ? save.error.message : 'Save failed'}
+        </div>
+      )}
+      {notice && !editing && (
+        <div className="mb-3 rounded-md border border-status-online/30 bg-status-online/10 px-3 py-2 text-xs text-status-online">
+          {notice}
+        </div>
+      )}
+      {file.isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : file.isError ? (
+        <p className="text-xs text-status-error">Could not load identity.md.</p>
+      ) : editing ? (
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={false}
+          className="min-h-[280px] font-mono text-xs"
+        />
+      ) : (
+        <Markdown>{file.data?.content ?? ''}</Markdown>
+      )}
+    </InfoCard>
+  )
+}
+
 function IdentityTab({ agentId }: { agentId: string }) {
   const agent = useAgent(agentId)
   const config = useAgentConfig(agentId)
@@ -660,6 +752,9 @@ function IdentityTab({ agentId }: { agentId: string }) {
             ]}
           />
         </InfoCard>
+      </div>
+      <div className="lg:col-span-2">
+        <IdentityDocumentCard agentId={agentId} />
       </div>
     </div>
   )
