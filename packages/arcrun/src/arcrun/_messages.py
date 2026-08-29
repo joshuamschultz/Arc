@@ -7,6 +7,7 @@ Re-exports ``TextBlock`` and ``ToolUseBlock`` so callers in arcrun
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 import arcllm
@@ -28,6 +29,7 @@ __all__ = [
     "content_text",
     "system_message",
     "system_messages",
+    "time_context_message",
     "tool_result",
     "user_message",
 ]
@@ -102,3 +104,34 @@ def assistant_message(content: list[Any]) -> Message:
 
 def tool_result(tool_use_id: str, content: str) -> Message:
     return Message(role="tool", content=[ToolResultBlock(tool_use_id=tool_use_id, content=content)])
+
+
+def time_context_text(now: datetime) -> str:
+    """Render a resolved clock reading as the words the model reads (H-038).
+
+    Minute granularity only — seconds would churn the trace and the prefix
+    every single call for no signal the model can use. ``%Z`` reads whatever
+    label the caller's ``tzinfo`` carries (``UTC`` for arcrun's own default;
+    a host-supplied clock can hand back its own zone).
+    """
+    return f"Current date/time: {now.strftime('%Y-%m-%d %H:%M %Z').strip()}"
+
+
+def time_context_message(now: datetime) -> Message:
+    """The ephemeral per-call time block (H-038).
+
+    ``user`` role, deliberately: a ``system``-role message is extracted by
+    every caching-aware adapter (see ``arcllm.adapters.anthropic._extract_system``)
+    into the cache-control'd system blocks, so a value that changes on every
+    call would bust that cache every call — precisely what this hotfix exists
+    to avoid (SPEC-029 D-393). Callers must append this to the per-call message
+    list only, never to ``state.messages`` — the persisted transcript — or it
+    would ride the growing cached prefix instead of staying out of it.
+
+    ``ephemeral=True`` because it always lands as the literal last item of the
+    per-call list (the only position that keeps the growing prefix byte-stable
+    for caching): anything that infers intent from "the newest message" —
+    ``arcllm.modules.routing``'s phrase match and tool-continuity lock, most
+    of all — must not mistake it for real conversational content.
+    """
+    return Message(role="user", content=time_context_text(now), ephemeral=True)

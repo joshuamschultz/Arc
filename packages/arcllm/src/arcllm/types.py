@@ -57,6 +57,15 @@ ToolResultBlock.model_rebuild()
 class Message(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str | list[ContentBlock]
+    # True for a message a loop injects as per-call context rather than real
+    # conversational content (e.g. arcrun's per-call current-time block,
+    # H-038) — it carries no signal of intent. Defaults False so every
+    # existing caller and every wire adapter (which formats fields by name,
+    # never dumps the whole model) is unaffected. A consumer that infers
+    # meaning from "the newest message" — phrase-based routing, a
+    # tool-continuity lock — should skip a message with this set rather than
+    # read it as fresh human or tool signal.
+    ephemeral: bool = False
 
 
 # ---------------------------------------------------------------------------

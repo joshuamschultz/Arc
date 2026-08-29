@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import arcllm
@@ -16,6 +17,8 @@ from arcrun._messages import (
     ToolUseBlock,
     assistant_message,
     content_text,
+    time_context_message,
+    time_context_text,
     tool_result,
 )
 from arcrun.builtins.task_complete import (
@@ -36,6 +39,17 @@ _logger = logging.getLogger("arcrun.strategies.react")
 # Longest injection preview carried in the audit event. The full message rides
 # the message list as user-role data; the audit event keeps a bounded preview.
 _PREVIEW_LEN = 120
+
+
+def _default_clock() -> datetime:
+    """Zero-config reading for H-038's per-call time block: real UTC, now.
+
+    Only called when a host does not inject ``state.clock`` — the seam a host
+    uses to hand its own timezone, or to pin a fixed value in a test or a
+    future replay/audit path (mirrors ``actor_did``/``run_origin``: a
+    caller-supplied callable, arcrun never reads config for it).
+    """
+    return datetime.now(UTC)
 
 
 def _call_signature(tc: Any) -> str:
@@ -271,6 +285,17 @@ async def react_loop(
                 _check_append_only(messages, transformed)
             messages = transformed
 
+        # H-038 — per-call current-time context. Resolved once per turn through
+        # an injectable clock (default: real UTC) exactly like actor_did/
+        # run_origin, so a future replay/audit path can pin the exact value
+        # this turn used instead of calling now() again. Appended to a NEW
+        # list, never onto ``messages``/``state.messages``: a ``user``-role
+        # block that rides only THIS call, so it never joins the cached system
+        # segment (SPEC-029 D-393 — a value that changes every call must not
+        # sit in the cached prefix) and never grows the persisted transcript.
+        now = (state.clock or _default_clock)()
+        call_messages = [*messages, time_context_message(now)]
+
         # Call model
         tools = state.registry.list_schemas()
         # Force tool calling on first turn only, then let LLM decide.
@@ -281,9 +306,9 @@ async def react_loop(
             invoke_kwargs["tool_choice"] = state.tool_choice
         call_start = time.time()
         response = (
-            await _stream_model_call(model, messages, tools, state, invoke_kwargs)
+            await _stream_model_call(model, call_messages, tools, state, invoke_kwargs)
             if state.stream_event is not None
-            else await state.await_work(model.invoke(messages, tools=tools, **invoke_kwargs))
+            else await state.await_work(model.invoke(call_messages, tools=tools, **invoke_kwargs))
         )
         if response is None:
             return _halt_on_cancel(state)
@@ -299,6 +324,11 @@ async def react_loop(
                 "tokens": state.tokens_used.copy(),
                 "latency_ms": latency_ms,
                 "cost_usd": getattr(response, "cost_usd", 0.0),
+                # H-038 — lands the resolved value in the hash-chained trace so
+                # what the model actually saw is recoverable without re-deriving
+                # it from a fresh clock read (verify_chain covers this event
+                # like any other; a replay path reads this rather than now()).
+                "current_time": time_context_text(now),
             },
         )
 

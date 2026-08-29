@@ -493,6 +493,36 @@ class TestTelemetryTraceRecording:
         assert rec.response_body is not None
         assert "content" in rec.response_body
 
+    async def test_request_body_records_the_ephemeral_flag_with_the_message(self):
+        """H-038 security confirm #4: the hash-chained trace carries ``ephemeral``.
+
+        ``_build_request_body`` captures each message with ``model_dump()``
+        (unlike the wire adapters, which hand-pick fields) — so the flag rides
+        along for free, on the SAME hash-chained ``TraceRecord`` (SHA-256,
+        JCS canonical JSON, see ``arcllm.trace_store``) that already carries
+        the rest of the request. A replay/audit tool reading this record back
+        sees exactly which message was ephemeral and can reproduce the same
+        routing decision (skip it) rather than re-deriving it.
+        """
+        events: list = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, store_raw_bodies=True), inner
+        )
+        messages = [
+            Message(role="user", content="Do the real task."),
+            Message(
+                role="user", content="Current date/time: 2026-08-29 14:32 UTC", ephemeral=True
+            ),
+        ]
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        recorded = rec.request_body["messages"]
+        assert recorded[0]["ephemeral"] is False
+        assert recorded[1]["ephemeral"] is True
+
     async def test_request_body_none_when_store_raw_bodies_false(self, messages):
         """Request/response bodies are None when store_raw_bodies=False."""
         from arcllm.trace_store import TraceRecord

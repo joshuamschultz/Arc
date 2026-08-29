@@ -118,6 +118,11 @@ class _ReactModel:
 
 def _latest_user_text(messages: Any) -> str:
     for m in reversed(list(messages)):
+        # arcrun appends an ``ephemeral`` per-call current-time block (H-038)
+        # after every real message; skip it the same way
+        # ``arcllm.modules.routing`` does so this reads the real task text.
+        if getattr(m, "ephemeral", False) or (isinstance(m, dict) and m.get("ephemeral", False)):
+            continue
         role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)
         if role == "user":
             content = getattr(m, "content", None) or (

@@ -259,9 +259,13 @@ def _last_user_text(messages: Sequence[Message]) -> str | None:
     Tool results also arrive on the ``user`` role in the neutral message shape,
     so a message whose content is a block list containing a ``tool_result`` is
     machine output and is skipped. Only prose the operator or a teammate
-    actually wrote can steer a route.
+    actually wrote can steer a route. A loop-injected ``ephemeral`` message
+    (e.g. arcrun's per-call current-time block, H-038) is skipped the same
+    way — it rides the tail of every call but is not something anyone said.
     """
     for message in reversed(messages):
+        if message.ephemeral:
+            continue
         if message.role != "user":
             continue
         content = message.content
@@ -293,10 +297,14 @@ def _trailing_tool_result_ids(messages: Sequence[Message]) -> list[str]:
     first message that is not. Parallel dispatch can append several result
     messages at once, so the run may be longer than one. Anything earlier in
     the history belongs to a cycle that already closed and must not lock
-    anything.
+    anything. A loop-injected ``ephemeral`` message (H-038's per-call
+    current-time block) is transparent to this scan — it rides after the real
+    tail on every call and must not read as the cycle having closed.
     """
     ids: list[str] = []
     for message in reversed(messages):
+        if message.ephemeral:
+            continue
         answered = _tool_result_ids([message])
         if not answered:
             break

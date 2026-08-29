@@ -322,15 +322,28 @@ class SecurityModule(BaseModule):
         }
 
     def _redact_messages(self, messages: list[Message]) -> list[Message]:
-        """Redact PII from all messages, returning new list."""
+        """Redact PII from all messages, returning new list.
+
+        Carries ``ephemeral`` forward onto the rebuilt copy (H-038): this
+        module sits OUTSIDE ``RoutingModule`` in ``load_model``'s composed
+        chain, so whatever it hands ``self._inner.invoke`` is what routing's
+        phrase-match and tool-continuity lock actually see. Redaction's job is
+        to change *content*, not to silently reset metadata a message already
+        carried — losing the flag here would reintroduce, for any deployment
+        with PII redaction on, exactly the routing bug marking it fixed.
+        """
         result: list[Message] = []
         for msg in messages:
             if isinstance(msg.content, str):
                 redacted_content = self._redact_str(msg.content)
-                result.append(Message(role=msg.role, content=redacted_content))
+                result.append(
+                    Message(role=msg.role, content=redacted_content, ephemeral=msg.ephemeral)
+                )
             elif isinstance(msg.content, list):
                 redacted_blocks = self._redact_blocks(msg.content)
-                result.append(Message(role=msg.role, content=redacted_blocks))
+                result.append(
+                    Message(role=msg.role, content=redacted_blocks, ephemeral=msg.ephemeral)
+                )
             else:
                 result.append(msg)
         return result
