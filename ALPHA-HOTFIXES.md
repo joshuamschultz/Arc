@@ -64,14 +64,14 @@ before this batch is complete.
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
-| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | CODING | |
+| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
-| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | CODING | |
+| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | NEW | |
 | H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | NEW | |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
