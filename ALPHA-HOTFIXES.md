@@ -64,29 +64,30 @@ before this batch is complete.
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
-| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
+| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
-| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | NEW | |
-| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | NEW | |
-| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | NEW | |
+| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
+| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | CODING | |
+| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | CODING | |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
-| H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | NEW | |
+| H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | MERGED | 6dc93100 |
+| H-033b | Knowledge | Connector sync counters wrong (Last sync Never / 0 bytes) — missing last_synced_at + two-DB split (separate from connect path) | M | NEW | |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
-| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | NEW | |
+| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
 | H-036 | UI | Fully keyboard-drivable | L | NEW | |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
-| H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | NEW | |
-| H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | NEW | |
+| H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | MERGED | b37f1417 |
+| H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | CODING | |
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
-| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch | S | NEW | |
+| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
@@ -201,7 +202,11 @@ before this batch is complete.
 #### H-018 — Delete files
 - **Symptom:** Workspace file browser: view/edit only, no delete.
 - **Expected:** Delete (operator-gated, audited) alongside view/edit.
-- **Status:** NEW
+- **Status:** MERGED (b311fd45) + hardened + deployed (runtime 0.4.0-43d46b86).
+- **What shipped:** DELETE route (operator-gated, audited, path-fenced). Blocked-outright: identity.md, policy.md, config TOMLs, `context/**`, `.arcsig` sidecars, `*.key` (any location), `workspace/audit/**`, `.audit/**`. Confirm-required (409→200): memory/**, sessions/**, context.md. Key material protected on ALL FOUR verbs (list filters, read 403, write 403, delete block). Symlink/TOCTOU: check+unlink on the resolved realpath (one resolve), audit records the resolved path. Adversarial cases in `scripts/run_adversarial_tests.py`.
+- **DISCLOSURE-WINDOW FACT (found during the fix):** before this change, the files LIST (`/files/tree`) and VIEW (`/files/read`) routes are **GET = viewer-accessible** and had **no key-material check** — so a `*.key` or config file that ever landed inside a browsable agent root could be listed/read in plaintext by any *viewer* token, not just operator. **Severity (verified on box):** an on-box scan found **0 `*.key` files inside any agent root** (keys live in `~/.arcagent/keys`, outside the browsable `~/arc/team` roots), so no key was ever actually in reach → on the single-operator DGX/Azure posture: **note it, no key rotation needed.** Config TOMLs at the agent root also had zero delete protection (reachable via `root=agent`) — now blocked.
+- **NEEDS JOSH (one path no headless test drove):** walk the authenticated DELETE UI on the box — delete a normal file (works) → attempt identity.md / policy.md / a `.key` (403, key absent from tree) → one confirm-path file (409→200) → confirm the Audit page shows those events with resolved paths. Operator token is browser-side/auto-generated, so this can't run headless.
+- **Verified live:** HREG1 capture→recall HIT on the runtime; Audit/stats/needs return 401 (auth), not 500. UI-driven authenticated DELETE left for Josh (operator token is browser-side).
 
 ### Messages
 

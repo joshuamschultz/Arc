@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +164,13 @@ class RunState:
     runaway_count: int = 0
     consecutive_tool_errors: int = 0
     stream_event: Callable[[str, dict[str, Any]], None] | None = None
+    # H-038 — per-call current-time context. The host injects a clock exactly
+    # like ``actor_did``/``run_origin`` (a caller-supplied callable, never a
+    # config read): ``None`` uses arcrun's zero-config default (real UTC,
+    # resolved in ``strategies.react``). A host with its own timezone or a
+    # test/replay path that needs to pin the exact recorded value overrides it
+    # here — arcrun never reaches up for either.
+    clock: Callable[[], datetime] | None = None
 
     def remaining_seconds(self) -> float | None:
         """Return remaining run budget or raise on expiry."""

@@ -60,6 +60,20 @@ def _registry(bus: EventBus, tools: list[Tool]) -> ToolRegistry:
     return registry
 
 
+def _last_real_message(messages: list[Any]) -> Any:
+    """The newest message that is actual turn content, not loop metadata.
+
+    arcrun appends an ``ephemeral`` per-call current-time block (H-038) after
+    every real message it sends the model; that block always sits last, so a
+    fixture reading "the prompt" must look past it the same way
+    ``arcllm.modules.routing`` does in production.
+    """
+    for message in reversed(messages):
+        if not getattr(message, "ephemeral", False):
+            return message
+    return messages[-1]
+
+
 class FakeModel:
     """Answers every turn from a caller-supplied function of the message list.
 
@@ -76,7 +90,7 @@ class FakeModel:
         self, messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
     ) -> LLMResponse:
         self.tool_sets.append([t.name for t in (tools or [])])
-        self.prompts.append(content_text(messages[-1].content))
+        self.prompts.append(content_text(_last_real_message(messages).content))
         reply = self._respond(messages)
         if inspect.isawaitable(reply):
             reply = await reply
@@ -149,10 +163,13 @@ async def test_child_starts_from_fresh_messages_not_the_parent_transcript() -> N
     await _host(FakeModel(respond), state, bus).spawn(AgentSpec(prompt="child task"))
 
     child_messages = seen[0]
-    assert len(child_messages) == 2
-    assert child_messages[0].role == "system"
-    assert "You are the parent." in content_text(child_messages[0].content)
-    assert content_text(child_messages[1].content).startswith("child task")
+    # arcrun appends an ephemeral per-call current-time block (H-038) after
+    # every real message; strip it before asserting on the real transcript.
+    real_messages = [m for m in child_messages if not getattr(m, "ephemeral", False)]
+    assert len(real_messages) == 2
+    assert real_messages[0].role == "system"
+    assert "You are the parent." in content_text(real_messages[0].content)
+    assert content_text(real_messages[1].content).startswith("child task")
     assert all("a later parent turn" not in content_text(m.content) for m in child_messages)
 
 
@@ -544,7 +561,7 @@ async def test_spawn_many_returns_submission_order_not_completion_order() -> Non
     bus = EventBus(run_id="parent-run")
 
     async def respond(messages: list[Any]) -> str:
-        prompt = content_text(messages[-1].content)
+        prompt = content_text(_last_real_message(messages).content)
         if "slow" in prompt:
             await asyncio.sleep(0.05)
             return "slow answer"
@@ -563,7 +580,7 @@ async def test_one_failing_child_never_aborts_its_siblings() -> None:
     bus = EventBus(run_id="parent-run")
 
     def respond(messages: list[Any]) -> str:
-        if "boom" in content_text(messages[-1].content):
+        if "boom" in content_text(_last_real_message(messages).content):
             raise RuntimeError("provider exploded")
         return "fine"
 

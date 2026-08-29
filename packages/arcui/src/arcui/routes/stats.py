@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.identity import resolve_agent_did
+from arcui.identity import resolve_agent_did, resolve_agent_identity
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,19 @@ async def get_performance(request: Request) -> JSONResponse:
         return _invalid_window_response()
     agent = request.query_params.get("agent_id")
     resolved_agent = _agent_filter(request, agent) if agent else None
-    return JSONResponse(await request.app.state.observe.performance(window, agent=resolved_agent))
+    perf = await request.app.state.observe.performance(window, agent=resolved_agent)
+    # H-029: attach the canonical AgentIdentity (H-007) to each per-agent row,
+    # joined off the roster by its ``actor_did`` (H-008) — the Model usage
+    # page's per-agent breakdown renders that, never the raw display name
+    # ``compute_performance`` groups by (which can be a label, not a DID).
+    provider = getattr(request.app.state, "roster_provider", None)
+    roster = provider() if provider is not None else []
+    name_by_did = {r.did: (r.display_name or r.name) for r in roster if r.did}
+    for row in perf.get("agents", []):
+        did = row.get("actor_did")
+        if isinstance(did, str) and did:
+            row["identity"] = resolve_agent_identity(did, name_by_did.get(did)).model_dump()
+    return JSONResponse(perf)
 
 
 async def get_queue_stats(request: Request) -> JSONResponse:

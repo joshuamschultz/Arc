@@ -1338,11 +1338,22 @@ export const useRevokeConnection = (instance: string) => {
 
 // Rotation. The response lists field names only. One write serves every agent
 // granted this connection, because there is only ever one copy of the credential.
+//
+// Invalidates the auth read (`useConnectorAuthorization`) alongside doctor: that
+// query is what decides an OAuth connector's `authorize_url` ("Add the app key
+// and secret first…") and what fills a rotation form's non-sensitive fields the
+// next time it opens. Leaving it cached meant an operator who had just saved a
+// working app key/secret still saw "Add the app key and secret first" — keys
+// that were genuinely saved, reported back to the UI as not saved.
 export const useReauthConnector = (instance: string) => {
   const queryClient = useQueryClient()
   return useMutation<ConnectorAuthResponse, Error, Record<string, string>>({
     mutationFn: (secrets) => apiPut(connectionPath(instance, '/auth'), { secrets }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: doctorKey(instance) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: doctorKey(instance) })
+      queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
+      queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
+    },
   })
 }
 

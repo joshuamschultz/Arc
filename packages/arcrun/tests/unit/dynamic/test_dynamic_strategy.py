@@ -36,6 +36,15 @@ async def _noop(_params: dict[str, Any], _ctx: object) -> str:
     return "ok"
 
 
+def _last_real_message(messages: list[Any]) -> Any:
+    """The newest real turn content, skipping arcrun's ephemeral per-call
+    current-time block (H-038), which always rides last."""
+    for message in reversed(messages):
+        if not getattr(message, "ephemeral", False):
+            return message
+    return messages[-1]
+
+
 def _registry(bus: EventBus) -> ToolRegistry:
     registry = ToolRegistry(
         tools=[
@@ -82,11 +91,11 @@ class AuthoringModel:
     ) -> LLMResponse:
         if any(t.name == "emit_script" for t in (tools or [])):
             return self._author(messages)
-        self.child_prompts.append(content_text(messages[-1].content))
+        self.child_prompts.append(content_text(_last_real_message(messages).content))
         return LLMResponse(content=self._child_reply, stop_reason="end_turn")
 
     def _author(self, messages: list[Any]) -> LLMResponse:
-        self.authoring_prompts.append(content_text(messages[-1].content))
+        self.authoring_prompts.append(content_text(_last_real_message(messages).content))
         if self.raise_on_author:
             raise RuntimeError("provider is down")
         source = self._scripts.pop(0) if self._scripts else ""

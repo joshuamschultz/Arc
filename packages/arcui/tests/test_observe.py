@@ -20,7 +20,14 @@ from arcui.observe import Observe
 
 
 def _write_audit(
-    data_dir: Path, *, seq: int, actor_did: str, action: str = "gateway.fs.read"
+    data_dir: Path,
+    *,
+    seq: int,
+    actor_did: str,
+    action: str = "gateway.fs.read",
+    target: str = "tool:x",
+    outcome: str = "allow",
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Append one signed-chain record to the durable WORM file arcstore mirrors."""
     worm = data_dir / "worm"
@@ -34,8 +41,9 @@ def _write_audit(
             "ts": f"2026-05-31T00:00:0{seq}+00:00",
             "actor_did": actor_did,
             "action": action,
-            "target": "tool:x",
-            "outcome": "allow",
+            "target": target,
+            "outcome": outcome,
+            "extra": extra,
         },
     }
     with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
@@ -186,6 +194,98 @@ async def test_audit_reads_worm_chain(tmp_path: Path) -> None:
             "did:arc:alpha",
             "did:arc:beta",
         }
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_audit_projects_readable_fields(tmp_path: Path) -> None:
+    """H-022: Observe.audit() enriches raw rows into operator-legible fields.
+
+    Covers the three shapes an operator actually needs to read at a glance —
+    a policy denial (with a reason), a policy allow, and a namespaced-target
+    event — without needing the roster (that join is the route's job).
+    """
+    _write_audit(
+        tmp_path,
+        seq=0,
+        actor_did="did:arc:alpha",
+        action="policy.evaluate",
+        target="memory.write",
+        outcome="deny",
+        extra={"reason": "tool not on the agent allowlist", "rule_id": "R-3"},
+    )
+    _write_audit(
+        tmp_path,
+        seq=1,
+        actor_did="did:arc:alpha",
+        action="policy.evaluate",
+        target="memory.write",
+        outcome="allow",
+        extra={"reason": "matched safe-set", "rule_id": "R-1"},
+    )
+    _write_audit(
+        tmp_path,
+        seq=2,
+        actor_did="did:arc:alpha",
+        action="connector.attach_denied",
+        target="connector:github",
+        outcome="deny",
+        extra={"reason": "no grant on file"},
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        events = await observe.audit()
+        by_seq = {e["seq"]: e for e in events}
+
+        denial = by_seq[0]
+        assert denial["action_label"] == "Tool policy check"
+        assert denial["decision"] == "Denied"
+        assert denial["reason"] == "tool not on the agent allowlist"
+        assert denial["target_label"] == "memory.write"
+        # Read-projection only — the raw stored fields are untouched.
+        assert denial["action"] == "policy.evaluate"
+        assert denial["outcome"] == "deny"
+
+        allow = by_seq[1]
+        assert allow["action_label"] == "Tool policy check"
+        assert allow["decision"] == "Allowed"
+        assert allow["reason"] == "matched safe-set"
+
+        connector_denial = by_seq[2]
+        assert connector_denial["action_label"] == "Connector attach denied"
+        assert connector_denial["decision"] == "Denied"
+        assert connector_denial["reason"] == "no grant on file"
+        assert connector_denial["target_label"] == "Connector: github"
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_audit_projection_falls_back_for_unmapped_and_empty_values(
+    tmp_path: Path,
+) -> None:
+    """An action/outcome outside the known vocabulary still degrades to a
+    readable label (never a raw token); a bare target and missing extra never
+    raise.
+    """
+    _write_audit(
+        tmp_path,
+        seq=0,
+        actor_did="did:arc:alpha",
+        action="widget.frobnicated",
+        target="",
+        outcome="partial",
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        event = (await observe.audit())[0]
+        assert event["action_label"] == "Widget Frobnicated"
+        assert event["decision"] == "Partial"
+        assert event["reason"] is None
+        assert event["target_label"] == "—"
     finally:
         await observe.stop()
 
@@ -549,3 +649,71 @@ def test_row_to_trace_cache_tokens_absent_is_none() -> None:
     trace = _row_to_trace({"record_id": "r5", "outcome": "ok"})
     assert trace["cache_read_tokens"] is None
     assert trace["cache_write_tokens"] is None
+
+
+def test_row_to_trace_labels_a_chat_call_as_inference_with_no_job() -> None:
+    """H-029: a plain chat/completion call — no embed ``operation``, no
+    maintenance-job suffix on its label — is "inference" with no job badge."""
+    from arcui.observe import _row_to_trace
+
+    trace = _row_to_trace({"record_id": "r6", "outcome": "ok", "agent_label": "olivia"})
+    assert trace["capability_class"] == "inference"
+    assert trace["operation"] is None
+    assert trace["job"] is None
+
+
+def test_row_to_trace_labels_an_embed_call_with_its_operation() -> None:
+    """H-028's classifier, reused here (H-029): the embed path's ``operation``
+    key on ``extra`` marks the call as "embedding" and surfaces the short
+    caller label — available on the LIST shape, not gated behind bodies."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r7",
+        "outcome": "ok",
+        "extra": {"operation": "retrieve:recall"},
+    }
+    trace = _row_to_trace(row)
+    assert trace["capability_class"] == "embedding"
+    assert trace["operation"] == "retrieve:recall"
+    assert "request" not in trace  # still no bodies on the list shape
+
+
+def test_row_to_trace_job_from_agent_label_suffix() -> None:
+    """A maintenance call's ``<agent>/<job>`` label suffix names the job,
+    mirroring ``compute_runs``' run-level ``_job_of`` at call granularity."""
+    from arcui.observe import _row_to_trace
+
+    trace = _row_to_trace({"record_id": "r8", "outcome": "ok", "agent_label": "olivia/distill"})
+    assert trace["job"] == "distill"
+
+
+def test_row_to_trace_job_background_from_extra_origin() -> None:
+    """No job suffix, but the row carries a background self-wake origin —
+    reads as "background", same as a run with no maintenance suffix."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r9",
+        "outcome": "ok",
+        "agent_label": "olivia",
+        "extra": {"origin": "background"},
+    }
+    assert _row_to_trace(row)["job"] == "background"
+
+
+def test_row_to_trace_capability_class_handles_json_string_extra() -> None:
+    """extra may arrive as a JSON string (see test_row_to_trace_handles_json_string_extra)
+    — the classifier must see the parsed dict, not the raw string."""
+    import json as _json
+
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r10",
+        "outcome": "ok",
+        "extra": _json.dumps({"operation": "embed"}),
+    }
+    trace = _row_to_trace(row)
+    assert trace["capability_class"] == "embedding"
+    assert trace["operation"] == "embed"

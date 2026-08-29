@@ -14,9 +14,14 @@ export type Dict = Record<string, unknown>
 export interface Trace {
   [key: string]: unknown
   trace_id?: string
+  // The actor's DID (H-008 joins/filters on this, never agent_label).
   agent?: string
   agent_label?: string
   agent_did?: string
+  // Canonical identity for `agent`, resolved server-side (H-007/H-029) —
+  // render with the shared `AgentIdentity` component instead of the raw
+  // `agent`/`agent_label` strings. Absent when the roster provider isn't wired.
+  identity?: AgentIdentityShape
   provider?: string
   model?: string
   input_tokens?: number
@@ -34,6 +39,15 @@ export interface Trace {
   tools?: unknown
   request?: unknown
   response?: unknown
+  // H-028/H-029: what the call WAS — "inference" (chat/completion) or
+  // "embedding" — classified from the recorded call type, never the model name.
+  capability_class?: 'inference' | 'embedding'
+  // The embed path's short caller label (e.g. "embed:consolidate",
+  // "retrieve:recall"); undefined for a chat/completion call.
+  operation?: string | null
+  // Sub-job kind (workpad|distill|consolidate|eval|background) parsed off the
+  // agent_label suffix or background origin; null for a plain agent call.
+  job?: string | null
 }
 
 /**
@@ -125,12 +139,40 @@ export interface Task {
 export interface AuditEvent {
   [key: string]: unknown
   timestamp?: string
+  ts?: string
   event_type?: string
   action?: string
-  actor?: string
+  // Plain-language sentence for `action`, resolved server-side (H-022) —
+  // e.g. "policy.evaluate" -> "Tool policy check". Render this, not `action`.
+  action_label?: string
+  // The resolved friendly name for `actor_did` (roster join, H-007/H-022) —
+  // `null`/absent when the DID has no roster row (operator, role DID, …).
+  actor?: string | null
   agent_id?: string
+  // The canonical {AgentIdentity} shape (arcui.identity, H-007), joined by
+  // DID server-side. Render with the shared `AgentIdentity` component rather
+  // than re-deriving a name/host/type from the raw `actor_did` in React.
+  identity?: AgentIdentityShape
+  actor_did?: string
+  target?: string
+  // "Kind: value" for a namespaced target (`connector:github` -> "Connector:
+  // github"); the bare target unchanged when it has no namespace.
+  target_label?: string
+  outcome?: string
+  // Plain verdict word for `outcome` (e.g. "deny" -> "Denied"), resolved
+  // server-side (H-022).
   decision?: string
+  // The policy pipeline's (or emitter's) stated reason, lifted out of
+  // `extra` server-side (H-022) — present on most allow/deny rows.
+  reason?: string
   severity?: string
+  seq?: number | string
+  event_hash?: string
+  prev_hash?: string
+  signature?: string
+  verified?: boolean | number
+  request_id?: string
+  extra?: Record<string, unknown>
 }
 
 // --- HTTP response envelopes (schemas.py, 1:1) -----------------------------

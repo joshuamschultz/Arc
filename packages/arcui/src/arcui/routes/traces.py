@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.identity import resolve_agent_did
+from arcui.identity import resolve_agent_did, resolve_agent_identity
 from arcui.schemas import ErrorResponse, TracesResponse
 
 _MAX_TRACE_LIMIT = 500
@@ -40,6 +41,26 @@ def _validate_filter(value: str | None) -> str | None:
     if not _VALID_FILTER_RE.match(value):
         return None
     return value
+
+
+def _name_by_did(request: Request) -> dict[str, str | None]:
+    """The roster's DID -> friendly-name map, for joining trace identity (H-008)."""
+    provider = getattr(request.app.state, "roster_provider", None)
+    roster = provider() if provider is not None else []
+    return {r.did: (r.display_name or r.name) for r in roster if r.did}
+
+
+def _attach_identity(trace: dict[str, Any], name_by_did: dict[str, str | None]) -> None:
+    """Attach the canonical AgentIdentity (H-007) to one trace's actor DID.
+
+    The Calls table renders the ONE shared ``AgentIdentity`` component
+    instead of a raw label — joined off the roster **by DID** (H-008), never
+    the free-text ``agent_label`` that already rides the trace (a label can
+    drift or collide; the DID never does).
+    """
+    did = trace.get("agent")
+    if isinstance(did, str) and did:
+        trace["identity"] = resolve_agent_identity(did, name_by_did.get(did)).model_dump()
 
 
 async def list_traces(request: Request) -> JSONResponse:
@@ -75,6 +96,9 @@ async def list_traces(request: Request) -> JSONResponse:
         agent=agent_filter,
         limit=limit,
     )
+    name_by_did = _name_by_did(request)
+    for trace in traces:
+        _attach_identity(trace, name_by_did)
     return JSONResponse(TracesResponse(traces=traces, cursor=None).model_dump(mode="json"))
 
 
@@ -101,6 +125,7 @@ async def get_trace(request: Request) -> JSONResponse:
             ErrorResponse(error="Trace not found").model_dump(mode="json"),
             status_code=404,
         )
+    _attach_identity(record, _name_by_did(request))
 
     return JSONResponse(record)
 

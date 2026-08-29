@@ -147,6 +147,46 @@ class TestPiiOutboundText:
         assert "[PII:SSN]" in sent_messages[0].content
         assert "[PII:EMAIL]" in sent_messages[0].content
 
+    async def test_redaction_preserves_the_ephemeral_flag(self):
+        """H-038 security confirm: redaction must not silently erase metadata.
+
+        ``load_model`` composes SecurityModule OUTSIDE RoutingModule (registry
+        wraps rate_limit/fallback/retry/RoutingModule first, then security), so
+        whatever ``_redact_messages`` hands ``self._inner.invoke`` is what
+        RoutingModule actually sees. Rebuilding a ``Message`` with only
+        ``role``/``content`` — dropping ``ephemeral`` — would silently reset
+        arcrun's per-call time block back to ``ephemeral=False`` before it ever
+        reaches routing, reintroducing the exact phrase-match/tool-lock bug
+        H-038 fixed, for any deployment with PII redaction on. A message with
+        no PII at all (nothing to redact) must still come out ephemeral.
+        """
+        inner = _make_inner()
+        module = SecurityModule(_base_config(), inner)
+        messages = [
+            Message(role="user", content="Do the real task."),
+            Message(
+                role="user", content="Current date/time: 2026-08-29 14:32 UTC", ephemeral=True
+            ),
+        ]
+
+        await module.invoke(messages)
+
+        sent_messages = inner.invoke.call_args[0][0]
+        assert sent_messages[0].ephemeral is False
+        assert sent_messages[1].ephemeral is True
+
+    async def test_redaction_preserves_the_ephemeral_flag_when_pii_found(self):
+        """Same guarantee when the ephemeral message's own text gets redacted."""
+        inner = _make_inner()
+        module = SecurityModule(_base_config(), inner)
+        messages = [Message(role="user", content="contact me at user@test.com", ephemeral=True)]
+
+        await module.invoke(messages)
+
+        sent = inner.invoke.call_args[0][0][0]
+        assert "[PII:EMAIL]" in sent.content
+        assert sent.ephemeral is True
+
 
 # ---------------------------------------------------------------------------
 # PII redaction — outbound messages (ContentBlock content)
