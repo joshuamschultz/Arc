@@ -43,8 +43,8 @@ before this batch is complete.
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
 | H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | NEW | |
-| H-002 | Home | Recent Activity shows the sub-process (job) | S | NEW | |
-| H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | NEW | |
+| H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
+| H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | NEW | |
 | H-005 | Home | Metrics always live + accurate | M | NEW | |
 | H-006 | Home | Home loads with data in < 2s | M | NEW | |
@@ -53,15 +53,15 @@ before this batch is complete.
 | H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | NEW | |
 | H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | NEW | |
-| H-012 | Agent·Runs | Rename Runs→Activity; add identifying metadata | S | NEW | |
+| H-012 | Agent·Runs | Rename Runs→Activity; add identifying metadata | S | MERGED | 157701a9 |
 | H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | NEW | |
 | H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | NEW | |
-| H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | NEW | |
+| H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | MERGED | ed84d651 |
 | H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | NEW | |
-| H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | NEW | |
+| H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | MERGED | 157701a9 |
 | H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | NEW | |
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | NEW | |
-| H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | NEW | |
+| H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
@@ -69,13 +69,13 @@ before this batch is complete.
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
-| H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | NEW | |
+| H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | NEW | |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | NEW | |
 | H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | NEW | |
-| H-032 | Connections | Cards only need half screen | S | NEW | |
+| H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | NEW | |
-| H-034 | Menu | Collapse = a button at top of the menu | S | NEW | |
+| H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
 | H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | NEW | |
 | H-036 | UI | Fully keyboard-drivable | L | NEW | |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
