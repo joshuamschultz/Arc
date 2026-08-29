@@ -81,6 +81,88 @@ class TestCostEfficiency:
         assert eff["models"][0]["model"] == "cheap"
         assert eff["potential_savings_usd"] >= 0.0
 
+    def test_embedding_model_never_suggested_as_inference_savings(self) -> None:
+        """H-028: an embedding model must never be the inference "switch to" pick.
+
+        An embed call's near-zero cost-per-token used to win the GLOBAL
+        cheapest-model comparison, so the dashboard proposed "switching" a
+        chat workload to an embedding model — a comparison that is invalid
+        because inference cannot run on an embedding model.
+        """
+        rows = [
+            _row(
+                model="claude-opus",
+                provider="anthropic",
+                cost_usd=1.0,
+                prompt_tokens=1000,
+                completion_tokens=500,
+            ),
+            _row(
+                model="all-MiniLM-L6-v2",
+                provider="local",
+                cost_usd=0.0000001,
+                prompt_tokens=100,
+                completion_tokens=0,
+                extra={"operation": "embed"},
+            ),
+        ]
+        eff = compute_cost_efficiency(rows, window="24h")
+
+        # Only one inference model exists, so it is trivially its own
+        # cheapest — the embedding model must never appear in this slot.
+        assert eff["cheapest_model"] == "claude-opus"
+        assert eff["cheapest_model"] != "all-MiniLM-L6-v2"
+        assert eff["potential_savings_usd"] == 0.0
+
+        inference_model_names = {
+            m["model"] for m in eff["models"] if m["capability_class"] == "inference"
+        }
+        assert "all-MiniLM-L6-v2" not in inference_model_names
+
+        # The embedding call still gets its own (correctly-scoped) ranking.
+        assert eff["embedding_cheapest_model"] == "all-MiniLM-L6-v2"
+
+    def test_inference_model_never_suggested_as_embedding_savings(self) -> None:
+        """The inverse: a cheap chat model must never be an embedding "switch to" pick."""
+        rows = [
+            _row(
+                model="haiku",
+                provider="anthropic",
+                cost_usd=0.0000001,
+                prompt_tokens=10,
+                completion_tokens=5,
+            ),
+            _row(
+                model="text-embed-expensive",
+                provider="openai",
+                cost_usd=1.0,
+                prompt_tokens=1000,
+                completion_tokens=0,
+                extra={"operation": "embed"},
+            ),
+            _row(
+                model="all-MiniLM-L6-v2",
+                provider="local",
+                cost_usd=0.01,
+                prompt_tokens=1000,
+                completion_tokens=0,
+                extra={"operation": "embed"},
+            ),
+        ]
+        eff = compute_cost_efficiency(rows, window="24h")
+
+        assert eff["embedding_cheapest_model"] == "all-MiniLM-L6-v2"
+        assert eff["embedding_cheapest_model"] != "haiku"
+
+        embedding_model_names = {
+            m["model"] for m in eff["models"] if m["capability_class"] == "embedding"
+        }
+        assert "haiku" not in embedding_model_names
+
+        # The inference call still gets its own (correctly-scoped) ranking,
+        # untouched by the far-cheaper embedding rows.
+        assert eff["cheapest_model"] == "haiku"
+
 
 class TestPerformance:
     def test_success_rate_and_percentiles(self) -> None:

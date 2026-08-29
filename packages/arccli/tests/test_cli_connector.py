@@ -895,7 +895,7 @@ class TestSemanticLayer:
     def test_an_absent_layer_says_how_one_appears(
         self, arc_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """"Not found" with no next step is how an operator concludes a feature
+        """ "Not found" with no next step is how an operator concludes a feature
         does not exist."""
         connector_handler(["semantic", "shop", "--arc-dir", str(arc_dir)])
 

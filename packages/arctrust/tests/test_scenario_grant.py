@@ -160,14 +160,17 @@ async def test_an_agent_can_never_grant_its_own_scenario() -> None:
     decision = await _layer().evaluate(_call(agent_did=agent.did), _ctx(grants=(self_signed,)))
 
     assert decision.outcome == "deny"
-    assert verify_scenario_grant(
-        self_signed,
-        agent_did=agent.did,
-        tool_name="jira_create_issue",
-        composition=_COMPOSITION,
-        origin="workflow:nightly-meeting-ingest",
-        connection="jira",
-    ) is False
+    assert (
+        verify_scenario_grant(
+            self_signed,
+            agent_did=agent.did,
+            tool_name="jira_create_issue",
+            composition=_COMPOSITION,
+            origin="workflow:nightly-meeting-ingest",
+            connection="jira",
+        )
+        is False
+    )
 
 
 async def test_a_tampered_grant_is_refused() -> None:

@@ -110,7 +110,9 @@ async def test_a_background_turn_captures_but_does_not_advance_consolidation() -
     _configure_with(brain)
     turn_context.set_interactive(False)
 
-    await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "background churn"}]}))
+    await capture_respond(
+        _ctx({"messages": [{"role": "assistant", "content": "background churn"}]})
+    )
 
     assert brain.captures == ["background churn"]  # still captured to memory
     assert _runtime.state().events_since_consolidate == 0  # but no consolidation event
@@ -122,7 +124,9 @@ async def test_a_real_interactive_turn_advances_consolidation() -> None:
     _configure_with(brain)
     turn_context.set_interactive(True)
 
-    await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "answered the user"}]}))
+    await capture_respond(
+        _ctx({"messages": [{"role": "assistant", "content": "answered the user"}]})
+    )
 
     assert _runtime.state().events_since_consolidate == 1
 

@@ -16,7 +16,7 @@ import {
 import { PageHeader } from '@/components/page-header'
 import { InsightStat, StatusChip } from '@/components/ai'
 import { StatusDot } from '@/components/status-badge'
-import { ChartCard, AreaSeries } from '@/components/charts'
+import { AreaSeries, ChartCard } from '@/components/charts'
 import { Sparkline } from '@/components/llm/sparkline'
 import {
   useApprovals,
@@ -26,8 +26,17 @@ import {
   useLlmStats,
   useTimeseries,
 } from '@/lib/queries'
-import { initials, relativeTime, shortId, fmtTokens, fmtCost, fmtNumber } from '@/lib/format'
+import {
+  initials,
+  jobLabel,
+  relativeTime,
+  shortId,
+  fmtTokens,
+  fmtCost,
+  fmtNumber,
+} from '@/lib/format'
 import type { Agent, RunSummary, TaskStatus } from '@/lib/types'
+
 
 /** Momentum within the window: later-half sum vs earlier-half, as a percentage.
  * Undefined when there isn't enough signal to be honest about a direction. */
@@ -332,9 +341,19 @@ export function HomePage() {
                     to={`/arcrun?run=${encodeURIComponent(r.run_id)}`}
                     className={`flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 ${i > 0 ? 'border-t border-border' : ''}`}
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                      {runAgent(r)}
-                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {runAgent(r)}
+                      </span>
+                      {jobLabel(r.job) && (
+                        <span
+                          className="truncate text-[11px] leading-tight text-foreground/55"
+                          title="A background job the agent ran on its own (not a person-driven run)"
+                        >
+                          {jobLabel(r.job)}
+                        </span>
+                      )}
+                    </div>
                     <StatusChip value={r.status} />
                     <span className="whitespace-nowrap text-xs text-muted-foreground">
                       {relativeTime(r.started_at)}

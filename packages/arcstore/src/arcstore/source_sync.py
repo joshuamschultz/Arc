@@ -218,9 +218,7 @@ class InMemorySourceSyncStore:
                     "error_code": None,
                 }
             )
-            self._pages = {
-                page for page in self._pages if page[:2] != key
-            }
+            self._pages = {page for page in self._pages if page[:2] != key}
             return True
 
     async def purge(self, agent_did: str, source_id: str) -> bool:

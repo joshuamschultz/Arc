@@ -100,17 +100,27 @@ class _Service:
         self, connection_id: str, *, resource_ids: tuple[str, ...]
     ) -> tuple[_Resource, ...]:
         self.resources = resource_ids
-        return tuple(_Resource(resource_id=resource_id, selected=True) for resource_id in resource_ids)
+        return tuple(
+            _Resource(resource_id=resource_id, selected=True) for resource_id in resource_ids
+        )
 
     async def list_review_items(
         self, *, status: str | None = None, source_id: str | None = None
     ) -> tuple[_Review, ...]:
         item = _Review()
-        return (item,) if status in {None, item.status} and source_id in {None, item.provenance.source} else ()
+        return (
+            (item,)
+            if status in {None, item.status} and source_id in {None, item.provenance.source}
+            else ()
+        )
 
     async def resolve_review(self, review_id: str, decision: str) -> _Review | None:
         self.review_decision = (review_id, decision)
-        return _Review(status="approved" if decision == "approve" else "declined") if review_id == "fact-1" else None
+        return (
+            _Review(status="approved" if decision == "approve" else "declined")
+            if review_id == "fact-1"
+            else None
+        )
 
     async def sync_now(self, connection_id: str) -> bool:
         self.action = ("sync", connection_id)
@@ -144,7 +154,10 @@ class _Registry:
 def _client() -> tuple[TestClient, _Service]:
     service = _Service()
     app = Starlette(routes=routes)
-    app.add_middleware(AuthMiddleware, auth_config=AuthConfig({"viewer_token": "viewer", "operator_token": "operator"}))
+    app.add_middleware(
+        AuthMiddleware,
+        auth_config=AuthConfig({"viewer_token": "viewer", "operator_token": "operator"}),
+    )
     app.state.roster_provider = lambda: [SimpleNamespace(agent_id="olivia", did="did:arc:olivia")]
     app.state.embedded_agent_cache = {
         "did:arc:olivia": SimpleNamespace(_capability_registry=_Registry(service))
@@ -196,7 +209,10 @@ def test_activate_connected_data_hides_runtime_failure() -> None:
 
 def test_connected_sources_exposes_connected_account_before_ingest() -> None:
     client, _service = _client()
-    response = client.get("/api/agents/olivia/knowledge/connected-sources", headers={"Authorization": "Bearer viewer"})
+    response = client.get(
+        "/api/agents/olivia/knowledge/connected-sources",
+        headers={"Authorization": "Bearer viewer"},
+    )
     assert response.status_code == 200
     item = response.json()["items"][0]
     assert item == {
@@ -217,10 +233,14 @@ def test_connected_sources_exposes_connected_account_before_ingest() -> None:
 def test_mapping_is_operator_gated_and_stages_typed_homes() -> None:
     client, service = _client()
     path = "/api/agents/olivia/knowledge/connected-sources/dropbox-olivia/mapping"
-    denied = client.post(path, headers={"Authorization": "Bearer viewer"}, json={"homes": ["document"]})
+    denied = client.post(
+        path, headers={"Authorization": "Bearer viewer"}, json={"homes": ["document"]}
+    )
     assert denied.status_code == 403
 
-    invalid = client.post(path, headers={"Authorization": "Bearer operator"}, json={"homes": ["nope"]})
+    invalid = client.post(
+        path, headers={"Authorization": "Bearer operator"}, json={"homes": ["nope"]}
+    )
     assert invalid.status_code == 400
 
     staged = client.post(
@@ -258,7 +278,9 @@ def test_resource_scope_is_visible_and_operator_gated() -> None:
             "detail": "",
         }
     ]
-    denied = client.post(path, headers={"Authorization": "Bearer viewer"}, json={"resource_ids": []})
+    denied = client.post(
+        path, headers={"Authorization": "Bearer viewer"}, json={"resource_ids": []}
+    )
     assert denied.status_code == 403
     selected = client.post(
         path,

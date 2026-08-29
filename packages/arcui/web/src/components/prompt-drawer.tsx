@@ -189,14 +189,15 @@ export function PromptDrawer({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               spellCheck={false}
-              className="h-full min-h-[320px] w-full resize-none rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              wrap="soft"
+              className="h-full min-h-[320px] w-full resize-none whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           ) : view === 'diff' && !body ? (
             <p className="text-xs text-muted-foreground">
               No override — the effective prompt is identical to stock.
             </p>
           ) : (
-            <CodeBlock code={body ?? ''} language={view === 'diff' ? 'diff' : 'markdown'} />
+            <CodeBlock code={body ?? ''} language={view === 'diff' ? 'diff' : 'markdown'} wrap />
           )}
         </div>
       </SheetContent>

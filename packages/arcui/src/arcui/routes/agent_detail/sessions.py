@@ -197,9 +197,9 @@ async def get_sessions(request: Request) -> JSONResponse:
         )
     sessions.sort(key=lambda s: float(s.mtime), reverse=True)
     return JSONResponse(
-        SessionsListResponse(
-            sessions=sessions, current_session_key=current_key
-        ).model_dump(mode="json")
+        SessionsListResponse(sessions=sessions, current_session_key=current_key).model_dump(
+            mode="json"
+        )
     )
 
 

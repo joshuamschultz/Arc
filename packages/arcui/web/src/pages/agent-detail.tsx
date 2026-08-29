@@ -83,13 +83,22 @@ import {
   fmtCost,
   fmtLatency,
   fmtNumber,
-  initials,
+  jobLabel,
   relativeTime,
   shortId,
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { AgentIdentity } from '@/components/AgentIdentity'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { CapabilityInventoryItem, Dict, Task, TaskStatus, TaskPriority, RunSummary } from '@/lib/types'
+import type {
+  AgentIdentityShape,
+  CapabilityInventoryItem,
+  Dict,
+  Task,
+  TaskStatus,
+  TaskPriority,
+  RunSummary,
+} from '@/lib/types'
 
 const TASK_STATUS_FILTERS: (TaskStatus | 'all')[] = [
   'all', 'backlog', 'todo', 'in_progress', 'review', 'done', 'failed',
@@ -1547,8 +1556,21 @@ function RunsTab({ agentId }: { agentId: string }) {
                 i > 0 && 'border-t border-border',
               )}
             >
-              <span className="font-mono text-xs text-primary">{shortId(r.run_id, 16)}</span>
+              <div className="flex min-w-0 flex-col">
+                <span className="font-mono text-xs text-primary">{shortId(r.run_id, 16)}</span>
+                {jobLabel(r.job) && (
+                  <span
+                    className="truncate text-[11px] leading-tight text-foreground/55"
+                    title="A background job the agent ran on its own (not a person-driven run)"
+                  >
+                    {jobLabel(r.job)}
+                  </span>
+                )}
+              </div>
               <StatusChip value={r.status} />
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {r.turns} turns · {r.tool_calls} tools
+              </span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                 {relativeTime(r.started_at)}
               </span>
@@ -1918,7 +1940,7 @@ const TAB_LABEL: Record<TabId, string> = {
   identity: 'Identity',
   inbox: 'Inbox',
   sessions: 'Sessions',
-  runs: 'Runs',
+  runs: 'Activity',
   llm: 'LLM',
   skills: 'Skills',
   tools: 'Tools',
@@ -1941,6 +1963,14 @@ export function AgentDetailPage() {
 
   const a = agent.data ?? {}
   const label = String(a.display_name || a.name || id)
+  const identity: AgentIdentityShape = (a.identity as AgentIdentityShape | undefined) ?? {
+    did: String(a.did ?? ''),
+    host: 'unknown',
+    platform: 'unknown',
+    type: String(a.type ?? 'unknown'),
+    short_id: 'unknown',
+    name: null,
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -1953,20 +1983,12 @@ export function AgentDetailPage() {
         >
           <ArrowLeft className="size-4" />
         </button>
-        <span
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-primary-foreground"
-          style={{ background: (a.color as string) || 'var(--primary)' }}
-        >
-          {initials(label)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{label}</h1>
-          {a.did != null && (
-            <span className="mt-1 inline-block max-w-full truncate rounded border border-border bg-muted/40 px-1.5 py-0.5 align-middle font-mono text-[11px] text-muted-foreground">
-              {String(a.did)}
-            </span>
-          )}
-        </div>
+        <AgentIdentity
+          identity={identity}
+          fallbackName={label}
+          color={a.color as string | undefined}
+          className="min-w-0 flex-1"
+        />
         <StatusDot online={Boolean(a.online)} />
       </div>
 

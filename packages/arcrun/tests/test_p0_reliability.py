@@ -31,22 +31,32 @@ def _provider() -> StaticProvider:
 
 
 class _BlockedSelectionModel:
-    async def invoke(self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any) -> Any:
+    async def invoke(
+        self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
+    ) -> Any:
         if tools:
             await asyncio.Event().wait()
         return arcllm.LLMResponse(content="never", stop_reason="end_turn")
 
 
 class _PartialFailureModel:
-    async def invoke(self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any) -> Any:
+    async def invoke(
+        self, _messages: list[Any], tools: list[Any] | None = None, **_kwargs: Any
+    ) -> Any:
         if tools:
             return arcllm.LLMResponse(
-                tool_calls=[arcllm.ToolCall(id="strategy", name="select_strategy", arguments={"strategy": "react"})],
+                tool_calls=[
+                    arcllm.ToolCall(
+                        id="strategy", name="select_strategy", arguments={"strategy": "react"}
+                    )
+                ],
                 stop_reason="tool_use",
             )
         return arcllm.LLMResponse(content="never", stop_reason="end_turn")
 
-    async def invoke_stream(self, _messages: list[Any], **_kwargs: Any) -> AsyncIterator[arcllm.Delta]:
+    async def invoke_stream(
+        self, _messages: list[Any], **_kwargs: Any
+    ) -> AsyncIterator[arcllm.Delta]:
         yield arcllm.Delta(text="partial")
         raise RuntimeError("wire lost")
 

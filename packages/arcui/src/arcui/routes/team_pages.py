@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.identity import resolve_agent_identity
 from arcui.query_validators import safe_int
 from arcui.routes.agent_detail.capabilities import agent_skill_rows
 from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION, agent_tool_rows
@@ -75,6 +76,11 @@ def _roster(request: Request) -> list[Any]:
 
 
 def _roster_to_dict(entry: Any) -> dict[str, Any]:
+    # H-007: the canonical identity shape — DID parsed into host/platform/type/
+    # short_id, friendly name attached by the DID join — computed once, here,
+    # so every screen renders the same {AgentIdentity} the SPA's one shared
+    # component draws, instead of re-parsing the raw DID in React.
+    identity = resolve_agent_identity(entry.did, entry.display_name or entry.name)
     return {
         "agent_id": entry.agent_id,
         "name": entry.name,
@@ -89,6 +95,7 @@ def _roster_to_dict(entry: Any) -> dict[str, Any]:
         "color": entry.color,
         "role_label": entry.role_label,
         "hidden": entry.hidden,
+        "identity": identity.model_dump(),
     }
 
 

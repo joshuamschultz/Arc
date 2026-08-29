@@ -52,7 +52,9 @@ class _MailAddressBook:
         return f"agent://{did.rsplit(':', maxsplit=1)[-1]}"
 
 
-def _app(*, delivery_port: _DeliveryPort | None = None) -> tuple[Starlette, AuthConfig, DurableInboxService]:
+def _app(
+    *, delivery_port: _DeliveryPort | None = None
+) -> tuple[Starlette, AuthConfig, DurableInboxService]:
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
     service = DurableInboxService(FakeInboxRepository(), delivery_port=delivery_port)
     app = Starlette(routes=routes)

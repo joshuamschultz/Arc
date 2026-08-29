@@ -86,9 +86,7 @@ async def inject_connections_catalog(ctx: Any) -> None:
         proposal = await service.get_mapping_proposal(status.connection_id)
         homes = ", ".join(home.value for home in proposal.homes) if proposal else "not mapped"
         name = source.display_name or source.source_kind
-        lines.append(
-            f"- {name} ({source.source_kind}): status={status.status}; homes={homes}"
-        )
+        lines.append(f"- {name} ({source.source_kind}): status={status.status}; homes={homes}")
     if not lines:
         return
     sections["connections"] = _CATALOG_PREAMBLE + "\n" + "\n".join(lines)

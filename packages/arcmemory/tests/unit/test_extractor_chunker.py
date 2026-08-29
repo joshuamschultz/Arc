@@ -229,9 +229,7 @@ class TestWhatConnectedSourcesActuallyReturn:
         extractor = get_extractor("application/json")
         assert extractor is not None
 
-        text = extractor.extract(
-            b'{"title": "Fix the crawler", "labels": ["bug", "sync"]}'
-        )
+        text = extractor.extract(b'{"title": "Fix the crawler", "labels": ["bug", "sync"]}')
 
         assert "Fix the crawler" in text
         # The field name is often the word someone searches for.

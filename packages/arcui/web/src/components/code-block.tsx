@@ -12,10 +12,13 @@ export function CodeBlock({
   code,
   language,
   className,
+  wrap = false,
 }: {
   code: string
   language?: string
   className?: string
+  /** Soft-wrap long lines instead of showing a horizontal scrollbar. */
+  wrap?: boolean
 }) {
   const html = useMemo(() => highlightToHtml(code, language), [code, language])
 
@@ -23,6 +26,7 @@ export function CodeBlock({
     <pre
       className={cn(
         'overflow-auto rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed text-foreground',
+        wrap && 'whitespace-pre-wrap [overflow-wrap:anywhere]',
         className,
       )}
     >

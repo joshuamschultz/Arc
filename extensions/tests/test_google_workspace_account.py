@@ -22,7 +22,9 @@ BUNDLE = Path(__file__).resolve().parents[1] / "google_workspace"
 
 
 def _manifest():  # type: ignore[no-untyped-def]
-    return load_manifest((BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL)
+    return load_manifest(
+        (BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
+    )
 
 
 def test_the_account_is_placed_into_gog_account() -> None:
@@ -33,7 +35,9 @@ def test_the_account_is_placed_into_gog_account() -> None:
 
 def test_two_connections_bind_two_distinct_accounts() -> None:
     manifest = _manifest()
-    industrial = placement_environment(manifest, {"account": Secret("josh@blackarcindustrial.com")})
+    industrial = placement_environment(
+        manifest, {"account": Secret("josh@blackarcindustrial.com")}
+    )
     systems = placement_environment(manifest, {"account": Secret("josh@blackarcsystems.com")})
     assert industrial["GOG_ACCOUNT"].reveal() == "josh@blackarcindustrial.com"
     assert systems["GOG_ACCOUNT"].reveal() == "josh@blackarcsystems.com"

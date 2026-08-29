@@ -168,15 +168,11 @@ class InMemoryObjectState:
 
     async def list_object_ids(self, source_id: str) -> list[str]:
         return [
-            object_id
-            for (stored_source, object_id) in self._states
-            if stored_source == source_id
+            object_id for (stored_source, object_id) in self._states if stored_source == source_id
         ]
 
     async def clear_source(self, source_id: str) -> None:
-        self._states = {
-            key: value for key, value in self._states.items() if key[0] != source_id
-        }
+        self._states = {key: value for key, value in self._states.items() if key[0] != source_id}
 
     async def source_generation(self, connection_id: str) -> int:
         del connection_id
@@ -209,9 +205,7 @@ class ConnectedObjectOrderError(ConnectedObjectError):
 
 def source_instance_id(agent_did: str, source: ConnectedSource) -> str:
     """Return a collision-resistant, non-secret source-instance identifier."""
-    raw = "\0".join(
-        (agent_did, source.connection_id, source.account_id, str(source.generation))
-    )
+    raw = "\0".join((agent_did, source.connection_id, source.account_id, str(source.generation)))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

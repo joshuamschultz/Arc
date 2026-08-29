@@ -168,9 +168,7 @@ def build_distiller(
     label = f"{agent_name or 'memory'}/distill"
 
     def factory() -> Any:
-        return arcllm.load_model(
-            provider, model or None, agent_label=label, telemetry=telemetry
-        )
+        return arcllm.load_model(provider, model or None, agent_label=label, telemetry=telemetry)
 
     return ArcLLMDistiller(factory, model=model or None)
 

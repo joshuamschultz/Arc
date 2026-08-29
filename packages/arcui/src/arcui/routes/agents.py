@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.identity import resolve_agent_identity
 from arcui.schemas import (
     AgentsListResponse,
     ErrorResponse,
@@ -64,6 +65,10 @@ async def get_agent(request: Request) -> JSONResponse:
                 "role_label": r.role_label,
                 "hidden": r.hidden,
                 "workspace_path": r.workspace_path,
+                # H-007: canonical identity — DID parsed + roster-name joined
+                # by DID, so the header renders the same shape every list of
+                # agents does (see arcui.identity, routes/team_pages.py).
+                "identity": resolve_agent_identity(r.did, r.display_name or r.name).model_dump(),
             }
             if r.online:
                 entry = registry.get(agent_id)
@@ -91,6 +96,15 @@ async def get_agent(request: Request) -> JSONResponse:
         meta = entry.registration.model_dump()
         meta.setdefault("agent_id", agent_id)
         meta["online"] = True
+        # No roster row to carry a `did` — a registration's own `meta` is the
+        # only place one could have been reported. Still resolve so the
+        # response always carries the canonical shape (safe "unknown" parts
+        # when there is no DID at all, per arcui.identity.parse_did).
+        reported_did = entry.registration.meta.get("did", "")
+        meta["identity"] = resolve_agent_identity(
+            reported_did if isinstance(reported_did, str) else "",
+            entry.registration.agent_name,
+        ).model_dump()
         return JSONResponse(meta)
 
     return JSONResponse(

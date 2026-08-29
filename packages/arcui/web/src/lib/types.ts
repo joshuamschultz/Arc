@@ -36,6 +36,23 @@ export interface Trace {
   response?: unknown
 }
 
+/**
+ * Canonical agent identity — the ONE shape every screen renders, resolved
+ * server-side (arcui.identity, H-007) by parsing the DID and joining the
+ * roster's friendly name **by DID**. `host`/`platform`/`type`/`short_id`
+ * are always populated (`"unknown"` when the DID itself is malformed or
+ * absent, `""` for a structurally valid role DID with no hash segment);
+ * `name` is `null` when no roster row matched this DID.
+ */
+export interface AgentIdentityShape {
+  did: string
+  host: string
+  platform: string
+  type: string
+  short_id: string
+  name: string | null
+}
+
 export interface Agent {
   [key: string]: unknown
   agent_id?: string
@@ -51,6 +68,7 @@ export interface Agent {
   role_label?: string
   hidden?: boolean
   workspace_path?: string
+  identity?: AgentIdentityShape
 }
 
 export interface PolicyBullet {

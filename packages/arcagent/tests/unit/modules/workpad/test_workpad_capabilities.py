@@ -104,7 +104,9 @@ class TestTrackRuns:
         assert st.run_count == 0
         assert st.transcript == []
 
-    async def test_background_run_does_not_count_toward_the_cadence(self, configured: Path) -> None:
+    async def test_background_run_does_not_count_toward_the_cadence(
+        self, configured: Path
+    ) -> None:
         # A pulse/proactive/consolidation self-wake is non-interactive: it must
         # not advance the workpad cadence or reset the idle clock.
         from arcagent.modules.workpad.capabilities import track_runs

@@ -37,6 +37,7 @@ def _unavailable(what: str) -> JSONResponse:
         status_code=503,
     )
 
+
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 # NIST SI-10: same safe charset as the trace/identity filters elsewhere.
 _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9._:/-]{1,128}$")
