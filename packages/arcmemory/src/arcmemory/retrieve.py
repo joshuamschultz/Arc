@@ -78,10 +78,19 @@ class Retriever:
             audit_sink=self._audit,
         )
 
-    async def index(self) -> None:
-        """Incrementally (re)build both derived indices (content-gated, LLM10)."""
-        await self._surface.index_if_needed()
-        await self._structural.trigger_index()
+    async def index(self, *, embed: bool = True) -> None:
+        """Incrementally (re)build both derived indices (content-gated, LLM10).
+
+        ``embed=False`` (the recall hot path, H-REG-1) still runs the surface
+        index's CHEAP lexical write (chunk + fts/BM25 rows, zero LLM) so a
+        just-captured card is immediately BM25-searchable, but skips the vector
+        embed there AND skips ``trigger_index`` entirely — the structural
+        (insight-trigger) channel has no lexical fallback, so it is pure embed
+        cost and stays exclusively the background maintainer's job.
+        """
+        await self._surface.index_if_needed(embed=embed)
+        if embed:
+            await self._structural.trigger_index()
 
     async def retrieve(
         self,

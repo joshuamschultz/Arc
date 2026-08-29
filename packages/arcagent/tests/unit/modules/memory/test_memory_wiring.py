@@ -246,22 +246,15 @@ async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> No
     assert (tmp_path / "memory" / "index.db").exists()
     assert not (tmp_path / "memory" / "daily-log").exists()
 
-    # Recall on a turn is query-only — it never embeds the corpus — so the just-captured
-    # line is not searchable until the background maintainer indexes it. Warm the index
-    # the way the poll loop does, then recall finds it. This is the whole point: the
-    # embed happens off the turn, not on it.
-    from arcagent.modules.memory.capabilities import refresh_index_once
-
+    # Recall on a turn is query-only — it never EMBEDS the corpus — but it still
+    # writes the cheap lexical (BM25) row synchronously (H-REG-1), so the
+    # just-captured line is searchable on this very turn, with no background wait.
     sections: dict[str, str] = {}
     await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
-    assert "recall" not in sections  # nothing indexed yet → query-only recall is empty
-
-    await refresh_index_once()  # the background pass embeds the changed chunks
-    st.recall_cache.clear()  # a new turn: the once-per-turn recall cache is fresh
-    sections = {}
-    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
-    # Degraded (no embedder) BM25+graph recall now returns the captured line.
-    assert "recall" in sections
+    assert "recall" in sections, (
+        "a just-captured line must be BM25-searchable on the same turn, "
+        "at zero embed cost (H-REG-1)"
+    )
     assert "payments" in sections["recall"]
 
 

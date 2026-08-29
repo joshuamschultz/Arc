@@ -162,6 +162,14 @@ class MemoryDB:
             "mtime REAL, classification TEXT DEFAULT 'unclassified', content_hash TEXT)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope)")
+        # H-REG-1: ``content_hash`` tracks freshness for the CHEAP lexical write
+        # (chunk row + fts/BM25 row, no embedder needed). ``embedded_hash`` tracks,
+        # separately, which content_hash the VECTOR was last embedded for — so a
+        # background embed pass can tell "written lexically, never embedded"
+        # (embedded_hash NULL or stale) apart from "already embedded, nothing to
+        # do" instead of the lexical write's hash bump masking a pending embed.
+        # The backfill this migration needs runs below, AFTER vec0 exists.
+        chunks_columns_added = self._ensure_columns(conn, "chunks", {"embedded_hash": "TEXT"})
 
         # FTS5 keyword/BM25 mirror of chunk text.
         conn.execute(
@@ -183,6 +191,26 @@ class MemoryDB:
                 "CREATE VIRTUAL TABLE IF NOT EXISTS vec0 "
                 f"USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[{self._dims}])"
             )
+
+        if "embedded_hash" in chunks_columns_added and self._vec_available:
+            # Migration backfill (production hazard): a box upgraded from before
+            # this column existed already has real vectors for rows the column
+            # starts NULL on. Left unfixed, the first post-deploy embed pass
+            # would see every one of those rows as "never embedded" and re-embed
+            # the ENTIRE existing corpus — months of memory, a cost/latency spike
+            # of the same class as the past consolidation runaway. Stamping
+            # ``embedded_hash = content_hash`` for every chunk that already has a
+            # vec0 row marks exactly those rows resolved, so only genuinely
+            # unembedded content is pending after deploy. Gated on
+            # ``chunks_columns_added`` — this branch runs only the ONE time the
+            # column is actually created — so it is a no-op, safe to call, on an
+            # already-migrated DB. Must run AFTER the ``vec0`` create above: on a
+            # brand-new DB the table would not exist yet otherwise.
+            conn.execute(
+                "UPDATE chunks SET embedded_hash = content_hash "
+                "WHERE chunk_id IN (SELECT chunk_id FROM vec0)"
+            )
+            conn.commit()
 
         # Abstraction-space trigger vectors — kept in a SEPARATE table from the
         # surface ``vec0`` chunks (SDD 7) so surface noise cannot drown a minted
@@ -216,7 +244,7 @@ class MemoryDB:
         conn.commit()
 
     @staticmethod
-    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> set[str]:
         """Add any of ``columns`` missing from an already-existing ``table``.
 
         ``CREATE TABLE IF NOT EXISTS`` only applies a schema to a table that
@@ -226,12 +254,17 @@ class MemoryDB:
         default, and each missing one gets ``ALTER TABLE ... ADD COLUMN``.
         A no-op migration framework on purpose — just enough to stop this
         exact failure mode from recurring on the next added column.
+
+        Returns the subset of ``columns`` actually added this call — empty on
+        an already-migrated DB — so a caller can gate a one-time backfill (run
+        exactly when the column is first created, never again) on it.
         """
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-        for name, ddl in columns.items():
-            if name not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+        added = {name for name in columns if name not in existing}
+        for name in added:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {columns[name]}")
         conn.commit()
+        return added
 
 
 __all__ = ["DEFAULT_DIMS", "MemoryDB"]
