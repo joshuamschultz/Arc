@@ -108,6 +108,25 @@ def _read_text_or_empty(path: Path) -> str:
         return ""
 
 
+def _is_key_material(path: Path) -> bool:
+    """Whether ``path``'s file name is private key material (H-018 hardening).
+
+    Every private Ed25519 seed Arc writes to disk carries a ``.key`` suffix:
+    ``AgentIdentity.save_keys`` (``arctrust.identity``) names an agent's own
+    keypair ``<did-as-filename>.key``, and ``OperatorKey.save``
+    (``arctrust.operator``) names the audit authority's key ``operator.key``.
+    Checking the SUFFIX rather than a fixed directory holds even if an
+    operator ever misconfigures ``identity.key_dir`` to resolve inside an
+    agent's own directory tree — the default, ``~/.arcagent/keys``, already
+    sits outside every root these routes can reach, and the operator key
+    directory defaults outside the agent tree too. Keys are non-exportable
+    by construction (build-principles.md "Keys and credentials", OWASP
+    LLM07) — no dashboard verb (list, read, write, delete) may render or
+    remove one.
+    """
+    return path.name.lower().endswith(".key")
+
+
 def _compute_write_target(agent_root: Path, file_path: Path) -> tuple[str | None, str | None]:
     """Map an on-disk file to its ``PUT /files/read`` save target.
 

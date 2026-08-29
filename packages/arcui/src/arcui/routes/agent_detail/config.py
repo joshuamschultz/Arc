@@ -9,6 +9,7 @@ chokepoint per SPEC-022).
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 from typing import Any
 
 from arcgateway import fs_reader
@@ -16,12 +17,14 @@ from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.audit import emit_mutation_audit
 from arcui.query_validators import safe_choice
 from arcui.routes.agent_detail._common import (
     _CALLER_DID,
     _CONFIG_WHITELIST,
     _VALID_ROOTS,
     _agent_root,
+    _is_key_material,
     _resolve_root_path,
 )
 from arcui.schemas import (
@@ -130,6 +133,14 @@ async def get_files_tree(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    # H-018 hardening: private key material is never exportable, so it must
+    # never appear in a listing either — filtering here (by literal on-disk
+    # name; ``get_file_read`` below closes the symlink-disguise case at read
+    # time via the resolved path) keeps a key file out of the tree the same
+    # way ``.audit/`` and other hidden entries are already excluded by
+    # ``fs_reader._walk``.
+    entries = [e for e in entries if not _is_key_material(Path(e.path))]
+
     return JSONResponse(
         FilesTreeResponse(
             root=root_arg,
@@ -166,6 +177,32 @@ async def get_file_read(request: Request) -> JSONResponse:
         return err
 
     base = _resolve_root_path(agent_root, root_arg)
+
+    # H-018 hardening: keys are non-exportable by construction (LLM07) — no
+    # verb on this dashboard may render one's bytes. Resolve independently of
+    # fs_reader (which has no such check) so a symlink DISGUISED under an
+    # innocuous name (e.g. ``notes.md`` -> ``operator.key``) is still caught:
+    # the check runs on the RESOLVED target's name, not the request string.
+    # Best-effort: any resolution error here just falls through to
+    # fs_reader's own (audited) path-traversal handling below.
+    try:
+        resolved = (base / rel).resolve()
+    except OSError:
+        resolved = None
+    if resolved is not None and _is_key_material(resolved):
+        emit_mutation_audit(
+            request,
+            target=f"{root_arg}:{rel}",
+            operation="file_read",
+            outcome="denied",
+            detail="key_material_blocked",
+        )
+        return JSONResponse(
+            ErrorResponse(
+                error=f"'{rel}' is private key material and cannot be viewed from the dashboard."
+            ).model_dump(mode="json"),
+            status_code=403,
+        )
 
     try:
         content = fs_reader.read_file(

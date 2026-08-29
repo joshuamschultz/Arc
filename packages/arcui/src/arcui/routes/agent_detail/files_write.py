@@ -20,17 +20,29 @@ file tools enforce:
    credentials never touch the filesystem (arcagent doctrine).
 
 Delete adds a third guard the write route does not need: ADR-029 agent-state
-protection (see ``_protection_level``). ``identity.md`` and the audit chain
-(``workspace/audit/**``, the sibling ``.audit/**``) can never be deleted from
-the dashboard. ``memory/``, ``sessions/``, ``context.md``, and ``policy.md``
-are the agent's own memory/operating state — deletable only with an explicit
-``confirm_protected=true`` query param, which the UI gates behind a second,
-stronger confirmation dialog.
+protection (see ``_protection_level``). ``identity.md``, ``policy.md``, the
+per-agent config TOMLs, any signed prompt overlay under ``context/**`` (plus
+its ``.arcsig`` sidecar), any private key file (``*.key``, wherever it
+resolves), and the audit chain (``workspace/audit/**``, the sibling
+``.audit/**``) can never be deleted from the dashboard. ``memory/``,
+``sessions/``, and ``context.md`` are the agent's own memory/operating
+state — deletable only with an explicit ``confirm_protected=true`` query
+param, which the UI gates behind a second, stronger confirmation dialog.
+
+The delete path also closes a symlink/TOCTOU gap: ``_confine`` resolves the
+target's realpath exactly ONCE, and every check plus the eventual ``unlink``
+act on that same resolved :class:`Path` object — a workspace entry that is
+actually a symlink to a protected or out-of-bounds file is judged (and, if
+refused, audited) by what it truly points at, never by the request string a
+caller can spell however it likes.
 
 Every write/delete (applied, denied, or errored) is recorded through the
-COMP-010 ``emit_mutation_audit`` helper. The UI never signs: if a saved file
-has an ``.arcsig`` sidecar, the write response flags the signature as stale
-so the agent knows it must re-sign — arcui holds no agent identity.
+COMP-010 ``emit_mutation_audit`` helper, and once the target has been
+resolved the audit ``target`` field carries the RESOLVED path — not the raw
+request string — so a symlink attempt shows in the audit trail as what it
+actually pointed at. The UI never signs: if a saved file has an ``.arcsig``
+sidecar, the write response flags the signature as stale so the agent knows
+it must re-sign — arcui holds no agent identity.
 """
 
 from __future__ import annotations
@@ -44,7 +56,12 @@ from starlette.responses import JSONResponse
 
 from arcui.audit import emit_mutation_audit
 from arcui.query_validators import safe_choice
-from arcui.routes.agent_detail._common import _VALID_ROOTS, _agent_root, _resolve_root_path
+from arcui.routes.agent_detail._common import (
+    _VALID_ROOTS,
+    _agent_root,
+    _is_key_material,
+    _resolve_root_path,
+)
 from arcui.schemas import ErrorResponse, FileDeleteResponse, FileWriteResponse
 
 # Detached-signature sidecar convention (arcagent.capabilities.artifact_signing
@@ -52,23 +69,72 @@ from arcui.schemas import ErrorResponse, FileDeleteResponse, FileWriteResponse
 _SIDECAR_SUFFIX = ".arcsig"
 
 # ADR-029 agent-state protection (H-018). Paths below are relative to the
-# AGENT root (``team/<agent>/``), not the ``workspace`` alias, because one of
-# the two protected trees — the sibling ``.audit/`` directory
+# AGENT root (``team/<agent>/``), not the ``workspace`` alias, because two of
+# the protected trees — the sibling ``.audit/`` directory
 # (``arcagent.core.agent_security.trace_checkpoint_chain_path`` /
-# ``prior_audit_chains_exist``) — lives OUTSIDE ``workspace/`` entirely, next
-# to it. Computing one relative path against the agent root and checking it
-# against both trees means the guard fires identically whether the operator
-# addressed the file via ``root=workspace`` or ``root=agent``.
+# ``prior_audit_chains_exist``) and the signed-prompt-overlay ``context/``
+# directory (``arcagent.core.prompt_context._resolver_for_root`` —
+# ``<agent_root>/context``, deliberately OUTSIDE the workspace subtree the
+# agent's own file tools are confined to) — live OUTSIDE ``workspace/``
+# entirely, next to it. Computing one relative path against the agent root
+# and checking it against every tree means the guard fires identically
+# whether the operator addressed the file via ``root=workspace`` or
+# ``root=agent``.
 #
 # BLOCKED — never deletable from the dashboard, no confirmation overrides it:
-#   - workspace/identity.md         — the agent's immutable-goals document (ASI01).
-#   - workspace/audit/**            — the in-workspace policy audit chain
-#                                     (``agent_security.policy_audit_log_path``'s
-#                                     workspace-relative fallback).
-#   - .audit/**                     — the sibling trace-checkpoint/skills WORM
-#                                     chain and dynamic-approval directory.
-_BLOCKED_EXACT: frozenset[str] = frozenset({"workspace/identity.md", "workspace/audit", ".audit"})
-_BLOCKED_PREFIXES: tuple[str, ...] = ("workspace/audit/", ".audit/")
+#   - workspace/identity.md  — the agent's immutable-goals document (ASI01).
+#   - workspace/policy.md    — the policy-pipeline bullets document. A
+#                              PolicyPipeline with no configured file
+#                              default-ALLOWs (fail-closed-only-when-set —
+#                              see arctrust's configured-gate rule), so
+#                              deleting this is not a "reset to default," it
+#                              is an authorization DOWNGRADE from whatever
+#                              restrictive policy was in force to allow-all.
+#                              That is the same blast radius as identity.md,
+#                              not "the agent's own operating state" — an
+#                              operator who wants to change policy uses the
+#                              policy EDIT path (audited as "policy
+#                              changed"), never a file delete.
+#   - arcagent.toml / arcllm.toml / arcrun.toml — the agent's own config,
+#                              sitting directly in the agent root (reachable
+#                              via ``root=agent``, same directory
+#                              ``arcagent.core.config_loading`` loads from).
+#                              Deleting one does not "reset to default"; it
+#                              breaks the agent's next start (or, worse,
+#                              silently changes DID/model/loop behavior via
+#                              whatever a sibling_chain fallback resolves
+#                              to instead).
+#   - context/**              — signed prompt overlays (arcprompt COMP-007,
+#                              ``<agent_root>/context/<package>/<name>.md``)
+#                              plus their ``.arcsig`` sidecars. Deleting an
+#                              overlay silently changes (or, sidecar-only,
+#                              breaks) the effective signed system prompt —
+#                              a control-plane artifact, not ordinary
+#                              content (build-principles.md).
+#   - *.key (anywhere)         — private Ed25519 key material. Checked by
+#                              suffix via ``_is_key_material`` so the block
+#                              holds regardless of location (see that
+#                              function's docstring). Keys are
+#                              non-exportable by construction (LLM07).
+#   - *.arcsig (anywhere)      — detached signature sidecars for any signed
+#                              artifact, not just prompt overlays.
+#   - workspace/audit/**       — the in-workspace policy audit chain
+#                              (``agent_security.policy_audit_log_path``'s
+#                              workspace-relative fallback).
+#   - .audit/**                — the sibling trace-checkpoint/skills WORM
+#                              chain and dynamic-approval directory.
+_BLOCKED_EXACT: frozenset[str] = frozenset(
+    {
+        "workspace/identity.md",
+        "workspace/policy.md",
+        "arcagent.toml",
+        "arcllm.toml",
+        "arcrun.toml",
+        "workspace/audit",
+        ".audit",
+    }
+)
+_BLOCKED_PREFIXES: tuple[str, ...] = ("workspace/audit/", ".audit/", "context/")
 
 # CONFIRM — the agent's own memory/operating state. Deletable only when the
 # caller passes ``confirm_protected=true`` (a distinct, stronger confirmation
@@ -76,9 +142,8 @@ _BLOCKED_PREFIXES: tuple[str, ...] = ("workspace/audit/", ".audit/")
 #   - workspace/memory/**    — arcmemory's entire durable store (SPEC-041).
 #   - workspace/sessions/**  — session transcripts (fs_reader-served today).
 #   - workspace/context.md   — the workpad's self-managed run-stable cockpit.
-#   - workspace/policy.md    — the reflected/edited policy bullets document.
 _CONFIRM_EXACT: frozenset[str] = frozenset(
-    {"workspace/memory", "workspace/sessions", "workspace/context.md", "workspace/policy.md"}
+    {"workspace/memory", "workspace/sessions", "workspace/context.md"}
 )
 _CONFIRM_PREFIXES: tuple[str, ...] = ("workspace/memory/", "workspace/sessions/")
 
@@ -129,14 +194,39 @@ def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
 
+def _best_effort_resolved(base: Path, rel: str) -> str:
+    """Best-effort resolved path, for AUDIT FORENSICS ONLY on a refused delete.
+
+    Never consulted for the security decision — that is :func:`_confine`'s
+    job alone. This exists so a denied audit event names what a ``..`` or
+    symlink attempt actually resolved to (e.g. a path outside the agent
+    root), not the untrusted request string a caller can spell any way it
+    likes. Falls back to the raw ``rel`` on any resolution error so audit
+    emission itself can never raise.
+    """
+    try:
+        return (base / rel).resolve().as_posix()
+    except OSError:
+        return rel
+
+
 def _protection_level(agent_root: Path, canonical: Path) -> str | None:
     """Return ``"blocked"``, ``"confirm"``, or ``None`` for a delete target (ADR-029).
 
-    Computed from ``canonical``'s path relative to the AGENT root regardless of
-    which ``root`` query param resolved it — see the module-level comment above
-    :data:`_BLOCKED_EXACT` for why that single computation has to cover both
-    the ``workspace/`` and sibling ``.audit/`` trees.
+    ``canonical`` must already be the fully resolved realpath (see
+    :func:`_confine`) — this function performs no filesystem access of its
+    own and must never re-resolve, so the path it judges is exactly the path
+    the caller is about to unlink (the TOCTOU-closing invariant).
+
+    Key material and signature sidecars are checked by name/suffix FIRST,
+    independent of location, before the location-based (relative-to-agent-root)
+    checks — see :data:`_BLOCKED_EXACT` for why. Computed from ``canonical``'s
+    path relative to the AGENT root regardless of which ``root`` query param
+    resolved it, so the guard fires identically whether the operator addressed
+    the file via ``root=workspace`` or ``root=agent``.
     """
+    if _is_key_material(canonical) or canonical.name.lower().endswith(_SIDECAR_SUFFIX):
+        return "blocked"
     try:
         rel = canonical.relative_to(agent_root.resolve()).as_posix()
     except ValueError:
@@ -263,6 +353,17 @@ async def delete_file(request: Request) -> JSONResponse:
     Directories are never removed here: the browser only ever selects a leaf
     file, so an existing directory at ``rel`` falls through to the same 404
     a missing file gets, rather than a recursive delete.
+
+    Symlink / TOCTOU: :func:`_confine` resolves the realpath exactly ONCE,
+    producing ``canonical``. Every check below (:func:`_protection_level`,
+    ``is_file``) and the eventual ``unlink`` operate on that SAME
+    :class:`Path` object — nothing here calls ``.resolve()`` a second time.
+    A workspace entry that is actually a symlink is therefore judged, and
+    deleted or refused, by what it truly points at, never by the request
+    string. From the point ``canonical`` exists, every audit ``target`` is
+    built from it (relative to the selected root) rather than from the raw
+    ``rel`` query param, so a symlink attempt is recorded as what it
+    actually resolved to.
     """
     agent_id = request.path_params["id"]
     agent_root = _agent_root(request, agent_id)
@@ -283,7 +384,8 @@ async def delete_file(request: Request) -> JSONResponse:
 
     target = f"{root_arg}:{rel}"
 
-    # Operator gate first — a viewer never reaches the filesystem.
+    # Operator gate first — a viewer never reaches the filesystem, so there is
+    # no resolved path yet to prefer over the raw request string.
     if getattr(request.state, "role", None) != "operator":
         emit_mutation_audit(
             request, target=target, operation="file_delete", outcome="denied", detail="viewer role"
@@ -293,14 +395,25 @@ async def delete_file(request: Request) -> JSONResponse:
     base = _resolve_root_path(agent_root, root_arg)
     canonical = _confine(base, rel)
     if canonical is None:
+        # Escape refused — no safe path was ever assigned to `canonical`, but
+        # a best-effort resolve still tells the audit trail where a symlink
+        # or `..` attempt actually pointed (e.g. outside the agent root
+        # entirely), which the raw request string alone would hide.
         emit_mutation_audit(
             request,
-            target=target,
+            target=f"{root_arg}:{_best_effort_resolved(base, rel)}",
             operation="file_delete",
             outcome="denied",
             detail="path escapes agent directory",
         )
         return _error(f"path escapes agent directory: {rel}", 400)
+
+    # From here on `canonical` is the single resolved realpath every
+    # remaining check and the delete itself act on — recompute the audit
+    # target from IT (not `rel`) so a symlink shows in the log as its real
+    # destination.
+    resolved_rel = canonical.relative_to(base.resolve()).as_posix()
+    target = f"{root_arg}:{resolved_rel}"
 
     protection = _protection_level(agent_root, canonical)
     if protection == "blocked":
@@ -312,8 +425,9 @@ async def delete_file(request: Request) -> JSONResponse:
             detail="protected_agent_state:blocked",
         )
         return _error(
-            f"'{rel}' is protected agent state (identity or the audit chain) and can "
-            "never be deleted from the dashboard.",
+            f"'{rel}' is protected agent state (identity, policy, agent config, a "
+            "signed prompt overlay, key material, or the audit chain) and can never "
+            "be deleted from the dashboard.",
             403,
         )
 

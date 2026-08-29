@@ -118,8 +118,9 @@ class FileDeleteResponse(BaseModel):
 
     ``protected`` echoes the ADR-029 agent-state tier the deleted path fell
     into: ``"confirm"`` when the operator had to pass ``confirm_protected=true``
-    (memory/sessions/context.md/policy.md), else ``None`` for ordinary content.
-    Blocked paths (identity.md, the audit chain) never reach a 200 — they are
+    (memory/sessions/context.md), else ``None`` for ordinary content. Blocked
+    paths (identity.md, policy.md, the per-agent config TOMLs, signed prompt
+    overlays, key material, the audit chain) never reach a 200 — they are
     refused with a 403 before anything is deleted.
     """
 

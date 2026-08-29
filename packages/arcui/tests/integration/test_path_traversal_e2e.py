@@ -160,3 +160,66 @@ class TestSymlinkEscape:
             assert "EXFIL_CANARY" not in str(body), "symlink escape returned outside content"
         else:
             assert resp.status_code in (400, 404)
+
+
+class TestKeyMaterialBlocked:
+    """H-018 security-review amendment: private key material must never be
+    listed or read from the dashboard — not just refused at delete (see
+    ``test_file_delete_routes.py``). Keys are non-exportable by construction
+    (build-principles.md "Keys and credentials", OWASP LLM07): code gets a
+    signing capability, never raw key bytes, on any of the three read-side
+    verbs (list, read) any more than on delete.
+    """
+
+    def test_files_read_refuses_key_file(self, tmp_path: Path) -> None:
+        team_root = _build_team_dir(tmp_path)
+        (team_root / "alpha_agent" / "operator.key").write_text(
+            "ed25519-seed-bytes", encoding="utf-8"
+        )
+        app, auth = _build_app(team_root)
+        c = TestClient(app)
+        resp = c.get(
+            "/api/agents/alpha/files/read?root=agent&path=operator.key",
+            headers=_viewer(auth),
+        )
+        assert resp.status_code == 403
+        assert "ed25519-seed-bytes" not in resp.text
+
+    def test_files_tree_excludes_key_file(self, tmp_path: Path) -> None:
+        team_root = _build_team_dir(tmp_path)
+        (team_root / "alpha_agent" / "operator.key").write_text(
+            "ed25519-seed-bytes", encoding="utf-8"
+        )
+        app, auth = _build_app(team_root)
+        c = TestClient(app)
+        resp = c.get(
+            "/api/agents/alpha/files/tree?root=agent&path=",
+            headers=_viewer(auth),
+        )
+        assert resp.status_code == 200
+        paths = [e["path"] for e in resp.json()["entries"]]
+        assert "operator.key" not in paths
+
+    def test_files_read_refuses_symlink_disguised_key_file(self, tmp_path: Path) -> None:
+        """A symlink named innocuously but pointing at a .key file must still
+        be refused — the check runs on the RESOLVED target's name, not the
+        request string, so disguising a key behind a friendly filename does
+        not work."""
+        team_root = _build_team_dir(tmp_path)
+        agent_dir = team_root / "alpha_agent"
+        real_key = agent_dir / "operator.key"
+        real_key.write_text("ed25519-seed-bytes", encoding="utf-8")
+        link = agent_dir / "workspace" / "notes.md"
+        try:
+            os.symlink(real_key, link)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable on this platform")
+
+        app, auth = _build_app(team_root)
+        c = TestClient(app)
+        resp = c.get(
+            "/api/agents/alpha/files/read?root=workspace&path=notes.md",
+            headers=_viewer(auth),
+        )
+        assert resp.status_code == 403
+        assert "ed25519-seed-bytes" not in resp.text
