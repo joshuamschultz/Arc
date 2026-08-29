@@ -40,6 +40,7 @@ import type {
   DocumentsResponse,
   EntitiesResponse,
   FileReadResponse,
+  FileWriteResponse,
   FilesTreeResponse,
   IdentityCostResponse,
   IndexHealthResponse,
@@ -988,6 +989,22 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
       apiGet(`/api/agents/${agentId}/files/read?path=${encodeURIComponent(path!)}`, signal),
     enabled: !!path,
   })
+
+// Operator-gated save through the SAME `PUT /files/read` chokepoint the read
+// side above resolves — server-side this is direct workspace filesystem I/O
+// (ADR-029), never the agent's write/edit tools, and every save (applied,
+// denied, or errored) is audited (files_write.py). The viewer role never
+// reaches the filesystem: a non-operator PUT is rejected server-side before
+// any byte is touched, regardless of what this hook is wired to in the UI.
+export const useSaveAgentFile = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<FileWriteResponse, Error, { path: string; content: string }>({
+    mutationFn: ({ path, content }) =>
+      apiPut(`/api/agents/${agentId}/files/read?path=${encodeURIComponent(path)}`, { content }),
+    onSuccess: (_data, { path }) =>
+      queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'file', path] }),
+  })
+}
 
 // --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
 
