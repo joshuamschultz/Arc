@@ -42,14 +42,14 @@ before this batch is complete.
 
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
-| H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | NEW | |
+| H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | CODING | |
 | H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
 | H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
-| H-004 | Home | Tasks + Runs counts time-bound to 24h | M | NEW | |
-| H-005 | Home | Metrics always live + accurate | M | NEW | |
-| H-006 | Home | Home loads with data in < 2s | M | NEW | |
+| H-004 | Home | Tasks + Runs counts time-bound to 24h | M | MERGED | W3a |
+| H-005 | Home | Metrics always live + accurate | M | MERGED | W3a |
+| H-006 | Home | Home loads with data in < 2s | M | MERGED | W3a |
 | H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | MERGED | 663d9ea1 |
-| H-008 | Fleet | Fleet shows 0 calls though agents ran | M | NEW | |
+| H-008 | Fleet | Fleet shows 0 calls though agents ran | M | MERGED | W3a |
 | H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | MERGED | 210fd232 |
 | H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | NEW | |
