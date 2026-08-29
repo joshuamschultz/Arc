@@ -280,6 +280,12 @@ export interface FileWriteResponse {
   message: string
 }
 
+export interface FileDeleteResponse {
+  path: string
+  protected: string | null
+  message: string
+}
+
 // --- Prompts (COMP-010: editable system prompts) ---------------------------
 
 export type PromptStatus = 'stock' | 'overridden'
