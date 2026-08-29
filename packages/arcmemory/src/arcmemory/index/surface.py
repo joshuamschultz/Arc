@@ -25,7 +25,7 @@ injected, the vec list is simply dropped — BM25 + graph still answer, a
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -144,6 +144,14 @@ class SurfaceIndex:
         ``content_hash`` doesn't match its ``embedded_hash`` (no vector yet, or the
         vector is for stale content) — tracked as a separate hash specifically so
         the lexical write's hash bump can never mask a pending embed.
+
+        Turn-path bound: even the CHEAP part still has to know what changed, and
+        proving that normally means reading every markdown card's full body every
+        call. A card whose on-disk ``mtime`` still matches what was last indexed
+        for it is skipped WITHOUT being opened at all (see ``_file_unchanged``
+        below) — a call with nothing new touches every file's inode via a cheap
+        ``stat()``, never its bytes. Episodic events have no such shortcut (one
+        indexed SQL query already fetches them all, cheaply, every call).
         """
         # Only chase the anti-hash-gate branch when embedding is actually possible —
         # with no embedder/vec0 wired, ``embedded_hash`` never gets stamped no
@@ -157,7 +165,20 @@ class SurfaceIndex:
         embedded = (
             await self._backend.embedded_hashes(self._scope.key) if chasing_pending_embeds else {}
         )
-        all_chunks = self._collect_chunks()
+        stored_mtimes = await self._backend.stored_mtimes(self._scope.key)
+
+        def _file_unchanged(chunk_id: str, mtime: float) -> bool:
+            """True when a FILE chunk is provably unchanged (and, if this pass is
+            chasing a pending embed, already embedded) — safe to skip reading
+            its body THIS call. A mismatch of any signal falls through to the
+            ordinary full read, so this can only ever skip work that would have
+            been a no-op anyway.
+            """
+            if chunk_id not in stored or stored_mtimes.get(chunk_id) != mtime:
+                return False
+            return not chasing_pending_embeds or embedded.get(chunk_id) == stored[chunk_id]
+
+        all_chunks = self._collect_chunks(skip_file=_file_unchanged)
         targets = [
             c
             for c in all_chunks
@@ -181,8 +202,16 @@ class SurfaceIndex:
             )
         return len(targets)
 
-    def _collect_chunks(self) -> list[_Chunk]:
-        """Every source file + every raw event, as gate-hashed chunks (fixed order)."""
+    def _collect_chunks(
+        self, *, skip_file: Callable[[str, float], bool] | None = None
+    ) -> list[_Chunk]:
+        """Every source file + every raw event, as gate-hashed chunks (fixed order).
+
+        ``skip_file`` (H-REG-1 turn-path bound) is forwarded to
+        ``iter_source_chunks``: a FILE chunk it proves unchanged is never opened,
+        only ``stat()``ed, and is simply absent from the returned list — safe,
+        because an absent chunk can never be selected as a target either.
+        """
         events = self._episodic.events(self._scope.key)
         return [
             _Chunk(
@@ -193,7 +222,9 @@ class SurfaceIndex:
                 mtime=sc.mtime,
                 content_hash=content_hash(sc.text),
             )
-            for sc in iter_source_chunks(self._mem_dir, self._workspace, events)
+            for sc in iter_source_chunks(
+                self._mem_dir, self._workspace, events, skip_file=skip_file
+            )
         ]
 
     async def _embed(self, texts: list[str]) -> list[list[float]] | None:

@@ -19,6 +19,7 @@ directly against the real ``SurfaceIndex`` + ``SqliteIndexBackend`` path.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -215,3 +216,37 @@ async def test_embed_true_with_no_embedder_wired_does_not_reindex_unchanged_chun
 
     second = await surface.index_if_needed(embed=True)
     assert second == 0, "an unchanged chunk must not be treated as forever-pending"
+
+
+# -- turn-path bound: an unchanged FILE is never re-opened, only stat()ed ----
+
+
+async def test_second_pass_never_reopens_a_file_whose_mtime_is_unchanged(
+    workspace: Path, db: MemoryDB, scope: Scope, embedder
+) -> None:
+    """The recall hot path calls ``index_if_needed(embed=False)`` every turn — it
+    must not re-read every markdown card's full body each time just to prove
+    most of them are unchanged (O(corpus) growth on the turn path).
+
+    Proven by corruption: after the first pass, the file's bytes are replaced
+    with invalid UTF-8 (would raise ``UnicodeDecodeError`` on any real read)
+    while its mtime is forced back to the exact value already on record. If the
+    code tried to open it anyway, this test would raise; completing at all —
+    finding no target — is the proof it trusted the ``stat()`` and skipped it.
+    """
+    entities = workspace / "memory" / "entities"
+    entities.mkdir(parents=True)
+    card = entities / "sparrow.md"
+    card.write_text("---\ntype: entity\nname: Sparrow\n---\n\nthe sparrow schedule is set")
+
+    surface = SurfaceIndex(db, workspace, scope, embedder=embedder)
+    first = await surface.index_if_needed(embed=False)
+    assert first == 1
+    recorded_mtime = card.stat().st_mtime
+
+    card.write_bytes(b"\xff\xfe corrupted, would raise UnicodeDecodeError if read \x80\x81")
+    os.utime(card, (recorded_mtime, recorded_mtime))
+
+    second = await surface.index_if_needed(embed=False)  # must not raise, must not re-read
+    assert second == 0
+    assert embedder.calls == 0

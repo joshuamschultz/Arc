@@ -75,6 +75,16 @@ class IndexBackend(Protocol):
         """``chunk_id -> content_hash`` for every chunk indexed under ``scope``."""
         ...
 
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        """``chunk_id -> mtime`` for every chunk indexed under ``scope``.
+
+        The turn-path bound (H-REG-1): lets a caller decide a FILE chunk is
+        provably unchanged from a cheap ``stat()`` alone, without opening and
+        hashing its body, so ``index_if_needed`` need not re-read the whole
+        corpus on every turn — only files whose on-disk mtime actually moved.
+        """
+        ...
+
     async def embedded_hashes(self, scope: str) -> dict[str, str]:
         """``chunk_id -> embedded_hash`` for every chunk that HAS a vector.
 
@@ -181,6 +191,16 @@ class SqliteIndexBackend:
             row[0]: row[1]
             for row in conn.execute(
                 "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (scope,)
+            ).fetchall()
+        }
+
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        conn = self._db.connect()
+        return {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT chunk_id, mtime FROM chunks WHERE scope=? AND mtime IS NOT NULL",
+                (scope,),
             ).fetchall()
         }
 
@@ -371,8 +391,32 @@ class PostgresIndexBackend:
         async with pool.acquire() as conn:
             await conn.execute(create_table)
             # H-REG-1: self-migration for a table created before this column existed —
-            # mirrors ``MemoryDB._ensure_columns`` (sqlite's equivalent seam).
+            # mirrors ``MemoryDB._ensure_columns`` (sqlite's equivalent seam). Checked
+            # BEFORE the ALTER (unlike sqlite's rowcount-free ``ADD COLUMN IF NOT
+            # EXISTS``) so the migration backfill below can be gated on "did this
+            # call actually create the column" rather than running unconditionally.
+            had_embedded_hash = bool(
+                await conn.fetchval(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='chunks' AND column_name='embedded_hash'"
+                )
+            )
             await conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedded_hash TEXT")
+            if not had_embedded_hash:
+                # Migration backfill (production hazard): a server upgraded from
+                # before this column existed already has real vectors for rows the
+                # column starts NULL on. Left unfixed, the first post-deploy embed
+                # pass would see every one of those rows as "never embedded" and
+                # re-embed the ENTIRE existing corpus — months of memory, a
+                # cost/latency spike of the same class as the past consolidation
+                # runaway. Stamping ``embedded_hash = content_hash`` for every row
+                # that already carries a vector marks exactly those rows resolved.
+                # Gated on ``had_embedded_hash`` (false only the one time the
+                # column is actually created), so this is a no-op — safe to call —
+                # on an already-migrated database.
+                await conn.execute(
+                    "UPDATE chunks SET embedded_hash = content_hash WHERE embedding IS NOT NULL"
+                )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw "
                 "ON chunks USING hnsw (embedding vector_cosine_ops)"
@@ -432,6 +476,14 @@ class PostgresIndexBackend:
                 "SELECT chunk_id, content_hash FROM chunks WHERE scope=$1", scope
             )
         return {str(row["chunk_id"]): str(row["content_hash"]) for row in rows}
+
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id, mtime FROM chunks WHERE scope=$1 AND mtime IS NOT NULL", scope
+            )
+        return {str(row["chunk_id"]): float(row["mtime"]) for row in rows}
 
     async def embedded_hashes(self, scope: str) -> dict[str, str]:
         pool = await self._pool()
