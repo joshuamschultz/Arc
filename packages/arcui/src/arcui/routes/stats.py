@@ -15,12 +15,28 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.identity import resolve_agent_did
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
 
 # NIST SI-10: Allowlist valid window values at the API boundary
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
+
+
+def _agent_filter(request: Request, agent_id: str) -> str:
+    """Resolve ``?agent_id=`` (the roster's human label) to its DID (H-008).
+
+    Every ``llm_calls`` row is stamped with the agent's stable DID; the
+    roster's ``agent_id`` is a free-text label that can drift from whatever
+    got recorded historically. Falls back to the raw id when no roster entry
+    resolves it (no team_root configured, or a bogus/unknown id) — that still
+    filters ``llm_calls`` down to an empty result rather than silently
+    returning every agent's rows.
+    """
+    provider = getattr(request.app.state, "roster_provider", None)
+    resolved = resolve_agent_did(provider(), agent_id) if provider is not None else None
+    return resolved or agent_id
 
 
 def _validated_window(request: Request) -> str | None:
@@ -41,14 +57,16 @@ def _invalid_window_response() -> JSONResponse:
 async def get_stats(request: Request) -> JSONResponse:
     """GET /api/stats — telemetry rollup over a window from the store.
 
-    Supports ``?agent_id=`` for per-agent drill-down (filters on agent_label).
+    Supports ``?agent_id=`` for per-agent drill-down (resolved to the agent's
+    DID and joined against ``actor_did`` — see :func:`_agent_filter`, H-008).
     """
     window = _validated_window(request)
     if window is None:
         return _invalid_window_response()
     agent = request.query_params.get("agent_id")
+    resolved_agent = _agent_filter(request, agent) if agent else None
     try:
-        return JSONResponse(await request.app.state.observe.stats(window, agent=agent))
+        return JSONResponse(await request.app.state.observe.stats(window, agent=resolved_agent))
     except Exception:  # reason: a saturated pool must degrade, not 500 the panel
         logger.exception("stats read failed")
         return JSONResponse(
@@ -63,7 +81,8 @@ async def get_timeseries(request: Request) -> JSONResponse:
     if window is None:
         return _invalid_window_response()
     agent = request.query_params.get("agent_id")
-    return JSONResponse(await request.app.state.observe.timeseries(window, agent=agent))
+    resolved_agent = _agent_filter(request, agent) if agent else None
+    return JSONResponse(await request.app.state.observe.timeseries(window, agent=resolved_agent))
 
 
 async def get_circuit_breakers(request: Request) -> JSONResponse:
@@ -88,7 +107,8 @@ async def get_performance(request: Request) -> JSONResponse:
     if window is None:
         return _invalid_window_response()
     agent = request.query_params.get("agent_id")
-    return JSONResponse(await request.app.state.observe.performance(window, agent=agent))
+    resolved_agent = _agent_filter(request, agent) if agent else None
+    return JSONResponse(await request.app.state.observe.performance(window, agent=resolved_agent))
 
 
 async def get_queue_stats(request: Request) -> JSONResponse:

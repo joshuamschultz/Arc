@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.identity import resolve_agent_did
 from arcui.schemas import ErrorResponse, TracesResponse
 
 _MAX_TRACE_LIMIT = 500
@@ -62,8 +63,16 @@ async def list_traces(request: Request) -> JSONResponse:
 
     # SPEC-026 FR-5: read LLM-call history from the arcstore mirror (durable),
     # not a live trace store. Reads are on-demand request/response.
+    agent_filter = _validate_filter(params.get("agent"))
+    if agent_filter:
+        # H-008: ``observe.traces`` joins on the agent's DID, not its
+        # free-text roster label — resolve it the same way ``?agent_id=``
+        # does on the stats routes.
+        provider = getattr(request.app.state, "roster_provider", None)
+        resolved = resolve_agent_did(provider(), agent_filter) if provider is not None else None
+        agent_filter = resolved or agent_filter
     traces = await request.app.state.observe.traces(
-        agent=_validate_filter(params.get("agent")),
+        agent=agent_filter,
         limit=limit,
     )
     return JSONResponse(TracesResponse(traces=traces, cursor=None).model_dump(mode="json"))

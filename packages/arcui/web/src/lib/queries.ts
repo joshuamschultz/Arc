@@ -100,10 +100,17 @@ export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api
 // Polls every 4s so live todo -> in_progress -> done transitions and newly
 // dispatched tasks surface on the board without a manual refresh. The board's
 // other driving query (roster) is near-static, so only tasks needs the poll.
-export const useTeamTasks = () =>
+// `window` (H-004), when passed, scopes the count to tasks touched within it
+// (Home's "today" card) — omitted, callers keep seeing the whole backlog
+// (the Tasks board, "Needs you" review list).
+export const useTeamTasks = (window?: string) =>
   useQuery<TasksResponse>({
-    queryKey: ['team', 'tasks'],
-    queryFn: ({ signal }) => apiGet<TasksResponse>('/api/team/tasks', signal),
+    queryKey: ['team', 'tasks', window ?? 'all'],
+    queryFn: ({ signal }) =>
+      apiGet<TasksResponse>(
+        `/api/team/tasks${window ? `?window=${window}` : ''}`,
+        signal,
+      ),
     refetchInterval: 4000,
   })
 
@@ -949,10 +956,15 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
 // matching poll here, the list (and any header stats derived from it) freeze
 // at first-load while the drawer underneath keeps moving, so the two disagree
 // for the entire life of a long-running run.
-export const useRuns = () =>
+// `window` (H-004/H-006), when passed, scopes the fold to runs from the last
+// window (SQL-pushed cutoff) instead of the last N raw rows — Home's "today"
+// card wants that; the ArcRun page and agent-detail runs tab omit it and keep
+// seeing full recent history exactly as before.
+export const useRuns = (window?: string) =>
   useQuery<RunsResponse>({
-    queryKey: ['runs'],
-    queryFn: ({ signal }) => apiGet<RunsResponse>('/api/runs', signal),
+    queryKey: ['runs', window ?? 'all'],
+    queryFn: ({ signal }) =>
+      apiGet<RunsResponse>(`/api/runs${window ? `?window=${window}` : ''}`, signal),
     refetchInterval: 4000,
   })
 

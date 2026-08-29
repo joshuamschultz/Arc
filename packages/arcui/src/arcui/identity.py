@@ -24,9 +24,19 @@ empty rather than "unknown".
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Protocol
+
 from pydantic import BaseModel
 
 UNKNOWN = "unknown"
+
+
+class _RosterRow(Protocol):
+    """The two roster fields the reverse (label -> DID) join needs."""
+
+    agent_id: str
+    did: str
 
 
 class AgentIdentity(BaseModel):
@@ -93,3 +103,25 @@ def resolve_agent_identity(did: str, name: str | None) -> AgentIdentity:
     identity = parse_did(did)
     identity.name = name or None
     return identity
+
+
+def resolve_agent_did(roster: Iterable[_RosterRow], agent_id: str) -> str | None:
+    """Look up ``agent_id``'s DID in a roster snapshot (the reverse H-007 join).
+
+    H-008: every ``llm_calls`` / ``audit_chain`` row is stamped with the
+    agent's stable DID; the roster's ``agent_id`` is a free-text label (the
+    config ``[agent].name`` or a directory-derived slug) that can drift from
+    whatever string got recorded historically — a rename, a re-cased label, a
+    "twin" agent reusing a display name. Filtering observability reads on that
+    label directly is how a demonstrably-running agent shows zero calls: the
+    join silently fails and comes back empty instead of erroring. Every route
+    that scopes a read to "one agent" must resolve through this DID join, never
+    match the label against recorded rows directly. Returns ``None`` (never an
+    empty string) when no roster row names ``agent_id`` or that row has no DID
+    on file — callers should keep filtering on something that still narrows to
+    an empty result, not silently drop the filter.
+    """
+    for entry in roster:
+        if entry.agent_id == agent_id and entry.did:
+            return entry.did
+    return None
