@@ -68,9 +68,7 @@ async def get_agent(request: Request) -> JSONResponse:
                 # H-007: canonical identity — DID parsed + roster-name joined
                 # by DID, so the header renders the same shape every list of
                 # agents does (see arcui.identity, routes/team_pages.py).
-                "identity": resolve_agent_identity(
-                    r.did, r.display_name or r.name
-                ).model_dump(),
+                "identity": resolve_agent_identity(r.did, r.display_name or r.name).model_dump(),
             }
             if r.online:
                 entry = registry.get(agent_id)
