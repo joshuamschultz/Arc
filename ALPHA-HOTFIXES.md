@@ -72,16 +72,16 @@ before this batch is complete.
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
-| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | NEW | |
-| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | NEW | |
+| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | CODING | |
+| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | CODING | |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
-| H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | NEW | |
+| H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | CODING | |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
 | H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
 | H-036 | UI | Fully keyboard-drivable | L | NEW | |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | CODING | |
-| H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | NEW | |
+| H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | CODING | |
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
