@@ -51,17 +51,17 @@ before this batch is complete.
 | H-006 | Home | Home loads with data in < 2s | M | MERGED | W3a |
 | H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | MERGED | 663d9ea1 |
 | H-008 | Fleet | Fleet shows 0 calls though agents ran | M | MERGED | W3a |
-| H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | CODING | |
+| H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | MERGED | a986e20 |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | MERGED | 210fd232 |
-| H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | CODING | |
+| H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | MERGED | 7d708959 |
 | H-012 | Agent·Runs | Rename Runs→Activity; add identifying metadata | S | MERGED | 157701a9 |
-| H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | CODING | |
-| H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | CODING | |
+| H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | MERGED | 6921ee29 |
+| H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | MERGED | 6921ee29 |
 | H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | MERGED | ed84d651 |
 | H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | NEW | |
 | H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | MERGED | 157701a9 |
-| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | CODING | |
-| H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | CODING | |
+| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | MERGED | 24dd7f56* |
+| H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
