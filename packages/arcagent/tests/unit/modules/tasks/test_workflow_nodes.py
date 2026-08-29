@@ -380,9 +380,7 @@ class TestMetadataShapeMatchesTheRunner:
         """A pinned notification target must reach the dispatch, not be dropped."""
         from arcagent.modules.tasks.node_execution import node_from_task
 
-        node = node_from_task(
-            MagicMock(metadata=_node_block(deliver_to="telegram:8293394811"))
-        )
+        node = node_from_task(MagicMock(metadata=_node_block(deliver_to="telegram:8293394811")))
         assert node is not None
         assert node.deliver_to == "telegram:8293394811"
 

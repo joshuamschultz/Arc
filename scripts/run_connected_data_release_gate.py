@@ -25,8 +25,7 @@ def main() -> int:
     if os.environ.get("ARC_RELEASE_GATE_POSTGRES") == "1":
         if not os.environ.get("ARCSTORE_TEST_POSTGRES_DSN"):
             sys.stderr.write(
-                "ARCSTORE_TEST_POSTGRES_DSN is required when "
-                "ARC_RELEASE_GATE_POSTGRES=1\n"
+                "ARCSTORE_TEST_POSTGRES_DSN is required when ARC_RELEASE_GATE_POSTGRES=1\n"
             )
             return 2
         tests.append("packages/arcstore/tests/integration/test_source_sync_postgres.py")

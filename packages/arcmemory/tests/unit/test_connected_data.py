@@ -217,7 +217,9 @@ class _GenerationState:
 
 
 @pytest.mark.asyncio
-async def test_reconnect_requires_a_new_mapping_approval_after_generation_fence(tmp_path: Path) -> None:
+async def test_reconnect_requires_a_new_mapping_approval_after_generation_fence(
+    tmp_path: Path,
+) -> None:
     approval = ApprovalStore(FakeBackend())
     generation = _GenerationState()
     service = ConnectedDataService(
@@ -422,9 +424,7 @@ async def test_a_document_parser_crash_skips_one_object_not_the_account(
             raise LookupError("parser limit reached")
 
     monkeypatch.setattr(extract_module, "get_extractor", lambda *a, **k: _Exploding())
-    monkeypatch.setattr(
-        "arcmemory.connected_data.get_extractor", lambda *a, **k: _Exploding()
-    )
+    monkeypatch.setattr("arcmemory.connected_data.get_extractor", lambda *a, **k: _Exploding())
 
     approval = ApprovalStore(FakeBackend())
     service = _service(tmp_path, approval)

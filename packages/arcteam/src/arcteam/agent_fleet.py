@@ -105,7 +105,6 @@ class ArcTeamFleet:
             await backend.start()
         return WorkflowRunStore(backend), backend
 
-
     def open_control_plane(
         self,
         *,

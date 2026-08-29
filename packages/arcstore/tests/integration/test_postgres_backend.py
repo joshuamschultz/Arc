@@ -95,7 +95,9 @@ async def test_postgres_backends_share_one_pool_per_dsn() -> None:
         # The survivor still works after a sibling released its handle.
         key = f"pg-{uuid4().hex}"
         await first.upsert(
-            "llm_calls", key, {"kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-22T00:00:00Z"}
+            "llm_calls",
+            key,
+            {"kind": "llm_call", "actor_did": _ACTOR, "ts": "2026-08-22T00:00:00Z"},
         )
         assert await first.query("llm_calls", where={"record_id": key})
     finally:

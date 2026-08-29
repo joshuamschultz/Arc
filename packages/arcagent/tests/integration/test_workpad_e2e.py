@@ -21,6 +21,7 @@ from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.paths import module_root
 
 import arcagent
+from arcagent.core import turn_context
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -32,7 +33,6 @@ from arcagent.core.config import (
     SecurityConfig,
     TelemetryConfig,
 )
-from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
 
 _ISSUER = "did:arc:workpad-e2e-operator"

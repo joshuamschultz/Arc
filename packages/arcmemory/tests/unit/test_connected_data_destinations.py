@@ -25,12 +25,8 @@ from arcmemory.types import MemoryHome, Scope
 _DID = "did:arc:destination-test"
 
 
-@pytest.mark.parametrize(
-    "source_kind", ["confluence", "github", "jira", "readwise_reader"]
-)
-def test_collaboration_sources_are_document_mappable(
-    workspace: Path, source_kind: str
-) -> None:
+@pytest.mark.parametrize("source_kind", ["confluence", "github", "jira", "readwise_reader"])
+def test_collaboration_sources_are_document_mappable(workspace: Path, source_kind: str) -> None:
     service = ConnectedDataService(workspace, _DID, approval_store=None)
     source = ConnectedSource(
         connection_id=source_kind,

@@ -167,9 +167,11 @@ async def test_rebuild_of_one_scope_leaves_a_sibling_scopes_index_intact(
     )
 
     def _chunk_count(scope: str) -> int:
-        return db.connect().execute(
-            "SELECT count(*) FROM chunks WHERE scope=?", (scope,)
-        ).fetchone()[0]
+        return (
+            db.connect()
+            .execute("SELECT count(*) FROM chunks WHERE scope=?", (scope,))
+            .fetchone()[0]
+        )
 
     assert _chunk_count(doc.key) == 1, "precondition: the doc scope was indexed"
 

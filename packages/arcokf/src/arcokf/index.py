@@ -155,9 +155,7 @@ def _parse_index(text: str) -> tuple[CollectionEntry, ...]:
     return tuple(ordered)
 
 
-def validate_collection_index(
-    index: Path, root: Path | None = None
-) -> CollectionIndexValidation:
+def validate_collection_index(index: Path, root: Path | None = None) -> CollectionIndexValidation:
     """Validate an index and, when supplied, every listed document digest."""
     try:
         text = index.read_text(encoding="utf-8")

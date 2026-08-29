@@ -332,7 +332,9 @@ before this batch is complete.
 ### CI
 
 #### H-043 — All CI jobs red
-- **Symptom:** Every CI job (Security & SBOM, Lint & Type Check, and the whole Test matrix across 3.11–3.13 × ubuntu/macos/windows) fails in 2–4 seconds.
-- **Read:** A 2–4s fail across every job points at a shared setup break (dependency/lockfile resolve, workflow config, or a collection-time import error) — not real test failures.
-- **Expected:** Full matrix green. Root-cause the shared setup failure first.
-- **Status:** NEW
+- **Symptom:** Every CI job fails in 2–4 seconds.
+- **Root cause (found):** Every recent run executed **0 steps across all jobs** (Lint job: started 18:57:11, completed 18:57:13, `steps: []`). Jobs die at runner **setup**, before any step. This is an **account/infrastructure** failure — the standard signature of GitHub Actions **billing/spending limit reached** or Actions disabled for the repo/org — not a code failure. Logs are pruned (BlobNotFound), consistent with never-started jobs.
+- **Split:**
+  - **H-043a (infra) — BLOCKED on Josh:** check GitHub → Settings → Billing → Actions spending limit, and repo Settings → Actions enabled. Code cannot fix this.
+  - **H-043b (code) — mine:** repo had real lint/format drift (3 ruff errors + 24 files needing `ruff format`) that would fail Lint once the runner works; plus `mypy packages/*/src --strict` must be clean repo-wide. Driving these to green so the matrix passes the moment H-043a is resolved.
+- **Status:** BLOCKED (H-043a on Josh) · H-043b in progress
