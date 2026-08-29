@@ -802,7 +802,10 @@ class TestEdgeCases:
         spool.mkdir(parents=True, exist_ok=True)
         rec = SpoolRecord(
             kind="llm_call",
-            actor_did="did:arc:test:alpha",
+            # H-008: the same DID `_build_team_dir` declares in alpha's
+            # `[identity].did` — the join key the per-agent traces route
+            # resolves through, not the free-text `agent_label`.
+            actor_did="did:arc:alpha",
             agent_label="alpha",
             request_id="req-alpha-1",
             model="claude",

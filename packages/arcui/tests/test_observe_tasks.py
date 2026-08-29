@@ -17,6 +17,7 @@ Neither ``Observe.tasks`` nor ``Observe.audit(target=...)`` exist yet — RED.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,43 @@ async def test_tasks_filters_by_status(tmp_path: Path) -> None:
     try:
         rows = await observe.tasks(status="in_progress")
         assert [r["id"] for r in rows] == ["t1"]
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_tasks_window_keeps_only_recently_touched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H-004: ``window`` scopes Home's "today" card to tasks touched (created
+    or updated) within it — the backlog's all-time total, minus everything
+    that has not moved since.
+
+    ``updated_at`` is the mutable-plane row's OWN write-time stamp, not
+    whatever a caller's payload claims (both ``FakeBackend`` and the real
+    ``PostgresBackend`` overwrite it on every read from the ``mutable_records``
+    row itself — see ``memory._decode`` / ``postgres._mutable_row``) — so the
+    only way to seed a genuinely stale task is to backdate the clock the
+    backend stamps writes with, not the JSON payload.
+    """
+    import arcstore.backends.memory as memory_backend
+
+    store, backend = await _seed_store(tmp_path)
+    now = datetime.now(UTC)
+    stale_ts = (now - timedelta(hours=3)).isoformat()
+    monkeypatch.setattr(memory_backend, "_now", lambda: stale_ts)
+    await store.create(_task("stale"))
+    monkeypatch.undo()  # restore the real clock before writing the fresh task
+    await store.create(_task("fresh"))
+
+    observe = Observe(data_dir=tmp_path, backend=backend)
+    await observe.start()
+    try:
+        windowed = await observe.tasks(window="1h")
+        assert [r["id"] for r in windowed] == ["fresh"]
+
+        unwindowed = await observe.tasks()
+        assert {r["id"] for r in unwindowed} == {"fresh", "stale"}
     finally:
         await observe.stop()
 

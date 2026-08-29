@@ -12,6 +12,7 @@ there is no separate rolling aggregator to keep in sync.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,6 +46,17 @@ def _window_cutoff(window: str) -> str:
     """ISO-8601 UTC cutoff for a window key (lexicographic compare is valid)."""
     seconds = _WINDOW_SECONDS.get(window, _WINDOW_SECONDS["24h"])
     return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+
+
+def _task_touched_at(task: dict[str, Any]) -> str:
+    """A task's most recent activity stamp, for window filtering (H-004).
+
+    ``updated_at`` moves on every status change; ``created_at`` covers a task
+    that was created but never touched again. A task with neither (should not
+    happen — both are stamped on create) sorts before every real cutoff, so it
+    drops out of a windowed read rather than corrupting the comparison.
+    """
+    return task.get("updated_at") or task.get("created_at") or ""
 
 
 def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[str, Any]:
@@ -204,9 +216,13 @@ class Observe:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         await self._ensure()
-        # The UI's "agent" identifier is the human agent label (arcagent name),
-        # not the full DID; filter on that.
-        where = {"agent_label": agent} if agent else None
+        # H-008: filter on the agent's DID, not its free-text label. A label
+        # (config ``[agent].name`` / roster slug) can drift from whatever
+        # string got recorded on a call historically (rename, re-casing, a
+        # "twin" agent reusing a display name); the DID never does. Callers
+        # resolve the caller-facing id to a DID via ``arcui.identity`` before
+        # reaching here (see ``routes.agent_detail._common._agent_did``).
+        where = {"actor_did": agent} if agent else None
         rows = await self._backend.query("llm_calls", where=where, order_by="ts DESC", limit=limit)
         return [_row_to_trace(r) for r in rows]  # list = metadata only (lightweight)
 
@@ -254,7 +270,11 @@ class Observe:
         )
 
     async def tasks(
-        self, *, owner_did: str | None = None, status: str | None = None
+        self,
+        *,
+        owner_did: str | None = None,
+        status: str | None = None,
+        window: str | None = None,
     ) -> list[dict[str, Any]]:
         """Task rows from the arcstore mutable plane (SPEC-056 Phase D, FR-6).
 
@@ -263,11 +283,25 @@ class Observe:
         yet (SPEC-032 migration — see ``arcstore.tasks`` docstring), so the
         backend is cast to the narrow ``MutableTaskBackend`` Protocol
         ``TaskStore`` actually needs; the configured backend implements both.
+
+        ``window`` (H-004), when given, keeps only tasks touched (created or
+        updated) within it — Home's "today" card wants the backlog moved
+        today, not the whole board's all-time total. Filtered in Python: the
+        mutable-records plane has no ``ts_gte`` pushdown (unlike the
+        append-only operational tables — see :meth:`_llm_rows_in_window`), and
+        a fleet's task count is small enough (low hundreds, not events-per-
+        second) that this never becomes the O(all-history) cost H-006 is
+        about. The Tasks board (``/tasks``) and per-agent tabs call this with
+        no window and keep seeing every task, same as before.
         """
         await self._ensure()
         store = TaskStore(cast(MutableTaskBackend, self._backend))
         rows = await store.list(status=status, owner_did=owner_did)
-        return [t.model_dump(mode="json") for t in rows]
+        items = [t.model_dump(mode="json") for t in rows]
+        if window is not None:
+            cutoff = _window_cutoff(window)
+            items = [t for t in items if _task_touched_at(t) >= cutoff]
+        return items
 
     async def _llm_rows_in_window(
         self, window: str, *, agent: str | None = None
@@ -276,9 +310,12 @@ class Observe:
 
         The ``ts >= cutoff`` bound is pushed into the store so the window filter
         runs in SQL and the ``limit`` applies after it — not over the whole table.
+
+        H-008: ``agent``, when given, must already be a DID — not a free-text
+        label — for the same reason :meth:`traces` filters on ``actor_did``.
         """
         await self._ensure()
-        where = {"agent_label": agent} if agent else None
+        where = {"actor_did": agent} if agent else None
         return await self._backend.query(
             "llm_calls",
             where=where,
@@ -315,7 +352,12 @@ class Observe:
     # -- SPEC-028 tool / code / spawn surfaces (FR-4) ----------------------
 
     async def runs(
-        self, *, agent: str | None = None, limit: int = 200, scan: int = 4_000
+        self,
+        *,
+        agent: str | None = None,
+        window: str | None = None,
+        limit: int = 200,
+        scan: int = 4_000,
     ) -> list[dict[str, Any]]:
         """List real runs (one per ``request_id``), newest first.
 
@@ -329,14 +371,31 @@ class Observe:
         multi-second loads and starved the pool until sibling panels failed. Four
         thousand recent rows per table reconstructs far more than the ``limit`` of
         200 runs the page shows, at a fraction of the load.
+
+        ``window`` (H-004/H-006), when given, pushes a ``ts >= cutoff`` bound
+        into each table query (SQL-side, same as :meth:`_llm_rows_in_window`)
+        instead of relying on ``scan``'s raw-row-count cap alone — Home's
+        "today" card wants runs from the last day, not whatever the last N
+        events happen to span. Omitted (the ArcRun page, agent-detail runs
+        tab), this reads the full recent history exactly as before.
+
+        The three per-table reads are independent — fired concurrently
+        (H-006) rather than three sequential round-trips through the shared
+        pool.
         """
         await self._ensure()
         where = {"actor_did": agent} if agent else None
-        rows: list[dict[str, Any]] = []
-        for kind in ("run_events", "tool_events", "llm_calls"):
-            rows.extend(
-                await self._backend.query(kind, where=where, order_by="ts DESC", limit=scan)
+        ts_gte = _window_cutoff(window) if window else None
+        kinds = ("run_events", "tool_events", "llm_calls")
+        results = await asyncio.gather(
+            *(
+                self._backend.query(
+                    kind, where=where, ts_gte=ts_gte, order_by="ts DESC", limit=scan
+                )
+                for kind in kinds
             )
+        )
+        rows = [row for table_rows in results for row in table_rows]
         return compute_runs(rows, limit=limit)
 
     async def timeline(self, *, run_id: str, limit: int = 1000) -> list[dict[str, Any]]:
@@ -344,17 +403,20 @@ class Observe:
 
         The three streams join on ``request_id == run_id`` (§11.4); merge happens
         in Python (one query per table) — no SQL UNION, matching the Observe shape.
+        spawn_events join the same way (request_id is stamped from the spawning
+        run's context), so a run's sub-agent spawns show inline in its own
+        trace — this run's children, not the agent's lifetime history. The four
+        per-table reads are independent — fired concurrently (H-006).
         """
         await self._ensure()
-        merged: list[dict[str, Any]] = []
-        # spawn_events join the same way (request_id is stamped from the spawning
-        # run's context), so a run's sub-agent spawns show inline in its own
-        # trace — this run's children, not the agent's lifetime history.
-        for kind in ("run_events", "tool_events", "llm_calls", "spawn_events"):
-            rows = await self._backend.query(
-                kind, where={"request_id": run_id}, order_by="ts", limit=limit
+        kinds = ("run_events", "tool_events", "llm_calls", "spawn_events")
+        results = await asyncio.gather(
+            *(
+                self._backend.query(kind, where={"request_id": run_id}, order_by="ts", limit=limit)
+                for kind in kinds
             )
-            merged.extend(rows)
+        )
+        merged = [row for table_rows in results for row in table_rows]
         merged.sort(key=lambda r: (r.get("ts") or "", r.get("kind") or ""))
         return merged
 

@@ -218,7 +218,13 @@ class TestFederatedQueryFlow:
         assert labels == set(agents)
 
     def test_agent_filter_isolates_one_agent(self, _isolated_arc_data_dir: Path) -> None:
-        """`?agent=agent_b` returns only agent_b's records — filter must not leak."""
+        """`?agent=<did>` returns only that agent's records — filter must not leak.
+
+        H-008: the filter joins on the agent's DID, not its free-text label
+        (a label can drift from what got recorded historically) — so with no
+        roster to resolve a label through (as here), the caller passes the
+        DID directly, exactly what ``_seed`` stamped as ``actor_did``.
+        """
         for agent in ["agent_a", "agent_b"]:
             _seed(_isolated_arc_data_dir, agent=agent, seq=0)
             _seed(_isolated_arc_data_dir, agent=agent, seq=1)
@@ -227,7 +233,7 @@ class TestFederatedQueryFlow:
         app = create_app(auth_config=auth)
         with TestClient(app) as client:
             resp = client.get(
-                "/api/traces?limit=10&agent=agent_b",
+                "/api/traces?limit=10&agent=did:arc:test:agent_b",
                 headers={"Authorization": "Bearer v"},
             )
         assert resp.status_code == 200

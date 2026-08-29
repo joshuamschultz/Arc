@@ -48,12 +48,20 @@ def _invalid(msg: str) -> JSONResponse:
 
 
 async def get_runs(request: Request) -> JSONResponse:
-    """GET /api/runs[?agent=<did>] — real runs (one per request_id), newest first."""
+    """GET /api/runs[?agent=<did>][?window=<w>] — real runs, newest first.
+
+    ``window`` (H-004/H-006) scopes the fold to runs touched in the last
+    window instead of the last ``scan`` raw rows — Home's "today" card wants
+    this; the ArcRun page and agent-detail runs tab omit it for full history.
+    """
     agent = request.query_params.get("agent")
     if agent is not None and not _VALID_ID_RE.match(agent):
         return _invalid("Invalid agent format")
+    window = request.query_params.get("window")
+    if window is not None and window not in _VALID_WINDOWS:
+        return _invalid("Invalid window. Use 1h, 24h, 7d, or 30d.")
     try:
-        runs = await request.app.state.observe.runs(agent=agent)
+        runs = await request.app.state.observe.runs(agent=agent, window=window)
     except Exception:  # reason: a saturated pool must degrade, not 500 the panel
         logger.exception("runs read failed")
         return _unavailable("runs")

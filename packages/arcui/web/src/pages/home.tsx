@@ -80,14 +80,25 @@ const TASK_SEGMENTS: Array<{
 export function HomePage() {
   const approvalsQ = useApprovals()
   const runsQ = useRuns()
+  // H-004: the Tasks/Runs summary cards below are "today" numbers, like every
+  // other tile on this page — a separate 24h-windowed fetch feeds them so the
+  // unwindowed lists above (failedRuns / reviewTasks in "Needs you", and
+  // "Recent activity") keep surfacing older items exactly as before.
+  const runsWindowedQ = useRuns('24h')
   const tasksQ = useTeamTasks()
+  const tasksWindowedQ = useTeamTasks('24h')
   const rosterQ = useRoster()
   const statsQ = useLlmStats('24h')
   const tsQ = useTimeseries('24h')
 
   const approvals = approvalsQ.data?.approvals ?? []
   const runs = useMemo<RunSummary[]>(() => runsQ.data?.runs ?? [], [runsQ.data])
+  const runsWindowed = useMemo<RunSummary[]>(
+    () => runsWindowedQ.data?.runs ?? [],
+    [runsWindowedQ.data],
+  )
   const tasks = useMemo(() => tasksQ.data?.tasks ?? [], [tasksQ.data])
+  const tasksWindowed = useMemo(() => tasksWindowedQ.data?.tasks ?? [], [tasksWindowedQ.data])
   const agents = useMemo<Agent[]>(
     () => (rosterQ.data?.agents ?? []).filter((a) => !a.hidden),
     [rosterQ.data],
@@ -123,27 +134,29 @@ export function HomePage() {
   const tokenSpark = buckets.map((b) => b.total_tokens)
   const toolCalls = runs.reduce((sum, r) => sum + (r.tool_calls ?? 0), 0)
 
-  // Run outcomes across the current snapshot — the "how are runs going" totals.
+  // Run outcomes over the last 24h (H-004) — "how did today's work go".
+  // `running` stays un-windowed: a run still in flight counts as running
+  // regardless of when it started.
   const runStatus = useMemo(() => {
     const c = { running, completed: 0, failed: 0, stale: 0 }
-    for (const r of runs) {
+    for (const r of runsWindowed) {
       const s = (r.status || '').toLowerCase()
       if (['completed', 'success', 'done', 'ok'].includes(s)) c.completed += 1
       else if (['failed', 'error'].includes(s)) c.failed += 1
       else if (s === 'stale') c.stale += 1
     }
     return c
-  }, [runs, running])
+  }, [runsWindowed, running])
 
-  // --- State (totals) — tasks by status -------------------------------------
+  // --- State (totals) — tasks by status, last 24h (H-004) -------------------
   const taskCounts = useMemo(() => {
-    const total = tasks.length
+    const total = tasksWindowed.length
     const segs = TASK_SEGMENTS.map((seg) => ({
       ...seg,
-      count: tasks.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
+      count: tasksWindowed.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
     }))
     return { total, segs }
-  }, [tasks])
+  }, [tasksWindowed])
 
   return (
     <div className="flex h-full flex-col">

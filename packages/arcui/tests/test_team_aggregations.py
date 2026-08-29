@@ -296,6 +296,47 @@ class TestFleetTasks:
         for t in tasks:
             assert "agent_id" in t
 
+    def test_tasks_window_scopes_to_recently_touched(
+        self, tmp_path, arcstore_backend: FakeBackend, monkeypatch
+    ) -> None:
+        """H-004: ``?window=1h`` on ``/api/team/tasks`` keeps only tasks touched
+        within it — Home's "today" card, not the whole board's all-time total.
+        """
+        import arcstore.backends.memory as memory_backend
+
+        team = _build_team(tmp_path, [("alpha", "")])
+        stale_ts = "2020-01-01T00:00:00+00:00"
+        monkeypatch.setattr(memory_backend, "_now", lambda: stale_ts)
+        asyncio.run(
+            _seed_tasks(
+                arcstore_backend,
+                [Task(id="stale-t1", title="old", creator_did="did:arc:alpha")],
+            )
+        )
+        monkeypatch.undo()
+        asyncio.run(
+            _seed_tasks(
+                arcstore_backend,
+                [Task(id="fresh-t1", title="new", creator_did="did:arc:alpha")],
+            )
+        )
+
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
+        client = TestClient(app)
+
+        resp = client.get("/api/team/tasks?window=1h", headers=_viewer(auth))
+        assert resp.status_code == 200
+        assert {t["id"] for t in resp.json()["tasks"]} == {"fresh-t1"}
+
+        resp = client.get("/api/team/tasks", headers=_viewer(auth))
+        assert {t["id"] for t in resp.json()["tasks"]} == {"stale-t1", "fresh-t1"}
+
+    def test_tasks_invalid_window_400(self, tmp_path) -> None:
+        app, auth, _ = _make_app(team_root=_build_team(tmp_path, [("alpha", "")]))
+        client = TestClient(app)
+        resp = client.get("/api/team/tasks?window=bogus", headers=_viewer(auth))
+        assert resp.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # /api/team/tools-skills

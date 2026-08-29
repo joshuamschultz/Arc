@@ -49,13 +49,16 @@ def _write_call(
     model: str = "claude",
     outcome: str = "ok",
     ts: str | None = None,
+    actor_did: str = "did:arc:acme:analyst/aabbccdd",
+    agent_label: str | None = None,
 ) -> None:
     spool = data_dir / "spool"
     spool.mkdir(parents=True, exist_ok=True)
     spool_record(
         SpoolRecord(
             kind="llm_call",
-            actor_did="did:arc:acme:analyst/aabbccdd",
+            actor_did=actor_did,
+            agent_label=agent_label,
             request_id=rid,
             model=model,
             prompt_tokens=100,
@@ -128,6 +131,42 @@ async def test_stats_excludes_rows_outside_window(tmp_path: Path) -> None:
         stats = await observe.stats("1h")
         assert stats["request_count"] == 2
         assert stats["total_tokens"] == 300
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_stats_filters_by_did_even_when_label_has_drifted(tmp_path: Path) -> None:
+    """H-008: the per-agent filter joins on the stable DID, never the label.
+
+    An agent's ``agent_label`` (its config ``[agent].name`` at call time) can
+    drift from whatever the caller now knows it as — a rename, a re-cased
+    display name, a "twin" agent config. Two calls carry the SAME DID here but
+    different (and in one case entirely absent) labels; filtering by that DID
+    must still surface both. Filtering by the OLD label value must not — that
+    is exactly how a demonstrably-running agent showed zero calls.
+    """
+    olivia_did = "did:arc:dgx:executor/01234567"
+    _write_call(tmp_path, "r0", actor_did=olivia_did, agent_label="olivia")
+    _write_call(tmp_path, "r1", actor_did=olivia_did, agent_label="Deep Olivia")  # renamed
+    _write_call(tmp_path, "r2", actor_did=olivia_did, agent_label=None)  # label never stamped
+    _write_call(tmp_path, "other", actor_did="did:arc:dgx:executor/other000")
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        stats = await observe.stats("24h", agent=olivia_did)
+        assert stats["request_count"] == 3
+
+        traces = await observe.traces(agent=olivia_did, limit=10)
+        assert len(traces) == 3
+
+        ts = await observe.timeseries("24h", agent=olivia_did)
+        assert sum(b["request_count"] for b in ts["buckets"]) == 3
+
+        # The stale label, used directly as a filter value, must not match —
+        # proving the join key really moved off ``agent_label``.
+        stale_label_stats = await observe.stats("24h", agent="olivia")
+        assert stale_label_stats["request_count"] == 0
     finally:
         await observe.stop()
 
@@ -280,6 +319,46 @@ async def test_runs_lists_real_runs_grouped_by_request_id(tmp_path: Path) -> Non
         assert r["llm_calls"] == 1
         assert r["total_tokens"] == 150
         assert r["status"] == "completed"
+    finally:
+        await observe.stop()
+
+
+async def test_runs_window_excludes_older_runs(tmp_path: Path) -> None:
+    """H-004/H-006: ``window`` pushes a ``ts >= cutoff`` bound into the fold,
+    the same way :meth:`Observe.stats` windows llm_calls — not a raw-row-count
+    scan that happens to cover roughly a day on a quiet fleet and roughly an
+    hour on a busy one. A run from 2 hours ago drops out of a 1h-windowed
+    read; an unwindowed read (the ArcRun page) still sees it.
+    """
+    now = datetime.now(UTC)
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-recent",
+            ts=now.isoformat(),
+            name="turn.start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-stale",
+            ts=(now - timedelta(hours=2)).isoformat(),
+            name="turn.start",
+        ),
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        windowed = await observe.runs(window="1h")
+        assert [r["run_id"] for r in windowed] == ["run-recent"]
+
+        unwindowed = await observe.runs()
+        assert {r["run_id"] for r in unwindowed} == {"run-recent", "run-stale"}
     finally:
         await observe.stop()
 
