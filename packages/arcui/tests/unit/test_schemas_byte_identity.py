@@ -107,6 +107,17 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
     ),
     (schemas.TasksResponse, {"tasks": []}),
     (schemas.TasksResponse, {"tasks": [{"id": "t1", "subject": "x"}]}),
+    (schemas.HomeNeedsQueue, {"count": 0, "items": []}),
+    (schemas.HomeNeedsQueue, {"count": 1, "items": [{"id": "req1"}]}),
+    (
+        schemas.HomeNeedsResponse,
+        {
+            "approvals": {"count": 0, "items": []},
+            "capabilities": {"count": 1, "items": [{"agent_id": "olivia", "name": "reporter"}]},
+            "review_tasks": {"count": 0, "items": []},
+            "total": 1,
+        },
+    ),
     (schemas.SchedulesResponse, {"schedules": []}),
     (
         schemas.TracesResponse,
