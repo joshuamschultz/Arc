@@ -11,6 +11,15 @@ import {
   YAxis,
 } from 'recharts'
 
+import { fmtCompact } from '@/lib/format'
+
+// Recharts renders raw axis values by default (a token count shows as an
+// unreadable "1834221", and a flat/degenerate domain collapses to "0000").
+// Every numeric series axis + tooltip runs through a compact formatter (1.2K,
+// 3.4M) unless a caller passes its own — one place, so no chart regresses to
+// raw numbers again (H-003).
+const _num = (v: unknown): number => (typeof v === 'number' ? v : Number(v))
+
 const AXIS = { fontSize: 11, fill: 'var(--muted-foreground)' }
 const TOOLTIP_STYLE = {
   background: 'var(--popover)',
@@ -58,10 +67,12 @@ export function AreaSeries({
   data,
   dataKey,
   color = 'var(--chart-1)',
+  valueFormat = fmtCompact,
 }: {
   data: Array<Record<string, unknown>>
   dataKey: string
   color?: string
+  valueFormat?: (n: number) => string
 }) {
   const gradId = `grad-${dataKey}`
   return (
@@ -75,12 +86,19 @@ export function AreaSeries({
         </defs>
         <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
         <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={false} minTickGap={24} />
-        <YAxis tick={AXIS} tickLine={false} axisLine={false} width={48} />
+        <YAxis
+          tick={AXIS}
+          tickLine={false}
+          axisLine={false}
+          width={48}
+          tickFormatter={(v: number) => valueFormat(_num(v))}
+        />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
           labelStyle={TOOLTIP_LABEL_STYLE}
           itemStyle={TOOLTIP_ITEM_STYLE}
           cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+          formatter={(v: unknown) => valueFormat(_num(v))}
         />
         <Area
           type="monotone"
@@ -101,22 +119,31 @@ export function BarSeries({
   data,
   dataKey,
   color = 'var(--chart-2)',
+  valueFormat = fmtCompact,
 }: {
   data: Array<Record<string, unknown>>
   dataKey: string
   color?: string
+  valueFormat?: (n: number) => string
 }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
         <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
         <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={false} />
-        <YAxis tick={AXIS} tickLine={false} axisLine={false} width={48} />
+        <YAxis
+          tick={AXIS}
+          tickLine={false}
+          axisLine={false}
+          width={48}
+          tickFormatter={(v: number) => valueFormat(_num(v))}
+        />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
           labelStyle={TOOLTIP_LABEL_STYLE}
           itemStyle={TOOLTIP_ITEM_STYLE}
           cursor={{ fill: 'var(--muted)', opacity: 0.3 }}
+          formatter={(v: unknown) => valueFormat(_num(v))}
         />
         <Bar dataKey={dataKey} fill={color} radius={[3, 3, 0, 0]} maxBarSize={48} />
       </BarChart>

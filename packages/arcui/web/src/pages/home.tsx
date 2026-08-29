@@ -1,15 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import {
   ShieldAlert,
   AlertTriangle,
   Eye,
@@ -25,7 +16,7 @@ import {
 import { PageHeader } from '@/components/page-header'
 import { InsightStat, StatusChip } from '@/components/ai'
 import { StatusDot } from '@/components/status-badge'
-import { ChartCard } from '@/components/charts'
+import { AreaSeries, ChartCard } from '@/components/charts'
 import { Sparkline } from '@/components/llm/sparkline'
 import {
   useApprovals,
@@ -40,83 +31,12 @@ import {
   jobLabel,
   relativeTime,
   shortId,
-  fmtCompact,
   fmtTokens,
   fmtCost,
   fmtNumber,
 } from '@/lib/format'
 import type { Agent, RunSummary, TaskStatus } from '@/lib/types'
 
-// Mirrors `components/charts.tsx`'s AreaSeries look. Kept local to this
-// hotfix (H-003) rather than adding a formatter prop to the shared component,
-// so the fix stays scoped to the Home page's Token Volume chart.
-const CHART_AXIS = { fontSize: 11, fill: 'var(--muted-foreground)' }
-const CHART_TOOLTIP_STYLE = {
-  background: 'var(--popover)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  boxShadow: 'var(--shadow-md)',
-  fontSize: '12px',
-  padding: '6px 10px',
-  color: 'var(--popover-foreground)',
-}
-const CHART_TOOLTIP_LABEL_STYLE = {
-  color: 'var(--muted-foreground)',
-  fontSize: '10px',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.08em',
-  marginBottom: '2px',
-}
-const CHART_TOOLTIP_ITEM_STYLE = { color: 'var(--popover-foreground)', padding: 0 }
-
-/** Token-volume area chart with compact axis ticks + tooltip values (H-003:
- * the raw-number ticks on a 24h window were unreadable, all rounding to
- * "0000"-looking labels). */
-function TokenVolumeChart({ data }: { data: Array<{ label: string; tokens: number }> }) {
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <defs>
-          <linearGradient id="grad-tokens-home" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.28} />
-            <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
-        <XAxis
-          dataKey="label"
-          tick={CHART_AXIS}
-          tickLine={false}
-          axisLine={false}
-          minTickGap={24}
-        />
-        <YAxis
-          tick={CHART_AXIS}
-          tickLine={false}
-          axisLine={false}
-          width={48}
-          tickFormatter={(value: number) => fmtCompact(value)}
-        />
-        <Tooltip
-          contentStyle={CHART_TOOLTIP_STYLE}
-          labelStyle={CHART_TOOLTIP_LABEL_STYLE}
-          itemStyle={CHART_TOOLTIP_ITEM_STYLE}
-          cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-          formatter={(value) => fmtCompact(typeof value === 'number' ? value : Number(value))}
-        />
-        <Area
-          type="monotone"
-          dataKey="tokens"
-          stroke="var(--chart-1)"
-          strokeWidth={1.5}
-          fill="url(#grad-tokens-home)"
-          dot={false}
-          activeDot={{ r: 3, strokeWidth: 0, fill: 'var(--chart-1)' }}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
-  )
-}
 
 /** Momentum within the window: later-half sum vs earlier-half, as a percentage.
  * Undefined when there isn't enough signal to be honest about a direction. */
@@ -274,7 +194,7 @@ export function HomePage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <ChartCard title="Token volume · 24h">
             {volume.length > 1 ? (
-              <TokenVolumeChart data={volume} />
+              <AreaSeries data={volume} dataKey="tokens" />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Not enough activity yet to chart.
