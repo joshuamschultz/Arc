@@ -50,7 +50,12 @@ class WebConfig(ModuleConfig):
     # and needs no account. The other three are the same paid services; name one
     # to opt in.
     search_provider: Literal["parallel", "firecrawl", "tavily"] | None = None
-    extract_provider: Literal["browser", "parallel", "firecrawl", "tavily"] = "browser"
+    # ``http`` is the default: a keyless httpx fetch + HTML-to-text reduction that
+    # needs no Chrome and works on a headless box. ``browser`` drives CDP/Chrome
+    # (JS rendering) but launches a local Chrome when ``browser_cdp_url`` is empty,
+    # which fails on a server with none — so it is opt-in, not the default. The
+    # other three are paid services; name one to opt in.
+    extract_provider: Literal["http", "browser", "parallel", "firecrawl", "tavily"] = "http"
 
     # CDP endpoint the keyless ``browser`` extract provider attaches to. Empty
     # launches a local headless Chrome, which the federal tier forbids — a

@@ -51,7 +51,7 @@ _ENV_VAR_BY_PROVIDER: dict[str, str] = {
 
 #: Providers that need no credential at all. ``browser`` reads pages through the
 #: browser module's CDP backend, so basic site lookup works on a fresh box.
-_KEYLESS_PROVIDERS = frozenset({"browser"})
+_KEYLESS_PROVIDERS = frozenset({"http", "browser"})
 
 
 @dataclass
@@ -227,13 +227,17 @@ def _make_provider(name: str, api_key: str, timeout_s: float) -> Any:
 
 def _make_keyless_provider(name: str, cfg: WebConfig) -> Any:
     """Construct a provider that needs no credential."""
-    from arcagent.modules.web.providers.browser_page import BrowserPageProvider
+    if name == "http":
+        from arcagent.modules.web.providers.http_fetch import HttpFetchProvider
 
-    if name != "browser":
-        raise ValueError(f"Unknown keyless web provider: {name!r}")
-    return BrowserPageProvider.create(
-        cdp_url=cfg.browser_cdp_url, tier=cfg.tier, timeout_s=cfg.request_timeout_s
-    )
+        return HttpFetchProvider.create(timeout_s=cfg.request_timeout_s)
+    if name == "browser":
+        from arcagent.modules.web.providers.browser_page import BrowserPageProvider
+
+        return BrowserPageProvider.create(
+            cdp_url=cfg.browser_cdp_url, tier=cfg.tier, timeout_s=cfg.request_timeout_s
+        )
+    raise ValueError(f"Unknown keyless web provider: {name!r}")
 
 
 # --- Tool availability -------------------------------------------------------

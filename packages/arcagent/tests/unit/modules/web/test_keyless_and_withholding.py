@@ -261,9 +261,15 @@ class TestKeylessExtraction:
 
         assert backend.closed == 1
 
-    async def test_web_extract_tool_runs_end_to_end_on_the_default_config(self) -> None:
-        """Default config, no keys anywhere, and the tool returns page content."""
-        _runtime.configure(config={}, telemetry=MagicMock(), agent_name="a")
+    async def test_web_extract_tool_runs_end_to_end_through_the_browser_provider(self) -> None:
+        """The browser extract provider, no keys anywhere, returns page content.
+
+        (The shipped DEFAULT provider is now the keyless ``http`` fetcher — see
+        providers/test_http_fetch.py — so this pins ``browser`` explicitly.)
+        """
+        _runtime.configure(
+            config={"extract_provider": "browser"}, telemetry=MagicMock(), agent_name="a"
+        )
         backend = _FakeBackend(_FakeSession())
 
         with _patch_seam(backend):
@@ -384,7 +390,7 @@ class TestTierControlsStillApply:
 
     async def test_the_size_cap_truncates_browser_content(self) -> None:
         _runtime.configure(
-            config={"max_content_bytes": 1024},
+            config={"max_content_bytes": 1024, "extract_provider": "browser"},
             telemetry=MagicMock(),
             agent_name="a",
         )

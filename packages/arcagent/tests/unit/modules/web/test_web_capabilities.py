@@ -65,9 +65,9 @@ class TestWebConfig:
     def test_defaults(self) -> None:
         cfg = WebConfig()
         # No keyless search engine exists, so search ships off; extraction ships
-        # on through the keyless browser backend.
+        # on through the keyless http fetcher (works with no Chrome, no key).
         assert cfg.search_provider is None
-        assert cfg.extract_provider == "browser"
+        assert cfg.extract_provider == "http"
         assert cfg.tier == "personal"
         assert cfg.url_allowlist == []
         assert cfg.max_content_bytes == 1_000_000
