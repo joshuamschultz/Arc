@@ -37,7 +37,8 @@ export function Sidebar() {
         onClick={onClick}
         aria-label={label}
         className={cn(
-          'flex h-11 items-center rounded-[11px] transition-colors',
+          'flex h-11 items-center rounded-[11px] outline-none transition-colors',
+          'focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar',
           expanded ? 'w-full gap-3 px-3' : 'w-11 justify-center',
           active
             ? 'bg-primary/12 text-primary'
@@ -79,6 +80,17 @@ export function Sidebar() {
         </div>
         {expanded && (
           <span className="text-[15px] font-bold tracking-tight text-sidebar-foreground">ARC</span>
+        )}
+      </div>
+
+      {/* Collapse/expand lives here, at the top of the menu, as its own
+          button — not a nav row buried near Settings — so it reads as a rail
+          control, not a destination. */}
+      <div className={cn('mb-2 flex', expanded ? 'justify-start' : 'justify-center')}>
+        {railButton(
+          toggleExpanded,
+          expanded ? 'Collapse' : 'Expand',
+          expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />,
         )}
       </div>
 
@@ -134,13 +146,6 @@ export function Sidebar() {
       </div>
 
       <div className="mt-2 flex flex-col gap-1.5">
-        <div className={cn('flex', expanded ? 'justify-start' : 'justify-center')}>
-          {railButton(
-            toggleExpanded,
-            expanded ? 'Collapse' : 'Expand',
-            expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />,
-          )}
-        </div>
         {railButton(
           () => setOperator(!operator),
           operator ? 'Operator controls on' : 'Operator controls off',

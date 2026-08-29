@@ -87,19 +87,26 @@ export function TaskBoard({
   const columns = focusStatus === 'all' ? COLUMNS : COLUMNS.filter((c) => c.id === focusStatus)
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-h-0 max-h-full flex-col gap-3">
       <FilterPills
         value={scope}
         onChange={setScope}
         options={SCOPES.map((s) => ({ value: s.value, label: s.label }))}
       />
-      <div className="flex flex-1 gap-3 overflow-x-auto pb-2">
+      {/* `min-h-0` on every level of this flex chain (row -> column -> item
+          list) is load-bearing: a flex item's default `min-height: auto`
+          refuses to shrink below its content's natural height, so without it
+          each column grows to fit every card and pushes the whole board past
+          the viewport instead of scrolling internally. With it, the row takes
+          exactly the space `h-full` leaves and each column's own list scrolls
+          in place — true at any real viewport height, not just wide desktop. */}
+      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
       {columns.map((col) => {
         const items = byColumn.get(col.id) ?? []
         return (
           <div
             key={col.id}
-            className="flex min-w-[11rem] flex-1 basis-0 flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5"
+            className="flex min-h-0 min-w-[11rem] flex-1 basis-0 flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5"
           >
             <div className="flex items-center justify-between px-1 py-0.5">
               <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -110,7 +117,7 @@ export function TaskBoard({
                 {items.length}
               </span>
             </div>
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
               {items.length === 0 ? (
                 <div className="rounded-md border border-dashed border-border/60 bg-background/30 p-4 text-center text-[11px] text-muted-foreground/70">
                   Empty
