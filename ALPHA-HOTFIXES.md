@@ -86,7 +86,7 @@ before this batch is complete.
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
-| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
+| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
@@ -204,6 +204,7 @@ before this batch is complete.
 - **Status:** MERGED (b311fd45) + hardened + deployed (runtime 0.4.0-43d46b86).
 - **What shipped:** DELETE route (operator-gated, audited, path-fenced). Blocked-outright: identity.md, policy.md, config TOMLs, `context/**`, `.arcsig` sidecars, `*.key` (any location), `workspace/audit/**`, `.audit/**`. Confirm-required (409→200): memory/**, sessions/**, context.md. Key material protected on ALL FOUR verbs (list filters, read 403, write 403, delete block). Symlink/TOCTOU: check+unlink on the resolved realpath (one resolve), audit records the resolved path. Adversarial cases in `scripts/run_adversarial_tests.py`.
 - **DISCLOSURE-WINDOW FACT (found during the fix):** before this change, the files LIST (`/files/tree`) and VIEW (`/files/read`) routes are **GET = viewer-accessible** and had **no key-material check** — so a `*.key` or config file that ever landed inside a browsable agent root could be listed/read in plaintext by any *viewer* token, not just operator. **Severity (verified on box):** an on-box scan found **0 `*.key` files inside any agent root** (keys live in `~/.arcagent/keys`, outside the browsable `~/arc/team` roots), so no key was ever actually in reach → on the single-operator DGX/Azure posture: **note it, no key rotation needed.** Config TOMLs at the agent root also had zero delete protection (reachable via `root=agent`) — now blocked.
+- **NEEDS JOSH (one path no headless test drove):** walk the authenticated DELETE UI on the box — delete a normal file (works) → attempt identity.md / policy.md / a `.key` (403, key absent from tree) → one confirm-path file (409→200) → confirm the Audit page shows those events with resolved paths. Operator token is browser-side/auto-generated, so this can't run headless.
 - **Verified live:** HREG1 capture→recall HIT on the runtime; Audit/stats/needs return 401 (auth), not 500. UI-driven authenticated DELETE left for Josh (operator token is browser-side).
 
 ### Messages
