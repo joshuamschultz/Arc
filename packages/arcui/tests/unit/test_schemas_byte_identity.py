@@ -71,6 +71,7 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "last_role": None,
             "last_text": None,
             "last_ts": None,
+            "current": False,
         },
     ),
     (
@@ -88,8 +89,10 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
                     "last_role": None,
                     "last_text": None,
                     "last_ts": None,
+                    "current": False,
                 },
             ],
+            "current_session_key": None,
         },
     ),
     (

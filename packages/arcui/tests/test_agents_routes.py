@@ -889,7 +889,8 @@ class TestEdgeCases:
         client = TestClient(app)
         resp = client.get("/api/agents/beta/sessions", headers=_viewer(auth))
         assert resp.status_code == 200
-        assert resp.json() == {"sessions": []}
+        # No SessionRouter wired on this read-only app → no current marker.
+        assert resp.json() == {"sessions": [], "current_session_key": None}
 
     def test_session_replay_invalid_sid_chars(self, tmp_path):
         team = _build_team_dir(tmp_path)

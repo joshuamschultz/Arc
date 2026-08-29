@@ -144,10 +144,16 @@ export interface SessionEntry {
   path: string
   size: number
   mtime: number
+  // True for the caller's current (rotation-aware) conversation — the session
+  // the live chat writes to. After a /new this is the rotated generation.
+  current?: boolean
 }
 
 export interface SessionsListResponse {
   sessions: SessionEntry[]
+  // The caller's current session key; the live chat writes here. Lets a list
+  // surface highlight/open the live conversation instead of a stale rotation.
+  current_session_key?: string | null
 }
 
 export interface SessionReplayResponse {

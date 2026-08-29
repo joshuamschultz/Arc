@@ -8,6 +8,7 @@ from typing import Any
 
 from arcgateway import fs_reader
 from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
+from arcgateway.identity import derive_viewer_did
 from arctrust.session_identity import build_session_key
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -50,6 +51,29 @@ def _peer_map(request: Request, agent_did: str | None) -> dict[str, str]:
         label = getattr(entry, "display_name", "") or getattr(entry, "name", "") or peer_did
         out[build_session_key(agent_did, peer_did)] = label
     return out
+
+
+def _current_session_key(request: Request, agent_did: str | None) -> str | None:
+    """Resolve the calling viewer's CURRENT session key for this agent.
+
+    The chat WebSocket writes to ``SessionRouter.current_session_key`` — the
+    rotation-aware key that follows ``/new``. The session LIST must name that
+    same key, or a client re-deriving the generation-0 base key would load a
+    different (stale) conversation after a rotation. Derived from the same
+    viewer token the socket and the rotate route use, so all three resolve the
+    identical (agent, user) pair. Returns ``None`` on a read-only deployment
+    (no ``session_router``) or an unknown agent — the list stays valid, just
+    without a current marker.
+    """
+    router = getattr(request.app.state, "session_router", None)
+    if router is None or not agent_did:
+        return None
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        return None
+    user_did = derive_viewer_did(token)
+    key: str = router.current_session_key(agent_did, user_did)
+    return key
 
 
 def _session_kind(sid: str, peer_map: dict[str, str]) -> str:
@@ -147,7 +171,9 @@ async def get_sessions(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    peer_map = _peer_map(request, _agent_did(request, agent_id))
+    agent_did = _agent_did(request, agent_id)
+    peer_map = _peer_map(request, agent_did)
+    current_key = _current_session_key(request, agent_did)
     sessions: list[SessionEntry] = []
     for entry in entries:
         if entry.type != "file" or not entry.path.endswith(".jsonl"):
@@ -166,10 +192,15 @@ async def get_sessions(request: Request) -> JSONResponse:
                 last_role=last_role,
                 last_text=last_text,
                 last_ts=last_ts,
+                current=sid == current_key,
             )
         )
     sessions.sort(key=lambda s: float(s.mtime), reverse=True)
-    return JSONResponse(SessionsListResponse(sessions=sessions).model_dump(mode="json"))
+    return JSONResponse(
+        SessionsListResponse(
+            sessions=sessions, current_session_key=current_key
+        ).model_dump(mode="json")
+    )
 
 
 async def get_session_replay(request: Request) -> JSONResponse:

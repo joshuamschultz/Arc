@@ -253,6 +253,10 @@ class SessionEntry(BaseModel):
     last_role: str | None = None
     last_text: str | None = None
     last_ts: str | None = None
+    # True for the caller's *current* (rotation-aware) conversation — the one a
+    # new message lands in and a refresh must resolve. After a ``/new`` this is
+    # the rotated generation, not the stale generation-0 base key.
+    current: bool = False
 
 
 class SessionsListResponse(BaseModel):
@@ -261,6 +265,11 @@ class SessionsListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessions: list[SessionEntry]
+    # The caller's current session key (``SessionRouter.current_session_key``),
+    # so a client loads/highlights the live conversation by default instead of
+    # re-deriving the base key, which diverges from the write path after a
+    # rotation. ``None`` when no SessionRouter is wired (read-only deployments).
+    current_session_key: str | None = None
 
 
 class SessionReplayResponse(BaseModel):

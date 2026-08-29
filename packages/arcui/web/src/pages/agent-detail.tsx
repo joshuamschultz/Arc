@@ -485,7 +485,12 @@ function OverviewTab({ agentId }: { agentId: string }) {
                       <span className="truncate font-mono text-xs text-primary">
                         {shortId(sess.sid, 22)}
                       </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
+                      {sess.current && (
+                        <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                          Current
+                        </span>
+                      )}
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                         {relativeTime(sess.mtime)}
                       </span>
                       <span className="shrink-0 font-mono text-xs text-muted-foreground">
@@ -649,7 +654,14 @@ const sessionColumns: ColumnDef<Dict, unknown>[] = [
     accessorKey: 'sid',
     header: 'Session',
     cell: (c) => (
-      <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 18)}</span>
+      <span className="flex items-center gap-2">
+        <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 18)}</span>
+        {(c.row.original as Dict).current === true && (
+          <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+            Current
+          </span>
+        )}
+      </span>
     ),
   },
   {
