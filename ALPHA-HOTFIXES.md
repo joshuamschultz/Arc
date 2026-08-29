@@ -64,23 +64,23 @@ before this batch is complete.
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
-| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
+| H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | CODING | |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
-| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | NEW | |
+| H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | CODING | |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | NEW | |
 | H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | NEW | |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | NEW | |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
-| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | NEW | |
+| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | CODING | |
 | H-036 | UI | Fully keyboard-drivable | L | NEW | |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
-| H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | NEW | |
+| H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | CODING | |
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | NEW | |
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
