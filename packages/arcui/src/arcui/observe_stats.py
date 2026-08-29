@@ -167,7 +167,7 @@ def compute_llm_by_identity(rows: list[dict[str, Any]], *, window: str) -> dict[
     }
 
 
-def _capability_class(row: dict[str, Any]) -> str:
+def capability_class(row: dict[str, Any]) -> str:
     """Classify one ``llm_calls`` row as ``"embedding"`` or ``"inference"``.
 
     ``arcllm.embeddings._emit_telemetry`` is the only call site that stamps
@@ -176,6 +176,10 @@ def _capability_class(row: dict[str, Any]) -> str:
     That recorded call type is ground truth for capability class, never the
     model name: a model capable of both would be classified per call, by
     what the call actually was (H-028).
+
+    Public (not ``_``-prefixed): also consumed by ``observe._row_to_trace``
+    (H-029) to label each call in the Calls table the same way the cost-
+    efficiency partition already does — one classifier, one definition.
     """
     extra = row.get("extra")
     if isinstance(extra, dict) and extra.get("operation"):
@@ -233,8 +237,8 @@ def compute_cost_efficiency(rows: list[dict[str, Any]], *, window: str) -> dict[
     offered as a swap for embedding spend — the two are not interchangeable
     (H-028). Each partition ranks and compares only within itself.
     """
-    inference_rows = [r for r in rows if _capability_class(r) == "inference"]
-    embedding_rows = [r for r in rows if _capability_class(r) == "embedding"]
+    inference_rows = [r for r in rows if capability_class(r) == "inference"]
+    embedding_rows = [r for r in rows if capability_class(r) == "embedding"]
 
     inference_models = _rank_models(inference_rows, window=window)
     embedding_models = _rank_models(embedding_rows, window=window)
@@ -265,35 +269,50 @@ def compute_performance(rows: list[dict[str, Any]], *, window: str) -> dict[str,
     """Per-model and per-agent performance with success rate + percentiles."""
     model_agg: dict[str, dict[str, Any]] = {}
     agent_agg: dict[str, dict[str, Any]] = {}
+    # H-029: the agent row's display ``name`` is ``_agent_of`` (label, falling
+    # back to DID) — not something a frontend roster join can key on. Track
+    # each key's DID separately (first one seen; a label maps to one DID
+    # within a window in practice) so the Calls/Overview UI can resolve the
+    # canonical AgentIdentity (H-007/H-008) instead of guessing off the label.
+    agent_did_of: dict[str, str | None] = {}
     for row in rows:
         _accumulate(model_agg.setdefault(row.get("model") or "unknown", _perf_entry()), row)
-        _accumulate(agent_agg.setdefault(_agent_of(row), _perf_entry()), row)
+        agent_key = _agent_of(row)
+        _accumulate(agent_agg.setdefault(agent_key, _perf_entry()), row)
+        agent_did_of.setdefault(agent_key, row.get("actor_did"))
 
-    def _rows(agg: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    def _rows(
+        agg: dict[str, dict[str, Any]], dids: dict[str, str | None] | None = None
+    ) -> list[dict[str, Any]]:
         out = []
         for name, data in agg.items():
             samples = sorted(data["latency_samples"])
             n = len(samples)
             req = data["request_count"]
             err = data["error_count"]
-            out.append(
-                {
-                    "name": name,
-                    "request_count": req,
-                    "error_count": err,
-                    "retry_count": 0,
-                    "success_rate": round((req - err) / req * 100, 1) if req > 0 else 0.0,
-                    "total_cost": round(data["total_cost"], 6),
-                    "total_tokens": int(data["total_tokens"]),
-                    "latency_avg": round(sum(samples) / n, 1) if n else 0.0,
-                    "latency_p50": round(_percentile(samples, 50), 1),
-                    "latency_p95": round(_percentile(samples, 95), 1),
-                }
-            )
+            entry: dict[str, Any] = {
+                "name": name,
+                "request_count": req,
+                "error_count": err,
+                "retry_count": 0,
+                "success_rate": round((req - err) / req * 100, 1) if req > 0 else 0.0,
+                "total_cost": round(data["total_cost"], 6),
+                "total_tokens": int(data["total_tokens"]),
+                "latency_avg": round(sum(samples) / n, 1) if n else 0.0,
+                "latency_p50": round(_percentile(samples, 50), 1),
+                "latency_p95": round(_percentile(samples, 95), 1),
+            }
+            if dids is not None:
+                entry["actor_did"] = dids.get(name)
+            out.append(entry)
         out.sort(key=lambda r: r["request_count"], reverse=True)
         return out
 
-    return {"window": window, "models": _rows(model_agg), "agents": _rows(agent_agg)}
+    return {
+        "window": window,
+        "models": _rows(model_agg),
+        "agents": _rows(agent_agg, agent_did_of),
+    }
 
 
 def _new_run(run_id: str) -> dict[str, Any]:

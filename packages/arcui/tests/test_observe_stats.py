@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from arcui.observe_stats import (
+    capability_class,
     compute_cost_efficiency,
     compute_performance,
     compute_runs,
@@ -68,6 +69,15 @@ class TestComputeStats:
         assert stats["request_count"] == 0
         assert stats["total_cost"] == 0.0
         assert stats["model_stats"] == {}
+
+
+class TestCapabilityClass:
+    def test_public_for_cross_module_reuse(self) -> None:
+        """H-029: ``observe._row_to_trace`` reuses this classifier (not a copy)
+        to label each call in the Calls table the same way cost-efficiency
+        partitions it — it must stay importable, not ``_``-prefixed."""
+        assert capability_class(_row()) == "inference"
+        assert capability_class(_row(extra={"operation": "embed:consolidate"})) == "embedding"
 
 
 class TestCostEfficiency:
@@ -174,6 +184,18 @@ class TestPerformance:
         assert model_row["error_count"] == 1
         assert model_row["success_rate"] == 90.0
         assert "latency_p95" in model_row
+
+    def test_agent_rows_carry_actor_did_for_identity_join(self) -> None:
+        """H-029: the agent row's ``name`` is a display label (``_agent_of``),
+        which a roster join can't key on — ``actor_did`` rides alongside it
+        so the route layer can resolve the canonical AgentIdentity (H-007)."""
+        rows = [_row(agent_label="alice", actor_did="did:arc:local:executor/aaaa1111")]
+        perf = compute_performance(rows, window="24h")
+        agent_row = next(a for a in perf["agents"] if a["name"] == "alice")
+        assert agent_row["actor_did"] == "did:arc:local:executor/aaaa1111"
+        # Model rows carry no such join key — they're not an agent identity.
+        model_row = next(m for m in perf["models"] if m["name"] == "gpt-4")
+        assert "actor_did" not in model_row
 
 
 class TestTimeseries:

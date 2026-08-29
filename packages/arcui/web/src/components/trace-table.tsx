@@ -4,6 +4,8 @@ import { Download } from 'lucide-react'
 import { DataTable } from '@/components/data-table'
 import { TraceDrawer } from '@/components/trace-drawer'
 import { StatusText } from '@/components/status-badge'
+import { AgentIdentity } from '@/components/AgentIdentity'
+import { CapabilityBadge } from '@/components/llm/capability-badge'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -12,8 +14,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { fmtCost, fmtLatency, fmtNumber, relativeTime, shortId } from '@/lib/format'
-import type { Trace } from '@/lib/types'
+import { fmtCost, fmtLatency, fmtNumber, jobLabel, relativeTime, shortId } from '@/lib/format'
+import type { AgentIdentityShape, Trace } from '@/lib/types'
+
+/** A trace's identity when the roster join didn't attach one (e.g. an older
+ * route) — still renders the DID/label the call actually carried instead of
+ * an empty block (H-007 pattern; see agent-detail's `ParticipantIdentity`). */
+function fallbackIdentity(t: Trace): AgentIdentityShape {
+  return {
+    did: t.agent || '',
+    host: 'unknown',
+    platform: 'unknown',
+    type: 'unknown',
+    short_id: 'unknown',
+    name: t.agent_label ?? null,
+  }
+}
 
 const columns: ColumnDef<Trace, unknown>[] = [
   {
@@ -29,7 +45,30 @@ const columns: ColumnDef<Trace, unknown>[] = [
     accessorFn: (r) => r.agent_label || r.agent,
     id: 'agent',
     header: 'Agent',
-    cell: (c) => <span className="text-xs text-foreground">{String(c.getValue() ?? '—')}</span>,
+    // H-007/H-029: the canonical identity block (friendly name + type + DID),
+    // resolved server-side and joined by DID (H-008) — never the raw label.
+    cell: (c) => {
+      const t = c.row.original
+      const job = jobLabel(t.job ?? null)
+      return (
+        <div className="flex flex-col gap-1">
+          <AgentIdentity
+            identity={t.identity ?? fallbackIdentity(t)}
+            fallbackName={t.agent_label || undefined}
+            size="sm"
+            showAvatar={false}
+          />
+          {job && (
+            <span
+              className="truncate text-[11px] leading-tight text-foreground/55"
+              title="A background job the agent ran on its own (not a person-driven call)"
+            >
+              {job}
+            </span>
+          )}
+        </div>
+      )
+    },
   },
   {
     accessorKey: 'model',
@@ -40,6 +79,24 @@ const columns: ColumnDef<Trace, unknown>[] = [
     accessorKey: 'provider',
     header: 'Provider',
     cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue() ?? '—')}</span>,
+  },
+  {
+    accessorKey: 'capability_class',
+    id: 'type',
+    header: 'Type',
+    // H-028/H-029: what the call WAS, plus its short operation label
+    // (embed:*/retrieve:*) when the embed path stamped one.
+    cell: (c) => {
+      const t = c.row.original
+      return (
+        <div className="flex flex-col gap-0.5">
+          <CapabilityBadge value={t.capability_class} />
+          {t.operation && (
+            <span className="truncate font-mono text-[10px] text-muted-foreground">{t.operation}</span>
+          )}
+        </div>
+      )
+    },
   },
   {
     accessorFn: (r) => r.input_tokens ?? r.total_tokens ?? 0,
@@ -76,8 +133,8 @@ const columns: ColumnDef<Trace, unknown>[] = [
 
 const ALL = '__all__'
 const EXPORT_FIELDS = [
-  'trace_id', 'agent', 'model', 'provider', 'input_tokens', 'output_tokens',
-  'duration_ms', 'cost_usd', 'status', 'timestamp',
+  'trace_id', 'agent', 'capability_class', 'operation', 'job', 'model', 'provider',
+  'input_tokens', 'output_tokens', 'duration_ms', 'cost_usd', 'status', 'timestamp',
 ] as const
 
 function uniq(values: Array<string | undefined>): string[] {
@@ -137,11 +194,14 @@ export function TraceTable({ traces }: { traces: Trace[] }) {
   const [model, setModel] = useState(ALL)
   const [agent, setAgent] = useState(ALL)
   const [status, setStatus] = useState(ALL)
+  const [type, setType] = useState(ALL)
 
   const providers = useMemo(() => uniq(traces.map((t) => t.provider)), [traces])
   const models = useMemo(() => uniq(traces.map((t) => t.model)), [traces])
   const agents = useMemo(() => uniq(traces.map((t) => t.agent_label || t.agent)), [traces])
   const statuses = useMemo(() => uniq(traces.map((t) => t.status || 'ok')), [traces])
+  // H-028 classes only — never derived from the model name (see CapabilityBadge).
+  const types = useMemo(() => uniq(traces.map((t) => t.capability_class || 'inference')), [traces])
 
   const filtered = useMemo(
     () =>
@@ -150,9 +210,10 @@ export function TraceTable({ traces }: { traces: Trace[] }) {
         if (model !== ALL && t.model !== model) return false
         if (agent !== ALL && (t.agent_label || t.agent) !== agent) return false
         if (status !== ALL && (t.status || 'ok') !== status) return false
+        if (type !== ALL && (t.capability_class || 'inference') !== type) return false
         return true
       }),
-    [traces, provider, model, agent, status],
+    [traces, provider, model, agent, status, type],
   )
 
   return (
@@ -162,6 +223,7 @@ export function TraceTable({ traces }: { traces: Trace[] }) {
         <FilterSelect value={model} onChange={setModel} options={models} placeholder="All models" />
         <FilterSelect value={agent} onChange={setAgent} options={agents} placeholder="All agents" />
         <FilterSelect value={status} onChange={setStatus} options={statuses} placeholder="All status" />
+        <FilterSelect value={type} onChange={setType} options={types} placeholder="All types" />
         <Button
           variant="outline"
           size="sm"

@@ -173,6 +173,45 @@ class TestTracesRoute:
             )
             assert resp.status_code != 400, f"trace_id {trace_id!r} unexpectedly rejected"
 
+    def test_list_traces_attaches_agent_identity(
+        self, tmp_path: Path, _isolated_arc_data_dir: Path
+    ):
+        """H-029: the Calls table renders the canonical AgentIdentity
+        (H-007), joined off the roster by DID (H-008) — not the free-text
+        ``agent_label`` a call happened to be recorded under."""
+        team = tmp_path / "team"
+        team.mkdir()
+        did = "did:arc:dgx:executor/aaaa1111"
+        _write_roster_agent(team, "olivia_agent", name="olivia", did=did)
+        _seed_spool(_isolated_arc_data_dir, actor_did=did, agent_label="Deep Olivia")
+
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/traces", headers={"Authorization": "Bearer v"})
+        assert resp.status_code == 200
+        trace = resp.json()["traces"][0]
+        assert trace["identity"]["did"] == did
+        # The roster's current name wins — even though the call recorded a
+        # since-renamed label (exactly H-008's "no free-text match" case).
+        assert trace["identity"]["name"] == "olivia"
+
+    def test_get_trace_attaches_agent_identity(
+        self, tmp_path: Path, _isolated_arc_data_dir: Path
+    ):
+        team = tmp_path / "team"
+        team.mkdir()
+        did = "did:arc:dgx:executor/bbbb2222"
+        _write_roster_agent(team, "olivia_agent", name="olivia", did=did)
+        trace_id = _seed_spool(_isolated_arc_data_dir, actor_did=did)
+
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get(f"/api/traces/{trace_id}", headers={"Authorization": "Bearer v"})
+        assert resp.status_code == 200
+        assert resp.json()["identity"]["name"] == "olivia"
+
 
 class TestConfigRoute:
     def test_get_config_no_controller(self):
@@ -296,6 +335,26 @@ class TestStatsRoute:
         data = resp.json()
         assert "models" in data
         assert "agents" in data
+
+    def test_get_performance_attaches_agent_identity(
+        self, tmp_path: Path, _isolated_arc_data_dir: Path
+    ):
+        """H-029: the Model usage page's per-agent breakdown renders the
+        canonical AgentIdentity (H-007), joined off the roster by DID
+        (H-008) — never the display label ``compute_performance`` groups by."""
+        team = tmp_path / "team"
+        team.mkdir()
+        did = "did:arc:dgx:executor/cccc3333"
+        _write_roster_agent(team, "olivia_agent", name="olivia", did=did)
+        _seed_spool(_isolated_arc_data_dir, actor_did=did, agent_label="Deep Olivia")
+
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/performance", headers={"Authorization": "Bearer v"})
+        assert resp.status_code == 200
+        agent_row = next(a for a in resp.json()["agents"] if a["actor_did"] == did)
+        assert agent_row["identity"]["name"] == "olivia"
 
     def test_get_circuit_breakers_empty(self):
         _, client, _ = _make_app()
