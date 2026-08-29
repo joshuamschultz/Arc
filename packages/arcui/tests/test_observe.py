@@ -20,7 +20,14 @@ from arcui.observe import Observe
 
 
 def _write_audit(
-    data_dir: Path, *, seq: int, actor_did: str, action: str = "gateway.fs.read"
+    data_dir: Path,
+    *,
+    seq: int,
+    actor_did: str,
+    action: str = "gateway.fs.read",
+    target: str = "tool:x",
+    outcome: str = "allow",
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Append one signed-chain record to the durable WORM file arcstore mirrors."""
     worm = data_dir / "worm"
@@ -34,8 +41,9 @@ def _write_audit(
             "ts": f"2026-05-31T00:00:0{seq}+00:00",
             "actor_did": actor_did,
             "action": action,
-            "target": "tool:x",
-            "outcome": "allow",
+            "target": target,
+            "outcome": outcome,
+            "extra": extra,
         },
     }
     with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
@@ -186,6 +194,98 @@ async def test_audit_reads_worm_chain(tmp_path: Path) -> None:
             "did:arc:alpha",
             "did:arc:beta",
         }
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_audit_projects_readable_fields(tmp_path: Path) -> None:
+    """H-022: Observe.audit() enriches raw rows into operator-legible fields.
+
+    Covers the three shapes an operator actually needs to read at a glance —
+    a policy denial (with a reason), a policy allow, and a namespaced-target
+    event — without needing the roster (that join is the route's job).
+    """
+    _write_audit(
+        tmp_path,
+        seq=0,
+        actor_did="did:arc:alpha",
+        action="policy.evaluate",
+        target="memory.write",
+        outcome="deny",
+        extra={"reason": "tool not on the agent allowlist", "rule_id": "R-3"},
+    )
+    _write_audit(
+        tmp_path,
+        seq=1,
+        actor_did="did:arc:alpha",
+        action="policy.evaluate",
+        target="memory.write",
+        outcome="allow",
+        extra={"reason": "matched safe-set", "rule_id": "R-1"},
+    )
+    _write_audit(
+        tmp_path,
+        seq=2,
+        actor_did="did:arc:alpha",
+        action="connector.attach_denied",
+        target="connector:github",
+        outcome="deny",
+        extra={"reason": "no grant on file"},
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        events = await observe.audit()
+        by_seq = {e["seq"]: e for e in events}
+
+        denial = by_seq[0]
+        assert denial["action_label"] == "Tool policy check"
+        assert denial["decision"] == "Denied"
+        assert denial["reason"] == "tool not on the agent allowlist"
+        assert denial["target_label"] == "memory.write"
+        # Read-projection only — the raw stored fields are untouched.
+        assert denial["action"] == "policy.evaluate"
+        assert denial["outcome"] == "deny"
+
+        allow = by_seq[1]
+        assert allow["action_label"] == "Tool policy check"
+        assert allow["decision"] == "Allowed"
+        assert allow["reason"] == "matched safe-set"
+
+        connector_denial = by_seq[2]
+        assert connector_denial["action_label"] == "Connector attach denied"
+        assert connector_denial["decision"] == "Denied"
+        assert connector_denial["reason"] == "no grant on file"
+        assert connector_denial["target_label"] == "Connector: github"
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_audit_projection_falls_back_for_unmapped_and_empty_values(
+    tmp_path: Path,
+) -> None:
+    """An action/outcome outside the known vocabulary still degrades to a
+    readable label (never a raw token); a bare target and missing extra never
+    raise.
+    """
+    _write_audit(
+        tmp_path,
+        seq=0,
+        actor_did="did:arc:alpha",
+        action="widget.frobnicated",
+        target="",
+        outcome="partial",
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        event = (await observe.audit())[0]
+        assert event["action_label"] == "Widget Frobnicated"
+        assert event["decision"] == "Partial"
+        assert event["reason"] is None
+        assert event["target_label"] == "—"
     finally:
         await observe.stop()
 
