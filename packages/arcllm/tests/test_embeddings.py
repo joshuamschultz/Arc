@@ -153,8 +153,44 @@ async def test_embed_telemetry_carries_request_and_response_bodies() -> None:
     extra = captured[0].extra
     assert extra["request_body"]["input"] == ["remember the budget line"]
     assert extra["request_body"]["count"] == 1
-    # Vector shape only — the raw float array is never stored.
-    assert extra["response_body"] == {"embedding_dims": 4, "count": 1}
+    # Vector shape + operation only — the raw float array is never stored.
+    assert extra["response_body"] == {
+        "operation": "embed",
+        "embedding_dims": 4,
+        "count": 1,
+    }
+
+
+async def test_embed_telemetry_records_operation_context() -> None:
+    """The trace must show WHAT an embed was for — embed vs retrieve, and its
+    purpose/source — so a bare ``all-MiniLM-L6-v2`` call is no longer contextless.
+    The label rides ``extra`` as a first-class key (for filtering) and inside the
+    response body (so the existing RESPONSE panel shows it with zero UI change)."""
+    from arcstore.records import SpoolRecord
+
+    fake = _FakeEmbedder(dims=4)
+    captured: list[SpoolRecord] = []
+    await embed(
+        ["consolidate the day"],
+        model="fake-embed",
+        provider=fake,
+        operation="embed:consolidate",
+        on_event=captured.append,
+    )
+    extra = captured[0].extra
+    assert extra["operation"] == "embed:consolidate"
+    assert extra["response_body"]["operation"] == "embed:consolidate"
+
+
+async def test_embed_operation_defaults_to_generic() -> None:
+    """A caller that passes no label defaults to the generic ``embed`` — the
+    existing API is never broken by the new context field."""
+    from arcstore.records import SpoolRecord
+
+    fake = _FakeEmbedder(dims=4)
+    captured: list[SpoolRecord] = []
+    await embed(["no label"], model="fake-embed", provider=fake, on_event=captured.append)
+    assert captured[0].extra["operation"] == "embed"
 
 
 async def test_embed_omits_input_text_when_raw_capture_disabled() -> None:
@@ -174,7 +210,11 @@ async def test_embed_omits_input_text_when_raw_capture_disabled() -> None:
     request_body = captured[0].extra["request_body"]
     assert "input" not in request_body
     assert request_body["count"] == 1
-    assert captured[0].extra["response_body"] == {"embedding_dims": 4, "count": 1}
+    assert captured[0].extra["response_body"] == {
+        "operation": "embed",
+        "embedding_dims": 4,
+        "count": 1,
+    }
 
 
 async def test_embed_spool_record_carries_bodies_for_trace_ui(
@@ -201,7 +241,7 @@ async def test_embed_spool_record_carries_bodies_for_trace_ui(
     assert len(spooled) == 1
     extra = spooled[0].extra
     assert extra["request_body"]["input"] == ["remember the budget line"]
-    assert extra["response_body"] == {"embedding_dims": 4, "count": 1}
+    assert extra["response_body"] == {"operation": "embed", "embedding_dims": 4, "count": 1}
     assert spooled[0].actor_did == "did:arc:local:executor/test"
 
 

@@ -163,7 +163,7 @@ class SurfaceIndex:
         """Embed through the injected seam, or None when embeddings are unavailable."""
         if not self._backend.vec_available:
             return None
-        return await embed_or_none(self._embedder, texts)
+        return await embed_or_none(self._embedder, texts, operation="embed:index-surface")
 
     # -- search ------------------------------------------------------------
 
@@ -193,7 +193,7 @@ class SurfaceIndex:
         """Cosine search via the backend, scope-isolated; None when unavailable."""
         if not self._backend.vec_available:
             return None
-        vectors = await embed_or_none(self._embedder, [text])
+        vectors = await embed_or_none(self._embedder, [text], operation="retrieve:surface")
         if not vectors:
             return None
         return await self._backend.vec_search(self._scope.key, vectors[0])

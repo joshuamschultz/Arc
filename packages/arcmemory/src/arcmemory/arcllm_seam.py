@@ -40,7 +40,7 @@ from arcmemory.distill import (
     InsightMint,
     ProcedureExtraction,
 )
-from arcmemory.index.rebuild import EmbeddingUnavailableError
+from arcmemory.index.rebuild import EmbeddingUnavailableError, current_embed_operation
 from arcmemory.types import Event, Fact, Procedure
 
 # A factory that yields a *fresh* arcllm provider for one call. An arcllm model
@@ -97,6 +97,7 @@ class ArcLLMEmbedder:
                 model=self._model,
                 backend=self._backend,
                 provider=self._resolve_provider(),
+                operation=current_embed_operation(),
                 telemetry=self._telemetry,
             )
         except (

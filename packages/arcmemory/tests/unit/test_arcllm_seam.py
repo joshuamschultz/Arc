@@ -37,6 +37,48 @@ async def test_embedder_returns_arcllm_vectors(monkeypatch: pytest.MonkeyPatch) 
     assert seen["texts"] == ["hello"] and seen["model"] == "m" and seen["backend"] == "local"
 
 
+async def test_operation_label_flows_from_funnel_into_arcllm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The purpose label set at the call site (``embed_or_none(..., operation=...)``)
+    must reach ``arcllm.embed`` so the trace records WHAT the embed was for —
+    consolidate vs ingest vs recall — not a contextless ``all-MiniLM`` call."""
+    from arcmemory.index.rebuild import embed_or_none
+
+    seen: dict[str, Any] = {}
+
+    async def fake_embed(texts: list[str], **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return SimpleNamespace(vectors=[[1.0]])
+
+    monkeypatch.setattr(arcllm, "embed", fake_embed)
+    embedder = ArcLLMEmbedder(model="m")
+
+    await embed_or_none(embedder, ["x"], operation="embed:consolidate")
+    assert seen["operation"] == "embed:consolidate"
+
+
+async def test_operation_label_defaults_and_never_leaks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A direct seam call (no funnel) defaults to the generic ``embed``, and the
+    per-call label is reset afterward — it must not bleed into the next embed."""
+    from arcmemory.index.rebuild import current_embed_operation, embed_or_none
+
+    seen: list[str] = []
+
+    async def fake_embed(texts: list[str], **kwargs: Any) -> Any:
+        seen.append(kwargs["operation"])
+        return SimpleNamespace(vectors=[[1.0]])
+
+    monkeypatch.setattr(arcllm, "embed", fake_embed)
+    embedder = ArcLLMEmbedder(model="m")
+
+    await embed_or_none(embedder, ["a"], operation="retrieve:recall")
+    # After the funnel resets the contextvar, a bare seam call is the generic label.
+    await embedder.embed_texts(["b"])
+    assert seen == ["retrieve:recall", "embed"]
+    assert current_embed_operation() == "embed"
+
+
 async def test_embedder_empty_input_skips_arcllm(monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(*_a: Any, **_k: Any) -> Any:
         raise AssertionError("arcllm.embed must not be called for empty input")

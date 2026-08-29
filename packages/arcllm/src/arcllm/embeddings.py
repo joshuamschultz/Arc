@@ -102,9 +102,15 @@ def _embed_request_body(texts: list[str], *, store_raw: bool) -> dict[str, Any]:
     return body
 
 
-def _embed_response_body(dims: int, count: int) -> dict[str, Any]:
-    """Compact response descriptor — the vector shape, never the vectors."""
-    return {"embedding_dims": dims, "count": count}
+def _embed_response_body(dims: int, count: int, operation: str) -> dict[str, Any]:
+    """Compact response descriptor — the vector shape + what the embed was for.
+
+    ``operation`` is the short caller label (``embed:consolidate``,
+    ``embed:ingest``, ``retrieve:recall``, …) so the trace RESPONSE panel shows
+    WHAT the call did — embed vs retrieve, and its purpose/source — not just the
+    shape. Never content: a bare operation/purpose string.
+    """
+    return {"operation": operation, "embedding_dims": dims, "count": count}
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +383,7 @@ def _emit_telemetry(
     usage: Usage,
     cost: float,
     latency_ms: float,
+    operation: str,
     request_body: dict[str, Any] | None = None,
     response_body: dict[str, Any] | None = None,
 ) -> None:
@@ -384,12 +391,14 @@ def _emit_telemetry(
 
     Request/response bodies ride ``extra`` so the trace UI shows the actual
     embed (input text + vector shape), not ``null`` — mirroring the completion
-    path's ``_record_spool``.
+    path's ``_record_spool``. ``operation`` is stamped as a first-class
+    ``extra`` key so the trace can be filtered by what the embed was for
+    (embed vs retrieve; consolidate / ingest / recall / …).
     """
     from arcstore.records import SpoolRecord
     from arcstore.spool import record as spool_record
 
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = {"operation": operation}
     if request_body is not None:
         extra["request_body"] = request_body
     if response_body is not None:
@@ -424,6 +433,7 @@ async def embed(
     model: str,
     provider: EmbeddingProvider | None = None,
     backend: str = "local",
+    operation: str = "embed",
     telemetry: dict[str, Any] | None = None,
     on_event: Callable[[SpoolRecord], None] | None = None,
 ) -> EmbeddingResponse:
@@ -435,6 +445,11 @@ async def embed(
         provider: An explicit backend to use (dependency injection). When
             ``None``, one is resolved from ``backend`` + ``model``.
         backend: ``"local"`` (default), ``"provider"``, or ``"none"``.
+        operation: Short caller label recorded on the trace so it shows WHAT
+            the embed was for — embed vs retrieve, and the purpose/source
+            (e.g. ``embed:consolidate``, ``embed:ingest``, ``retrieve:recall``).
+            Defaults to the generic ``"embed"``. A bare operation/purpose
+            string only — never content.
         telemetry: SPEC-038 budget + telemetry config, reusing the completion
             keys — ``budget_scope``, ``monthly_limit_usd``, ``daily_limit_usd``,
             ``per_call_max_usd``, ``cost_input_per_1m``, ``enforcement``,
@@ -480,7 +495,8 @@ async def embed(
         usage=response.usage,
         cost=cost,
         latency_ms=latency_ms,
+        operation=operation,
         request_body=_embed_request_body(texts, store_raw=tel.get("store_raw_bodies", True)),
-        response_body=_embed_response_body(response.dims, len(response.vectors)),
+        response_body=_embed_response_body(response.dims, len(response.vectors), operation),
     )
     return response

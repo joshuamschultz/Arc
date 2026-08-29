@@ -552,7 +552,7 @@ class Consolidator:
         cues = self._all_cues()
         if len(cues) < 2:
             return []
-        embedded = await embed_or_none(self._embedder, cues)
+        embedded = await embed_or_none(self._embedder, cues, operation="embed:consolidate-cues")
         if embedded is None:
             return []
         vectors = dict(zip(cues, embedded, strict=True))
@@ -597,7 +597,11 @@ class Consolidator:
         if len(entities) < 2:
             self._emit_dedup_pass(len(entities), 0, 0)
             return []
-        embedded = await embed_or_none(self._embedder, [e.name for _, e in entities])
+        embedded = await embed_or_none(
+            self._embedder,
+            [e.name for _, e in entities],
+            operation="embed:consolidate-entity-dedup",
+        )
         if embedded is None:
             self._emit_dedup_skipped("no-embedder")
             return []
@@ -683,7 +687,9 @@ class Consolidator:
         if len(cards) < 2:
             return []
         triggers = [f"{c.title}. {c.when_to_use}" for c in cards]
-        embedded = await embed_or_none(self._embedder, triggers)
+        embedded = await embed_or_none(
+            self._embedder, triggers, operation="embed:consolidate-procedure-dedup"
+        )
         if embedded is None:
             self._emit_dedup_skipped("no-embedder-procedures")
             return []

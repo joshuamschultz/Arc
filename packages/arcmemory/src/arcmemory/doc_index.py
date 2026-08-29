@@ -241,7 +241,7 @@ class DocIndex:
         """Embed through the injected seam, or ``None`` when embeddings are unavailable."""
         if not backend.vec_available:
             return None
-        return await embed_or_none(self._embedder, texts)
+        return await embed_or_none(self._embedder, texts, operation="embed:ingest")
 
     async def _maybe_rerank(self, query: str, hits: list[DocHit]) -> list[DocHit]:
         """Bounded top-K rerank, only when injected and the top1/top2 margin is tight."""

@@ -135,7 +135,11 @@ class StructuralIndex:
         if not pending:
             return 0
 
-        vectors = await embed_or_none(self._embedder, [trigger for _, trigger in pending])
+        vectors = await embed_or_none(
+            self._embedder,
+            [trigger for _, trigger in pending],
+            operation="embed:index-structural",
+        )
         if vectors is None:
             return 0
         for (insight_id, trigger), vector in zip(pending, vectors, strict=True):
@@ -158,7 +162,9 @@ class StructuralIndex:
         ``None`` when no embedder is available (the caller then falls back to the
         cue-graph channel only — SDD degrade).
         """
-        vectors = await embed_or_none(self._embedder, [_abstract(situation)])
+        vectors = await embed_or_none(
+            self._embedder, [_abstract(situation)], operation="retrieve:structural"
+        )
         if not vectors:
             return None
         query = vectors[0]

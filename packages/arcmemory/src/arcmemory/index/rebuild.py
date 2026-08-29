@@ -13,6 +13,7 @@ table is simply left empty -- retrieval degrades to BM25 + graph, never fails.
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Iterable
 from itertools import combinations
 from pathlib import Path
@@ -86,7 +87,25 @@ class Embedder(Protocol):
     async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
-async def embed_or_none(embedder: Embedder | None, texts: list[str]) -> list[list[float]] | None:
+# The operation/purpose label for the embed currently in flight. ``embed_or_none``
+# sets it for the duration of one seam call so the arcllm-backed embedder can stamp
+# the telemetry record with WHAT the embed was for (consolidate / ingest / recall /
+# …) — without widening the ``Embedder`` Protocol (and every stub of it) with a
+# parameter only one implementation reads. A short operation/purpose string only,
+# never content. Reset in ``finally`` so it never leaks across calls.
+_EMBED_OPERATION: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "arcmemory_embed_operation", default="embed"
+)
+
+
+def current_embed_operation() -> str:
+    """The operation label for the embed in flight (default ``"embed"``)."""
+    return _EMBED_OPERATION.get()
+
+
+async def embed_or_none(
+    embedder: Embedder | None, texts: list[str], *, operation: str = "embed"
+) -> list[list[float]] | None:
     """Embed through the seam, or ``None`` when embeddings are unavailable.
 
     The single degrade funnel every call site shares: ``None`` embedder (never
@@ -96,17 +115,24 @@ async def embed_or_none(embedder: Embedder | None, texts: list[str]) -> list[lis
     Because it is the one funnel, it is also where the degrade is made **loud** —
     once per process per reason (``arcmemory.degrade``), so semantic recall can
     never go dark unnoticed again.
+
+    ``operation`` is the short label for this call (``embed:consolidate``,
+    ``retrieve:recall``, …); it rides a contextvar to the arcllm-backed embedder so
+    the trace records what the embed was for. Defaults to the generic ``"embed"``.
     """
     if embedder is None:
         warn_once("embedder:not-wired", _NOT_WIRED)
         return None
     if not texts:
         return []
+    token = _EMBED_OPERATION.set(operation)
     try:
         return await embedder.embed_texts(texts)
     except EmbeddingUnavailableError as exc:
         warn_once("embedder:unavailable", _UNAVAILABLE.format(exc))
         return None
+    finally:
+        _EMBED_OPERATION.reset(token)
 
 
 class IndexRebuilder:
@@ -200,7 +226,7 @@ class IndexRebuilder:
         """Embed chunk texts through the injected seam, or None when unavailable."""
         if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
             return None
-        return await embed_or_none(self._embedder, texts)
+        return await embed_or_none(self._embedder, texts, operation="embed:index-rebuild")
 
     # -- edges -------------------------------------------------------------
 
@@ -239,4 +265,10 @@ class IndexRebuilder:
                 self._graph.hebbian_bump(self._scope.key, a, b, ts=event.ts)
 
 
-__all__ = ["Embedder", "EmbeddingUnavailableError", "IndexRebuilder", "embed_or_none"]
+__all__ = [
+    "Embedder",
+    "EmbeddingUnavailableError",
+    "IndexRebuilder",
+    "current_embed_operation",
+    "embed_or_none",
+]

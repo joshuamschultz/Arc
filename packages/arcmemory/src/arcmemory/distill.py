@@ -317,7 +317,9 @@ async def _fuzzy_entity_match(
     ]
     if not same_type:
         return None, cross_type_exact
-    embedded = await embed_or_none(embedder, [name] + [e.name for _, e in same_type])
+    embedded = await embed_or_none(
+        embedder, [name] + [e.name for _, e in same_type], operation="embed:entity-resolve"
+    )
     if embedded is None:
         return None, cross_type_exact
     query, existing = embedded[0], embedded[1:]
