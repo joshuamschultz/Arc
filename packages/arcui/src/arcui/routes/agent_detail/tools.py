@@ -19,6 +19,8 @@ from arcui.routes.agent_detail._common import (
     _compute_write_target,
     _read_text_or_empty,
 )
+from arcui.routes.agent_detail.capabilities import _live_agent
+from arcui.routes.agent_detail.capabilities import agent_tool_rows as _loader_tool_rows
 from arcui.schemas import ErrorResponse, ToolDetailResponse, ToolsResponse
 
 # Transports whose files live under the agent root and are safe to edit via
@@ -382,6 +384,78 @@ def agent_tool_rows(
     return list(seen.values()), allowlist, denylist, policy_summary
 
 
+def _source_category(transport: str, source_root: str) -> str:
+    """Classify a tool row's origin into one of H-014's four source badges:
+    ``builtin`` / ``agent`` / ``extension`` / ``module``.
+
+    Prefers the capability loader's own ``source_root`` (more granular —
+    e.g. ``"agent-skills"``, ``"module:memory-skills"``) when the row was
+    matched to a loader verdict; falls back to the disk/builtin/module scan's
+    ``transport`` label for rows the loader doesn't enumerate (extensions,
+    live-registered-only tools, config-only allowlist entries). Every other
+    scan root (``agent_dir``, ``workspace``, ``capability``, ``global``,
+    ``config``, ``registered``, and the loader's ``agent``/``workspace``
+    roots) is agent-facing, so it collapses to ``"agent"``.
+    """
+    key = (source_root or transport or "").lower()
+    if key.startswith("module:"):
+        return "module"
+    if key.startswith("builtin"):
+        return "builtin"
+    if key == "extension":
+        return "extension"
+    return "agent"
+
+
+async def _merge_loader_verdicts(
+    tools: list[dict[str, Any]], agent_root: Path, live_agent: Any
+) -> None:
+    """Layer the capability loader's verbatim verdict onto the durable tool
+    rows IN PLACE (H-013): ``version``, ``source_root``, ``loader_status``,
+    and ``loader_detail`` — the signature/TOFU provenance that proves each
+    tool was signed and verified at load, previously shown only in the
+    now-removed second "CAPABILITY TOOLS — LOADER VERDICTS" table. Falls back
+    to the loader's own ``description`` when the disk-scan regex found none.
+
+    A loader-enumerated tool absent from ``tools`` (e.g. an agent/workspace
+    capability the disk-file regex missed) is appended rather than dropped —
+    the merged list must be the UNION of both prior tables, not their
+    intersection. Every row also gets a normalized ``source`` category
+    (H-014) so the UI can render one consistent badge regardless of which
+    scan surfaced the row.
+    """
+    cap_rows = await _loader_tool_rows(agent_root, live_agent)
+    by_name = {row["name"]: row for row in tools}
+    for cap in cap_rows:
+        name = str(cap.get("name") or "")
+        if not name:
+            continue
+        target = by_name.get(name)
+        if target is None:
+            target = {
+                "name": name,
+                "transport": "",
+                "classification": "",
+                "description": "",
+                "status": "allow",
+            }
+            tools.append(target)
+            by_name[name] = target
+        target["version"] = cap.get("version") or ""
+        target["source_root"] = cap.get("source_root") or ""
+        target["loader_status"] = cap.get("status") or ""
+        target["loader_detail"] = cap.get("status_detail") or ""
+        if not target.get("description"):
+            target["description"] = cap.get("description") or ""
+
+    for row in tools:
+        row.setdefault("version", "")
+        row.setdefault("source_root", "")
+        row.setdefault("loader_status", "")
+        row.setdefault("loader_detail", "")
+        row["source"] = _source_category(str(row.get("transport") or ""), str(row["source_root"]))
+
+
 async def get_tools(request: Request) -> JSONResponse:
     agent_id = request.path_params["id"]
     agent_root = _agent_root(request, agent_id)
@@ -397,6 +471,7 @@ async def get_tools(request: Request) -> JSONResponse:
     live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
 
     tools, allowlist, denylist, policy_summary = agent_tool_rows(agent_id, agent_root, live_tools)
+    await _merge_loader_verdicts(tools, agent_root, _live_agent(request, agent_id))
 
     return JSONResponse(
         ToolsResponse(
@@ -520,13 +595,11 @@ async def get_tool_detail(request: Request) -> JSONResponse:
         )
         return JSONResponse(payload.model_dump(mode="json"))
 
-    from arcui.routes.agent_detail.capabilities import _live_agent, agent_tool_rows
-
     # Only consult agent/workspace-sourced rows here — builtins/global route
     # through the dedicated steps below so the transport label stays the
     # canonical "builtin" the Tools tab list already uses, not the loader's
     # raw "builtins"/"builtins-skills" scan-root name.
-    cap_rows = await agent_tool_rows(agent_root, _live_agent(request, agent_id))
+    cap_rows = await _loader_tool_rows(agent_root, _live_agent(request, agent_id))
     cap_matches = [
         r
         for r in cap_rows

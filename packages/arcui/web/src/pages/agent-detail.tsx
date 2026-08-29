@@ -771,12 +771,14 @@ function SkillsTab({ agentId }: { agentId: string }) {
 
 function ToolsTab({ agentId }: { agentId: string }) {
   const q = useAgentTools(agentId)
-  const caps = useAgentCapabilities(agentId)
+  // ONE consolidated list (H-013): the disk/builtin/module scan's edit
+  // affordances merged with the capability loader's verbatim verdict
+  // (version, source, signature/TOFU status) — no second "loader verdicts"
+  // table to fall out of sync with this one.
   const tools = (q.data?.tools ?? []) as Dict[]
   // Same `policy_summary` the Identity tab's "Allow" row renders from
   // (H-010) — one interpreter, so the two tabs cannot disagree.
   const policyLabel = q.data?.policy_summary?.label ?? 'allow-all'
-  const capTools = (caps.data?.items ?? []).filter((i) => i.kind === 'tool')
   const [selected, setSelected] = useState<string | null>(null)
   return (
     <>
@@ -792,26 +794,6 @@ function ToolsTab({ agentId }: { agentId: string }) {
               <StatCard label="Policy" value={policyLabel} />
             </div>
             <ToolsTable tools={tools} onRowClick={(t) => setSelected(String(t.name))} />
-            <Section title="Capability tools — loader verdicts">
-              <QueryState
-                query={caps}
-                isEmpty={() => capTools.length === 0}
-                empty={
-                  <p className="text-xs text-muted-foreground">
-                    No capability tools scanned across the four roots.
-                  </p>
-                }
-              >
-                {() => (
-                  <CapabilityTable
-                    items={capTools}
-                    searchPlaceholder="Search capability tools…"
-                    emptyTitle="No capability tools"
-                    onRowClick={(item: CapabilityInventoryItem) => setSelected(item.name)}
-                  />
-                )}
-              </QueryState>
-            </Section>
           </div>
         )}
       </QueryState>
