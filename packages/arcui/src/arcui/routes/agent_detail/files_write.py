@@ -290,6 +290,20 @@ async def put_file_write(request: Request) -> JSONResponse:
         )
         return _error(f"path escapes agent directory: {rel}", 400)
 
+    # A private key is non-exportable by principle and a detached ``.arcsig`` is
+    # meaningless if hand-edited — neither is ever legitimately written through the
+    # file editor (unlike identity.md / policy.md, which ARE the operator-edit path).
+    # Checked on the RESOLVED path so a symlink alias cannot smuggle a write.
+    if _is_key_material(canonical) or canonical.name.lower().endswith(_SIDECAR_SUFFIX):
+        emit_mutation_audit(
+            request,
+            target=_best_effort_resolved(base, rel),
+            operation="file_write",
+            outcome="denied",
+            detail="protected artifact: private key or signature sidecar is not hand-writable",
+        )
+        return _error("refusing to write a private key or signature sidecar", 403)
+
     content = await _content_from_body(request)
     if content is None:
         return _error("expected a JSON body with a string 'content' field", 400)

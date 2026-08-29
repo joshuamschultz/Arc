@@ -86,6 +86,28 @@ class TestSave:
         assert body["message"] == "Saved."
         assert (agent_dir / "workspace" / "identity.md").read_text() == "# new persona\n"
 
+    def test_operator_cannot_write_a_private_key(self, ctx: tuple[TestClient, Path]) -> None:
+        # A private key is non-exportable by principle (LLM07); the file editor must
+        # never overwrite one, even as operator. identity.md (above) stays writable.
+        client, agent_dir = ctx
+        resp = client.put(
+            "/api/agents/alpha/files/read?root=agent&path=agent.key",
+            headers=_op(),
+            json={"content": "STOLEN"},
+        )
+        assert resp.status_code == 403
+        assert not (agent_dir / "agent.key").exists()
+
+    def test_operator_cannot_write_an_arcsig_sidecar(self, ctx: tuple[TestClient, Path]) -> None:
+        # A detached signature is meaningless if hand-edited — refuse the write.
+        client, _ = ctx
+        resp = client.put(
+            "/api/agents/alpha/files/read?root=workspace&path=identity.md.arcsig",
+            headers=_op(),
+            json={"content": "forged"},
+        )
+        assert resp.status_code == 403
+
     def test_can_create_file_at_agent_root(self, ctx: tuple[TestClient, Path]) -> None:
         client, agent_dir = ctx
         resp = client.put(
