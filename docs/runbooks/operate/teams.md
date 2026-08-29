@@ -186,7 +186,7 @@ whichever DID is in `gateway.toml`'s `[gateway].agent_did`. A multi-agent
 fleet with Telegram enabled still only has one agent answering Telegram
 messages; the rest are reachable via the web dashboard / API only, unless
 you stand up a second gateway instance on a different bot token per
-the multi-instance considerations in [arcgateway.md](../../building/packages/arcgateway.md#multi-instance-considerations).
+the multi-instance considerations in [arcgateway.md](../../building/packages/arcgateway.md#binding-a-bot-to-an-agent).
 
 ## 7. Verify
 

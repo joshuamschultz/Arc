@@ -108,7 +108,9 @@ nav:
           - arcllm: building/packages/arcllm.md
           - arcrun: building/packages/arcrun.md
           - arctrust: building/packages/arctrust.md
+          - arcbundle: building/packages/arcbundle.md
           - arcstore: building/packages/arcstore.md
+          - arcokf: building/packages/arcokf.md
           - arcprompt: building/packages/arcprompt.md
           - arcmodel: building/packages/arcmodel.md
           - arcagent: building/packages/arcagent.md

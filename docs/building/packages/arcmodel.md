@@ -1,208 +1,169 @@
-# arcmodel - Model Registry
+# arcmodel - Model Management and Routing
 
-> **Building with Arc**  ·  Build  ·  page 15 of 27  
-> **For** Engineers writing code against Arc  
+> **Building with Arc**  ·  Build  ·  page 15 of 27
+> **For** Engineers writing code against Arc
 > [← arcprompt](arcprompt.md)  ·  [Docs home](../../README.md)  ·  [arcagent →](arcagent.md)
 
 ---
 
-## Overview
+## In one breath
 
-`arcmodel` provides **model metadata and registry**:
-- **Model catalog** - All supported models with metadata
-- **Pricing data** - Token costs per model
-- **Capability matrix** - Tool, vision, JSON support
-- **Selection logic** - Choose best model for task
+`arcmodel` is a **reserved, early-scaffolding package**. It is the intended
+future home for cross-tenant model *selection*, capability *discovery*, and
+tiered *routing* — concerns that today live inside `arcllm` provider configs.
+As shipped on this commit, the package installs and exports **`__version__`
+only**. There is no public API, no class, and no function to call yet.
+
+This page is deliberately honest about that. Everything below the "Current
+state" section describes what the package *will* become, not what it does now.
+If you are looking for the model layer that actually works today, that is
+[`arcllm`](arcllm.md) — its always-on router already picks and calls a model on
+every turn.
 
 ```mermaid
 flowchart LR
-    classDef registry fill:#003B82,stroke:#002550,color:#FFFFFF
-    classDef model fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef live fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef planned fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    arcmodel[arcmodel<br/>Model Registry]:::registry --> Claude[Claude Models]:::model
-    arcmodel --> GPT[GPT Models]:::model
-    arcmodel --> Gemini[Gemini Models]:::model
-    arcmodel --> Llama[Llama Models]:::model
-    arcmodel --> Local[Local Models]:::model
+    arcllm["arcllm<br/>17 providers · always-on router"]:::live
+    arcmodel["arcmodel<br/>model selection · routing<br/>(scaffolding)"]:::planned
+    arcllm -. "planned: lift routing out of provider config" .-> arcmodel
 ```
+
+The dotted edge is planned, not wired. Nothing imports `arcmodel`, and
+`arcmodel` declares no Arc dependency.
 
 ---
 
-## Model Catalog
+## Current state
 
-### Model Metadata
+| Fact | Value (verified on this commit) |
+|---|---|
+| Version | `0.0.2` (`arcmodel.__version__`) |
+| Public symbols | none — only `__version__` |
+| Arc dependencies | none declared |
+| Reverse dependencies | none — nothing imports it |
+| Source files | `src/arcmodel/__init__.py` only |
+| Tests | none |
+| `pyproject` status classifier | `Development Status :: 1 - Planning` |
+
+The entire source of the package is:
 
 ```python
-from arcllm import ModelMetadata, load_model
+"""arcmodel — Arc model management. Coming soon."""
 
-registry = ModelMetadata()
-
-# Get model info
-info = registry.get("anthropic/claude-sonnet-4-5-20250929")
-
-print(info.context_window)  # 200000
-print(info.max_output)      # 8192
-print(info.supports_tools)  # True
-print(info.supports_vision) # True
-print(info.input_price)     # 3.00 per 1M tokens
-print(info.output_price)    # 15.00 per 1M tokens
+__version__ = "0.0.2"
 ```
 
-### Model Entry Structure
-
-```json
-{
-  "id": "anthropic/claude-sonnet-4-5-20250929",
-  "provider": "anthropic",
-  "context_window": 200000,
-  "max_output": 8192,
-  "supports_tools": true,
-  "supports_vision": true,
-  "supports_json": true,
-  "input_price_per_1m": 3.00,
-  "output_price_per_1m": 15.00,
-  "recommended_for": ["general", "analysis", "coding"]
-}
-```
+That is not an omission in this document — it is the package. The package-local
+`CLAUDE.md` states the rule plainly: *"Status = early scaffolding. Do not invent
+a public API or dump ad-hoc routing here without an explicit product/design
+decision."*
 
 ---
 
-## Model Selection
+## What `arcllm` provides today vs. what `arcmodel` is reserved for
 
-### By Requirements
+The division of labor is the reason `arcmodel` exists as a name before it exists
+as code: the two concerns are genuinely different, and keeping them separate
+keeps `arcllm` a clean provider adapter.
 
-```python
-from arcllm import ModelMetadata, load_model
+| Concern | Lives today in | Reserved for `arcmodel` |
+|---|---|---|
+| Talking to a provider's wire API (17 providers) | `arcllm` | stays in `arcllm` |
+| Per-call model choice on a single turn | `arcllm` router (`load_model` always returns a router) | — |
+| `[providers.<name>]` `base_url` overrides | `arcllm` config | stays in `arcllm` |
+| **Cross-tenant** model catalogs with ACLs | — | `arcmodel` |
+| **Capability discovery** — query a provider for its current lineup, prices, context windows | — | `arcmodel` |
+| **Tier-aware fallback** — federal-only models for sensitive calls, open models otherwise | — | `arcmodel` |
+| **Cost-bounded selection** — downgrade automatically as a running budget nears a ceiling | — | `arcmodel` |
+| **Per-call eligibility rules** — "this call requires SOC2-certified hosting" | — | `arcmodel` |
 
-registry = ModelMetadata()
-
-# Find models with specific features
-models = registry.find(
-    supports_tools=True,
-    supports_vision=True,
-    max_context=100000,
-    max_cost=0.01  # per 1K tokens
-)
-
-for model in models:
-    print(f"{model.id}: ${model.estimated_cost(1000):.4f}")
-```
-
-### By Task Type
-
-```python
-# Recommended models by task
-TASK_MODELS = {
-    "analysis": ["anthropic/claude-sonnet-4-5-20250929"],
-    "coding": ["anthropic/claude-sonnet-4-5-20250929", "openai/gpt-4o"],
-    "creative": ["anthropic/claude-opus-4-20250929"],
-    "fast": ["groq/llama-3.1-70b"]
-}
-```
+The near-term guidance from the package's own rules: **extend the `arcllm`
+registry/config for immediate needs.** Real provider HTTP stays in `arcllm`
+until `arcmodel` has a defined, spec-owned seam with `arcllm`.
 
 ---
 
-## Pricing
+## Intended shape (not yet built)
 
-### Cost Calculation
+When a spec owns this package, it is expected to sit **beside `arcllm`**,
+lifting routing and model-selection concerns out of provider configs. The
+planned scope, from the package README and `CLAUDE.md`:
 
-```python
-from arcllm import ModelMetadata, load_model
+- **Capability-aware routing** — pick the right model per call (tools / vision /
+  long context / JSON mode).
+- **Tier-aware fallback** — federal-only models for sensitive calls, open models
+  for the rest.
+- **Cost-bounded selection** — downgrade to a cheaper model as the running
+  budget approaches a threshold.
+- **Multi-tenant model registries** — per-organization catalogs with ACLs, so an
+  org sees only its approved models.
+- **Capability discovery** — query providers for the current model lineup,
+  prices, and context windows.
+- **Per-call eligibility** — compliance predicates that narrow the candidate set
+  before selection.
 
-registry = ModelMetadata()
-model = registry.get("anthropic/claude-sonnet-4-5-20250929")
-
-# Estimate cost
-cost = model.estimate_cost(
-    prompt_tokens=5000,
-    completion_tokens=2000
-)
-# cost = (5000/1000000) * 3.00 + (2000/1000000) * 15.00 = $0.019
-
-# Batch estimation
-total_cost = registry.estimate_total(
-    model_id="anthropic/claude-sonnet-4-5-20250929",
-    prompt_tokens=50000,
-    completion_tokens=20000
-)
-```
-
-### Provider Pricing
-
-```python
-# Per-provider pricing tables
-PRICING = {
-    "anthropic": {
-        "claude-sonnet-4-5-20250929": {
-            "input": 3.00,
-            "output": 15.00
-        },
-        "claude-opus-4-20250929": {
-            "input": 15.00,
-            "output": 75.00
-        }
-    },
-    "openai": {
-        "gpt-4o": {
-            "input": 5.00,
-            "output": 15.00
-        }
-    }
-}
-```
+None of these have a class or function on this commit. Treat the list as a
+design target, not an API.
 
 ---
 
-## API Reference
+## Worked example
 
-### Classes
+The only thing you can do with `arcmodel` today is read its version:
 
 ```python
-class ModelMetadata:
-    def get(self, model_id: str) -> ModelInfo: ...
-    def list(self) -> list[ModelInfo]: ...
-    def find(self, **criteria) -> list[ModelInfo]: ...
-    def estimate_total(
-        self,
-        model_id: str,
-        prompt_tokens: int,
-        completion_tokens: int
-    ) -> float: ...
+import arcmodel
 
-class ModelInfo(TypedDict):
-    id: str
-    provider: str
-    context_window: int
-    max_output: int
-    supports_tools: bool
-    supports_vision: bool
-    supports_json: bool
-    input_price_per_1m: float
-    output_price_per_1m: float
-    recommended_for: list[str]
-    
-    def estimate_cost(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int
-    ) -> float: ...
+print(arcmodel.__version__)   # "0.0.2"
 ```
+
+Any snippet that constructs a registry, looks up model metadata, or estimates a
+cost from `arcmodel` is describing a package that does not exist yet. For a
+real, callable model layer, use `arcllm`:
+
+```python
+import arcllm
+
+# arcllm's router is always-on: load_model returns a router that picks and
+# calls a concrete provider model per request.
+router = arcllm.load_model("anthropic/claude-sonnet-4-5")
+```
+
+See [arcllm](arcllm.md) for the shipped model surface, including the
+`[providers.<name>]` `base_url` override and the always-on router.
 
 ---
 
-## Next Steps
+## Working here
 
-- [API Reference](../../reference/api.md) - Complete API documentation
-- [Package Index](../package-index.md) - All Arc packages
+If you are the engineer who finally builds this package:
+
+1. **Start from a spec** (PRD/SDD) — the package rules forbid growing a public
+   API without an explicit product/design decision.
+2. **Define the contract with `arcllm` first** — the seam between "which model"
+   (`arcmodel`) and "call this model" (`arcllm`) is the whole design.
+3. **Grow the package deliberately.** An empty package is not an invitation to
+   park unrelated routing code; keep concern purity intact so `arcllm` stays a
+   standalone provider adapter.
 
 ---
 
 ## Verified public surface
 
-> Introspected from the installed package on the current commit. Every name
-> below is importable exactly as shown; full signatures are in the
-> [API reference](../../reference/api.md#arcmodel).
+> Introspected from the installed package on the current commit.
 
-`arcmodel` exposes no public top-level Python symbols — it is used through its
-submodules or its console entry point.
+`arcmodel` exposes **no public Python symbols** other than `__version__`. It has
+no console entry point and no submodules. When the package grows a real API,
+this section and the [API reference](../../reference/api.md) will list it.
 
+---
+
+## Next Steps
+
+- [arcllm](arcllm.md) — the model layer that works today (17 providers,
+  always-on router)
+- [Package index](../package-index.md) — all Arc packages
+- [The Seam Model](../../concepts/seam-model.md) — why routing belongs behind a
+  contract, not a core `if provider == …` branch

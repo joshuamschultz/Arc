@@ -381,7 +381,7 @@ Operator commands for managing DM pairing codes. Require a running gateway
 — in practice that means `arc ui start --team-root <dir> --gateway-config
 <path>` (the embedded gateway); the standalone `arcgateway start` daemon
 unconditionally refuses to start at every tier (see
-[packages/arcgateway.md](../building/packages/arcgateway.md#embedded-gateway-pattern)),
+[packages/arcgateway.md](../building/packages/arcgateway.md#the-embedded-gateway-is-canonical)),
 so it is never the "running arcgateway" these commands need.
 
 | Command | Purpose | Example |
@@ -398,7 +398,7 @@ so it is never the "running arcgateway" these commands need.
  which isn't a real field on `GatewayConfig`)
 - Approving a code requires a registered trust-anchor operator key first —
  run `arc identity init` once if you haven't (see DM pairing in
- [packages/arcgateway.md](../building/packages/arcgateway.md#pairing-system))
+ [packages/arcgateway.md](../building/packages/arcgateway.md#pairing))
 
 ---
 
