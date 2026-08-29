@@ -262,6 +262,34 @@ async def test_audit_projects_readable_fields(tmp_path: Path) -> None:
         await observe.stop()
 
 
+@pytest.mark.asyncio
+async def test_audit_projection_falls_back_for_unmapped_and_empty_values(
+    tmp_path: Path,
+) -> None:
+    """An action/outcome outside the known vocabulary still degrades to a
+    readable label (never a raw token); a bare target and missing extra never
+    raise.
+    """
+    _write_audit(
+        tmp_path,
+        seq=0,
+        actor_did="did:arc:alpha",
+        action="widget.frobnicated",
+        target="",
+        outcome="partial",
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        event = (await observe.audit())[0]
+        assert event["action_label"] == "Widget Frobnicated"
+        assert event["decision"] == "Partial"
+        assert event["reason"] is None
+        assert event["target_label"] == "—"
+    finally:
+        await observe.stop()
+
+
 # SPEC-028 — tool/code timeline + spawn lineage + per-identity cost (FR-4)
 
 
