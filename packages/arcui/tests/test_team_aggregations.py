@@ -195,6 +195,20 @@ class TestRoster:
         agents = {a["agent_id"]: a for a in resp.json()["agents"]}
         assert "degraded" not in agents["alpha"]
 
+    def test_roster_carries_canonical_identity_shape(self, tmp_path):
+        # H-007: every roster row ships the same {host, platform, type,
+        # short_id, name} shape the SPA's one shared component renders,
+        # parsed from the row's own DID and joined by DID — not by matching
+        # names client-side.
+        team = _build_team(tmp_path, [("alpha", "")])
+        app, auth, _ = _make_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/team/roster", headers=_viewer(auth))
+        alpha = next(a for a in resp.json()["agents"] if a["agent_id"] == "alpha")
+        identity = alpha["identity"]
+        assert identity["did"] == "did:arc:alpha"
+        assert identity["name"] == "alpha"
+
 
 # ---------------------------------------------------------------------------
 # /api/team/policy/{bullets,stats}
