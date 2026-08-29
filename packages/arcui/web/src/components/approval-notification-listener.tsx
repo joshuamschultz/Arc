@@ -122,7 +122,7 @@ export function ApprovalNotificationListener() {
     <button
       type="button"
       onClick={() => void enable()}
-      className="fixed right-4 top-4 z-50 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium shadow-sm"
+      className="fixed right-4 top-16 z-50 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium shadow-sm"
       aria-label="Enable approval notifications"
     >
       <Bell className="size-3.5" /> Enable notifications
