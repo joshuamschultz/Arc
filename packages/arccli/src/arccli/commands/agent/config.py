@@ -9,14 +9,19 @@ from pathlib import Path
 
 from arccli.commands.agent._common import _load_agent_config, _resolve_agent_dir
 from arccli.commands.agent._config_sync import (
+    ConfigRefreshResult,
     ConfigSyncResult,
     discover_agent_dirs,
+    refresh_agent_config,
     sync_agent_config,
 )
 
 
 def _config(args: argparse.Namespace) -> None:
-    """Show agent configuration, or sync it against the current scaffold."""
+    """Show agent configuration, or sync/refresh it against the current scaffold."""
+    if getattr(args, "refresh_defaults", False):
+        _refresh(args)
+        return
     if getattr(args, "sync", False):
         _sync(args)
         return
@@ -60,6 +65,42 @@ def _sync(args: argparse.Namespace) -> None:
         f"{verb} {len(new_modules)} module(s) and "
         f"{len(added) - len(new_modules)} setting(s) across {len(results)} agent(s)\n"
     )
+
+
+def _refresh(args: argparse.Namespace) -> None:
+    """Add missing scaffold settings AND advance untouched defaults (H-039)."""
+    dry_run = bool(getattr(args, "dry_run", False))
+    agent_dirs = _sync_targets(args)
+    if not agent_dirs:
+        sys.stderr.write("error: no agent directory with an arcagent.toml found\n")
+        raise SystemExit(1)
+
+    results = [refresh_agent_config(agent_dir, dry_run=dry_run) for agent_dir in agent_dirs]
+    for result in results:
+        _report_refresh(result, dry_run=dry_run)
+
+    added = sum(len(r.added) for r in results)
+    refreshed = sum(len(r.refreshed) for r in results)
+    verb = "would advance" if dry_run else "advanced"
+    sys.stdout.write(
+        f"added {added} new setting(s) and {verb} {refreshed} stale default(s) "
+        f"across {len(results)} agent(s)\n"
+    )
+
+
+def _report_refresh(result: ConfigRefreshResult, *, dry_run: bool) -> None:
+    name = result.path.parent.name
+    if not result.changed:
+        sys.stdout.write(f"  = {name}: already current\n")
+        return
+    marker = "?" if dry_run else "+"
+    sys.stdout.write(
+        f"  {marker} {name}: {len(result.added)} new, {len(result.refreshed)} refreshed\n"
+    )
+    for key in result.added:
+        sys.stdout.write(f"      + {key}\n")
+    for key in result.refreshed:
+        sys.stdout.write(f"      ~ {key}\n")
 
 
 def _sync_targets(args: argparse.Namespace) -> list[Path]:

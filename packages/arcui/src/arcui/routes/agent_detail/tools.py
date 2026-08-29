@@ -402,7 +402,12 @@ def _source_category(transport: str, source_root: str) -> str:
         return "module"
     if key.startswith("builtin"):
         return "builtin"
-    if key == "extension":
+    # "extension:<name>" is the loader's real scan-root spelling for a
+    # connector's tools (arcagent.capabilities.capability_loader.
+    # EXTENSION_ROOT_PREFIX); the bare "extension" is the legacy disk-scan
+    # transport label. Both must map here, or a connector's live-registered
+    # tools drop into "agent" and vanish from the source filter (H-031).
+    if key == "extension" or key.startswith("extension:"):
         return "extension"
     return "agent"
 

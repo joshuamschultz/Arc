@@ -147,6 +147,35 @@ class TestPiiOutboundText:
         assert "[PII:SSN]" in sent_messages[0].content
         assert "[PII:EMAIL]" in sent_messages[0].content
 
+    async def test_redaction_preserves_every_message_field(self):
+        """Contract (kills the field-drop bug class): SecurityModule reconstructs
+        Message objects on the redaction path, so it must copy EVERY field. It
+        already dropped ``ephemeral`` once; the field added after that would hit
+        the same wall. This populates every non-content field with a NON-default
+        value and asserts field-for-field survival through the real rebuild path
+        (PII present → a new Message is actually constructed). The guard forces
+        this test — and a review of every ``Message(...)`` reconstruction in
+        modules/ — to be extended the day Message gains a field.
+        """
+        # If this fails, Message gained a field: set it non-default below AND
+        # confirm every Message(...) rebuild in arcllm/modules copies it.
+        assert set(Message.model_fields) == {"role", "content", "ephemeral"}
+
+        inner = _make_inner()
+        module = SecurityModule(_base_config(), inner)
+        original = Message(role="user", content="SSN 123-45-6789", ephemeral=True)
+
+        await module.invoke([original])
+
+        (sent,) = inner.invoke.call_args[0][0]
+        assert "[PII:SSN]" in sent.content  # proves the rebuild path ran
+        for field in Message.model_fields:
+            if field == "content":  # content is legitimately transformed by redaction
+                continue
+            assert getattr(sent, field) == getattr(original, field), (
+                f"redaction dropped Message field '{field}'"
+            )
+
     async def test_redaction_preserves_the_ephemeral_flag(self):
         """H-038 security confirm: redaction must not silently erase metadata.
 

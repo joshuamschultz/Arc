@@ -279,7 +279,18 @@ def _union_trusted_keys(
 
 
 class RuntimeToolItem(BaseModel):
-    """One tool registered in a LOADED agent's runtime ToolRegistry (REQ-095)."""
+    """One tool registered in a LOADED agent's runtime ToolRegistry (REQ-095).
+
+    ``source`` is :attr:`RegisteredTool.source` — the capability scan root the
+    tool's code loaded from (``"extension:<name>"``, ``"agent"``,
+    ``"module:<name>"``, …), empty when first-party code registered the tool
+    directly. This is the ONLY place a connector-attached extension's tools
+    are enumerable at all: an extension's verbs register into the live
+    registry through :class:`~arcagent.extension.bridge.CapabilityBridge` with
+    no file the static inventory scan roots could ever find, so dropping this
+    field here would make every attached extension's tools invisible to
+    arcui's capability views (H-031 source coverage).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -287,6 +298,7 @@ class RuntimeToolItem(BaseModel):
     description: str
     classification: str
     transport: str
+    source: str = ""
 
 
 class AgentCapabilityInventory(BaseModel):
@@ -348,6 +360,7 @@ async def collect_agent_capability_inventory(
             description=tool.description,
             classification=str(tool.classification),
             transport=str(getattr(tool, "transport", "")),
+            source=str(getattr(tool, "source", "") or ""),
         )
         for tool in live_agent.registered_tools
     ]

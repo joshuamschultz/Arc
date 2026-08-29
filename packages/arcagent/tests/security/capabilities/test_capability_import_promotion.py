@@ -120,6 +120,44 @@ def test_promotion_requires_reviewed_unchanged_staging_and_signs_agent_files(
     }
 
 
+def test_promoted_import_reports_loaded_through_the_real_capability_inventory(
+    tmp_path: Path,
+) -> None:
+    """H-030: signing and pinning are necessary but not sufficient — the whole
+    point of promotion is that a REAL load (mirrored here by the same
+    ``collect_agent_capability_inventory`` seam arcui's capability views and
+    ``arc trust`` use) reports the uploaded tool and skill ``"loaded"``, not
+    merely present on disk. Revoking must remove them from that same view.
+    """
+    import asyncio
+
+    from arcagent.capabilities.inventory import collect_agent_capability_inventory
+
+    config, staging, service, manifest = _setup(tmp_path)
+    key = generate_keypair()
+    service.promote(
+        staging,
+        target_agent_did="did:arc:agent:target",
+        operator_did=_DID,
+        signer=InProcessSigner(key.private_key),
+        config_path=config,
+    )
+
+    inventory = asyncio.run(collect_agent_capability_inventory(config))
+    by_name = {item.name: item for item in inventory.items}
+    assert by_name["imported_tool"].status == "loaded", by_name["imported_tool"].status_detail
+    assert by_name["imported_tool"].source_root == "agent"
+    assert by_name["imported_skill"].status == "loaded", by_name["imported_skill"].status_detail
+    assert by_name["imported_skill"].source_root == "agent-skills"
+
+    service.revoke(staging, operator_did=_DID, config_path=config)
+
+    inventory_after_revoke = asyncio.run(collect_agent_capability_inventory(config))
+    remaining = {item.name for item in inventory_after_revoke.items}
+    assert "imported_tool" not in remaining
+    assert "imported_skill" not in remaining
+
+
 def test_revoke_removes_promoted_files_and_trust_and_is_audited(tmp_path: Path) -> None:
     config, staging, service, manifest = _setup(tmp_path)
     key = generate_keypair()

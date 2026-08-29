@@ -16,6 +16,7 @@ from arccli.commands.agent._common import (
     _scaffold_workspace,
     render_agent_config,
 )
+from arccli.commands.agent._config_sync import write_config_snapshot
 
 
 def _create(args: argparse.Namespace) -> None:
@@ -38,6 +39,11 @@ def _create(args: argparse.Namespace) -> None:
     # Three sibling config files compose into one effective config: arcagent.toml
     # (everything else) + arcllm.toml (LLM-wire) + arcrun.toml (loop controls).
     (agent_dir / "arcagent.toml").write_text(render_agent_config(name=name, tier=tier))
+    # H-039: snapshot the values just written so a later `arc agent config
+    # --refresh-defaults` can tell "operator changed this" from "still
+    # whatever the scaffold wrote" — without this every field looks untouched
+    # forever and a stale default can never advance.
+    write_config_snapshot(agent_dir)
 
     arcllm_content = _DEFAULT_ARCLLM_CONFIG
     if model != "anthropic/claude-sonnet-4-5-20250929":

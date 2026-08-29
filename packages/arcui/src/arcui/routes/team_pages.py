@@ -29,8 +29,13 @@ from starlette.routing import Route
 
 from arcui.identity import resolve_agent_identity
 from arcui.query_validators import safe_int
-from arcui.routes.agent_detail.capabilities import agent_skill_rows
-from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION, agent_tool_rows
+from arcui.routes.agent_detail.capabilities import _live_agent, agent_skill_rows
+from arcui.routes.agent_detail.tools import (
+    _BUILTIN_CLASSIFICATION,
+    _merge_loader_verdicts,
+    _source_category,
+    agent_tool_rows,
+)
 from arcui.schemas import (
     AuditEventsResponse,
     ErrorResponse,
@@ -222,25 +227,38 @@ async def get_tasks(request: Request) -> JSONResponse:
 
 
 async def get_tools_skills(request: Request) -> JSONResponse:
-    """GET /api/team/tools-skills — fleet skills directory + tools matrix."""
+    """GET /api/team/tools-skills — fleet skills directory + tools matrix.
+
+    Each tool row carries the same loader-verdict/signature provenance and
+    normalized ``source`` badge (builtin/agent/extension/module, H-013/H-014)
+    the per-agent Tools tab shows, so a signed-and-loaded capability import
+    (H-030) or an attached extension (H-031) reads the same here as it does
+    on the agent's own tab — not silently downgraded to bare disk-scan rows
+    with no verdict, which is what this endpoint did before.
+    """
     skills: list[dict[str, Any]] = []
     tools_by_name: dict[str, dict[str, Any]] = {}
     registry = request.app.state.agent_registry
 
     for entry in _roster(request):
+        agent_root = Path(entry.workspace_path)
+        live = _live_agent(request, entry.agent_id)
         # Skills via the arcagent inventory seam — same set the agent loads.
-        for s in await _read_agent_skills(entry):
+        for s in await _read_agent_skills(entry, live):
             s["agent_id"] = entry.agent_id
+            s["source"] = _source_category("", str(s.get("source_root") or ""))
             skills.append(s)
         # Tools from the SAME durable enumeration the per-agent Tools tab uses
-        # (builtins + modules + disk + policy), not live registration — the fleet
-        # is read-on-demand, so no agent is live-registered and a live-only read
-        # showed zero tools while every agent plainly had them.
-        live = registry.get(entry.agent_id)
-        live_tools = list(live.registration.tools) if live is not None else []
-        rows, _allow, _deny, _summary = agent_tool_rows(
-            entry.agent_id, Path(entry.workspace_path), live_tools
-        )
+        # (builtins + modules + disk + policy), not live registration alone —
+        # the fleet is read-on-demand, so a not-loaded agent must still show
+        # its full tool surface. The registry's registration.tools (bare
+        # names, no provenance) seeds the live-tool layer the same way the
+        # per-agent tab does; the loader-verdict merge below is what actually
+        # supplies source/status/version for every row, live or not.
+        registration = registry.get(entry.agent_id)
+        live_tools = list(registration.registration.tools) if registration is not None else []
+        rows, _allow, _deny, _summary = agent_tool_rows(entry.agent_id, agent_root, live_tools)
+        await _merge_loader_verdicts(rows, agent_root, live)
         for row in rows:
             tool = row["name"]
             existing = tools_by_name.setdefault(
@@ -249,6 +267,10 @@ async def get_tools_skills(request: Request) -> JSONResponse:
                     "name": tool,
                     "agents": [],
                     "classification": row.get("classification") or _BUILTIN_CLASS.get(tool, ""),
+                    "source": row.get("source") or "",
+                    "version": row.get("version") or "",
+                    "loader_status": row.get("loader_status") or "",
+                    "loader_detail": row.get("loader_detail") or "",
                 },
             )
             if entry.agent_id not in existing["agents"]:
@@ -262,10 +284,10 @@ async def get_tools_skills(request: Request) -> JSONResponse:
     )
 
 
-async def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
+async def _read_agent_skills(entry: Any, live_agent: Any = None) -> list[dict[str, Any]]:
     # Reuse the agent-detail seam so the fleet list and the per-agent tab
     # surface the identical set the agent loads, each with source_root + status.
-    return await agent_skill_rows(Path(entry.workspace_path))
+    return await agent_skill_rows(Path(entry.workspace_path), live_agent)
 
 
 # ---------------------------------------------------------------------------

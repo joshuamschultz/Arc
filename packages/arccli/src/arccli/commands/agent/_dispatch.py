@@ -113,6 +113,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "Existing values are never changed.",
     )
     p.add_argument(
+        "--refresh-defaults",
+        dest="refresh_defaults",
+        action="store_true",
+        help="Like --sync, but ALSO advance a value still at whatever default the "
+        "scaffold last wrote there to today's default (H-039). A value that differs "
+        "from that snapshot — an operator changed it — is left untouched.",
+    )
+    p.add_argument(
         "--team-root",
         dest="team_root",
         help="Sync every agent under this team root instead of one directory.",
@@ -121,7 +129,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         dest="dry_run",
         action="store_true",
-        help="With --sync: report what would be added and write nothing.",
+        help="With --sync/--refresh-defaults: report the change and write nothing.",
     )
 
     # memory
