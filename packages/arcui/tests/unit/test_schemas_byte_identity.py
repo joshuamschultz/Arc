@@ -133,7 +133,17 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
     ),
     (
         schemas.ToolsResponse,
-        {"tools": [], "allowlist": [], "denylist": []},
+        {
+            "tools": [],
+            "allowlist": [],
+            "denylist": [],
+            "policy_summary": {
+                "state": "default-allow",
+                "allow": [],
+                "deny": [],
+                "label": "allow-all",
+            },
+        },
     ),
     (
         schemas.ToolsResponse,
@@ -141,6 +151,12 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "tools": [{"name": "read", "transport": "builtin"}],
             "allowlist": ["read"],
             "denylist": ["bash"],
+            "policy_summary": {
+                "state": "explicit",
+                "allow": ["read"],
+                "deny": ["bash"],
+                "label": "allow 1 (deny 1)",
+            },
         },
     ),
     (

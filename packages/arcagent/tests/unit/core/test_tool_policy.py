@@ -351,6 +351,83 @@ class TestAgentLayer:
         assert decision.outcome == "allow"
 
 
+class TestSummarizeToolPolicy:
+    """H-010: one authoritative interpreter, at least 3 states, 2+ layer shapes.
+
+    ``summarize_tool_policy`` must agree with the pipeline layers it
+    describes: ``AgentLayer`` treats an absent allowlist entry (``None``) as
+    unconstrained and a present-but-empty entry (``set()``) as deny-all. This
+    class proves the summarizer reports the same verdict for both an
+    agent-scoped allowlist lookup and a Global-scope config table.
+    """
+
+    def test_absent_allowlist_is_default_allow(self) -> None:
+        """No ``[tools.policy]`` allow key at all — the Global-scope shape."""
+        from arcagent.core.tool_policy import ToolPolicyState, summarize_tool_policy
+
+        summary = summarize_tool_policy(allow=None, deny=None)
+        assert summary.state == ToolPolicyState.DEFAULT_ALLOW
+        assert summary.allow == []
+        assert summary.label == "allow-all"
+
+    def test_empty_allowlist_is_deny_all(self) -> None:
+        """An allowlist that was configured and names nothing."""
+        from arcagent.core.tool_policy import ToolPolicyState, summarize_tool_policy
+
+        summary = summarize_tool_policy(allow=[], deny=None)
+        assert summary.state == ToolPolicyState.DENY_ALL
+        assert summary.allow == []
+        assert summary.label == "deny-all"
+
+    def test_populated_allowlist_is_explicit(self) -> None:
+        from arcagent.core.tool_policy import ToolPolicyState, summarize_tool_policy
+
+        summary = summarize_tool_policy(allow=["read", "grep"], deny=None)
+        assert summary.state == ToolPolicyState.EXPLICIT
+        assert summary.allow == ["read", "grep"]
+        assert summary.label == "allow 2"
+
+    def test_deny_list_rides_along_without_changing_state(self) -> None:
+        from arcagent.core.tool_policy import ToolPolicyState, summarize_tool_policy
+
+        summary = summarize_tool_policy(allow=None, deny=["bash"])
+        assert summary.state == ToolPolicyState.DEFAULT_ALLOW
+        assert summary.deny == ["bash"]
+        assert summary.label == "allow-all (deny 1)"
+
+    def test_agent_scoped_layer_shape_matches_global_shape(self) -> None:
+        """The exact None-vs-empty-set distinction ``AgentLayer`` evaluates.
+
+        A per-agent allowlist map lookup (``dict.get(agent_did)``) returns
+        ``None`` for an agent with no entry and a ``set()`` for an agent whose
+        entry names no tools — the same two inputs a Global-scope TOML table
+        produces for "key absent" vs "key present, empty list". Both call
+        sites must resolve through this one function to the same states.
+        """
+        from arcagent.core.tool_policy import ToolPolicyState, summarize_tool_policy
+
+        allowlist_by_agent: dict[str, set[str]] = {"did:arc:locked-down": set()}
+
+        unconstrained = summarize_tool_policy(
+            allow=list(allowlist_by_agent.get("did:arc:unlisted"))
+            if allowlist_by_agent.get("did:arc:unlisted") is not None
+            else None
+        )
+        locked_down = summarize_tool_policy(allow=list(allowlist_by_agent["did:arc:locked-down"]))
+
+        assert unconstrained.state == ToolPolicyState.DEFAULT_ALLOW
+        assert locked_down.state == ToolPolicyState.DENY_ALL
+
+    def test_summary_is_frozen(self) -> None:
+        from pydantic import ValidationError
+
+        from arcagent.core.tool_policy import summarize_tool_policy
+
+        summary = summarize_tool_policy(allow=None)
+        with __import__("pytest").raises(ValidationError):
+            summary.label = "mutated"  # type: ignore[misc]
+
+
 class TestTierFactory:
     """Phase 2 Task 2.15: per-tier layer composition."""
 

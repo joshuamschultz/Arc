@@ -68,6 +68,11 @@ from arcagent.core.errors import (
 from arcagent.core.module_config import validate_module_configs
 from arcagent.core.module_discovery import discover_modules, module_root
 from arcagent.core.prompt_context import build_prompt_resolver
+from arcagent.core.tool_policy import (
+    ToolPolicyState,
+    ToolPolicySummary,
+    summarize_tool_policy,
+)
 from arcagent.extension import ProbeResult, ToolOutcome, ToolResult
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.keys import KeyStatus, KeyStore, default_env_file
@@ -218,6 +223,8 @@ __all__ = [
     "Tier",
     "ToolError",
     "ToolOutcome",
+    "ToolPolicyState",
+    "ToolPolicySummary",
     "ToolResult",
     "ToolSpec",
     "ToolVetoedError",
@@ -258,6 +265,7 @@ __all__ = [
     "sign_capability",
     "stream_token_text",
     "stricter_tier",
+    "summarize_tool_policy",
     "tier_rank",
     "tool",
     "trust_bundled_capabilities",
