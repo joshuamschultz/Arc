@@ -22,6 +22,7 @@ import type {
   AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
+  AuthMeResponse,
   BlobFoldersResponse,
   ChannelsResponse,
   ConnectedDataActivationResponse,
@@ -87,16 +88,23 @@ import type {
 // server-query-first seam that keeps the DB migration transparent (plan
 // §storage-evolution).
 
-function useApiQuery<T>(key: unknown[], path: string): UseQueryResult<T> {
+function useApiQuery<T>(key: unknown[], path: string, enabled?: boolean): UseQueryResult<T> {
   return useQuery<T>({
     queryKey: key,
     queryFn: ({ signal }) => apiGet<T>(path, signal),
+    enabled,
   })
 }
 
 // --- Fleet (team) ----------------------------------------------------------
 
 export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
+
+// Who is holding this session's token (SPEC-057 REQ-043) — the operator
+// identity a channel-membership picker offers alongside the roster (H-019).
+// Static-token sessions come back `anonymous: true` with `did: null`.
+export const useMe = (enabled = true) =>
+  useApiQuery<AuthMeResponse>(['auth', 'me'], '/api/auth/me', enabled)
 
 // Polls every 4s so live todo -> in_progress -> done transitions and newly
 // dispatched tasks surface on the board without a manual refresh. The board's
