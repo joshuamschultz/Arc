@@ -143,6 +143,20 @@ export interface AgentsListResponse {
   agents: Agent[]
 }
 
+// Mirrors GET /api/auth/me (SPEC-057 REQ-043). `did` is null for an
+// anonymous static-token session (viewer/operator token, no signed-in
+// account) — callers that need a DID to act as this caller must check it.
+export interface AuthMeResponse {
+  authenticated: boolean
+  anonymous: boolean
+  role: string | null
+  email: string | null
+  did: string | null
+  display_name?: string
+  handle?: string
+  expires_at?: string
+}
+
 export interface TracesResponse {
   traces: Trace[]
   cursor?: string | null
