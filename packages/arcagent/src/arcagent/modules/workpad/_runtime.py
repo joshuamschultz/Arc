@@ -74,6 +74,10 @@ class _State:
     # the idle-flush backstop accumulates across restarts.
     last_maintenance_ts: float = 0.0
     runs_at_last_maintenance: int = 0
+    # Wall-clock time of the last REAL (interactive) run. Idle-flush is measured
+    # from here, not from the last maintenance, so context cleanup fires ~15 min
+    # after the person actually stopped — never on background churn.
+    last_activity_ts: float = 0.0
     # Recent role-tagged activity lines accumulated since the last rewrite; drained
     # (snapshotted + cleared) when the maintainer fires. Bounded by config.
     transcript: list[str] = field(default_factory=list)
@@ -89,6 +93,7 @@ class _State:
                     "run_count": self.run_count,
                     "last_maintenance_ts": self.last_maintenance_ts,
                     "runs_at_last_maintenance": self.runs_at_last_maintenance,
+                    "last_activity_ts": self.last_activity_ts,
                 }
             ),
         )
@@ -145,6 +150,7 @@ def configure(
         run_count=int(persisted.get("run_count", 0)),
         last_maintenance_ts=float(persisted.get("last_maintenance_ts", time.time())),
         runs_at_last_maintenance=int(persisted.get("runs_at_last_maintenance", 0)),
+        last_activity_ts=float(persisted.get("last_activity_ts", time.time())),
     )
     _registry[agent_did] = new_state
     _current_did.set(agent_did)

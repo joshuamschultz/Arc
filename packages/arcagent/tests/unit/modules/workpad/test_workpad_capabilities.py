@@ -21,12 +21,18 @@ import pytest
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
 
 
 @pytest.fixture(autouse=True)
-def _reset_runtime() -> None:
+def _reset_runtime() -> Any:
     _runtime.reset()
+    # Default to a real (person-driven) turn; background-run tests flip this off.
+    turn_context.set_interactive(True)
+    yield
+    _runtime.reset()
+    turn_context.set_interactive(False)
 
 
 @pytest.fixture
@@ -94,6 +100,17 @@ class TestTrackRuns:
         from arcagent.modules.workpad.capabilities import track_runs
 
         await track_runs(_post_respond("hi", "yo", automated=True))
+        st = _runtime.state()
+        assert st.run_count == 0
+        assert st.transcript == []
+
+    async def test_background_run_does_not_count_toward_the_cadence(self, configured: Path) -> None:
+        # A pulse/proactive/consolidation self-wake is non-interactive: it must
+        # not advance the workpad cadence or reset the idle clock.
+        from arcagent.modules.workpad.capabilities import track_runs
+
+        turn_context.set_interactive(False)
+        await track_runs(_post_respond("pulse check", "nothing to do"))
         st = _runtime.state()
         assert st.run_count == 0
         assert st.transcript == []

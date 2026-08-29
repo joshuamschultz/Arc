@@ -22,12 +22,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
 
 
 @pytest.fixture(autouse=True)
-def _reset_runtime() -> None:
+def _reset_runtime() -> Any:
     _runtime.reset()
+    turn_context.set_interactive(True)  # default: a real, person-driven turn
+    yield
+    _runtime.reset()
+    turn_context.set_interactive(False)
 
 
 def _model(content: str) -> Any:
@@ -103,14 +108,21 @@ class TestIdleFlush:
         )
         st = _runtime.state()
         st.eval_model = _model("# cockpit\n- open loop")
-        # Pretend the last maintenance was long ago (idle gap).
-        st.last_maintenance_ts = time.time() - 100_000
 
-        await track_runs(_post_respond("did work", "ok"))  # run 1 of 100
+        # A real turn, then the person goes quiet (idle measured from it).
+        await track_runs(_post_respond("did work", "ok"))  # interactive → count=1, no fire yet
+        await _drain(st)
+        st.eval_model.invoke.assert_not_awaited()
+        st.last_activity_ts = time.time() - 100_000  # 100k s since the real turn
+
+        # A background self-wake carries the idle flush — it does not count itself.
+        turn_context.set_interactive(False)
+        await track_runs(_post_respond("pulse", "idle"))
         await _drain(st)
 
         assert (ws / "context.md").read_text(encoding="utf-8").startswith("# cockpit")
         st.eval_model.invoke.assert_awaited_once()
+        assert _runtime.state().run_count == 1  # the background run never counted
 
     async def test_no_refire_without_new_activity(self, tmp_path: Path) -> None:
         from arcagent.modules.workpad.capabilities import _should_maintain
@@ -142,11 +154,15 @@ class TestIdleFlush:
         )
         st = _runtime.state()
         st.eval_model = _model("# cockpit\n- loop")
-        st.last_maintenance_ts = time.time() - 100_000
 
-        await track_runs(_post_respond("a", "b"))  # idle gap → fires, resets clock
+        await track_runs(_post_respond("a", "b"))  # interactive → count=1
         await _drain(st)
-        await track_runs(_post_respond("c", "d"))  # clock now fresh → no fire
+        st.last_activity_ts = time.time() - 100_000  # the person went quiet
+
+        turn_context.set_interactive(False)
+        await track_runs(_post_respond("pulse", "x"))  # idle gap → fires, marks flushed
+        await _drain(st)
+        await track_runs(_post_respond("pulse", "y"))  # nothing new since → no re-fire
         await _drain(st)
 
         st.eval_model.invoke.assert_awaited_once()

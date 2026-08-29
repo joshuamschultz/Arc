@@ -32,6 +32,7 @@ import arcrun
 from arcokf import OKFValidationError, validate
 from arcprompt import load_stock
 
+from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
 from arcagent.tools._decorator import hook, tool
 from arcagent.utils.audit import safe_audit
@@ -75,9 +76,17 @@ async def track_runs(ctx: Any) -> None:
     if ctx.data.get("automated", False):
         return
     st = _runtime.state()
-    _accumulate(st, ctx.data.get("messages", []))
-    st.run_count += 1
-    st.persist()
+    # Ignore background self-wakes — the pulse tick, the proactive scheduler,
+    # memory consolidation, and the workpad's own maintenance run. They are not
+    # real context to curate and must not drive the cadence; only a turn a person
+    # drove counts. (See ADR: background runs never drive maintenance cadence.)
+    if turn_context.interactive():
+        _accumulate(st, ctx.data.get("messages", []))
+        st.run_count += 1
+        st.last_activity_ts = time.time()
+        st.persist()
+    # The maintenance CHECK still runs on any turn, so a later background turn can
+    # carry the idle flush once enough quiet time has passed since the last real one.
     if not _should_maintain(st):
         return
     model = _eval_model()
@@ -107,17 +116,20 @@ async def track_runs(ctx: Any) -> None:
 
 
 def _should_maintain(st: _runtime._State) -> bool:
-    """Fire on the cadence boundary, or after an idle gap with unflushed activity.
+    """Fire only on unflushed REAL activity — a person's turns, never background churn.
 
-    The idle path is the restart-resilience backstop: a long, slow session that
-    never lands exactly on ``every_n_runs`` still flushes once the run counter has
-    advanced past the last rewrite and enough wall time has elapsed.
+    Gated first on there being new real activity since the last rewrite, so a quiet
+    agent whose only turns are background self-wakes never maintains. Then either the
+    cadence boundary (a long active session) or ~``flush_idle_seconds`` since the last
+    REAL run (the person stopped) triggers a single flush. Idle is measured from
+    ``last_activity_ts`` (the last real run), not the last maintenance, so cleanup
+    lands after the person actually went quiet rather than on a rolling schedule.
     """
-    if st.run_count % st.config.every_n_runs == 0:
-        return True
     if st.run_count <= st.runs_at_last_maintenance:
         return False
-    return time.time() - st.last_maintenance_ts >= st.config.flush_idle_seconds
+    if st.run_count % st.config.every_n_runs == 0:
+        return True
+    return time.time() - st.last_activity_ts >= st.config.flush_idle_seconds
 
 
 @hook(event="agent:shutdown", priority=_SHUTDOWN_PRIORITY)

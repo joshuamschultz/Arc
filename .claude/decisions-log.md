@@ -8402,3 +8402,18 @@ _Five parallel read-only Explore agents: Slack auth/scopes, backfill/rate-limits
 - Arc — copy: `extensions/dropbox/extension.toml` + `extensions/dropbox/arc_ext_dropbox/__init__.py` (template), `extensions/confluence/*` (simpler token variant). Schema/contracts: `packages/arcagent/src/arcagent/extension/{manifest,oauth,native_attachment,source}.py`. Framework: `.../modules/connectors/{install,attachments,capabilities,source_authorization}.py`, `.../connector_reconcile.py`. Ingestion: `packages/arcmemory/src/arcmemory/{connected_data,index/backend,security}.py`, `packages/arcokf/`. Security: `.../core/session_internal/capability_ledger.py`, `packages/arctrust/src/arctrust/policy.py`, `.../tools/{human_gate,_egress}.py`, `.../extension/grants.py`. Surfaces: `packages/arccli/src/arccli/commands/{connector,approve}.py`, `packages/arcui/.../routes/connectors.py` + `web/src/components/{connector-secrets-sheet,connector-authorize-panel,knowledge-connections}.tsx`.
 - Release gate: `packages/arcagent/tests/e2e/test_connected_data_release_gate.py` (a data connection isn't complete until `document_search` returns the synced chunk).
 - Pattern skills: `python-patterns` (the connector client), `postgres-patterns` (pgvector index), `langgraph-workflows` (the nightly extraction workflow).
+
+---
+
+## Background maintenance — Architecture Decision (2026-08-29)
+
+Phase: architecture | Status: adopted | ID range: D-726 to D-726
+
+### Architecture
+
+- **D-726 — Background self-wakes never drive maintenance cadence; only real (interactive) turns do.** *(Priority: Simplicity/Correctness)*
+  - **Decision:** Every self-managing background process — memory consolidation, the workpad/context cockpit, and any future one — counts and is triggered ONLY by a turn a real person drove. The agent's own machinery (the pulse tick, the proactive scheduler, consolidation itself, the workpad's own maintenance run) must be ignored for cadence and idle purposes. Idle-based cleanup is measured from the **last real turn**, not from the last maintenance or on a rolling schedule, so it fires ~once after the person actually goes quiet and then stays quiet until they return.
+  - **Mechanism:** `turn_context.interactive()` — True only for a turn a human opened (chat, channel post), False for background self-wakes (bound in `agent_dispatch.bind_inbound_channel`). Maintenance hooks gate their counters/accumulation and their idle clock on it. A later background turn may still *carry* an idle flush (trigger the check) but never counts as new activity.
+  - **Why it's key to proper management:** counting background churn made a quiet agent keep crossing its trigger and re-running expensive maintenance on nothing new — a $159/day consolidation runaway (see problem-log PROB-013) and a workpad firing every ~10 min instead of once ~15 min after the last message. "New context to manage" means new *human* context, full stop.
+  - **Applies to:** `arcmemory` consolidation trigger (`_capture`), `arcagent` workpad (`track_runs` / `_should_maintain`); the same gate is required for any future background maintainer.
+  - **Alternatives rejected:** the `automated` flag (pulse/scheduler dispatch with `automated=False`, so it does not distinguish real from background); a pure wall-clock timer per process (more moving parts than gating the existing per-turn hook).
