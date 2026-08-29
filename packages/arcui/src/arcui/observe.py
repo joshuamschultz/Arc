@@ -225,8 +225,15 @@ class Observe:
             where["actor_did"] = agent
         if target:
             where["target"] = target
+        # Order by ``ts``, not the WORM chain's own ``seq``: this table mirrors
+        # MANY chains (one per agent, plus ``audit-chain-arcui.jsonl``), each with
+        # its own sequence numbering starting at 0, so "seq DESC" would interleave
+        # unrelated chains by local position instead of real time. ``ts`` is also
+        # the only ordering the production PostgresBackend actually supports
+        # (H-021: "seq DESC" raised ValueError there — the in-memory test fake
+        # accepts any column name, which is why this only broke against Postgres).
         return await self._backend.query(
-            "audit_chain", where=where or None, order_by="seq DESC", limit=limit
+            "audit_chain", where=where or None, order_by="ts DESC", limit=limit
         )
 
     async def run_recalls(self, run_id: str) -> list[dict[str, Any]]:
@@ -235,12 +242,14 @@ class Observe:
         Filters the durable ``audit_chain`` mirror to ``memory.recall_attributed``
         events stamped with this run's ``request_id`` — the cards/trigger the
         memory brain surfaced during this run, for the run drawer.
+
+        Ordered by ``ts`` (see :meth:`audit` for why not ``seq``).
         """
         await self._ensure()
         return await self._backend.query(
             "audit_chain",
             where={"request_id": run_id, "action": "memory.recall_attributed"},
-            order_by="seq DESC",
+            order_by="ts DESC",
             limit=50,
         )
 
