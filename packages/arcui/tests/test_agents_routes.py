@@ -266,6 +266,23 @@ class TestGetAgent:
         assert body["agent_id"] == "a1"
         assert body["online"] is True
 
+    def test_get_agent_carries_canonical_identity_shape(self):
+        # H-007: no roster in this fixture, so identity resolves from
+        # whatever the registration reports — still the canonical shape,
+        # degrading to "unknown" parts rather than omitting the field.
+        app, auth, registry = _make_app()
+        _register_agent(registry, "a1", "agent-alpha")
+
+        client = TestClient(app)
+        resp = client.get(
+            "/api/agents/a1",
+            headers={"Authorization": f"Bearer {auth.viewer_token}"},
+        )
+        assert resp.status_code == 200
+        identity = resp.json()["identity"]
+        assert identity["name"] == "agent-alpha"
+        assert identity["host"] == "unknown"
+
     def test_get_nonexistent_returns_404(self):
         # When neither the live registry nor the roster_provider knows the
         # id, the route returns 404 with a clear error.
@@ -286,6 +303,20 @@ class TestGetAgent:
 
 def _viewer(auth: AuthConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.viewer_token}"}
+
+
+class TestGetAgentIdentityViaRoster:
+    def test_roster_row_resolves_identity_from_its_did(self, tmp_path):
+        # H-007 canonical adoption point: the per-agent detail header reads
+        # this response's `identity` field instead of re-parsing `did`.
+        team = _build_team_dir(tmp_path)
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/agents/alpha", headers=_viewer(auth))
+        assert resp.status_code == 200
+        identity = resp.json()["identity"]
+        assert identity["did"] == "did:arc:alpha"
+        assert identity["name"] == "alpha"
 
 
 class TestAgentConfigRoute:
