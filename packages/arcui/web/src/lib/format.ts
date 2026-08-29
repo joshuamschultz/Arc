@@ -6,6 +6,17 @@ const tokenFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 1,
 })
 const numberFmt = new Intl.NumberFormat('en-US')
+const compactFmt = new Intl.NumberFormat(undefined, { notation: 'compact' })
+
+/**
+ * Compact display for large numbers on chart axes/tooltips: 1.2K, 3.4M, 1.8B.
+ * Locale-aware (unlike `fmtTokens`, which is pinned to `en-US` for tables) so
+ * axis ticks read naturally wherever the dashboard runs.
+ */
+export function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return compactFmt.format(n)
+}
 
 /** Compact token counts: 1.2M, 45K. */
 export function fmtTokens(n: number | null | undefined): string {
