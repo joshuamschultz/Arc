@@ -681,6 +681,9 @@ export interface CostEfficiencyResponse {
   most_used_model: string | null
   potential_savings_usd: number
   potential_savings_pct: number
+  embedding_cheapest_model: string | null
+  embedding_potential_savings_usd: number
+  embedding_potential_savings_pct: number
 }
 export const useCostEfficiency = (window = '24h') =>
   useApiQuery<CostEfficiencyResponse>(
