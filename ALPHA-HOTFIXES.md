@@ -86,7 +86,7 @@ before this batch is complete.
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
-| H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | CODING | |
+| H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 

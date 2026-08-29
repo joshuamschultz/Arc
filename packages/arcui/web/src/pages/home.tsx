@@ -88,7 +88,6 @@ export function HomePage() {
   // unwindowed lists above (failedRuns / reviewTasks in "Needs you", and
   // "Recent activity") keep surfacing older items exactly as before.
   const runsWindowedQ = useRuns('24h')
-  const tasksQ = useTeamTasks()
   const tasksWindowedQ = useTeamTasks('24h')
   const rosterQ = useRoster()
   const statsQ = useLlmStats('24h')
@@ -115,7 +114,6 @@ export function HomePage() {
     () => runsWindowedQ.data?.runs ?? [],
     [runsWindowedQ.data],
   )
-  const tasks = useMemo(() => tasksQ.data?.tasks ?? [], [tasksQ.data])
   const tasksWindowed = useMemo(() => tasksWindowedQ.data?.tasks ?? [], [tasksWindowedQ.data])
   const agents = useMemo<Agent[]>(
     () => (rosterQ.data?.agents ?? []).filter((a) => !a.hidden),
