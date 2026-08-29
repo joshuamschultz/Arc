@@ -210,19 +210,23 @@ class ArcMemoryBrain:
         cue channel — when omitted, arcmemory derives them by tagging the abstraction
         against its own entity/cue graph. Both are optional (backward-compatible).
 
-        ``index`` gates the incremental corpus (re)index that precedes the search.
-        The agent recall hot path passes ``index=False`` so a turn embeds only its
-        own query, never the corpus — indexing is a background maintainer's job
-        (:meth:`refresh_index`), off the first-LLM-call path. Default ``True`` keeps
-        every other caller auto-indexing exactly as before.
+        ``index`` gates the EXPENSIVE half of the incremental corpus (re)index that
+        precedes the search — the vector embed. The agent recall hot path passes
+        ``index=False`` so a turn embeds only its own query, never the corpus —
+        embedding is a background maintainer's job (:meth:`refresh_index`), off the
+        first-LLM-call path. The CHEAP half (chunk + fts/BM25 lexical rows) always
+        runs regardless of ``index`` (H-REG-1) — zero LLM cost, and it is what
+        makes a just-captured card searchable via BM25 in the SAME turn it was
+        captured, rather than only after the next background refresh. Default
+        ``True`` keeps every other caller auto-indexing (lexical + embed) exactly
+        as before.
 
         Returns the injectable ``<memory-result>`` rendering (empty string when
         nothing survives the gate). Never raises on a missing embedder — recall
         degrades to BM25 + graph.
         """
         bundle = self._bundle(session_id)
-        if index:
-            await bundle.retriever.index()
+        await bundle.retriever.index(embed=index)
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         situation = Situation(text=query, summary=summary, cues=list(cues or []))
         result = await bundle.retriever.retrieve(
@@ -250,12 +254,12 @@ class ArcMemoryBrain:
         typed cards instead of the injectable text, so a caller can see WHERE each
         memory came from and WHAT it points to. Never raises on a missing embedder.
 
-        ``index`` gates the pre-search corpus index (see :meth:`retrieve`); default
+        ``index`` gates the EXPENSIVE embed half of the pre-search corpus index
+        (see :meth:`retrieve`); the cheap lexical half always runs. Default
         ``True`` preserves prior behavior.
         """
         bundle = self._bundle(session_id)
-        if index:
-            await bundle.retriever.index()
+        await bundle.retriever.index(embed=index)
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         situation = Situation(text=query, summary=summary, cues=list(cues or []))
         return await bundle.retriever.recall_cards(
@@ -335,8 +339,7 @@ class ArcMemoryBrain:
     ) -> str:
         """Run the gated recall for a fired moment: bound, dedup, attribute, render."""
         bundle = self._bundle(session_id)
-        if index:
-            await bundle.retriever.index()
+        await bundle.retriever.index(embed=index)
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         # Fold the query cues into the search text so a working-set entity absent from
         # the literal message still reaches the text-driven surface channel (COMP-001).
@@ -414,12 +417,14 @@ class ArcMemoryBrain:
     async def refresh_index(self, *, session_id: str | None = None) -> None:
         """Incrementally index changed chunks — the background maintainer's job.
 
-        The counterpart to ``retrieve(index=False)``: recall on a turn searches only,
-        and this refresh (embedding just the changed chunks, content-hash-gated) runs
-        off the turn path so a whole-corpus embed never blocks a person's turn. Cheap
-        when nothing changed. Degrades silently without an embedder, like recall.
+        The counterpart to ``retrieve(index=False)``: recall on a turn writes only the
+        cheap lexical rows, and this refresh (embedding just the changed chunks —
+        including any chunk a turn already wrote lexically but never embedded,
+        H-REG-1) runs off the turn path so a whole-corpus embed never blocks a
+        person's turn. Cheap when nothing changed. Degrades silently without an
+        embedder, like recall.
         """
-        await self._bundle(session_id).retriever.index()
+        await self._bundle(session_id).retriever.index(embed=True)
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the glass-box files + stream (REQ-022)."""

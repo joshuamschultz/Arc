@@ -61,10 +61,13 @@ class Brain(Protocol):
         (structural) recall channel so a different-domain turn can still match a stored
         abstraction without sharing surface tokens.
 
-        ``index`` gates the pre-search corpus (re)index. The agent recall path passes
-        ``index=False`` so a turn embeds only its query, never the corpus — indexing
-        is the background maintainer's job (:meth:`refresh_index`). A Brain that keeps
-        no index simply ignores it.
+        ``index`` gates the EXPENSIVE embed half of the pre-search corpus (re)index.
+        The agent recall path passes ``index=False`` so a turn embeds only its
+        query, never the corpus — embedding is the background maintainer's job
+        (:meth:`refresh_index`). A conforming Brain still writes the CHEAP lexical
+        half (no embedder needed) regardless of ``index``, so a just-captured item
+        is searchable the same turn it lands; a Brain that keeps no index at all
+        simply ignores the parameter.
         """
         ...
 

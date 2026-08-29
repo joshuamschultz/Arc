@@ -123,15 +123,52 @@ class SurfaceIndex:
 
     # -- indexing ----------------------------------------------------------
 
-    async def index_if_needed(self) -> int:
-        """Embed + index only new/changed chunks; return how many were (re)indexed."""
+    async def index_if_needed(self, *, embed: bool = True) -> int:
+        """Write only new/changed chunks; return how many were (re)indexed.
+
+        ``embed`` splits the two costs the prior single pass conflated (H-REG-1):
+
+        * the CHEAP part — the chunk row + the fts/BM25 lexical row — always runs
+          for content whose ``content_hash`` changed, at zero LLM cost. This is
+          what makes a just-captured card BM25-searchable on the SAME call that
+          skips embedding, so a person's turn (``embed=False``) still gets fresh
+          lexical recall without ever touching the corpus embedder.
+        * the EXPENSIVE part — the vector embed — only runs when ``embed=True``
+          (the background :meth:`~arcmemory.brain.ArcMemoryBrain.refresh_index`
+          maintainer), and only for texts that actually need it.
+
+        The hash-gate trap: gating solely on ``content_hash`` would mean a chunk
+        written lexically (``embed=False``, hash stamped, no vector) looks
+        "unchanged" to a later ``embed=True`` pass and would NEVER get embedded.
+        So the embed pass also re-processes any chunk whose current
+        ``content_hash`` doesn't match its ``embedded_hash`` (no vector yet, or the
+        vector is for stale content) — tracked as a separate hash specifically so
+        the lexical write's hash bump can never mask a pending embed.
+        """
+        # Only chase the anti-hash-gate branch when embedding is actually possible —
+        # with no embedder/vec0 wired, ``embedded_hash`` never gets stamped no
+        # matter how many passes run, so treating that as "always pending" would
+        # make every call re-upsert the whole corpus for a vector that will never
+        # arrive. This mirrors ``_embed``'s own degrade gate exactly.
+        chasing_pending_embeds = (
+            embed and self._embedder is not None and self._backend.vec_available
+        )
         stored = await self._backend.stored_hashes(self._scope.key)
-        changed = [c for c in self._collect_chunks() if stored.get(c.chunk_id) != c.content_hash]
-        if not changed:
+        embedded = (
+            await self._backend.embedded_hashes(self._scope.key) if chasing_pending_embeds else {}
+        )
+        all_chunks = self._collect_chunks()
+        targets = [
+            c
+            for c in all_chunks
+            if stored.get(c.chunk_id) != c.content_hash
+            or (chasing_pending_embeds and embedded.get(c.chunk_id) != c.content_hash)
+        ]
+        if not targets:
             return 0
 
-        embeddings = await self._embed([c.text for c in changed])
-        for i, chunk in enumerate(changed):
+        embeddings = await self._embed([c.text for c in targets]) if embed else None
+        for i, chunk in enumerate(targets):
             await self._backend.upsert_chunk(
                 scope=self._scope.key,
                 chunk_id=chunk.chunk_id,
@@ -142,7 +179,7 @@ class SurfaceIndex:
                 text=chunk.text,
                 embedding=embeddings[i] if embeddings is not None else None,
             )
-        return len(changed)
+        return len(targets)
 
     def _collect_chunks(self) -> list[_Chunk]:
         """Every source file + every raw event, as gate-hashed chunks (fixed order)."""

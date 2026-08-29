@@ -80,24 +80,24 @@ async def test_retrieve_degrades_without_embedder_never_raises(workspace: Path) 
     assert await brain.retrieve("anything") == ""
 
 
-async def test_retrieve_index_false_is_query_only_until_a_background_refresh(
+async def test_retrieve_index_false_is_bm25_visible_immediately_never_embeds(
     workspace: Path,
 ) -> None:
-    """The turn's recall must never embed the corpus: index=False searches only.
+    """H-REG-1: ``index=False`` still writes the cheap lexical row, synchronously.
 
-    A captured card is not searchable until an index runs. With index=False the
-    read path does no indexing, so the just-captured content stays invisible to
-    recall until ``refresh_index`` (the background maintainer) indexes it. This is
-    what keeps a whole-corpus embed off the turn/first-LLM-call path.
+    The turn's recall must never EMBED the corpus, but it must not go BLIND to a
+    just-captured card either: the fix splits the two costs ``index_if_needed``
+    used to conflate. A just-captured card is BM25-searchable on the very call
+    that captured it — no embedder needed, no background wait — while the
+    (expensive) vector embed still defers entirely to ``refresh_index`` (the
+    background maintainer; pinned with a real embedder in
+    ``test_surface_embed_split.py``).
     """
     brain = ArcMemoryBrain(workspace, _DID)
     await brain.capture("Ada owns the payments service", kind="respond")
 
-    # Query-only recall does not index, so the unindexed capture is not found.
-    assert await brain.retrieve("who owns payments", index=False) == ""
-
-    # The background refresh indexes the changed chunks; now query-only recall hits.
-    await brain.refresh_index()
+    # Query-only recall writes the cheap lexical (fts/BM25) row synchronously,
+    # so the just-captured card is found on this very call — no background wait.
     assert "<memory-result" in await brain.retrieve("who owns payments", index=False)
 
 

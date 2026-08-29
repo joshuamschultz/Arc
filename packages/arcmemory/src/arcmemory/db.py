@@ -162,6 +162,13 @@ class MemoryDB:
             "mtime REAL, classification TEXT DEFAULT 'unclassified', content_hash TEXT)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope)")
+        # H-REG-1: ``content_hash`` tracks freshness for the CHEAP lexical write
+        # (chunk row + fts/BM25 row, no embedder needed). ``embedded_hash`` tracks,
+        # separately, which content_hash the VECTOR was last embedded for — so a
+        # background embed pass can tell "written lexically, never embedded"
+        # (embedded_hash NULL or stale) apart from "already embedded, nothing to
+        # do" instead of the lexical write's hash bump masking a pending embed.
+        self._ensure_columns(conn, "chunks", {"embedded_hash": "TEXT"})
 
         # FTS5 keyword/BM25 mirror of chunk text.
         conn.execute(
