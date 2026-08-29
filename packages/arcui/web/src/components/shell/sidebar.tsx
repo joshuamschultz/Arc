@@ -1,10 +1,9 @@
 import { Fragment } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Moon, Sun, Lock, LockOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { NAV_ITEMS, NAV_GROUPS, GROUP_LABELS } from '@/app/nav'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
-import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useSidebar } from '@/hooks/use-sidebar'
 import {
   Tooltip,
@@ -20,7 +19,6 @@ import {
  */
 export function Sidebar() {
   const { dark, toggle } = useTheme()
-  const [operator, setOperator] = useOperatorMode()
   const { expanded, toggle: toggleExpanded } = useSidebar()
 
   // A control that adapts to width: icon-only with a tooltip when collapsed, a
@@ -147,26 +145,10 @@ export function Sidebar() {
 
       <div className="mt-2 flex flex-col gap-1.5">
         {railButton(
-          () => setOperator(!operator),
-          operator ? 'Operator controls on' : 'Operator controls off',
-          operator ? <LockOpen className="size-[18px]" /> : <Lock className="size-[18px]" />,
-          operator,
-        )}
-        {railButton(
           toggle,
           dark ? 'Switch to light mode' : 'Switch to dark mode',
           dark ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />,
         )}
-        <div className={cn('flex items-center', expanded ? 'gap-3 px-3 pt-1' : 'justify-center pt-1')}>
-          <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-secondary text-[11px] font-bold text-secondary-foreground">
-            JS
-          </div>
-          {expanded && (
-            <span className="truncate text-[13px] font-medium text-sidebar-foreground/70">
-              Operator
-            </span>
-          )}
-        </div>
       </div>
     </nav>
   )
