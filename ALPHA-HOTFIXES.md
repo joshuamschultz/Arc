@@ -58,14 +58,14 @@ before this batch is complete.
 | H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | MERGED | 6921ee29 |
 | H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | MERGED | 6921ee29 |
 | H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | MERGED | ed84d651 |
-| H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | NEW | |
+| H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | CODING | |
 | H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | MERGED | 157701a9 |
 | H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | MERGED | b311fd45 |
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
-| H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
+| H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | CODING | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
