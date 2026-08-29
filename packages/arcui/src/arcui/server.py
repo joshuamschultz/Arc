@@ -79,6 +79,9 @@ logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
+#: Web-chat attachment size ceiling, matching the gateway's inbound media ceiling.
+_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+
 
 #: The main entry bundle in the served HTML (``/assets/index-<hash>.js``).
 _BUNDLE_RE = re.compile(r"/assets/(index-[A-Za-z0-9_-]+\.js)")
@@ -703,6 +706,29 @@ def create_app(
         return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
 
     app.state.roster_provider = _roster_provider
+
+    def _attachment_store_for(agent_did: str) -> Any:
+        """Resolve an agent's own artefact store so a web-chat upload lands in
+        its workspace (SPEC-065, ADR-029: per agent, never a shared store).
+
+        The upload route read this off ``app.state`` but nothing ever set it, so
+        every web-chat attachment 404'd 'agent workspace unavailable'. The roster
+        already resolves each agent's directory; the store writes under
+        ``<agent_dir>/workspace/`` exactly as the gateway's own inbound path does.
+        """
+        if app.state.team_root is None:
+            return None
+        from arcgateway.media_store import MediaStore
+
+        for entry in _roster_provider():
+            if entry.did == agent_did:
+                return MediaStore(
+                    workspace=Path(entry.workspace_path) / "workspace",
+                    max_bytes=_ATTACHMENT_MAX_BYTES,
+                )
+        return None
+
+    app.state.attachment_store_for = _attachment_store_for
 
     return app
 
