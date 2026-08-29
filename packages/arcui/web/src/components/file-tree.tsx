@@ -1,8 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, File, Folder, FolderOpen, Pencil } from 'lucide-react'
-import { apiGet, apiPut, ApiError } from '@/lib/api'
-import type { FileReadResponse, FilesTreeEntry, FilesTreeResponse, FileWriteResponse } from '@/lib/types'
+import { ChevronRight, File, Folder, FolderOpen, Pencil, Trash2 } from 'lucide-react'
+import { apiGet, apiPut, apiDelete, ApiError } from '@/lib/api'
+import type {
+  FileDeleteResponse,
+  FileReadResponse,
+  FilesTreeEntry,
+  FilesTreeResponse,
+  FileWriteResponse,
+} from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { fmtBytes } from '@/lib/format'
 import { MarkdownFile } from '@/components/frontmatter'
@@ -155,11 +161,40 @@ function BinaryFile({ data, mime, size }: { data: string; mime: string; size: nu
   )
 }
 
-/** Read + (operator-only) edit for one workspace file. Markdown renders in
- *  view mode; Edit mode is a raw textarea saved via `PUT .../files/read`
- *  (COMP-012). Errors (400 path-escape/secret-content, 403 viewer) and a
- *  stale-signature warning surface verbatim from the server. */
-function FileViewer({ agentId, root, path }: { agentId: string; root: string; path: string }) {
+/** Delete one workspace file (H-018). A plain confirm precedes every delete;
+ *  a path the server flags as agent memory/session state (409, `confirm_protected`
+ *  required) gets a second, stronger confirm naming what's really being removed.
+ *  A path the server refuses outright (403 — identity/audit chain) just shows
+ *  the server's reason; there is no override for that case. */
+async function deleteFile(
+  agentId: string,
+  root: string,
+  path: string,
+  confirmProtected: boolean,
+): Promise<FileDeleteResponse> {
+  return apiDelete<FileDeleteResponse>(
+    `/api/agents/${agentId}/files/read?root=${root}&path=${encodeURIComponent(path)}` +
+      (confirmProtected ? '&confirm_protected=true' : ''),
+  )
+}
+
+/** Read + (operator-only) edit + delete for one workspace file. Markdown
+ *  renders in view mode; Edit mode is a raw textarea saved via
+ *  `PUT .../files/read` (COMP-012). Delete calls `DELETE .../files/read`
+ *  (H-018). Errors (400 path-escape/secret-content, 403 viewer or protected
+ *  state, 409 confirmation required) and a stale-signature warning surface
+ *  verbatim from the server. */
+function FileViewer({
+  agentId,
+  root,
+  path,
+  onDeleted,
+}: {
+  agentId: string
+  root: string
+  path: string
+  onDeleted: () => void
+}) {
   const queryKey = ['agent', agentId, 'file', root, path]
   const q = useQuery<FileReadResponse>({
     queryKey,
@@ -173,6 +208,8 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveResult, setSaveResult] = useState<FileWriteResponse | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   if (q.isLoading) return <LoadingRows rows={8} />
   if (q.isError) return <ErrorState error={q.error} />
@@ -207,6 +244,41 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
     }
   }
 
+  const runDelete = async (confirmProtected: boolean) => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteFile(agentId, root, path, confirmProtected)
+      await queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'files'] })
+      onDeleted()
+      return
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // Agent memory/session state — the ordinary confirm already happened;
+        // this second one names exactly what's at stake before retrying.
+        if (
+          window.confirm(
+            `'${path}' is part of this agent's own memory or session state, not ordinary ` +
+              'workspace content. Deleting it changes what the agent remembers. Delete anyway?',
+          )
+        ) {
+          setDeleting(false)
+          await runDelete(true)
+          return
+        }
+      } else {
+        setDeleteError(e instanceof ApiError ? e.message : 'Delete failed')
+      }
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const startDelete = () => {
+    if (!window.confirm(`Delete '${path}'? This cannot be undone.`)) return
+    void runDelete(false)
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
@@ -216,6 +288,17 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
           {operatorMode && !editing && !isBinary && (
             <Button variant="ghost" size="sm" onClick={startEdit}>
               <Pencil className="size-3.5" /> Edit
+            </Button>
+          )}
+          {operatorMode && !editing && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={deleting}
+              onClick={startDelete}
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 className="size-3.5" /> {deleting ? 'Deleting…' : 'Delete'}
             </Button>
           )}
           {editing && (
@@ -233,6 +316,11 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
       {saveError && (
         <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
           {saveError}
+        </div>
+      )}
+      {deleteError && (
+        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          {deleteError}
         </div>
       )}
       {saveResult?.signature_stale && (
@@ -288,7 +376,12 @@ export function FileTree({
       </div>
       <div className="overflow-hidden">
         {selected ? (
-          <FileViewer agentId={agentId} root={root} path={selected} />
+          <FileViewer
+            agentId={agentId}
+            root={root}
+            path={selected}
+            onDeleted={() => setSelected(null)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             Select a file to view

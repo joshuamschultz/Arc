@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Plus, UserMinus, UserPlus } from 'lucide-react'
 import {
@@ -8,11 +8,36 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { apiDelete, apiPost, ApiError } from '@/lib/api'
-import { useRoster } from '@/lib/queries'
-import type { Channel } from '@/lib/types'
+import { useMe, useRoster } from '@/lib/queries'
+import type { Agent, Channel } from '@/lib/types'
+
+/** All the keys a channel member ref could arrive as for this agent — DID,
+ *  agent id, name, and the DID's trailing hex — so membership can be checked
+ *  against whichever form the server happens to have stored. */
+function refKeysFor(agent: Agent): string[] {
+  const tail = agent.did ? (agent.did.split('/').pop()?.split(':').pop() ?? '') : ''
+  return [agent.did, agent.agent_id, agent.name, tail].filter((k): k is string => Boolean(k))
+}
+
+/** One selectable identity in the add-member dropdown: a DID to submit and
+ *  the friendly name + type a person recognizes (H-019) — never a raw DID. */
+interface MemberOption {
+  did: string
+  label: string
+  type: string
+}
 
 /** Resolve a channel member ref (usually a DID) to the name a person would use:
  *  the roster display name, "Operator" for the human, else the DID's short tail. */
@@ -112,10 +137,11 @@ export function CreateChannelSheet({ open, onOpenChange }: { open: boolean; onOp
   )
 }
 
-/** Member list + operator-only add/remove (COMP-006). Refs are resolved
- *  server-side through the arcteam registry — the client sends whatever the
- *  operator types (agent id, DID, or handle) and surfaces an unresolvable
- *  ref's error verbatim. */
+/** Member list + operator-only add/remove (COMP-006). The add picker offers
+ *  every roster agent and the signed-in operator (H-019) — never free text —
+ *  so the DID sent to the server always names a real, known identity. Refs
+ *  are still resolved server-side through the arcteam registry; an
+ *  unresolvable ref's error surfaces verbatim. */
 export function ChannelMembersSheet({
   channel,
   open,
@@ -129,9 +155,39 @@ export function ChannelMembersSheet({
 }) {
   const queryClient = useQueryClient()
   const memberName = useMemberName()
+  const roster = useRoster()
+  const me = useMe(operatorMode)
   const [newMember, setNewMember] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const memberKeys = useMemo(() => new Set(channel?.members ?? []), [channel?.members])
+
+  const agentOptions = useMemo<MemberOption[]>(() => {
+    const agents = roster.data?.agents ?? []
+    const opts: MemberOption[] = []
+    for (const a of agents) {
+      if (!a.did || a.hidden) continue
+      if (refKeysFor(a).some((k) => memberKeys.has(k))) continue
+      opts.push({
+        did: a.did,
+        label: a.identity?.name || a.display_name || a.name || a.agent_id || a.did,
+        type: a.identity?.type || a.type || 'agent',
+      })
+    }
+    return opts
+  }, [roster.data, memberKeys])
+
+  // Multi-operator support is coming; today the only operator identity this
+  // client can name is whoever is signed in to the session (H-019). A
+  // static-token session (no account) reports `did: null` — nothing to offer.
+  const operatorOption = useMemo<MemberOption | null>(() => {
+    const meDid = me.data?.did
+    if (!meDid || memberKeys.has(meDid)) return null
+    return { did: meDid, label: me.data?.display_name || 'Operator', type: 'operator' }
+  }, [me.data, memberKeys])
+
+  const options = operatorOption ? [...agentOptions, operatorOption] : agentOptions
 
   if (channel == null) return null
 
@@ -203,14 +259,44 @@ export function ChannelMembersSheet({
           )}
           {operatorMode && (
             <div className="flex items-center gap-2 border-t border-border pt-4">
-              <Input
-                value={newMember}
-                onChange={(e) => setNewMember(e.target.value)}
-                placeholder="agent ref…"
-                className="h-8"
-                onKeyDown={(e) => e.key === 'Enter' && add()}
-              />
-              <Button size="sm" disabled={!newMember.trim() || busy === newMember.trim()} onClick={add}>
+              <Select value={newMember} onValueChange={setNewMember} disabled={options.length === 0}>
+                <SelectTrigger className="h-8 flex-1">
+                  <SelectValue
+                    placeholder={options.length === 0 ? 'No available identities' : 'Add a member…'}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {agentOptions.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Agents</SelectLabel>
+                      {agentOptions.map((o) => (
+                        <SelectItem key={o.did} value={o.did}>
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate">{o.label}</span>
+                            <span className="truncate text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+                              {o.type}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {operatorOption && (
+                    <SelectGroup>
+                      <SelectLabel>Operators</SelectLabel>
+                      <SelectItem value={operatorOption.did}>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{operatorOption.label}</span>
+                          <span className="truncate text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+                            {operatorOption.type}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    </SelectGroup>
+                  )}
+                </SelectContent>
+              </Select>
+              <Button size="sm" disabled={!newMember || busy === newMember} onClick={add}>
                 <UserPlus className="size-3.5" /> Add
               </Button>
             </div>

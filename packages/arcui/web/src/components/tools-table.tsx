@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { CapabilityStatusBadge } from '@/components/capability-table'
 import { cn } from '@/lib/utils'
 import type { Dict } from '@/lib/types'
 
@@ -35,10 +36,43 @@ function StatusBadge({ value }: { value?: string }) {
   return <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', tone)}>{value ?? 'allow'}</span>
 }
 
-/** Tool surface table: transport, effect classification, allow/deny status, and
- *  a click-to-expand description row. Row click also opens the detail drawer
- *  (U6) when `onRowClick` is supplied — the inline expand stays for a quick
- *  glance without leaving the table. */
+// H-014: every tool row shows where it comes from — builtin / agent / extension
+// / module — from the `source` category the backend derives off the loader's
+// scan root (falling back to the disk-scan transport). Four fixed buckets, so
+// a badge never silently blends a new source into "agent".
+const SOURCE_LABEL: Record<string, string> = {
+  builtin: 'builtin',
+  agent: 'agent',
+  extension: 'extension',
+  module: 'module',
+}
+const SOURCE_TONE: Record<string, string> = {
+  builtin: 'border-border bg-muted text-muted-foreground',
+  agent: 'border-status-warning/30 bg-status-warning/15 text-status-warning',
+  extension: 'border-status-info/30 bg-status-info/15 text-status-info',
+  module: 'border-primary/30 bg-primary/15 text-primary',
+}
+
+/** builtin / agent / extension / module badge (H-014). */
+export function SourceBadge({ value }: { value?: string }) {
+  const key = value ?? ''
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium',
+        SOURCE_TONE[key] ?? 'border-border bg-muted text-muted-foreground',
+      )}
+    >
+      {SOURCE_LABEL[key] ?? (key || '—')}
+    </span>
+  )
+}
+
+/** ONE consolidated tool surface table (H-013): source badge, version,
+ *  effect classification, the loader's verbatim signature/TOFU verdict, and
+ *  the tool-policy allow/deny status, plus a click-to-expand description row.
+ *  Row click also opens the detail drawer (U6) when `onRowClick` is supplied
+ *  — the inline expand stays for a quick glance without leaving the table. */
 export function ToolsTable({
   tools,
   onRowClick,
@@ -50,8 +84,12 @@ export function ToolsTable({
   const [filter, setFilter] = useState('')
   const rows = useMemo(() => {
     const q = filter.toLowerCase()
-    return tools.filter((t) =>
-      !q || `${t.name ?? ''} ${t.transport ?? ''} ${t.classification ?? ''}`.toLowerCase().includes(q),
+    return tools.filter(
+      (t) =>
+        !q ||
+        `${t.name ?? ''} ${t.source ?? ''} ${t.transport ?? ''} ${t.classification ?? ''} ${t.loader_status ?? ''}`
+          .toLowerCase()
+          .includes(q),
     )
   }, [tools, filter])
 
@@ -63,15 +101,17 @@ export function ToolsTable({
         placeholder="Filter tools…"
         className="h-8 max-w-xs"
       />
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               <th className="w-6 px-3 py-2" />
               <th className="px-3 py-2">Tool</th>
-              <th className="px-3 py-2">Transport</th>
+              <th className="px-3 py-2">Source</th>
+              <th className="px-3 py-2">Version</th>
               <th className="px-3 py-2">Classification</th>
-              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Loader verdict</th>
+              <th className="px-3 py-2">Policy</th>
             </tr>
           </thead>
           <tbody>
@@ -96,14 +136,25 @@ export function ToolsTable({
                         {String(t.name ?? '—')}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{String(t.transport || '—')}</td>
+                    <td className="px-3 py-2"><SourceBadge value={t.source as string} /></td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{String(t.version || '—')}</td>
                     <td className="px-3 py-2"><ClassificationBadge value={t.classification as string} /></td>
+                    <td className="px-3 py-2">
+                      {t.loader_status ? (
+                        <CapabilityStatusBadge
+                          status={t.loader_status as string}
+                          detail={t.loader_detail as string}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2"><StatusBadge value={t.status as string} /></td>
                   </tr>
                   {isOpen && desc && (
                     <tr className="border-b border-border/60 bg-muted/20">
                       <td />
-                      <td colSpan={4} className="px-3 py-2 text-xs text-muted-foreground">{desc}</td>
+                      <td colSpan={6} className="px-3 py-2 text-xs text-muted-foreground">{desc}</td>
                     </tr>
                   )}
                 </Fragment>

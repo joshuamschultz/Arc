@@ -46,7 +46,7 @@ from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
 from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
 from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
-from arcui.routes.agent_detail.files_write import put_file_write
+from arcui.routes.agent_detail.files_write import delete_file, put_file_write
 from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
     get_inbox_search,
@@ -95,6 +95,7 @@ routes = [
     Route("/api/agents/{id}/files/tree", get_files_tree, methods=["GET"]),
     Route("/api/agents/{id}/files/read", get_file_read, methods=["GET"]),
     Route("/api/agents/{id}/files/read", put_file_write, methods=["PUT"]),
+    Route("/api/agents/{id}/files/read", delete_file, methods=["DELETE"]),
     Route("/api/agents/{id}/skills", get_skills, methods=["GET"]),
     Route("/api/agents/{id}/skills/{skill_name}/detail", get_skill_detail, methods=["GET"]),
     Route("/api/agents/{id}/skills/{skill_name}/evals", get_skill_evals, methods=["GET"]),

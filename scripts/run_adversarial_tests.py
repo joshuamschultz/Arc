@@ -42,6 +42,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_multi_agent_runtime_isolation.py",
         "packages/arcmemory/tests/security/test_no_read_up_real_paths.py",
     ),
+    "dashboard symlink deletion and key/control-plane exfiltration (H-018)": (
+        "packages/arcui/tests/integration/test_file_delete_routes.py",
+        "packages/arcui/tests/integration/test_path_traversal_e2e.py",
+    ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",

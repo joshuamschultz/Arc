@@ -51,17 +51,17 @@ before this batch is complete.
 | H-006 | Home | Home loads with data in < 2s | M | MERGED | W3a |
 | H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | MERGED | 663d9ea1 |
 | H-008 | Fleet | Fleet shows 0 calls though agents ran | M | MERGED | W3a |
-| H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
+| H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | MERGED | a986e20 |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | MERGED | 210fd232 |
-| H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | NEW | |
+| H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | MERGED | 7d708959 |
 | H-012 | Agent·Runs | Rename Runs→Activity; add identifying metadata | S | MERGED | 157701a9 |
-| H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | NEW | |
-| H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | NEW | |
+| H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | MERGED | 6921ee29 |
+| H-014 | Agent·Tools | Show tools from builtin/agent/extension/module w/ source id | M | MERGED | 6921ee29 |
 | H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | MERGED | ed84d651 |
 | H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | NEW | |
 | H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | MERGED | 157701a9 |
-| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | NEW | |
-| H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | NEW | |
+| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | MERGED | b311fd45 |
+| H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
@@ -86,6 +86,7 @@ before this batch is complete.
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
+| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch | S | NEW | |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
@@ -93,6 +94,8 @@ before this batch is complete.
 **Advisor:** a standing **Fable** planner/advisor (`Planner`) reviews each issue's plan for correctness, architecture fit (four pillars), and best outcome before it is coded, and reviews the result before merge.
 
 **Planner sequencing (2026-08-29):** Wave0 unblockers (H-043 billing→Josh, H-021) · Wave1 H-007 identity foundation (server-side, DID-join, one component — dependents H-008/H-029/H-022/H-019/H-012/H-002 adopt it) · Wave2 quick-S UI · Wave3 Home/metrics (H-004/5/6/8/1 — one query-layer unit; H-008 is the connector-counter defect family) · Wave4 agent-detail · Wave5 system/plumbing · Wave6 mini-specs (Knowledge cluster H-023→27, H-016 graph, H-041→42 skill, H-040 fleet, then H-036 keyboard, H-037 CLI parity LAST). **Flag:** H-002 (Home activity) / H-012 (agent Runs tab) job-subtitle may be partly covered by the recent run-list work — diff before coding. (Confirmed NOT done; both real.)
+
+**Wave 4 in flight (worktrees, CODING):** W4a=H-013+H-014 (merge the two Tools lists into one, keep loader-verdict/signature provenance + source badges) · W4b=H-011 (inbox email-client side/expand panel) · W4c=H-009 (Identity tab + operator-only audited identity.md edit, ASI01) · W4d=H-018 (delete files: operator-gated + audited + path-fenced + agent-state paths protected) · W4e=H-019 (member add dropdown of agents+operators). W4a/b/c share agent-detail.tsx (distinct tab regions).
 
 **Wave 3 in flight (worktrees, CODING):** W3a=H-008+H-004+H-005+H-006 (metrics unit: root-cause the 0-calls join/window/two-DB bug, 24h-window Tasks/Runs cards, live+accurate, <2s — all in observe/observe_stats + home) · W3b=H-010 (policy one-truth fn in arcagent tool_policy, 3 states default-allow/deny-all/explicit; both Identity+Tools tabs render it). H-001 (NEEDS YOU aggregation) sequenced right after W3a (shares home.tsx).
 

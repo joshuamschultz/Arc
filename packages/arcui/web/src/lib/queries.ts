@@ -22,6 +22,7 @@ import type {
   AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
+  AuthMeResponse,
   BlobFoldersResponse,
   ChannelsResponse,
   ConnectedDataActivationResponse,
@@ -40,6 +41,7 @@ import type {
   DocumentsResponse,
   EntitiesResponse,
   FileReadResponse,
+  FileWriteResponse,
   FilesTreeResponse,
   IdentityCostResponse,
   IndexHealthResponse,
@@ -87,16 +89,23 @@ import type {
 // server-query-first seam that keeps the DB migration transparent (plan
 // §storage-evolution).
 
-function useApiQuery<T>(key: unknown[], path: string): UseQueryResult<T> {
+function useApiQuery<T>(key: unknown[], path: string, enabled?: boolean): UseQueryResult<T> {
   return useQuery<T>({
     queryKey: key,
     queryFn: ({ signal }) => apiGet<T>(path, signal),
+    enabled,
   })
 }
 
 // --- Fleet (team) ----------------------------------------------------------
 
 export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
+
+// Who is holding this session's token (SPEC-057 REQ-043) — the operator
+// identity a channel-membership picker offers alongside the roster (H-019).
+// Static-token sessions come back `anonymous: true` with `did: null`.
+export const useMe = (enabled = true) =>
+  useApiQuery<AuthMeResponse>(['auth', 'me'], '/api/auth/me', enabled)
 
 // Polls every 4s so live todo -> in_progress -> done transitions and newly
 // dispatched tasks surface on the board without a manual refresh. The board's
@@ -988,6 +997,22 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
       apiGet(`/api/agents/${agentId}/files/read?path=${encodeURIComponent(path!)}`, signal),
     enabled: !!path,
   })
+
+// Operator-gated save through the SAME `PUT /files/read` chokepoint the read
+// side above resolves — server-side this is direct workspace filesystem I/O
+// (ADR-029), never the agent's write/edit tools, and every save (applied,
+// denied, or errored) is audited (files_write.py). The viewer role never
+// reaches the filesystem: a non-operator PUT is rejected server-side before
+// any byte is touched, regardless of what this hook is wired to in the UI.
+export const useSaveAgentFile = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<FileWriteResponse, Error, { path: string; content: string }>({
+    mutationFn: ({ path, content }) =>
+      apiPut(`/api/agents/${agentId}/files/read?path=${encodeURIComponent(path)}`, { content }),
+    onSuccess: (_data, { path }) =>
+      queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'file', path] }),
+  })
+}
 
 // --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
 
