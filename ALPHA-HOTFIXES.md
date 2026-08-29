@@ -62,7 +62,7 @@ before this batch is complete.
 | H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | NEW | |
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | NEW | |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | NEW | |
-| H-021 | Audit | Not loading (HTTP 500) | M | CODING | |
+| H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
