@@ -72,8 +72,8 @@ before this batch is complete.
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
-| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | CODING | |
-| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | CODING | |
+| H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | MERGED | 1f65e6a1 |
+| H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | MERGED | 1f65e6a1 |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | MERGED | 6dc93100 |
 | H-033b | Knowledge | Connector sync counters wrong (Last sync Never / 0 bytes) — missing last_synced_at + two-DB split (separate from connect path) | M | NEW | |
