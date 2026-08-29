@@ -201,7 +201,10 @@ before this batch is complete.
 #### H-018 — Delete files
 - **Symptom:** Workspace file browser: view/edit only, no delete.
 - **Expected:** Delete (operator-gated, audited) alongside view/edit.
-- **Status:** NEW
+- **Status:** MERGED (b311fd45) + hardened + deployed (runtime 0.4.0-43d46b86).
+- **What shipped:** DELETE route (operator-gated, audited, path-fenced). Blocked-outright: identity.md, policy.md, config TOMLs, `context/**`, `.arcsig` sidecars, `*.key` (any location), `workspace/audit/**`, `.audit/**`. Confirm-required (409→200): memory/**, sessions/**, context.md. Key material protected on ALL FOUR verbs (list filters, read 403, write 403, delete block). Symlink/TOCTOU: check+unlink on the resolved realpath (one resolve), audit records the resolved path. Adversarial cases in `scripts/run_adversarial_tests.py`.
+- **DISCLOSURE-WINDOW FACT (found during the fix):** before this change, the files LIST (`/files/tree`) and VIEW (`/files/read`) routes are **GET = viewer-accessible** and had **no key-material check** — so a `*.key` or config file that ever landed inside a browsable agent root could be listed/read in plaintext by any *viewer* token, not just operator. **Severity (verified on box):** an on-box scan found **0 `*.key` files inside any agent root** (keys live in `~/.arcagent/keys`, outside the browsable `~/arc/team` roots), so no key was ever actually in reach → on the single-operator DGX/Azure posture: **note it, no key rotation needed.** Config TOMLs at the agent root also had zero delete protection (reachable via `root=agent`) — now blocked.
+- **Verified live:** HREG1 capture→recall HIT on the runtime; Audit/stats/needs return 401 (auth), not 500. UI-driven authenticated DELETE left for Josh (operator token is browser-side).
 
 ### Messages
 
