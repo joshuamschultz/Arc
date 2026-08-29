@@ -26,7 +26,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { useRunTimeline, useTraceDetail } from '@/lib/queries'
-import { fmtCost, fmtLatency, fmtNumber, fmtTime, jobLabel, shortId } from '@/lib/format'
+import { fmtCost, fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { RunSummary, Trace } from '@/lib/types'
 
@@ -407,14 +407,6 @@ export function RunRiver({ run }: { run: RunSummary | null }) {
         </h2>
         <div className="mt-1 flex items-center gap-2.5 text-sm text-muted-foreground">
           <StatusChip value={run.status} />
-          {jobLabel(run.job) && (
-            <span
-              className="inline-flex items-center gap-1 rounded border border-muted-foreground/30 bg-muted-foreground/8 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-              title="A background job the agent ran on its own (not a person-driven run)"
-            >
-              {jobLabel(run.job)}
-            </span>
-          )}
           <span>{run.turns} turns</span>
           <span>·</span>
           <span>{run.tool_calls} tools</span>

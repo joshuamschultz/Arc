@@ -135,21 +135,25 @@ export function ArcRunPage() {
                       >
                         {initials(name)}
                       </span>
-                      <span className="truncate text-sm font-semibold text-foreground">{name}</span>
-                      <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-semibold text-foreground">
+                          {name}
+                        </span>
+                        {jobLabel(r.job) && (
+                          <span
+                            className="truncate text-[11px] leading-tight text-foreground/55"
+                            title="A background job the agent ran on its own (not a person-driven run)"
+                          >
+                            {jobLabel(r.job)}
+                          </span>
+                        )}
+                      </div>
+                      <span className="ml-auto shrink-0 self-start text-[11px] tabular-nums text-muted-foreground">
                         {relativeTime(r.started_at)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 pl-8">
                       <StatusChip value={r.status} />
-                      {jobLabel(r.job) && (
-                        <span
-                          className="inline-flex items-center gap-1 rounded border border-muted-foreground/30 bg-muted-foreground/8 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                          title="A background job the agent ran on its own (not a person-driven run)"
-                        >
-                          {jobLabel(r.job)}
-                        </span>
-                      )}
                       <span className="font-mono text-[11px] text-muted-foreground">
                         {shortId(r.run_id, 10)}
                       </span>
