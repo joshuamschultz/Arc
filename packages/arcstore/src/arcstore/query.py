@@ -38,8 +38,15 @@ async def audit_records(
     *,
     limit: int = _DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Most-recent mirrored audit-chain records (by sequence, newest first)."""
-    return await backend.query(AUDIT_TABLE, order_by="seq DESC", limit=limit)
+    """Most-recent mirrored audit-chain records (by time, newest first).
+
+    Ordered by ``ts``, not the WORM chain's own ``seq``: this table mirrors many
+    chains (one per agent, plus the arcui mutation chain), each numbering its own
+    ``seq`` from 0, so sorting on it would interleave unrelated chains by local
+    position instead of real time. ``ts`` is also the only ordering the
+    production PostgresBackend supports (H-021).
+    """
+    return await backend.query(AUDIT_TABLE, order_by="ts DESC", limit=limit)
 
 
 async def skill_versions(
