@@ -10,15 +10,32 @@ import { JsonBlock } from '@/components/json-block'
 import { LoadingRows } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { LlmContent } from '@/components/llm-content-renderer'
+import { AgentIdentity } from '@/components/AgentIdentity'
+import { CapabilityBadge } from '@/components/llm/capability-badge'
 import { useTraceDetail } from '@/lib/queries'
-import { fmtCost, fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
-import type { Trace } from '@/lib/types'
+import { fmtCost, fmtLatency, fmtNumber, fmtTime, jobLabel, shortId } from '@/lib/format'
+import type { AgentIdentityShape, Trace } from '@/lib/types'
+
+/** Same graceful fallback as trace-table.tsx's — this trace's identity when
+ * the roster join didn't attach one. */
+function fallbackIdentity(t: Trace): AgentIdentityShape {
+  return {
+    did: t.agent || '',
+    host: 'unknown',
+    platform: 'unknown',
+    type: 'unknown',
+    short_id: 'unknown',
+    name: t.agent_label ?? null,
+  }
+}
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</span>
-      <span className="font-mono text-sm tabular-nums text-foreground">{value}</span>
+      {/* A div, not a span: some values (e.g. the Type field's badge + operation
+         label) are themselves block content, which a <span> can't validly hold. */}
+      <div className="font-mono text-sm tabular-nums text-foreground">{value}</div>
     </div>
   )
 }
@@ -220,10 +237,42 @@ export function TraceDrawer({
           </TabsList>
 
           <TabsContent value="structured" className="flex-1 space-y-5 overflow-auto p-5">
+            {/* H-007/H-029: the canonical identity block, resolved server-side
+               and joined by DID (H-008) — replaces the raw agent_label/DID text. */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3">
+              <AgentIdentity
+                identity={full.identity ?? fallbackIdentity(full)}
+                fallbackName={full.agent_label || undefined}
+                size="sm"
+              />
+              {jobLabel(full.job ?? null) && (
+                <span
+                  className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                  title="A background job the agent ran on its own (not a person-driven call)"
+                >
+                  {jobLabel(full.job ?? null)}
+                </span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <Field label="Model" value={full.model || '—'} />
               <Field label="Provider" value={full.provider || '—'} />
-              <Field label="Agent" value={full.agent_label || full.agent || '—'} />
+              {/* H-028/H-029: what the call WAS, plus its short operation label
+                 (embed:… / retrieve:…) when the embed path stamped one. */}
+              <Field
+                label="Type"
+                value={
+                  <div className="flex flex-col items-start gap-1">
+                    <CapabilityBadge value={full.capability_class} />
+                    {full.operation && (
+                      <span className="font-mono text-[11px] normal-case text-muted-foreground">
+                        {full.operation}
+                      </span>
+                    )}
+                  </div>
+                }
+              />
               <Field label="Status" value={<StatusText value={full.status} />} />
               <Field label="Tokens in" value={fmtNumber(inTokens)} />
               <Field label="Tokens out" value={fmtNumber(full.output_tokens)} />

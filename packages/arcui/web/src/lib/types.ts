@@ -14,9 +14,14 @@ export type Dict = Record<string, unknown>
 export interface Trace {
   [key: string]: unknown
   trace_id?: string
+  // The actor's DID (H-008 joins/filters on this, never agent_label).
   agent?: string
   agent_label?: string
   agent_did?: string
+  // Canonical identity for `agent`, resolved server-side (H-007/H-029) —
+  // render with the shared `AgentIdentity` component instead of the raw
+  // `agent`/`agent_label` strings. Absent when the roster provider isn't wired.
+  identity?: AgentIdentityShape
   provider?: string
   model?: string
   input_tokens?: number
@@ -34,6 +39,15 @@ export interface Trace {
   tools?: unknown
   request?: unknown
   response?: unknown
+  // H-028/H-029: what the call WAS — "inference" (chat/completion) or
+  // "embedding" — classified from the recorded call type, never the model name.
+  capability_class?: 'inference' | 'embedding'
+  // The embed path's short caller label (e.g. "embed:consolidate",
+  // "retrieve:recall"); undefined for a chat/completion call.
+  operation?: string | null
+  // Sub-job kind (workpad|distill|consolidate|eval|background) parsed off the
+  // agent_label suffix or background origin; null for a plain agent call.
+  job?: string | null
 }
 
 /**

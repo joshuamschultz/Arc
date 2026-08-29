@@ -649,3 +649,71 @@ def test_row_to_trace_cache_tokens_absent_is_none() -> None:
     trace = _row_to_trace({"record_id": "r5", "outcome": "ok"})
     assert trace["cache_read_tokens"] is None
     assert trace["cache_write_tokens"] is None
+
+
+def test_row_to_trace_labels_a_chat_call_as_inference_with_no_job() -> None:
+    """H-029: a plain chat/completion call — no embed ``operation``, no
+    maintenance-job suffix on its label — is "inference" with no job badge."""
+    from arcui.observe import _row_to_trace
+
+    trace = _row_to_trace({"record_id": "r6", "outcome": "ok", "agent_label": "olivia"})
+    assert trace["capability_class"] == "inference"
+    assert trace["operation"] is None
+    assert trace["job"] is None
+
+
+def test_row_to_trace_labels_an_embed_call_with_its_operation() -> None:
+    """H-028's classifier, reused here (H-029): the embed path's ``operation``
+    key on ``extra`` marks the call as "embedding" and surfaces the short
+    caller label — available on the LIST shape, not gated behind bodies."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r7",
+        "outcome": "ok",
+        "extra": {"operation": "retrieve:recall"},
+    }
+    trace = _row_to_trace(row)
+    assert trace["capability_class"] == "embedding"
+    assert trace["operation"] == "retrieve:recall"
+    assert "request" not in trace  # still no bodies on the list shape
+
+
+def test_row_to_trace_job_from_agent_label_suffix() -> None:
+    """A maintenance call's ``<agent>/<job>`` label suffix names the job,
+    mirroring ``compute_runs``' run-level ``_job_of`` at call granularity."""
+    from arcui.observe import _row_to_trace
+
+    trace = _row_to_trace({"record_id": "r8", "outcome": "ok", "agent_label": "olivia/distill"})
+    assert trace["job"] == "distill"
+
+
+def test_row_to_trace_job_background_from_extra_origin() -> None:
+    """No job suffix, but the row carries a background self-wake origin —
+    reads as "background", same as a run with no maintenance suffix."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r9",
+        "outcome": "ok",
+        "agent_label": "olivia",
+        "extra": {"origin": "background"},
+    }
+    assert _row_to_trace(row)["job"] == "background"
+
+
+def test_row_to_trace_capability_class_handles_json_string_extra() -> None:
+    """extra may arrive as a JSON string (see test_row_to_trace_handles_json_string_extra)
+    — the classifier must see the parsed dict, not the raw string."""
+    import json as _json
+
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r10",
+        "outcome": "ok",
+        "extra": _json.dumps({"operation": "embed"}),
+    }
+    trace = _row_to_trace(row)
+    assert trace["capability_class"] == "embedding"
+    assert trace["operation"] == "embed"

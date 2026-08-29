@@ -9,6 +9,7 @@ import { TraceTable } from '@/components/trace-table'
 import { EmptyState } from '@/components/states'
 import { Sparkline } from '@/components/llm/sparkline'
 import { BreakerBadge } from '@/components/llm/breaker-badge'
+import { AgentIdentity } from '@/components/AgentIdentity'
 import {
   useBudgets,
   useCircuitBreakers,
@@ -19,7 +20,20 @@ import {
   useTraces,
 } from '@/lib/queries'
 import { fmtCost, fmtLatency, fmtNumber, fmtTokens } from '@/lib/format'
-import type { Dict } from '@/lib/types'
+import type { AgentIdentityShape, Dict } from '@/lib/types'
+
+/** An agent perf row's identity when the roster join didn't attach one —
+ * still renders the DID/label the row actually carried (H-007 pattern). */
+function fallbackIdentity(row: Dict): AgentIdentityShape {
+  return {
+    did: typeof row.actor_did === 'string' ? row.actor_did : '',
+    host: 'unknown',
+    platform: 'unknown',
+    type: 'unknown',
+    short_id: 'unknown',
+    name: typeof row.name === 'string' ? row.name : null,
+  }
+}
 
 const WINDOWS = [
   { value: '1h', label: '1h' },
@@ -95,6 +109,13 @@ function Overview() {
         .filter((d) => d.cost > 0)
         .sort((a, b) => b.cost - a.cost),
     [s],
+  )
+  // H-029: per-agent breakdown with the canonical identity, resolved
+  // server-side and joined by DID (H-007/H-008) — not the bar chart's plain
+  // label, which can be a free-text `agent_label` rather than a DID.
+  const agentRows = useMemo(
+    () => [...(perf.data?.agents ?? [])].sort((a, b) => Number(b.total_cost) - Number(a.total_cost)),
+    [perf.data],
   )
   const savings = eff.data?.potential_savings_usd ?? 0
 
@@ -272,8 +293,50 @@ function Overview() {
         </div>
       </div>
 
-      {perf.data?.agents && perf.data.agents.length > 0 && (
-        <p className="text-xs text-muted-foreground">{perf.data.agents.length} agents active in window.</p>
+      {agentRows.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Per-agent spend
+          </h3>
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="px-4 py-2.5 text-left">Agent</th>
+                  <th className="px-4 py-2.5 text-right">Calls</th>
+                  <th className="px-4 py-2.5 text-right">Success</th>
+                  <th className="px-4 py-2.5 text-right">Cost</th>
+                  <th className="px-4 py-2.5 text-right">Avg latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentRows.map((a, i) => (
+                  <tr
+                    key={String(a.actor_did ?? a.name ?? i)}
+                    className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
+                  >
+                    <td className="px-4 py-2">
+                      <AgentIdentity
+                        identity={(a.identity as AgentIdentityShape | undefined) ?? fallbackIdentity(a)}
+                        fallbackName={typeof a.name === 'string' ? a.name : undefined}
+                        size="sm"
+                        showAvatar={false}
+                      />
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{fmtNumber(a.request_count as number)}</td>
+                    {/* success_rate already arrives 0-100 (compute_performance) — fmtPercent expects
+                       a 0-1 fraction, so it's formatted directly here rather than misapplied. */}
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {a.success_rate != null ? `${Number(a.success_rate).toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtCost(a.total_cost as number)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{fmtLatency(a.latency_avg as number)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   )

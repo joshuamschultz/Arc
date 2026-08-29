@@ -27,6 +27,7 @@ from arcstore.tasks import MutableTaskBackend, TaskStore
 from pydantic import SecretStr
 
 from arcui.observe_stats import (
+    capability_class,
     compute_cost_efficiency,
     compute_llm_by_identity,
     compute_performance,
@@ -60,6 +61,24 @@ def _task_touched_at(task: dict[str, Any]) -> str:
     return task.get("updated_at") or task.get("created_at") or ""
 
 
+def _call_job(agent_label: str | None, extra: dict[str, Any]) -> str | None:
+    """Name one LLM call's kind for the Calls table (H-029).
+
+    Mirrors ``compute_runs``' ``_job_of``, at call granularity instead of
+    run granularity: a maintenance call labels itself ``<agent>/<job>``
+    (workpad, distill, consolidate, eval, …) — the suffix is the job. Absent
+    a suffix, a background self-wake (pulse/scheduler/sub-agent) reads as
+    ``"background"``; a real, person-driven call gets no badge.
+    """
+    if isinstance(agent_label, str) and "/" in agent_label:
+        suffix = agent_label.rsplit("/", 1)[1].strip()
+        if suffix:
+            return suffix
+    if extra.get("origin") == "background":
+        return "background"
+    return None
+
+
 def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[str, Any]:
     """Map an arcstore ``llm_calls`` row to the UI trace shape.
 
@@ -70,17 +89,29 @@ def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[
     single-trace DETAIL sets ``include_bodies=True`` to surface ``request`` /
     ``response`` / ``messages`` / ``tools``. Under the federal/CUI default the bodies
     are absent regardless — the UI handles that.
+
+    ``capability_class`` / ``operation`` / ``job`` (H-029) are cheap, string-only
+    labels — unlike the raw bodies they ship on every row, list included, so the
+    Calls table can say what a call WAS without a per-row detail fetch.
     """
     prompt = row.get("prompt_tokens") or 0
     completion = row.get("completion_tokens") or 0
     outcome = row.get("outcome")
+    extra = row.get("extra")
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except (json.JSONDecodeError, TypeError):
+            extra = None
+    extra = extra if isinstance(extra, dict) else {}
+    agent_label = row.get("agent_label")
     trace: dict[str, Any] = {
         "trace_id": row.get("record_id"),
         "timestamp": row.get("ts"),
         "model": row.get("model"),
         "provider": row.get("provider"),
         "agent": row.get("actor_did"),
-        "agent_label": row.get("agent_label"),
+        "agent_label": agent_label,
         # UI vocabulary: the producer records ``ok``/``error`` outcomes.
         "status": "success" if outcome == "ok" else outcome,
         "cost_usd": row.get("cost_usd"),
@@ -93,16 +124,15 @@ def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[
         "cache_read_tokens": row.get("cache_read_tokens"),
         "cache_write_tokens": row.get("cache_write_tokens"),
         "request_id": row.get("request_id"),
+        # H-028's inference/embedding split, reused (not recomputed) per call.
+        "capability_class": capability_class({"extra": extra}),
+        # The embed path's short caller label (``embed:*`` / ``retrieve:*``);
+        # None for a chat/completion call, which never stamps one.
+        "operation": extra.get("operation"),
+        "job": _call_job(agent_label, extra),
     }
     if not include_bodies:
         return trace
-    extra = row.get("extra")
-    if isinstance(extra, str):
-        try:
-            extra = json.loads(extra)
-        except (json.JSONDecodeError, TypeError):
-            extra = None
-    extra = extra if isinstance(extra, dict) else {}
     request_body = extra.get("request_body")
     trace["request"] = request_body
     trace["response"] = extra.get("response_body")
