@@ -415,6 +415,14 @@ class ToolsResponse(BaseModel):
     ``arcagent.ToolPolicySummary`` serialized — that both the Tools tab and
     the Identity tab render their headline label from, so the two surfaces
     can no longer disagree about what an empty allowlist means.
+
+    ``tools`` (H-013/H-014) is the single consolidated tool list — durable
+    scan fields (``name``, ``transport``, ``classification``, ``description``,
+    ``status`` allow/deny) merged with the capability loader's verbatim
+    verdict (``version``, ``source_root``, ``loader_status``,
+    ``loader_detail`` — the signature/TOFU provenance) and a normalized
+    ``source`` badge category (``builtin`` / ``agent`` / ``extension`` /
+    ``module``). One row, one tool — no second "loader verdicts" table.
     """
 
     model_config = ConfigDict(extra="forbid")
