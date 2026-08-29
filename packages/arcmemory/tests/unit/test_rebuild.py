@@ -131,3 +131,50 @@ async def test_rebuild_without_embedder_degrades(
     assert conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0] > 0
     if db.vec_available:
         assert conn.execute("SELECT COUNT(*) FROM vec0").fetchone()[0] == 0
+
+
+async def test_rebuild_of_one_scope_leaves_a_sibling_scopes_index_intact(
+    workspace: Path, db: MemoryDB, embedder
+) -> None:
+    """A rebuild must wipe only its own scope, never every scope in the db.
+
+    One agent's db holds several scopes at once — the bare recall scope plus a
+    doc scope per connected source. rebuild() deleted chunks/fts/vec globally
+    (no WHERE scope) but re-indexed only its own, so a rebuild for one scope
+    silently emptied the others' caches — which forced the recall scope to
+    re-embed its whole corpus on every lookup after any sibling rebuild ran.
+    """
+    from arcmemory.index.backend import open_index_backend
+
+    # The recall scope (rebuilt from mem_dir + events) and a sibling doc scope
+    # (a connected source's own pool, distinct chunk ids) — the real multi-scope
+    # shape inside one agent's db.
+    recall = Scope(agent_did="did:arc:agent")
+    doc = Scope(agent_did="did:arc:agent", session_id="doc:dropbox")
+    _seed_agent(workspace, db, recall)
+    await IndexRebuilder(workspace=workspace, db=db, scope=recall, embedder=embedder).rebuild()
+
+    backend = open_index_backend("sqlite", db=db)
+    await backend.upsert_chunk(
+        scope=doc.key,
+        chunk_id="dropbox:report#0",
+        source_path="dropbox://q3.txt",
+        mtime=1000.0,
+        classification="unclassified",
+        content_hash="h",
+        text="quarterly revenue report",
+        embedding=[0.2] * db.dims if backend.vec_available else None,
+    )
+
+    def _chunk_count(scope: str) -> int:
+        return db.connect().execute(
+            "SELECT count(*) FROM chunks WHERE scope=?", (scope,)
+        ).fetchone()[0]
+
+    assert _chunk_count(doc.key) == 1, "precondition: the doc scope was indexed"
+
+    # Rebuilding the recall scope must not touch the doc scope.
+    await IndexRebuilder(workspace=workspace, db=db, scope=recall, embedder=embedder).rebuild()
+
+    assert _chunk_count(doc.key) == 1, "the doc scope's chunk was wiped by the recall rebuild"
+    assert _chunk_count(recall.key) > 0, "the recall scope's own chunks are present"

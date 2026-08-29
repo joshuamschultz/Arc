@@ -159,12 +159,16 @@ class IndexRebuilder:
         self._seed_vocab = set(seed_vocabulary or [])
 
     async def rebuild(self) -> None:
-        """Wipe every derived table and re-derive it from truth (idempotent).
+        """Wipe THIS scope's derived tables and re-derive them from truth (idempotent).
 
-        The single canonical wipe: ``chunks`` is cleared so rows for deleted sources
-        do not survive as orphans, and ``insight_trigger`` is cleared so a poisoned or
-        orphaned abstraction-space vector cannot outlive the rebuild that is meant to
-        fix it (the next ``trigger_index`` re-embeds the current insight set).
+        Scoped on purpose: one agent's db holds several scopes at once — the bare
+        recall scope plus a doc scope per connected source — so the wipe must name
+        ``self._scope`` on every table. An unscoped ``DELETE FROM chunks`` emptied
+        every sibling scope's cache while re-indexing only this one, which forced
+        the recall scope to re-embed its whole corpus on every lookup after any
+        sibling rebuild ran. ``chunks`` is cleared so rows for deleted sources do
+        not survive as orphans; ``insight_trigger`` so a poisoned abstraction-space
+        vector cannot outlive the rebuild meant to fix it.
         """
         # The collection index is a derived routing artifact, so its owning
         # service refreshes it before this disposable SQLite cache is rebuilt.
@@ -172,12 +176,22 @@ class IndexRebuilder:
         # retrieval never repairs it on its own.
         CollectionIndexStore(self._mem_dir).sync()
         conn = self._db.connect()
-        conn.execute("DELETE FROM fts_chunks")
-        conn.execute("DELETE FROM edges")
-        conn.execute("DELETE FROM chunks")
-        conn.execute("DELETE FROM insight_trigger")
+        scope = self._scope.key
         if self._db.vec_available:
-            conn.execute("DELETE FROM vec0")
+            # vec0 carries no scope column; drop only this scope's vectors by id.
+            ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT chunk_id FROM chunks WHERE scope=?", (scope,)
+                ).fetchall()
+            ]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                conn.execute(f"DELETE FROM vec0 WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
+        conn.execute("DELETE FROM fts_chunks WHERE scope=?", (scope,))
+        conn.execute("DELETE FROM edges WHERE scope=?", (scope,))
+        conn.execute("DELETE FROM chunks WHERE scope=?", (scope,))
+        conn.execute("DELETE FROM insight_trigger WHERE scope=?", (scope,))
         conn.commit()
 
         await self._rebuild_chunks()
