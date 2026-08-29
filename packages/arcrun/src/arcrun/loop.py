@@ -59,6 +59,7 @@ def _build_state(
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
+    run_origin: str | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -70,6 +71,7 @@ def _build_state(
         spool_actor_did=actor_did,
         store_raw_bodies=store_raw_bodies,
         sample_rate=sample_rate,
+        run_origin=run_origin,
     )
     tools = provider_tools(capabilities, caller_did=actor_did or _DEFAULT_CALLER_DID)
     if not tools:
@@ -170,6 +172,7 @@ async def run(
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
+    run_origin: str | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
 
@@ -211,6 +214,7 @@ async def run(
         stream_event=stream_event,
         deadline=deadline,
         tool_ledger=tool_ledger,
+        run_origin=run_origin,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -334,6 +338,7 @@ async def run_async(
     stream_event: Callable[[str, dict[str, Any]], None] | None = None,
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
+    run_origin: str | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -366,6 +371,7 @@ async def run_async(
         stream_event=stream_event,
         deadline=deadline,
         tool_ledger=tool_ledger,
+        run_origin=run_origin,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

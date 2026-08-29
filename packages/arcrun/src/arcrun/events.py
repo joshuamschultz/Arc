@@ -176,12 +176,19 @@ class EventBus:
         spool_actor_did: str | None = None,
         store_raw_bodies: bool = False,
         sample_rate: float = 1.0,
+        run_origin: str | None = None,
     ) -> None:
         self._run_id = run_id
         self._on_event = on_event
         # When set, loop-lifecycle events are mirrored to the arcstore spool
         # under this DID (SPEC-026 FR-4). None disables operational recording.
         self._spool_actor_did = spool_actor_did
+        # An opaque per-run origin string the caller (arcagent) supplies —
+        # "background" for a self-wake (pulse / scheduler / consolidation /
+        # sub-agent), absent for a person-driven turn. Rides every run_event's
+        # extra so an observer (arcui) can badge background runs apart from real
+        # ones. arcrun records it verbatim; it never interprets it.
+        self._run_origin = run_origin
         # Raw-capture posture flows in from the caller, never
         # read from config here — arcrun stays config-free (SPEC-028 NFR-4).
         self.store_raw_bodies = store_raw_bodies
@@ -238,6 +245,9 @@ class EventBus:
             return
         try:
             if event.type in _RUN_EVENT_TYPES:
+                extra = _run_event_extra(event)
+                if self._run_origin is not None:
+                    extra = {**extra, "origin": self._run_origin}
                 _spool_record(
                     _SpoolRecord(
                         kind="run_event",
@@ -245,7 +255,7 @@ class EventBus:
                         request_id=self._run_id,
                         name=event.type,
                         outcome=_run_event_outcome(event),
-                        extra=_run_event_extra(event),
+                        extra=extra,
                     )
                 )
             elif event.type in _TOOL_EVENT_TYPES:

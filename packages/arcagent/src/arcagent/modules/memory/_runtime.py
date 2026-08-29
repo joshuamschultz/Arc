@@ -97,6 +97,11 @@ class _State:
     events_since_consolidate: int = 0
     last_activity: float = field(default_factory=time.monotonic)
     last_consolidate_at: float = field(default_factory=time.monotonic)
+    # Whether the surface index has been warmed once since startup. Recall on a turn
+    # is query-only (never embeds the corpus); the background poll keeps the index
+    # fresh, and warms it once at startup so a cold/empty index becomes searchable
+    # without waiting for the first capture.
+    index_warmed: bool = False
 
 
 # Per-agent state keyed by the owning agent's DID. Shared across the process's

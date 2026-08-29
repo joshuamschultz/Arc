@@ -42,6 +42,39 @@ def test_eventbus_records_lifecycle_run_events() -> None:
     assert all(r.request_id == "r1" for r in recorded)
 
 
+def test_run_origin_rides_run_event_extra_for_the_observer() -> None:
+    # The caller (arcagent) hands the loop an opaque origin string — "background"
+    # for a pulse/scheduler/consolidation/sub-agent self-wake, absent for a
+    # person-driven turn. It must ride every run_event's extra so the dashboard
+    # can badge background runs apart from real ones. arcrun stays agnostic: it
+    # records the string, it does not interpret it.
+    recorded: list = []
+    bus = EventBus(
+        run_id="r1",
+        spool_actor_did="did:arc:acme:analyst/aabbccdd",
+        run_origin="background",
+    )
+    with patch.object(events_mod, "_spool_record", recorded.append):
+        bus.emit("turn.start", {"turn": 1})
+        bus.emit("strategy.selected", {"strategy": "react"})
+    run_rows = [r for r in recorded if r.kind == "run_event"]
+    assert all(r.extra.get("origin") == "background" for r in run_rows)
+    # strategy.selected keeps its own detail alongside the origin.
+    strat = next(r for r in run_rows if r.name == "strategy.selected")
+    assert strat.extra.get("strategy") == "react"
+
+
+def test_run_origin_absent_leaves_no_origin_key() -> None:
+    # A person-driven turn passes no origin: the run_event extra carries no origin
+    # key at all (the dashboard treats its absence as "real / interactive").
+    recorded: list = []
+    bus = EventBus(run_id="r1", spool_actor_did="did:arc:acme:analyst/aabbccdd")
+    with patch.object(events_mod, "_spool_record", recorded.append):
+        bus.emit("turn.start", {"turn": 1})
+    row = next(r for r in recorded if r.kind == "run_event")
+    assert "origin" not in row.extra
+
+
 def test_breach_terminal_stamps_reason_on_run_event_outcome() -> None:
     # A budget/turn/token cap emits loop.completed carrying a breach ``reason``.
     # It must ride onto the spool row's ``outcome`` so an observer can tell a

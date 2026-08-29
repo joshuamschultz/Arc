@@ -51,6 +51,7 @@ class Brain(Protocol):
         summary: str = "",
         cues: list[str] | None = None,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         """Query-conditioned, clearance-gated recall; returns injectable text.
 
@@ -59,6 +60,11 @@ class Brain(Protocol):
         that ignores them still satisfies the contract. They feed the analogical
         (structural) recall channel so a different-domain turn can still match a stored
         abstraction without sharing surface tokens.
+
+        ``index`` gates the pre-search corpus (re)index. The agent recall path passes
+        ``index=False`` so a turn embeds only its query, never the corpus — indexing
+        is the background maintainer's job (:meth:`refresh_index`). A Brain that keeps
+        no index simply ignores it.
         """
         ...
 
@@ -78,6 +84,15 @@ class Brain(Protocol):
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the source-of-truth files."""
+        ...
+
+    async def refresh_index(self, *, session_id: str | None = None) -> None:
+        """Incrementally index changed chunks off the turn path (background maintainer).
+
+        The counterpart to ``retrieve(index=False)``: the recall hot path never
+        embeds the corpus, and this refresh does, in the background. A Brain with no
+        index no-ops it.
+        """
         ...
 
     async def list_procedures(self, *, session_id: str | None = None) -> str:
@@ -109,6 +124,7 @@ class Brain(Protocol):
         top_k: int = 3,
         budget: int = 512,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         """Detected-loop-moment signal; returns injectable text or ``""``.
 
@@ -150,6 +166,7 @@ class NullBrain:
         summary: str = "",
         cues: list[str] | None = None,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         return ""
 
@@ -160,6 +177,9 @@ class NullBrain:
         return []
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
+        return None
+
+    async def refresh_index(self, *, session_id: str | None = None) -> None:
         return None
 
     async def list_procedures(self, *, session_id: str | None = None) -> str:
@@ -178,6 +198,7 @@ class NullBrain:
         top_k: int = 3,
         budget: int = 512,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         return ""
 

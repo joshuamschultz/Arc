@@ -32,6 +32,7 @@ from arcagent.core.config import (
     SecurityConfig,
     TelemetryConfig,
 )
+from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
 
 _ISSUER = "did:arc:workpad-e2e-operator"
@@ -118,6 +119,12 @@ async def test_post_respond_drives_context_rewrite(
         )
     )
     _runtime.state().eval_model = model
+
+    # These emissions stand in for real, person-driven turns, so mark the turn
+    # interactive — the workpad cadence only counts turns a person drove, never
+    # background self-wakes (ADR D-726). Without this the runs never count and the
+    # rewrite never fires.
+    turn_context.set_interactive(True)
 
     # Two real bus emissions → every_n_runs=2 fires the rewrite on the 2nd.
     assert agent._bus is not None

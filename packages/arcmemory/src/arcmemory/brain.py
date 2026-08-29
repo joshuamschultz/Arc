@@ -200,6 +200,7 @@ class ArcMemoryBrain:
         summary: str = "",
         cues: list[str] | None = None,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         """Single-pass, clearance-gated, boundary-marked recall (REQ-040..062).
 
@@ -209,12 +210,19 @@ class ArcMemoryBrain:
         cue channel — when omitted, arcmemory derives them by tagging the abstraction
         against its own entity/cue graph. Both are optional (backward-compatible).
 
+        ``index`` gates the incremental corpus (re)index that precedes the search.
+        The agent recall hot path passes ``index=False`` so a turn embeds only its
+        own query, never the corpus — indexing is a background maintainer's job
+        (:meth:`refresh_index`), off the first-LLM-call path. Default ``True`` keeps
+        every other caller auto-indexing exactly as before.
+
         Returns the injectable ``<memory-result>`` rendering (empty string when
         nothing survives the gate). Never raises on a missing embedder — recall
         degrades to BM25 + graph.
         """
         bundle = self._bundle(session_id)
-        await bundle.retriever.index()
+        if index:
+            await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         situation = Situation(text=query, summary=summary, cues=list(cues or []))
         result = await bundle.retriever.retrieve(
@@ -233,6 +241,7 @@ class ArcMemoryBrain:
         summary: str = "",
         cues: list[str] | None = None,
         session_id: str | None = None,
+        index: bool = True,
     ) -> list[RecallCard]:
         """Structured glass-box recall — ranked cards WITH provenance + ``[[links]]``.
 
@@ -240,9 +249,13 @@ class ArcMemoryBrain:
         bounded pass as :meth:`retrieve` (retrieval is NOT agentic), but returns the
         typed cards instead of the injectable text, so a caller can see WHERE each
         memory came from and WHAT it points to. Never raises on a missing embedder.
+
+        ``index`` gates the pre-search corpus index (see :meth:`retrieve`); default
+        ``True`` preserves prior behavior.
         """
         bundle = self._bundle(session_id)
-        await bundle.retriever.index()
+        if index:
+            await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         situation = Situation(text=query, summary=summary, cues=list(cues or []))
         return await bundle.retriever.recall_cards(
@@ -259,6 +272,7 @@ class ArcMemoryBrain:
         top_k: int = 3,
         budget: int = 512,
         session_id: str | None = None,
+        index: bool = True,
     ) -> str:
         """Decide, deterministically, whether a detected moment earns a recall.
 
@@ -304,6 +318,7 @@ class ArcMemoryBrain:
             top_k=top_k,
             budget=budget,
             session_id=session_id,
+            index=index,
         )
 
     async def _proactive_recall(
@@ -316,10 +331,12 @@ class ArcMemoryBrain:
         top_k: int,
         budget: int,
         session_id: str | None,
+        index: bool = True,
     ) -> str:
         """Run the gated recall for a fired moment: bound, dedup, attribute, render."""
         bundle = self._bundle(session_id)
-        await bundle.retriever.index()
+        if index:
+            await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         # Fold the query cues into the search text so a working-set entity absent from
         # the literal message still reaches the text-driven surface channel (COMP-001).
@@ -393,6 +410,16 @@ class ArcMemoryBrain:
         if consolidator.due(now=now, interval_minutes=self._cfg.consolidate_interval_minutes):
             return self._summarize(await consolidator.run(now=now))
         return self._summarize(ConsolidationResult())
+
+    async def refresh_index(self, *, session_id: str | None = None) -> None:
+        """Incrementally index changed chunks — the background maintainer's job.
+
+        The counterpart to ``retrieve(index=False)``: recall on a turn searches only,
+        and this refresh (embedding just the changed chunks, content-hash-gated) runs
+        off the turn path so a whole-corpus embed never blocks a person's turn. Cheap
+        when nothing changed. Degrades silently without an embedder, like recall.
+        """
+        await self._bundle(session_id).retriever.index()
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the glass-box files + stream (REQ-022)."""

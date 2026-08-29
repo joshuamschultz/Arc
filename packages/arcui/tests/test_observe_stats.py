@@ -226,6 +226,35 @@ class TestComputeRuns:
         assert r["ended_at"] == "2026-05-31T00:00:07+00:00"
         assert round(r["duration_ms"]) == 6000
 
+    def test_person_driven_run_has_no_origin(self) -> None:
+        # A real run stamps no origin — absence reads as interactive.
+        runs = compute_runs(self._events())
+        assert runs[0]["origin"] is None
+
+    def test_background_origin_surfaces_from_run_event_extra(self) -> None:
+        # A self-wake (pulse / scheduler / consolidation / sub-agent) stamps
+        # origin="background" on its run_events; one such row badges the whole run.
+        events = [
+            {
+                "kind": "run_event",
+                "request_id": "bg-1",
+                "actor_did": "did:a",
+                "name": "turn.start",
+                "extra": {"origin": "background"},
+                "ts": "2026-05-31T00:00:01+00:00",
+            },
+            {
+                "kind": "run_event",
+                "request_id": "bg-1",
+                "actor_did": "did:a",
+                "name": "loop.complete",
+                "extra": {"origin": "background"},
+                "ts": "2026-05-31T00:00:02+00:00",
+            },
+        ]
+        runs = compute_runs(events)
+        assert runs[0]["origin"] == "background"
+
     def test_completed_run_with_tool_error_is_completed_not_error(self) -> None:
         # A run that reached loop.complete FINISHED. A single failed tool call
         # along the way was recovered (the loop kept going to its terminal), so

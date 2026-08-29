@@ -147,6 +147,7 @@ async def _query_recall(st: _runtime._State, ctx: Any, query: str) -> str:
         top_k=st.config.top_k,
         budget=st.config.budget,
         summary=summary,
+        index=False,  # query-only on the turn; indexing is the background refresh's job
     )
     _cache_recall(st, key, text)
     await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})
@@ -269,6 +270,7 @@ async def on_agent_moment(ctx: Any) -> None:
         top_k=st.config.top_k,
         budget=st.config.budget,
         session_id=session_id,
+        index=False,  # query-only on the turn; indexing is the background refresh's job
     )
     if text_out:
         # A decision-point recall rides the mid-loop channel (appended before the next
@@ -316,7 +318,11 @@ async def inject_insight(ctx: Any) -> None:
     if not await _acl_allows("memory.search", st.agent_did):
         return
     text = await st.brain.retrieve(
-        query, clearance="unclassified", top_k=st.config.top_k, budget=st.config.budget
+        query,
+        clearance="unclassified",
+        top_k=st.config.top_k,
+        budget=st.config.budget,
+        index=False,  # query-only on the turn; indexing is the background refresh's job
     )
     if text:
         ctx.data["insight"] = text
@@ -895,12 +901,31 @@ async def memory_consolidate_loop(_ctx: Any) -> None:
     """Poll the event-count / idle trigger; consolidate when it fires (DC-5)."""
     while True:
         try:
+            await refresh_index_once()
             await consolidate_poll_once()
         except asyncio.CancelledError:
             raise
         except Exception:  # reason: fail-open — a sleep-path error must not crash the agent
             _logger.warning("memory consolidation poll failed", exc_info=True)
         await asyncio.sleep(_CONSOLIDATE_POLL_INTERVAL)
+
+
+async def refresh_index_once() -> None:
+    """Keep the surface index warm off the turn path — query-only recall's partner.
+
+    Recall on a turn never embeds the corpus (``retrieve(index=False)``); this
+    background pass embeds the changed chunks so newly captured memory becomes
+    searchable within a poll interval instead of on a person's turn. It runs when
+    there is pending real activity, and once at startup to warm a cold/empty index.
+    Content-hash gated, so a warm index with nothing changed costs no embeds.
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    if st.index_warmed and st.events_since_consolidate <= 0:
+        return
+    await st.brain.refresh_index()
+    st.index_warmed = True
 
 
 async def consolidate_poll_once(*, now: float | None = None) -> bool:

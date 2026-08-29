@@ -414,6 +414,10 @@ async def _dispatch_stream_locked(
                     transform_context=transform,
                     tool_choice=tool_choice,
                     actor_did=agent._identity.did if agent._identity else None,
+                    # Tag background self-wakes (pulse / scheduler / consolidation /
+                    # sub-agent) so the dashboard can badge them apart from real,
+                    # person-driven runs. Absent origin == interactive (SPEC D-726).
+                    run_origin=None if turn_context.interactive() else "background",
                     store_raw_bodies=agent._config.telemetry.capture_tool_io,
                     max_tokens=run_max_tokens,
                     max_cost_usd=run_max_cost_usd,

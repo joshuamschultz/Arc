@@ -256,6 +256,7 @@ def _new_run(run_id: str) -> dict[str, Any]:
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "cost_usd": 0.0,
+        "origin": None,
         "_error": False,
         "_completed": False,
         "_breached": False,
@@ -301,6 +302,13 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
         run["actor_did"] = row.get("actor_did")
     if run["agent"] is None and row.get("agent_label"):
         run["agent"] = row.get("agent_label")
+    # A background self-wake stamps origin="background" on its run_events (arcrun
+    # EventBus). One such row makes the whole run background — a person-driven run
+    # stamps nothing, so absence reads as interactive.
+    if run["origin"] is None:
+        origin = (row.get("extra") or {}).get("origin")
+        if origin:
+            run["origin"] = origin
 
     _fold_event_kind(run, row)
 
@@ -355,6 +363,9 @@ def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
         "total_tokens": run["prompt_tokens"] + run["completion_tokens"],
         "cost_usd": round(run["cost_usd"], 6),
         "status": status,
+        # "background" for a self-wake (pulse / scheduler / consolidation / sub-agent),
+        # None for a person-driven run — the dashboard badges the former.
+        "origin": run["origin"],
     }
 
 

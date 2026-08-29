@@ -407,6 +407,14 @@ export function RunRiver({ run }: { run: RunSummary | null }) {
         </h2>
         <div className="mt-1 flex items-center gap-2.5 text-sm text-muted-foreground">
           <StatusChip value={run.status} />
+          {run.origin === 'background' && (
+            <span
+              className="inline-flex items-center gap-1 rounded border border-muted-foreground/30 bg-muted-foreground/8 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+              title="A background self-wake (pulse, scheduler, memory upkeep, or sub-agent) — not a person-driven run"
+            >
+              Background
+            </span>
+          )}
           <span>{run.turns} turns</span>
           <span>·</span>
           <span>{run.tool_calls} tools</span>

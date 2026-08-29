@@ -52,13 +52,16 @@ class _SpyBrain:
     def __init__(self) -> None:
         self.captures: list[str] = []
         self.retrieves: list[str] = []
+        self.retrieve_index_flags: list[bool] = []
         self.consolidations = 0
+        self.refreshes = 0
 
     async def capture(self, text: str, **_: Any) -> None:
         self.captures.append(text)
 
-    async def retrieve(self, query: str, **_: Any) -> str:
+    async def retrieve(self, query: str, *, index: bool = True, **_: Any) -> str:
         self.retrieves.append(query)
+        self.retrieve_index_flags.append(index)
         return f"<memory-result>{query}</memory-result>"
 
     async def consolidate(self, **_: Any) -> dict[str, object]:
@@ -67,6 +70,9 @@ class _SpyBrain:
 
     async def rebuild_index(self, **_: Any) -> None:
         return None
+
+    async def refresh_index(self, **_: Any) -> None:
+        self.refreshes += 1
 
 
 def _configure_with(brain: Any, cfg: dict[str, Any] | None = None) -> None:
@@ -236,14 +242,58 @@ async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> No
     assert (tmp_path / "memory" / "index.db").exists()
     assert not (tmp_path / "memory" / "daily-log").exists()
 
+    # Recall on a turn is query-only — it never embeds the corpus — so the just-captured
+    # line is not searchable until the background maintainer indexes it. Warm the index
+    # the way the poll loop does, then recall finds it. This is the whole point: the
+    # embed happens off the turn, not on it.
+    from arcagent.modules.memory.capabilities import refresh_index_once
+
     sections: dict[str, str] = {}
     await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
-    # Degraded (no embedder) BM25+graph recall still returns the captured line.
+    assert "recall" not in sections  # nothing indexed yet → query-only recall is empty
+
+    await refresh_index_once()  # the background pass embeds the changed chunks
+    st.recall_cache.clear()  # a new turn: the once-per-turn recall cache is fresh
+    sections = {}
+    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
+    # Degraded (no embedder) BM25+graph recall now returns the captured line.
     assert "recall" in sections
     assert "payments" in sections["recall"]
 
 
 # -- Wiring behavior (spy brain) -----------------------------------------
+
+
+async def test_turn_recall_is_query_only_never_indexes_the_corpus() -> None:
+    """inject_recall must ask the Brain for a query-only retrieve (index=False).
+
+    The whole point of the fix: a person's turn embeds only its query, never the
+    corpus. If this ever passes index=True again, a whole-corpus embed is back on
+    the first-LLM-call path.
+    """
+    spy = _SpyBrain()
+    _configure_with(spy)
+    sections: dict[str, str] = {}
+    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
+    assert spy.retrieve_index_flags == [False]
+
+
+async def test_background_refresh_warms_once_then_only_when_dirty() -> None:
+    """refresh_index_once warms a cold index once, then re-indexes only on new activity."""
+    from arcagent.modules.memory.capabilities import refresh_index_once
+
+    spy = _SpyBrain()
+    _configure_with(spy)
+    st = _runtime.state()
+
+    await refresh_index_once()  # cold start → warm once
+    assert spy.refreshes == 1
+    await refresh_index_once()  # nothing new, already warm → no re-index
+    assert spy.refreshes == 1
+
+    st.events_since_consolidate = 1  # a real capture landed
+    await refresh_index_once()  # dirty → re-index the changed chunks
+    assert spy.refreshes == 2
 
 
 async def test_recall_is_once_per_turn_across_spawn_double_assembly() -> None:
