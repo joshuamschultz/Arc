@@ -569,7 +569,11 @@ export function ConnectionsPage() {
                     ? 'Click a chip to grant or revoke.'
                     : 'Turn on operator controls to grant or revoke.'}
                 </ContextNote>
-                <div className="space-y-3">
+                {/* Denser 2-up grid once there is room; a single column below
+                    `md` keeps every section (doctor, sign-in, knowledge sync)
+                    readable rather than squeezed. `items-start` stops a tall
+                    card from stretching its shorter neighbor to match height. */}
+                <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
                   {data.connections.map((inst) => (
                     <ConnectionCard
                       key={inst.instance}
