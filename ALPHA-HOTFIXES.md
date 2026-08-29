@@ -90,7 +90,9 @@ before this batch is complete.
 
 **Advisor:** a standing **Fable** planner/advisor (`Planner`) reviews each issue's plan for correctness, architecture fit (four pillars), and best outcome before it is coded, and reviews the result before merge.
 
-**Planner sequencing (2026-08-29):** Wave0 unblockers (H-043 billing→Josh, H-021) · Wave1 H-007 identity foundation (server-side, DID-join, one component — dependents H-008/H-029/H-022/H-019/H-012/H-002 adopt it) · Wave2 quick-S UI · Wave3 Home/metrics (H-004/5/6/8/1 — one query-layer unit; H-008 is the connector-counter defect family) · Wave4 agent-detail · Wave5 system/plumbing · Wave6 mini-specs (Knowledge cluster H-023→27, H-016 graph, H-041→42 skill, H-040 fleet, then H-036 keyboard, H-037 CLI parity LAST). **Flag:** H-002 (Home activity) / H-012 (agent Runs tab) job-subtitle may be partly covered by the recent run-list work — diff before coding.
+**Planner sequencing (2026-08-29):** Wave0 unblockers (H-043 billing→Josh, H-021) · Wave1 H-007 identity foundation (server-side, DID-join, one component — dependents H-008/H-029/H-022/H-019/H-012/H-002 adopt it) · Wave2 quick-S UI · Wave3 Home/metrics (H-004/5/6/8/1 — one query-layer unit; H-008 is the connector-counter defect family) · Wave4 agent-detail · Wave5 system/plumbing · Wave6 mini-specs (Knowledge cluster H-023→27, H-016 graph, H-041→42 skill, H-040 fleet, then H-036 keyboard, H-037 CLI parity LAST). **Flag:** H-002 (Home activity) / H-012 (agent Runs tab) job-subtitle may be partly covered by the recent run-list work — diff before coding. (Confirmed NOT done; both real.)
+
+**Wave 2 in flight (worktrees, CODING):** W2a=H-003+H-002 (home.tsx, token-axis compact fmt + activity job) · W2b=H-012+H-017 (agent-detail: Runs→Activity + AgentIdentity adoption + fill space) · W2c=H-020+H-032+H-034 (board overflow, connections 2-col, collapse button) · W2d=H-015 (prompt soft-wrap) · W2e=H-028 (embed≠inference — partition savings by capability class, backend). **H-010 deferred to Wave 3** per Planner (backend policy semantics: preserve 3 states default-allow/deny-all/explicit; one-truth fn in arcagent tool_policy, not arcui).
 
 ---
 
