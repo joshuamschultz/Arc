@@ -48,7 +48,7 @@ before this batch is complete.
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | NEW | |
 | H-005 | Home | Metrics always live + accurate | M | NEW | |
 | H-006 | Home | Home loads with data in < 2s | M | NEW | |
-| H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | NEW | |
+| H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | CODING | |
 | H-008 | Fleet | Fleet shows 0 calls though agents ran | M | NEW | |
 | H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | NEW | |
@@ -62,7 +62,7 @@ before this batch is complete.
 | H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | NEW | |
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | NEW | |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | NEW | |
-| H-021 | Audit | Not loading (HTTP 500) | M | NEW | |
+| H-021 | Audit | Not loading (HTTP 500) | M | CODING | |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | NEW | |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | NEW | |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
@@ -84,11 +84,13 @@ before this batch is complete.
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
-| H-043 | CI | All CI jobs red (fail in 2-4s) — get the whole matrix green | M | NEW | |
+| H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
 **Advisor:** a standing **Fable** planner/advisor (`Planner`) reviews each issue's plan for correctness, architecture fit (four pillars), and best outcome before it is coded, and reviews the result before merge.
+
+**Planner sequencing (2026-08-29):** Wave0 unblockers (H-043 billing→Josh, H-021) · Wave1 H-007 identity foundation (server-side, DID-join, one component — dependents H-008/H-029/H-022/H-019/H-012/H-002 adopt it) · Wave2 quick-S UI · Wave3 Home/metrics (H-004/5/6/8/1 — one query-layer unit; H-008 is the connector-counter defect family) · Wave4 agent-detail · Wave5 system/plumbing · Wave6 mini-specs (Knowledge cluster H-023→27, H-016 graph, H-041→42 skill, H-040 fleet, then H-036 keyboard, H-037 CLI parity LAST). **Flag:** H-002 (Home activity) / H-012 (agent Runs tab) job-subtitle may be partly covered by the recent run-list work — diff before coding.
 
 ---
 
