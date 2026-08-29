@@ -113,6 +113,23 @@ class FileWriteResponse(BaseModel):
     message: str
 
 
+class FileDeleteResponse(BaseModel):
+    """Body of ``DELETE /api/agents/{id}/files/read`` (H-018).
+
+    ``protected`` echoes the ADR-029 agent-state tier the deleted path fell
+    into: ``"confirm"`` when the operator had to pass ``confirm_protected=true``
+    (memory/sessions/context.md/policy.md), else ``None`` for ordinary content.
+    Blocked paths (identity.md, the audit chain) never reach a 200 — they are
+    refused with a 403 before anything is deleted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    protected: str | None
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Agent detail — prompts (COMP-010: editable system prompts)
 # ---------------------------------------------------------------------------
