@@ -76,6 +76,7 @@ nav:
   - Concepts:
       - The Seam Model — Why Everything Is a Plugin: concepts/seam-model.md
       - Fleet layering and removable composition: concepts/fleet-layering.md
+      - Memory, the Index, and Scope: concepts/memory-index-and-scope.md
 
   - Walkthrough:
       - 1. What Arc Is: walkthrough/01-what-is-arc.md
