@@ -75,6 +75,29 @@ def inbound_hop() -> int:
     return _inbound_hop.get()
 
 
+_interactive: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "arcagent_interactive", default=False
+)
+
+
+def set_interactive(value: bool) -> None:
+    """Mark this turn as driven by a real person, not the agent waking itself.
+
+    True only for a turn a human opened — a chat message, a channel post. The
+    agent's own background machinery (the pulse tick, the proactive scheduler,
+    memory consolidation) runs turns too, with this False. Memory consolidation
+    keys off it: only real interaction counts toward "there is new context to
+    fold in", so a quiet agent's background churn cannot keep re-triggering an
+    expensive consolidation on nothing new.
+    """
+    _interactive.set(value)
+
+
+def interactive() -> bool:
+    """Whether a real person drove this turn (vs a background self-wake)."""
+    return _interactive.get()
+
+
 def inbound_channel() -> str | None:
     """The current turn's inbound channel target, or None if not a channel turn."""
     return _inbound_channel.get()
@@ -96,9 +119,11 @@ def is_team_target(target: str) -> bool:
 __all__ = [
     "inbound_channel",
     "inbound_hop",
+    "interactive",
     "is_team_target",
     "overheard",
     "set_inbound_channel",
     "set_inbound_hop",
+    "set_interactive",
     "set_overheard",
 ]

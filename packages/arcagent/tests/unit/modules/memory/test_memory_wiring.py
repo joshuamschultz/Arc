@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from arcagent.brain import NullBrain
+from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
     backfill_digest_from_holdings,
@@ -39,8 +40,10 @@ def _ctx(data: dict[str, Any]) -> SimpleNamespace:
 @pytest.fixture(autouse=True)
 def _reset() -> Any:
     _runtime.reset()
+    turn_context.set_interactive(False)
     yield
     _runtime.reset()
+    turn_context.set_interactive(False)
 
 
 class _SpyBrain:
@@ -85,6 +88,52 @@ def _configure_with(brain: Any, cfg: dict[str, Any] | None = None) -> None:
             active=not isinstance(brain, NullBrain),
         )
     )
+
+
+# -- Consolidation fires on real interaction, not background self-wakes ------
+
+
+@pytest.mark.asyncio
+async def test_a_background_turn_captures_but_does_not_advance_consolidation() -> None:
+    """A pulse/proactive/consolidation self-wake must not drive consolidation.
+
+    Counting background churn made a quiet agent keep crossing the event
+    threshold and re-running an expensive consolidation on nothing new.
+    """
+    brain = _SpyBrain()
+    _configure_with(brain)
+    turn_context.set_interactive(False)
+
+    await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "background churn"}]}))
+
+    assert brain.captures == ["background churn"]  # still captured to memory
+    assert _runtime.state().events_since_consolidate == 0  # but no consolidation event
+
+
+@pytest.mark.asyncio
+async def test_a_real_interactive_turn_advances_consolidation() -> None:
+    brain = _SpyBrain()
+    _configure_with(brain)
+    turn_context.set_interactive(True)
+
+    await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "answered the user"}]}))
+
+    assert _runtime.state().events_since_consolidate == 1
+
+
+@pytest.mark.asyncio
+async def test_a_background_only_agent_never_consolidates() -> None:
+    """No interactive turns means no pending events, so the poll never fires."""
+    brain = _SpyBrain()
+    _configure_with(brain)
+    turn_context.set_interactive(False)
+    for _ in range(50):
+        await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "tick"}]}))
+
+    fired = await consolidate_poll_once(now=1_000_000.0)
+
+    assert fired is False
+    assert brain.consolidations == 0
 
 
 # -- Hotfix: bind() survives a sibling asyncio.Task (task 36) ------------
@@ -212,6 +261,7 @@ async def test_recall_is_once_per_turn_across_spawn_double_assembly() -> None:
 async def test_capture_hooks_call_brain_and_count_events() -> None:
     spy = _SpyBrain()
     _configure_with(spy)
+    turn_context.set_interactive(True)  # a real interaction — events count
     await capture_tool(
         _ctx({"tool": "read", "result": "the quarterly revenue report shows growth"})
     )
@@ -236,6 +286,7 @@ async def test_capture_user_records_user_kind_and_counts_event() -> None:
     """The user's input turn is captured as kind='user' (previously never stored)."""
     spy = _KindSpyBrain()
     _configure_with(spy)
+    turn_context.set_interactive(True)  # a real user turn — the event counts
     await capture_user(_ctx({"task": "how do I deploy the gateway?"}))
     assert spy.captures == ["how do I deploy the gateway?"]
     assert spy.kinds == ["user"]

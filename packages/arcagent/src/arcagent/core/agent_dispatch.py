@@ -270,6 +270,7 @@ def bind_inbound_channel(
     *,
     overheard: bool = False,
     hop: int = 0,
+    interactive: bool = False,
 ) -> None:
     """Bind the turn's inbound channel and remember it as a delivery target.
 
@@ -283,6 +284,7 @@ def bind_inbound_channel(
     # the executor->agent task boundary does not reliably reach the loop's hooks.
     turn_context.set_overheard(overheard)
     turn_context.set_inbound_hop(hop)
+    turn_context.set_interactive(interactive)
     if reply_target:
         # Remember this channel so arcui can offer it as a delivery-target
         # dropdown (a raw chat_id exists only here on the inbound path).
@@ -366,7 +368,9 @@ async def _dispatch_stream_locked(
     """Execute a turn after its session serialization lock is held."""
     agent._ensure_started()
     activate_runtime_bindings(agent)
-    bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard)
+    bind_inbound_channel(
+        agent, reply_target, reply_label, overheard=overheard, interactive=interactive
+    )
     # One run id spans prompt assembly AND the loop, bound here so a step that runs
     # while the prompt is built — a memory recall, most of all — lands in the same
     # run's trace as the reads that follow it. arcrun reuses this id when handed in,
@@ -484,7 +488,11 @@ async def start_tracked_run(
     try:
         agent._ensure_started()
         activate_runtime_bindings(agent)
-        bind_inbound_channel(agent, reply_target, reply_label, overheard=overheard, hop=hop)
+        # This path is the turn an inbound human message opens (registered
+        # interactive=True below), so it counts as real interaction for memory.
+        bind_inbound_channel(
+            agent, reply_target, reply_label, overheard=overheard, hop=hop, interactive=True
+        )
         _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
             agent, input_text
         )

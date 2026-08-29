@@ -393,14 +393,26 @@ async def capture_respond(ctx: Any) -> None:
 
 
 async def _capture(st: _runtime._State, text: str, *, kind: str) -> None:
-    """ACL-gated Brain capture + consolidation-trigger bookkeeping."""
+    """ACL-gated Brain capture + consolidation-trigger bookkeeping.
+
+    Capture always records the content. The consolidation TRIGGER, though, only
+    advances on a turn a real person drove (``turn_context.interactive()``): the
+    agent's own background machinery — the pulse tick, the proactive scheduler,
+    consolidation itself — runs turns constantly, and counting those meant a quiet
+    agent kept crossing the event threshold and re-running an expensive
+    consolidation on nothing new. Now background churn neither adds an event nor
+    resets the idle clock, so consolidation fires once after real activity settles
+    (idle past ``consolidate_idle_seconds``) and then stays quiet until a person
+    interacts again.
+    """
     if not text:
         return
     if not await _acl_allows("memory.write", st.agent_did):
         return
     await st.brain.capture(text, kind=kind)
-    st.events_since_consolidate += 1
-    st.last_activity = time.monotonic()
+    if turn_context.interactive():
+        st.events_since_consolidate += 1
+        st.last_activity = time.monotonic()
     await _audit("memory.capture", {"kind": kind})
     await _announce_ingest(st, text, kind)
 
