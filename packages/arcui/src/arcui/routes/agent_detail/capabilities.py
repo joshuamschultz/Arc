@@ -49,7 +49,45 @@ async def _agent_capability_rows(
             "%s inventory failed for %s; contributing none", kind, agent_root, exc_info=True
         )
         return []
-    return [item.model_dump(mode="json") for item in inventory.items if item.kind == kind]
+    rows = [item.model_dump(mode="json") for item in inventory.items if item.kind == kind]
+    if kind == "tool" and inventory.runtime:
+        _append_runtime_only_tools(rows, inventory.runtime_tools)
+    return rows
+
+
+def _append_runtime_only_tools(rows: list[dict[str, Any]], runtime_tools: list[Any]) -> None:
+    """Surface a live-registered tool that has no static scan root of its own.
+
+    A connector's per-verb tools register into the live registry through
+    :class:`~arcagent.extension.bridge.CapabilityBridge` under an
+    ``extension:<name>`` scan root — there is no ``.py`` file anywhere for the
+    static inventory scan to find, so an attached extension's tools would
+    otherwise never appear in ``kind == "tool"`` items at all (H-031). Each
+    runtime tool carries its own true scan-root in ``source`` (H-030's
+    ``RuntimeToolItem.source``); a tool already found by the static scan is
+    left as-is (fuller ``source_path``/``version`` there) rather than
+    overwritten by this best-effort runtime row.
+    """
+    seen = {row["name"] for row in rows}
+    for tool in runtime_tools:
+        name = getattr(tool, "name", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        rows.append(
+            {
+                "kind": "tool",
+                "name": name,
+                "version": "",
+                "description": getattr(tool, "description", "") or "",
+                "source_root": getattr(tool, "source", "") or "",
+                "source_path": "",
+                "status": "loaded",
+                "status_detail": (
+                    "runtime-registered; no static scan root (e.g. an attached extension)"
+                ),
+            }
+        )
 
 
 async def agent_skill_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
