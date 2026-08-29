@@ -162,6 +162,16 @@ class TestCreate:
         assert context.exists()
         assert len(context.read_text().strip()) > 0
 
+    def test_create_scaffolds_an_empty_pulse_file(self, tmp_path):
+        # Every agent gets a pulse.md so the scheduled-check file exists and is
+        # ready to edit; empty means the pulse is a no-op until checks are added.
+        from arcagent.modules.pulse.engine import parse_pulse_file
+
+        _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
+        pulse = tmp_path / "my-agent" / "workspace" / "pulse.md"
+        assert pulse.exists()
+        assert parse_pulse_file(pulse.read_text(encoding="utf-8")) == []
+
     def test_create_root_index_is_reserved_and_not_memory_index(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
         workspace = tmp_path / "my-agent" / "workspace"

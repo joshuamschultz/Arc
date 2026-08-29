@@ -1013,6 +1013,24 @@ def _discover_runtime_tools(agent_dir: Path) -> list[_DiscoveredTool]:
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_PULSE = """# Pulse — scheduled self-checks
+
+The agent reads this file each time its pulse fires. The wake interval and the
+on/off switch live in `arcagent.toml` under `[modules.pulse]`. Each `##` section
+below is one scheduled check the agent runs when it is due; with none, the pulse
+wakes and does nothing.
+
+To add a check, follow this shape (the pulse tick is the floor — a check's own
+interval decides how often it actually runs):
+
+    ## morning_summary
+    - **Interval:** 1440 minutes
+    - **Action:** What the agent should do when this check runs.
+
+No checks are defined yet.
+"""
+
+
 def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     """Create the agent + workspace directory structure (SPEC-021 layout)."""
     workspace = agent_dir / "workspace"
@@ -1040,6 +1058,12 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     if not index_path.exists():
         index_path.write_text(_DEFAULT_INDEX, encoding="utf-8")
 
+    # Every agent gets a pulse.md so the scheduled-check file exists and is ready
+    # to edit; empty means the pulse is a no-op until checks are added.
+    pulse_path = workspace / "pulse.md"
+    if not pulse_path.exists():
+        pulse_path.write_text(_DEFAULT_PULSE, encoding="utf-8")
+
     # Per-agent capabilities live at the AGENT root (trusted scan root).
     # Agent-authored capabilities go under workspace/capabilities (untrusted).
     (agent_dir / "capabilities").mkdir(exist_ok=True)
@@ -1065,7 +1089,7 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path, tier: str = "per
     sys.stdout.write("    capabilities/             # per-agent capabilities (trusted)\n")
     sys.stdout.write("      calculator.py\n")
     sys.stdout.write("    workspace/\n")
-    sys.stdout.write("      identity.md, policy.md, context.md, index.md\n")
+    sys.stdout.write("      identity.md, policy.md, context.md, index.md, pulse.md\n")
     sys.stdout.write("      capabilities/          # agent-authored (UNTRUSTED, AST-validated)\n")
     sys.stdout.write("      sessions/              # chat transcripts (JSONL)\n")
     sys.stdout.write("      memory/                # lazily created when a Brain is enabled\n")
