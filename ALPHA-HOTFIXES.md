@@ -48,7 +48,7 @@ before this batch is complete.
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | NEW | |
 | H-005 | Home | Metrics always live + accurate | M | NEW | |
 | H-006 | Home | Home loads with data in < 2s | M | NEW | |
-| H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | CODING | |
+| H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | MERGED | 663d9ea1 |
 | H-008 | Fleet | Fleet shows 0 calls though agents ran | M | NEW | |
 | H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
 | H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | NEW | |
