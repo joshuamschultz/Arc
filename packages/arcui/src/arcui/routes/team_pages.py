@@ -220,7 +220,7 @@ async def get_tools_skills(request: Request) -> JSONResponse:
         # showed zero tools while every agent plainly had them.
         live = registry.get(entry.agent_id)
         live_tools = list(live.registration.tools) if live is not None else []
-        rows, _allow, _deny = agent_tool_rows(
+        rows, _allow, _deny, _summary = agent_tool_rows(
             entry.agent_id, Path(entry.workspace_path), live_tools
         )
         for row in rows:

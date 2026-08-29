@@ -194,10 +194,22 @@ export interface SkillsResponse {
   skills: Dict[]
 }
 
+// The ONE authoritative policy verdict (H-010, arcagent.summarize_tool_policy).
+// The Identity tab and the Tools tab both render their headline label from
+// this — never from a locally re-derived allow.length check — so they cannot
+// disagree about what an empty allowlist means.
+export interface ToolPolicySummary {
+  state: 'default-allow' | 'deny-all' | 'explicit'
+  allow: string[]
+  deny: string[]
+  label: string
+}
+
 export interface ToolsResponse {
   tools: Dict[]
   allowlist: string[]
   denylist: string[]
+  policy_summary: ToolPolicySummary
 }
 
 export interface PolicyResponse {

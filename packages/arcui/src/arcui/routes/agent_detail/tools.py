@@ -268,14 +268,24 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
 
 def _load_tool_policy(
     agent_id: str, agent_root: Path
-) -> tuple[list[str], list[str], dict[str, Any]]:
+) -> tuple[list[str] | None, list[str], dict[str, Any]]:
     """Read ``[tools.policy]`` allow/deny lists and ``[modules]`` from arcagent.toml.
 
-    Returns ``(allowlist, denylist, enabled_modules)``; defaults to empty when
-    the file is absent, unreadable, or malformed — the tools route stays robust
-    to a partial install.
+    Returns ``(allowlist, denylist, enabled_modules)``. ``allowlist`` is
+    ``None`` when the ``allow`` key is absent from ``[tools.policy]`` (or the
+    file/section is missing) — distinct from an ``allow = []`` the operator
+    configured explicitly. That distinction is exactly what
+    ``arcagent.summarize_tool_policy`` (H-010) needs to tell "no allowlist
+    configured" (default-allow) apart from "allowlist configured empty"
+    (deny-all); collapsing both to ``[]`` here is what produced the
+    contradictory Identity/Tools tab labels this route now avoids.
+
+    ``denylist`` defaults to ``[]`` — an absent vs. empty deny list behaves
+    identically (nothing is denied either way), so no such distinction is
+    needed there. Defaults to empty/None when the file is absent, unreadable,
+    or malformed — the tools route stays robust to a partial install.
     """
-    allowlist: list[str] = []
+    allowlist: list[str] | None = None
     denylist: list[str] = []
     enabled_modules: dict[str, Any] = {}
     try:
@@ -306,14 +316,28 @@ def _load_tool_policy(
 
 def agent_tool_rows(
     agent_id: str, agent_root: Path, live_tools: list[str]
-) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str], arcagent.ToolPolicySummary]:
     """Every tool an agent can call, deduplicated across all sources, plus its
-    allow/deny lists. Built from DURABLE sources (builtins, modules, disk,
-    policy) so it holds up in the read-on-demand deployment where no agent is
-    live-registered; any `live_tools` passed in are layered on top. Shared by the
-    per-agent Tools tab and the fleet tools matrix so both show the identical set.
+    allow/deny lists and the one authoritative policy verdict. Built from
+    DURABLE sources (builtins, modules, disk, policy) so it holds up in the
+    read-on-demand deployment where no agent is live-registered; any
+    `live_tools` passed in are layered on top. Shared by the per-agent Tools
+    tab and the fleet tools matrix so both show the identical set.
+
+    ``policy_summary`` (H-010) is computed here, once, from the RAW allowlist
+    ``_load_tool_policy`` returns (``None`` when unconfigured, ``[]`` when
+    configured empty) via ``arcagent.summarize_tool_policy`` — the single
+    interpreter both the Identity tab and the Tools tab render from. The
+    ``allowlist`` returned alongside it is the materialized ``list[str]`` the
+    tool rows below need (``None`` collapsed to ``[]``); that collapse is
+    fine for row-building because a row either names a config-listed tool or
+    it doesn't; it is exactly the collapse that must NOT happen for the
+    display verdict, which is why the summary is computed from the raw value
+    first.
     """
-    allowlist, denylist, enabled_modules = _load_tool_policy(agent_id, agent_root)
+    allowlist_raw, denylist, enabled_modules = _load_tool_policy(agent_id, agent_root)
+    policy_summary = arcagent.summarize_tool_policy(allowlist_raw, denylist)
+    allowlist = list(allowlist_raw) if allowlist_raw is not None else []
 
     # Order: 1) live registry → 2) builtins → 3) module-derived → 4) disk → 5) policy
     seen: dict[str, dict[str, Any]] = {}
@@ -355,7 +379,7 @@ def agent_tool_rows(
     for t in allowlist:
         _add(t, transport="config")
 
-    return list(seen.values()), allowlist, denylist
+    return list(seen.values()), allowlist, denylist, policy_summary
 
 
 async def get_tools(request: Request) -> JSONResponse:
@@ -372,13 +396,14 @@ async def get_tools(request: Request) -> JSONResponse:
     entry = registry.get(agent_id)
     live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
 
-    tools, allowlist, denylist = agent_tool_rows(agent_id, agent_root, live_tools)
+    tools, allowlist, denylist, policy_summary = agent_tool_rows(agent_id, agent_root, live_tools)
 
     return JSONResponse(
         ToolsResponse(
             tools=tools,
             allowlist=allowlist,
             denylist=denylist,
+            policy_summary=policy_summary.model_dump(mode="json"),
         ).model_dump(mode="json")
     )
 

@@ -366,13 +366,20 @@ class SkillsResponse(BaseModel):
 
 
 class ToolsResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/tools``."""
+    """Body of ``GET /api/agents/{id}/tools``.
+
+    ``policy_summary`` (H-010) is the ONE authoritative policy verdict —
+    ``arcagent.ToolPolicySummary`` serialized — that both the Tools tab and
+    the Identity tab render their headline label from, so the two surfaces
+    can no longer disagree about what an empty allowlist means.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     tools: list[dict[str, Any]]
     allowlist: list[str]
     denylist: list[str]
+    policy_summary: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
