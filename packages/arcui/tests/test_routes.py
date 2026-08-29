@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,7 +23,14 @@ def _make_app(
     return app, client, auth
 
 
-def _seed_spool(data_dir: Path, *, model: str = "claude", outcome: str = "ok") -> str:
+def _seed_spool(
+    data_dir: Path,
+    *,
+    model: str = "claude",
+    outcome: str = "ok",
+    actor_did: str = "did:arc:test:exec/aabbccdd",
+    agent_label: str | None = None,
+) -> str:
     """Write one llm_call to the durable spool; return its trace_id (record_id)."""
     from arcstore.records import SpoolRecord
     from arcstore.spool import record as spool_record
@@ -31,7 +39,8 @@ def _seed_spool(data_dir: Path, *, model: str = "claude", outcome: str = "ok") -
     spool.mkdir(parents=True, exist_ok=True)
     rec = SpoolRecord(
         kind="llm_call",
-        actor_did="did:arc:test:exec/aabbccdd",
+        actor_did=actor_did,
+        agent_label=agent_label,
         request_id="req-1",
         model=model,
         prompt_tokens=100,
@@ -42,6 +51,18 @@ def _seed_spool(data_dir: Path, *, model: str = "claude", outcome: str = "ok") -
     )
     spool_record(rec, path=spool / "operational-2026-05-31.jsonl")
     return rec.record_id
+
+
+def _write_roster_agent(team_root: Path, dir_name: str, *, name: str, did: str) -> None:
+    """Minimal ``team/<dir_name>/arcagent.toml`` — enough for team_roster to
+    surface one agent with a known ``agent_id`` (== ``name``) and DID."""
+    agent_dir = team_root / dir_name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "arcagent.toml").write_text(
+        f'[agent]\nname = "{name}"\n[identity]\ndid = "{did}"\n[llm]\nmodel = "openai/gpt-4o"\n',
+        encoding="utf-8",
+    )
+    (agent_dir / "workspace").mkdir()
 
 
 class TestHealthRoute:
@@ -219,6 +240,32 @@ class TestStatsRoute:
         assert resp.status_code == 200
         data = resp.json()
         assert data.get("request_count", 0) == 0
+
+    def test_get_stats_resolves_roster_label_to_did(
+        self, tmp_path: Path, _isolated_arc_data_dir: Path
+    ):
+        """H-008: ``?agent_id=<roster slug>`` joins through the roster's DID,
+        not a raw label match — an agent's calls were recorded under a label
+        that no longer matches its current roster entry (a rename), which is
+        exactly how a demonstrably-running agent showed zero calls.
+        """
+        team = tmp_path / "team"
+        team.mkdir()
+        did = "did:arc:dgx:executor/aaaa1111"
+        _write_roster_agent(team, "olivia_agent", name="olivia", did=did)
+        # Recorded under a DIFFERENT label than the roster's current name —
+        # the DID is the only thing that still lines up.
+        _seed_spool(_isolated_arc_data_dir, actor_did=did, agent_label="Deep Olivia")
+
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/stats?agent_id=olivia",
+                headers={"Authorization": "Bearer v"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["request_count"] == 1
 
     def test_get_stats_invalid_window_400(self):
         _, client, _ = _make_app()
@@ -813,3 +860,48 @@ class TestToolAndLineageRoutes:
             assert run["tool_calls"] == 1
             assert run["llm_calls"] == 1
             assert run["total_tokens"] == 15
+
+    def test_runs_route_window_scopes_to_recent(self, _isolated_arc_data_dir: Path):
+        """H-004: ``?window=1h`` on ``/api/runs`` drops a run from 2h ago —
+        Home's "today" card, not the whole recent-scan history."""
+        from arcstore.records import SpoolRecord
+        from arcstore.spool import record as spool_record
+
+        now = datetime.now(UTC)
+        spool = _isolated_arc_data_dir / "spool"
+        spool.mkdir(parents=True, exist_ok=True)
+        p = spool / "operational-2026-05-31.jsonl"
+        spool_record(
+            SpoolRecord(
+                kind="run_event",
+                actor_did="did:c",
+                request_id="run-recent",
+                name="turn.start",
+                ts=now.isoformat(),
+            ),
+            path=p,
+        )
+        spool_record(
+            SpoolRecord(
+                kind="run_event",
+                actor_did="did:c",
+                request_id="run-stale",
+                name="turn.start",
+                ts=(now - timedelta(hours=2)).isoformat(),
+            ),
+            path=p,
+        )
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/runs?window=1h", headers={"Authorization": "Bearer v"})
+            assert resp.status_code == 200
+            assert {r["run_id"] for r in resp.json()["runs"]} == {"run-recent"}
+
+            resp = client.get("/api/runs", headers={"Authorization": "Bearer v"})
+            assert {r["run_id"] for r in resp.json()["runs"]} == {"run-recent", "run-stale"}
+
+    def test_runs_route_invalid_window_400(self):
+        _, client, _ = _make_app()
+        resp = client.get("/api/runs?window=bogus", headers={"Authorization": "Bearer viewer-tok"})
+        assert resp.status_code == 400

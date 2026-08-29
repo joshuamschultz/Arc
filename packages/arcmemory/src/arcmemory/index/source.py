@@ -11,7 +11,7 @@ walk once means the two callers cannot drift on it.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -41,9 +41,25 @@ class SourceChunk(BaseModel):
 
 
 def iter_source_chunks(
-    mem_dir: Path, workspace: Path, events: Iterable[Event]
+    mem_dir: Path,
+    workspace: Path,
+    events: Iterable[Event],
+    *,
+    skip_file: Callable[[str, float], bool] | None = None,
 ) -> Iterator[SourceChunk]:
-    """Yield every curated file chunk (fixed order) then every raw-event chunk."""
+    """Yield every curated file chunk (fixed order) then every raw-event chunk.
+
+    ``skip_file`` (turn-path bound, H-REG-1) lets a caller avoid reading a
+    markdown card's full body at all: called with ``(chunk_id, on-disk mtime)``
+    — a cheap ``stat()``, already needed either way — right before the file
+    would be opened. When it returns ``True`` the file is skipped entirely
+    (never read, never yielded), which only ``SurfaceIndex._collect_chunks``
+    uses, and only for a chunk it can already PROVE is unchanged (and, when
+    relevant, already embedded) from data it has independent of this file's
+    body. ``None`` (the default, including every call from the deterministic
+    ``IndexRebuilder``) preserves the full, unconditional walk exactly as
+    before.
+    """
     # ``index.md`` is a derived routing artifact, never part of the inventory it
     # describes.  A reader may use it only after the owning collection service has
     # produced a canonical, digest-verified file; tampering therefore degrades to
@@ -68,20 +84,24 @@ def iter_source_chunks(
         if not directory.exists():
             continue
         for path in sorted(directory.glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            fm, _ = parse_document(text)
             # as_posix() keeps source identifiers stable across OSes — on Windows
             # str() would emit backslashes and fork the chunk_id from Unix.
             rel = path.relative_to(workspace).as_posix()
+            chunk_id = f"file:{rel}"
+            mtime = path.stat().st_mtime
+            if skip_file is not None and skip_file(chunk_id, mtime):
+                continue
+            text = path.read_text(encoding="utf-8")
+            fm, _ = parse_document(text)
             yield SourceChunk(
-                chunk_id=f"file:{rel}",
+                chunk_id=chunk_id,
                 source_path=rel,
                 text=text,
                 # A genuinely missing label passes through empty — the no-read-up
                 # gate decides fail-closed (federal) vs default (personal), never
                 # the index (SDD §8).
                 classification=str(fm.get("classification") or ""),
-                mtime=path.stat().st_mtime,
+                mtime=mtime,
             )
     for event in events:
         yield SourceChunk(

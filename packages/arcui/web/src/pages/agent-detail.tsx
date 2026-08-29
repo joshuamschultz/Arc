@@ -594,12 +594,17 @@ function OverviewTab({ agentId }: { agentId: string }) {
 function IdentityTab({ agentId }: { agentId: string }) {
   const agent = useAgent(agentId)
   const config = useAgentConfig(agentId)
+  const tools = useAgentTools(agentId)
   const a = agent.data ?? {}
   const cfg = (config.data?.config ?? {}) as Dict
   const ident = (cfg.identity ?? {}) as Dict
   const toolsPolicy = ((cfg.tools as Dict)?.policy ?? {}) as Dict
-  const allow = (toolsPolicy.allow as string[]) ?? []
-  const deny = (toolsPolicy.deny as string[]) ?? []
+  // The Allow/Deny verdict renders from the SAME `policy_summary` the Tools
+  // tab uses (H-010) — never from a locally re-derived allow.length check —
+  // so the two tabs cannot disagree about what an empty allowlist means.
+  const policySummary = tools.data?.policy_summary
+  const allow = policySummary?.allow ?? []
+  const deny = policySummary?.deny ?? []
   const color = String(a.color ?? '')
 
   return (
@@ -626,7 +631,7 @@ function IdentityTab({ agentId }: { agentId: string }) {
         <InfoCard title="Tool Policy">
           <KVList
             rows={[
-              ['Allow', allow.length ? allow.join(', ') : '∅ (deny-all)'],
+              ['Allow', allow.length ? allow.join(', ') : (policySummary?.label ?? '—')],
               ['Deny', deny.length ? deny.join(', ') : '∅'],
               [
                 'Timeout',
@@ -768,13 +773,9 @@ function ToolsTab({ agentId }: { agentId: string }) {
   const q = useAgentTools(agentId)
   const caps = useAgentCapabilities(agentId)
   const tools = (q.data?.tools ?? []) as Dict[]
-  const allow = q.data?.allowlist ?? []
-  const deny = q.data?.denylist ?? []
-  const policyLabel = deny.length
-    ? `deny ${deny.length}`
-    : allow.length
-      ? `allow ${allow.length}`
-      : 'allow-all'
+  // Same `policy_summary` the Identity tab's "Allow" row renders from
+  // (H-010) — one interpreter, so the two tabs cannot disagree.
+  const policyLabel = q.data?.policy_summary?.label ?? 'allow-all'
   const capTools = (caps.data?.items ?? []).filter((i) => i.kind === 'tool')
   const [selected, setSelected] = useState<string | null>(null)
   return (

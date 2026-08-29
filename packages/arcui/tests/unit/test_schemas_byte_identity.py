@@ -107,6 +107,17 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
     ),
     (schemas.TasksResponse, {"tasks": []}),
     (schemas.TasksResponse, {"tasks": [{"id": "t1", "subject": "x"}]}),
+    (schemas.HomeNeedsQueue, {"count": 0, "items": []}),
+    (schemas.HomeNeedsQueue, {"count": 1, "items": [{"id": "req1"}]}),
+    (
+        schemas.HomeNeedsResponse,
+        {
+            "approvals": {"count": 0, "items": []},
+            "capabilities": {"count": 1, "items": [{"agent_id": "olivia", "name": "reporter"}]},
+            "review_tasks": {"count": 0, "items": []},
+            "total": 1,
+        },
+    ),
     (schemas.SchedulesResponse, {"schedules": []}),
     (
         schemas.TracesResponse,
@@ -133,7 +144,17 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
     ),
     (
         schemas.ToolsResponse,
-        {"tools": [], "allowlist": [], "denylist": []},
+        {
+            "tools": [],
+            "allowlist": [],
+            "denylist": [],
+            "policy_summary": {
+                "state": "default-allow",
+                "allow": [],
+                "deny": [],
+                "label": "allow-all",
+            },
+        },
     ),
     (
         schemas.ToolsResponse,
@@ -141,6 +162,12 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "tools": [{"name": "read", "transport": "builtin"}],
             "allowlist": ["read"],
             "denylist": ["bash"],
+            "policy_summary": {
+                "state": "explicit",
+                "allow": ["read"],
+                "deny": ["bash"],
+                "label": "allow 1 (deny 1)",
+            },
         },
     ),
     (

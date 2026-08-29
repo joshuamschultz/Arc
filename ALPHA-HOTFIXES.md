@@ -42,16 +42,17 @@ before this batch is complete.
 
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
-| H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | NEW | |
+| H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | MERGED | 03cb871a |
+| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (needs an aggregate endpoint) | M | NEW | |
 | H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
 | H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
-| H-004 | Home | Tasks + Runs counts time-bound to 24h | M | NEW | |
-| H-005 | Home | Metrics always live + accurate | M | NEW | |
-| H-006 | Home | Home loads with data in < 2s | M | NEW | |
+| H-004 | Home | Tasks + Runs counts time-bound to 24h | M | MERGED | W3a |
+| H-005 | Home | Metrics always live + accurate | M | MERGED | W3a |
+| H-006 | Home | Home loads with data in < 2s | M | MERGED | W3a |
 | H-007 | Global | Consistent, legible agent identity (host/type/id/short-name) | M | MERGED | 663d9ea1 |
-| H-008 | Fleet | Fleet shows 0 calls though agents ran | M | NEW | |
+| H-008 | Fleet | Fleet shows 0 calls though agents ran | M | MERGED | W3a |
 | H-009 | Agent·Identity | Show all identity does + editable rendered identity.md | M | NEW | |
-| H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | NEW | |
+| H-010 | Agent·Identity | Tool Policy display wrong (shows deny-all; is allow-all) | S | MERGED | 210fd232 |
 | H-011 | Agent·Inbox | Thread opens below (confusing) → side/expand like email | M | NEW | |
 | H-012 | Agent·Runs | Rename Runs→Activity; add identifying metadata | S | MERGED | 157701a9 |
 | H-013 | Agent·Tools | Two duplicate tool lists → one complete list | M | NEW | |
@@ -85,6 +86,7 @@ before this batch is complete.
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
+| H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
@@ -92,7 +94,9 @@ before this batch is complete.
 
 **Planner sequencing (2026-08-29):** Wave0 unblockers (H-043 billing→Josh, H-021) · Wave1 H-007 identity foundation (server-side, DID-join, one component — dependents H-008/H-029/H-022/H-019/H-012/H-002 adopt it) · Wave2 quick-S UI · Wave3 Home/metrics (H-004/5/6/8/1 — one query-layer unit; H-008 is the connector-counter defect family) · Wave4 agent-detail · Wave5 system/plumbing · Wave6 mini-specs (Knowledge cluster H-023→27, H-016 graph, H-041→42 skill, H-040 fleet, then H-036 keyboard, H-037 CLI parity LAST). **Flag:** H-002 (Home activity) / H-012 (agent Runs tab) job-subtitle may be partly covered by the recent run-list work — diff before coding. (Confirmed NOT done; both real.)
 
-**Wave 2 in flight (worktrees, CODING):** W2a=H-003+H-002 (home.tsx, token-axis compact fmt + activity job) · W2b=H-012+H-017 (agent-detail: Runs→Activity + AgentIdentity adoption + fill space) · W2c=H-020+H-032+H-034 (board overflow, connections 2-col, collapse button) · W2d=H-015 (prompt soft-wrap) · W2e=H-028 (embed≠inference — partition savings by capability class, backend). **H-010 deferred to Wave 3** per Planner (backend policy semantics: preserve 3 states default-allow/deny-all/explicit; one-truth fn in arcagent tool_policy, not arcui).
+**Wave 3 in flight (worktrees, CODING):** W3a=H-008+H-004+H-005+H-006 (metrics unit: root-cause the 0-calls join/window/two-DB bug, 24h-window Tasks/Runs cards, live+accurate, <2s — all in observe/observe_stats + home) · W3b=H-010 (policy one-truth fn in arcagent tool_policy, 3 states default-allow/deny-all/explicit; both Identity+Tools tabs render it). H-001 (NEEDS YOU aggregation) sequenced right after W3a (shares home.tsx).
+
+**Wave 2 (MERGED):** W2a=H-003+H-002 (home.tsx, token-axis compact fmt + activity job) · W2b=H-012+H-017 (agent-detail: Runs→Activity + AgentIdentity adoption + fill space) · W2c=H-020+H-032+H-034 (board overflow, connections 2-col, collapse button) · W2d=H-015 (prompt soft-wrap) · W2e=H-028 (embed≠inference — partition savings by capability class, backend). **H-010 deferred to Wave 3** per Planner (backend policy semantics: preserve 3 states default-allow/deny-all/explicit; one-truth fn in arcagent tool_policy, not arcui).
 
 ---
 

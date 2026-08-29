@@ -36,7 +36,14 @@ async def get_stats(request: Request) -> JSONResponse:
     )
     if err is not None:
         return err
-    stats = await request.app.state.observe.stats(window, agent=agent_id)
+    # H-008: join on the agent's DID, not the roster label — a label can
+    # drift from whatever string got recorded on its llm_calls historically.
+    # Fall back to the raw id (never None) when the roster is present but
+    # this agent has no DID on file, so the read still narrows to empty
+    # rather than reading every agent's rows.
+    stats = await request.app.state.observe.stats(
+        window, agent=_agent_did(request, agent_id) or agent_id
+    )
     return JSONResponse(StatsResponse(stats=stats, window=window).model_dump(mode="json"))
 
 
@@ -59,7 +66,9 @@ async def get_traces(request: Request) -> JSONResponse:
     if err is not None:
         return err
 
-    traces = await request.app.state.observe.traces(agent=agent_id, limit=limit)
+    traces = await request.app.state.observe.traces(
+        agent=_agent_did(request, agent_id) or agent_id, limit=limit
+    )
     return JSONResponse(TracesResponse(traces=traces, cursor=None).model_dump(mode="json"))
 
 

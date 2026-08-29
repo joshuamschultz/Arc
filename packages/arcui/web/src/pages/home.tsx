@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ShieldAlert,
+  PackageCheck,
   AlertTriangle,
   Eye,
   ArrowRight,
@@ -18,14 +19,16 @@ import { InsightStat, StatusChip } from '@/components/ai'
 import { StatusDot } from '@/components/status-badge'
 import { AreaSeries, ChartCard } from '@/components/charts'
 import { Sparkline } from '@/components/llm/sparkline'
+import { AgentIdentity } from '@/components/AgentIdentity'
 import {
-  useApprovals,
+  useHomeNeeds,
   useRuns,
   useTeamTasks,
   useRoster,
   useLlmStats,
   useTimeseries,
 } from '@/lib/queries'
+import type { HomeNeedsResponse } from '@/lib/queries'
 import {
   initials,
   jobLabel,
@@ -35,7 +38,7 @@ import {
   fmtCost,
   fmtNumber,
 } from '@/lib/format'
-import type { Agent, RunSummary, TaskStatus } from '@/lib/types'
+import type { Agent, AgentIdentityShape, RunSummary, TaskStatus } from '@/lib/types'
 
 
 /** Momentum within the window: later-half sum vs earlier-half, as a percentage.
@@ -78,16 +81,40 @@ const TASK_SEGMENTS: Array<{
  * its canonical screen, where the full actions live (progressive disclosure).
  */
 export function HomePage() {
-  const approvalsQ = useApprovals()
+  const homeNeedsQ = useHomeNeeds()
   const runsQ = useRuns()
-  const tasksQ = useTeamTasks()
+  // H-004: the Tasks/Runs summary cards below are "today" numbers, like every
+  // other tile on this page — a separate 24h-windowed fetch feeds them so the
+  // unwindowed lists above (failedRuns / reviewTasks in "Needs you", and
+  // "Recent activity") keep surfacing older items exactly as before.
+  const runsWindowedQ = useRuns('24h')
+  const tasksWindowedQ = useTeamTasks('24h')
   const rosterQ = useRoster()
   const statsQ = useLlmStats('24h')
   const tsQ = useTimeseries('24h')
 
-  const approvals = approvalsQ.data?.approvals ?? []
+  // Each queue carries its OWN true count separately from its (possibly
+  // shorter) preview list — "Needs you" must count everything waiting, not
+  // just however many rows fit on this page (H-001).
+  const approvalsQueue: HomeNeedsResponse['approvals'] = homeNeedsQ.data?.approvals ?? {
+    count: 0,
+    items: [],
+  }
+  const capabilitiesQueue: HomeNeedsResponse['capabilities'] = homeNeedsQ.data?.capabilities ?? {
+    count: 0,
+    items: [],
+  }
+  const reviewQueue: HomeNeedsResponse['review_tasks'] = homeNeedsQ.data?.review_tasks ?? {
+    count: 0,
+    items: [],
+  }
+
   const runs = useMemo<RunSummary[]>(() => runsQ.data?.runs ?? [], [runsQ.data])
-  const tasks = useMemo(() => tasksQ.data?.tasks ?? [], [tasksQ.data])
+  const runsWindowed = useMemo<RunSummary[]>(
+    () => runsWindowedQ.data?.runs ?? [],
+    [runsWindowedQ.data],
+  )
+  const tasksWindowed = useMemo(() => tasksWindowedQ.data?.tasks ?? [], [tasksWindowedQ.data])
   const agents = useMemo<Agent[]>(
     () => (rosterQ.data?.agents ?? []).filter((a) => !a.hidden),
     [rosterQ.data],
@@ -100,18 +127,29 @@ export function HomePage() {
     }
     return m
   }, [agents])
+  // Full agent rows keyed both ways — H-007's AgentIdentity needs the whole
+  // resolved shape (name + type/host + DID), not just a display string.
+  const agentByDid = useMemo(() => {
+    const m = new Map<string, Agent>()
+    for (const a of agents) if (a.did) m.set(a.did, a)
+    return m
+  }, [agents])
+  const agentByAgentId = useMemo(() => {
+    const m = new Map<string, Agent>()
+    for (const a of agents) if (a.agent_id) m.set(a.agent_id, a)
+    return m
+  }, [agents])
   const runAgent = (r: RunSummary) =>
     (r.actor_did && nameByDid.get(r.actor_did)) || nameByDid.get(r.agent) || r.agent
 
-  const failedRuns = runs
-    .filter((r) => (r.status || '').toLowerCase() === 'failed')
-    .slice(0, 5)
-  const reviewTasks = tasks.filter((t) => t.status === 'review').slice(0, 5)
+  const failedRunsAll = runs.filter((r) => (r.status || '').toLowerCase() === 'failed')
+  const failedRuns = failedRunsAll.slice(0, 5)
   const online = agents.filter((a) => a.online).length
   const running = runs.filter((r) =>
     ['running', 'in_progress'].includes((r.status || '').toLowerCase()),
   ).length
-  const needsYou = approvals.length + failedRuns.length + reviewTasks.length
+  const needsYou =
+    approvalsQueue.count + capabilitiesQueue.count + reviewQueue.count + failedRunsAll.length
   const recent = runs.slice(0, 6)
 
   // --- Activity (last 24h) — authoritative LLM stats + the run snapshot ------
@@ -123,27 +161,29 @@ export function HomePage() {
   const tokenSpark = buckets.map((b) => b.total_tokens)
   const toolCalls = runs.reduce((sum, r) => sum + (r.tool_calls ?? 0), 0)
 
-  // Run outcomes across the current snapshot — the "how are runs going" totals.
+  // Run outcomes over the last 24h (H-004) — "how did today's work go".
+  // `running` stays un-windowed: a run still in flight counts as running
+  // regardless of when it started.
   const runStatus = useMemo(() => {
     const c = { running, completed: 0, failed: 0, stale: 0 }
-    for (const r of runs) {
+    for (const r of runsWindowed) {
       const s = (r.status || '').toLowerCase()
       if (['completed', 'success', 'done', 'ok'].includes(s)) c.completed += 1
       else if (['failed', 'error'].includes(s)) c.failed += 1
       else if (s === 'stale') c.stale += 1
     }
     return c
-  }, [runs, running])
+  }, [runsWindowed, running])
 
-  // --- State (totals) — tasks by status -------------------------------------
+  // --- State (totals) — tasks by status, last 24h (H-004) -------------------
   const taskCounts = useMemo(() => {
-    const total = tasks.length
+    const total = tasksWindowed.length
     const segs = TASK_SEGMENTS.map((seg) => ({
       ...seg,
-      count: tasks.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
+      count: tasksWindowed.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
     }))
     return { total, segs }
-  }, [tasks])
+  }, [tasksWindowed])
 
   return (
     <div className="flex h-full flex-col">
@@ -248,19 +288,39 @@ export function HomePage() {
             </div>
           ) : (
             <div className="grid gap-2.5">
-              {approvals.map((a) => (
+              {approvalsQueue.items.map((a) => (
                 <NeedsRow
                   key={`ap-${a.id}`}
                   tone="warning"
                   icon={<ShieldAlert className="size-4" />}
-                  title={`${a.agent_label} needs your approval`}
-                  sub={
+                  identity={agentByDid.get(a.agent_did)?.identity}
+                  fallbackName={a.agent_label}
+                  color={agentByDid.get(a.agent_did)?.color}
+                  message={
                     <>
-                      to run <span className="font-mono">{a.tool}</span>
+                      needs your approval to run <span className="font-mono">{a.tool}</span>
                       {a.legs?.length ? ` · ${a.legs.join(', ')}` : ''}
                     </>
                   }
                   href="/approvals"
+                  cta="Review"
+                />
+              ))}
+              {capabilitiesQueue.items.map((c) => (
+                <NeedsRow
+                  key={`cap-${c.agent_id}-${c.name}`}
+                  tone="warning"
+                  icon={<PackageCheck className="size-4" />}
+                  identity={agentByAgentId.get(c.agent_id)?.identity}
+                  fallbackName={c.agent_label}
+                  color={agentByAgentId.get(c.agent_id)?.color}
+                  message={
+                    <>
+                      needs your review before its {c.kind}{' '}
+                      <span className="font-mono">{c.name}</span> can load
+                    </>
+                  }
+                  href="/gated"
                   cta="Review"
                 />
               ))}
@@ -269,10 +329,18 @@ export function HomePage() {
                   key={`run-${r.run_id}`}
                   tone="error"
                   icon={<AlertTriangle className="size-4" />}
-                  title={`${runAgent(r)}'s run failed`}
-                  sub={
+                  identity={
+                    (r.actor_did && agentByDid.get(r.actor_did)?.identity) ||
+                    agentByDid.get(r.agent)?.identity
+                  }
+                  fallbackName={runAgent(r)}
+                  color={
+                    (r.actor_did && agentByDid.get(r.actor_did)?.color) ||
+                    agentByDid.get(r.agent)?.color
+                  }
+                  message={
                     <>
-                      run <span className="font-mono">{shortId(r.run_id, 12)}</span> ·{' '}
+                      run failed · <span className="font-mono">{shortId(r.run_id, 12)}</span> ·{' '}
                       {relativeTime(r.started_at)}
                     </>
                   }
@@ -280,13 +348,20 @@ export function HomePage() {
                   cta="Open"
                 />
               ))}
-              {reviewTasks.map((t) => (
+              {reviewQueue.items.map((t) => (
                 <NeedsRow
                   key={`task-${t.id}`}
                   tone="info"
                   icon={<Eye className="size-4" />}
-                  title="A task is waiting for your review"
-                  sub={<span className="font-mono">{shortId(String(t.id ?? ''), 12)}</span>}
+                  identity={t.owner_did ? agentByDid.get(t.owner_did)?.identity : undefined}
+                  fallbackName={t.owner_did ? undefined : 'A task'}
+                  color={t.owner_did ? agentByDid.get(t.owner_did)?.color : undefined}
+                  message={
+                    <>
+                      is waiting for your review ·{' '}
+                      <span className="font-mono">{shortId(String(t.id ?? ''), 12)}</span>
+                    </>
+                  }
                   href="/tasks"
                   cta="Review"
                 />
@@ -432,18 +507,27 @@ const TONE: Record<string, string> = {
   info: 'text-status-info',
 }
 
+/** One "Needs you" row. When the item names an agent (`identity` resolved
+ * off the roster by DID), the row leads with the H-007 `AgentIdentity` block
+ * — the ONE renderer for an agent's name + type/host + DID across the
+ * dashboard — instead of hand-rolling a name string; `fallbackName` alone
+ * covers items with no agent to show (or an agent not in the roster). */
 function NeedsRow({
   tone,
   icon,
-  title,
-  sub,
+  identity,
+  fallbackName,
+  color,
+  message,
   href,
   cta,
 }: {
   tone: 'warning' | 'error' | 'info'
   icon: ReactNode
-  title: string
-  sub: ReactNode
+  identity?: AgentIdentityShape
+  fallbackName?: string
+  color?: string
+  message: ReactNode
   href: string
   cta: string
 }) {
@@ -453,8 +537,21 @@ function NeedsRow({
         {icon}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-        <div className="truncate text-xs text-muted-foreground">{sub}</div>
+        {identity ? (
+          <AgentIdentity
+            identity={identity}
+            fallbackName={fallbackName}
+            color={color}
+            size="sm"
+            showAvatar={false}
+            className="mb-1"
+          />
+        ) : (
+          fallbackName && (
+            <div className="truncate text-sm font-semibold text-foreground">{fallbackName}</div>
+          )
+        )}
+        <div className="truncate text-xs text-muted-foreground">{message}</div>
       </div>
       <Link
         to={href}

@@ -75,6 +75,26 @@ class IndexBackend(Protocol):
         """``chunk_id -> content_hash`` for every chunk indexed under ``scope``."""
         ...
 
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        """``chunk_id -> mtime`` for every chunk indexed under ``scope``.
+
+        The turn-path bound (H-REG-1): lets a caller decide a FILE chunk is
+        provably unchanged from a cheap ``stat()`` alone, without opening and
+        hashing its body, so ``index_if_needed`` need not re-read the whole
+        corpus on every turn — only files whose on-disk mtime actually moved.
+        """
+        ...
+
+    async def embedded_hashes(self, scope: str) -> dict[str, str]:
+        """``chunk_id -> embedded_hash`` for every chunk that HAS a vector.
+
+        Distinct from :meth:`stored_hashes`: a chunk written lexically-only
+        (``embedding=None``) gets a ``content_hash`` but no ``embedded_hash`` entry
+        here, so a caller can tell "fts is fresh" apart from "the vector is fresh"
+        (H-REG-1's hash-gate trap) — the two channels are gated on separate hashes.
+        """
+        ...
+
     async def delete_scope(self, scope: str) -> None:
         """Remove every chunk/fts/vec row for ``scope`` (rebuild's wipe step)."""
         ...
@@ -131,11 +151,23 @@ class SqliteIndexBackend:
         embedding: list[float] | None,
     ) -> None:
         conn = self._db.connect()
+        # ``ON CONFLICT ... DO UPDATE`` (not ``INSERT OR REPLACE``): REPLACE deletes
+        # and re-inserts the row, so any column omitted from the statement — here
+        # ``embedded_hash`` — would silently reset to NULL on every lexical-only
+        # write, erasing the record that this chunk's vector is already current
+        # (H-REG-1). The UPDATE form touches exactly the columns named, so a
+        # ``None`` embedding preserves whatever ``embedded_hash`` was already
+        # stored, and a real embedding stamps it to this write's content_hash.
+        embedded_hash = content_hash if embedding is not None else None
         conn.execute(
-            "INSERT OR REPLACE INTO chunks "
-            "(chunk_id, scope, source_path, mtime, classification, content_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (chunk_id, scope, source_path, mtime, classification, content_hash),
+            "INSERT INTO chunks "
+            "(chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(chunk_id) DO UPDATE SET "
+            "scope=excluded.scope, source_path=excluded.source_path, mtime=excluded.mtime, "
+            "classification=excluded.classification, content_hash=excluded.content_hash, "
+            "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash)",
+            (chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash),
         )
         conn.execute(
             "DELETE FROM fts_chunks WHERE chunk_id=? AND scope=?",
@@ -159,6 +191,27 @@ class SqliteIndexBackend:
             row[0]: row[1]
             for row in conn.execute(
                 "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (scope,)
+            ).fetchall()
+        }
+
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        conn = self._db.connect()
+        return {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT chunk_id, mtime FROM chunks WHERE scope=? AND mtime IS NOT NULL",
+                (scope,),
+            ).fetchall()
+        }
+
+    async def embedded_hashes(self, scope: str) -> dict[str, str]:
+        conn = self._db.connect()
+        return {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT chunk_id, embedded_hash FROM chunks "
+                "WHERE scope=? AND embedded_hash IS NOT NULL",
+                (scope,),
             ).fetchall()
         }
 
@@ -337,6 +390,33 @@ class PostgresIndexBackend:
         )
         async with pool.acquire() as conn:
             await conn.execute(create_table)
+            # H-REG-1: self-migration for a table created before this column existed —
+            # mirrors ``MemoryDB._ensure_columns`` (sqlite's equivalent seam). Checked
+            # BEFORE the ALTER (unlike sqlite's rowcount-free ``ADD COLUMN IF NOT
+            # EXISTS``) so the migration backfill below can be gated on "did this
+            # call actually create the column" rather than running unconditionally.
+            had_embedded_hash = bool(
+                await conn.fetchval(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='chunks' AND column_name='embedded_hash'"
+                )
+            )
+            await conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedded_hash TEXT")
+            if not had_embedded_hash:
+                # Migration backfill (production hazard): a server upgraded from
+                # before this column existed already has real vectors for rows the
+                # column starts NULL on. Left unfixed, the first post-deploy embed
+                # pass would see every one of those rows as "never embedded" and
+                # re-embed the ENTIRE existing corpus — months of memory, a
+                # cost/latency spike of the same class as the past consolidation
+                # runaway. Stamping ``embedded_hash = content_hash`` for every row
+                # that already carries a vector marks exactly those rows resolved.
+                # Gated on ``had_embedded_hash`` (false only the one time the
+                # column is actually created), so this is a no-op — safe to call —
+                # on an already-migrated database.
+                await conn.execute(
+                    "UPDATE chunks SET embedded_hash = content_hash WHERE embedding IS NOT NULL"
+                )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw "
                 "ON chunks USING hnsw (embedding vector_cosine_ops)"
@@ -359,17 +439,25 @@ class PostgresIndexBackend:
         embedding: list[float] | None,
     ) -> None:
         pool = await self._pool()
+        # H-REG-1: a lexical-only write (``embedding is None``) must neither wipe an
+        # existing vector nor claim (via ``embedded_hash``) that a vector was written
+        # for content it never embedded — ``COALESCE(EXCLUDED.x, chunks.x)`` on both
+        # columns preserves the prior value whenever this write carries no embedding,
+        # exactly mirroring the sqlite backend's ``ON CONFLICT`` behavior.
+        embedded_hash = content_hash if embedding is not None else None
         async with pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO chunks "
                 "(scope, chunk_id, text, embedding, tsv, source_path, mtime, "
-                "classification, content_hash) "
-                "VALUES ($1, $2, $3, $4, to_tsvector('english', $3), $5, $6, $7, $8) "
+                "classification, content_hash, embedded_hash) "
+                "VALUES ($1, $2, $3, $4, to_tsvector('english', $3), $5, $6, $7, $8, $9) "
                 "ON CONFLICT (scope, chunk_id) DO UPDATE SET "
-                "text = EXCLUDED.text, embedding = EXCLUDED.embedding, "
+                "text = EXCLUDED.text, "
+                "embedding = COALESCE(EXCLUDED.embedding, chunks.embedding), "
                 "tsv = EXCLUDED.tsv, source_path = EXCLUDED.source_path, "
                 "mtime = EXCLUDED.mtime, classification = EXCLUDED.classification, "
-                "content_hash = EXCLUDED.content_hash",
+                "content_hash = EXCLUDED.content_hash, "
+                "embedded_hash = COALESCE(EXCLUDED.embedded_hash, chunks.embedded_hash)",
                 scope,
                 chunk_id,
                 text,
@@ -378,6 +466,7 @@ class PostgresIndexBackend:
                 mtime,
                 classification,
                 content_hash,
+                embedded_hash,
             )
 
     async def stored_hashes(self, scope: str) -> dict[str, str]:
@@ -387,6 +476,24 @@ class PostgresIndexBackend:
                 "SELECT chunk_id, content_hash FROM chunks WHERE scope=$1", scope
             )
         return {str(row["chunk_id"]): str(row["content_hash"]) for row in rows}
+
+    async def stored_mtimes(self, scope: str) -> dict[str, float]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id, mtime FROM chunks WHERE scope=$1 AND mtime IS NOT NULL", scope
+            )
+        return {str(row["chunk_id"]): float(row["mtime"]) for row in rows}
+
+    async def embedded_hashes(self, scope: str) -> dict[str, str]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chunk_id, embedded_hash FROM chunks "
+                "WHERE scope=$1 AND embedded_hash IS NOT NULL",
+                scope,
+            )
+        return {str(row["chunk_id"]): str(row["embedded_hash"]) for row in rows}
 
     async def delete_scope(self, scope: str) -> None:
         pool = await self._pool()

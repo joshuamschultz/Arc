@@ -500,6 +500,48 @@ class TestToolsRoute:
         assert "tools" in body
         assert "allowlist" in body
 
+    def test_policy_summary_explicit_matches_fixture_allowlist(self, tmp_path):
+        """H-010: ``_build_team_dir``'s fixture declares an explicit allowlist."""
+        team = _build_team_dir(tmp_path)
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/agents/alpha/tools", headers=_viewer(auth))
+        assert resp.status_code == 200
+        summary = resp.json()["policy_summary"]
+        assert summary["state"] == "explicit"
+        assert summary["allow"] == ["fs.read", "search"]
+
+    def test_policy_summary_default_allow_when_allow_key_absent(self, tmp_path):
+        """H-010: no ``[tools.policy]`` allow key → default-allow, not deny-all."""
+        team = _build_team_dir(tmp_path)
+        (team / "alpha_agent" / "arcagent.toml").write_text(
+            '[agent]\nname = "alpha"\n[identity]\ndid = "did:arc:alpha"\n',
+            encoding="utf-8",
+        )
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/agents/alpha/tools", headers=_viewer(auth))
+        assert resp.status_code == 200
+        summary = resp.json()["policy_summary"]
+        assert summary["state"] == "default-allow"
+        assert summary["label"] == "allow-all"
+
+    def test_policy_summary_deny_all_when_allow_configured_empty(self, tmp_path):
+        """H-010: ``allow = []`` is configured-but-blind → deny-all, not allow-all."""
+        team = _build_team_dir(tmp_path)
+        (team / "alpha_agent" / "arcagent.toml").write_text(
+            '[agent]\nname = "alpha"\n[identity]\ndid = "did:arc:alpha"\n'
+            "[tools.policy]\nallow = []\n",
+            encoding="utf-8",
+        )
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/agents/alpha/tools", headers=_viewer(auth))
+        assert resp.status_code == 200
+        summary = resp.json()["policy_summary"]
+        assert summary["state"] == "deny-all"
+        assert summary["label"] == "deny-all"
+
 
 class TestSessionsRoute:
     def test_list_sessions(self, tmp_path):
@@ -802,7 +844,10 @@ class TestEdgeCases:
         spool.mkdir(parents=True, exist_ok=True)
         rec = SpoolRecord(
             kind="llm_call",
-            actor_did="did:arc:test:alpha",
+            # H-008: the same DID `_build_team_dir` declares in alpha's
+            # `[identity].did` — the join key the per-agent traces route
+            # resolves through, not the free-text `agent_label`.
+            actor_did="did:arc:alpha",
             agent_label="alpha",
             request_id="req-alpha-1",
             model="claude",

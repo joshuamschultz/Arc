@@ -13,6 +13,8 @@ from pathlib import Path
 
 from starlette.requests import Request
 
+from arcui.identity import resolve_agent_did
+
 logger = logging.getLogger("arcui.routes.agent_detail")
 
 # Whitelisted top-level config sections — anything else (e.g. ``[secrets]``,
@@ -72,20 +74,18 @@ def _agent_root(request: Request, agent_id: str) -> Path | None:
 
 
 def _agent_did(request: Request, agent_id: str) -> str | None:
-    """Resolve an agent's DID (audit actor) from the injected roster provider.
+    """Resolve an agent's DID (the llm_calls/audit join key) via the roster.
 
-    The audit chain filters on ``actor_did`` (a DID), but the agent-detail
-    routes key on the human agent label; this bridges label -> DID so the
-    per-agent audit tab reads the durable chain instead of nothing.
+    The durable history (``audit_chain``, ``llm_calls``) filters on
+    ``actor_did`` (a DID), but the agent-detail routes key on the human agent
+    label; this bridges label -> DID (see ``arcui.identity.resolve_agent_did``,
+    H-007/H-008) so the per-agent audit/stats/traces tabs read the durable
+    record instead of silently coming back empty.
     """
     provider = getattr(request.app.state, "roster_provider", None)
     if provider is None:
         return None
-    for entry in provider():
-        if entry.agent_id == agent_id:
-            did: str = entry.did
-            return did
-    return None
+    return resolve_agent_did(provider(), agent_id)
 
 
 def _resolve_root_path(agent_root: Path, root_arg: str) -> Path:

@@ -33,6 +33,7 @@ from arcui.routes.agent_detail.capabilities import agent_skill_rows
 from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION, agent_tool_rows
 from arcui.schemas import (
     AuditEventsResponse,
+    ErrorResponse,
     PolicyBulletsResponse,
     TasksResponse,
     TeamPolicyStatsResponse,
@@ -186,10 +187,27 @@ def _bullet_to_dict(b: policy_parser.PolicyBullet) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+_VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
+
+
 async def get_tasks(request: Request) -> JSONResponse:
-    """GET /api/team/tasks — arcstore task rows, stamped with owning agent_id."""
+    """GET /api/team/tasks[?window=<w>] — arcstore task rows, stamped with owning agent_id.
+
+    ``window``, when given, keeps only tasks touched (created or updated)
+    within it — Home's "today" card (H-004) wants that instead of the whole
+    backlog's all-time total. Omitted, the Tasks board keeps seeing every
+    task exactly as before.
+    """
+    window = request.query_params.get("window")
+    if window is not None and window not in _VALID_WINDOWS:
+        return JSONResponse(
+            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
+                mode="json"
+            ),
+            status_code=400,
+        )
     did_to_agent = {entry.did: entry.agent_id for entry in _roster(request)}
-    rows = await request.app.state.observe.tasks()
+    rows = await request.app.state.observe.tasks(window=window)
     out: list[dict[str, Any]] = []
     for row in rows:
         row = dict(row)
@@ -220,7 +238,7 @@ async def get_tools_skills(request: Request) -> JSONResponse:
         # showed zero tools while every agent plainly had them.
         live = registry.get(entry.agent_id)
         live_tools = list(live.registration.tools) if live is not None else []
-        rows, _allow, _deny = agent_tool_rows(
+        rows, _allow, _deny, _summary = agent_tool_rows(
             entry.agent_id, Path(entry.workspace_path), live_tools
         )
         for row in rows:
