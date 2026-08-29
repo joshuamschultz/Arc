@@ -107,11 +107,31 @@ def _scalar(val: Any) -> str:
         return _quote(val)
     if isinstance(val, (int, float)):
         return str(val)
-    if isinstance(val, list):
+    if isinstance(val, (list, tuple)):
         return "[" + ", ".join(_scalar(v) for v in val) + "]"
     if isinstance(val, dict):
         return "{" + ", ".join(f"{_key(k)} = {_scalar(v)}" for k, v in val.items()) + "}"
     raise ValueError(f"unsupported TOML value type: {type(val).__name__}")
 
 
-__all__ = ["dumps_toml"]
+def format_scalar(val: Any) -> str:
+    """Public alias for the scalar formatter — reused by ``config_render``.
+
+    Kept as a thin wrapper (not a rename) so ``dumps_toml``'s internal calls
+    stay untouched while a second, model-driven emitter gets the same
+    tomllib-round-tripping scalar rules without a duplicate implementation.
+    """
+    return _scalar(val)
+
+
+def format_header(path: list[str]) -> str:
+    """Public alias for the dotted-table-header formatter."""
+    return _header(path)
+
+
+def format_key(key: str) -> str:
+    """Public alias for the bare/quoted key formatter."""
+    return _key(key)
+
+
+__all__ = ["dumps_toml", "format_header", "format_key", "format_scalar"]
