@@ -196,6 +196,47 @@ class TestCollectAgentInventory:
         tool = next(t for t in result.runtime_tools if t.name == "bash")
         assert tool.classification == "state_modifying"
 
+    async def test_live_agent_runtime_tool_source_carries_extension_scan_root(
+        self, tmp_path: Path
+    ) -> None:
+        """H-031: a connector's per-verb tools register through an
+        ``extension:<name>`` scan root at runtime with no file the static
+        inventory scan could ever find — ``RuntimeToolItem.source`` is the
+        ONLY place that provenance survives to reach arcui's capability
+        views. Losing it collapses every attached extension's tools into the
+        generic "agent" source bucket.
+        """
+        from arcagent.capabilities.inventory import collect_agent_capability_inventory
+        from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+
+        config_path, identity = _build_agent_dir(tmp_path, tier="personal")
+
+        class _FakeLiveAgent:
+            def __init__(self, ident: AgentIdentity) -> None:
+                self._identity = ident
+
+            @property
+            def registered_tools(self) -> list[RegisteredTool]:
+                return [
+                    RegisteredTool(
+                        name="github_create_issue",
+                        description="open a GitHub issue",
+                        input_schema={},
+                        transport=ToolTransport.PROCESS,
+                        execute=None,
+                        classification="external_effect",
+                        source="extension:github",
+                    )
+                ]
+
+        result = await collect_agent_capability_inventory(
+            config_path,
+            live_agent=_FakeLiveAgent(identity),
+            global_root=tmp_path / "no-global",
+        )
+        tool = next(t for t in result.runtime_tools if t.name == "github_create_issue")
+        assert tool.source == "extension:github"
+
 
 class TestRegisteredToolsAccessor:
     def test_registered_tools_lists_registry_contents(self) -> None:

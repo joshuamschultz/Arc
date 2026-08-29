@@ -168,9 +168,61 @@ def test_source_category_covers_all_four_h014_badges() -> None:
     assert tools_route._source_category("module:memory", "") == "module"
     assert tools_route._source_category("", "module:memory-skills") == "module"
     assert tools_route._source_category("extension", "") == "extension"
+    # H-031: the loader's REAL scan-root spelling for a connector's tools is
+    # "extension:<name>" (arcagent.capabilities.capability_loader.
+    # EXTENSION_ROOT_PREFIX) — bare "extension" is only the legacy disk-scan
+    # transport label. Without this branch a connector's live-registered
+    # tools fell through to "agent" and the source filter could never find
+    # them (H-031 coverage regression).
+    assert tools_route._source_category("", "extension:github") == "extension"
     assert tools_route._source_category("agent_dir", "") == "agent"
     assert tools_route._source_category("workspace", "") == "agent"
     assert tools_route._source_category("registered", "") == "agent"
+
+
+@pytest.mark.asyncio
+async def test_extension_tool_with_no_static_scan_root_surfaces_as_extension(
+    tmp_path: Path,
+) -> None:
+    """H-031 coverage: a connector's per-verb tool has no ``.py`` file any
+    static scan root will ever find — it exists only in a live agent's
+    runtime registry, tagged with its true ``extension:<name>`` scan root
+    (H-030's ``RuntimeToolItem.source``). The merge must surface it anyway,
+    correctly badged, rather than it being invisible everywhere the fleet
+    Tools & Skills page reads.
+    """
+    from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+
+    agent_root = tmp_path / "agent"
+    agent_root.mkdir()
+    (agent_root / "arcagent.toml").write_text(
+        '[agent]\nname = "ext-agent"\n\n[security]\ntier = "personal"\n',
+        encoding="utf-8",
+    )
+
+    class _FakeLiveAgent:
+        _identity = None
+
+        @property
+        def registered_tools(self) -> list[RegisteredTool]:
+            return [
+                RegisteredTool(
+                    name="github_create_issue",
+                    description="open a GitHub issue",
+                    input_schema={},
+                    transport=ToolTransport.PROCESS,
+                    execute=None,
+                    classification="external_effect",
+                    source="extension:github",
+                )
+            ]
+
+    tools: list[dict[str, Any]] = []
+    await tools_route._merge_loader_verdicts(tools, agent_root, _FakeLiveAgent())
+
+    row = _row(tools, "github_create_issue")
+    assert row["source"] == "extension"
+    assert row["loader_status"] == "loaded"
 
 
 @pytest.mark.asyncio
