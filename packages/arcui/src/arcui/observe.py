@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -148,6 +149,149 @@ def _build_spawn_tree(edges: list[dict[str, Any]], root_did: str | None) -> dict
     return _node(root_did, frozenset())
 
 
+# ---------------------------------------------------------------------------
+# Audit read-projection (H-022)
+# ---------------------------------------------------------------------------
+#
+# The stored ``audit_chain`` row (see ``arcstore.ingest._worm_row``) is the
+# raw, tamper-evident WORM record: ``actor_did``/``action``/``target``/
+# ``outcome`` plus the chain's hash/signature fields. That is exactly right
+# for the durable record and exactly wrong to show an operator raw — a dotted
+# machine action ("policy.evaluate") and a bare verdict ("deny") don't say
+# WHAT was denied or WHY. The functions below add derived, display-only keys
+# on read; they never touch the stored record (WORM stays byte-for-byte).
+# Actor identity (DID -> friendly name) is NOT joined here — that needs the
+# roster, which Observe has no access to (SPEC-026 keeps it a pure store
+# reader) — the caller joins it (see ``routes.team_pages._attach_actor_identity``).
+
+_AUDIT_ACTION_LABELS: dict[str, str] = {
+    "policy.evaluate": "Tool policy check",
+    "tool.call": "Tool called",
+    "tool.executed": "Tool executed",
+    "tool_call": "Tool called",
+    "connector.call": "Connector called",
+    "connector.approval_granted": "Connector approval granted",
+    "connector.approval_denied": "Connector approval denied",
+    "connector.attach_denied": "Connector attach denied",
+    "connector.reconcile_queue_unavailable": "Connector queue unavailable",
+    "capability.signed": "Capability signed",
+    "capability.bundle_trusted": "Capability bundle trusted",
+    "capability.signature_revoked": "Capability signature revoked",
+    "module.installed": "Module installed",
+    "module.removed": "Module removed",
+    "module.bundle.verified": "Module bundle verified",
+    "module.signature_invalid": "Module signature invalid",
+    "module.content_hash_mismatch": "Module content hash mismatch",
+    "memory.captured": "Memory captured",
+    "memory.recall_attributed": "Memory recalled",
+    "memory.acl.denied": "Memory access denied",
+    "memory.write": "Memory written",
+    "credential.read": "Credential read",
+    "spawn.start": "Sub-agent spawned",
+    "spawn.complete": "Sub-agent finished",
+    "spawn.denied": "Sub-agent spawn denied",
+    "skill.mutation.applied": "Skill mutation applied",
+    "skill.signature.verify": "Skill signature verified",
+    "skill.sandbox.execute": "Skill executed in sandbox",
+    "skill.slsa.check": "Skill provenance checked",
+    "workflow.created": "Workflow created",
+    "workflow.edited": "Workflow edited",
+    "workflow.archived": "Workflow archived",
+    "workflow.unarchived": "Workflow restored",
+    "tasks.create": "Task created",
+    "tasks.start": "Task started",
+    "trace.checkpoint": "Trace checkpoint recorded",
+    "agent.startup": "Agent started",
+    "backend.signature_verified": "Backend signature verified",
+    "backend.signature_invalid": "Backend signature invalid",
+    "backend.content_hash_mismatch": "Backend content hash mismatch",
+    "executor.backend.loaded": "Execution backend loaded",
+    "executor.backend.denied": "Execution backend denied",
+    "vault.unreachable": "Vault unreachable",
+    "gateway.fs.read": "File read",
+    "gateway.fs.changed": "File changed",
+    "gateway.adapter.auth_rejected": "Gateway login rejected",
+}
+
+_AUDIT_DECISION_LABELS: dict[str, str] = {
+    "allow": "Allowed",
+    "allowed": "Allowed",
+    "deny": "Denied",
+    "denied": "Denied",
+    "ok": "Applied",
+    "success": "Applied",
+    "applied": "Applied",
+    "error": "Error",
+    "failed": "Error",
+    "failure": "Error",
+    "granted": "Granted",
+    "revoked": "Revoked",
+    "degraded": "Degraded",
+    "recovered": "Recovered",
+}
+
+
+def _title_from_dotted(name: str) -> str:
+    """``module.bundle.verified`` -> ``Module Bundle Verified`` (unmapped fallback)."""
+    words = [w for w in re.split(r"[._-]+", name) if w]
+    return " ".join(w[:1].upper() + w[1:] for w in words) if words else name
+
+
+def _audit_action_label(action: str | None) -> str:
+    """Plain-language sentence for a dotted ``action``/event_type."""
+    if not action:
+        return "Recorded an event"
+    return _AUDIT_ACTION_LABELS.get(action, _title_from_dotted(action))
+
+
+def _audit_decision_label(outcome: str | None) -> str | None:
+    """Plain verdict word for a raw ``outcome`` — ``None`` when there is none."""
+    if not outcome:
+        return None
+    return _AUDIT_DECISION_LABELS.get(outcome.lower(), _title_from_dotted(outcome))
+
+
+def _split_target(target: str | None) -> tuple[str | None, str]:
+    """Split a namespaced ``kind:value`` target (``connector:github``, ``task:9f2c``).
+
+    A bare target (most ``policy.evaluate`` rows: the target IS the tool name)
+    has no ``kind`` and is returned unchanged as ``value``.
+    """
+    if not target:
+        return None, ""
+    kind, sep, value = target.partition(":")
+    if sep and kind and value:
+        return kind, value
+    return None, target
+
+
+def _audit_target_label(target: str | None) -> str:
+    kind, value = _split_target(target)
+    if kind is None:
+        return value or "—"
+    return f"{_title_from_dotted(kind)}: {value}"
+
+
+def _project_audit_event(row: dict[str, Any]) -> dict[str, Any]:
+    """Enrich one raw ``audit_chain`` row with operator-legible fields (H-022).
+
+    Adds ``action_label`` (plain-language action), ``decision`` (plain verdict
+    word for ``outcome``), ``reason`` (lifted from ``extra.reason`` — set by
+    ``arctrust.policy.worm_policy_sink`` for every ``policy.evaluate`` allow/
+    deny), and ``target_label`` (a namespaced target split into "Kind: value").
+    Every original field is preserved verbatim — this only adds keys.
+    """
+    extra = row.get("extra")
+    extra = extra if isinstance(extra, dict) else {}
+    return {
+        **row,
+        "action_label": _audit_action_label(row.get("action")),
+        "decision": _audit_decision_label(row.get("outcome")),
+        "reason": extra.get("reason") or extra.get("detail"),
+        "target_label": _audit_target_label(row.get("target")),
+    }
+
+
 class Observe:
     """arcui's read-only view of the durable operational record.
 
@@ -248,9 +392,10 @@ class Observe:
         # the only ordering the production PostgresBackend actually supports
         # (H-021: "seq DESC" raised ValueError there — the in-memory test fake
         # accepts any column name, which is why this only broke against Postgres).
-        return await self._backend.query(
+        rows = await self._backend.query(
             "audit_chain", where=where or None, order_by="ts DESC", limit=limit
         )
+        return [_project_audit_event(r) for r in rows]
 
     async def run_recalls(self, run_id: str) -> list[dict[str, Any]]:
         """Recall-attribution events correlated to one run (SPEC-073 Phase D2).

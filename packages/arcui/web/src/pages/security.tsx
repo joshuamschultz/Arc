@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/page-header'
 import { DataTable } from '@/components/data-table'
 import { FilterPills } from '@/components/filter-pills'
 import { EventDrawer } from '@/components/event-drawer'
+import { AgentIdentity } from '@/components/AgentIdentity'
 import { SeverityBadge } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
 import {
@@ -13,11 +14,11 @@ import {
   LedgerSummary,
   SignedMark,
 } from '@/components/audit/ledger'
-import { auditField, actorRole, isSigned, isVerified } from '@/components/audit/ledger-utils'
-import { useTeamAudit, useRoster } from '@/lib/queries'
-import { relativeTime, fmtTime, shortId } from '@/lib/format'
+import { auditField, isSigned, isVerified } from '@/components/audit/ledger-utils'
+import { useTeamAudit } from '@/lib/queries'
+import { relativeTime, fmtTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { AuditEvent } from '@/lib/types'
+import type { AgentIdentityShape, AuditEvent } from '@/lib/types'
 
 // Values drive the (server) query; labels read in operator language.
 const FILTERS = [
@@ -28,10 +29,30 @@ const FILTERS = [
 
 // The acting DID (`actor_did`), with the older `agent_id` name as a fallback.
 const agentOf = (e: AuditEvent) => auditField(e, 'actor_did', 'agent_id')
-// The event name (`action`), with the older `event_type` name as a fallback.
-const actionOf = (e: AuditEvent) => auditField(e, 'action', 'event_type')
-// The verdict/severity — a real severity level, else the outcome verdict.
+// The plain-language action sentence, resolved server-side (H-022); the raw
+// dotted `action`/`event_type` is the fallback for an event predating it.
+const actionOf = (e: AuditEvent) => auditField(e, 'action_label', 'action', 'event_type')
+// The verdict/severity — a real severity level, else the server-resolved
+// decision word, else the raw outcome for an event predating H-022.
 const verdictOf = (e: AuditEvent) => auditField(e, 'severity', 'decision', 'outcome')
+
+// The canonical {AgentIdentity} shape (H-007/H-022), joined server-side by
+// DID; a bare `did` (no roster row) still renders — just with no friendly name.
+function eventIdentity(e: AuditEvent): AgentIdentityShape {
+  if (e.identity) return e.identity
+  const did = agentOf(e) ?? ''
+  return { did, host: 'unknown', platform: 'unknown', type: 'unknown', short_id: 'unknown', name: null }
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** Compact actor cell — the shared H-007 renderer, so an Audit row reads the
+ *  identical name/DID every other screen shows instead of a raw truncated DID. */
+function ActorCell({ event }: { event: AuditEvent }) {
+  const identity = eventIdentity(event)
+  const fallback = identity.type && identity.type !== 'unknown' ? capitalize(identity.type) : undefined
+  return <AgentIdentity identity={identity} fallbackName={fallback} size="sm" showAvatar={false} />
+}
 
 const columns: ColumnDef<AuditEvent, unknown>[] = [
   {
@@ -58,43 +79,52 @@ const columns: ColumnDef<AuditEvent, unknown>[] = [
     accessorFn: (r) => actionOf(r) ?? '',
     id: 'event',
     header: 'Event',
-    cell: (c) => (
-      <div className="flex items-center gap-2">
-        <SignedMark event={c.row.original} />
-        <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-          {actionOf(c.row.original) ?? '—'}
-        </span>
-      </div>
-    ),
+    cell: (c) => {
+      const e = c.row.original
+      return (
+        <div className="flex items-center gap-2">
+          <SignedMark event={e} />
+          <div className="leading-tight">
+            <div className="text-xs font-medium text-foreground">{actionOf(e) ?? '—'}</div>
+            {e.action && (
+              <div className="font-mono text-[10px] text-muted-foreground/70">{String(e.action)}</div>
+            )}
+          </div>
+        </div>
+      )
+    },
   },
   {
-    accessorFn: (r) => agentOf(r) ?? '',
-    id: 'agent_id',
-    header: 'Agent',
+    accessorFn: (r) => eventIdentity(r).name ?? agentOf(r) ?? '',
+    id: 'actor',
+    header: 'Actor',
+    cell: (c) => <ActorCell event={c.row.original} />,
+  },
+  {
+    accessorFn: (r) => auditField(r, 'target_label', 'target') ?? '',
+    id: 'target',
+    header: 'Target',
     cell: (c) => {
-      const did = agentOf(c.row.original)
+      const label = auditField(c.row.original, 'target_label', 'target')
       return (
-        <span className="font-mono text-xs text-muted-foreground" title={did}>
-          {did ? shortId(did, 20) : '—'}
+        <span className="text-xs text-foreground" title={auditField(c.row.original, 'target')}>
+          {label ?? '—'}
         </span>
       )
     },
   },
   {
-    accessorFn: (r) => auditField(r, 'actor') ?? actorRole(agentOf(r)),
-    id: 'actor',
-    header: 'Actor',
-    cell: (c) => {
-      const e = c.row.original
-      const actor = auditField(e, 'actor') ?? actorRole(agentOf(e))
-      return <span className="text-xs text-muted-foreground">{actor}</span>
-    },
-  },
-  {
     accessorFn: (r) => verdictOf(r) ?? '',
     id: 'severity',
-    header: 'Severity',
-    cell: (c) => <AuditVerdict value={verdictOf(c.row.original)} />,
+    header: 'Outcome',
+    cell: (c) => {
+      const e = c.row.original
+      return (
+        <span title={auditField(e, 'reason')}>
+          <AuditVerdict value={verdictOf(e)} />
+        </span>
+      )
+    },
   },
   {
     accessorFn: (r) => auditField(r, 'event_hash') ?? '',
@@ -167,61 +197,6 @@ export function SecurityPage() {
   )
 }
 
-// Machine `action` -> plain-language sentence. Anything unmatched degrades to a
-// readable Title-Case of the dotted name (module.bundle.verified -> "Module
-// Bundle Verified"), so an unknown action is never shown raw.
-const ACTION_LABELS: Record<string, string> = {
-  'module.bundle.verified': 'Verified a module bundle',
-  'module.bundle.loaded': 'Loaded a module bundle',
-  'tool.call': 'Called a tool',
-  'tool.result': 'Returned a tool result',
-  'task.approve': 'Approved a task',
-  'task.create': 'Created a task',
-  'task.complete': 'Completed a task',
-  'policy.allow': 'Policy allowed an action',
-  'policy.deny': 'Policy denied an action',
-  'memory.recall_attributed': 'Recalled memory cards',
-  'policy.evaluate': 'Evaluated a policy',
-  'skill.verified': 'Verified a skill',
-  'session.start': 'Started a session',
-  'run.start': 'Started a run',
-  'run.complete': 'Completed a run',
-  'memory.write': 'Wrote to memory',
-}
-
-function titleCase(action: string): string {
-  return action
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
-
-/** Decode the machine `action` into a plain-language description of what happened. */
-function describeAction(action: string | undefined): string {
-  if (!action) return 'Recorded an event'
-  return ACTION_LABELS[action] ?? titleCase(action)
-}
-
-// Turn the acting DID into a name a person recognizes: operator DIDs read as
-// "Operator", agent/spawn DIDs resolve through the roster, else the plain role.
-function resolveActor(did: string | undefined, nameByDid: Map<string, string>): string {
-  if (!did) return 'Unknown'
-  if (did.includes(':operator') || did.includes(':ui')) return 'Operator'
-  const exact = nameByDid.get(did)
-  if (exact) return exact
-  // Spawn DIDs extend a base agent DID with a suffix — match on the prefix.
-  for (const [base, name] of nameByDid) {
-    if (did.startsWith(base)) return name
-  }
-  return actorRole(did)
-}
-
-/** A one-word target ("workpad") reads better title-cased; a path or id stays as-is. */
-function plainTarget(target: string): string {
-  return /^[a-z][a-z0-9_-]*$/.test(target) ? titleCase(target) : target
-}
-
 /** One plain sentence explaining the entry's signed/verified state. */
 function signStateSentence(signed: boolean, verified: boolean): string {
   if (!signed) return 'This entry carries no signature, so its integrity cannot be checked.'
@@ -272,20 +247,13 @@ function VerdictMark({ value }: { value: string | undefined }) {
  * target, the decision) above the technical fields, hash chain, and raw JSON.
  */
 function AuditDetail({ event }: { event: AuditEvent }) {
-  const roster = useRoster()
-  const nameByDid = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const a of roster.data?.agents ?? []) {
-      if (a.did) m.set(a.did, a.display_name || a.name || a.agent_id || a.did)
-    }
-    return m
-  }, [roster.data])
-
   const signed = isSigned(event)
   const verified = isVerified(event)
   const verdict = verdictOf(event)
   const agent = agentOf(event)
   const target = auditField(event, 'target')
+  const targetLabel = auditField(event, 'target_label', 'target')
+  const reason = auditField(event, 'reason')
 
   return (
     <div className="space-y-4">
@@ -293,15 +261,21 @@ function AuditDetail({ event }: { event: AuditEvent }) {
       <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3.5">
         <div className="flex flex-wrap items-center gap-2">
           <SignedMark event={event} />
-          <span className="text-sm font-semibold text-foreground">
-            {describeAction(actionOf(event))}
-          </span>
+          <span className="text-sm font-semibold text-foreground">{actionOf(event)}</span>
           <VerdictMark value={verdict} />
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-          <Field label="Who">{resolveActor(agent, nameByDid)}</Field>
-          {target && <Field label="Target">{plainTarget(target)}</Field>}
+          <Field label="Who">
+            <ActorCell event={event} />
+          </Field>
+          {targetLabel && <Field label="Target">{targetLabel}</Field>}
         </dl>
+        {reason && (
+          <p className="text-[11px] leading-relaxed text-foreground">
+            <span className="font-semibold">Reason: </span>
+            {reason}
+          </p>
+        )}
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           {signStateSentence(signed, verified)}
         </p>
@@ -312,12 +286,12 @@ function AuditDetail({ event }: { event: AuditEvent }) {
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
         <Field label="Time">{fmtTime(auditField(event, 'ts', 'timestamp'))}</Field>
         {agent && (
-          <Field label="Agent">
+          <Field label="Agent DID">
             <span className="break-all font-mono text-foreground">{agent}</span>
           </Field>
         )}
         {target && (
-          <Field label="Target">
+          <Field label="Raw target">
             <span className="break-all font-mono text-foreground">{target}</span>
           </Field>
         )}

@@ -40,7 +40,16 @@ async def _seed_tasks(backend: FakeBackend, tasks: list[Task]) -> None:
         await store.create(task)
 
 
-def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
+def _write_worm_audit(
+    data_dir: Path,
+    *,
+    seq: int,
+    actor_did: str,
+    action: str = "gateway.fs.read",
+    target: str = "tool:x",
+    outcome: str = "allow",
+    extra: dict[str, object] | None = None,
+) -> None:
     """Append one signed-chain record to the durable WORM file arcstore mirrors."""
     worm = data_dir / "worm"
     worm.mkdir(parents=True, exist_ok=True)
@@ -52,9 +61,10 @@ def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
         "event": {
             "ts": f"2026-05-31T00:00:{seq:02d}+00:00",
             "actor_did": actor_did,
-            "action": "gateway.fs.read",
-            "target": "tool:x",
-            "outcome": "allow",
+            "action": action,
+            "target": target,
+            "outcome": outcome,
+            "extra": extra,
         },
     }
     with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
@@ -432,6 +442,46 @@ class TestFleetAudit:
         with TestClient(app) as client:
             resp = client.get("/api/team/audit?limit=10", headers=_viewer(auth))
         assert len(resp.json()["events"]) == 10
+
+    def test_rows_carry_actor_identity_and_readable_fields(
+        self, tmp_path, _isolated_arc_data_dir: Path
+    ):
+        """H-022: a row names WHO (roster-joined identity), WHAT tool/target,
+        and WHY (the policy pipeline's reason) — not just raw DID/action/outcome.
+        """
+        from arcui.server import create_app
+
+        _write_worm_audit(
+            _isolated_arc_data_dir,
+            seq=0,
+            actor_did="did:arc:alpha",
+            action="policy.evaluate",
+            target="memory.write",
+            outcome="deny",
+            extra={"reason": "tool not on the agent allowlist"},
+        )
+
+        team = _build_team(tmp_path, [("alpha", "")])
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/team/audit", headers=_viewer(auth))
+        assert resp.status_code == 200
+        event = resp.json()["events"][0]
+
+        # WHO — roster-joined by DID (H-007), not a raw truncated DID.
+        assert event["identity"]["did"] == "did:arc:alpha"
+        assert event["identity"]["name"] == "alpha"
+        assert event["actor"] == "alpha"
+        # WHAT / WHY / outcome.
+        assert event["action_label"] == "Tool policy check"
+        assert event["target_label"] == "memory.write"
+        assert event["decision"] == "Denied"
+        assert event["reason"] == "tool not on the agent allowlist"
+        # Raw stored fields untouched — this is a read projection, not a rewrite.
+        assert event["actor_did"] == "did:arc:alpha"
+        assert event["action"] == "policy.evaluate"
+        assert event["outcome"] == "deny"
 
 
 # ---------------------------------------------------------------------------

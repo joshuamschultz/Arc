@@ -273,6 +273,36 @@ async def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _attach_actor_identity(
+    events: list[dict[str, Any]], roster: list[Any]
+) -> list[dict[str, Any]]:
+    """Join each event's ``actor_did`` to its H-007 identity (H-022).
+
+    Mirrors ``_roster_to_dict``'s join: by DID, never by matching a free-text
+    label (see ``identity.resolve_agent_did``'s docstring on why a label can
+    drift). Adds ``identity`` (the canonical {AgentIdentity} shape the SPA's
+    one shared component renders), ``actor`` (the resolved friendly name, or
+    ``None`` for a DID with no roster row), and ``agent_id`` (the roster's
+    slug, for the row's search/filter text) — every original field survives
+    unchanged.
+    """
+    name_by_did = {r.did: (r.display_name or r.name) for r in roster if r.did}
+    agent_id_by_did = {r.did: r.agent_id for r in roster if r.did}
+    enriched = []
+    for event in events:
+        did = str(event.get("actor_did") or "")
+        identity = resolve_agent_identity(did, name_by_did.get(did))
+        enriched.append(
+            {
+                **event,
+                "identity": identity.model_dump(mode="json"),
+                "actor": identity.name,
+                "agent_id": agent_id_by_did.get(did),
+            }
+        )
+    return enriched
+
+
 async def get_audit(request: Request) -> JSONResponse:
     """GET /api/team/audit — fleet audit chain (last N), newest first.
 
@@ -290,6 +320,7 @@ async def get_audit(request: Request) -> JSONResponse:
         return err
     target = request.query_params.get("target")
     events = await request.app.state.observe.audit(limit=limit, target=target)
+    events = _attach_actor_identity(events, _roster(request))
     return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))
 
 

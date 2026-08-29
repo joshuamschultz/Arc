@@ -21,12 +21,3 @@ export function isSigned(e: AuditEvent): boolean {
 export function isVerified(e: AuditEvent): boolean {
   return Boolean(e.verified)
 }
-
-/** Plain-language actor role read off the acting DID — Operator / Agent / System. */
-export function actorRole(did: string | undefined): string {
-  if (!did) return '—'
-  if (did.includes(':operator')) return 'Operator'
-  if (did.includes(':agent:')) return 'Agent'
-  if (did.includes(':ui')) return 'Operator'
-  return 'System'
-}
