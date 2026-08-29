@@ -58,6 +58,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         config = MemoryConfig(**{**config.model_dump(), **dynamics})
 
     agent_did = context["agent_did"]
+    agent_name = str(context.get("agent_name", ""))
     embed_backend = str(backend.get("embed_backend", "local"))
     embed_model = str(backend.get("embed_model", ""))
     embed_base_url = str(backend.get("embed_base_url", ""))
@@ -79,9 +80,11 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         agent_did,
         config=config,
         embedder=build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url),
-        distiller=build_distiller(distill_provider, distill_model, agent_did),
+        distiller=build_distiller(distill_provider, distill_model, agent_did, agent_name),
         audit_sink=context.get("audit_sink"),
-        model_factory=_build_loop_model_factory(distill_provider, distill_model, agent_did),
+        model_factory=_build_loop_model_factory(
+            distill_provider, distill_model, agent_did, agent_name
+        ),
         identity=context.get("identity"),
         policy_pipeline=context.get("policy_pipeline"),
         store_raw_bodies=capture_tool_io,
@@ -96,13 +99,17 @@ def _safe_tier(tier: object) -> Tier:
 
 
 def _build_loop_model_factory(
-    provider: str, model: str, agent_did: str
+    provider: str, model: str, agent_did: str, agent_name: str = ""
 ) -> Callable[[], Any] | None:
     """Factory for the agentic consolidation loop's model, or ``None`` when off.
 
     Same provider/model as the distiller, loaded WITH telemetry so the memory agent's
     turns ride the SPEC-038 budget/circuit-breaker (LLM10). ``None`` (no distill
     provider) → the agentic engine degrades to the pipeline distiller.
+
+    The model call is labeled ``<agent>/consolidate`` so this background "sleep"
+    run names itself in the dashboard run list rather than reading as a plain
+    agent run.
 
     Deferred like ``build_distiller`` beside it, and for the same reason: the model
     is used only when a consolidation actually runs. Building it eagerly made a
@@ -113,8 +120,12 @@ def _build_loop_model_factory(
     if not provider:
         return None
 
+    label = f"{agent_name or 'memory'}/consolidate"
+
     def factory() -> Any:
-        return arcllm.load_model(provider, model or None, telemetry={"agent_did": agent_did})
+        return arcllm.load_model(
+            provider, model or None, agent_label=label, telemetry={"agent_did": agent_did}
+        )
 
     return factory
 
@@ -141,19 +152,25 @@ def build_embedder(
     )
 
 
-def build_distiller(provider: str, model: str, agent_did: str) -> ArcLLMDistiller | None:
+def build_distiller(
+    provider: str, model: str, agent_did: str, agent_name: str = ""
+) -> ArcLLMDistiller | None:
     """arcllm-backed distiller (fresh provider per consolidation), or ``None`` when off.
 
     The per-run provider is loaded WITH telemetry so its ``invoke`` rides the SPEC-038
     budget/circuit-breaker (LLM10) — exactly as the embedder seam does; a runaway
-    consolidation cannot make an unbounded distillation call.
+    consolidation cannot make an unbounded distillation call. Labeled
+    ``<agent>/distill`` so a distillation run names itself in the run list.
     """
     if not provider:
         return None
     telemetry = {"agent_did": agent_did}
+    label = f"{agent_name or 'memory'}/distill"
 
     def factory() -> Any:
-        return arcllm.load_model(provider, model or None, telemetry=telemetry)
+        return arcllm.load_model(
+            provider, model or None, agent_label=label, telemetry=telemetry
+        )
 
     return ArcLLMDistiller(factory, model=model or None)
 

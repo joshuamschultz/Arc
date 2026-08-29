@@ -7,7 +7,7 @@ import { RunCoverflow } from '@/components/run-coverflow'
 import { EmptyState, LoadingRows } from '@/components/states'
 import { StatusChip } from '@/components/ai'
 import { useRoster, useRuns } from '@/lib/queries'
-import { initials, relativeTime, shortId } from '@/lib/format'
+import { initials, jobLabel, relativeTime, shortId } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { RunSummary } from '@/lib/types'
 
@@ -142,12 +142,12 @@ export function ArcRunPage() {
                     </div>
                     <div className="flex items-center gap-2 pl-8">
                       <StatusChip value={r.status} />
-                      {r.origin === 'background' && (
+                      {jobLabel(r.job) && (
                         <span
                           className="inline-flex items-center gap-1 rounded border border-muted-foreground/30 bg-muted-foreground/8 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                          title="A background self-wake (pulse, scheduler, memory upkeep, or sub-agent) — not a person-driven run"
+                          title="A background job the agent ran on its own (not a person-driven run)"
                         >
-                          Background
+                          {jobLabel(r.job)}
                         </span>
                       )}
                       <span className="font-mono text-[11px] text-muted-foreground">

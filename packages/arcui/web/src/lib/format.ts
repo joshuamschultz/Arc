@@ -43,6 +43,24 @@ export function shortId(id: string | null | undefined, len = 12): string {
   return id.length > len ? id.slice(0, len) : id
 }
 
+/**
+ * Friendly label for a run's job kind (RunSummary.job), or null for a plain
+ * person-driven agent run. Names the background sub-job the run list badges:
+ * workpad upkeep, memory distill/sleep, planning eval, or a generic background
+ * self-wake (pulse / scheduler / sub-agent).
+ */
+export function jobLabel(job: string | null | undefined): string | null {
+  if (!job) return null
+  const known: Record<string, string> = {
+    workpad: 'Context upkeep',
+    distill: 'Memory distill',
+    consolidate: 'Memory sleep',
+    eval: 'Planning',
+    background: 'Background',
+  }
+  return known[job] || job.charAt(0).toUpperCase() + job.slice(1)
+}
+
 export function fmtBytes(n: number | null | undefined): string {
   if (n == null) return '—'
   if (n < 1024) return `${n} B`

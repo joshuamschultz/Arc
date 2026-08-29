@@ -535,6 +535,7 @@ export interface RunSummary {
   cost_usd: number
   status: string // completed | running | error
   origin?: string | null // "background" for a self-wake; null/absent for a person-driven run
+  job?: string | null // sub-job kind (workpad|distill|consolidate|eval|background); null for a plain agent run
 }
 
 export interface RunsResponse {

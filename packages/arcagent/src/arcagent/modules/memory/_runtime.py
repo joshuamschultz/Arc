@@ -138,13 +138,13 @@ def configure(
     Brain so the agentic consolidation engine's memory-tool writes are signed +
     policy-authorized.
     """
-    del agent_name  # accepted for signature-dispatch parity; unused here
     cfg = MemoryConfig(**(config or {}))
     ws = Path(workspace).resolve()
     brain = select_brain(
         cfg.brain,
         workspace=ws,
         agent_did=agent_did,
+        agent_name=agent_name,  # labels background memory jobs in the run list
         tier=cfg.tier,
         brain_allowlist=tuple(cfg.brain_allowlist),
         identity=identity,

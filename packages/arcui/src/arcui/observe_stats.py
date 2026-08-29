@@ -366,7 +366,30 @@ def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
         # "background" for a self-wake (pulse / scheduler / consolidation / sub-agent),
         # None for a person-driven run — the dashboard badges the former.
         "origin": run["origin"],
+        # The KIND of run for the list badge: a maintenance sub-job names itself in
+        # its agent_label suffix ("<agent>/workpad", "/distill", "/consolidate",
+        # "/eval"); a background full run (pulse/scheduler/sub-agent) has no suffix
+        # but carries origin="background"; a plain person-driven agent run is None.
+        "job": _job_of(run),
     }
+
+
+def _job_of(run: dict[str, Any]) -> str | None:
+    """Name the run's kind for the list badge, or None for a plain agent run.
+
+    A maintenance model call labels itself ``<agent>/<job>`` (workpad, distill,
+    consolidate, eval, …) — the suffix is the job. Absent a suffix, a background
+    self-wake (pulse / scheduler / sub-agent) reads as ``background``; a real,
+    person-driven agent run gets no badge.
+    """
+    label = run["agent"]
+    if isinstance(label, str) and "/" in label:
+        suffix = label.rsplit("/", 1)[1].strip()
+        if suffix:
+            return suffix
+    if run["origin"] == "background":
+        return "background"
+    return None
 
 
 def compute_runs(

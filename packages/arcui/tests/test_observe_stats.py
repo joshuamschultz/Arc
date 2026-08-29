@@ -226,14 +226,15 @@ class TestComputeRuns:
         assert r["ended_at"] == "2026-05-31T00:00:07+00:00"
         assert round(r["duration_ms"]) == 6000
 
-    def test_person_driven_run_has_no_origin(self) -> None:
-        # A real run stamps no origin — absence reads as interactive.
+    def test_person_driven_run_has_no_origin_or_job(self) -> None:
+        # A real agent run stamps no origin and earns no job badge.
         runs = compute_runs(self._events())
         assert runs[0]["origin"] is None
+        assert runs[0]["job"] is None
 
     def test_background_origin_surfaces_from_run_event_extra(self) -> None:
-        # A self-wake (pulse / scheduler / consolidation / sub-agent) stamps
-        # origin="background" on its run_events; one such row badges the whole run.
+        # A self-wake (pulse / scheduler / sub-agent) with no maintenance sub-label
+        # stamps origin="background"; one such row badges the whole run "background".
         events = [
             {
                 "kind": "run_event",
@@ -254,6 +255,41 @@ class TestComputeRuns:
         ]
         runs = compute_runs(events)
         assert runs[0]["origin"] == "background"
+        assert runs[0]["job"] == "background"
+
+    def test_maintenance_job_named_from_agent_label_suffix(self) -> None:
+        # A workpad/distill/eval run labels its model calls "<agent>/<job>"; the
+        # list badge is that suffix, so the operator sees WHAT the run was, not
+        # just that it was background.
+        events = [
+            {
+                "kind": "run_event",
+                "request_id": "wp-1",
+                "actor_did": "did:a",
+                "name": "turn.start",
+                "ts": "2026-05-31T00:00:01+00:00",
+            },
+            {
+                "kind": "llm_call",
+                "request_id": "wp-1",
+                "actor_did": "did:a",
+                "agent_label": "josh_agent/workpad",
+                "model": "haiku",
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "outcome": "ok",
+                "ts": "2026-05-31T00:00:02+00:00",
+            },
+            {
+                "kind": "run_event",
+                "request_id": "wp-1",
+                "actor_did": "did:a",
+                "name": "loop.complete",
+                "ts": "2026-05-31T00:00:03+00:00",
+            },
+        ]
+        runs = compute_runs(events)
+        assert runs[0]["job"] == "workpad"
 
     def test_completed_run_with_tool_error_is_completed_not_error(self) -> None:
         # A run that reached loop.complete FINISHED. A single failed tool call

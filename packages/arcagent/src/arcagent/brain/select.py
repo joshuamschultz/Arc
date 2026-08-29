@@ -46,6 +46,7 @@ def select_brain(
     *,
     workspace: Path,
     agent_did: str,
+    agent_name: str = "",
     tier: str = "personal",
     audit_sink: Any = None,
     brain_allowlist: tuple[str, ...] = (),
@@ -63,6 +64,10 @@ def select_brain(
     context: dict[str, Any] = {
         "workspace": workspace,
         "agent_did": agent_did,
+        # The friendly agent name, used only for trace attribution labels
+        # (e.g. "<name>/consolidate") so background memory jobs name themselves
+        # in the run list. Optional — a backend that ignores it is unaffected.
+        "agent_name": agent_name,
         "tier": tier,
         "audit_sink": audit_sink,
         "identity": identity,
