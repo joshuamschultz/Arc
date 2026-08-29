@@ -77,7 +77,7 @@ before this batch is complete.
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | NEW | |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
-| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | CODING | |
+| H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
 | H-036 | UI | Fully keyboard-drivable | L | NEW | |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | CODING | |
