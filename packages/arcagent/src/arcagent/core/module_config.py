@@ -24,6 +24,37 @@ class ModuleConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# H-039 — which built-in modules a freshly scaffolded agent ships with active.
+# This is a product decision (which capabilities are on out of the box), not a
+# model fact, so it cannot be read off any Pydantic default: nothing here
+# duplicates a module's OWN field list (config_render.py does that from each
+# module's ``<Name>Config``) — it only says on/off. A module with no entry
+# here still gets its full ``[modules.<name>]`` + ``[modules.<name>.config]``
+# block rendered, just `enabled = false` (SPEC/H-039: present even when off).
+BUILTIN_MODULE_DEFAULTS: dict[str, bool] = {
+    "memory": True,
+    "session": True,
+    "workpad": True,
+    "progress": True,
+    "user_profile": False,
+    "policy": True,
+    "skills": True,
+    "planning": False,
+    "pulse": False,
+    "proactive": False,
+    "scheduler": True,
+    "messaging": True,
+    "tasks": True,
+    "workflows": True,
+    "connectors": True,
+    "connected_data": True,
+    "runcontrol": True,
+    "web": False,
+    "voice": False,
+    "browser": False,
+}
+
+
 class _ModuleEntryLike(Protocol):
     enabled: bool
     config: dict[str, Any]
@@ -49,7 +80,7 @@ def validate_module_configs(modules: dict[str, Any]) -> list[str]:
     for name, entry in modules.items():
         if not getattr(entry, "enabled", False):
             continue
-        model = _config_model_for(name)
+        model = config_model_for(name)
         if model is None:
             continue
         try:
@@ -63,7 +94,7 @@ def validate_module_configs(modules: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _config_model_for(name: str) -> type[ModuleConfig] | None:
+def config_model_for(name: str) -> type[ModuleConfig] | None:
     """The module's conventional top-level config model, if it declares one."""
     class_name = "".join(part.capitalize() for part in name.split("_")) + "Config"
     try:

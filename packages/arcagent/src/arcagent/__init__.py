@@ -119,6 +119,7 @@ from arcagent.tiers import (
 from arcagent.tools._decorator import tool
 from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
 from arcagent.tools._secret_guard import find_secret
+from arcagent.utils import config_render
 from arcagent.utils.toml_writer import dumps_toml
 
 
@@ -234,6 +235,7 @@ __all__ = [
     "builtin_capabilities_path",
     "catalog",
     "collect_agent_capability_inventory",
+    "config_render",
     "deep_merge",
     "default_env_file",
     "deployment_tier",

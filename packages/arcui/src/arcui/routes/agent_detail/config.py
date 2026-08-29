@@ -8,10 +8,12 @@ chokepoint per SPEC-022).
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from arcgateway import fs_reader
 from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
@@ -34,6 +36,19 @@ from arcui.schemas import (
     FilesTreeEntry,
     FilesTreeResponse,
 )
+
+_logger = logging.getLogger("arcui.agent_detail.config")
+
+# H-039: an on-disk arcagent.toml is allowed to omit a key entirely — hand
+# edits, or a file scaffolded before a field existed. The dashboard still
+# shows the FULL option set (every field the models declare, present at its
+# default, real value where the file has one) rather than only what happened
+# to survive to disk. `_AGENT_TIERS` is duplicated from
+# `arccli.commands.agent._common.AGENT_TIERS` in spelling only — arcui may
+# not depend on arccli (a top-layer CLI, not something a sibling surface
+# imports), and this is one closed set of three literal strings, not a field
+# list.
+_AGENT_TIERS = frozenset({"personal", "enterprise", "federal"})
 
 
 async def get_config(request: Request) -> JSONResponse:
@@ -82,11 +97,30 @@ async def get_config(request: Request) -> JSONResponse:
 
     return JSONResponse(
         ConfigResponse(
-            config=_whitelist_config(parsed),
+            config=_whitelist_config(_with_full_option_defaults(agent_id, parsed)),
             raw=content.content,
             mtime=content.mtime,
         ).model_dump(mode="json")
     )
+
+
+def _with_full_option_defaults(agent_id: str, parsed: dict[str, Any]) -> dict[str, Any]:
+    """Fill in every option this agent's file doesn't carry, at its default.
+
+    Real on-disk values always win (``deep_merge``'s "later wins" — parsed is
+    the override). Best-effort: a defaults-generation failure must never take
+    down the config tab, so this falls back to the file's own content alone.
+    """
+    try:
+        name = parsed.get("agent", {}).get("name") or agent_id
+        tier = parsed.get("security", {}).get("tier")
+        if tier not in _AGENT_TIERS:
+            tier = "personal"
+        defaults = arcagent.config_render.default_agent_config_dict(name=name, tier=tier)
+        return arcagent.deep_merge(defaults, parsed)
+    except Exception:  # reason: fail-open — the raw/parsed view must still render
+        _logger.warning("could not compute full config defaults for %s", agent_id, exc_info=True)
+        return parsed
 
 
 def _whitelist_config(cfg: dict[str, Any]) -> dict[str, Any]:

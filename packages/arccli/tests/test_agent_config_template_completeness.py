@@ -15,7 +15,7 @@ from typing import Any, get_args
 
 import arcagent.modules
 import pytest
-from arcagent.core.module_config import ModuleConfig, _config_model_for
+from arcagent.core.module_config import ModuleConfig, config_model_for
 from pydantic import BaseModel, ValidationError
 
 from arccli.commands.agent._common import render_agent_config
@@ -134,7 +134,7 @@ def rendered(scaffold: str) -> dict[str, Any]:
 def test_template_declares_every_module_setting(
     module_name: str, rendered: dict[str, Any], scaffold: str
 ) -> None:
-    model = _config_model_for(module_name)
+    model = config_model_for(module_name)
     assert model is not None, (
         f"module {module_name!r} declares no "
         f"{''.join(part.capitalize() for part in module_name.split('_'))}Config "
@@ -172,7 +172,7 @@ def test_template_has_no_unknown_module_settings(rendered: dict[str, Any]) -> No
     """The reverse drift: a scaffold key no module accepts fails at agent load."""
     stale: dict[str, list[str]] = {}
     for name, block in rendered.get("modules", {}).items():
-        model = _config_model_for(name)
+        model = config_model_for(name)
         if model is None:
             continue
         declared = _declared_keys(model) | _open_table_keys(model)
@@ -206,7 +206,7 @@ def test_scaffold_passes_the_runtime_module_config_gate(tmp_path: Path, scaffold
     # module's block is exactly what an operator edits before turning it on.
     refused: dict[str, str] = {}
     for name, entry in config.modules.items():
-        model = _config_model_for(name)
+        model = config_model_for(name)
         if model is None:
             continue
         try:

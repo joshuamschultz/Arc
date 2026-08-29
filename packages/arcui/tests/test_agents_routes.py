@@ -341,6 +341,31 @@ class TestAgentConfigRoute:
         # No secrets — section is dropped entirely.
         assert "secrets" not in cfg
 
+    def test_config_shows_full_option_set_even_when_the_file_is_sparse(self, tmp_path):
+        """H-039: a section this agent's file never mentions still shows up,
+        at its model default — the dashboard must not only show what happened
+        to survive to disk. ``_build_team_dir``'s fixture carries only
+        agent/identity/llm/secrets/tools.policy; context/session/security/
+        vault/team/modules are entirely absent from the file on disk.
+        """
+        team = _build_team_dir(tmp_path)
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        resp = client.get("/api/agents/alpha/config", headers=_viewer(auth))
+        assert resp.status_code == 200
+        cfg = resp.json()["config"]
+
+        # Absent from the file entirely -> filled in at the model default.
+        assert cfg["context"]["max_tokens"] == 128000
+        assert cfg["session"]["retention_count"] == 50
+        assert cfg["vault"]["cache_ttl_seconds"] == 300
+        assert cfg["modules"]["memory"]["enabled"] is True
+
+        # Real on-disk values still win over the default for the SAME key.
+        assert cfg["agent"]["name"] == "alpha"
+        assert cfg["agent"]["org"] == "research"  # file says "research", default is "default"
+        assert cfg["tools"]["policy"]["allow"] == ["fs.read", "search"]
+
     def test_config_does_not_leak_secrets_in_raw(self, tmp_path):
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
