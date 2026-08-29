@@ -207,7 +207,9 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
                 "config": {
                     "brain": "arcmemory",
                     "distill_provider": "anthropic",
-                    "distill_model": "claude-sonnet-4-5-20250929",
+                    # A cheap background summarizer, not the top model — memory
+                    # consolidation runs unattended and must not cost like a chat turn.
+                    "distill_model": "claude-haiku-4-5-20251001",
                 },
             },
             # arcskill is the workspace-declared default skills adapter (root

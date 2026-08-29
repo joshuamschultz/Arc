@@ -244,7 +244,7 @@ curated_knowledge_enabled = false  # explicit curated documents, independent of 
 embed_backend = "local"      # local (arcllm offline model) | none (BM25 + graph only)
 embed_model = ""             # empty → arcllm default (all-MiniLM-L6-v2)
 distill_provider = "anthropic"  # consolidation distiller provider (empty = no-op)
-distill_model = "claude-sonnet-4-5-20250929"  # distiller model
+distill_model = "claude-haiku-4-5-20251001"  # distiller model — a cheap background summarizer, not the top model
 top_k = 5                    # recall count at assemble_prompt
 budget = 1024                # recall token budget
 # knowledge_budget = 2048    # separate cap on curated documents; unset reuses `budget`
