@@ -83,6 +83,7 @@ import {
   fmtCost,
   fmtLatency,
   fmtNumber,
+  jobLabel,
   relativeTime,
   shortId,
 } from '@/lib/format'
@@ -1555,8 +1556,21 @@ function RunsTab({ agentId }: { agentId: string }) {
                 i > 0 && 'border-t border-border',
               )}
             >
-              <span className="font-mono text-xs text-primary">{shortId(r.run_id, 16)}</span>
+              <div className="flex min-w-0 flex-col">
+                <span className="font-mono text-xs text-primary">{shortId(r.run_id, 16)}</span>
+                {jobLabel(r.job) && (
+                  <span
+                    className="truncate text-[11px] leading-tight text-foreground/55"
+                    title="A background job the agent ran on its own (not a person-driven run)"
+                  >
+                    {jobLabel(r.job)}
+                  </span>
+                )}
+              </div>
               <StatusChip value={r.status} />
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {r.turns} turns · {r.tool_calls} tools
+              </span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                 {relativeTime(r.started_at)}
               </span>
@@ -1926,7 +1940,7 @@ const TAB_LABEL: Record<TabId, string> = {
   identity: 'Identity',
   inbox: 'Inbox',
   sessions: 'Sessions',
-  runs: 'Runs',
+  runs: 'Activity',
   llm: 'LLM',
   skills: 'Skills',
   tools: 'Tools',

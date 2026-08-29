@@ -279,7 +279,7 @@ export function FileTree({
   const [selected, setSelected] = useState<string | null>(null)
   // Reset selection when switching roots so the viewer never shows a stale file.
   return (
-    <div className="grid h-[460px] grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+    <div className="grid h-[70vh] max-h-[720px] min-h-[320px] grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
       <div className="overflow-auto border-r border-border p-2">
         <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           {rootLabel ?? root}
