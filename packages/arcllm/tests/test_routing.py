@@ -294,6 +294,37 @@ class TestPhraseTier:
 
         assert response.metadata["arcllm_route"] == "default"
 
+    async def test_all_ephemeral_messages_fall_back_to_default_route(self, monkeypatch):
+        """H-038 security confirm #3: an all-ephemeral tail must not crash routing.
+
+        arcrun's per-call current-time block always rides the tail, and every
+        message before it can theoretically be ephemeral too (a degenerate but
+        reachable shape once other loop-injected ephemeral blocks exist). Both
+        ``_last_user_text`` and ``_trailing_tool_result_ids`` walk the whole
+        list with ``continue`` on an ephemeral message — with none of it real
+        content, both must return ``None``/``[]`` (not raise, not IndexError)
+        and selection must land on the one always-defined fallback: the
+        default route.
+        """
+        adapters = _pair()
+        router = _build(adapters, phrases={"local": ("run this locally",)}, threshold=0.9)
+        monkeypatch.setattr(
+            "arcllm.embeddings.resolve_embedder",
+            lambda *a, **k: _StubEmbedder(["run this locally"]),
+        )
+
+        response = await router.invoke(
+            [
+                Message(role="user", content="run this locally", ephemeral=True),
+                Message(
+                    role="user", content="Current date/time: 2026-08-29 14:32 UTC", ephemeral=True
+                ),
+            ]
+        )
+
+        assert response.metadata["arcllm_route"] == "default"
+        assert response.metadata["arcllm_route_reason"] == "default"
+
     async def test_tool_result_is_not_treated_as_user_text(self, monkeypatch):
         """Tool results ride the user role; only prose may steer a route."""
         adapters = _pair()
