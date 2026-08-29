@@ -60,6 +60,7 @@ from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
 from arcui.routes import gateway as gateway_routes
+from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
@@ -286,6 +287,7 @@ def create_app(
         *team_ws_routes.routes,
         *tasks_routes.routes,
         *approvals_routes.routes,
+        *home_routes.routes,
         *cancellations_routes.routes,
         *capability_imports_routes.routes,
         *trust_routes.routes,

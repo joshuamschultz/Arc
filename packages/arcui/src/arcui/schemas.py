@@ -292,6 +292,32 @@ class TasksResponse(BaseModel):
     tasks: list[dict[str, Any]]
 
 
+class HomeNeedsQueue(BaseModel):
+    """One operator-action queue inside ``HomeNeedsResponse``: a true count
+    plus a short, capped preview list an operator can act on without leaving
+    Home."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    count: int
+    items: list[dict[str, Any]]
+
+
+class HomeNeedsResponse(BaseModel):
+    """Body of ``GET /api/home/needs`` — Home's aggregated "NEEDS YOU" panel
+    (H-001). ``total`` is the sum of every queue's ``count`` — never derived
+    from the (possibly truncated) ``items`` lists, so "all caught up" means
+    every queue really is empty, not just that none of them fit the preview.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    approvals: HomeNeedsQueue
+    capabilities: HomeNeedsQueue
+    review_tasks: HomeNeedsQueue
+    total: int
+
+
 class SchedulesResponse(BaseModel):
     """Body of ``GET /api/agents/{id}/schedules`` (and the team variant)."""
 

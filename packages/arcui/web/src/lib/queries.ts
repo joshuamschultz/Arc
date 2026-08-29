@@ -69,6 +69,7 @@ import type {
   SessionsListResponse,
   SpawnTreeResponse,
   StatsResponse,
+  Task,
   TasksResponse,
   TeamPolicyStatsResponse,
   TeamToolsSkillsResponse,
@@ -187,6 +188,45 @@ export const useGatedCapabilities = (includeLoaded: boolean) =>
         includeLoaded ? '/api/trust/gated?include_loaded=1' : '/api/trust/gated',
         signal,
       ),
+    refetchInterval: 4000,
+  })
+
+/** A gated capability as it rides along in ``/api/home/needs`` — the raw
+ * inventory row, with none of ``/api/trust/gated``'s ``signer_did``
+ * enrichment (that read costs a sidecar lookup per row; Home only needs
+ * enough to say WHAT is pending and WHERE to go review it). */
+export interface HomeNeedsCapability {
+  agent_id: string
+  agent_label: string
+  name: string
+  kind: 'tool' | 'skill'
+  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error' | 'loaded'
+  path: string
+  hash: string
+  detail: string
+}
+
+export interface HomeNeedsQueue<T> {
+  count: number
+  items: T[]
+}
+
+export interface HomeNeedsResponse {
+  approvals: HomeNeedsQueue<PendingApproval>
+  capabilities: HomeNeedsQueue<HomeNeedsCapability>
+  review_tasks: HomeNeedsQueue<Task>
+  total: number
+}
+
+// Polls every 4s, same cadence as the queues it aggregates (approvals, gated
+// capabilities, tasks-in-review): Home's "Needs you" panel must not lag the
+// pages an operator would land on after clicking through it. One request
+// instead of three, run concurrently server-side (H-001) — see
+// ``arcui.routes.home``.
+export const useHomeNeeds = () =>
+  useQuery<HomeNeedsResponse>({
+    queryKey: ['home', 'needs'],
+    queryFn: ({ signal }) => apiGet<HomeNeedsResponse>('/api/home/needs', signal),
     refetchInterval: 4000,
   })
 
