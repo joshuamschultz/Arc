@@ -91,11 +91,11 @@ root fix pending), **OPEN** (diagnosed, not yet fixed).
 - **Lesson:** a connector wrapping a multi-account CLI must bind each connection to one account via an env placement, not a per-call flag threaded through the sync path.
 
 ### PROB-004 — gog keyring unreadable in a headless service
-- **Date:** 2026-08-27 · **Area:** deploy / google_workspace · **Status:** OPEN (operator action)
+- **Date:** 2026-08-27 · **Area:** deploy / google_workspace · **Status:** FIXED (2026-08-29)
 - **Symptom:** gog errors "no TTY available for keyring file backend password prompt".
 - **Root cause:** gog keeps tokens in a file keyring that needs a password; a background service has no TTY to prompt.
-- **Fix:** set `GOG_KEYRING_PASSWORD` in `~/arc/config/arc.env` (the service env; `scrubbed_environment` inherits it into the gog child). This is the operator's own keyring password — Claude cannot know it.
-- **Lesson:** vendor CLIs with an interactive keyring need an explicit headless credential path in the service environment.
+- **Fix:** `GOG_KEYRING_PASSWORD` set in `~/arc/config/arc.env` (0600; `scrubbed_environment` inherits it into the gog child). Both accounts' `account` bound per connection in `connections.env` (`ARC_SECRET_BLACKARC_ACCOUNT` = josh@blackarcindustrial.com, `ARC_SECRET_SYSTEMS_ACCOUNT` = josh@blackarcsystems.com). Both connections now probe reachable with full Gmail/Drive/Calendar tools.
+- **Lesson:** vendor CLIs with an interactive keyring need an explicit headless credential path in the service environment; the binary must also be on the service PATH (`~/.local/bin`).
 
 ### PROB-003 — Connected knowledge was invisible to the agent
 - **Date:** 2026-08-27 · **Area:** arcagent/connected_data + memory · **Status:** FIXED
