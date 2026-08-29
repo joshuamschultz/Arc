@@ -167,8 +167,24 @@ def compute_llm_by_identity(rows: list[dict[str, Any]], *, window: str) -> dict[
     }
 
 
-def compute_cost_efficiency(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
-    """Per-model cost-efficiency ranking + potential single-model savings."""
+def _capability_class(row: dict[str, Any]) -> str:
+    """Classify one ``llm_calls`` row as ``"embedding"`` or ``"inference"``.
+
+    ``arcllm.embeddings._emit_telemetry`` is the only call site that stamps
+    an ``operation`` key onto ``extra`` (SPEC-016 D-... trace filtering) —
+    chat/completion calls recorded by ``arcllm.modules.telemetry`` never do.
+    That recorded call type is ground truth for capability class, never the
+    model name: a model capable of both would be classified per call, by
+    what the call actually was (H-028).
+    """
+    extra = row.get("extra")
+    if isinstance(extra, dict) and extra.get("operation"):
+        return "embedding"
+    return "inference"
+
+
+def _rank_models(rows: list[dict[str, Any]], *, window: str) -> list[dict[str, Any]]:
+    """Cost-per-token ranking for one capability-class partition of rows."""
     stats = compute_stats(rows, window=window)
     models = []
     for model, data in stats["model_stats"].items():
@@ -185,26 +201,63 @@ def compute_cost_efficiency(rows: list[dict[str, Any]], *, window: str) -> dict[
             }
         )
     models.sort(key=lambda m: m["cost_per_token"])
+    return models
 
-    cheapest = models[0]["model"] if models else None
-    most_used = max(models, key=lambda m: m["request_count"])["model"] if models else None
 
+def _class_savings(models: list[dict[str, Any]]) -> tuple[str | None, float, float]:
+    """Potential savings from collapsing this capability class onto its own cheapest model."""
+    if not models:
+        return None, 0.0, 0.0
+    cheapest = models[0]["model"]
+    if len(models) == 1:
+        return cheapest, 0.0, 0.0
+
+    cheapest_cpt = models[0]["cost_per_token"]
     potential_savings = 0.0
-    if len(models) > 1:
-        cheapest_cpt = models[0]["cost_per_token"]
-        for m in models[1:]:
-            if m["total_tokens"] > 0:
-                potential_savings += m["total_cost"] - m["total_tokens"] * cheapest_cpt
+    for m in models[1:]:
+        if m["total_tokens"] > 0:
+            potential_savings += m["total_cost"] - m["total_tokens"] * cheapest_cpt
 
-    total_cost = stats["total_cost"]
-    savings_pct = (potential_savings / total_cost * 100) if total_cost > 0 else 0.0
+    class_total_cost = sum(m["total_cost"] for m in models)
+    savings_pct = (potential_savings / class_total_cost * 100) if class_total_cost > 0 else 0.0
+    return cheapest, potential_savings, savings_pct
+
+
+def compute_cost_efficiency(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
+    """Per-model cost-efficiency ranking + potential single-model savings.
+
+    Calls are partitioned by capability class (embedding vs inference)
+    before any cheapest-model comparison runs. An embedding model's
+    near-zero cost-per-token must never be offered as a "savings" swap for
+    inference (chat/completion) spend, and an inference model must never be
+    offered as a swap for embedding spend — the two are not interchangeable
+    (H-028). Each partition ranks and compares only within itself.
+    """
+    inference_rows = [r for r in rows if _capability_class(r) == "inference"]
+    embedding_rows = [r for r in rows if _capability_class(r) == "embedding"]
+
+    inference_models = _rank_models(inference_rows, window=window)
+    embedding_models = _rank_models(embedding_rows, window=window)
+    for m in inference_models:
+        m["capability_class"] = "inference"
+    for m in embedding_models:
+        m["capability_class"] = "embedding"
+    all_models = inference_models + embedding_models
+
+    most_used = max(all_models, key=lambda m: m["request_count"])["model"] if all_models else None
+    cheapest, potential_savings, savings_pct = _class_savings(inference_models)
+    embed_cheapest, embed_savings, embed_savings_pct = _class_savings(embedding_models)
+
     return {
         "window": window,
-        "models": models,
+        "models": all_models,
         "cheapest_model": cheapest,
         "most_used_model": most_used,
         "potential_savings_usd": round(potential_savings, 6),
         "potential_savings_pct": round(savings_pct, 1),
+        "embedding_cheapest_model": embed_cheapest,
+        "embedding_potential_savings_usd": round(embed_savings, 6),
+        "embedding_potential_savings_pct": round(embed_savings_pct, 1),
     }
 
 
