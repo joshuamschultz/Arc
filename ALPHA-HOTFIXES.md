@@ -60,7 +60,7 @@ before this batch is complete.
 | H-015 | Agent·Prompts | Wrap text in prompt editor/viewer | S | MERGED | ed84d651 |
 | H-016 | Agent·Knowledge | Interactive graph viewer (hover nodes/edges → metadata) | L | NEW | |
 | H-017 | Agent·Knowledge | Use empty screen space (bigger content) | S | MERGED | 157701a9 |
-| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | MERGED | 24dd7f56* |
+| H-018 | Agent·Workspace | Add delete for files (have view/edit, not delete) | M | MERGED | b311fd45 |
 | H-019 | Messages | Member add: dropdown of agents + operators (multi-operator) | M | MERGED | 4cbbeb34 |
 | H-020 | Tasks | Board bottom overflows off-screen → responsive/boxed | S | MERGED | 284fdbec |
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
@@ -86,6 +86,7 @@ before this batch is complete.
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
+| H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch | S | NEW | |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
