@@ -709,7 +709,35 @@ async def datastore_query(
         "memory.datastore_query",
         {"source": source or "auto", "op": op, "table": table, "hit": bool(result), "tool": True},
     )
-    return _render_datastore_result(result)
+    context = await _table_meaning_context(st, sources, table)
+    return context + _render_datastore_result(result)
+
+
+async def _table_meaning_context(st: Any, sources: tuple[str, ...], table: str) -> str:
+    """Prepend the operator's semantic-layer meaning for ``table`` — COMPOSE, never
+    shadow or replace the row data that follows it (H-025 describe-before-query).
+
+    Best-effort: no describe seam, nothing registered, or a signed layer that
+    fails integrity verification all return no context rather than blocking the
+    row query that already ran — a meaning-composition failure must not hide
+    data the caller is otherwise cleared to see.
+    """
+    describe = getattr(st.brain, "describe_datastore", None)
+    if describe is None:
+        return ""
+    for source_id in sources:
+        try:
+            text = await describe(source_id, table=table, caller_did=st.agent_did)
+        except RuntimeError as exc:  # reason: a signed semantic layer failed
+            # verification (tamper) — fail closed on the MEANING, not the rows.
+            await _audit(
+                "memory.datastore_describe_tampered",
+                {"source": source_id, "table": table, "tool": True},
+            )
+            return f"(semantic layer for {source_id!r} failed integrity verification: {exc})\n\n"
+        if text:
+            return f"Table meaning (operator's semantic layer):\n{text}\n\n"
+    return ""
 
 
 async def _approved_datastore_sources() -> tuple[str, ...]:
@@ -730,6 +758,54 @@ async def _approved_datastore_sources() -> tuple[str, ...]:
         if proposal is not None and proposal.approval_status == "approved" and candidate.source_id:
             approved.append(candidate.source_id)
     return tuple(approved)
+
+
+@tool(
+    name="datastore_describe",
+    description=(
+        "Describe a connected structured datastore's tables and columns in the "
+        "operator's own words — entity names, meanings, and bounded example values."
+    ),
+    classification="read_only",
+    when_to_use=(
+        "ALWAYS before your first datastore_query against a source you have not "
+        "already described this session, and again whenever a table name is "
+        "unfamiliar. A column called 'amt' means nothing on its own; this is "
+        "where an operator has already said what it holds. Omit table to see "
+        "every visible table, or pass one from a prior datastore_describe/query."
+    ),
+)
+async def datastore_describe(source: str | None = None, table: str | None = None) -> str:
+    """Describe-before-query: the semantic layer's meaning, not the rows themselves."""
+    st = _runtime.state()
+    if not st.active:
+        return "Memory is not enabled for this agent."
+    describe = getattr(st.brain, "describe_datastore", None)
+    if describe is None:
+        return "Datastore description is not available for this agent."
+    if not await _acl_allows("memory.search", st.agent_did):
+        return "No datastore description found."
+    sources = (source,) if source else await _approved_datastore_sources()
+    if not sources:
+        return "No connected datastore found."
+    blocks: list[str] = []
+    for source_id in sources:
+        try:
+            text = await describe(source_id, table=table, caller_did=st.agent_did)
+        except RuntimeError as exc:  # reason: signed layer failed verification (tamper)
+            await _audit(
+                "memory.datastore_describe_tampered",
+                {"source": source_id, "table": table or "", "tool": True},
+            )
+            blocks.append(f"{source_id}: failed integrity verification ({exc})")
+            continue
+        if text:
+            blocks.append(text)
+    await _audit(
+        "memory.datastore_describe",
+        {"source": source or "auto", "table": table or "", "hit": bool(blocks), "tool": True},
+    )
+    return "\n\n".join(blocks) if blocks else "No datastore description found."
 
 
 @tool(
@@ -970,6 +1046,7 @@ __all__ = [
     "capture_user",
     "connected_sources",
     "consolidate_poll_once",
+    "datastore_describe",
     "datastore_query",
     "document_search",
     "inject_insight",

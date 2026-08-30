@@ -164,11 +164,11 @@ class _AuthorizedDatastorePort:
         self._source = source
         self._datastore = datastore
 
-    async def introspect(self) -> Any:
+    async def introspect(self, *, sample_limit: int = 0) -> Any:
         return await self._source._authorized(
             "datastore_introspect",
             self._source._connection_id,
-            self._datastore.introspect,
+            lambda: self._datastore.introspect(sample_limit=sample_limit),
         )
 
     async def persist_ontology(self, store: Any) -> None:

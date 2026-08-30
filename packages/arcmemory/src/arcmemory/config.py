@@ -233,6 +233,20 @@ class MemoryConfig(BaseModel):
         default=True, description="enable living per-source incremental sync"
     )
 
+    # Semantic-layer sample values (H-025) — pulling REAL rows into an
+    # operator-editable, agent-consulted file is powerful (an agent can read a
+    # column's meaning from its data) and dangerous (it is now a distributable
+    # copy of live data). Bounded, redacted (see datastore.py), and — because
+    # pulling real values into a file is a step no prior tier took — OFF by
+    # default at federal; an operator must opt in explicitly (ADR-019: tier is
+    # stringency metadata, not a gate that forbids the choice).
+    datastore_sample_values: bool = Field(
+        default=True, description="capture bounded, redacted per-column sample values"
+    )
+    datastore_sample_limit: int = Field(
+        default=5, ge=0, description="max sample values captured per column (bounded LIMIT read)"
+    )
+
     @classmethod
     def for_tier(cls, tier: Tier) -> MemoryConfig:
         """Return the R-9 constant set for ``tier`` (federal is strictest)."""
@@ -256,6 +270,9 @@ class MemoryConfig(BaseModel):
                 # bounded consumption (LLM10) for pushed source batches and backfills.
                 ingest_max_batch=500,
                 backfill_max_age_days=30,
+                # Real row values in a distributable file need explicit federal
+                # opt-in, not a quiet default (H-025).
+                datastore_sample_values=False,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

@@ -36,9 +36,13 @@ def _plan(*homes: KnowledgeHome) -> MappingPlan:
 class _Brain:
     def __init__(self) -> None:
         self.registered: list[tuple[str, str]] = []
+        self.connection_ids: list[str] = []
 
-    async def register_datastore(self, source_id: str, port: Any, *, caller_did: str) -> None:
+    async def register_datastore(
+        self, source_id: str, port: Any, *, connection_id: str = "", caller_did: str
+    ) -> None:
         self.registered.append((source_id, caller_did))
+        self.connection_ids.append(connection_id)
 
 
 class _Port:
@@ -77,6 +81,9 @@ async def test_a_datastore_attaches_from_a_sync_with_no_bound_turn(
     await _adapter(tmp_path).register_datastore(_source(), _Port(), _plan(KnowledgeHome.DATASTORE))
 
     assert brain.registered == [(brain.registered[0][0], _DID)]
+    # H-025: the operator-facing connection_id (not the opaque source_id hash)
+    # is what the Brain must receive — it is what keys the semantic layer file.
+    assert brain.connection_ids == ["shop"]
 
 
 async def test_it_attaches_for_its_own_agent_and_no_other(

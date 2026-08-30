@@ -399,7 +399,12 @@ def _semantic(args: argparse.Namespace) -> None:
     prints it bare and nothing else: ``$EDITOR "$(arc connector semantic shop
     --path)"``.
     """
-    from arcmemory.semantic_layer import layer_path, load_semantic_layer
+    from arcmemory.semantic_layer import (
+        SIGNATURE_SUFFIX,
+        SemanticLayerTamperedError,
+        layer_path,
+        load_semantic_layer,
+    )
 
     path = layer_path(args.instance, getattr(args, "arc_dir", None))
     if path is None:
@@ -414,7 +419,13 @@ def _semantic(args: argparse.Namespace) -> None:
         _out("  open Knowledge → Connections and configure the connection, then")
         _out("  run this again.")
         return
-    layer = load_semantic_layer(path)
+    try:
+        layer = load_semantic_layer(path)
+    except SemanticLayerTamperedError as exc:
+        _fail(str(exc))
+    if path.with_name(path.name + SIGNATURE_SUFFIX).is_file():
+        _out(f"Signed through arcui — a hand edit here will fail verification. {path}")
+        _out("")
     if not layer.table:
         _fail(
             f"{path} could not be read as a semantic layer. It is hand-edited, so "

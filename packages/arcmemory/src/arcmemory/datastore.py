@@ -20,13 +20,22 @@ from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from arctrust.redaction import RegexPiiDetector, redact_text
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from arcmemory.stores.semantic import SemanticStore
 
 #: Declared sqlite column types treated as free-text search targets.
 _TEXT_TYPES = ("TEXT", "CHAR", "CLOB", "VARCHAR")
+
+#: Raw rows read per column before Python-side dedup — a small, fixed window, so
+#: sampling can never become a full-table scan/sort. A plain ``SELECT ... LIMIT``
+#: with no ``ORDER BY``/``DISTINCT`` stops reading after this many rows regardless
+#: of table size; ``SELECT DISTINCT ... LIMIT`` was deliberately avoided because a
+#: query planner can still execute it as an unbounded scan+sort on an unindexed,
+#: huge column.
+_SAMPLE_FETCH_CAP = 50
 
 #: query() op name -> the keys of the structured-data port's args dict it consumes.
 _KNOWN_OPS = frozenset({"get_record", "find", "list"})
@@ -40,6 +49,11 @@ class TableInfo(BaseModel):
     columns: list[str]
     searchable_columns: list[str]
     foreign_keys: dict[str, str]
+    #: Bounded, deduplicated, REDACTED example values per column — empty unless a
+    #: caller opted into sampling (``introspect(sample_limit=N)``). Redaction runs
+    #: inside the adapter that reads the raw row (this class), never downstream, so
+    #: a captured PII/secret value cannot reach the semantic layer file unredacted.
+    sample_values: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class DatastoreOntology(BaseModel):
@@ -70,7 +84,7 @@ class DatastorePort(Protocol):
     allowlisted operation and schema member, never submit arbitrary SQL.
     """
 
-    async def introspect(self) -> DatastoreOntology: ...
+    async def introspect(self, *, sample_limit: int = 0) -> DatastoreOntology: ...
 
     async def persist_ontology(self, store: SemanticStore) -> None: ...
 
@@ -89,8 +103,13 @@ class SqliteDatastore:
         self._conn = conn
         self._ontology: DatastoreOntology | None = None
 
-    def introspect(self) -> DatastoreOntology:
-        """Build the ontology from stdlib PRAGMA table_info / foreign_key_list."""
+    def introspect(self, *, sample_limit: int = 0) -> DatastoreOntology:
+        """Build the ontology from stdlib PRAGMA table_info / foreign_key_list.
+
+        ``sample_limit`` > 0 additionally captures up to that many bounded,
+        redacted example values per column (REQ H-025 §2) — 0 (the default)
+        introspects the schema only, exactly as before.
+        """
         table_names = [
             str(row[0])
             for row in self._conn.execute(
@@ -100,13 +119,13 @@ class SqliteDatastore:
         tables: dict[str, TableInfo] = {}
         entity_map: dict[str, str] = {}
         for table_name in table_names:
-            tables[table_name] = self._table_info_for(table_name)
+            tables[table_name] = self._table_info_for(table_name, sample_limit=sample_limit)
             entity_map[_singularize(table_name)] = f"table:{table_name}"
         ontology = DatastoreOntology(tables=tables, entity_map=entity_map)
         self._ontology = ontology
         return ontology
 
-    def _table_info_for(self, table_name: str) -> TableInfo:
+    def _table_info_for(self, table_name: str, *, sample_limit: int = 0) -> TableInfo:
         """PRAGMA table_info/foreign_key_list for one table already known to exist.
 
         ``table_name`` here always comes from ``sqlite_master`` (queried just
@@ -127,13 +146,48 @@ class SqliteDatastore:
         foreign_keys: dict[str, str] = {}
         for fk in self._conn.execute(f"PRAGMA foreign_key_list({table_name})"):
             foreign_keys[str(fk[3])] = str(fk[2])
+        sample_values: dict[str, list[str]] = {}
+        if sample_limit > 0:
+            for col_name in columns:
+                values = self._sample_values_for(table_name, col_name, limit=sample_limit)
+                if values:
+                    sample_values[col_name] = values
         return TableInfo(
             name=table_name,
             primary_key=primary_key,
             columns=columns,
             searchable_columns=searchable,
             foreign_keys=foreign_keys,
+            sample_values=sample_values,
         )
+
+    def _sample_values_for(self, table_name: str, column: str, *, limit: int) -> list[str]:
+        """Up to ``limit`` bounded, deduplicated, REDACTED example values for one column.
+
+        Reads a small fixed window of raw rows (``LIMIT`` only, no ``ORDER BY`` or
+        ``DISTINCT`` — never a full-table scan/sort) and dedupes in Python, so a
+        huge unindexed column costs at most ``_SAMPLE_FETCH_CAP`` row reads. Every
+        value is redacted (PII + secrets) before it is returned — this is the last
+        point a raw database value exists before it can be written into the
+        operator-editable, agent-consulted semantic layer file (LLM02/LLM06).
+        ``table_name``/``column`` are schema-validated call sites only (from
+        ``sqlite_master``/``PRAGMA table_info``), never agent-supplied.
+        """
+        detector = RegexPiiDetector()
+        rows = self._conn.execute(
+            f"SELECT {column} FROM {table_name} WHERE {column} IS NOT NULL "  # noqa: S608
+            "LIMIT ?",
+            (_SAMPLE_FETCH_CAP,),
+        ).fetchall()
+        seen: dict[str, None] = {}
+        for (value,) in rows:
+            text = str(value).strip()
+            if not text or text in seen:
+                continue
+            seen[text] = None
+            if len(seen) >= limit:
+                break
+        return [redact_text(text, detector.detect(text)) for text in seen]
 
     def persist_ontology(self, store: SemanticStore) -> None:
         """Write each table as a ``db_table`` Entity — Facts: primary_key, row_count,
@@ -243,8 +297,8 @@ class SqliteDatastorePort:
         self._uri = self._read_only_uri(path) if path and path != ":memory:" else ""
         self._snapshot = None if self._uri else conn.serialize()
 
-    async def introspect(self) -> DatastoreOntology:
-        return await asyncio.to_thread(self._introspect)
+    async def introspect(self, *, sample_limit: int = 0) -> DatastoreOntology:
+        return await asyncio.to_thread(self._introspect, sample_limit)
 
     async def persist_ontology(self, store: SemanticStore) -> None:
         await asyncio.to_thread(self._persist_ontology, store)
@@ -252,9 +306,9 @@ class SqliteDatastorePort:
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:
         return await asyncio.to_thread(self._query, op, table, args)
 
-    def _introspect(self) -> DatastoreOntology:
+    def _introspect(self, sample_limit: int = 0) -> DatastoreOntology:
         with closing(self._open()) as conn:
-            return SqliteDatastore(conn).introspect()
+            return SqliteDatastore(conn).introspect(sample_limit=sample_limit)
 
     def _persist_ontology(self, store: SemanticStore) -> None:
         with closing(self._open()) as conn:

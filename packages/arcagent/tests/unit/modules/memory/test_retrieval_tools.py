@@ -23,6 +23,7 @@ import pytest
 from arcagent.brain import NullBrain
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
+    datastore_describe,
     datastore_query,
     document_search,
     memory_search,
@@ -211,3 +212,114 @@ async def test_datastore_query_output_is_boundary_marked_data() -> None:
     assert "<memory-result" in out, "datastore rows must be boundary-marked as untrusted DATA"
     # A forged closing marker in the row is defanged, not passed through verbatim.
     assert "</memory-result> injection attempt" not in out
+
+
+# -- H-025: datastore_describe tool + datastore_query composes meaning first --
+
+
+async def test_datastore_describe_is_importable_with_tool_metadata() -> None:
+    assert hasattr(datastore_describe, "_arc_capability_meta")
+
+
+async def test_datastore_describe_is_in_capabilities_all() -> None:
+    from arcagent.modules.memory import capabilities
+
+    assert "datastore_describe" in capabilities.__all__
+
+
+async def test_datastore_describe_calls_brain_and_returns_the_meaning() -> None:
+    class _Brain:
+        async def describe_datastore(
+            self, source_id: str, *, table: str | None = None, **_: Any
+        ) -> str:
+            assert source_id == "erp"
+            assert table == "invoices"
+            return "invoices — one row is an invoice."
+
+    _configure_with(_Brain())
+
+    out = await datastore_describe("erp", "invoices")
+
+    assert out == "invoices — one row is an invoice."
+
+
+async def test_datastore_describe_with_null_brain_is_graceful_never_raises() -> None:
+    _configure_with(NullBrain())
+
+    out = await datastore_describe("erp")
+
+    assert isinstance(out, str)
+    assert "not enabled" in out.lower() or "not available" in out.lower()
+
+
+async def test_datastore_describe_with_a_brain_lacking_the_method_is_graceful() -> None:
+    class _MinimalBrain:
+        async def capture(self, text: str, **_: Any) -> None:
+            return None
+
+    _configure_with(_MinimalBrain())
+
+    out = await datastore_describe("erp")
+
+    assert isinstance(out, str)
+
+
+async def test_datastore_query_composes_meaning_ahead_of_rows_never_replacing_them() -> None:
+    """H-025 describe-before-query: the compose point PREPENDS the operator's
+    table meaning to the rendered row data — it must never shadow or replace it."""
+
+    class _Brain:
+        async def describe_datastore(
+            self, source_id: str, *, table: str | None = None, **_: Any
+        ) -> str:
+            return "widgets — one row is a widget."
+
+        async def datastore_query(
+            self, source_id: str, op: str, table: str, args: dict[str, Any], **_: Any
+        ) -> object:
+            return {"id": 1, "name": "sprocket"}
+
+    _configure_with(_Brain())
+
+    out = await datastore_query("sqlite-1", "get_record", "widgets", {"pk_value": "1"})
+
+    assert "widgets — one row is a widget." in out
+    assert "sprocket" in out
+    assert out.index("widget.") < out.index("sprocket"), "meaning must be PREPENDED, not appended"
+
+
+async def test_datastore_query_still_returns_rows_when_describe_is_unavailable() -> None:
+    """Compose is best-effort: no describe seam must never block the rows a
+    caller is otherwise cleared to see."""
+
+    class _Brain:
+        async def datastore_query(self, *_: Any, **__: Any) -> object:
+            return {"id": 1, "name": "sprocket"}
+
+    _configure_with(_Brain())
+
+    out = await datastore_query("sqlite-1", "get_record", "widgets", {"pk_value": "1"})
+
+    assert "sprocket" in out
+
+
+async def test_datastore_query_fails_closed_on_meaning_not_on_rows_when_layer_is_tampered() -> (
+    None
+):
+    """A signed semantic layer that fails integrity verification must refuse to
+    compose its (possibly tampered) text into context, without ever pretending
+    the row lookup itself failed."""
+
+    class _Brain:
+        async def describe_datastore(self, *_: Any, **__: Any) -> str:
+            raise RuntimeError("failed signature verification against the pinned operator key")
+
+        async def datastore_query(self, *_: Any, **__: Any) -> object:
+            return {"id": 1, "name": "sprocket"}
+
+    _configure_with(_Brain())
+
+    out = await datastore_query("sqlite-1", "get_record", "widgets", {"pk_value": "1"})
+
+    assert "integrity verification" in out
+    assert "sprocket" in out
