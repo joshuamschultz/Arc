@@ -62,6 +62,9 @@ import type {
   EventsResponse,
   PromptDetail,
   PromptListResponse,
+  SharedKnowledgeResponse,
+  SharedKnowledgeSearchResponse,
+  SharedKnowledgeDetail,
   SkillDetail,
   ToolDetail,
   PolicyBulletsResponse,
@@ -279,6 +282,27 @@ export const useTeamPolicyBullets = () =>
 
 export const useTeamPolicyStats = () =>
   useApiQuery<TeamPolicyStatsResponse>(['team', 'policy', 'stats'], '/api/team/policy/stats')
+
+// --- H-027: fleet-shared knowledge — read-only view of documents agents
+// have promoted into the signed fleet collection, grouped by owner. --------
+
+export const useSharedKnowledge = () =>
+  useApiQuery<SharedKnowledgeResponse>(['team', 'knowledge', 'shared'], '/api/team/knowledge/shared')
+
+export const useSharedKnowledgeSearch = (q: string) =>
+  useQuery<SharedKnowledgeSearchResponse>({
+    queryKey: ['team', 'knowledge', 'shared', 'search', q],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/team/knowledge/shared/search?q=${encodeURIComponent(q)}`, signal),
+    enabled: q.trim().length > 0,
+  })
+
+export const useSharedKnowledgeDetail = (identifier: string | null) =>
+  useApiQuery<SharedKnowledgeDetail>(
+    ['team', 'knowledge', 'shared', 'detail', identifier],
+    `/api/team/knowledge/shared/${encodeURIComponent(identifier ?? '')}`,
+    !!identifier,
+  )
 
 export const useTeamAudit = (filter?: string, limit = 100) =>
   useApiQuery<AuditEventsResponse>(

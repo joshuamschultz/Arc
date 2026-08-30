@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import arcrun
 from arctrust import (
     AgentIdentity,
+    AuditSink,
     FileNotaryTransit,
     OperatorKey,
     RecordCipher,
@@ -65,7 +66,7 @@ from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
     SessionCapabilityLedger,
 )
-from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
@@ -1257,6 +1258,28 @@ class ArcAgent:
                 message="extensions require a started agent identity",
             )
         return _ExtensionSigner(self._identity)
+
+    @property
+    def audit_sink(self) -> AuditSink:
+        """This agent's audit sink — routes typed arctrust events to its telemetry.
+
+        Read-only accessor for out-of-process wiring (e.g. the fleet
+        shared-knowledge composition) so a promotion an agent performs is
+        audited through the SAME telemetry boundary as its own operations,
+        never a silent side channel. Raises before startup, when there is no
+        telemetry to route to.
+        """
+        if self._telemetry is None:
+            raise ExtensionError(
+                code="AGENT_NOT_STARTED",
+                message="the audit sink requires a started agent",
+            )
+        return TelemetryAuditSink(self._telemetry)
+
+    @property
+    def workspace(self) -> Path:
+        """The agent's resolved workspace root (its home for direct-I/O state)."""
+        return self._workspace
 
     @property
     def skills(self) -> list[SkillEntry]:

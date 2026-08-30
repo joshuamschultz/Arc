@@ -6,6 +6,7 @@ from arcteam.shared_knowledge.backend import (
     SharedKnowledgeDocument,
     SharedKnowledgeHit,
     SharedKnowledgeReference,
+    SharedKnowledgeSummary,
 )
 from arcteam.shared_knowledge.composition import (
     ComposedSharedKnowledgeAgent,
@@ -25,5 +26,6 @@ __all__ = [
     "SharedKnowledgeDocument",
     "SharedKnowledgeHit",
     "SharedKnowledgeReference",
+    "SharedKnowledgeSummary",
     "SharedKnowledgeUnavailableError",
 ]

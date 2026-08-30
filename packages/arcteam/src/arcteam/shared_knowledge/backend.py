@@ -89,6 +89,18 @@ class SharedKnowledgeHit:
     excerpt: str
 
 
+@dataclass(frozen=True)
+class SharedKnowledgeSummary:
+    """One promoted document as the fleet read surface sees it (owner-attributed)."""
+
+    reference: SharedKnowledgeReference
+    title: str
+    classification: str
+    tags: tuple[str, ...]
+    owner_did: str
+    excerpt: str
+
+
 class FleetSharedKnowledgeBackend:
     """Persist a fleet's signed knowledge, membership, and lifecycle decisions."""
 
@@ -116,6 +128,9 @@ class FleetSharedKnowledgeBackend:
 
     async def search(self, query: str, access: _Access) -> list[SharedKnowledgeHit]:
         return await asyncio.to_thread(self._search, query, access)
+
+    async def list_documents(self, access: _Access) -> list[SharedKnowledgeSummary]:
+        return await asyncio.to_thread(self._list_documents, access)
 
     async def revoke(self, reference: str, access: _Access) -> None:
         await asyncio.to_thread(self._revoke, reference, access)
@@ -199,6 +214,33 @@ class FleetSharedKnowledgeBackend:
                     SharedKnowledgeHit(document.reference, document.title, document.content[:160])
                 )
         return matches
+
+    def _list_documents(self, access: _Access) -> list[SharedKnowledgeSummary]:
+        """Every readable promoted document — classification-filtered, revocation-aware.
+
+        Reuses ``_read`` per document, so a doc the caller may not read (no-read-up)
+        or a revoked doc is skipped exactly as ``_search`` skips it. Attributes each
+        surviving document to its owner DID so the operator sees who promoted what.
+        """
+        if not self._documents.exists():
+            return []
+        summaries: list[SharedKnowledgeSummary] = []
+        for path in sorted(self._documents.glob("*.md")):
+            try:
+                document = self._read(path.stem, access)
+            except (FileNotFoundError, PermissionError, ValueError):
+                continue
+            summaries.append(
+                SharedKnowledgeSummary(
+                    document.reference,
+                    document.title,
+                    document.classification,
+                    document.tags,
+                    self._owner(document.reference.identifier),
+                    document.content[:160],
+                )
+            )
+        return summaries
 
     def _revoke(self, reference: str, access: _Access) -> None:
         document = self._read(reference, access)
@@ -352,4 +394,5 @@ __all__ = [
     "SharedKnowledgeDocument",
     "SharedKnowledgeHit",
     "SharedKnowledgeReference",
+    "SharedKnowledgeSummary",
 ]
