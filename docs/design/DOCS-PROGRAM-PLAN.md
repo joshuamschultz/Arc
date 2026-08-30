@@ -292,22 +292,32 @@ on them. Ordered by size of gap.
    routing, innermost-stack placement, per-endpoint vault key — all undocumented.
    → Owns T2.12 + feeds T1.4. Needs an arcllm SME read.
 2. **Provider override / inheritance model (D-232–240).** `provider override` =
-   0 hits. How a provider overrides base_url/auth-header/model-name mapping (the
-   Azure/OpenAI-compat seam) has no conceptual page. → Feeds T1.4, T2.12.
+   0 doc hits; the base_url/auth-header override seam (Azure/OpenAI-compat) has
+   no conceptual page. **Correction (verified, DocsW2):** there is **no
+   model-name remapping table** — model IDs pass through via
+   `route.model or config.provider.default_model` (`arcllm/registry.py:242,207`).
+   The page must say "no mapping layer, IDs pass through", not describe a mapping
+   that doesn't exist. → Feeds T1.4, T2.12.
 3. **Verify-before-load ordering invariant (D-474, D-636 "verified before
    materialize, never after").** Signing is described, but the *ordering* — the
    actual heart of the Sign pillar — is never stated. → Belongs in T2.3.
 4. **Tool-contract hashing / rug-pull defense (D-563).** `rug-pull` = 0,
    `contract hash` = 0. A named security invariant with no footprint. → Belongs
    in T2.6 + `reference/security.md`.
-5. **Connected-source `document_search` *tool-registration* site + gateway
-   inbound-media trust/retention (D-672/674/675/681/682).** Two open anchors:
-   (a) the code-anchor agent could not locate where `document_search` is exposed
-   to the LLM as a tool (the callable exists at `doc_index.py:153` /
-   `connected_data.py:881`, but the ToolSpec registration was not found); (b)
-   media-bytes storage location, untrusted-media posture, and retention are
-   undocumented. → Blocks part of T2.8 and T2.15; needs an SME to trace the tool
-   wiring first.
+5. **Gateway inbound-media trust/retention (D-672/674/675/681/682).**
+   Media-bytes storage location, untrusted-media posture, and retention are
+   undocumented. → Blocks part of T2.15; needs a gateway SME trace.
+   *(The former sibling open anchor — the `document_search` tool-registration
+   site — is now RESOLVED, see below.)*
+
+**RESOLVED (was open):** the `document_search` LLM-facing **tool** registration
+site is found and verified against source (DocsW2, Wave 2):
+`modules/memory/capabilities.py:617` — an `@tool(name="document_search",
+classification="read_only", …)` decorator whose body calls
+`st.brain.document_search` (`:636/641`) → `ArcMemoryBrain.document_search`
+(`arcmemory/brain.py:812`) → `DocIndex.document_search` (`doc_index.py:153`). A
+sibling `knowledge_search` (`capabilities.py:605`) covers the personal curated
+store — a distinct surface. T2.8 cites `capabilities.py:617` as verified.
 
 **Also undocumented (smaller, can be written by REVISE-ing an existing page):**
 
@@ -440,8 +450,11 @@ Handed to page authors so diagrams and footers cite real symbols. All under
 `doc_index.py:36` (`doc_scope`), `:66,153` (`DocIndex`) · `extension/source.py:160`
 (`SourceAdapter`, 5 methods) · `connected_data/coordinator.py:38,54,351` ·
 `extension/grants.py:95,154` (`ConnectionRegistry.granted_to`) · reference impl
-`extensions/postgresql/arc_ext_postgresql/__init__.py:47,163,210`. **Open
-anchor:** the `document_search` *tool*-registration site was not located.
+`extensions/postgresql/arc_ext_postgresql/__init__.py:47,163,210`. The
+`document_search` **tool** registration (verified): `modules/memory/capabilities.py:617`
+(`@tool`) → `ArcMemoryBrain.document_search` (`arcmemory/brain.py:812`) →
+`DocIndex.document_search` (`doc_index.py:153`); sibling `knowledge_search`
+(`capabilities.py:605`) is the personal-store surface.
 
 **Inter-agent mail:** `arcteam/mail.py:188,213,342,251,114` · `storage.py:38,164`
 · `backends/nats.py:128` · `arcstore/mail_outbox.py:30,200` (`PostgresMailOutbox`,
@@ -481,6 +494,7 @@ Docker/ACR lane).
 - **5 biggest undocumented rationale/data-flow items:** (1) LLM load-balancing /
   endpoint pools (D-449–458) · (2) provider override/inheritance (D-232–240) ·
   (3) verify-before-load ordering invariant (D-474/636) · (4) tool-contract
-  hashing / rug-pull (D-563) · (5) the `document_search` tool-registration site +
-  gateway inbound-media trust/retention (D-672/674/675). All need an SME code
-  read before writing.
+  hashing / rug-pull (D-563) · (5) gateway inbound-media trust/retention
+  (D-672/674/675). Items 1–4 need an SME code read before writing. *(A former
+  6th item — the `document_search` tool-registration site — is now resolved:
+  `modules/memory/capabilities.py:617`.)*
