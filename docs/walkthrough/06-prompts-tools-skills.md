@@ -593,3 +593,27 @@ not `improver/evaluator.py` (that's the ranker, not the gate).
 - HTTP/process/MCP transport wiring was confirmed absent by exhaustive grep
  for `ToolTransport.HTTP` / `.PROCESS` / `.MCP` construction sites as of
  this writing; a future change could add one without updating this doc.
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **prompt assembly** flow (Part A above), shared
+verbatim with the shared *Decision Index* catalog
+(`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
+the durable anchor. Full text for each `D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcprompt → arcagent context |
+| **What calls what** | `PromptResolver.resolve` (stock + operator overlay) → `PromptSnapshot` → `ContextManager.assemble_system_prompt` (+ `agent:assemble_prompt` bus sections) → `ToolRegistry.format_for_prompt` |
+| **What passes — where / when / to** | stock docs + a signed overlay → a snapshot **frozen once per run**; core workspace files + module-injected sections + the tool catalog → the system prompt → the model |
+| **Security / modularity reason** | prompts are signed, protected artifacts (not mutable text); the overlay is pinned to the **operator** key so an agent can't self-sign its own prompt; the per-run snapshot is reproducible and verified **before** use (D-474) |
+| **`D-NNN` / ADR** | D-459, D-460, D-461, D-462, D-463, D-073, D-074 · D-474 · ADR-006 |
+| **Code anchor** | `arcprompt/resolver.py:60` (`PromptResolver.resolve`) · `arcprompt/snapshot.py:28` (`PromptSnapshot`) · `session_internal/context.py:337` (`assemble_system_prompt`) · `core/tool_registry.py:202` (`format_for_prompt`) |
+
+**Set it up:** the Track 1 counterpart is the
+[Prompts reference](../reference/prompts.md) — the full stock-prompt catalog and
+overlay conventions. The turn this assembly feeds is
+[Anatomy of a turn](03-anatomy-of-a-turn.md).

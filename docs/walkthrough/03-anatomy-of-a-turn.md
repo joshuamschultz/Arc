@@ -657,3 +657,27 @@ flowchart TD
 | `packages/arctrust/src/arctrust/audit.py` | `emit`, `WormSink`, `AuditEvent` | Durable audit behavior |
 | `packages/arcstore/src/arcstore/spool.py` | `record`, `request_context`, spool read functions | The append-only operational record |
 | `packages/arcui/src/arcui/observe.py`, `routes/traces.py` | Spool query/read path for the trace dashboard | How recorded turns get displayed |
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **run / turn** flow, shared verbatim with the
+shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
+numbers drift; the **symbol name** is the durable anchor. Full text and
+alternatives for each `D-NNN` live in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcagent core → arcrun |
+| **What calls what** | `ArcAgent.run` → `dispatch_stream` → `build_run_context` → `arcrun.run_stream` → `react_loop` → `model.invoke` |
+| **What passes — where / when / to** | `run_id` minted once and **pinned** through the whole run; the tool-set **frozen** at loop start (`registry.freeze()`); each turn's `messages` + tool schemas → the model; `StreamEvent`s (Token / TurnEnd) back to the surface |
+| **Security / modularity reason** | A frozen tool-set means no mid-run privilege change (ADR-027); one `run_id` end to end means honest trace correlation, never a reconstructed guess |
+| **`D-NNN` / ADR** | D-591, D-587, D-589, D-602, D-618, D-623 · ADR-024, ADR-027 |
+| **Code anchor** | `core/agent.py:738` (`ArcAgent.run`) · `core/agent_dispatch.py:42,296` (`build_run_context`, `dispatch_stream`) · `arcrun/loop.py:67,82` (`run_id` mint, `registry.freeze`) · `arcrun/strategies/react.py:237` (`react_loop`) |
+
+**Set it up:** the Track 1 counterpart is
+[Your first agent](../building/quickstart.md) — building and chatting with a
+real agent. The tool-authorization half of this flow expands in
+[A tool call through policy](data-flows.md#tool-execution-pipeline).

@@ -640,3 +640,27 @@ Full detail on every durable format: [`docs/08-data-and-storage.md`](08-data-and
 | Observe / read path | `arc ui start` (always tailing) | none — always-on | shared PostgreSQL operational store |
 
 Full config precedence and every key above: [`docs/12-configuration.md`](12-configuration.md).
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **workflow / schedule fire → task** flow, shared
+verbatim with the shared *Decision Index* catalog
+(`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
+the durable anchor. Full text for each `D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcteam / arcagent workflow + scheduler |
+| **What calls what** | a `[trigger]` cron → an owner-scoped schedule → node materialization on the task-DAG substrate → run progression |
+| **What passes — where / when / to** | a schedule fire → a task **write** (durable) → an agent run; `deliver_to` pins a node's `notify_user` to a channel (signed) |
+| **Security / modularity reason** | a handoff is a task write, not a message (D-538); the monotonic-progress rule stops a nonterminal plan from spinning; `deliver_to` is model-immutable so the model can't redirect a notification |
+| **`D-NNN` / ADR** | D-507, D-508, D-509, D-630, D-119, D-335 · SPEC-056 / SPEC-061 |
+| **Code anchor** | `arcagent/modules/scheduler/` (`SchedulerEngine`, store) · `arcagent/modules/tasks/` (`TaskStore`, dispatch loop) · `arcagent/modules/workflows/` (ArcFlow node materialization) |
+
+**Set it up:** the Track 1 counterpart is
+[Workflows & schedules](../runbooks/operate/tasks.md) — cron triggers,
+`deliver_to`, and the nightly-ingest pattern. The turn each fired task runs is
+[Anatomy of a turn](03-anatomy-of-a-turn.md).
