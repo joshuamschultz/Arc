@@ -275,6 +275,41 @@ async def delete_memory(request: Request) -> JSONResponse:
     return _mutation_response(entry_id, [result])
 
 
+async def list_chunks(request: Request) -> JSONResponse:
+    """GET .../knowledge/chunks — paged browse, or literal/vector search via ``?q=``.
+
+    ``?mode=vector|literal`` selects the search channel (default ``literal``);
+    ignored on a plain browse. Both paths go through
+    ``MemoryOperator.browse_chunks``/``search_chunks`` (H-023), which gate every
+    candidate on clearance before pagination/limit and cap each chunk's text —
+    this route runs no SQL and owns no store logic of its own.
+    """
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    query = request.query_params.get("q")
+
+    if query:
+        mode = request.query_params.get("mode", "literal")
+        limit = int(request.query_params.get("limit", "10"))
+        try:
+            result = await op.search_chunks(query, mode=mode, limit=limit)
+        except Exception as exc:
+            return _store_unreadable(exc)
+        return JSONResponse(result.model_dump(mode="json"))
+
+    limit = int(request.query_params.get("limit", "50"))
+    offset = int(request.query_params.get("offset", "0"))
+    try:
+        page = await op.browse_chunks(limit=limit, offset=offset)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse(page.model_dump(mode="json"))
+
+
 # ---------------------------------------------------------------------------
 # Entities
 # ---------------------------------------------------------------------------
@@ -693,6 +728,7 @@ routes = [
         methods=["GET"],
     ),
     Route("/api/agents/{agent_id}/knowledge/index-health", index_health, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/chunks", list_chunks, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories", list_memories, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories/{entry_id}", get_memory, methods=["GET"]),
     Route(
