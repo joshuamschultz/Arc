@@ -84,8 +84,8 @@ before this batch is complete.
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | MERGED | b37f1417 |
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
-| H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) — DONE, queued for merge | L | VERIFY | d3719973 |
-| H-041 | arcskill | Real skill improvement loop — merged 20ef4e8f but REOPENED: producer wiring REQUIRED (arcagent stamps llm_trace_id on real runs) + real-path E2E test + judge-fail-blocks-promotion test | L | VERIFY | 20ef4e8f+wiring |
+| H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) | L | MERGED | a8fd4364 |
+| H-041 | arcskill | Real skill improvement loop (curation + producer wiring + real-path E2E + judge-fail-blocks-promotion) | L | MERGED | 20ef4e8f+0ae5bf6b |
 | H-041b | arcui | "Promote to golden" frontend button on the existing skill-versions route (CLI-first shipped; small UI follow-up; H-037 parity sweep will surface it) | S | NEXT-PROGRAM | |
 | H-040b | Fleet | H-040 Slice 2: dynamic roster for ALL member kinds (native + foreign) through ONE freshness model (not a foreign-only path); + private MemoryPort DID gate, revocation CLI, quarantine provenance | L | NEXT-PROGRAM | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
@@ -95,7 +95,7 @@ before this batch is complete.
 | H-044 | Knowledge | DB parity: Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP (extensions/postgresql, asyncpg — full port). REMAINING: MySQL family (clone template+driver), Mongo, Snowflake, BigQuery + conformance harness | L | NEXT-PROGRAM | |
 | H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
 | H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
-| H-047 | Security | build_brain identity guard (3 checks + zero-tolerance owner bootstrap) — BLESSED + tightened; closes on merge (queued behind H041wire) | S | VERIFY | 78cbff17+5b6c8ec8 |
+| H-047 | Security | build_brain identity guard (3 checks + zero-tolerance owner bootstrap) | S | MERGED | 168a8ab6 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
