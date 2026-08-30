@@ -9,8 +9,9 @@
 import { useState, type ReactNode } from 'react'
 import { Markdown } from '@/components/markdown'
 import { JsonBlock } from '@/components/json-block'
-import { formatXml } from '@/lib/format'
+import { formatXml, fmtNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import type { PromptSection } from '@/lib/types'
 
 /** True when a string contains at least one XML-ish element tag. */
 function hasXml(text: string): boolean {
@@ -65,7 +66,7 @@ function splitXml(text: string): Segment[] {
 // sequence gets a collapsed, named row per section — the prompt becomes a table
 // of contents you open, instead of a page you scroll past.
 
-interface PromptSection {
+interface XmlSection {
   name: string
   /** The element's own name attribute, when it has one (a tool, a skill). */
   label: string | null
@@ -78,8 +79,8 @@ function nameAttribute(openTag: string): string | null {
 }
 
 /** Top-level `<tag>…</tag>` sections, or null when the body is not a prompt. */
-function parsePromptSections(content: string): PromptSection[] | null {
-  const sections: PromptSection[] = []
+function parsePromptSections(content: string): XmlSection[] | null {
+  const sections: XmlSection[] = []
   let covered = 0
   XML_BLOCK.lastIndex = 0
   for (let m = XML_BLOCK.exec(content); m !== null; m = XML_BLOCK.exec(content)) {
@@ -100,7 +101,7 @@ function parsePromptSections(content: string): PromptSection[] | null {
   return sections
 }
 
-function PromptSections({ sections }: { sections: PromptSection[] }) {
+function PromptSections({ sections }: { sections: XmlSection[] }) {
   return (
     <div className="space-y-1.5">
       {sections.map((s, i) => (
@@ -311,4 +312,45 @@ export function LlmContent({ content, className }: { content: unknown; className
   }
   // Object / other — fall back to a JSON view rather than "[object Object]".
   return <JsonBlock value={content} className={className} />
+}
+
+// --- ordered prompt sections (H-049) ----------------------------------------
+// The server (arcui.prompt_sections) re-presents a call's assembled prompt as
+// labeled sections in the operator-legible order: system prompt · identity ·
+// strategies · policies · tool list · skill list · context · session data, then
+// any other real section. Each is a collapsed <details> shell — a table of
+// contents you open, in the order a reader wants — with its body rendered
+// through the same structured formatter as the rest of the call.
+
+function PromptSectionRow({ section }: { section: PromptSection }) {
+  return (
+    <details className="rounded-md border border-border/60 bg-background/40">
+      <summary className="cursor-pointer select-none px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <span className="font-mono text-foreground">{section.label}</span>
+        <span className="ml-2 tabular-nums">~{fmtNumber(section.tokens)} tok</span>
+      </summary>
+      <div className="border-t border-border/60 px-2 py-2">
+        <LlmContent content={section.body} />
+      </div>
+    </details>
+  )
+}
+
+/** Ordered, expandable prompt sections for an LLM call's request. Renders
+ *  nothing when the call carried no stored body (federal-encrypted default). */
+export function PromptSectionsView({
+  sections,
+  className,
+}: {
+  sections: PromptSection[]
+  className?: string
+}) {
+  if (!sections.length) return null
+  return (
+    <div className={cn('space-y-1.5', className)}>
+      {sections.map((s) => (
+        <PromptSectionRow key={s.key} section={s} />
+      ))}
+    </div>
+  )
 }

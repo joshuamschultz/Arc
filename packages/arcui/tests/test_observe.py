@@ -348,6 +348,65 @@ async def test_timeline_joins_on_run_id(tmp_path: Path) -> None:
         await observe.stop()
 
 
+async def test_timeline_llm_call_carries_the_fields_the_ui_renders(tmp_path: Path) -> None:
+    """H-050 — a run's LLM calls must appear in its timeline carrying what the
+    run-river/run-detail views render inline (model, in/out tokens, and the
+    ``record_id`` that opens the call detail), so the operator sees the real
+    chain turn → LLM call → tool(s), not just turns and tools.
+    """
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-9",
+            ts="2026-05-31T00:00:01+00:00",
+            name="turn.start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="llm_call",
+            actor_did="did:c",
+            request_id="run-9",
+            ts="2026-05-31T00:00:02+00:00",
+            model="claude-opus-4-8",
+            prompt_tokens=1200,
+            completion_tokens=340,
+            outcome="ok",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-9",
+            ts="2026-05-31T00:00:03+00:00",
+            tool_name="read",
+            phase="start",
+        ),
+    )
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        timeline = await observe.timeline(run_id="run-9")
+        llm = next(e for e in timeline if e["kind"] == "llm_call")
+        # The exact keys the frontend fold (lib/run-timeline.ts mergeTimeline)
+        # reads to build the inline LLM step and its drill-in.
+        assert llm["model"] == "claude-opus-4-8"
+        assert llm["prompt_tokens"] == 1200
+        assert llm["completion_tokens"] == 340
+        assert llm["record_id"]  # the trace_id the "view call" drawer fetches
+        # Causal order: the LLM call sits between the turn that spawned it and the
+        # tool it went on to invoke.
+        kinds = [e["kind"] for e in timeline]
+        assert kinds.index("llm_call") < kinds.index("tool_event")
+    finally:
+        await observe.stop()
+
+
 async def test_runs_lists_real_runs_grouped_by_request_id(tmp_path: Path) -> None:
     """Observe.runs() returns one summary per run (request_id), newest first,
     joining run/tool/llm spool rows — not session files."""
@@ -593,6 +652,34 @@ def test_row_to_trace_surfaces_bodies_from_extra() -> None:
     # The LIST shape (default) is lightweight — bodies are omitted entirely.
     assert "request" not in _row_to_trace(row)
     assert "response" not in _row_to_trace(row)
+
+
+def test_row_to_trace_projects_ordered_prompt_sections() -> None:
+    """H-049 — the call detail carries the request re-presented as ordered,
+    labeled sections; the plain LIST shape carries none of it (metadata only)."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "rP",
+        "model": "claude-opus-4-8",
+        "outcome": "ok",
+        "extra": {
+            "request_body": {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "<base>\nHarness.\n</base>\n\n<identity>\nOlivia.\n</identity>",
+                    },
+                    {"role": "user", "content": "hi"},
+                ],
+            },
+        },
+    }
+    detail = _row_to_trace(row, include_bodies=True)
+    keys = [s["key"] for s in detail["prompt_sections"]]
+    assert keys == ["system_prompt", "identity"]
+    # Metadata-only list rows never carry the (potentially sensitive) sections.
+    assert "prompt_sections" not in _row_to_trace(row)
 
 
 def test_row_to_trace_handles_json_string_extra() -> None:

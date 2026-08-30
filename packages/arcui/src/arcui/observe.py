@@ -35,6 +35,7 @@ from arcui.observe_stats import (
     compute_stats,
     compute_timeseries,
 )
+from arcui.prompt_sections import build_prompt_sections
 
 _WINDOW_SECONDS = {
     "1h": 3600,
@@ -138,6 +139,12 @@ def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[
     trace["response"] = extra.get("response_body")
     trace["messages"] = (request_body or {}).get("messages")
     trace["tools"] = (request_body or {}).get("tools")
+    # H-049: the same request, re-presented as ordered, labeled sections
+    # (system prompt · identity · strategies · policies · tool list · skill list
+    # · context · session data) for the call detail view. A read-only projection
+    # over what was actually sent — empty when the body is absent (metadata-only
+    # / federal-encrypted default), so the view degrades to its plain rendering.
+    trace["prompt_sections"] = build_prompt_sections(request_body)
     return trace
 
 

@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
 import { LoadingRows } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
-import { LlmContent } from '@/components/llm-content-renderer'
+import { LlmContent, PromptSectionsView } from '@/components/llm-content-renderer'
 import { AgentIdentity } from '@/components/AgentIdentity'
 import { CapabilityBadge } from '@/components/llm/capability-badge'
 import { useTraceDetail } from '@/lib/queries'
@@ -205,7 +205,14 @@ export function TraceDrawer({
   const detail = useTraceDetail(open ? (trace?.trace_id ?? null) : null)
   const full: Trace = { ...(trace ?? {}), ...(detail.data ?? {}) }
   const stillLoading = detail.isLoading && full.model == null
-  const messages = extractMessages(full)
+  const allMessages = extractMessages(full)
+  // H-049: when the server split the prompt into ordered sections, show those
+  // (they cover the whole system prompt + this turn's retrieved data) and keep
+  // only the actual dialogue as Messages — the system blob no longer repeats.
+  const promptSections = Array.isArray(full.prompt_sections) ? full.prompt_sections : []
+  const messages = promptSections.length
+    ? allMessages.filter((m) => m.role !== 'system')
+    : allMessages
   const inTokens = full.input_tokens ?? full.total_tokens
   const response = full.response
   const request = full.request
@@ -282,10 +289,19 @@ export function TraceDrawer({
 
             <CacheBreakdown trace={full} />
 
+            {promptSections.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Prompt
+                </div>
+                <PromptSectionsView sections={promptSections} />
+              </div>
+            )}
+
             {messages.length > 0 && (
               <div className="space-y-2">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Messages
+                  {promptSections.length ? 'Conversation' : 'Messages'}
                 </div>
                 {messages.map((m, i) => (
                   <MessageBubble key={i} message={m} />
@@ -306,7 +322,7 @@ export function TraceDrawer({
               </div>
             )}
 
-            {messages.length === 0 && request !== undefined && (
+            {promptSections.length === 0 && messages.length === 0 && request !== undefined && (
               <div className="space-y-1.5">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   Request

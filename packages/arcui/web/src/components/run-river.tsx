@@ -17,7 +17,7 @@ import { StatusChip } from '@/components/ai'
 import { SignedSeal } from '@/components/hitl'
 import { LoadingRows, EmptyState } from '@/components/states'
 import { JsonBlock } from '@/components/json-block'
-import { LlmContent } from '@/components/llm-content-renderer'
+import { LlmContent, PromptSectionsView } from '@/components/llm-content-renderer'
 import {
   Sheet,
   SheetContent,
@@ -163,7 +163,12 @@ function LlmDrawer({
 }) {
   const { data, isLoading } = useTraceDetail(open ? (item.traceId ?? null) : null)
   const [view, setView] = useState<'structured' | 'raw'>('structured')
-  const messages = reqMessages(data)
+  // H-049: ordered, labeled prompt sections cover the whole system prompt; the
+  // remaining request messages are just the dialogue, so drop the system blob.
+  const promptSections = Array.isArray(data?.prompt_sections) ? data.prompt_sections : []
+  const messages = promptSections.length
+    ? reqMessages(data).filter((m) => m.role !== 'system')
+    : reqMessages(data)
   const response = data?.response
   const rc = respContent(response)
 
@@ -215,15 +220,21 @@ function LlmDrawer({
             <JsonBlock value={data ?? item} />
           ) : isLoading ? (
             <LoadingRows rows={6} />
-          ) : messages.length === 0 && response === undefined ? (
+          ) : promptSections.length === 0 && messages.length === 0 && response === undefined ? (
             <p className="text-xs text-muted-foreground">
               No stored request/response for this call.
             </p>
           ) : (
             <div className="space-y-4">
+              {promptSections.length > 0 && (
+                <div className="space-y-2">
+                  <SectionLabel>Prompt</SectionLabel>
+                  <PromptSectionsView sections={promptSections} />
+                </div>
+              )}
               {messages.length > 0 && (
                 <div className="space-y-2">
-                  <SectionLabel>Request</SectionLabel>
+                  <SectionLabel>{promptSections.length ? 'Conversation' : 'Request'}</SectionLabel>
                   {messages.map((m, i) => (
                     <div
                       key={i}
