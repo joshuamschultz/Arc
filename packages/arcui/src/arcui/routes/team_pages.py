@@ -101,6 +101,7 @@ def _roster_to_dict(entry: Any) -> dict[str, Any]:
         "color": entry.color,
         "role_label": entry.role_label,
         "hidden": entry.hidden,
+        "harness": getattr(entry, "harness", "arcagent"),
         "identity": identity.model_dump(),
     }
 

@@ -386,9 +386,65 @@ def _registration_identity(entity_type: str, workspace_path: str | None, root: P
     return identity
 
 
+def _register_foreign_enrollment(args: argparse.Namespace) -> None:
+    """Write a PENDING enrollment row for a foreign harness (H-040 §3.3).
+
+    A foreign harness is untrusted code, so it is not registered on the operator's
+    say-so at the keyboard: ``arc team register --harness <foreign> --pubkey <hex>``
+    parks a pending row that ``arc approve <id>`` signs into an EnrollmentGrant and
+    admits. The member's OWN verify key is supplied here; arc never holds its
+    private key.
+    """
+    import asyncio
+
+    from arccli.commands.enroll import build_pending_enrollment
+
+    handle = args.entity_id.split("://")[-1]
+    try:
+        public_key = bytes.fromhex(getattr(args, "pubkey", "") or "")
+    except ValueError:
+        err("arc team register: --pubkey must be hex-encoded Ed25519 bytes")
+        sys.exit(2)
+    if len(public_key) != 32:
+        err("arc team register: --pubkey must be a 32-byte Ed25519 verify key (hex)")
+        sys.exit(2)
+    caps = frozenset(c.strip() for c in (getattr(args, "caps", "") or "").split(",") if c.strip())
+    row = build_pending_enrollment(
+        handle=handle,
+        name=args.name,
+        harness=args.harness,
+        public_key=public_key,
+        capabilities=caps,
+        clearance=getattr(args, "clearance", None) or "UNCLASSIFIED",
+        audit_mode=getattr(args, "audit_mode", None) or "boundary",
+        org=getattr(args, "org", None) or "local",
+    )
+
+    async def _run() -> None:
+        from arcstore.approvals import ApprovalStore
+        from arcstore.backends import open_backend
+
+        backend = open_backend()
+        await backend.start()
+        try:
+            await ApprovalStore(backend).create(row)
+        finally:
+            await backend.stop()
+
+    asyncio.run(_run())
+    _write(f"Pending enrollment: {row.id} (harness={args.harness}, did={row.agent_did})")
+    _write(f"  Approve with: arc approve {row.id}")
+
+
 def _register(args: argparse.Namespace) -> None:
     """Register an agent or user entity on DID-keyed identity."""
     from arcteam.types import Entity, EntityType
+
+    # H-040: a foreign harness is never registered directly — it is enrolled via
+    # an operator-signed grant. Divert to the pending-enrollment path.
+    if getattr(args, "harness", "arcagent") not in ("", "arcagent"):
+        _register_foreign_enrollment(args)
+        return
 
     root = _get_root(args)
     entity_id: str = args.entity_id
@@ -1142,6 +1198,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Agent workspace path (default: cwd). Resolved to absolute. "
         "Must exist as a directory; ~ and $VAR forms rejected (SR-6).",
     )
+    # H-040: foreign-harness enrollment. A non-arcagent harness parks a pending
+    # enrollment row instead of registering directly (approved via `arc approve`).
+    p.add_argument(
+        "--harness",
+        default="arcagent",
+        help="Runtime kind (default: arcagent). A foreign value (e.g. hermes) "
+        "requires operator approval via `arc approve`.",
+    )
+    p.add_argument("--pubkey", default=None, help="Foreign member's own Ed25519 verify key (hex).")
+    p.add_argument("--caps", default="", help="Comma-separated capabilities for a foreign member.")
+    p.add_argument(
+        "--clearance", default=None, help="Max classification admitted (default UNCLASSIFIED)."
+    )
+    p.add_argument(
+        "--audit-mode",
+        dest="audit_mode",
+        default=None,
+        help="'boundary' (default) or 'full' (federal). Tier stringency dial (§10.1).",
+    )
+    p.add_argument("--org", default=None, help="Org segment of the derived DID (default: local).")
 
     # entities
     p = subs.add_parser("entities", help="List registered entities.")

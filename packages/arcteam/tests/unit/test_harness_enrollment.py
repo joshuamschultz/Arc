@@ -25,9 +25,7 @@ from arcteam.agent_fleet import FleetDirectoryAdapter
 from arcteam.audit import AuditLogger
 from arcteam.harness.enrollment import (
     EnrollmentDenied,
-    admit_registration,
     guard_dispatch,
-    is_eligible,
     member_admitted,
 )
 from arcteam.registry import EntityRegistry

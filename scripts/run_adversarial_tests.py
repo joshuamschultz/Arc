@@ -42,6 +42,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_multi_agent_runtime_isolation.py",
         "packages/arcmemory/tests/security/test_no_read_up_real_paths.py",
     ),
+    "foreign harness enrollment and admission (H-040)": (
+        "packages/arctrust/tests/test_enrollment_grant.py",
+        "packages/arcteam/tests/security/test_enrollment_abuse.py",
+        "packages/arcteam/tests/unit/test_harness_enrollment.py",
+    ),
     "dashboard symlink deletion and key/control-plane exfiltration (H-018)": (
         "packages/arcui/tests/integration/test_file_delete_routes.py",
         "packages/arcui/tests/integration/test_path_traversal_e2e.py",

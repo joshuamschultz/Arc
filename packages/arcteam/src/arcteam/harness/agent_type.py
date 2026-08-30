@@ -97,17 +97,19 @@ def _load_descriptor(name: str) -> AgentType | None:
     try:
         module = importlib.import_module(f"{_TYPES_PACKAGE}.{name}")
     except Exception as exc:  # reason: one broken folder must not take the fleet down
-        _logger.exception("harness: type folder %r failed to import and was skipped: %s", name, exc)
+        _logger.exception("harness: type folder %r failed to import and skipped: %s", name, exc)
         return None
     descriptor: Any = getattr(module, _DESCRIPTOR, None)
     if descriptor is None:
         return None
     if not isinstance(descriptor, AgentType):
-        _logger.warning("harness: %r exports a %s, not an AgentType", name, type(descriptor).__name__)
+        _logger.warning("harness: %r exports %s, not an AgentType", name, type(descriptor))
         return None
     if descriptor.name != name:
         _logger.warning(
-            "harness: folder %r declares itself %r — a type is named by its folder", name, descriptor.name
+            "harness: folder %r declares itself %r — a type is named by its folder",
+            name,
+            descriptor.name,
         )
         return None
     return descriptor

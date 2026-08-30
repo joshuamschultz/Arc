@@ -37,7 +37,7 @@ from arcteam.types import Entity, EntityStatus, EntityType
 OperatorKeyResolver = Callable[[str], bytes]
 
 
-class EnrollmentDenied(Exception):
+class EnrollmentDenied(Exception):  # noqa: N818  # reason: a denial, not an internal error — the raised gate decision
     """A foreign member failed enrollment verification at a chokepoint — fail-closed."""
 
 
@@ -128,7 +128,7 @@ def guard_dispatch(
         )
     if not member_admitted(entity, resolve_operator_key):
         raise EnrollmentDenied(
-            f"member {entity.handle!r} failed enrollment verification at dispatch — refusing to run"
+            f"member {entity.handle!r} failed enrollment verification — refusing to dispatch"
         )
 
 

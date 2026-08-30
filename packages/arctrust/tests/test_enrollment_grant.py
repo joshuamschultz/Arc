@@ -9,7 +9,6 @@ swapped member public key (TOCTOU), or facts that do not match the grant.
 
 from __future__ import annotations
 
-import pytest
 from arctrust.identity import AgentIdentity
 from arctrust.policy import (
     EnrollmentGrant,
