@@ -93,6 +93,7 @@ before this batch is complete.
 | H-044 | Knowledge | DB parity: Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP (extensions/postgresql, asyncpg — full port). REMAINING: MySQL family (clone template+driver), Mongo, Snowflake, BigQuery + conformance harness | L | NEXT-PROGRAM | |
 | H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
 | H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
+| H-047 | Security | arcmemory.build_brain (provider.py:43) is an unguarded factory: claimed agent_did (ctx:60) is not verified against a proven identity (ctx.identity optional, :88) → in-process caller can build a Brain for ANOTHER agent's workspace/DID (cross-agent memory bypass, ASI03). Guard: claimed DID must match proven identity; fail closed. Found by H-040 design pass. | S | CAUSE | |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
