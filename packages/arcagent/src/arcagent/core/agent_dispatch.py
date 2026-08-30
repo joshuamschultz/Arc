@@ -14,6 +14,7 @@ solely to keep ``agent.py`` slim.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -435,6 +436,14 @@ async def _dispatch_stream_locked(
                 "agent:error",
                 {"task": input_text, "error": str(exc), "error_type": type(exc).__name__},
             )
+            # A run that overflowed or otherwise errored still left the session
+            # bloated — and the success-path compaction below never runs on this
+            # branch, so an over-limit session used to stay permanently over the
+            # max (every subsequent turn re-overflowed and never pruned). Compact
+            # here too, best-effort, so the next turn starts under the limit. Never
+            # mask the original error.
+            with contextlib.suppress(Exception):
+                await maybe_compact(agent, session)
             raise
         finally:
             reset_session_id(session_token)
