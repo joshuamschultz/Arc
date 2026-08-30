@@ -69,7 +69,7 @@ before this batch is complete.
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | CODING | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
-| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | CODING | |
+| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | MERGED | 2f126606 |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | MERGED | 1f65e6a1 |
