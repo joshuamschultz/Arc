@@ -14,7 +14,7 @@ import threading
 import time
 import unicodedata
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -40,7 +40,7 @@ from arcllm.modules.telemetry_budget import (
 )
 from arcllm.modules.telemetry_cost import DEFAULT_MAX_TOKENS, calculate_cost, estimate_cost
 from arcllm.trace_store import EncryptedEnvelope, TraceRecord
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, StreamAccumulator, Tool, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -901,6 +901,91 @@ class TelemetryModule(BaseModule):
                 response_body=prepared.response_body,
             )
             return response
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Stream deltas from the inner chain, then record the SAME operational
+        ``llm_call`` row + trace record a non-streaming :meth:`invoke` would.
+
+        Without this, ``TelemetryModule`` overrode only ``invoke`` and inherited
+        the transparent :class:`BaseModule` stream pass-through — so a STREAMING
+        call (arcrun's react loop reasoning invoke) wrote NEITHER a spool row NOR
+        a trace record. The agent's own reasoning calls were therefore invisible
+        in the run trace, while non-streaming background sub-calls (distiller,
+        workpad, consolidation) showed — the exact "no LLM calls / missing system
+        context in arcrun" defect. Streaming to the caller is unchanged; the
+        accounting happens once, at completion, from the accumulated response.
+        """
+        await self._maybe_audit_disable()
+        with self._span("arcllm.telemetry") as tel_span:
+            t0 = time.monotonic()
+            budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
+            inner_kwargs = {
+                k: v for k, v in kwargs.items() if not k.startswith("_") and k != "lineage"
+            }
+            accumulator = StreamAccumulator(model=self._inner.model_name)
+            t_pre = time.monotonic()
+            try:
+                async for delta in self._inner.invoke_stream(messages, tools, **inner_kwargs):
+                    accumulator.add(delta)
+                    yield delta
+            except Exception as exc:
+                # A raising stream still records an operational line (FR-4 / C3),
+                # same as invoke().
+                error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
+                self._record_spool(
+                    outcome="error",
+                    model=self._inner.model_name,
+                    cost=None,
+                    latency_ms=round((time.monotonic() - t0) * 1000, 1),
+                    request_body=error_prepared.request_body,
+                    error=f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_LEN],
+                )
+                raise
+            t_llm = time.monotonic()
+            response = accumulator.build()
+            cost = self._calculate_cost(response.usage, response)
+            if self._budget_enabled:
+                self._accumulator.deduct(max(0.0, cost))
+                self._set_budget_otel(tel_span, "warned" if budget_meta else "allowed")
+            updates: dict[str, Any] = {"cost_usd": cost}
+            if budget_meta:
+                updates["metadata"] = {**(response.metadata or {}), **budget_meta}
+            response = response.model_copy(update=updates)
+            t_post = time.monotonic()
+            total_ms = round((t_post - t0) * 1000, 1)
+            phase_timings = {
+                "prompt_assembly_ms": round((t_pre - t0) * 1000, 1),
+                "llm_call_ms": round((t_llm - t_pre) * 1000, 1),
+                "post_processing_ms": round((t_post - t_llm) * 1000, 1),
+                "total_ms": total_ms,
+            }
+            tel_span.set_attribute("arcllm.telemetry.duration_ms", total_ms)
+            tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
+            prepared = self._prepare_bodies(messages, tools, kwargs, response)
+            if self._trace_store is not None or self._on_event is not None:
+                record = self._build_trace_record(response, cost, phase_timings, prepared, kwargs)
+                await self._emit_trace(record)
+            self._record_spool(
+                outcome="ok",
+                model=response.model,
+                cost=cost,
+                latency_ms=total_ms,
+                prompt_tokens=(
+                    response.usage.input_tokens
+                    + (response.usage.cache_read_tokens or 0)
+                    + (response.usage.cache_write_tokens or 0)
+                ),
+                completion_tokens=response.usage.output_tokens,
+                cache_read_tokens=response.usage.cache_read_tokens,
+                cache_write_tokens=response.usage.cache_write_tokens,
+                request_body=prepared.request_body,
+                response_body=prepared.response_body,
+            )
 
     async def _invoke_inner(
         self,

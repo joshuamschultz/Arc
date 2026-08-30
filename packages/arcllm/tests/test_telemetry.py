@@ -7,7 +7,7 @@ import pytest
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.telemetry import TelemetryModule
-from arcllm.types import LLMProvider, LLMResponse, Message, Usage
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Usage
 
 _OK_RESPONSE = LLMResponse(
     content="ok",
@@ -748,6 +748,39 @@ class TestGetBudgetState:
 # ---------------------------------------------------------------------------
 # SPEC-028 C2 — task-local agent identity via contextvars
 # ---------------------------------------------------------------------------
+
+
+class TestStreamingIsRecorded:
+    """A streaming call must record the SAME operational llm_call row a
+    non-streaming invoke does — the arcrun react loop streams its reasoning
+    call, and before this it wrote no spool row (invisible in the run trace)."""
+
+    async def test_invoke_stream_records_a_spool_row(self, messages):
+        async def _fake_stream(_msgs, _tools=None, **_kw):
+            yield Delta(text="ok")
+            yield Delta(
+                usage=Usage(input_tokens=100, output_tokens=50, total_tokens=150),
+                stop_reason="end_turn",
+            )
+
+        inner = _make_inner()
+        inner.invoke_stream = _fake_stream
+        module = TelemetryModule(_make_config(), inner)
+
+        recorded: list = []
+        deltas: list = []
+        with patch("arcllm.modules.telemetry._spool_record", recorded.append):
+            async for d in module.invoke_stream(messages):
+                deltas.append(d)
+
+        # The stream is delivered to the caller unchanged...
+        assert "".join(d.text or "" for d in deltas) == "ok"
+        # ...AND exactly one ok llm_call row was recorded, carrying real tokens.
+        assert len(recorded) == 1
+        assert recorded[0].outcome == "ok"
+        assert recorded[0].model == "test-model"
+        assert recorded[0].prompt_tokens == 100
+        assert recorded[0].completion_tokens == 50
 
 
 class TestAgentIdentityContextVar:
