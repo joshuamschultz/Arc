@@ -19,9 +19,18 @@ class EntityType(StrEnum):
 
 
 class EntityStatus(StrEnum):
-    """Registration state of an entity. A registered entity is ``active``."""
+    """Registration state of an entity.
+
+    A freshly registered entity is ``active``. ``suspended`` and ``revoked`` are
+    the two off-states an operator sets to pull a member (H-040 §3.5): the roster
+    filter and the messaging consumer must refuse a non-``active`` member before
+    routing or delivering. ``revoked`` is the hard cut (paired with trust-store
+    pubkey removal so its signatures stop verifying); ``suspended`` is reversible.
+    """
 
     active = "active"
+    suspended = "suspended"
+    revoked = "revoked"
 
 
 class MsgType(StrEnum):
@@ -187,6 +196,17 @@ class Entity(BaseModel):
     workspace_path (SPEC-019 FR-2): absolute filesystem path to the agent's
     workspace directory. None for ``EntityType.USER`` records, which have
     no on-disk workspace.
+
+    harness (H-040): which runtime kind this member is. ``"arcagent"`` (the
+    default) is the single in-tree implementation the fleet trusts by identity;
+    any other value is a foreign harness that is untrusted code (ASI04) and is
+    admitted only through an operator-signed :class:`enrollment` grant.
+
+    enrollment (H-040 §3): the operator-signed ``EnrollmentGrant`` (in JSON wire
+    form, :func:`arctrust.policy.enrollment_to_wire`) that admits a foreign
+    member. ``None`` for a native ``arcagent`` (trusted by self-consistent DID)
+    and for users. Registry admission verifies it against the trust-store
+    operator key before a foreign entity is written.
     """
 
     did: str
@@ -201,6 +221,8 @@ class Entity(BaseModel):
     status: EntityStatus = EntityStatus.active
     workspace_path: str | None = None
     clearance: str = "UNCLASSIFIED"
+    harness: str = "arcagent"
+    enrollment: dict[str, Any] | None = None
 
 
 class Channel(BaseModel):

@@ -5,6 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from arcteam.audit import AuditLogger
+from arcteam.harness.enrollment import (
+    OperatorKeyResolver,
+    admit_registration,
+    default_operator_key_resolver,
+)
 from arcteam.storage import StorageBackend
 from arcteam.types import Entity, parse_uri
 
@@ -81,12 +86,29 @@ class EntityRegistry:
         self,
         backend: StorageBackend,
         audit: AuditLogger,
+        *,
+        resolve_operator_key: OperatorKeyResolver = default_operator_key_resolver,
     ) -> None:
         self._backend = backend
         self._audit = audit
+        # H-040 chokepoint 1: how registry admission resolves the operator pubkey
+        # for a foreign member's enrollment grant. Trust-store-backed by default;
+        # tests inject a fake. The grant is verified against THIS key, never the
+        # one the member supplies inside the grant.
+        self._resolve_operator_key = resolve_operator_key
 
     async def register(self, entity: Entity) -> None:
-        """Register a new entity. Rejects a duplicate DID or handle."""
+        """Register a new entity. Rejects a duplicate DID or handle.
+
+        H-040 chokepoint 1: a foreign harness (``harness != "arcagent"``) is
+        admitted only when its operator-signed :class:`EnrollmentGrant` verifies
+        against the trust-store operator key — fail-closed
+        (:class:`~arcteam.harness.enrollment.EnrollmentDenied`). Native agents and
+        users pass unchanged. Admission runs BEFORE the duplicate check writes
+        anything, so a forged foreign member never reaches the store.
+        """
+        admit_registration(entity, resolve_operator_key=self._resolve_operator_key)
+
         key = _entity_key(entity.did)
         if await self._backend.read(REGISTRY_COLLECTION, key) is not None:
             raise ValueError(f"Entity already registered: {entity.did}")
@@ -102,7 +124,10 @@ class EntityRegistry:
             event_type="entity.registered",
             subject=f"registry.{entity.type.value}",
             actor_id=entity.did,
-            detail=f"Registered {entity.type.value} @{entity.handle} with roles {entity.roles}",
+            detail=(
+                f"Registered {entity.type.value} @{entity.handle} "
+                f"(harness={entity.harness}) with roles {entity.roles}"
+            ),
             target_id=entity.did,
         )
 
