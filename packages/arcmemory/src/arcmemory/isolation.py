@@ -28,11 +28,15 @@ adopted here on the first build:
 
 * marker PRESENT → its key must exactly match the building identity's key, always;
 * marker ABSENT + no memory data → fresh workspace: bind it to this identity;
-* marker ABSENT + memory data present → the data's own recorded owner (the ``scope``
-  column of ``memory/index.db``) decides: data owned by the building agent is adopted
-  in place (the deployed fleet, which predates the marker, upgrades without a stumble);
-  data owned by a DIFFERENT agent fails closed — that is exactly the victim-workspace
-  shape (another agent's private recall must never be rebound to this identity).
+* marker ABSENT + memory data present → ZERO-TOLERANCE ownership. The workspace's own
+  recorded owners (the ``scope`` column of ``memory/index.db``) must be EVERY-row this
+  agent's — a single foreign scope row anywhere fails closed (not majority, not
+  "mostly mine"), and so does data with NO attributable scope rows at all (a legit
+  agent always leaves attributable rows; unattributable data is the suspicious shape).
+  Only a workspace whose every attributable row belongs to the building agent is
+  adopted in place — that is how the deployed fleet, which predates the marker,
+  upgrades without a stumble, while a victim workspace (another agent's private recall)
+  is never rebound to this identity.
 
 On any failure this raises :class:`MemoryIsolationError` and emits a
 ``memory.isolation_fault`` audit event — the SAME failure vocabulary the
@@ -70,10 +74,16 @@ class MemoryIsolationError(RuntimeError):
     """A brain build could not be tied to the workspace's owning identity.
 
     Raised fail-closed rather than return a Brain bound to the wrong
-    {workspace, agent_did, identity} (ASI03 / LLM02). Mirrors — deliberately,
-    same name and same ``RuntimeError`` base — ``arcagent.modules.memory._runtime.
-    MemoryIsolationError``; arcmemory may not import arcagent, so the type is
-    duplicated at this layer rather than shared, keeping one failure vocabulary.
+    {workspace, agent_did, identity} (ASI03 / LLM02).
+
+    MIRROR PAIR — keep in lockstep with
+    ``arcagent.modules.memory._runtime.MemoryIsolationError`` and its
+    ``memory.isolation_fault`` audit event. The two are deliberately the same name,
+    same ``RuntimeError`` base, and same audit action, but are SEPARATE types because
+    arcmemory sits below arcagent in the import DAG and must never import it
+    (``tests/architecture/test_no_arcagent_import.py``). This is the build-time guard;
+    ``_runtime`` is the runtime-resolution guard. Evolve them together — a change to
+    the error shape or the audit vocabulary here belongs there too.
     """
 
 
@@ -138,44 +148,60 @@ def _enforce_workspace_ownership(
                 "workspace is owned by a different identity",
             )
         return
-    # No marker yet. A workspace already holding a DIFFERENT agent's memory data is
-    # the victim shape and must never be silently rebound; data this agent owns (or a
-    # truly empty workspace) is adopted on this first build.
-    foreign_owner = _foreign_data_owner(memory_dir, agent_did)
-    if foreign_owner is not None:
+    # No marker yet. A truly empty workspace is bound to this identity on this first
+    # build. A workspace that ALREADY holds memory data is adopted ONLY under
+    # ZERO-TOLERANCE ownership: every recorded scope row must be this agent's, and at
+    # least one attributable row must exist. A single foreign scope row anywhere, or
+    # data with no attributable rows at all, is the victim / unattributable shape and
+    # fails closed — another agent's private recall must never be rebound to this
+    # identity, and ownership that cannot be established is not ownership.
+    if not _has_memory_data(memory_dir):
+        _write_owner_marker(marker, public_key, workspace, agent_did, audit_sink, tier)
+        return
+    scopes = _recorded_scopes(memory_dir)
+    foreign = {s for s in scopes if s != agent_did and not s.startswith(f"{agent_did}:")}
+    if foreign:
         _fail_closed(
-            workspace, agent_did, foreign_owner, audit_sink, tier,
+            workspace, agent_did, sorted(foreign)[0], audit_sink, tier,
             "workspace memory data is owned by a different agent DID",
+        )
+    if not scopes:
+        _fail_closed(
+            workspace, agent_did, "", audit_sink, tier,
+            "workspace holds memory data with no attributable owner",
         )
     _write_owner_marker(marker, public_key, workspace, agent_did, audit_sink, tier)
 
 
-def _foreign_data_owner(memory_dir: Path, agent_did: str) -> str | None:
-    """A scope DID recorded in the workspace's index that is NOT ``agent_did``.
+def _has_memory_data(memory_dir: Path) -> bool:
+    """Whether the workspace holds any memory data (anything under ``memory/`` other
+    than the owner marker itself and its write-replace temp)."""
+    if not memory_dir.exists():
+        return False
+    ignore = {_OWNER_MARKER, f".{_OWNER_MARKER}.tmp"}
+    return any(entry.name not in ignore for entry in memory_dir.iterdir())
 
-    Returns the first foreign owner found, or ``None`` when the workspace has no
-    index, no scoped rows, or every scoped row belongs to ``agent_did`` (bare DID or
-    a ``<did>:<session>`` narrowing of it).
-    """
+
+def _recorded_scopes(memory_dir: Path) -> set[str]:
+    """Every distinct ``scope`` recorded in the workspace's index (the on-disk record
+    of which agent the memory data belongs to). Empty when there is no index, it is
+    unopenable, or it holds no scoped rows."""
     db_path = memory_dir / "index.db"
     if not db_path.exists():
-        return None
+        return set()
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error:
-        # An unopenable/corrupt index is not proof of ownership — err toward the
-        # empty-workspace path (adopt) rather than inventing a foreign owner.
-        return None
+        # An unopenable/corrupt index yields no attributable owner — with data present
+        # the caller then fails closed, which is the correct suspicious-shape handling.
+        return set()
     try:
-        for scope in _recorded_scopes(conn):
-            if scope != agent_did and not scope.startswith(f"{agent_did}:"):
-                return scope
+        return _scopes_from(conn)
     finally:
         conn.close()
-    return None
 
 
-def _recorded_scopes(conn: sqlite3.Connection) -> set[str]:
+def _scopes_from(conn: sqlite3.Connection) -> set[str]:
     scopes: set[str] = set()
     for table in _SCOPED_TABLES:
         try:

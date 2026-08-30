@@ -65,6 +65,14 @@ class MemoryIsolationError(RuntimeError):
     cross-agent isolation check restored (ASI03 / LLM02). Subclasses
     ``RuntimeError`` so callers that already handle the "memory not configured"
     runtime error keep catching this too.
+
+    MIRROR PAIR — keep in lockstep with ``arcmemory.isolation.MemoryIsolationError``
+    and its ``memory.isolation_fault`` audit event. Same name, same ``RuntimeError``
+    base, same audit action, but a SEPARATE type: arcmemory may not import arcagent
+    (the DAG boundary), so the build-time guard (``arcmemory.isolation``, which vets
+    ``build_brain``'s {workspace, agent_did, identity}) mirrors this runtime-resolution
+    guard rather than sharing it. Evolve them together — a change to the error shape or
+    the audit vocabulary here belongs there too.
     """
 
 

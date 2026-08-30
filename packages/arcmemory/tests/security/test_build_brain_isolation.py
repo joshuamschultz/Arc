@@ -66,8 +66,8 @@ def _context(
     }
 
 
-def _seed_foreign_memory_data(workspace: Path, owner_did: str) -> None:
-    """Write an index.db whose rows are scoped to ``owner_did`` (no owner marker)."""
+def _seed_memory_scopes(workspace: Path, *scopes: str) -> None:
+    """Write an index.db with one episodic row per given scope (no owner marker)."""
     db_path = workspace / "memory" / "index.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -76,10 +76,11 @@ def _seed_foreign_memory_data(workspace: Path, owner_did: str) -> None:
             "CREATE TABLE episodic (event_id TEXT PRIMARY KEY, ts TEXT, scope TEXT, "
             "kind TEXT, text TEXT)"
         )
-        conn.execute(
-            "INSERT INTO episodic VALUES ('e1', '2026-01-01', ?, 'tool', 'secret')",
-            (owner_did,),
-        )
+        for i, scope in enumerate(scopes):
+            conn.execute(
+                "INSERT INTO episodic VALUES (?, '2026-01-01', ?, 'tool', 'secret')",
+                (f"e{i}", scope),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -171,18 +172,44 @@ def test_foreign_owned_memory_data_without_marker_fails_closed(tmp_path: Path) -
     """
     victim = _identity()
     intruder = _identity()
-    _seed_foreign_memory_data(tmp_path, victim.did)
+    _seed_memory_scopes(tmp_path, victim.did)
     sink = _RecordingSink()
     with pytest.raises(MemoryIsolationError):
         build_brain(_context(tmp_path, identity=intruder, audit_sink=sink))
     assert _fault_events(sink)
 
 
+def test_mixed_own_plus_one_foreign_scope_row_fails_closed(tmp_path: Path) -> None:
+    """ZERO-TOLERANCE: a workspace whose data is mostly the builder's but carries a
+    SINGLE foreign scope row is refused — not adopted on a majority."""
+    owner = _identity()
+    stranger = _identity()
+    _seed_memory_scopes(tmp_path, owner.did, owner.did, stranger.did)  # one foreign row
+    sink = _RecordingSink()
+    with pytest.raises(MemoryIsolationError):
+        build_brain(_context(tmp_path, identity=owner, audit_sink=sink))
+    assert _fault_events(sink)
+
+
+def test_memory_data_with_no_attributable_rows_fails_closed(tmp_path: Path) -> None:
+    """ZERO-TOLERANCE degenerate case: data files are present but NO scope-attributable
+    rows exist (ownership cannot be established) — refused, not adopted."""
+    owner = _identity()
+    # A glass-box markdown file, but no index.db rows to attribute ownership from.
+    entities = tmp_path / "memory" / "entities"
+    entities.mkdir(parents=True)
+    (entities / "vortex.md").write_text("# Vortex\nsecret deployment note\n", encoding="utf-8")
+    sink = _RecordingSink()
+    with pytest.raises(MemoryIsolationError):
+        build_brain(_context(tmp_path, identity=owner, audit_sink=sink))
+    assert _fault_events(sink)
+
+
 def test_own_legacy_memory_data_without_marker_is_adopted(tmp_path: Path) -> None:
-    """Non-regression: a pre-marker workspace whose data the builder already owns
+    """Non-regression: a pre-marker workspace whose data is ENTIRELY the builder's
     adopts on first build (the deployed fleet upgraded in place)."""
     owner = _identity()
-    _seed_foreign_memory_data(tmp_path, owner.did)  # data owned by the builder
+    _seed_memory_scopes(tmp_path, owner.did, owner.did)  # every row owned by the builder
     brain = build_brain(_context(tmp_path, identity=owner))
     assert isinstance(brain, arcmemory.ArcMemoryBrain)
     assert (tmp_path / "memory" / "owner.pub").read_bytes() == owner.public_key
