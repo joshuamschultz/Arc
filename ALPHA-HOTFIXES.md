@@ -410,3 +410,12 @@ Grounded by two research passes (knowledge/connected-data map; arcskill-improver
 ## Docs-wave follow-ups (from DocsW0)
 - **Upstream audit-sink fix (outside docs/):** project CLAUDE.md + .claude/coding-principles/build-principles.md §Audit still list JsonlSink/SignedChainSink/UIBridgeSink as the REAL sinks — they are prose contrasts. Real: NullSink/WormSink (arctrust audit.py), arcui MutationWormWriter (arcui/audit.py:231). Correct in the version/docs wave (it's the upstream source of the wrong claim).
 - **3 "needs confirmation" rationale anchors** (Wave 2 targets): document_search LLM-tool ToolSpec registration site (open); inbound-media trust/retention D-672/674/675/681/682; D-563 tool-contract hashing/rug-pull site.
+
+## MERGE QUEUE (all held behind H041wire clearing the shared tree; flush in order)
+1. H-047 (78cbff17+5b6c8ec8) — Planner-blessed, closes on merge
+2. H-040 Slice 1 (when it lands)
+3. DocsW0 (e4ed8c74) — Decision Index keystone + §6 fixes
+4. DocsT1A (301d17e7) — Track 1 setup spine (docs/get-started/, 10 pages)
+5. DocsT2B (Track 2 flow pages) — when it lands
+6. DocsW2 (deep pages) — when it lands
+Then: Wave 3 media (mermaid done inline; nanobanana heroes via GEMINI key; canvas) → Wave 4 nav re-sequence + mkdocs --strict + Track1⇄Track2 cross-links → H-037 (CLI parity, last) → version/changelog wave → batch→main→push→deploy DGX→post-deploy checks. H-043 (CI billing) = Josh.
