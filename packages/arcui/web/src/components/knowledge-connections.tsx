@@ -58,7 +58,13 @@ import {
   useStageSourceMapping,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import type { ChunkSearchMode, ConnectedSourceItem, EntityRecord } from '@/lib/types'
+import type {
+  ChunkPage,
+  ChunkSearchMode,
+  ChunkSearchResponse,
+  ConnectedSourceItem,
+  EntityRecord,
+} from '@/lib/types'
 
 const SECTIONS = [
   { value: 'sources', label: 'Sources' },
@@ -762,7 +768,7 @@ function ConnectionExplorerSection({ agentId }: { agentId: string }) {
             Vector search is unavailable for this agent — showing literal (BM25) results.
           </p>
         )}
-        <QueryState
+        <QueryState<ChunkPage | ChunkSearchResponse>
           query={searching ? search : browse}
           isEmpty={(d) => d.items.length === 0}
           empty={
