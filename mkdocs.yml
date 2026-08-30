@@ -75,6 +75,7 @@ nav:
 
   - Concepts:
       - The Seam Model — Why Everything Is a Plugin: concepts/seam-model.md
+      - The Decision Index — Every Seam to Its D-NNN: concepts/decision-index.md
       - Fleet layering and removable composition: concepts/fleet-layering.md
       - Memory, the Index, and Scope: concepts/memory-index-and-scope.md
 
