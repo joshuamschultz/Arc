@@ -94,7 +94,7 @@ before this batch is complete.
 | H-044 | Knowledge | DB parity: Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP (extensions/postgresql, asyncpg — full port). REMAINING: MySQL family (clone template+driver), Mongo, Snowflake, BigQuery + conformance harness | L | NEXT-PROGRAM | |
 | H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
 | H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
-| H-047 | Security | build_brain identity guard (3 checks + owner.pub marker bootstrap) — DONE, pending Planner bless of the non-regressive bootstrap refinement + merge (queued behind H041wire) | S | VERIFY | 78cbff17 |
+| H-047 | Security | build_brain identity guard (3 checks + zero-tolerance owner bootstrap) — BLESSED + tightened; closes on merge (queued behind H041wire) | S | VERIFY | 78cbff17+5b6c8ec8 |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
