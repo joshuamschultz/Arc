@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust.identity import AgentIdentity
 from pydantic import ValidationError
 
 from arcmemory import build_brain
@@ -63,13 +64,17 @@ def test_federal_tier_is_no_laxer_than_personal_on_proactive_cards() -> None:
     assert federal.proactive_max_cards <= personal.proactive_max_cards
 
 
+# build_brain requires an identity that matches agent_did and owns the workspace (H-047).
+_IDENTITY = AgentIdentity.generate(org="default", agent_type="executor")
+
+
 def _context(tmp_path: Path, **backend: object) -> dict[str, Any]:
     return {
         "workspace": tmp_path,
-        "agent_did": "did:arc:a",
+        "agent_did": _IDENTITY.did,
         "tier": "personal",
         "audit_sink": None,
-        "identity": None,
+        "identity": _IDENTITY,
         "policy_pipeline": None,
         "backend_config": dict(backend),
     }

@@ -82,6 +82,7 @@ from arcmemory.index.structural import (
     StructuralResult,
 )
 from arcmemory.index.surface import SurfaceIndex, SurfaceResult
+from arcmemory.isolation import MemoryIsolationError
 from arcmemory.operator import (
     EntityRecord,
     LinkRecord,
@@ -189,6 +190,7 @@ __all__ = [
     "MemoryConfig",
     "MemoryDB",
     "MemoryHome",
+    "MemoryIsolationError",
     "MemoryOperator",
     "MemoryPage",
     "MemoryRecord",
