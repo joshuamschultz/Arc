@@ -103,14 +103,24 @@ async def test_real_run_populates_llm_trace_id_and_join_resolves_payload(tmp_pat
     await skills_post_tool(_Ctx(tool="summarize", args={"invoice": "#7"}))  # forwards the id
     await skills_post_plan(_Ctx(task_outcome="success", turn_number=0, messages=[]))  # persist
 
+    # The id JSONLTraceStore ACTUALLY recorded for this call — read back FROM the store,
+    # not trusted from the local object. This is the exact key a production join must match.
+    stored = await llm_store.get(tid)
+    assert stored is not None
+    recorded_id = stored.trace_id
+
     payload_source = await _payload_source_over(llm_store)
     joined = await improver.curatable_traces("invoicer", payload_source)
     visible = [j for j in joined if isinstance(j, JoinedTrace)]
 
     assert visible, "the used trace must be curatable — the producer populated llm_trace_id"
-    # The producer wrote the id (not a hand-set value) — it came off the llm:call_complete event.
-    assert tid in visible[0].span.llm_trace_ids
-    # The read-time join resolved the ACTUAL arcllm payload body, not an empty.
+    # JOIN-LEVEL EQUALITY: the span links EXACTLY the id the store recorded for this call —
+    # not merely non-null, not a same-shaped different id. This is the assertion that catches
+    # a key that looks right but never matches the store in production.
+    assert visible[0].span.llm_trace_ids == [recorded_id]
+    # And the join resolved THAT payload — the one keyed by the recorded id, with the real body.
+    assert len(visible[0].payloads) == 1
+    assert visible[0].payloads[0]["trace_id"] == recorded_id
     assert _SECRET_BODY in visible[0].body_text()
 
     await improver.aclose()
