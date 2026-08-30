@@ -406,3 +406,7 @@ Grounded by two research passes (knowledge/connected-data map; arcskill-improver
 - nanobanana verified working (GEMINI_API_KEY in env; test image OK). mermaid already wired in mkdocs.
 - Waves: W0 keystones (T2.4 Decision Index + T2.2 layering + §6 doc-bug fixes) → W1 Lane A (Track1 setup spine REVISE) + Lane B (Track2 flow footers) → W2 deep pages (verifiable+flag) → W3 media → W4 mkdocs --strict + cross-links.
 - Doc bugs to fix while authoring: UIBridgeSink/JsonlSink/SignedChainSink are prose fiction (real: NullSink/WormSink, arcui MutationWormWriter) — audit page + CLAUDE.md/concepts must correct, not propagate. arcstore.md:412 calls the shipped last_synced_at fix "future work" — update.
+
+## Docs-wave follow-ups (from DocsW0)
+- **Upstream audit-sink fix (outside docs/):** project CLAUDE.md + .claude/coding-principles/build-principles.md §Audit still list JsonlSink/SignedChainSink/UIBridgeSink as the REAL sinks — they are prose contrasts. Real: NullSink/WormSink (arctrust audit.py), arcui MutationWormWriter (arcui/audit.py:231). Correct in the version/docs wave (it's the upstream source of the wrong claim).
+- **3 "needs confirmation" rationale anchors** (Wave 2 targets): document_search LLM-tool ToolSpec registration site (open); inbound-media trust/retention D-672/674/675/681/682; D-563 tool-contract hashing/rug-pull site.
