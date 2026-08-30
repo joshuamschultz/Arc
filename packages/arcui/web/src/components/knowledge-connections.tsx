@@ -548,10 +548,14 @@ function RepoIndexSection({ agentId }: { agentId: string }) {
               <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
                 <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" />
                 <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-foreground">Index could not be verified</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Index could not be verified —{' '}
+                    {data.guidance ?? 'Re-sync this source to restore its repository index.'}
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    This repository index failed cryptographic verification and is not shown.
-                    {data.error ? ` (${data.error})` : ''} Re-sync the source to rebuild it.
+                    The repository index failed verification and is not shown, so a local
+                    edit can never be read as trusted knowledge.
+                    {data.error ? ` Reason: ${data.error}.` : ''}
                   </p>
                 </div>
               </div>

@@ -265,8 +265,12 @@ class CollectionIndexView(BaseModel):
     Fail-closed by construction (H-026 / ASI06): the ``markdown`` and ``entries``
     are populated ONLY when arcokf verified the on-disk index against every listed
     document. A tampered, stale, or corrupt index yields ``verified=False`` with an
-    empty body and the verifier's reason in ``error`` — the unverified artifact is
-    never rendered. ``present=False`` means the source has no index yet (never
+    empty body, the verifier's reason in ``error`` and an operator-actionable
+    ``guidance`` string — the unverified artifact is never rendered. Verification is
+    a LOCAL comparison against ``<workspace>/memory/connected/<source_id>``, so a
+    failure means an out-of-band LOCAL mutation and re-syncing the source rebuilds
+    the index from scratch — hence the guidance is always "re-sync to restore",
+    never a dead end. ``present=False`` means the source has no index yet (never
     ingested, or an ungranted/unknown source id): an empty, successful result.
     """
 
@@ -277,6 +281,15 @@ class CollectionIndexView(BaseModel):
     entries: list[CollectionIndexEntry] = Field(default_factory=list)
     markdown: str = ""
     error: str | None = None
+    #: Operator-actionable instruction shown in place of an unverified body. A
+    #: fail-closed index is always recoverable by a re-sync, so the operator is
+    #: told HOW to fix it rather than left with a blank or purely-technical banner.
+    guidance: str | None = None
+
+
+#: The one recovery an operator can take for a fail-closed index: a re-sync rebuilds
+#: it from the source. Stable string so the UI never has to invent the instruction.
+_INDEX_UNVERIFIED_GUIDANCE = "Re-sync this source to restore its repository index."
 
 
 #: A connector source id names a workspace subfolder, so it must be a single safe
@@ -547,13 +560,21 @@ class MemoryOperator:
         validation = validate_collection_index(index_path, root)
         if not validation.valid:
             return CollectionIndexView(
-                source_id=source_id, present=True, verified=False, error=validation.error
+                source_id=source_id,
+                present=True,
+                verified=False,
+                error=validation.error,
+                guidance=_INDEX_UNVERIFIED_GUIDANCE,
             )
         try:
             markdown = index_path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             return CollectionIndexView(
-                source_id=source_id, present=True, verified=False, error=str(exc)
+                source_id=source_id,
+                present=True,
+                verified=False,
+                error=str(exc),
+                guidance=_INDEX_UNVERIFIED_GUIDANCE,
             )
         entries = [
             CollectionIndexEntry(

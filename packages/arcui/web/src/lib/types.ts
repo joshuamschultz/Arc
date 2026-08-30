@@ -1293,6 +1293,8 @@ export interface CollectionIndexView {
   entries: CollectionIndexEntry[]
   markdown: string
   error: string | null
+  /** Operator-actionable recovery instruction, set when `verified` is false. */
+  guidance: string | null
 }
 
 /** A live datastore read. `result` is the raw connector payload (a row, a list

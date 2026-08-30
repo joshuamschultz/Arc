@@ -190,6 +190,8 @@ def test_tampered_index_is_fail_closed(app_with_index: tuple[Any, str]) -> None:
     body = resp.json()
     assert body["present"] and not body["verified"]
     assert body["markdown"] == "" and not body["entries"] and body["error"]
+    # The wire carries an operator-actionable recovery instruction, not just a reason.
+    assert body["guidance"] and "re-sync" in body["guidance"].lower()
 
 
 def test_ungranted_source_reads_empty(app_with_index: tuple[Any, str]) -> None:

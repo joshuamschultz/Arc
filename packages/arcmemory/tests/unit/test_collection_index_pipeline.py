@@ -196,6 +196,8 @@ async def test_reader_fails_closed_on_a_tampered_index(tmp_path: Path) -> None:
     assert view.markdown == "", "the unverified artifact must never be rendered"
     assert not view.entries
     assert view.error
+    # The operator is told HOW to fix it, not left with a purely-technical banner.
+    assert view.guidance and "re-sync" in view.guidance.lower()
 
 
 @pytest.mark.asyncio
@@ -212,6 +214,46 @@ async def test_reader_fails_closed_on_a_tampered_listed_document(tmp_path: Path)
 
     assert view.present and not view.verified
     assert view.markdown == "" and not view.entries and view.error
+    assert view.guidance and "re-sync" in view.guidance.lower()
+
+
+# -- Self-heal: a re-sync restores a fail-closed index ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_resync_restores_a_fail_closed_index(tmp_path: Path) -> None:
+    """Fail-closed must be recoverable, not a dead end (the guidance's promise).
+
+    Start verified -> a local out-of-band edit makes the reader fail closed ->
+    the real re-sync path (the same ``sync_collection_index`` ingest uses)
+    rebuilds the index from the on-disk documents -> the reader verifies again
+    and renders the body.
+    """
+    service, source, mapping = await _granted(tmp_path)
+    await service.ingest(source, _obj("q3"), _content("q3", "quarterly revenue body"), mapping)
+    operator = _operator(tmp_path)
+
+    # Verified to begin with.
+    assert operator.read_collection_index(mapping.source_id).verified
+
+    # A local edit to a listed document breaks the committed digest -> fail closed.
+    doc_root = tmp_path / "memory" / "connected" / mapping.source_id
+    listed = next(p for p in doc_root.glob("*.md") if p.name != "index.md")
+    listed.write_text(listed.read_text(encoding="utf-8") + "\nlocal drift\n", encoding="utf-8")
+    broken = operator.read_collection_index(mapping.source_id)
+    assert broken.present and not broken.verified and broken.guidance
+
+    # The re-sync the operator is told to run: reindex_source rewrites the index
+    # from the actual on-disk documents (same path ingest drives).
+    restored_count = await service.reindex_source(source)
+    assert restored_count == 1
+
+    # The reader now verifies and renders the body — recovery, not a dead end.
+    healed = operator.read_collection_index(mapping.source_id)
+    assert healed.present and healed.verified
+    assert healed.document_count == 1 and healed.entries
+    assert healed.markdown.startswith("# Collection Index")
+    assert healed.error is None and healed.guidance is None
 
 
 # -- Abuse cases: ungranted source, path traversal -------------------------------
