@@ -5,6 +5,7 @@ import {
   PackageCheck,
   AlertTriangle,
   Eye,
+  MessageCircleQuestion,
   ArrowRight,
   CheckCircle2,
   Boxes,
@@ -108,6 +109,10 @@ export function HomePage() {
     count: 0,
     items: [],
   }
+  const waitingQueue: HomeNeedsResponse['waiting_on_human'] = homeNeedsQ.data?.waiting_on_human ?? {
+    count: 0,
+    items: [],
+  }
 
   const runs = useMemo<RunSummary[]>(() => runsQ.data?.runs ?? [], [runsQ.data])
   const runsWindowed = useMemo<RunSummary[]>(
@@ -149,7 +154,11 @@ export function HomePage() {
     ['running', 'in_progress'].includes((r.status || '').toLowerCase()),
   ).length
   const needsYou =
-    approvalsQueue.count + capabilitiesQueue.count + reviewQueue.count + failedRunsAll.length
+    approvalsQueue.count +
+    capabilitiesQueue.count +
+    reviewQueue.count +
+    waitingQueue.count +
+    failedRunsAll.length
   const recent = runs.slice(0, 6)
 
   // --- Activity (last 24h) — authoritative LLM stats + the run snapshot ------
@@ -364,6 +373,25 @@ export function HomePage() {
                   }
                   href="/tasks"
                   cta="Review"
+                />
+              ))}
+              {waitingQueue.items.map((w) => (
+                <NeedsRow
+                  key={`wait-${w.message_id}`}
+                  tone="info"
+                  icon={<MessageCircleQuestion className="size-4" />}
+                  identity={agentByDid.get(w.agent_did)?.identity}
+                  fallbackName={nameByDid.get(w.agent_did) ?? 'An agent'}
+                  color={agentByDid.get(w.agent_did)?.color}
+                  message={
+                    <>
+                      is waiting on your reply in{' '}
+                      <span className="font-mono">#{w.channel}</span>
+                      {w.preview ? ` · ${w.preview}` : ''}
+                    </>
+                  }
+                  href="/messages"
+                  cta="Reply"
                 />
               ))}
             </div>

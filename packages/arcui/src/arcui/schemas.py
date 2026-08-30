@@ -354,6 +354,12 @@ class HomeNeedsResponse(BaseModel):
     (H-001). ``total`` is the sum of every queue's ``count`` — never derived
     from the (possibly truncated) ``items`` lists, so "all caught up" means
     every queue really is empty, not just that none of them fit the preview.
+
+    ``waiting_on_human`` (H-001b) is the fourth queue: runs blocked because an
+    agent asked the operator a question over a channel and no human has replied.
+    It counts channel questions ONLY — a run paused on an approval or a workflow
+    gate is already in ``approvals`` / ``review_tasks`` and is excluded here by
+    structural provenance, so it is never double-counted.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -361,6 +367,7 @@ class HomeNeedsResponse(BaseModel):
     approvals: HomeNeedsQueue
     capabilities: HomeNeedsQueue
     review_tasks: HomeNeedsQueue
+    waiting_on_human: HomeNeedsQueue
     total: int
 
 

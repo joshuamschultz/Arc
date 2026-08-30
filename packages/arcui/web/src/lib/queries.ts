@@ -230,10 +230,24 @@ export interface HomeNeedsQueue<T> {
   items: T[]
 }
 
+/** One agent question awaiting a human, riding along in ``/api/home/needs``
+ * (H-001b). ``agent_did`` is the SIGNED asker — the agent credited as blocked,
+ * not a "who should answer" guess. Channel questions ONLY; a run paused on an
+ * approval or a workflow gate is counted in ``approvals`` / ``review_tasks``,
+ * never here. */
+export interface HomeNeedsWaiting {
+  agent_did: string
+  channel: string
+  message_id: string
+  ts: string
+  preview: string
+}
+
 export interface HomeNeedsResponse {
   approvals: HomeNeedsQueue<PendingApproval>
   capabilities: HomeNeedsQueue<HomeNeedsCapability>
   review_tasks: HomeNeedsQueue<Task>
+  waiting_on_human: HomeNeedsQueue<HomeNeedsWaiting>
   total: number
 }
 
