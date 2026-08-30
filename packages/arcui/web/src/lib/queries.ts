@@ -412,6 +412,43 @@ export const useEntityLinks = (agentId: string | null, slug: string | null) =>
     enabled: !!agentId && !!slug,
   })
 
+// --- Graph viewer (H-016 — windowed neighborhood view) ----------------------
+
+export interface GraphNode {
+  id: string
+  node_type: string
+  classification: string
+  metadata: Record<string, unknown>
+}
+
+export interface GraphEdge {
+  src: string
+  dst: string
+  kind: string
+  weight: number
+  salience?: number
+  last_hit?: string | null
+  hits?: number
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+/** Windowed neighborhood view: `node=null` is the whole (capped) scope window;
+ *  `node` re-centers the BFS window on a clicked node (neighborhood expand). */
+export const useKnowledgeGraph = (agentId: string | null, node: string | null, hops = 1) =>
+  useQuery<GraphResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'graph', node, hops],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({ hops: String(hops) })
+      if (node) params.set('node', node)
+      return apiGet(`/api/agents/${agentId}/knowledge/graph?${params}`, signal)
+    },
+    enabled: !!agentId,
+  })
+
 // --- Connections data views (SPEC-073 — connected-source projections) -------
 //
 // Read-only offshoot of the Knowledge browser. Every hook is keyed under the

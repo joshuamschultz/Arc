@@ -475,6 +475,42 @@ async def knowledge_summary(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Graph viewer (H-016) — windowed neighborhood view of the associative graph
+# ---------------------------------------------------------------------------
+
+
+async def get_graph(request: Request) -> JSONResponse:
+    """GET .../knowledge/graph?node=&hops= — windowed neighborhood view (H-016).
+
+    Same seam as every other knowledge read: one ``MemoryOperator.graph()`` call.
+    A node above the caller's clearance, and any edge whose far endpoint is
+    filtered, drops entirely — no id, count, or degree in the response hints
+    that a hidden node ever existed.
+    """
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    node = request.query_params.get("node")
+    hops_param = request.query_params.get("hops")
+    try:
+        hops = int(hops_param) if hops_param else 1
+    except ValueError:
+        return JSONResponse(
+            ErrorResponse(error="hops must be an integer").model_dump(mode="json"),
+            status_code=400,
+        )
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        graph = op.graph(node=node, hops=hops)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse(graph.model_dump(mode="json"))
+
+
+# ---------------------------------------------------------------------------
 # Connector-data views (SPEC-073 A2) — offshoot of Knowledge, read-only
 # ---------------------------------------------------------------------------
 
@@ -635,6 +671,7 @@ async def index_health(request: Request) -> JSONResponse:
 
 routes = [
     Route("/api/knowledge/{agent_id}", knowledge_summary, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/graph", get_graph, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/sources", list_sources, methods=["GET"]),
     Route(
         "/api/agents/{agent_id}/knowledge/sources/{source_id}/mapping",

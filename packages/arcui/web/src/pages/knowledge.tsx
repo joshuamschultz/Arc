@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/page-header'
 import { QueryState, EmptyState } from '@/components/states'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
+import { GraphViewer } from '@/components/knowledge-graph'
 import { MemoryBrowser } from '@/components/knowledge-memories'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
@@ -24,6 +25,7 @@ import { useKnowledge, useRoster } from '@/lib/queries'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'graph', label: 'Graph' },
   { value: 'insights', label: 'Insights' },
   { value: 'procedures', label: 'Procedures' },
   { value: 'entities', label: 'Entities' },
@@ -104,6 +106,10 @@ export function KnowledgePage() {
                 <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />
               )}
             </QueryState>
+          </TabsContent>
+
+          <TabsContent value="graph" className="flex-1 overflow-auto p-6">
+            <GraphViewer agentId={agentId} />
           </TabsContent>
 
           <TabsContent value="insights" className="flex-1 overflow-auto p-6">
