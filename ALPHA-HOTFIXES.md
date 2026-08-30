@@ -43,7 +43,7 @@ before this batch is complete.
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
 | H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | MERGED | 03cb871a |
-| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (needs an aggregate endpoint) | M | NEW | |
+| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (needs an aggregate endpoint) | M | CAUSE | |
 | H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
 | H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | MERGED | W3a |
@@ -66,7 +66,7 @@ before this batch is complete.
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | MERGED | 6e36436e |
-| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
+| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | CODING | |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | MERGED | 53ffcdbd |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | MERGED | 2f126606 |
