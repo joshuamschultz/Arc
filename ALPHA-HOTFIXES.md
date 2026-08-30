@@ -67,7 +67,7 @@ before this batch is complete.
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | MERGED | 6e36436e |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
-| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | CODING | |
+| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | MERGED | 53ffcdbd |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | MERGED | 2f126606 |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
