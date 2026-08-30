@@ -24,6 +24,8 @@ class _State:
     pages: int = 3
     bytes_processed: int = 4096
     error_code: str | None = None
+    # The successful-sync time lives on the durable sync state, not the status.
+    last_synced_at: str | None = "2026-08-29T01:00:00+00:00"
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,9 @@ class _SourceStatus:
     detail: str = "operator mapping required"
     description: _Description = _Description()
     state: _State = _State()
+    # None here on purpose: the wire must read the time from the durable state.
     last_synced_at: str | None = None
+    documents_indexed: int = 12
     allowed_homes: tuple[str, ...] = ("document", "blob")
 
 
@@ -225,7 +229,8 @@ def test_connected_sources_exposes_connected_account_before_ingest() -> None:
         "pages": 3,
         "bytes_processed": 4096,
         "error_code": None,
-        "last_synced_at": None,
+        "last_synced_at": "2026-08-29T01:00:00+00:00",
+        "documents_indexed": 12,
         "allowed_homes": ["document", "blob"],
     }
 

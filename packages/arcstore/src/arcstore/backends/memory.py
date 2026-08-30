@@ -18,7 +18,11 @@ from arcstore.mutation_fence import (
     MutationFenceRejectedError,
     RunnerFence,
 )
-from arcstore.source_sync import SourceSyncBackend
+from arcstore.source_sync import SourceSyncBackend, SourceSyncState
+
+#: The durable columns of a source-sync row, mirroring postgres's explicit
+#: SELECT. Derived from the model so a new field cannot drift out of the fake.
+_SOURCE_SYNC_STATE_COLUMNS = tuple(SourceSyncState.model_fields)
 
 
 def _now() -> str:
@@ -138,9 +142,8 @@ class FakeBackend(SourceSyncBackend):
         source_key = f"{agent_did}\0{source_id}"
         async with self._lock:
             row = self._tables.setdefault("connected_source_sync", {}).get(source_key)
-            return copy.deepcopy(
-                row
-                or {
+            if row is None:
+                return {
                     "agent_did": agent_did,
                     "source_id": source_id,
                     "status": "idle",
@@ -149,7 +152,12 @@ class FakeBackend(SourceSyncBackend):
                     "fencing_token": 0,
                     "generation": 1,
                 }
-            )
+            # Project to the durable columns only — the internal lease fields are
+            # bookkeeping, and returning them mirrors postgres's explicit SELECT
+            # rather than leaking state past the ``SourceSyncState`` contract.
+            return {
+                key: copy.deepcopy(row[key]) for key in _SOURCE_SYNC_STATE_COLUMNS if key in row
+            }
 
     async def source_sync_acquire_lease(
         self, agent_did: str, source_id: str, owner_id: str, ttl_seconds: float
@@ -263,6 +271,8 @@ class FakeBackend(SourceSyncBackend):
             ):
                 return False
             row.update({"status": status, "error_code": kwargs.get("error_code")})
+            if status == "complete":
+                row["last_synced_at"] = datetime.now(UTC).isoformat()
             return True
 
     async def source_sync_release_lease(
@@ -310,6 +320,7 @@ class FakeBackend(SourceSyncBackend):
                     "pages": 0,
                     "bytes_processed": 0,
                     "error_code": None,
+                    "last_synced_at": None,
                 }
             )
             pages = self._tables.setdefault("connected_source_pages", {})

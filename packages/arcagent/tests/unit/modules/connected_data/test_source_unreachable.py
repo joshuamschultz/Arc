@@ -313,13 +313,16 @@ async def test_a_completed_source_still_reads_completed_after_a_restart() -> Non
     )
     await service.start()
     try:
+        # The coordinator keys the durable row by the ``connection_id`` it was
+        # given, not by the doc pool's canonical id — so the inspection read
+        # must use the same key, or a finished source reads back as empty.
         lease = await store.acquire_lease(
-            "did:arc:test:agent", "canonical-dropbox", "worker", ttl_seconds=60
+            "did:arc:test:agent", "dropbox", "worker", ttl_seconds=60
         )
         assert lease is not None
         await store.set_status(
             "did:arc:test:agent",
-            "canonical-dropbox",
+            "dropbox",
             SyncStatus.COMPLETE,
             owner_id="worker",
             fencing_token=lease.fencing_token,
@@ -331,6 +334,7 @@ async def test_a_completed_source_still_reads_completed_after_a_restart() -> Non
         await service.close()
 
     assert status.status == "complete"
+    assert status.source_id == "canonical-dropbox"
 
 
 async def _ready_store(store: Any) -> Any:
