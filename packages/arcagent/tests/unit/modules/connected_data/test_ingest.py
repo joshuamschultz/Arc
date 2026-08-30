@@ -118,3 +118,51 @@ async def test_a_mapping_without_the_datastore_home_attaches_nothing(
     await _adapter(tmp_path).register_datastore(_source(), _Port(), _plan(KnowledgeHome.DOCUMENT))
 
     assert brain.registered == []
+
+
+async def test_sync_registration_purges_a_stale_pre_scoping_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H-024b end-to-end: the coordinator's sync registration collects old rows.
+
+    The migration story hangs on register_datastore running per sync
+    (coordinator.sync -> _register_live_datastore:370 -> ingest.register_datastore).
+    This drives that exact seam against a REAL Brain — not the fake — with a real
+    async SQLite port, and proves an old-shape ``db-table-<name>`` card left on a
+    deployed box is purged the first time a sync re-registers the datastore. So
+    the convergence is proven through the path, not by composition.
+    """
+    import sqlite3
+
+    from arcmemory.brain import ArcMemoryBrain
+    from arcmemory.datastore import SqliteDatastorePort
+    from arcmemory.stores.semantic import SemanticStore
+
+    ws = tmp_path / "ws"
+    brain = ArcMemoryBrain(ws, _DID)
+    store = SemanticStore(ws, brain._graph, brain._scope(None).key)
+    store.write_fact("db-table-legacyledger", "primary_key", "id", entity_type="db_table")
+    assert "db-table-legacyledger" in store.slugs()  # deployed old-shape row
+
+    runtime = SimpleNamespace(
+        state=lambda: (_ for _ in ()).throw(AssertionError("a sync has no bound turn")),
+        state_for=lambda did: SimpleNamespace(brain=brain, agent_did=did, active=True),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "arcagent.modules.memory._runtime", runtime)
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE invoices (id TEXT PRIMARY KEY, amount TEXT)")
+    conn.commit()
+    port_adapter = SimpleNamespace(datastore_port=lambda: _async(SqliteDatastorePort(conn)))
+
+    await _adapter(tmp_path).register_datastore(
+        _source(), port_adapter, _plan(KnowledgeHome.DATASTORE)
+    )
+
+    live = {s for s in store.slugs() if (e := store.read(s)) is not None and e.entity_type == "db_table"}
+    assert "db-table-legacy_invoices" not in live  # collected on the sync registration
+    assert any(s.endswith("-invoices") for s in live)  # new scoped card written
+
+
+async def _async(value: Any) -> Any:
+    return value
