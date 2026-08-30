@@ -18,6 +18,7 @@ from arcgateway import team_roster
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import Task, TaskStore
+from arcteam.types import Channel, Entity, EntityType, Message, MsgType
 from arctrust.identity import AgentIdentity
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -26,6 +27,74 @@ from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.observe import Observe
 from arcui.routes.home import routes as home_routes
+
+_HUMAN_DID = "did:arc:user/operator"
+
+
+class _FakeRegistry:
+    """Just the ``list_entities`` the waiting reader classifies types off."""
+
+    def __init__(self, entities: list[Entity]) -> None:
+        self._entities = entities
+
+    async def list_entities(self) -> list[Entity]:
+        return list(self._entities)
+
+
+class _FakeChannels:
+    """A read-only messenger stub: two channel methods, no bus."""
+
+    def __init__(self, channel: Channel, messages: list[Message]) -> None:
+        self._channel = channel
+        self._messages = messages
+
+    async def list_channels(self) -> list[Channel]:
+        return [self._channel]
+
+    async def list_channel_messages(
+        self, channel_name: str, after_seq: int = 0, limit: int = 100
+    ) -> list[Message]:
+        return list(self._messages)
+
+
+class _BrokenChannels:
+    """A messenger whose reads raise — the outage path the panel must survive."""
+
+    async def list_channels(self) -> list[Channel]:
+        raise RuntimeError("broker unreachable")
+
+    async def list_channel_messages(
+        self, channel_name: str, after_seq: int = 0, limit: int = 100
+    ) -> list[Message]:
+        raise RuntimeError("broker unreachable")
+
+
+def _agent_question(
+    agent_did: str, *, meta: dict[str, object] | None = None, action_required: bool = True
+) -> Message:
+    return Message(
+        id="q1",
+        ts="2026-08-29T11:00:00+00:00",
+        sender=agent_did,
+        signer_did=agent_did,
+        to=["channel://ops"],
+        body="Should I proceed with the migration?",
+        msg_type=MsgType.INFO,
+        action_required=action_required,
+        meta=meta or {},
+    )
+
+
+def _waiting_registry(agent_did: str) -> _FakeRegistry:
+    return _FakeRegistry(
+        [
+            Entity(did=agent_did, handle="olivia", id=agent_did, name="olivia", type=EntityType.AGENT),
+            Entity(
+                did=_HUMAN_DID, handle="operator", id=_HUMAN_DID, name="operator",
+                type=EntityType.USER,
+            ),
+        ]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +184,8 @@ def _make_app(
     seed_approval: bool,
     seed_capability: bool,
     seed_review_task: bool,
+    messaging_service: object | None = None,
+    messaging_registry: object | None = None,
 ) -> Starlette:
     team_root = tmp_path / "team"
     team_root.mkdir()
@@ -128,6 +199,8 @@ def _make_app(
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.approval_store = asyncio.run(_seed_approval_store(FakeBackend(), seed=seed_approval))
     app.state.observe = asyncio.run(_seed_observe(FakeBackend(), seed=seed_review_task))
+    app.state.messaging_service = messaging_service
+    app.state.messaging_registry = messaging_registry
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
@@ -151,6 +224,7 @@ def test_all_queues_empty_reports_zero_everywhere(tmp_path: Path) -> None:
     assert body["approvals"] == {"count": 0, "items": []}
     assert body["capabilities"] == {"count": 0, "items": []}
     assert body["review_tasks"] == {"count": 0, "items": []}
+    assert body["waiting_on_human"] == {"count": 0, "items": []}
     assert body["total"] == 0
 
 
@@ -247,6 +321,77 @@ def test_preview_items_are_capped_but_the_count_is_not(tmp_path: Path) -> None:
     assert body["approvals"]["count"] == 7
     assert len(body["approvals"]["items"]) == 5
     assert body["total"] == 7
+
+
+_AGENT_WAITING_DID = "did:arc:agent/olivia"
+
+
+def test_an_agent_question_awaiting_a_human_surfaces(tmp_path: Path) -> None:
+    """H-001b: an agent asked over a channel and no human replied -> NEEDS YOU."""
+    channel = Channel(name="ops", members=[_AGENT_WAITING_DID, _HUMAN_DID])
+    service = _FakeChannels(channel, [_agent_question(_AGENT_WAITING_DID)])
+    app = _make_app(
+        tmp_path,
+        seed_approval=False,
+        seed_capability=False,
+        seed_review_task=False,
+        messaging_service=service,
+        messaging_registry=_waiting_registry(_AGENT_WAITING_DID),
+    )
+    resp = TestClient(app).get("/api/home/needs", headers=_VIEWER)
+
+    body = resp.json()
+    assert body["waiting_on_human"]["count"] == 1
+    item = body["waiting_on_human"]["items"][0]
+    # The SIGNED asker is credited — fleet-wide, deterministic attribution.
+    assert item["agent_did"] == _AGENT_WAITING_DID
+    assert item["channel"] == "ops"
+    assert body["approvals"]["count"] == 0
+    assert body["total"] == 1
+
+
+def test_an_approval_paused_ask_is_not_double_counted_here(tmp_path: Path) -> None:
+    """The abuse case: a run paused on an approval also narrates itself onto the
+    channel. It must appear ONCE — in approvals — never also in waiting_on_human.
+    The narration is excluded by its structural ``meta['class']`` mark."""
+    channel = Channel(name="ops", members=[_AGENT_WAITING_DID, _HUMAN_DID])
+    narration = _agent_question(_AGENT_WAITING_DID, meta={"class": "narration"})
+    service = _FakeChannels(channel, [narration])
+    app = _make_app(
+        tmp_path,
+        seed_approval=True,  # the same paused run's PendingApproval row
+        seed_capability=False,
+        seed_review_task=False,
+        messaging_service=service,
+        messaging_registry=_waiting_registry(_AGENT_WAITING_DID),
+    )
+    resp = TestClient(app).get("/api/home/needs", headers=_VIEWER)
+
+    body = resp.json()
+    assert body["approvals"]["count"] == 1
+    assert body["waiting_on_human"]["count"] == 0  # counted once, in approvals
+    assert body["total"] == 1
+
+
+def test_messaging_failure_degrades_waiting_without_sinking_the_others(tmp_path: Path) -> None:
+    """A broken broker must empty ONLY the waiting queue — the other three,
+    and the total, stay honest."""
+    app = _make_app(
+        tmp_path,
+        seed_approval=True,
+        seed_capability=False,
+        seed_review_task=True,
+        messaging_service=_BrokenChannels(),
+        messaging_registry=_waiting_registry(_AGENT_WAITING_DID),
+    )
+    resp = TestClient(app).get("/api/home/needs", headers=_VIEWER)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["waiting_on_human"] == {"count": 0, "items": []}
+    assert body["approvals"]["count"] == 1
+    assert body["review_tasks"]["count"] == 1
+    assert body["total"] == 2  # only what was actually read — never the broker's ghost
 
 
 def test_a_missing_approval_store_degrades_to_empty_not_500(tmp_path: Path) -> None:

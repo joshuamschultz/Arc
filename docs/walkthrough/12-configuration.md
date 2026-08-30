@@ -515,3 +515,67 @@ above (not a new ad hoc dict), add it — commented, at its default — to the
 `_DEFAULT_CONFIG` template in `_common.py` so new agents document it, and if
 it's tier-sensitive, add a row to `RELAXABLE_KNOBS` rather than hand-rolling
 an `if tier == "federal"` check.
+
+---
+
+## The arc-home lifecycle — one resolver per path
+
+Config resolves against two homes, and which is which is the whole design.
+`~/.arc` is the **install** — disposable by construction; an update replaces
+only `runtime/<version>/` and flips the `current` symlink. `~/arc` is the
+**operator's** — the fleet and every agent's state — and an update never
+touches it. Every path is resolved by exactly one named accessor in
+`arctrust.paths` (no surface composes its own), enforced by
+`tests/architecture/test_arc_home_single_resolver.py`.
+
+```mermaid
+flowchart TB
+    classDef install fill:#F68D2E,stroke:#C06000,color:#FFFFFF
+    classDef keep    fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef flip    fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    subgraph Install["~/.arc — install (disposable)"]
+        RT["runtime/&lt;version&gt;/"]:::install
+        CUR["current → &lt;version&gt;"]:::flip
+    end
+    subgraph Operator["~/arc — operator (never touched by update)"]
+        CFG["config/*.toml"]:::keep
+        ST["state/ (operator key, WORM, bundles)"]:::keep
+        TEAM["team/&lt;agent&gt;/ (fleet)"]:::keep
+    end
+
+    NEW["arc runtime activate &lt;new&gt;"]:::flip -->|"install side by side"| RT
+    NEW -->|"atomic flip"| CUR
+    CUR -.->|"reads, never writes"| CFG
+    CUR -.->|"reads, never writes"| ST
+    CUR -.->|"reads, never writes"| TEAM
+```
+
+`activate_runtime` (`arctrust/paths.py:475`) is the atomic `current` flip;
+because nothing irreplaceable lives under `~/.arc`, dropping in a fresh tree —
+or `rm -rf ~/.arc` — costs only a reinstall. The full disk layout is in
+[8. Where Data Lives](08-data-and-storage.md).
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **config load + tier resolution** flow, shared
+verbatim with the shared *Decision Index* catalog
+(`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
+the durable anchor. Full text for each `D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcagent `config` + arctrust `paths` |
+| **What calls what** | `load_config` → `compose_raw_config` (`sibling_chain` packaged → user → per-agent, `deep_merge`, env overrides) → Pydantic validate → `_enforce_tier_crypto_floor` |
+| **What passes — where / when / to** | three TOML layers → one validated `ArcAgentConfig` **before** the agent starts; `[security].tier` → the crypto floor + the active policy set; every path via one named accessor each |
+| **Security / modularity reason** | one resolver per home path is a single source of truth; the tier floor refuses a weaker value and **cannot** raise a stricter one; fail-fast means a bad config never half-runs a turn |
+| **`D-NNN` / ADR** | D-489, D-310, D-471, D-579 · D-636 (verify-before-materialize) · ADR-003, ADR-029 |
+| **Code anchor** | `core/config.py:740,564` (`load_config`, `_enforce_tier_crypto_floor`) · `core/config_loading.py:80,69,48` (`compose_raw_config`, `sibling_chain`, `deep_merge`) · `arctrust/paths.py:475` (`activate_runtime`) |
+
+**Set it up:** the Track 1 counterpart is the
+[Configuration keys reference](../reference/config.md) — the knob-by-knob
+catalog. Every seam this config switches on is mapped in
+[11. Extension Points](11-extension-points.md).

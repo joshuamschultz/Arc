@@ -360,14 +360,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--agent", dest="agent", default=None, help="Agent directory to include per-agent roots."
     )
 
-    p = subs.add_parser("evals", help="List, edit, or regen a skill's golden eval suite.")
+    p = subs.add_parser(
+        "evals", help="List, edit, regen, promote-to-golden, or judge a skill's eval suite."
+    )
     p.add_argument(
         "target",
         nargs="+",
-        help="<skill_path> | edit <skill_path> <file> | regen <skill_path>",
+        help=(
+            "<skill_path> | edit <skill_path> <file> | regen <skill_path> "
+            "| promote <skill_path> <spec.json> | judge <skill_path> <candidate_output>"
+        ),
     )
     p.add_argument("--force", action="store_true", help="Commit an edit despite warnings.")
     p.add_argument("--yes", action="store_true", help="Skip the regen confirmation prompt.")
+    p.add_argument("--json", action="store_true", help="Emit judge verdicts as JSON.")
 
     return parser
 

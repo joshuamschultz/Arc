@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
+Alpha hardening release: ~50 dashboard/observability fixes plus six feature
+programs, all reviewed against the four pillars.
+
+### Knowledge
+- View and search memory chunks (literal BM25 + vector) with provenance, gated
+  no-read-up before pagination, loud vector degrade.
+- Explore a connected datastore: browse its persisted table schema and its
+  indexed chunks bound to one connection's source-scope (no cross-connection or
+  cross-agent leak). Stale pre-scoping `db_table` cards are purged by fact
+  equality; the revoke leak is closed.
+- Editable DB semantic layer, created on connect and consulted before a query;
+  bounded, redacted, classification-aware value sampling (off by default at
+  federal); operator edits signed.
+- OKF repository `index.md` per connected document source, refreshed on every
+  reindex, hosted under the agent workspace (never the remote store), rendered
+  fail-closed with an actionable re-sync banner.
+- Promote-to-shared-memory with a filter and a fleet shared view; an
+  interactive knowledge-graph viewer.
+
+### Fleet, skills, security
+- **Multi-agent-type fleet (Slice 1):** a `HarnessAdapter` seam lets foreign
+  agent types (e.g. a reference "hermes") enroll via an operator-signed grant,
+  appear badged in the roster, be @mentioned, dispatch out-of-process, and be
+  audited — three fail-closed chokepoints (admission, eligibility, dispatch),
+  enforcement Arc-side, layering preserved (`arcteam` imports neither `arcagent`
+  nor `arcllm`).
+- **Skill-improvement loop:** curate real traces into signed, redacted golden
+  cases (gate type per case: exact / assertions / judge-rubric with a pinned
+  judge + rubric hash); a suite carrying a judge case can no longer auto-promote
+  unseen — it routes to operator review carrying the honest reason.
+- **Cross-agent memory isolation:** `build_brain` now refuses a mismatched
+  `{workspace, agent_did, identity}` (claimed==proven, `did_matches_pubkey`,
+  workspace-owns-DID), zero-tolerance on foreign-owned data.
+- Per-LLM-call day/time injection (not baked into the cached system prompt).
+
+### Home, observability, memory
+- "NEEDS YOU" aggregates approvals, gated capabilities, review tasks, and now
+  agent-asked-human-silent channel questions (signed-asker attribution, no
+  double-count).
+- Consistent agent identity (host/type/id/short-name) via a DID join; audit
+  rows made readable; token volume in real units; Home counts time-bound to 24h
+  and loading under 2s.
+- **Consolidation runaway fixed:** background self-wakes no longer re-trigger
+  consolidation (gated on interactive turns) — the cause of high idle CPU and a
+  classification-warning flood on long-running nodes.
+- Query-only recall with a background index refresh (fresh captures stay
+  searchable); proactive/context recall.
+- Connector sync counters read the store that actually holds them (`last_synced_at`
+  stamped on completion; documents-indexed wired).
+
+### UI, config, docs
+- Fully keyboard-drivable dashboard (Cmd/Ctrl-K command palette + focus order).
+- Every config surfaced as documented TOML, shown in ArcUI and at new-agent
+  startup.
+- A full setup-and-tuning + architecture/data-flow documentation program
+  (mermaid diagrams, a decision index, a data-flow catalog).
+
 - Fixed the connected-account/Knowledge split: newly scaffolded agents now
   enable the removable `connected_data` module alongside `connectors`, and
   ArcUI reports a missing sync module instead of claiming there are no sources.

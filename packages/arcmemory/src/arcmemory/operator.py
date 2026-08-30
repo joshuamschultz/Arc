@@ -25,18 +25,20 @@ There is no invented score — a default-salience memory reads as importance ``1
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from arcokf import validate_collection_index
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.doc_index import DocHit
+from arcmemory.doc_index import DocHit, doc_scope
 from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -240,6 +242,60 @@ class ChunkSearchResult(BaseModel):
     mode: str = "literal"
     degraded: bool = False
     query: str = ""
+
+
+class CollectionIndexEntry(BaseModel):
+    """One authorized document as the verified collection index lists it (H-026).
+
+    A projection of arcokf's ``CollectionEntry`` — the document's workspace-relative
+    path, its human title, a one-line purpose summary, and the SHA-256 the index
+    committed for it. Only unclassified documents ever enter a shared index, so an
+    entry carries no classification of its own.
+    """
+
+    path: str
+    title: str
+    summary: str = ""
+    digest: str
+
+
+class CollectionIndexView(BaseModel):
+    """The OKF ``index.md`` for one connected document source — what's inside + purpose.
+
+    Fail-closed by construction (H-026 / ASI06): the ``markdown`` and ``entries``
+    are populated ONLY when arcokf verified the on-disk index against every listed
+    document. A tampered, stale, or corrupt index yields ``verified=False`` with an
+    empty body, the verifier's reason in ``error`` and an operator-actionable
+    ``guidance`` string — the unverified artifact is never rendered. Verification is
+    a LOCAL comparison against ``<workspace>/memory/connected/<source_id>``, so a
+    failure means an out-of-band LOCAL mutation and re-syncing the source rebuilds
+    the index from scratch — hence the guidance is always "re-sync to restore",
+    never a dead end. ``present=False`` means the source has no index yet (never
+    ingested, or an ungranted/unknown source id): an empty, successful result.
+    """
+
+    source_id: str
+    present: bool = False
+    verified: bool = False
+    document_count: int = 0
+    entries: list[CollectionIndexEntry] = Field(default_factory=list)
+    markdown: str = ""
+    error: str | None = None
+    #: Operator-actionable instruction shown in place of an unverified body. A
+    #: fail-closed index is always recoverable by a re-sync, so the operator is
+    #: told HOW to fix it rather than left with a blank or purely-technical banner.
+    guidance: str | None = None
+
+
+#: The one recovery an operator can take for a fail-closed index: a re-sync rebuilds
+#: it from the source. Stable string so the UI never has to invent the instruction.
+_INDEX_UNVERIFIED_GUIDANCE = "Re-sync this source to restore its repository index."
+
+
+#: A connector source id names a workspace subfolder, so it must be a single safe
+#: path segment — no separators, no traversal, no NUL. The reader rejects anything
+#: else before it ever touches the filesystem (path-substitution abuse case).
+_SAFE_SOURCE_ID = re.compile(r"[A-Za-z0-9._:@-]{1,256}")
 
 
 def _importance(scalar: float) -> int:
@@ -453,11 +509,23 @@ class MemoryOperator:
         prefix = f"blob-{source_id}-"
         return [f for f in folders if f.slug.startswith(prefix)]
 
-    def list_datastore_tables(self, *, session_id: str | None = None) -> list[EntityRecord]:
-        """The introspected ``db-table-<name>`` ontology entities."""
-        return [
+    def list_datastore_tables(
+        self, source_id: str | None = None, *, session_id: str | None = None
+    ) -> list[EntityRecord]:
+        """The introspected ``db-table-<source_id>-<name>`` ontology entities.
+
+        Optionally scoped to one connection (mirrors :meth:`list_blob_folders`):
+        each table is persisted under a source-prefixed slug at register time, so
+        the explorer shows exactly that connection's schema — read from the
+        PERSISTED ontology, so it works with the backing datastore unreachable.
+        """
+        tables = [
             e for e in self.list_entities(session_id=session_id) if e.entity_type == "db_table"
         ]
+        if source_id is None:
+            return tables
+        prefix = f"db-table-{source_id}-"
+        return [t for t in tables if t.slug.startswith(prefix)]
 
     async def document_search(
         self, source_id: str, query: str, *, top_k: int = 10
@@ -476,6 +544,64 @@ class MemoryOperator:
 
         index = DocIndex(self._db, self._workspace, self._cfg, embedder=self._embedder)
         return await index.list_documents(self._agent_did, source_id=source_id, limit=limit)
+
+    def read_collection_index(self, source_id: str) -> CollectionIndexView:
+        """Read one document source's verified OKF ``index.md`` (H-026).
+
+        The index is hosted under the agent WORKSPACE
+        (``<workspace>/memory/connected/<source_id>``), never the remote origin;
+        this is a plain file read of that host, gated by arcokf verification. The
+        body is returned ONLY when :func:`arcokf.validate_collection_index` confirms
+        the index is canonical AND every listed document's digest still matches —
+        so an operator-edited index, a stale inventory, or a tampered document all
+        fail closed to ``verified=False`` with an empty body rather than rendering an
+        unverified artifact (ASI06). An absent index (never ingested, or an ungranted
+        source) is an empty ``present=False`` result, not an error.
+        """
+        if _SAFE_SOURCE_ID.fullmatch(source_id) is None:
+            return CollectionIndexView(source_id=source_id, error="invalid source id")
+        base = (self._workspace / "memory" / "connected").resolve()
+        root = (base / source_id).resolve()
+        # Defense in depth: a source id that survived the regex must still resolve
+        # to a direct child of the connected root (no symlink/parent escape).
+        if root.parent != base:
+            return CollectionIndexView(source_id=source_id, error="invalid source id")
+        index_path = root / "index.md"
+        if not index_path.is_file():
+            return CollectionIndexView(source_id=source_id, present=False)
+        validation = validate_collection_index(index_path, root)
+        if not validation.valid:
+            return CollectionIndexView(
+                source_id=source_id,
+                present=True,
+                verified=False,
+                error=validation.error,
+                guidance=_INDEX_UNVERIFIED_GUIDANCE,
+            )
+        try:
+            markdown = index_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            return CollectionIndexView(
+                source_id=source_id,
+                present=True,
+                verified=False,
+                error=str(exc),
+                guidance=_INDEX_UNVERIFIED_GUIDANCE,
+            )
+        entries = [
+            CollectionIndexEntry(
+                path=entry.path, title=entry.title, summary=entry.summary, digest=entry.digest
+            )
+            for entry in validation.entries
+        ]
+        return CollectionIndexView(
+            source_id=source_id,
+            present=True,
+            verified=True,
+            document_count=len(entries),
+            entries=entries,
+            markdown=markdown,
+        )
 
     def list_provenances(self, item_id: str) -> list[Provenance]:
         """Every provenance recorded against one canonical item."""
@@ -609,15 +735,23 @@ class MemoryOperator:
         offset: int = 0,
         clearance: str = "unclassified",
         session_id: str | None = None,
+        source_id: str | None = None,
     ) -> ChunkPage:
-        """One gated, paginated page of the recall-scope's chunks, newest first.
+        """One gated, paginated page of chunks, newest first.
+
+        Without ``source_id`` this browses the agent's recall scope. With one it
+        is BOUND to exactly that connected source's isolated document pool
+        (``doc_scope`` = ``"<did>:doc:<source_id>"``) — the H-024 explorer view —
+        so the page shows only that connection's chunks, never the recall scope's
+        and never another source's or agent's.
 
         The no-read-up gate runs BEFORE pagination: ``total`` and the page slice
         both reflect only what ``clearance`` may see, so a caller can never infer
         the existence of an over-clearance chunk from a shifted count.
         """
-        scope = self._scope(session_id)
-        await self._index_chunks(scope, embed=False)
+        scope, freshen = self._chunk_scope(session_id, source_id)
+        if freshen:
+            await self._index_chunks(scope, embed=False)
         ids = await self._backend.recency_order(scope.key)
         recalls, meta = await self._hydrate_chunks(scope.key, ids)
         kept = self._gate_chunks(recalls, clearance)
@@ -637,8 +771,14 @@ class MemoryOperator:
         limit: int = 10,
         clearance: str = "unclassified",
         session_id: str | None = None,
+        source_id: str | None = None,
     ) -> ChunkSearchResult:
         """Search chunks by ``mode`` — ``"literal"`` (BM25) or ``"vector"`` (cosine).
+
+        Without ``source_id`` this searches the agent's recall scope. With one it
+        is BOUND to exactly that connected source's isolated document pool (the
+        H-024 explorer view), so results never include the recall scope's chunks
+        nor another source's or agent's.
 
         A ``"vector"`` request degrades LOUD to literal (``degraded=True``,
         ``mode="literal"``) when no embedder or sqlite-vec is available, or the
@@ -649,9 +789,10 @@ class MemoryOperator:
         visible one from the result. Any ``mode`` other than exactly ``"vector"``
         runs literal — there is no third, silently-empty mode.
         """
-        scope = self._scope(session_id)
+        scope, freshen = self._chunk_scope(session_id, source_id)
         want_vector = mode == "vector"
-        await self._index_chunks(scope, embed=want_vector)
+        if freshen:
+            await self._index_chunks(scope, embed=want_vector)
 
         degraded = False
         actual_mode = "vector" if want_vector else "literal"
@@ -680,6 +821,22 @@ class MemoryOperator:
             degraded=degraded,
             query=query,
         )
+
+    def _chunk_scope(self, session_id: str | None, source_id: str | None) -> tuple[Scope, bool]:
+        """The scope a chunk browse/search runs in, and whether to freshen it first.
+
+        No ``source_id`` -> the agent's recall scope, freshened by ``_index_chunks``
+        before reading (its markdown/event corpus may have changed). A ``source_id``
+        -> that connection's isolated document pool (``doc_scope``), which is
+        populated only by the ingestion lifecycle; freshening it here would pull the
+        agent's OWN memory files INTO the doc pool (``doc_index`` module docstring),
+        so we read it as-is. ``doc_scope`` binds the DID half to THIS operator's
+        ``agent_did`` — a caller-supplied ``source_id`` can never reach another
+        agent's pool.
+        """
+        if source_id is not None:
+            return doc_scope(self._agent_did, source_id), False
+        return self._scope(session_id), True
 
     async def _index_chunks(self, scope: Scope, *, embed: bool) -> None:
         """Freshen this scope's chunk/fts(/vec) rows before reading the backend.
@@ -975,6 +1132,8 @@ __all__ = [
     "ChunkPage",
     "ChunkRecord",
     "ChunkSearchResult",
+    "CollectionIndexEntry",
+    "CollectionIndexView",
     "EntityRecord",
     "GraphEdge",
     "GraphNode",

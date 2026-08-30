@@ -31,6 +31,7 @@ from arcteam.types import (
     MsgType,
     Priority,
 )
+from arcteam.waiting import OperatorScope, WaitingQuestion, waiting_on_human
 
 __all__ = [
     "AgentMailService",
@@ -50,6 +51,7 @@ __all__ = [
     "MessagingService",
     "MsgType",
     "NatsBackend",
+    "OperatorScope",
     "Priority",
     "RegistryMailAddressBook",
     "RetryableDeliveryError",
@@ -60,5 +62,7 @@ __all__ = [
     "TeamMemoryConfig",
     "TeamMemoryService",
     "TeamStore",
+    "WaitingQuestion",
     "mail_participant",
+    "waiting_on_human",
 ]

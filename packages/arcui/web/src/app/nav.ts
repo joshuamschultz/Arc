@@ -6,6 +6,7 @@ import {
   Workflow,
   GitBranch,
   BookOpen,
+  Share2,
   Wrench,
   Plug,
   ListChecks,
@@ -61,6 +62,7 @@ export const NAV_ITEMS: NavItem[] = [
   { path: 'arcrun', label: 'Activity', icon: Workflow, group: 'watch' },
   { path: 'workflows', label: 'Workflows', icon: GitBranch, group: 'watch' },
   { path: 'knowledge', label: 'Knowledge', icon: BookOpen, group: 'watch' },
+  { path: 'shared-knowledge', label: 'Shared knowledge', icon: Share2, group: 'watch' },
 
   { path: 'arcllm', label: 'Model usage', icon: Cpu, group: 'advanced' },
   { path: 'tools-skills', label: 'Tools & Skills', icon: Wrench, group: 'advanced' },

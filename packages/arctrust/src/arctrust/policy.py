@@ -50,6 +50,7 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from arctrust.canonical import canonical_json
 from arctrust.classification import Classification, dominates
 from arctrust.identity import AgentIdentity, did_from_public_key, did_matches_pubkey
 from arctrust.keypair import verify as _ed25519_verify
@@ -153,6 +154,44 @@ class ScenarioGrant(BaseModel):
     public_key: bytes
     algorithm: str = "ed25519"
     signature: bytes
+
+
+class EnrollmentGrant(BaseModel):
+    """Operator-signed proof that admits ONE foreign harness as a fleet member.
+
+    A native ``arcagent`` is trusted because the DID in its ``arcagent.toml`` is
+    self-consistent with the key it signs with. A foreign harness is untrusted
+    code (ASI04): "it holds a key" proves nothing. Trust must be an
+    operator-signed enrollment, verified against the trust-store operator key at
+    every load and every route (H-040 §3).
+
+    Modeled on :class:`ScenarioGrant`: ``frozen``, carries ``approver_did`` +
+    ``approver_public_key`` + ``signature``, canonicalized through
+    :func:`arctrust.canonical.canonical_json`. The signature binds the member's
+    OWN verify key (``member_public_key``) so a later swap of the entity's key
+    (TOCTOU) breaks verification.
+
+    There is deliberately **no expiry field** (§13 ruling 4): revocation is the
+    sole invalidation mechanism. A time-bomb on the grant reproduces the
+    mapping-approval-expiry incident where a valid grant silently lapsed on a
+    timer and reverted a working member.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    did: str  # the member DID being admitted
+    handle: str  # its @mention handle
+    harness: str  # "arcagent" | "hermes" | ...
+    member_public_key: bytes  # the member's OWN verify key — pinned here
+    capabilities: frozenset[str]
+    clearance: str  # max classification admitted (never exceeds operator grant)
+    audit_mode: str  # "boundary" | "full" — tier dial (§10.1); federal requires "full"
+    not_before: str  # ISO ts
+    nonce: str  # replay protection
+    approver_did: str
+    approver_public_key: bytes
+    algorithm: str = "ed25519"
+    signature: bytes  # operator sig over canonical_json(the above, minus sig)
 
 
 class ToolCall(BaseModel):
@@ -660,6 +699,201 @@ def verify_scenario_grant(
     )
     return verify_signature(
         grant.algorithm, key.encode("utf-8"), grant.signature, grant.public_key
+    )
+
+
+def _enrollment_signing_bytes(
+    *,
+    did: str,
+    handle: str,
+    harness: str,
+    member_public_key: bytes,
+    capabilities: frozenset[str],
+    clearance: str,
+    audit_mode: str,
+    not_before: str,
+    nonce: str,
+    approver_did: str,
+    approver_public_key: bytes,
+    algorithm: str,
+) -> bytes:
+    """Canonical bytes an EnrollmentGrant signature covers — every field but ``signature``.
+
+    Binary keys are hex-encoded so :func:`arctrust.canonical.canonical_json`
+    (stdlib JSON, no ``default=`` coercion) can serialize them deterministically.
+    """
+    return canonical_json(
+        {
+            "did": did,
+            "handle": handle,
+            "harness": harness,
+            "member_public_key": bytes(member_public_key).hex(),
+            "capabilities": sorted(capabilities),
+            "clearance": clearance,
+            "audit_mode": audit_mode,
+            "not_before": not_before,
+            "nonce": nonce,
+            "approver_did": approver_did,
+            "approver_public_key": bytes(approver_public_key).hex(),
+            "algorithm": algorithm,
+        }
+    )
+
+
+def sign_enrollment_grant(
+    *,
+    operator: ApprovalAuthority,
+    did: str,
+    handle: str,
+    harness: str,
+    member_public_key: bytes,
+    capabilities: frozenset[str],
+    clearance: str,
+    audit_mode: str,
+    not_before: str,
+    nonce: str,
+) -> EnrollmentGrant:
+    """Mint an operator-signed enrollment grant admitting one foreign member.
+
+    Signed under the deployment **operator** authority (the same key that signs
+    approvals and the audit chain) — never an agent key. ``verify_enrollment``
+    pins the grant to that operator's trust-store pubkey, so a grant signed by
+    any other key is refused (the self-blessing trap, H-040 §3.4).
+    """
+    signing_bytes = _enrollment_signing_bytes(
+        did=did,
+        handle=handle,
+        harness=harness,
+        member_public_key=member_public_key,
+        capabilities=capabilities,
+        clearance=clearance,
+        audit_mode=audit_mode,
+        not_before=not_before,
+        nonce=nonce,
+        approver_did=operator.did,
+        approver_public_key=operator.public_key,
+        algorithm=operator.algorithm,
+    )
+    return EnrollmentGrant(
+        did=did,
+        handle=handle,
+        harness=harness,
+        member_public_key=bytes(member_public_key),
+        capabilities=frozenset(capabilities),
+        clearance=clearance,
+        audit_mode=audit_mode,
+        not_before=not_before,
+        nonce=nonce,
+        approver_did=operator.did,
+        approver_public_key=bytes(operator.public_key),
+        algorithm=operator.algorithm,
+        signature=operator.sign(signing_bytes),
+    )
+
+
+def enrollment_to_wire(grant: EnrollmentGrant) -> dict[str, Any]:
+    """JSON-safe form of an :class:`EnrollmentGrant` for storage on an Entity.
+
+    The grant carries raw ``bytes`` (member/approver keys, signature) and a
+    ``frozenset`` that Pydantic's JSON mode cannot round-trip through an
+    arbitrary storage backend. This is the single serialization seam shared by
+    the operator surface (which mints + stores) and registry admission (which
+    reads + verifies) — mirrors :func:`grant_to_wire`.
+    """
+    return {
+        "did": grant.did,
+        "handle": grant.handle,
+        "harness": grant.harness,
+        "member_public_key": base64.b64encode(grant.member_public_key).decode("ascii"),
+        "capabilities": sorted(grant.capabilities),
+        "clearance": grant.clearance,
+        "audit_mode": grant.audit_mode,
+        "not_before": grant.not_before,
+        "nonce": grant.nonce,
+        "approver_did": grant.approver_did,
+        "approver_public_key": base64.b64encode(grant.approver_public_key).decode("ascii"),
+        "algorithm": grant.algorithm,
+        "signature": base64.b64encode(grant.signature).decode("ascii"),
+    }
+
+
+def enrollment_from_wire(data: dict[str, Any]) -> EnrollmentGrant:
+    """Reconstruct an :class:`EnrollmentGrant` from :func:`enrollment_to_wire` output."""
+    return EnrollmentGrant(
+        did=str(data["did"]),
+        handle=str(data["handle"]),
+        harness=str(data["harness"]),
+        member_public_key=base64.b64decode(str(data["member_public_key"])),
+        capabilities=frozenset(str(c) for c in data.get("capabilities", [])),
+        clearance=str(data["clearance"]),
+        audit_mode=str(data["audit_mode"]),
+        not_before=str(data["not_before"]),
+        nonce=str(data["nonce"]),
+        approver_did=str(data["approver_did"]),
+        approver_public_key=base64.b64decode(str(data["approver_public_key"])),
+        algorithm=str(data.get("algorithm", "ed25519")),
+        signature=base64.b64decode(str(data["signature"])),
+    )
+
+
+def verify_enrollment(
+    grant: EnrollmentGrant,
+    *,
+    did: str,
+    handle: str,
+    harness: str,
+    member_public_key: bytes,
+    operator_public_key: bytes,
+) -> bool:
+    """Whether ``grant`` is a valid operator enrollment for exactly this member.
+
+    Fail-closed — any failing condition returns False:
+
+      1. The grant's approver key equals the caller-supplied ``operator_public_key``
+         (from the trust store, never from the grant). This is what defeats a
+         member-supplied approver key (the self-blessing trap).
+      2. The member's key is NOT the approver's key (ASI09 — no self-enrollment).
+      3. Every enrollment fact (did/handle/harness/member_public_key) matches the
+         entity being admitted, so a swapped ``public_key`` (TOCTOU) or a replayed
+         grant for a different member is refused.
+      4. ``approver_did`` was derived from ``operator_public_key`` — the DID binds
+         to the key.
+      5. The member DID was derived from ``member_public_key`` — identity binds to
+         the pinned key.
+      6. The signature is valid over the canonical enrollment bytes under the
+         operator key.
+    """
+    if bytes(grant.approver_public_key) != bytes(operator_public_key):
+        return False
+    if bytes(grant.member_public_key) == bytes(grant.approver_public_key):
+        return False
+    if (
+        grant.did != did
+        or grant.handle != handle
+        or grant.harness != harness
+        or bytes(grant.member_public_key) != bytes(member_public_key)
+    ):
+        return False
+    if not did_matches_pubkey(grant.approver_did, grant.approver_public_key):
+        return False
+    if not did_matches_pubkey(grant.did, grant.member_public_key):
+        return False
+    signing_bytes = _enrollment_signing_bytes(
+        did=grant.did,
+        handle=grant.handle,
+        harness=grant.harness,
+        member_public_key=grant.member_public_key,
+        capabilities=grant.capabilities,
+        clearance=grant.clearance,
+        audit_mode=grant.audit_mode,
+        not_before=grant.not_before,
+        nonce=grant.nonce,
+        approver_did=grant.approver_did,
+        approver_public_key=grant.approver_public_key,
+        algorithm=grant.algorithm,
+    )
+    return verify_signature(
+        grant.algorithm, signing_bytes, grant.signature, grant.approver_public_key
     )
 
 
@@ -1545,6 +1779,7 @@ __all__ = [
     "ClassificationLayer",
     "ClearanceContext",
     "Decision",
+    "EnrollmentGrant",
     "GlobalLayer",
     "IdentityLayer",
     "OperatorApprovalAuthority",
@@ -1560,11 +1795,15 @@ __all__ = [
     "ToolCall",
     "ToolRuntimeStatus",
     "build_pipeline",
+    "enrollment_from_wire",
+    "enrollment_to_wire",
     "grant_from_wire",
     "grant_to_wire",
     "sign_approval",
     "sign_approval_for_hash",
     "sign_call",
+    "sign_enrollment_grant",
     "verify_approval",
     "verify_call",
+    "verify_enrollment",
 ]

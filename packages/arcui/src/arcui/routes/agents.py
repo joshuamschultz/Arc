@@ -64,6 +64,7 @@ async def get_agent(request: Request) -> JSONResponse:
                 "color": r.color,
                 "role_label": r.role_label,
                 "hidden": r.hidden,
+                "harness": getattr(r, "harness", "arcagent"),
                 "workspace_path": r.workspace_path,
                 # H-007: canonical identity — DID parsed + roster-name joined
                 # by DID, so the header renders the same shape every list of

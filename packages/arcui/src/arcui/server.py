@@ -56,14 +56,18 @@ from arcui.routes import capability_imports as capability_imports_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import connected_data as connected_data_routes
+from arcui.routes import connected_explorer as connected_explorer_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
+from arcui.routes import doc_repo_index as doc_repo_index_routes
 from arcui.routes import export as export_routes
 from arcui.routes import gateway as gateway_routes
 from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
+from arcui.routes import knowledge_shared as knowledge_shared_routes
 from arcui.routes import observe_run as observe_run_routes
+from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
 from arcui.routes import tasks as tasks_routes
@@ -274,13 +278,17 @@ def create_app(
         *chat_ws_routes.routes,
         *attachments_routes.routes,
         *knowledge_routes.routes,
+        *knowledge_shared_routes.routes,
+        *doc_repo_index_routes.routes,
         *connected_data_routes.routes,
+        *connected_explorer_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,
         *agent_detail_routes.routes,
         # SPEC-064: provider keys (fleet-wide) and connectors (per agent).
         *keys_routes.routes,
         *connectors_routes.routes,
+        *semantic_layer_routes.routes,
         *gateway_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
@@ -697,6 +705,12 @@ def create_app(
     # call this through app.state — they never import the registry or
     # team_root directly.
     app.state.team_root = team_root
+    # H-040 §4: foreign (non-arcagent) members have no arcagent.toml, so they are
+    # surfaced from the registry, not the disk scan. A startup snapshot of enrolled
+    # foreign members is stashed here; the roster provider merges it with the disk
+    # scan so a foreign member appears in the fleet with its harness badge. Empty
+    # by default → native-only roster, unchanged behavior.
+    app.state.foreign_members = []
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
@@ -705,7 +719,11 @@ def create_app(
         # arcagent.toml [agent].name == the directory name minus _agent).
         agents = app.state.agent_registry.list_agents()
         online = {a.agent_id for a in agents}
-        return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
+        base = team_roster.list_team(team_root=app.state.team_root, online_ids=online)
+        foreign = list(getattr(app.state, "foreign_members", []) or [])
+        if not foreign:
+            return base
+        return team_roster.merge_foreign_members(base, foreign, online)
 
     app.state.roster_provider = _roster_provider
 

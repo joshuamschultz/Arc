@@ -41,6 +41,7 @@ from arcui.schemas import (
     ErrorResponse,
     SkillEvalCase,
     SkillEvalCasesResponse,
+    SkillPromoteGoldenResponse,
     SkillRollbackResponse,
     SkillVersionBodyResponse,
     SkillVersionDiffResponse,
@@ -124,10 +125,69 @@ async def get_skill_evals(request: Request) -> JSONResponse:
         items=[
             SkillEvalCase(
                 nodeid=case.id,
-                provenance="machine" if case.machine_authored else "human",
+                provenance="curated"
+                if case.curated
+                else ("machine" if case.machine_authored else "human"),
+                gate_type=case.gate_type,
             )
             for case in cases
         ]
+    )
+    return JSONResponse(payload.model_dump(mode="json"))
+
+
+async def post_skill_promote_golden(request: Request) -> JSONResponse:
+    """POST .../skills/{skill_name}/promote — the operator "promote to golden" surface.
+
+    Wraps the SAME ``arcskill.improver.emit_golden_case`` operation the CLI drives
+    (locked design §6): no duplicate emission logic here. Operator-gated + audited; a
+    ``judge_rubric`` case without a pinned judge id + rubric sha256 is rejected (400).
+    """
+    from arcskill.improver import CuratedGoldenCase, emit_golden_case
+    from arcskill.improver.goldencase import CurationError
+
+    agent_id = request.path_params["id"]
+    skill_name = request.path_params["skill_name"]
+    if getattr(request.state, "role", None) != "operator":
+        return _error("Operator role required", 403)
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return _error("Agent not found", 404)
+    skill_dir = await _skill_dir(request, agent_root, skill_name)
+    if skill_dir is None:
+        return _error(f"skill {skill_name!r} not found", 404)
+    try:
+        body = await request.json()
+    except ValueError:
+        return _error("Invalid JSON body", 400)
+    if not isinstance(body, dict):
+        return _error("body must be a curation spec object", 400)
+    body.setdefault("skill_name", skill_name)
+    target = f"skill://{agent_id}/{skill_name}"
+    try:
+        case = CuratedGoldenCase.model_validate(body)
+        emitted = emit_golden_case(skill_dir, case)
+    except (CurationError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="skill.golden.curated",
+            outcome="error",
+            detail=str(exc),
+        )
+        return _error(str(exc), 400)
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="skill.golden.curated",
+        outcome="emitted",
+        detail=f"nodeid={emitted.nodeid} gate_type={emitted.case.gate_type}",
+    )
+    payload = SkillPromoteGoldenResponse(
+        status="emitted",
+        skill_name=skill_name,
+        nodeid=emitted.nodeid,
+        gate_type=emitted.case.gate_type,
     )
     return JSONResponse(payload.model_dump(mode="json"))
 
@@ -263,5 +323,6 @@ __all__ = [
     "get_skill_version_body",
     "get_skill_version_diff",
     "get_skill_versions",
+    "post_skill_promote_golden",
     "post_skill_rollback",
 ]

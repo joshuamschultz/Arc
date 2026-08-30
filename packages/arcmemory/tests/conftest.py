@@ -34,6 +34,21 @@ class StubEmbedder:
         return out
 
 
+@pytest.fixture(autouse=True)
+def _isolate_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every ``arctrust.paths`` write inside this test's tmp dir.
+
+    ``ArcMemoryBrain.register_datastore`` calls ``semantic_layer.overlay()``
+    (H-025), which resolves its file through ``arctrust.paths.semantic_layer_file``
+    -> ``operator_root()`` -> ``~/arc`` by default. Without this, any test that
+    registers a datastore writes a real ``~/arc/config/semantic/<id>.toml`` on
+    whatever machine runs the suite — the same class of leak the arcagent suite
+    isolates via ``ARC_CONFIG_DIR``/``ARCSTORE_DATA_DIR``.
+    """
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc-team"))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     """A fresh per-agent workspace directory."""

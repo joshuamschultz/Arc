@@ -18,9 +18,14 @@ from typing import Any, cast
 
 from arcteam.audit import AuditLogger
 from arcteam.composition import make_backend, message_signer
+from arcteam.harness.enrollment import (
+    OperatorKeyResolver,
+    default_operator_key_resolver,
+    is_eligible,
+)
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry, resolve
-from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
+from arcteam.types import Entity, Message, MsgType
 
 # The agent asks for three notice kinds; the bus carries many. Mapping them here
 # keeps the richer taxonomy out of the agent, which has no use for it.
@@ -34,8 +39,16 @@ _NOTICE_KINDS = {
 class FleetDirectoryAdapter:
     """``arcagent.fleet.FleetDirectory`` over the entity registry."""
 
-    def __init__(self, registry: EntityRegistry) -> None:
+    def __init__(
+        self,
+        registry: EntityRegistry,
+        *,
+        resolve_operator_key: OperatorKeyResolver = default_operator_key_resolver,
+    ) -> None:
         self._registry = registry
+        # H-040 chokepoint 2: how eligibility re-verifies a foreign member's
+        # enrollment before it can reach a routing decision.
+        self._resolve_operator_key = resolve_operator_key
 
     async def resolve(self, ref: str) -> str:
         return await resolve(self._registry, ref)
@@ -46,12 +59,16 @@ class FleetDirectoryAdapter:
         Eligibility is decided here rather than by the caller: an agent has no
         business reading membership state, and a roster filter written twice is
         a roster filter that will disagree with itself.
+
+        H-040 chokepoint 2: a member is eligible only if it is an active agent
+        AND its enrollment verifies. A revoked/suspended member, or a foreign
+        member whose operator grant no longer verifies, never reaches routing.
         """
         entities = await self._registry.list_entities()
         return tuple(
             entity
             for entity in entities
-            if entity.type == EntityType.AGENT and entity.status == EntityStatus.active
+            if is_eligible(entity, resolve_operator_key=self._resolve_operator_key)
         )
 
 

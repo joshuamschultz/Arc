@@ -43,7 +43,7 @@ before this batch is complete.
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
 | H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | MERGED | 03cb871a |
-| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (needs an aggregate endpoint) | M | NEW | |
+| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (arcteam waiting-on-human reader; action_required gate; no double-count) | L | MERGED | 30e3d3ad |
 | H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
 | H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | MERGED | W3a |
@@ -66,31 +66,51 @@ before this batch is complete.
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | MERGED | 6e36436e |
-| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
-| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
-| H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
-| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
+| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | MERGED | ec6ddfb0 |
+| H-024b | Knowledge | Stale-slug hygiene: purge pre-scoping db-table-<name> + revoke-leaked db_table cards (pollute Datastore tab + recall) | S | MERGED | 8e8ee9bf |
+| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | MERGED | 53ffcdbd |
+| H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | MERGED | 7c370871 |
+| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | MERGED | 2f126606 |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | MERGED | 1f65e6a1 |
 | H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | MERGED | 1f65e6a1 |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | MERGED | 6dc93100 |
-| H-033b | Knowledge | Connector sync counters wrong (Last sync Never / 0 bytes) — missing last_synced_at + two-DB split (separate from connect path) | M | NEW | |
+| H-033b | Knowledge | Connector sync counters wrong — RC was source_id KEY MISMATCH (write connection_id, read canonical) + missing last_synced_at + unwired index count; migration v8 | M | MERGED | f84efafc |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
 | H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
-| H-036 | UI | Fully keyboard-drivable | L | NEW | |
+| H-036 | UI | Fully keyboard-drivable (command palette + focus order) | L | MERGED | e3f31f60 |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | MERGED | b37f1417 |
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
-| H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
-| H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
-| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
+| H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) | L | MERGED | a8fd4364 |
+| H-041 | arcskill | Real skill improvement loop (curation + producer wiring + real-path E2E + judge-fail-blocks-promotion) | L | MERGED | 20ef4e8f+0ae5bf6b |
+| H-041b | arcui | "Promote to golden" frontend button on the existing skill-versions route (CLI-first shipped; small UI follow-up; H-037 parity sweep will surface it) | S | NEXT-PROGRAM | |
+| H-041c | arcskill | Judge-gate hole: judge_rubric cases pass before+after so auto-gate can neither promote NOR block on them → a semantically-degraded candidate auto-promotes on exact/assertion cases alone; AND evaluate_curated (real judge) has no caller. FIX: any judge_rubric case in a suite → DISALLOW auto-promote, route to operator review; wire `arc skill evals judge`; 2 tests | S | CODING | |
+| H-040b | Fleet | H-040 Slice 2: dynamic roster for ALL member kinds (native + foreign) through ONE freshness model (not a foreign-only path); + private MemoryPort DID gate, revocation CLI, quarantine provenance | L | NEXT-PROGRAM | |
+| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
+| H-044 | Knowledge | DB parity: Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP (extensions/postgresql, asyncpg — full port). REMAINING: MySQL family (clone template+driver), Mongo, Snowflake, BigQuery + conformance harness | L | NEXT-PROGRAM | |
+| H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
+| H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
+| H-047 | Security | build_brain identity guard (3 checks + zero-tolerance owner bootstrap) | S | MERGED | 168a8ab6 |
+| H-048 | Gateway | Browser disconnect instantly cancels the run ("browser disconnected") on refresh/blip/restart — now deferred by grace window, reconnect preserves run | M | MERGED | (batch) |
+| H-049 | arcui | LLM/context view lost expandable sections; prompt construction must show ordered sections: system prompt·identity·strategies·policies·tools·skills·context·session data | M | CODING | |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
+
+## Connection Parity (Josh directive, 2026-08-30)
+
+> "Agentic interaction should be the SAME for: RDS databases (aws, azure, supabase, sqlite, postgresql, etc); files (s3, onedrive, dropbox, etc); message context (emails, slack, teams, etc)."
+
+The seam is already vendor-neutral: `SourceDataShape` (DOCUMENT/MAIL/DATASTORE/BLOB) + `DatastorePort` Protocol (introspect/persist_ontology/query). Adding a backend = one adapter; explorer (H-024), schema layer (H-025), OKF index (H-026), Brain, and agent tools do NOT change.
+
+**AUDIT CORRECTION (ParityAudit, 2026-08-30):** concrete adapters live in the repo-root `extensions/` tree (signed bundles), NOT `packages/` — my earlier "only SQLite exists" was wrong (I never searched `extensions/`). **Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP** as a full tested `DatastorePort` (`extensions/postgresql`, asyncpg — connection + port + lifecycle in one class; Josh's recollection was right). Files: s3/dropbox/onedrive ship. Messages: gmail/outlook/slack ship. Real gaps (all adapter-only clones of the pg template, no seam changes): MySQL family + Mongo/Snowflake/BigQuery; **Google Drive knowledge** (tools-only today — top value); Teams/IMAP/SMB/Box. See H-044/045/046 (NEXT-PROGRAM).
+
+**H-044 DB coverage (Josh, 2026-08-30): comprehensive, in priority order.** (1) **Postgres family FIRST** — one wire adapter covers AWS RDS Postgres, Azure Postgres, Supabase; also the reference impl of a non-SQLite `DatastorePort` (driver, read-only connection, vault-backed credentials, `information_schema` introspection, allowlisted parameterized query). Then (2) Cloud warehouses (Snowflake/BigQuery/Redshift — different access model), (3) MySQL/MariaDB, (4) SQL Server/Azure SQL. Each is its own adapter behind the same contract; Postgres establishes the pattern the rest follow.
 
 **Advisor:** a standing **Fable** planner/advisor (`Planner`) reviews each issue's plan for correctness, architecture fit (four pillars), and best outcome before it is coded, and reviews the result before merge.
 
@@ -375,3 +395,31 @@ Grounded by two research passes (knowledge/connected-data map; arcskill-improver
 - **H-041 (curation layer, after H-042 seeds):** (1) skill-indexed trace view JOINING improver TraceStore metadata × arcllm JSONLTraceStore payloads by request id at READ time (no copy); (2) curation surface (select trace → edit result to ideal → emit golden) built ONCE in the improver/control-plane, CLI (`arc skill evals`) + arcui "promote to golden" wrap it; emitted golden lives signed in the skill's evals/ after redact; federal hash-only → curation DECLARED unavailable (never silently empty); (3) expected-output field + a per-case gate. Reuse EvalGate/sandbox/manifest/promote/change-bound/signing/approval-ladder/timeline. One provenance-tagged manifest (curated wins on conflict). **JOSH decision:** gate type per case — (a) exact-match, (b) judge-rubric (reuse judge_rubric.md; MUST pin judge model id + rubric hash in the manifest for reproducibility), (c) operator assertions. Lean: (b) for semantic, (a/c) for deterministic tool output.
 - **H-040 (multi-type fleet — deepest, its own design pass):** AgentType/HarnessAdapter Protocol in arcteam (identity, messaging, task-claim, memory-share, telemetry). Four pillars UNIVERSAL — hermes/openclaw instances get DIDs, signed enrollment, policy, audit, or they don't join. Memory-share only via arcteam→arcmemory (never reverse). Foreign-type adapters live as extensions, not in-tree deps. Fleet UI shows type badge + gracefully-degraded detail. **Needs Josh's direction on scope/priority.**
 - **H-036 (keyboard) → H-037 (CLI parity): LAST.** H-037 = push logic into package control-plane seams so both surfaces are thin wrappers + a routes↔COMMAND_REGISTRY parity matrix enforced as an architecture test (or it rots). Both freeze against a UI that must stop moving first.
+
+## Docs/version wave TODO (accumulating; execute after all rows MERGED)
+- **tsx guidance fallback drift (H-026):** knowledge-connections.tsx renders `data.guidance ?? '<hardcoded copy>'`; if the server string (operator.py:292) is edited later the fallback drifts. Tidy: drop the hardcoded fallback or keep them in sync. (Planner note, harmless for batch.)
+- Per Planner close-out directive: ALPHA-HOTFIXES NEEDS-JOSH section; root + per-package CHANGELOGs; version bumps (root 0.4.0→0.5.0; arcui/arcmemory/arcllm/arcrun/arcteam/arcagent/arcskill/arccli per-package MINOR where features added); READMEs; package CLAUDE.md layout sections (new files/seams); docs/ walkthrough pages + `mkdocs --strict`; spec status sync (SPEC-044/054 improver firing); final `npm run build` → static/ committed + restart note.
+
+## Post-deploy checks (DGX)
+- **H-033b counter verify (doubles as the pg-path evidence):** on the box, after ONE completed sync on a Postgres-backed source, the card must show **non-zero pages/bytes + a real last-sync time + documents_indexed>0** — not just "same DSN". The postgres last_synced_at path is only covered by a skipped integration test, so this live check IS its evidence. Also confirm arcui embedded agents read the SAME ArcStore DSN the sync writes to.
+- **Deploy note (not a regression):** migrated rows carry NULL last_synced_at until their FIRST post-deploy COMPLETE sync — cards will honestly say "Never" for that window. Expected, not a day-one regression.
+- **H-033b product follow-up (OUT OF BATCH):** documents_indexed counts document-home (.md) inventory; a MEMORY/DATASTORE-only source shows 0 documents (accurate). Whether the card should also count datastore items pairs with the H-044 parity program (where datastore item counts become first-class). Don't touch now.
+
+## Docs program (Josh: FULL SCOPE, gates the batch — DOCS-PROGRAM-PLAN.md)
+- Josh decisions (2026-08-30): (1) proceed at full scope — 35 pages both tracks + 14-row data-flow/decision catalog + all media (10 mermaid, 6 canvas, 5 nanobanana heroes); (2) for the 5 undocumented rationale items — DOCUMENT WHAT'S VERIFIABLE, FLAG GAPS ("needs confirmation"), no exhaustive per-item reverse-engineering.
+- nanobanana verified working (GEMINI_API_KEY in env; test image OK). mermaid already wired in mkdocs.
+- Waves: W0 keystones (T2.4 Decision Index + T2.2 layering + §6 doc-bug fixes) → W1 Lane A (Track1 setup spine REVISE) + Lane B (Track2 flow footers) → W2 deep pages (verifiable+flag) → W3 media → W4 mkdocs --strict + cross-links.
+- Doc bugs to fix while authoring: UIBridgeSink/JsonlSink/SignedChainSink are prose fiction (real: NullSink/WormSink, arcui MutationWormWriter) — audit page + CLAUDE.md/concepts must correct, not propagate. arcstore.md:412 calls the shipped last_synced_at fix "future work" — update.
+
+## Docs-wave follow-ups (from DocsW0)
+- **Upstream audit-sink fix (outside docs/):** project CLAUDE.md + .claude/coding-principles/build-principles.md §Audit still list JsonlSink/SignedChainSink/UIBridgeSink as the REAL sinks — they are prose contrasts. Real: NullSink/WormSink (arctrust audit.py), arcui MutationWormWriter (arcui/audit.py:231). Correct in the version/docs wave (it's the upstream source of the wrong claim).
+- **3 "needs confirmation" rationale anchors** (Wave 2 targets): document_search LLM-tool ToolSpec registration site (open); inbound-media trust/retention D-672/674/675/681/682; D-563 tool-contract hashing/rug-pull site.
+
+## MERGE QUEUE (all held behind H041wire clearing the shared tree; flush in order)
+1. H-047 (78cbff17+5b6c8ec8) — Planner-blessed, closes on merge
+2. H-040 Slice 1 (when it lands)
+3. DocsW0 (e4ed8c74) — Decision Index keystone + §6 fixes
+4. DocsT1A (301d17e7) — Track 1 setup spine (docs/get-started/, 10 pages)
+5. DocsT2B (Track 2 flow pages) — when it lands
+6. DocsW2 (deep pages) — when it lands
+Then: Wave 3 media (mermaid done inline; nanobanana heroes via GEMINI key; canvas) → Wave 4 nav re-sequence + mkdocs --strict + Track1⇄Track2 cross-links → H-037 (CLI parity, last) → version/changelog wave → batch→main→push→deploy DGX→post-deploy checks. H-043 (CI billing) = Josh.

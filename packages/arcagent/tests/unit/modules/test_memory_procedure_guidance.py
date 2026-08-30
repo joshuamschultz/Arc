@@ -35,10 +35,16 @@ def _clean_runtime() -> Any:
 
 def _configure(tmp_path: Any, *, brain: str) -> None:
     """Bind memory state the way agent startup does. ``brain='none'`` = NullBrain."""
+    from arctrust.identity import AgentIdentity
+
+    # A real identity that matches agent_did and owns the fresh workspace, so the
+    # arcmemory build_brain path clears the H-047 cross-agent isolation guard.
+    identity = AgentIdentity.generate(org="default", agent_type="executor")
     _runtime.configure(
         config={"brain": brain},
         workspace=tmp_path,
-        agent_did="did:arc:test:guidance",
+        agent_did=identity.did,
+        identity=identity,
     )
 
 

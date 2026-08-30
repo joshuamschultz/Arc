@@ -113,6 +113,55 @@ flowchart TB
     class STORE,TRUST,PROMPT found
 ```
 
+### The decisions that fix this rule
+
+The layering law is not a convention — it is a set of recorded decisions, each
+enforced by an AST architecture test. The stack, reduced to its one-way spine:
+
+```mermaid
+flowchart TB
+    classDef leaf  fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef mid   fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef fleet fill:#5A9CFF,stroke:#003B82,color:#002550
+
+    TEAM["arcteam — removable fleet layer"]
+    AGENT["arcagent — the agent nucleus"]
+    MEMORY["arcmemory — optional memory"]
+    RUN["arcrun — the loop"]
+    LLM["arcllm — provider calls"]
+    TRUST["arctrust — leaf: identity, sign, policy, WORM"]
+
+    TEAM --> AGENT
+    TEAM --> MEMORY
+    AGENT --> RUN
+    RUN --> LLM
+    AGENT -.-> TRUST
+    RUN -.-> TRUST
+    LLM -.-> TRUST
+    MEMORY -.-> TRUST
+
+    class TRUST leaf
+    class LLM,RUN mid
+    class AGENT,MEMORY agent
+    class TEAM fleet
+```
+
+Solid arrows are the execution spine (`arcllm → arcrun → arcagent`); dotted
+arrows show every layer depending on the `arctrust` leaf; `arcteam` composes
+`arcagent` and `arcmemory` from **above** and neither may import it back.
+
+| `D-NNN` | The rule it fixes |
+|---|---|
+| **[D-620](../concepts/decision-index.md)** | One-way execution-stack dependency graph — dependencies point straight down, never up or sideways |
+| **[D-621](../concepts/decision-index.md)** | ArcAgent consumes ArcRun through **one** qualified facade import (`import arcrun`), never a deep import into ArcRun's internals |
+| **[D-626](../concepts/decision-index.md)** | Each core package has exactly one clean cross-package import surface |
+| **[D-632](../concepts/decision-index.md)** | Every module is optional; **none ship in the wheel** — a module reaches a deployment only as a signed bundle under `~/.arc/modules/` (ADR-034) |
+| **[D-635](../concepts/decision-index.md)** | One core artifact; the module bundle is the only thing that varies by deployment — personal → federal is a stringency dial, not a rebuild |
+
+The full rationale for each, plus every other seam's governing decisions, is on
+the [Decision Index](../concepts/decision-index.md).
+
 ### Fleet composition is a separate outer layer
 
 `arcteam` is the removable fleet layer, not a dependency of an individual
@@ -488,7 +537,7 @@ on why each one bites.
 | [ADR-019](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md) — Four Pillars are universal defaults | Accepted | Identity, Sign, Authorize, Audit apply at every tier, not just federal — load-bearing for the whole security model |
 | [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md) — arcgateway owns the data plane, arcui is a pure consumer | Accepted | Every `team/<agent>/…` read goes through `arcgateway.fs_reader`, never direct filesystem access from `arcui` — see caveat above on `fs_watcher`'s current status |
 | [ADR-021](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-021-agent-self-description-via-toml-ui-section.md) — Agent self-description via `[ui]` in `arcagent.toml` | Accepted | UI display hints (name, color, role) live in the same TOML the agent already owns, not a sidecar file |
-| [ADR-022](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md) — Storage split: arctrust owns WORM, arcstore owns operational data | Proposed | The only ADR in this set still `Proposed`, not `Accepted` |
+| [ADR-022](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md) — Storage split: arctrust owns WORM, arcstore owns operational data | Shipped (ADR still marked `Proposed`) | **The split is live in code** — `arcstore` is the production operational store (PostgreSQL / Supabase, `PostgresBackend`) and `arctrust` owns the WORM chain; the ADR document's own status field just was never flipped to `Accepted`. Treat it as shipped, not pending |
 | [ADR-023](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md) — Capability resolution: unified `CapabilityProvider`, layered roots, signed-to-load trust | Accepted | Defines the `scan_roots` layering (builtins, global, agent, workspace, module) and last-wins precedence for tools/skills/memory |
 | [ADR-024](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md) — One streaming, session-bound `agent.run` — every surface goes through arcrun | Accepted | Closes off parallel run entry points; reinforces "arcrun is the only runtime path to arcllm" |
 | [ADR-025](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-025-cache-control-confined-to-anthropic-adapter.md) — Provider cache directives confined to the Anthropic adapter | Accepted | Prompt-caching `cache_control` logic lives only in `arcllm`'s `anthropic.py`, not spread across providers |
@@ -581,6 +630,36 @@ flowchart TD
 | `scripts/check_loc_budgets.py` | The LOC budget checker itself | Adjusting what's measured (not the ceilings — those signal "move the code") |
 | `tests/architecture/`, `packages/*/tests/architecture/` | Every layering guard in the table above | Any cross-package boundary change — run these first |
 
-See also: `docs/architecture/ARCH-OVERVIEW.md` (the seed document this file
-expands), `docs/architecture/policy-modules.md`, `docs/cli.md`,
+---
+
+## Flow footer — package layering & dependency direction
+
+The standard six-field summary (the same fields carried by every flow row in the
+[Decision Index catalog](../concepts/decision-index.md)):
+
+- **Where it lives** — `pyproject.toml` dependency lists per package + the AST
+  guards under `tests/architecture/` and `packages/*/tests/architecture/`.
+- **What calls what** — the execution spine is `arcllm → arcrun → arcagent`;
+  surfaces (`arccli`, `arcgateway`, `arcui`) sit above `arcagent`; `arcteam`
+  composes `arcagent`/`arcmemory` from above; `arctrust` is the leaf everything
+  depends on and it imports no `arc*` package.
+- **What passes (where / when / to)** — nothing at runtime; this seam is a
+  *compile-time* contract. Each package exposes one qualified import surface
+  (`import arcrun`, `import arcagent`, …); the guards read `import` statements
+  statically at test time, before any module is imported.
+- **Security / modularity reason** — one-way dependencies keep the four
+  audiences open at once (standalone layer, turnkey whole, federal-hardenable,
+  independently rewritable). An upward or sideways import would let a change in
+  one component ripple across the tree and would break "delete a module, the
+  rest still runs."
+- **`D-NNN` / ADR** — D-620, D-621, D-626, D-632, D-635; ADR-004 (LOC budgets).
+- **Code anchor** — `tests/architecture/test_arc_home_single_resolver.py`;
+  `packages/arcgateway/tests/architecture/test_imports.py:61`
+  (the arcui → `arcagent.capabilities.inventory`-only seam);
+  `scripts/check_loc_budgets.py`.
+
+See also: [The Decision Index](../concepts/decision-index.md) (every seam → its
+`D-NNN`), [The Seam Model](../concepts/seam-model.md),
+`docs/architecture/ARCH-OVERVIEW.md` (the seed document this file expands),
+`docs/architecture/policy-modules.md`, `docs/cli.md`,
 `docs/config-reference.md`.

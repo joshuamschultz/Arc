@@ -82,6 +82,8 @@ export interface Agent {
   role_label?: string
   hidden?: boolean
   workspace_path?: string
+  /** H-040: runtime kind — "arcagent" (native) or a foreign harness name. */
+  harness?: string
   identity?: AgentIdentityShape
 }
 
@@ -755,6 +757,46 @@ export interface SkillDetail {
   write_path: string | null // relative to write_root
 }
 
+// --- Skill version timeline + diff (H-042: the reviewable diff-merge surface) ------
+
+export interface SkillEvalCase {
+  nodeid: string
+  provenance: 'machine' | 'human'
+}
+
+export interface SkillEvalCasesResponse {
+  items: SkillEvalCase[]
+}
+
+export interface SkillVersionItem {
+  candidate_id: string
+  generation: number | null
+  parent_id: string | null
+  scores: Record<string, number>
+  active: boolean
+  body_hash: string | null
+  tombstone: boolean
+  ts: string | null
+}
+
+export interface SkillVersionsResponse {
+  items: SkillVersionItem[]
+}
+
+export interface SkillVersionDiffResponse {
+  a: string
+  b: string
+  diff: string
+}
+
+export interface SkillRollbackResponse {
+  status: string
+  skill_name: string
+  from_candidate_id: string | null
+  to_candidate_id: string
+  warning: string
+}
+
 export interface ToolDetail {
   name: string
   transport: string
@@ -1162,6 +1204,7 @@ export interface ConnectedSourceItem {
   bytes_processed: number
   error_code: string | null
   last_synced_at: string | null
+  documents_indexed: number
   allowed_homes: string[]
 }
 
@@ -1273,6 +1316,30 @@ export interface DocumentsResponse {
   items: DocHitItem[]
 }
 
+/** One authorized document in a verified collection index (mirror of
+ *  `arcmemory.operator.CollectionIndexEntry`). */
+export interface CollectionIndexEntry {
+  path: string
+  title: string
+  summary: string
+  digest: string
+}
+
+/** A connected document source's verified OKF `index.md` — what's inside +
+ *  purpose (mirror of `arcmemory.operator.CollectionIndexView`). Fail-closed:
+ *  `markdown`/`entries` are populated ONLY when `verified` is true. */
+export interface CollectionIndexView {
+  source_id: string
+  present: boolean
+  verified: boolean
+  document_count: number
+  entries: CollectionIndexEntry[]
+  markdown: string
+  error: string | null
+  /** Operator-actionable recovery instruction, set when `verified` is false. */
+  guidance: string | null
+}
+
 /** A live datastore read. `result` is the raw connector payload (a row, a list
  *  of rows, or null) — shape is source-defined, so it stays `unknown`. */
 export interface DatastoreQueryResponse {
@@ -1313,4 +1380,43 @@ export interface IndexHealthItem {
 
 export interface IndexHealthResponse {
   item: IndexHealthItem
+}
+
+// --- H-027: fleet-shared knowledge (documents agents promoted into the
+// signed fleet collection) ---------------------------------------------------
+
+/** One document an agent has promoted into the shared fleet collection. */
+export interface SharedKnowledgeDocument {
+  identifier: string
+  title: string
+  classification: string
+  tags: string[]
+  owner_did: string
+  owner_display: string
+  excerpt: string
+}
+
+export interface SharedKnowledgeResponse {
+  documents: SharedKnowledgeDocument[]
+}
+
+/** One search hit against the shared fleet collection. */
+export interface SharedKnowledgeSearchHit {
+  identifier: string
+  title: string
+  excerpt: string
+}
+
+export interface SharedKnowledgeSearchResponse {
+  hits: SharedKnowledgeSearchHit[]
+}
+
+/** Full content of one shared document (403 above the viewer's clearance,
+ *  404 if missing — surfaced as `ApiError` by `apiGet`). */
+export interface SharedKnowledgeDetail {
+  identifier: string
+  title: string
+  content: string
+  classification: string
+  tags: string[]
 }

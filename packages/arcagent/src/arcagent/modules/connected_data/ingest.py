@@ -301,6 +301,16 @@ class ArcMemoryIngestAdapter(IngestPort):
         module = import_module("arcmemory.connected_data")
         return str(module.source_instance_id(self._agent_did, self._source_model(module, source)))
 
+    async def documents_indexed(self, source: SourceDescription) -> int:
+        """Count this source's indexed document inventory for the operator card.
+
+        Reads ArcMemory's per-source document inventory — the searchable
+        documents the operator actually connected — without exposing any body.
+        """
+        service = self._connected_service()
+        module = import_module("arcmemory.connected_data")
+        return len(await service.list_documents(self._source_model(module, source)))
+
     async def mapping_approval_status(self, approval_id: str) -> str:
         """Read the generic approval state without accepting caller-supplied authority."""
         if self._approval_store is None:
@@ -365,7 +375,16 @@ class ArcMemoryIngestAdapter(IngestPort):
             raise ConnectedDataUnavailableError("active memory backend has no datastore port")
         datastore = await get_port()
         source_id = self.canonical_source_id(source)
-        await register(source_id, datastore, caller_did=self._agent_did)
+        # connection_id (the operator-facing connection name) is what keys the
+        # semantic layer file (H-025); source_id is only the opaque per-agent
+        # source-instance hash used for live dispatch, and no operator can find
+        # a file named after a hash.
+        await register(
+            source_id,
+            datastore,
+            connection_id=source.connection_id,
+            caller_did=self._agent_did,
+        )
 
     async def ingest(
         self,

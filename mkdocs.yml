@@ -73,8 +73,26 @@ extra_css:
 nav:
   - Home: README.md
 
+  - Get Started:
+      - Install: get-started/install.md
+      - Identity and keys: get-started/identity-and-keys.md
+      - Your first agent: get-started/first-agent.md
+      - Model providers: get-started/providers.md
+      - Connect a data source: get-started/connect-a-source.md
+      - Source cookbook (per provider): get-started/source-cookbook.md
+      - Tune knowledge and memory: get-started/tune-knowledge-and-memory.md
+      - Policy and tiers: get-started/policy-and-tiers.md
+      - The operational store: get-started/operational-store.md
+      - Dashboard tour: get-started/dashboard-tour.md
+      - Run a fleet: get-started/fleet.md
+      - Workflows: get-started/workflows.md
+      - Gateways (chat): get-started/gateways.md
+      - Operate and troubleshoot: get-started/operate-and-troubleshoot.md
+      - Deploy: get-started/deploy.md
+
   - Concepts:
       - The Seam Model — Why Everything Is a Plugin: concepts/seam-model.md
+      - The Decision Index — Every Seam to Its D-NNN: concepts/decision-index.md
       - Fleet layering and removable composition: concepts/fleet-layering.md
       - Memory, the Index, and Scope: concepts/memory-index-and-scope.md
 
@@ -92,6 +110,10 @@ nav:
       - 11. Extension Points: walkthrough/11-extension-points.md
       - 12. Configuration: walkthrough/12-configuration.md
       - Data flows: walkthrough/data-flows.md
+      - Audit and the WORM chain: walkthrough/audit-and-the-worm-chain.md
+      - "Flow: connected-source sync": walkthrough/flow-connected-source.md
+      - "Flow: an approval": walkthrough/flow-approval.md
+      - "Flow: LLM routing": walkthrough/flow-llm-routing.md
       - Diagrams: walkthrough/diagrams.md
 
   - Building with Arc:
@@ -130,6 +152,7 @@ nav:
       - API: reference/api.md
       - CLI: reference/cli.md
       - Configuration keys: reference/config.md
+      - Config catalog (every key): reference/config-catalog.md
       - Tiers and presets: reference/tiers-and-presets.md
       - Prompts: reference/prompts.md
       - Security: reference/security.md

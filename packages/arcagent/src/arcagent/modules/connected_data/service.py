@@ -96,6 +96,10 @@ class SourceRuntimeStatus:
     detail: str = ""
     description: SourceDescription | None = None
     state: SyncState | None = None
+    #: How many documents this source has in its indexed pool. Derived from the
+    #: ingest port, not the sync counters, so the card can show what is actually
+    #: searchable rather than only how many transfer pages were read.
+    documents_indexed: int = 0
 
 
 @dataclass(frozen=True)
@@ -565,6 +569,7 @@ class ConnectedDataService:
                 status=result.status.value,
                 description=description,
                 state=result,
+                documents_indexed=await self._documents_indexed(ingest, description),
             )
 
     async def _inspect_registration(self, registration: SourceRegistration) -> None:
@@ -575,18 +580,23 @@ class ConnectedDataService:
                 InspectSource(connection_id=connection_id)
             )
             source_id = ""
+            documents_indexed = 0
             if self._ingest_factory is not None:
                 candidate = self._ingest_factory(description)
                 ingest = await candidate if inspect.isawaitable(candidate) else candidate
                 description = await self._with_generation(description, ingest)
                 source_id = _canonical_source_id(ingest, description)
+                documents_indexed = await self._documents_indexed(ingest, description)
             self._descriptions[connection_id] = description
             # Read back what this source actually did, rather than declaring it
             # unmapped. The sync state is durable and the runtime status was
             # not, so every restart wiped a completed source back to
             # "awaiting_mapping" with no pages, no bytes and no source id —
             # which also left its documents unaddressable and its search empty.
-            state = await self._persisted_state(source_id)
+            # The coordinator keys that durable row by ``connection_id`` (the
+            # only stable id it has, being ingest-agnostic); reading it back by
+            # the doc pool's canonical id found nothing, so the counters read 0.
+            state = await self._persisted_state(connection_id)
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
                 source_id=source_id,
@@ -594,6 +604,7 @@ class ConnectedDataService:
                 detail=state.error_code or "" if state is not None else "",
                 description=description,
                 state=state,
+                documents_indexed=documents_indexed,
             )
         except Exception:
             self._statuses[connection_id] = SourceRuntimeStatus(
@@ -610,6 +621,28 @@ class ConnectedDataService:
             _logger.warning("connected-data sync state unreadable: %s", source_id)
             return None
         return state
+
+    async def _documents_indexed(
+        self, ingest: IngestPort, description: SourceDescription
+    ) -> int:
+        """Count this source's indexed documents through the optional ingest seam.
+
+        The transfer counters answer "how many pages did we pull"; an operator
+        wants "how many documents can the agent actually search". A backend that
+        does not expose the count, or a read that fails, degrades to 0 rather
+        than failing the whole inspection — a missing count must never blank a
+        source's status row.
+        """
+        count = getattr(ingest, "documents_indexed", None)
+        if not callable(count):
+            return 0
+        try:
+            return int(await count(description))
+        except Exception:
+            _logger.warning(
+                "connected-data document count unavailable: %s", description.connection_id
+            )
+            return 0
 
     async def _first_ingest_adapter(self) -> IngestPort | None:
         if self._ingest_factory is None:

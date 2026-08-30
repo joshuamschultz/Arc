@@ -8,11 +8,17 @@ now" across every queue that already has its own operator surface:
 - gated capabilities (unsigned/refused tools and skills across the fleet) —
   the same rows ``/api/trust/gated`` lists;
 - tasks awaiting operator review (``status == "review"``, SPEC-056's
-  ``requires_review`` gate) — the same rows ``/api/team/tasks`` lists.
+  ``requires_review`` gate) — the same rows ``/api/team/tasks`` lists;
+- runs waiting on a human reply (H-001b) — an agent asked the operator a
+  question over a channel and no human has answered, read through the arcteam
+  ``waiting_on_human`` seam. Channel questions ONLY: a run paused on an approval
+  or a workflow gate is already in the first and third queues and is excluded
+  here by structural provenance, so it is counted exactly once.
 
 This route does not replace any of those surfaces or their stores — it reads
 through the exact same seams (``ApprovalStore``, ``arcagent.list_gated``,
-``Observe.tasks``) and only aggregates their pending counts plus a short
+``Observe.tasks``, ``arcteam.waiting_on_human``) and only aggregates their
+pending counts plus a short
 preview so Home can answer "what needs me" in one round trip instead of the
 browser firing three sequential requests (SPEC-026's <2s Home budget). Each
 queue read runs concurrently and degrades to an empty queue on its own
@@ -29,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
+import arcteam
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -90,18 +97,41 @@ async def _tasks_in_review(request: Request) -> list[dict[str, Any]]:
     return list(rows)
 
 
+async def _waiting_on_human(request: Request) -> list[dict[str, Any]]:
+    """Agent questions on a channel that no human has answered — H-001b.
+
+    The outbound mirror of the messaging sweep: an agent asked the operator
+    something over a channel and is blocked on a reply. Attribution is the
+    signed asker and the arcteam reader excludes anything a run already surfaces
+    through approvals / review-tasks (its narration is structurally marked), so
+    a paused run is counted once — never here as well.
+    """
+    service = getattr(request.app.state, "messaging_service", None)
+    registry = getattr(request.app.state, "messaging_registry", None)
+    if service is None or registry is None:
+        return []
+    try:
+        waiting = await arcteam.waiting_on_human(service, registry)
+    except Exception:  # reason: a messaging outage must degrade, not sink the panel
+        logger.exception("home needs: waiting-on-human read failed")
+        return []
+    return [q.model_dump(mode="json") for q in waiting]
+
+
 async def get_needs(request: Request) -> JSONResponse:
     """GET /api/home/needs — the operator's aggregated pending-action queue."""
-    approvals, capabilities, review_tasks = await asyncio.gather(
+    approvals, capabilities, review_tasks, waiting = await asyncio.gather(
         _pending_approvals(request),
         _pending_capabilities(request),
         _tasks_in_review(request),
+        _waiting_on_human(request),
     )
     body = HomeNeedsResponse(
         approvals=HomeNeedsQueue(count=len(approvals), items=approvals[:_PREVIEW_LIMIT]),
         capabilities=HomeNeedsQueue(count=len(capabilities), items=capabilities[:_PREVIEW_LIMIT]),
         review_tasks=HomeNeedsQueue(count=len(review_tasks), items=review_tasks[:_PREVIEW_LIMIT]),
-        total=len(approvals) + len(capabilities) + len(review_tasks),
+        waiting_on_human=HomeNeedsQueue(count=len(waiting), items=waiting[:_PREVIEW_LIMIT]),
+        total=len(approvals) + len(capabilities) + len(review_tasks) + len(waiting),
     )
     return JSONResponse(body.model_dump(mode="json"))
 

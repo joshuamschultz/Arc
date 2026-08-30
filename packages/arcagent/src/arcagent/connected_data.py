@@ -82,6 +82,9 @@ class SyncState(BaseModel):
     bytes_processed: int = Field(default=0, ge=0)
     fencing_token: int = Field(default=0, ge=0)
     error_code: str | None = None
+    #: The last *successful* full-sync time, stamped by the store only on
+    #: COMPLETE. ``None`` until then — this is what the card's "Last sync" reads.
+    last_synced_at: datetime | None = None
 
 
 class SyncLease(BaseModel):

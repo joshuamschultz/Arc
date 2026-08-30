@@ -360,6 +360,72 @@ flowchart LR
 
 **Audit.** Every successful execute emits `tool.executed` with `actor_did`, `tier`, `transport`, and duration to `WormSink` — a hash-chained, append-only JSONL file. The audit system is fail-open by design: it must never interrupt the operation being audited.
 
+#### The policy layer chain — first-DENY-wins, tier-sized
+
+`PolicyPipeline.evaluate` walks the configured layers **in order** and returns
+on the **first `DENY`**; any exception a layer raises is itself converted to
+`DENY` (fail-closed). Which layers run is a function of tier — the layer set is
+a stringency dial, not a different code path — but **`IdentityLayer` always runs
+first, at every tier** (authentication is universal, ADR-019). Assembled by
+`build_pipeline()` in `arctrust/policy.py`:
+
+```mermaid
+flowchart LR
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef term    fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    ID["IdentityLayer<br/>(all tiers)"]:::found --> G["GlobalLayer<br/>(all tiers)"]:::found
+    G --> C["ClassificationLayer<br/>(ent / fed)"]:::found
+    C --> P["ProviderLayer<br/>(ent / fed)"]:::found
+    P --> A["AgentLayer<br/>(ent / fed)"]:::found
+    A --> T["TeamLayer<br/>(federal only)"]:::found
+    T --> S["SandboxLayer<br/>(ent / fed)"]:::found
+    S --> OK["ALLOW → pre_tool → execute"]:::term
+    ID -.->|"DENY"| STOP["short-circuit<br/>PolicyDenied, handler never runs"]:::runtime
+    G -.->|"DENY"| STOP
+    C -.->|"DENY"| STOP
+    P -.->|"DENY"| STOP
+    A -.->|"DENY"| STOP
+    T -.->|"DENY"| STOP
+    S -.->|"DENY"| STOP
+```
+
+Per tier: **personal** runs `[Identity, Global]`; **enterprise** runs
+`[Identity, Global, Classification, Provider, Agent, Sandbox]`; **federal** adds
+`TeamLayer` for the full seven. Layers past the first are no-ops when their
+policy is unconfigured, and fail **closed** only once a configured policy meets
+missing state — so tightening a tier never silently weakens a lower one.
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **tool call → policy** flow, shared verbatim with
+the shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
+numbers drift; the **symbol name** is the durable anchor. Full text for each
+`D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcagent `tool_registry` → arctrust `policy` |
+| **What calls what** | `wrapped_execute` → validate args → `sign_call` → `PolicyPipeline.evaluate` (tier layers) → `agent:pre_tool` → `tool.execute` → `agent:post_tool` → audit |
+| **What passes — where / when / to** | a signed `ToolCall`(name, args, `agent_did`, session, classification, `origin`) → each layer **in order**; the first `DENY` short-circuits before the handler; the result → the caller; a `tool.executed` event → the WORM chain |
+| **Security / modularity reason** | first-DENY-wins plus fail-closed-on-exception is least privilege with no confused-deputy path; the engine lives in arctrust, so arcagent never re-implements authorization |
+| **`D-NNN` / ADR** | D-294, D-662, D-608, D-607, D-563 · ADR-017A |
+| **Code anchor** | `core/tool_registry.py:646,520,537` (`wrapped_execute`, `sign_call`, evaluate call) · `arctrust/policy.py:1186,1221` (`PolicyPipeline.evaluate`, first-DENY short-circuit) · layers `arctrust/policy.py:695,749,823,890,981,1010,1085` |
+
+**D-563 (tool-contract hashing / rug-pull defense)** is a named invariant — a
+signed tool that changes shape after approval should be re-gated — but its
+hashing site is **not yet anchored in code**: treat that clause as
+**needs confirmation** pending an arctrust/tool-registry trace.
+
+**Set it up:** the Track 1 counterpart is
+[Policy & tiers](../reference/tiers-and-presets.md) — dialing the tier and its
+active policy set. The run this call sits inside is
+[Anatomy of a turn](03-anatomy-of-a-turn.md).
+
 ---
 
 ## Memory Lifecycle
@@ -484,6 +550,57 @@ flowchart LR
     E --> F[Execute]:::exec
     F --> G[Result to LLM]:::term
 ```
+
+Execution itself crosses an **isolated JSON exec seam**: the checked code never
+runs in-process via `eval`, it is handed to an `ExecutorBackend` acquired
+**only** for an executable artifact (D-667), and only its JSON result returns to
+the model — as inert DATA, never as an instruction.
+
+```mermaid
+flowchart LR
+    classDef check fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef exec  fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef term  fill:#D6E6FF,stroke:#0073FE,color:#002550
+
+    Code["authored Python<br/>(passed AST + restricted builtins)"]:::exec --> Seam["isolated JSON exec seam<br/>deny-by-default, never eval"]:::check
+    Seam --> Sel{"select backend<br/>build_backend()"}:::check
+    Sel --> L["local"]:::exec
+    Sel --> Dk["docker (container)"]:::exec
+    Sel --> Vm["vm / Firecracker (microVM)"]:::exec
+    L --> R["JSON result → LLM as DATA"]:::term
+    Dk --> R
+    Vm --> R
+```
+
+Built-in backends (`local` / `docker` / `vm`) are trusted with no manifest;
+**every non-builtin backend requires a signed `allowed_backends` manifest at
+every tier** (the tier picks which issuers are trusted, not whether to verify),
+and setuptools entry-point discovery is permanently disabled — there is no safe
+way to verify an arbitrary installed package.
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **dynamic tool / sandbox exec** flow, shared
+verbatim with the shared *Decision Index* catalog
+(`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
+the durable anchor. Full text for each `D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcagent tools → arcrun / isolation |
+| **What calls what** | agent-authored Python → encoding / AST check → restricted builtins → isolated JSON exec seam → result to LLM; browser via the CDP backend |
+| **What passes — where / when / to** | the authored code → a sandbox (deny-by-default), never `eval`; only its JSON result → the model, as DATA |
+| **Security / modularity reason** | RCE containment (ASI05); an isolation backend is acquired **only** for executable artifacts; an explicit allowlist, not implicit trust |
+| **`D-NNN` / ADR** | D-659, D-667, D-608, D-601, D-145, D-175, D-176 · ADR-017C |
+| **Code anchor** | `arcagent/tools/_dynamic_loader.py` (authored-tool load) · `arcrun/dynamic/` (grammar, interpreter) · `arcrun/backends/` (`local.py`, `docker.py`, `vm.py`, `loader.py`, `_verifier.py`) |
+
+**Set it up:** the Track 1 counterpart is
+[Firecracker isolation](../runbooks/deploy/firecracker.md) — provisioning the
+microVM exec backend. The authorization that gates every such call is
+[A tool call through policy](#tool-execution-pipeline).
 
 ---
 

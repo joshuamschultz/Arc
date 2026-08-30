@@ -485,3 +485,46 @@ class TestObserveWorkspaceWiring:
         finally:
             await obs2.stop()
         assert body == "line one\nline two\n"
+
+
+# ---------------------------------------------------------------------------
+# POST .../promote — operator "promote to golden" (H-041)
+# ---------------------------------------------------------------------------
+
+
+class TestSkillPromoteGolden:
+    def _url(self) -> str:
+        return f"/api/agents/tester/skills/{_SKILL_NAME}/promote"
+
+    def test_viewer_is_403(self, app_with_skill: Any) -> None:
+        with TestClient(app_with_skill) as client:
+            resp = client.post(
+                self._url(),
+                json={"case_id": "c", "gate_type": "exact_match", "ideal_output": "v"},
+                headers=_viewer(),
+            )
+        assert resp.status_code == 403
+
+    def test_operator_emits_curated_golden_then_listed(self, app_with_skill: Any) -> None:
+        with TestClient(app_with_skill) as client:
+            resp = client.post(
+                self._url(),
+                json={"case_id": "inv", "gate_type": "exact_match", "ideal_output": "Acme $42"},
+                headers=_operator(),
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["gate_type"] == "exact_match"
+            listing = client.get(
+                f"/api/agents/tester/skills/{_SKILL_NAME}/evals", headers=_viewer()
+            )
+        provenances = {it["provenance"] for it in listing.json()["items"]}
+        assert "curated" in provenances
+
+    def test_unpinned_judge_rubric_is_400(self, app_with_skill: Any) -> None:
+        with TestClient(app_with_skill) as client:
+            resp = client.post(
+                self._url(),
+                json={"case_id": "q", "gate_type": "judge_rubric", "rubric": "be nice"},
+                headers=_operator(),
+            )
+        assert resp.status_code == 400

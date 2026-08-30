@@ -183,4 +183,53 @@ class LLMCodeMutator:
         return BundlePatch(files=files, summary=summary[:500])
 
 
-__all__ = ["LLMCodeMutator", "SkillReflector"]
+class LLMSkillMerger:
+    """Default consolidation :class:`~arcskill.improver.seams.Merger` (Curator consolidate).
+
+    Turns two overlapping skills into one merged ``SKILL.md`` via a single bounded LLM
+    call. Returns the merge as a :class:`BundlePatch` over ``{"SKILL.md": <merged text>}``
+    so it flows through the SAME sign + eval-gate + approval-ladder machinery as any
+    other skill mutation — the Curator never hot-swaps a merge in directly.
+    """
+
+    def __init__(self, llm: LLMInvoker, *, resolve: PromptResolve | None = None) -> None:
+        self._llm = llm
+        self._resolve = resolve
+
+    async def propose(
+        self, *, a: BundleView, b: BundleView, insight: str
+    ) -> BundlePatch | None:
+        prompt = load_prompt("merge_prompt", resolve=self._resolve).format(
+            skill_a_name=a.skill_name,
+            skill_a_text=a.text,
+            skill_b_name=b.skill_name,
+            skill_b_text=b.text,
+            reason=insight,
+        )
+        try:
+            response = await self._llm.invoke(prompt)
+        except (OSError, TimeoutError, ConnectionError, RuntimeError):
+            _logger.exception("LLM error during skill consolidation")
+            return None
+        return self._parse_patch(response)
+
+    def _parse_patch(self, response: str) -> BundlePatch | None:
+        if not response:
+            return None
+        match = _JSON_FENCE_RE.search(response)
+        raw = match.group(1) if match else response
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            _logger.warning("skill merger returned unparseable JSON")
+            return None
+        files_raw = payload.get("files") if isinstance(payload, dict) else None
+        merged = files_raw.get("SKILL.md") if isinstance(files_raw, dict) else None
+        if not isinstance(merged, str) or not merged.strip():
+            return None
+        content = sanitize_text(merged, max_length=100_000).encode("utf-8")
+        summary = str(payload.get("summary", "")) if isinstance(payload, dict) else ""
+        return BundlePatch(files={"SKILL.md": content}, summary=summary[:500])
+
+
+__all__ = ["LLMCodeMutator", "LLMSkillMerger", "SkillReflector"]

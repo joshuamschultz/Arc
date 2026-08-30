@@ -7,6 +7,7 @@ import { ToolsSkillsPage } from '@/pages/tools-skills'
 import { PolicyPage } from '@/pages/policy'
 import { SecurityPage } from '@/pages/security'
 import { KnowledgePage } from '@/pages/knowledge'
+import { SharedKnowledgePage } from '@/pages/shared-knowledge'
 import { ArcLlmPage } from '@/pages/arcllm'
 import { ArcRunPage } from '@/pages/arcrun'
 import { AgentDetailPage } from '@/pages/agent-detail'
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: 'policy', element: <PolicyPage /> },
       { path: 'security', element: <SecurityPage /> },
       { path: 'knowledge', element: <KnowledgePage /> },
+      { path: 'shared-knowledge', element: <SharedKnowledgePage /> },
 
       // Phase 4–6 — ArcLLM / ArcRun / agent detail.
       { path: 'arcllm', element: <ArcLlmPage /> },

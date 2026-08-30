@@ -190,6 +190,34 @@ class PromptWriteResponse(BaseModel):
     message: str
 
 
+class SemanticLayerResponse(BaseModel):
+    """Body of ``GET /api/connections/{instance}/semantic-layer`` (H-025).
+
+    ``content`` is the raw TOML — this file is hand-edited, so the browser
+    round-trips exact text rather than a reconstructed model. ``signed`` is
+    whether a verified ``.arcsig`` sidecar is currently backing it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: str
+    exists: bool
+    content: str
+    classification: str
+    signed: bool
+
+
+class SemanticLayerWriteResponse(BaseModel):
+    """Body of ``PUT /api/connections/{instance}/semantic-layer`` — a signed save."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: str
+    signer_did: str
+    sha256: str
+    message: str
+
+
 class PromptResetResponse(BaseModel):
     """Body of ``DELETE /api/agents/{id}/prompts/{package}/{name}`` — override removed."""
 
@@ -326,6 +354,12 @@ class HomeNeedsResponse(BaseModel):
     (H-001). ``total`` is the sum of every queue's ``count`` — never derived
     from the (possibly truncated) ``items`` lists, so "all caught up" means
     every queue really is empty, not just that none of them fit the preview.
+
+    ``waiting_on_human`` (H-001b) is the fourth queue: runs blocked because an
+    agent asked the operator a question over a channel and no human has replied.
+    It counts channel questions ONLY — a run paused on an approval or a workflow
+    gate is already in ``approvals`` / ``review_tasks`` and is excluded here by
+    structural provenance, so it is never double-counted.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -333,6 +367,7 @@ class HomeNeedsResponse(BaseModel):
     approvals: HomeNeedsQueue
     capabilities: HomeNeedsQueue
     review_tasks: HomeNeedsQueue
+    waiting_on_human: HomeNeedsQueue
     total: int
 
 
@@ -440,12 +475,13 @@ class ToolsResponse(BaseModel):
 
 
 class SkillEvalCase(BaseModel):
-    """One golden eval case: pytest nodeid + machine/human provenance."""
+    """One golden eval case: pytest nodeid + provenance + gate type (H-041)."""
 
     model_config = ConfigDict(extra="forbid")
 
     nodeid: str
-    provenance: str  # "machine" | "human"
+    provenance: str  # "machine" | "human" | "curated"
+    gate_type: str = "exact_match"  # exact_match | assertions | judge_rubric
 
 
 class SkillEvalCasesResponse(BaseModel):
@@ -454,6 +490,17 @@ class SkillEvalCasesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[SkillEvalCase]
+
+
+class SkillPromoteGoldenResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/skills/{skill_name}/promote`` (H-041)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str  # "emitted"
+    skill_name: str
+    nodeid: str
+    gate_type: str
 
 
 class SkillVersionsResponse(BaseModel):

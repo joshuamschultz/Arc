@@ -46,17 +46,19 @@ def _call_status(ctx: Any) -> tuple[str, str | None]:
     return "ok", None
 
 
-def _observe_accepts_args(adapter: Any) -> bool:
-    """Whether the adapter's ``observe`` takes the optional ``args`` kwarg (REQ-117).
+def _observe_accepts(adapter: Any, name: str) -> bool:
+    """Whether the adapter's ``observe`` takes the optional ``name`` kwarg (REQ-117 / H-041).
 
-    A BYO adapter written against the pre-args protocol must keep working: args are
-    forwarded only to adapters that declare the parameter (or accept ``**kwargs``).
+    A BYO adapter written against an older protocol must keep working: an optional kwarg
+    (``args``, ``llm_trace_id``) is forwarded only to adapters that declare the parameter
+    (or accept ``**kwargs``). Every unknown kwarg is withheld rather than risking a
+    ``TypeError`` on an adapter that never learned it.
     """
     try:
         params = inspect.signature(adapter.observe).parameters
     except (TypeError, ValueError):
         return False
-    return "args" in params or any(
+    return name in params or any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
 
@@ -85,11 +87,15 @@ async def skills_post_tool(ctx: Any) -> None:
         status, error_type = _call_status(ctx)
         if status == "error":
             st.error_counts[st.active_skill] = st.error_counts.get(st.active_skill, 0) + 1
-        # Arg forwarding (REQ-117): arcagent only forwards; the scrub/persist decision
-        # lives entirely adapter-side (the arcskill TraceStore).
-        extra: dict[str, Any] = (
-            {"args": ctx.data.get("args") or None} if _observe_accepts_args(st.adapter) else {}
-        )
+        # Optional forwarding (REQ-117 / H-041): arcagent only forwards; the scrub/persist
+        # decision lives entirely adapter-side (the arcskill TraceStore). ``llm_trace_id`` is
+        # the current turn's arcllm trace id (stashed by ``skills_llm_call_complete``) — the
+        # producer that lets the read-time curation join resolve the real payload later.
+        extra: dict[str, Any] = {}
+        if _observe_accepts(st.adapter, "args"):
+            extra["args"] = ctx.data.get("args") or None
+        if st.current_llm_trace_id and _observe_accepts(st.adapter, "llm_trace_id"):
+            extra["llm_trace_id"] = st.current_llm_trace_id
         await st.adapter.observe(
             skill_name=st.active_skill,
             tool_name=tool,
@@ -117,6 +123,29 @@ async def skills_post_plan(ctx: Any) -> None:
     await st.adapter.on_turn_end(turn=turn, outcome=outcome)
     st.active_skill = None
     st.error_counts.clear()
+    # Turn-scoped: drop the linked trace id so the next turn's tools never inherit a stale
+    # one — the next LLM call restashes a fresh id before any tool runs (H-041).
+    st.current_llm_trace_id = None
+
+
+@hook(event="llm:call_complete", priority=200)
+async def skills_llm_call_complete(ctx: Any) -> None:
+    """Stash the current turn's arcllm trace id so this turn's tool observations can link it.
+
+    The arcllm bridge (``arcagent.core.model_manager``) emits ``llm:call_complete`` from every
+    ``TraceRecord``, carrying the ``trace_id`` arcllm PERSISTED the request/response payload
+    under. It fires when the invoke that produced the turn's tool calls completes — before
+    those tools run and their ``agent:post_tool`` events fire — so ``skills_post_tool`` reads a
+    live id and forwards it as ``observe(llm_trace_id=...)``. That is the producer half of the
+    read-time curation join (H-041): the span records the id; the join resolves the payload
+    from arcllm's store at read time, never copying a body into a second store.
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    trace_id = ctx.data.get("trace_id")
+    if trace_id:
+        st.current_llm_trace_id = str(trace_id)
 
 
 async def _classify_outcome(st: _runtime._State, ctx: Any) -> str:
@@ -199,6 +228,7 @@ def _poll_interval() -> float:
 
 
 __all__ = [
+    "skills_llm_call_complete",
     "skills_post_plan",
     "skills_post_tool",
     "skills_pre_respond",

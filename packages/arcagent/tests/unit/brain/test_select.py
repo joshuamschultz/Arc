@@ -59,11 +59,16 @@ def test_named_backend_resolves_via_build_brain(tmp_path: Path) -> None:
     package and calls its ``build_brain``; arcmemory is installed here, so a real Brain
     (never a NullBrain) comes back, with no arcmemory symbol named in arcagent source."""
     import arcmemory
+    from arctrust.identity import AgentIdentity
 
+    # arcmemory's build_brain enforces cross-agent isolation (H-047): the identity
+    # must match agent_did and own the fresh workspace, as ArcAgent threads it.
+    identity = AgentIdentity.generate(org="default", agent_type="executor")
     brain = select_brain(
         "arcmemory",
         workspace=tmp_path,
-        agent_did="did:arc:a",
+        agent_did=identity.did,
+        identity=identity,
         tier="personal",
         backend_config={"embed_backend": "none"},
     )

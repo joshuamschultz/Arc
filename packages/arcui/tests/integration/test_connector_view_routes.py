@@ -265,7 +265,7 @@ class TestDatastore:
             )
         assert resp.status_code == 200
         slugs = {item["slug"] for item in resp.json()["items"]}
-        assert "db-table-invoices" in slugs
+        assert f"db-table-{_SOURCE_ID}-invoices" in slugs
 
     def test_datastore_query_returns_the_reopened_row(self, app_with_connector_data: Any) -> None:
         with TestClient(app_with_connector_data) as client:

@@ -16,6 +16,7 @@ regardless of registry state.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -149,6 +150,75 @@ def _did_getter(agent: Any) -> Callable[[], str]:
     return lambda: str(agent.did)
 
 
+def _promotable_document_types() -> frozenset[str] | None:
+    """Operator allowlist of promotable document types, or None for no restriction.
+
+    ``ARC_SHARED_KNOWLEDGE_TYPES`` is a comma-separated list (e.g. ``procedure,policy``)
+    that lets the operator control WHAT gets shared to the fleet rather than every
+    personal note becoming fleet-wide. Unset/empty → any type may be promoted
+    (personal zero-config).
+    """
+    raw = os.environ.get("ARC_SHARED_KNOWLEDGE_TYPES", "").strip()
+    if not raw:
+        return None
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+async def install_fleet_shared_knowledge(
+    team_root: Path, started: list[tuple[Any, Path, str]]
+) -> int:
+    """Attach the signed fleet shared-knowledge tools to every started team agent (H-027).
+
+    Makes ``shared_knowledge_promote`` (and retrieve/search/revoke) LIVE: an agent
+    can promote one of its OWN curated personal documents into the operator-scoped,
+    signed fleet collection under ``<team_root>/shared/knowledge``. The service owns
+    every gate (membership, personal scope, owner==caller, no-write-down, Ed25519
+    signature, TOFU pin) plus the operator promotion-type filter; each promotion is
+    audited through the promoting agent's own telemetry sink (never a silent side
+    channel).
+
+    Best-effort: arcmemory absent, or one agent's wiring failing, degrades to a
+    warning and never blocks the fleet.
+    """
+    if not started:
+        return 0
+    try:
+        from arcmemory.adapters import PersonalKnowledgeAdapter
+    except ImportError:
+        return 0
+    import arcagent
+    from arcteam.shared_knowledge import (
+        ComposedSharedKnowledgeAgent,
+        FleetSharedKnowledgeComposition,
+        FleetSharedKnowledgeService,
+    )
+    from arcteam.team import Team
+
+    dids = [agent.did for agent, _workspace, _clearance in started]
+    team = Team(
+        id="team:fleet",
+        name="fleet",
+        members=dids,
+        default_channel="channel://fleet",
+    )
+    service = FleetSharedKnowledgeService.for_team_root(
+        team_root, promotable_document_types=_promotable_document_types()
+    )
+    composition = FleetSharedKnowledgeComposition(team, service)
+    members = [
+        ComposedSharedKnowledgeAgent(
+            agent,
+            PersonalKnowledgeAdapter(workspace, agent.did),
+            arcagent.KnowledgeAccess(agent.did, clearance),
+            agent.extension_signer,
+            agent.audit_sink,
+        )
+        for agent, workspace, clearance in started
+    ]
+    await composition.start(members)
+    return len(members)
+
+
 async def serve_fleet_agents(
     team_root: Path,
     fleet: Any,
@@ -180,6 +250,7 @@ async def serve_fleet_agents(
 
     agent_dirs = discover_agent_dirs(team_root)
     started = 0
+    knowledge_members: list[tuple[Any, Path, str]] = []
     for agent_dir in agent_dirs:
         try:
             agent, _config, _config_path = _load_arcagent(agent_dir)
@@ -198,17 +269,34 @@ async def serve_fleet_agents(
         except Exception as exc:  # reason: best-effort — one bad agent never blocks the fleet
             _write(f"  warn: could not start agent {agent_dir.name}: {exc}")
             continue
+        # Collect the shared-knowledge inputs separately so a missing attribute
+        # never un-starts an already-started agent — shared knowledge is additive.
+        try:
+            knowledge_members.append((agent, agent.workspace, _config.security.clearance))
+        except Exception:  # reason: additive — an ineligible agent just skips promotion
+            _logger.debug("fleet: %s not eligible for shared knowledge", agent.did, exc_info=True)
         if warm is not None:
             try:
                 await warm(agent.did, agent)
             except Exception:  # reason: LIVE-status is cosmetic; consuming already works
                 _logger.warning("fleet: could not warm %s for LIVE", agent.did, exc_info=True)
+
+    # Wire the signed fleet shared-knowledge surface across the started members so
+    # shared_knowledge_promote is actually LIVE. Best-effort — a wiring failure
+    # must never leave the messaging fleet dark (the tools it just started).
+    try:
+        shared = await install_fleet_shared_knowledge(team_root, knowledge_members)
+        if shared:
+            _write(f"  Fleet: shared-knowledge promotion active for {shared} agent(s).")
+    except Exception:  # reason: fail-open — shared knowledge is additive to messaging
+        _logger.warning("fleet: could not install shared knowledge", exc_info=True)
     return started
 
 
 __all__ = [
     "bootstrap_infra",
     "discover_agent_dirs",
+    "install_fleet_shared_knowledge",
     "nats_url",
     "register_folder_agents",
     "serve_fleet_agents",

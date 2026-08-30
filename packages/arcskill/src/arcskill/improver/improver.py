@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,17 +31,26 @@ from arcskill.improver.engine import SkillOptimizer
 from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.guardrails import ChangeBound, Guardrails
-from arcskill.improver.lifecycle import SkillLifecycle
+from arcskill.improver.lifecycle import ConsolidationCandidate, SkillLifecycle
 from arcskill.improver.models import (
     BundlePatch,
     BundleView,
+    Candidate,
+    EvalCase,
     LifecycleEvent,
     MutationEvent,
     SkillTrace,
 )
-from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
+from arcskill.improver.mutate import LLMCodeMutator, LLMSkillMerger, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
-from arcskill.improver.seams import ApprovalProvider, EvalRunner, LLMInvoker, Mutator, Signer
+from arcskill.improver.seams import (
+    ApprovalProvider,
+    EvalRunner,
+    LLMInvoker,
+    Merger,
+    Mutator,
+    Signer,
+)
 from arcskill.improver.suitegen import SuiteGenerator
 from arcskill.improver.trace_store import TraceStore
 
@@ -96,6 +106,7 @@ class ArcSkillImprover:
         signer: Signer | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
+        merger: Merger | None = None,
         suite_generator: SuiteTrigger | None = None,
         approval_provider: ApprovalProvider | None = None,
         audit_sink: Any = None,
@@ -131,6 +142,11 @@ class ArcSkillImprover:
         # LLM seam is present; provider-free, so tests inject a deterministic Mutator.
         self._mutator: Mutator | None = mutator or (
             LLMCodeMutator(llm, resolve=prompt_resolve) if llm else None
+        )
+        # Consolidation merger (Curator consolidate): default to the arcllm-backed
+        # merger when an LLM seam is present — same default-wiring shape as the mutator.
+        self._merger: Merger | None = merger or (
+            LLMSkillMerger(llm, resolve=prompt_resolve) if llm else None
         )
         # Suite trigger (SPEC-054 COMP-004): default to the production adapter over the
         # concrete SuiteGenerator when an LLM seam is present — mirrors the mutator default.
@@ -168,6 +184,7 @@ class ArcSkillImprover:
             self._config.lifecycle,
             load_traces=self._store.load_traces,
             generation_of=self._guardrails.get_generation,
+            text_of=self._read_skill_text,
         )
         self._tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -181,16 +198,17 @@ class ArcSkillImprover:
         return self._tier
 
     def retired_skills(self) -> frozenset[str]:
-        """Names of skills currently retired (disabled) — the offering filter (REQ-043).
+        """Names of skills currently retired OR merged-away — the offering filter (REQ-043).
 
-        A retired skill must not be advertised to or loaded by the agent loop. Read from
-        the candidate-store manifest so it survives restarts; revive clears it (lineage
-        retained, D-8).
+        Neither a retired nor a merged skill should be advertised to or loaded by the
+        agent loop (a merged skill's capability lives on in its survivor). Read from the
+        candidate-store manifest so it survives restarts; revive clears either state
+        (lineage retained, D-8).
         """
         return frozenset(
             name
             for name in self._candidate_store.list_skills()
-            if self._candidate_store.lifecycle_state(name) == "retired"
+            if self._candidate_store.lifecycle_state(name) in ("retired", "merged")
         )
 
     # -- SkillAdapter surface ------------------------------------------------
@@ -204,13 +222,17 @@ class ArcSkillImprover:
         error_type: str | None,
         session_id: str | None = None,
         args: dict[str, Any] | None = None,
+        llm_trace_id: str | None = None,
     ) -> None:
+        # ``llm_trace_id`` (H-041) records the arcllm request/trace id this tool step
+        # belongs to — span METADATA the read-time curation join later resolves.
         self._store.observe(
             skill_name=skill_name,
             tool_name=tool_name,
             status=status,
             error_type=error_type,
             args=args,
+            llm_trace_id=llm_trace_id,
         )
 
     async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
@@ -254,10 +276,128 @@ class ArcSkillImprover:
         """Operator-initiated revive of a retired skill (REQ-044); gated + audited.
 
         Federal requires operator approval even for revive (D-10); fail-closed if unwired.
+        Restores either a retired or a merged skill (both use the same lineage).
         """
         if not await self._authorize("skill.lifecycle.revive", "revive", skill_name, "revive"):
             return
         self._emit_lifecycle_audit(self._lifecycle.revive(skill_name))
+
+    async def review_consolidation(self, *, turn: int) -> None:
+        """Curator sweep: propose + gate consolidation of overlapping skills.
+
+        A merge candidate is proposed by the injected :class:`Merger`, then checked
+        through the SAME :class:`EvalGate` against BOTH skills' own golden suites
+        (parity, not improvement — the merge must not regress either skill's behavior)
+        and the SAME operator-approval ladder as any other mutation — never a hot-swap.
+        A no-op when no ``Merger``/``skill_path`` seam is wired.
+        """
+        if self._merger is None or self._skill_path is None:
+            return
+        for candidate in self._lifecycle.consolidation_candidates():
+            await self._propose_merge(candidate)
+
+    async def _propose_merge(self, candidate: ConsolidationCandidate) -> None:
+        if self._merger is None or self._skill_path is None:  # narrow for the type checker
+            return
+        path_a = self._skill_path(candidate.skill_a)
+        path_b = self._skill_path(candidate.skill_b)
+        if path_a is None or path_b is None:
+            return
+        view_a = build_bundle_view(candidate.skill_a, path_a)
+        view_b = build_bundle_view(candidate.skill_b, path_b)
+        patch = await self._merger.propose(a=view_a, b=view_b, insight=candidate.reason)
+        merged_bytes = patch.files.get("SKILL.md") if patch is not None else None
+        if not merged_bytes:
+            return
+        merged_text = merged_bytes.decode("utf-8")
+        gate_ok = await self._merge_gate_passes(
+            candidate, view_a, view_b, merged_text, path_a, path_b
+        )
+        if not gate_ok:
+            return
+        detail = f"merge {candidate.skill_b} into {candidate.skill_a}: {candidate.reason}"
+        if not await self._authorize(
+            "skill.lifecycle.consolidate", "consolidate", candidate.skill_a, detail
+        ):
+            return
+        self._apply_merge(candidate, path_a, merged_text, patch.summary if patch else "")
+
+    async def _merge_gate_passes(
+        self,
+        candidate: ConsolidationCandidate,
+        view_a: BundleView,
+        view_b: BundleView,
+        merged_text: str,
+        path_a: Path,
+        path_b: Path,
+    ) -> bool:
+        """Both originals' golden suites must accept the merged text (parity, not
+        improvement — ``require_improvement=False``): a merge preserves behavior, it
+        does not need to fix a failing case to be safe to apply."""
+        gate = EvalGate(self._eval_runner, min_golden_cases=self._config.min_golden_cases)
+        for name, before, skill_dir in (
+            (candidate.skill_a, view_a, path_a.parent),
+            (candidate.skill_b, view_b, path_b.parent),
+        ):
+            decision = await gate.decide(
+                before=before,
+                after=BundleView(name, merged_text, skill_dir),
+                cases=load_suite(skill_dir),
+                tier=self._tier,
+                kind="merge",
+                require_improvement=False,
+            )
+            if not decision.accepted:
+                _logger.info(
+                    "skill consolidation %s<-%s rejected on %s's suite: %s",
+                    candidate.skill_a,
+                    candidate.skill_b,
+                    name,
+                    decision.reason,
+                )
+                return False
+        return True
+
+    def _apply_merge(
+        self, candidate: ConsolidationCandidate, path_a: Path, merged_text: str, summary: str
+    ) -> None:
+        """Write the merged text to the survivor, mark the absorbed skill merged, audit."""
+        apply_bundle_patch(
+            path_a.parent,
+            BundlePatch(files={"SKILL.md": merged_text.encode("utf-8")}, summary=summary),
+            signer=self._signer,
+        )
+        prior_active = self._candidate_store.load_manifest(candidate.skill_a).get(
+            "active_candidate_id"
+        )
+        generation = self._guardrails.get_generation(candidate.skill_a) + 1
+        new_candidate = Candidate(
+            id=uuid.uuid4().hex,
+            text=merged_text,
+            parent_id=prior_active if isinstance(prior_active, str) else None,
+            generation=generation,
+        )
+        # Registered as a normal candidate version (SAME timeline/diff/rollback surface
+        # as a prose or code mutation) — an operator inspects and can roll it back
+        # exactly like any other applied change.
+        self._candidate_store.save(candidate.skill_a, new_candidate, active=True, frontier=True)
+        self._guardrails.set_generation(candidate.skill_a, generation)
+        merge_event = self._lifecycle.merge(
+            candidate.skill_b, into=candidate.skill_a, reason=candidate.reason
+        )
+        self._emit_lifecycle_audit(merge_event)
+        self._emit_audit(
+            candidate.skill_a,
+            "skill.mutation.applied",
+            "applied",
+            extra={
+                "merged_from": candidate.skill_b,
+                "candidate_id": new_candidate.id,
+                "summary": summary,
+            },
+        )
+        if self._reload is not None:
+            self._reload()
 
     def rollback(self, skill_name: str, candidate_id: str) -> None:
         """Revert to a prior candidate, cool off, and operator-audit the reversal (REQ-052)."""
@@ -376,9 +516,18 @@ class ArcSkillImprover:
             )
             return
 
-        # Operator-approval gate (D-10): federal approves every mutation. Fail-closed if
-        # required but unwired — a prose candidate never applies unapproved at federal.
-        if not await self._authorize("skill.mutation", "prose", skill_name, decision.reason):
+        # Operator-approval gate (D-10) + judge-gate guard (H-041c): federal approves every
+        # mutation; and at ANY tier a suite carrying a judge_rubric case forces the review
+        # route (the deterministic sandbox can't score that case — it waved through the
+        # strict-improvement gate unevaluated). Both rules live in _authorize; here we just
+        # hand it the suite. Fail-closed if approval is required but unwired.
+        if not await self._authorize(
+            "skill.mutation",
+            "prose",
+            skill_name,
+            decision.reason,
+            cases=load_suite(skill_path.parent),
+        ):
             return
 
         engine.apply_result(
@@ -450,9 +599,14 @@ class ArcSkillImprover:
             _logger.info("skill %s code patch rejected: %s", skill_name, decision.reason)
             self._record_rejection(skill_name, patch, decision.reason)
             return
-        # Operator-approval gate (D-10): enterprise + federal approve code mutations.
+        # Operator-approval gate (D-10) + judge-gate guard (H-041c): enterprise + federal
+        # approve code mutations; and at ANY tier a judge_rubric case in the suite forces the
+        # review route (the sandbox can't score it — it waved through the gate unevaluated).
+        # Both rules live in _authorize; here we just hand it the same suite the gate saw.
         # Fail-closed if required but unwired — never apply model-authored code unapproved.
-        if not await self._authorize("skill.mutation", "code", skill_name, patch.summary):
+        if not await self._authorize(
+            "skill.mutation", "code", skill_name, patch.summary, cases=cases
+        ):
             return
         apply_bundle_patch(skill_dir, patch, signer=self._signer)
         self._audit_code_mutation(skill_name, current, patch, [t.trace_id for t in traces])
@@ -487,23 +641,71 @@ class ArcSkillImprover:
     def _approval_required(self, kind: str) -> bool:
         """Whether the tier ladder (D-10 / PRD §7) requires operator approval for ``kind``.
 
-        federal → every mutation + retire/revive; enterprise → code mutations only;
-        personal → never (auto + audit). ``kind`` ∈ {code, prose, retire, revive}.
+        federal → every mutation + retire/revive/consolidate; enterprise → code
+        mutations + consolidate (a merge touches two skills' applied bodies — the same
+        integrity class as code); personal → never (auto + audit).
+        ``kind`` ∈ {code, prose, retire, revive, consolidate}.
         """
         if self._tier == "federal":
             return True
         if self._tier == "enterprise":
-            return kind == "code"
+            return kind in ("code", "consolidate")
         return False
 
-    async def _authorize(self, action: str, kind: str, skill_name: str, detail: str) -> bool:
+    @staticmethod
+    def _judge_review_reason(cases: list[EvalCase]) -> str | None:
+        """H-041c: the HONEST reason a suite must route to review, or ``None`` if it needn't.
+
+        A ``judge_rubric`` case needs a semantic LLM verdict the deterministic sandbox
+        :class:`EvalRunner` cannot produce — so it passes unchanged BEFORE and AFTER a
+        candidate, unable to cause OR prevent auto-promotion. A suite with any judge case
+        therefore must NOT auto-promote ("never automatic-AND-gated at once"): the candidate
+        routes to operator review carrying WHY — the count + identity of the cases that
+        forced it, and the command to compute their real verdicts. The judge is NOT run
+        here (no LLM at auto-promote time) — no verdict is fabricated; the reason states the
+        cases need judgment the auto gate cannot give.
+        """
+        judged = sorted(c.id for c in cases if c.gate_type == "judge_rubric")
+        if not judged:
+            return None
+        return (
+            f"{len(judged)} judge_rubric case(s) require semantic judgment the auto gate "
+            f"cannot evaluate ({', '.join(judged)}) — run `arc skill evals judge <candidate>` "
+            "for the real pinned-judge verdicts"
+        )
+
+    async def _authorize(
+        self,
+        action: str,
+        kind: str,
+        skill_name: str,
+        detail: str,
+        *,
+        cases: list[EvalCase] | None = None,
+    ) -> bool:
         """Gate a consequential transition through the operator-approval ladder (D-10).
 
         Returns ``True`` to proceed. **Fail-closed**: when approval is required but no
         approver is wired, the action is blocked. Every decision that reaches an approver
         (or is blocked for lack of one) is an operator-signed audit event.
+
+        ``cases`` (H-041c, mutation promote only) is the candidate's golden suite: if it
+        carries any ``judge_rubric`` case, the operator-review route is FORCED regardless of
+        the tier ladder, and the honest reason is folded into ``detail`` so the pending-review
+        outcome states WHY and how to get the real verdicts. One place, single-sourced — the
+        promote callers only supply their suite.
         """
-        if not self._approval_required(kind):
+        review_reason = self._judge_review_reason(cases) if cases is not None else None
+        force_review = review_reason is not None
+        if review_reason is not None:
+            detail = f"{review_reason}; {detail}" if detail else review_reason
+            _logger.info(
+                "skill %s: %s — routing candidate to operator review (auto-promotion "
+                "disallowed)",
+                skill_name,
+                review_reason,
+            )
+        if not force_review and not self._approval_required(kind):
             return True
         if self._approval_provider is None:
             self._emit_audit(
@@ -585,10 +787,27 @@ class ArcSkillImprover:
 
     def _emit_lifecycle_audit(self, event: LifecycleEvent) -> None:
         """Emit a tier-stamped lifecycle-transition audit event (operator-signed WORM)."""
-        action = (
-            "skill.lifecycle.revived" if event.to_state == "active" else "skill.lifecycle.retired"
-        )
+        action = {
+            "active": "skill.lifecycle.revived",
+            "merged": "skill.lifecycle.merged",
+        }.get(event.to_state, "skill.lifecycle.retired")
         self._emit_audit(event.skill_name, action, event.to_state, extra=event.to_dict())
+
+    def _read_skill_text(self, skill_name: str) -> str | None:
+        """Current SKILL.md text for ``skill_name``, or ``None`` when unresolvable.
+
+        The Curator consolidate signal (:meth:`SkillLifecycle.consolidation_candidates`)
+        reads live text, not a stored candidate — it compares what's actually loaded.
+        """
+        if self._skill_path is None:
+            return None
+        path = self._skill_path(skill_name)
+        if path is None:
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
 
     def _skill_override(self, skill_name: str) -> ChangeBoundConfig | None:
         """Read a per-skill change-bound override from the skill's frontmatter, if any."""
@@ -633,6 +852,73 @@ class ArcSkillImprover:
             return []
         tags = fm.get("tags", [])
         return list(tags) if isinstance(tags, list) else []
+
+    # -- operator-facing golden curation (H-041) -----------------------------
+    #
+    # ONE curation operation, wired here so the CLI (`arc skill evals promote`) and
+    # arcui ("promote to golden") both drive the SAME emit path (locked design §6).
+    # Imports are lazy so this block stays independent of the module's import head.
+
+    def trace_join(self, payload_source: Any) -> Any:
+        """Build the read-time trace join over this improver's spans (H-041).
+
+        ``payload_source`` is an ``async (trace_id) -> record|None`` resolver bound to
+        arcllm's ``JSONLTraceStore.get`` — the payloads are joined at read time, never
+        copied into the improver's store (locked design §3).
+        """
+        from arcskill.improver.trace_join import TraceJoin
+
+        return TraceJoin(self._store, payload_source)
+
+    async def curatable_traces(self, skill_name: str, payload_source: Any) -> list[Any]:
+        """Every span for ``skill_name`` joined to its arcllm payloads (or declared
+        unavailable, with a reason — never a silent empty)."""
+        from arcskill.improver.trace_join import TraceJoin
+
+        join = TraceJoin(self._store, payload_source)
+        return list(await join.curatable(skill_name))
+
+    def curate_golden(self, case: Any, *, redactor: Any = None) -> Any:
+        """Emit ``case`` as a signed + redacted golden under the skill's ``evals/``.
+
+        Fail-closed: a ``judge_rubric`` case without judge id + rubric sha256 raises
+        before anything is written (locked design §2).
+        """
+        from arcskill.improver.curation import emit_golden_case
+
+        if self._skill_path is None:
+            raise RuntimeError("no skill_path resolver wired; cannot locate the skill's evals/")
+        path = self._skill_path(case.skill_name)
+        if path is None:
+            raise RuntimeError(f"no such skill on disk: {case.skill_name}")
+        return emit_golden_case(
+            path.parent,
+            case,
+            signer=self._signer,
+            redactor=redactor,
+            audit_sink=self._audit_sink,
+            actor_did=self._agent_did,
+            tier=self._tier,
+        )
+
+    async def evaluate_curated(
+        self, skill_name: str, candidate_output: str, *, judge: Any = None
+    ) -> list[Any]:
+        """Compare a candidate output against every curated case PER its gate type."""
+        from arcskill.improver.curation import load_curated_cases
+        from arcskill.improver.goldencase import evaluate_curated_case
+
+        if self._skill_path is None:
+            return []
+        path = self._skill_path(skill_name)
+        if path is None:
+            return []
+        verdicts = []
+        for case in load_curated_cases(path.parent):
+            verdicts.append(
+                await evaluate_curated_case(case, candidate_output, judge=judge or self._llm)
+            )
+        return verdicts
 
     async def aclose(self) -> None:
         """Await in-flight improvement tasks (graceful shutdown)."""

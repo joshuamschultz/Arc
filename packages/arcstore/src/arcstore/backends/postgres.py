@@ -201,7 +201,7 @@ class PostgresBackend(SourceSyncBackend):
     async def source_sync_get_state(self, agent_did: str, source_id: str) -> dict[str, Any]:
         async with self._require_pool().acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, generation, error_code "  # noqa: E501
+                "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, generation, error_code, last_synced_at "  # noqa: E501
                 "FROM connected_source_sync WHERE agent_did=$1 AND source_id=$2",
                 agent_did,
                 source_id,
@@ -296,7 +296,9 @@ class PostgresBackend(SourceSyncBackend):
         self, agent_did: str, source_id: str, status: str, **kwargs: Any
     ) -> bool:
         result = await self._require_pool().execute(
-            "UPDATE connected_source_sync SET status=$3, error_code=$4, updated_at=now() WHERE agent_did=$1 AND source_id=$2 AND lease_owner=$5 AND fencing_token=$6 AND lease_expires_at > now()",  # noqa: E501
+            "UPDATE connected_source_sync SET status=$3, error_code=$4, updated_at=now(), "
+            "last_synced_at=CASE WHEN $3='complete' THEN now() ELSE last_synced_at END "
+            "WHERE agent_did=$1 AND source_id=$2 AND lease_owner=$5 AND fencing_token=$6 AND lease_expires_at > now()",  # noqa: E501
             agent_did,
             source_id,
             status,
@@ -334,7 +336,7 @@ class PostgresBackend(SourceSyncBackend):
             async with connection.transaction():
                 result = await connection.execute(
                     "UPDATE connected_source_sync SET cursor=NULL, status='idle', pages=0, "
-                    "bytes_processed=0, error_code=NULL, updated_at=now() "
+                    "bytes_processed=0, error_code=NULL, last_synced_at=NULL, updated_at=now() "
                     "WHERE agent_did=$1 AND source_id=$2 AND "
                     "(lease_expires_at IS NULL OR lease_expires_at <= now())",
                     agent_did,
@@ -370,7 +372,7 @@ class PostgresBackend(SourceSyncBackend):
                     "INSERT INTO connected_source_sync(agent_did, source_id, generation) "
                     "VALUES($1, $2, 2) ON CONFLICT(agent_did, source_id) DO UPDATE SET "
                     "cursor=NULL, status='idle', pages=0, bytes_processed=0, error_code=NULL, "
-                    "lease_owner=NULL, lease_expires_at=NULL, "
+                    "last_synced_at=NULL, lease_owner=NULL, lease_expires_at=NULL, "
                     "generation=connected_source_sync.generation+1, "
                     "updated_at=now()",
                     agent_did,

@@ -4,6 +4,7 @@ import {
   Database,
   FileText,
   FolderTree,
+  Library,
   Pause,
   Play,
   Plug,
@@ -39,9 +40,13 @@ import {
   useBlobFolders,
   useConnectedSourceAction,
   useConnectedSources,
+  useConnectionChunks,
+  useConnectionChunkSearch,
+  useConnectionTables,
   useDatastoreQuery,
   useDatastoreTables,
   useDocuments,
+  useSourceIndex,
   useIndexHealth,
   useProvenance,
   useMappingProposal,
@@ -53,10 +58,18 @@ import {
   useStageSourceMapping,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import type { ConnectedSourceItem, EntityRecord } from '@/lib/types'
+import type {
+  ChunkPage,
+  ChunkSearchMode,
+  ChunkSearchResponse,
+  ConnectedSourceItem,
+  EntityRecord,
+} from '@/lib/types'
 
 const SECTIONS = [
   { value: 'sources', label: 'Sources' },
+  { value: 'explorer', label: 'Explorer' },
+  { value: 'repository', label: 'Repository' },
   { value: 'documents', label: 'Documents' },
   { value: 'datastore', label: 'Datastore' },
   { value: 'blob', label: 'Blob folders' },
@@ -419,6 +432,7 @@ function SourceDetail({
               <dt className="text-muted-foreground">Status</dt><dd className="font-medium">{source.status}</dd>
               <dt className="text-muted-foreground">Batches read</dt><dd>{source.pages}</dd>
               <dt className="text-muted-foreground">Downloaded</dt><dd>{fmtBytes(source.bytes_processed)}</dd>
+              <dt className="text-muted-foreground">Documents indexed</dt><dd>{source.documents_indexed}</dd>
               <dt className="text-muted-foreground">Last sync</dt><dd>{source.last_synced_at ?? 'Never'}</dd>
               {source.error_code && <><dt className="text-muted-foreground">Error</dt><dd className="text-destructive">{source.error_code}</dd></>}
               {source.detail && <><dt className="text-muted-foreground">Detail</dt><dd>{source.detail}</dd></>}
@@ -507,6 +521,95 @@ function SourcesSection({
   )
 }
 
+// --- Repository index -------------------------------------------------------
+
+/** The per-source OKF `index.md` — "what's in this repo and what's it for"
+ *  (H-026). The server verifies the index fail-closed and only sends a body
+ *  when it is trusted; an unverified index shows a tamper banner, never its
+ *  contents. Operator-gated + audited server-side. */
+function RepoIndexSection({ agentId }: { agentId: string }) {
+  const [source, setSource] = useState('')
+  const index = useSourceIndex(agentId, source)
+  const ready = !!source
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+      </div>
+      {!ready ? (
+        <EmptyState
+          icon={<Library className="size-5" />}
+          title="Pick a source"
+          description="Choose a connected document source to see what its repository holds and what it is for."
+        />
+      ) : (
+        <QueryState
+          query={index}
+          isEmpty={(d) => !d.present}
+          empty={
+            <EmptyState
+              title="No repository index yet"
+              description="This source has not written an index. Run a sync from the Sources tab."
+            />
+          }
+        >
+          {(data) =>
+            !data.verified ? (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+                <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-foreground">
+                    Index could not be verified —{' '}
+                    {data.guidance ?? 'Re-sync this source to restore its repository index.'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    The repository index failed verification and is not shown, so a local
+                    edit can never be read as trusted knowledge.
+                    {data.error ? ` Reason: ${data.error}.` : ''}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip>
+                    {data.document_count} document{data.document_count === 1 ? '' : 's'}
+                  </Chip>
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <ShieldCheck className="size-3.5 text-emerald-500" />
+                    verified
+                  </span>
+                </div>
+                {data.entries.length === 0 ? (
+                  <EmptyState title="Repository is empty" description="No documents are indexed for this source yet." />
+                ) : (
+                  <ul className="space-y-2">
+                    {data.entries.map((entry) => (
+                      <li
+                        key={entry.path}
+                        className="space-y-1 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">{entry.title}</span>
+                          <MonoChip>{entry.path}</MonoChip>
+                        </div>
+                        {entry.summary && (
+                          <p className="text-sm text-muted-foreground">{entry.summary}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          }
+        </QueryState>
+      )}
+    </div>
+  )
+}
+
 // --- Documents --------------------------------------------------------------
 
 function DocumentsSection({ agentId }: { agentId: string }) {
@@ -580,6 +683,126 @@ function DocumentsSection({ agentId }: { agentId: string }) {
           )}
         </QueryState>
       )}
+    </div>
+  )
+}
+
+// --- Connection explorer (H-024) --------------------------------------------
+
+const SECTION_HEADING =
+  'text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground'
+
+/** Operator-only read of ONE connection: its datastore schema + its indexed
+ *  chunks. Schema is read from the PERSISTED ontology (works with the backing
+ *  datastore unreachable); chunks are bound to that connection's document pool,
+ *  gated no-read-up, and a ?mode=vector search degrades LOUD rather than looking
+ *  empty. Schema only — no row values are ever shown here (H-024). */
+function ConnectionExplorerSection({ agentId }: { agentId: string }) {
+  const [source, setSource] = useState('')
+  const [q, setQ] = useState('')
+  const [mode, setMode] = useState<ChunkSearchMode>('literal')
+  const sourceId = source || null
+  const tables = useConnectionTables(agentId, sourceId)
+  const browse = useConnectionChunks(agentId, sourceId)
+  const search = useConnectionChunkSearch(agentId, sourceId, q, mode)
+  const searching = q.trim().length > 0
+
+  if (!source) {
+    return (
+      <div className="space-y-3">
+        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+        <EmptyState
+          icon={<Database className="size-5" />}
+          title="Pick a connection"
+          description="Choose a connected source to explore its tables and indexed chunks."
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+
+      <section className="space-y-2">
+        <h3 className={SECTION_HEADING}>Tables &amp; schema</h3>
+        <QueryState
+          query={tables}
+          isEmpty={(d) => d.items.length === 0}
+          empty={
+            <EmptyState
+              icon={<Database className="size-5" />}
+              title="No datastore tables"
+              description="This connection exposes no introspected datastore schema."
+            />
+          }
+        >
+          {(data) => <EntityTable items={data.items} typeLabel="Type" />}
+        </QueryState>
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className={SECTION_HEADING}>Chunks</h3>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search chunks…"
+            className="max-w-sm"
+          />
+          <div className="flex gap-1">
+            {(['literal', 'vector'] as ChunkSearchMode[]).map((m) => (
+              <Button
+                key={m}
+                size="sm"
+                variant={mode === m ? 'default' : 'outline'}
+                onClick={() => setMode(m)}
+              >
+                {m}
+              </Button>
+            ))}
+          </div>
+        </div>
+        {searching && search.data?.degraded && (
+          <p className="flex items-center gap-1.5 text-xs text-amber-600">
+            <TriangleAlert className="size-3.5" />
+            Vector search is unavailable for this agent — showing literal (BM25) results.
+          </p>
+        )}
+        <QueryState<ChunkPage | ChunkSearchResponse>
+          query={searching ? search : browse}
+          isEmpty={(d) => d.items.length === 0}
+          empty={
+            <EmptyState
+              icon={<FileText className="size-5" />}
+              title={searching ? 'No matching chunks' : 'No chunks indexed'}
+              description={
+                searching
+                  ? undefined
+                  : 'This connection has indexed no document chunks. Run a sync from the Sources tab.'
+              }
+            />
+          }
+        >
+          {(data) => (
+            <ul className="space-y-2">
+              {data.items.map((c) => (
+                <li
+                  key={c.chunk_id}
+                  className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <MonoChip>{c.source || c.chunk_id}</MonoChip>
+                    <Chip>{c.classification}</Chip>
+                    {c.truncated && <Chip>truncated</Chip>}
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{c.text}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </section>
     </div>
   )
 }
@@ -1029,6 +1252,12 @@ export function ConnectionsBrowser({
       </TabsList>
       <TabsContent value="sources">
         <SourcesSection agentId={agentId} initialConnectionId={initialConnectionId} />
+      </TabsContent>
+      <TabsContent value="explorer">
+        <ConnectionExplorerSection agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="repository">
+        <RepoIndexSection agentId={agentId} />
       </TabsContent>
       <TabsContent value="documents">
         <DocumentsSection agentId={agentId} />

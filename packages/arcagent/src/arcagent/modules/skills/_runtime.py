@@ -68,6 +68,11 @@ class _State:
     # counts feeding its attribution fallback; both reset as the turn closes.
     outcome_classifier: OutcomeClassifier | None = None
     error_counts: dict[str, int] = field(default_factory=dict)
+    # The arcllm request/trace id of the LLM call driving the CURRENT turn (H-041). Stashed
+    # from ``llm:call_complete`` (the arcllm bridge) so the turn's tool observations can link
+    # to the exact payload arcllm persisted; cleared at turn end so a turn with no LLM call
+    # never inherits a stale id. Same DID-scoped state as the rest of the module.
+    current_llm_trace_id: str | None = None
     # Curator lifecycle-sweep cadence (CRITICAL-1): how often the @background_task loop
     # wakes. The 30-day inactivity *window* lives in the improver's LifecycleConfig.
     sweep_poll_seconds: float = 3_600.0
@@ -223,12 +228,18 @@ async def run_lifecycle_sweep() -> None:
     if st is None or not st.active:
         return
     st.sweep_turn += 1
-    await st.adapter.review_lifecycle(turn=st.last_turn or st.sweep_turn)
+    turn_label = st.last_turn or st.sweep_turn
+    await st.adapter.review_lifecycle(turn=turn_label)
     # Suite-bootstrap backstop (SPEC-054 REQ-107) piggybacks the Curator cadence.
     # getattr-guarded so a BYO adapter predating sweep_suites never breaks the sweep.
     sweep_suites = getattr(st.adapter, "sweep_suites", None)
     if sweep_suites is not None:
         await sweep_suites()
+    # Consolidation sweep (H-042): same cadence, same getattr guard — a BYO adapter
+    # predating review_consolidation never breaks the sweep.
+    review_consolidation = getattr(st.adapter, "review_consolidation", None)
+    if review_consolidation is not None:
+        await review_consolidation(turn=turn_label)
     await reconcile_suppression()
 
 

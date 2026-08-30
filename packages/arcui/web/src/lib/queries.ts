@@ -28,6 +28,7 @@ import type {
   ChunkPage,
   ChunkSearchMode,
   ChunkSearchResponse,
+  CollectionIndexView,
   ConnectedDataActivationResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
@@ -62,7 +63,14 @@ import type {
   EventsResponse,
   PromptDetail,
   PromptListResponse,
+  SharedKnowledgeResponse,
+  SharedKnowledgeSearchResponse,
+  SharedKnowledgeDetail,
   SkillDetail,
+  SkillEvalCasesResponse,
+  SkillRollbackResponse,
+  SkillVersionDiffResponse,
+  SkillVersionsResponse,
   ToolDetail,
   PolicyBulletsResponse,
   PolicyResponse,
@@ -223,10 +231,24 @@ export interface HomeNeedsQueue<T> {
   items: T[]
 }
 
+/** One agent question awaiting a human, riding along in ``/api/home/needs``
+ * (H-001b). ``agent_did`` is the SIGNED asker — the agent credited as blocked,
+ * not a "who should answer" guess. Channel questions ONLY; a run paused on an
+ * approval or a workflow gate is counted in ``approvals`` / ``review_tasks``,
+ * never here. */
+export interface HomeNeedsWaiting {
+  agent_did: string
+  channel: string
+  message_id: string
+  ts: string
+  preview: string
+}
+
 export interface HomeNeedsResponse {
   approvals: HomeNeedsQueue<PendingApproval>
   capabilities: HomeNeedsQueue<HomeNeedsCapability>
   review_tasks: HomeNeedsQueue<Task>
+  waiting_on_human: HomeNeedsQueue<HomeNeedsWaiting>
   total: number
 }
 
@@ -279,6 +301,27 @@ export const useTeamPolicyBullets = () =>
 
 export const useTeamPolicyStats = () =>
   useApiQuery<TeamPolicyStatsResponse>(['team', 'policy', 'stats'], '/api/team/policy/stats')
+
+// --- H-027: fleet-shared knowledge — read-only view of documents agents
+// have promoted into the signed fleet collection, grouped by owner. --------
+
+export const useSharedKnowledge = () =>
+  useApiQuery<SharedKnowledgeResponse>(['team', 'knowledge', 'shared'], '/api/team/knowledge/shared')
+
+export const useSharedKnowledgeSearch = (q: string) =>
+  useQuery<SharedKnowledgeSearchResponse>({
+    queryKey: ['team', 'knowledge', 'shared', 'search', q],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/team/knowledge/shared/search?q=${encodeURIComponent(q)}`, signal),
+    enabled: q.trim().length > 0,
+  })
+
+export const useSharedKnowledgeDetail = (identifier: string | null) =>
+  useApiQuery<SharedKnowledgeDetail>(
+    ['team', 'knowledge', 'shared', 'detail', identifier],
+    `/api/team/knowledge/shared/${encodeURIComponent(identifier ?? '')}`,
+    !!identifier,
+  )
 
 export const useTeamAudit = (filter?: string, limit = 100) =>
   useApiQuery<AuditEventsResponse>(
@@ -660,6 +703,51 @@ export const useDatastoreTables = (agentId: string | null) =>
     enabled: !!agentId,
   })
 
+/** H-024 explorer: ONE connection's introspected datastore schema (operator-only). */
+export const useConnectionTables = (agentId: string | null, sourceId: string | null) =>
+  useQuery<DatastoreTablesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'tables'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/tables`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+/** H-024 explorer: browse ONE connection's indexed chunks, gated (operator-only). */
+export const useConnectionChunks = (
+  agentId: string | null,
+  sourceId: string | null,
+  limit = 50,
+) =>
+  useQuery<ChunkPage>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'chunks', limit],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/chunks?limit=${limit}`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+/** H-024 explorer: literal/vector search over ONE connection's chunks, gated + LOUD-degrade. */
+export const useConnectionChunkSearch = (
+  agentId: string | null,
+  sourceId: string | null,
+  q: string,
+  mode: ChunkSearchMode,
+) =>
+  useQuery<ChunkSearchResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'chunks', 'search', q, mode],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/chunks?q=${encodeURIComponent(q)}&mode=${mode}`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId && q.trim().length > 0,
+  })
+
 export const useDocuments = (agentId: string | null, source: string, q: string) =>
   useQuery<DocumentsResponse>({
     queryKey: ['agent', agentId, 'knowledge', 'documents', source, q],
@@ -669,6 +757,19 @@ export const useDocuments = (agentId: string | null, source: string, q: string) 
         signal,
       ),
     // A source with no query lists what it holds; a query filters that list.
+    enabled: !!agentId && !!source,
+  })
+
+/** One document source's verified OKF `index.md` — what's inside + purpose
+ *  (H-026). Operator-gated + audited server-side; fail-closed on tamper. */
+export const useSourceIndex = (agentId: string | null, source: string) =>
+  useQuery<CollectionIndexView>({
+    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index`,
+        signal,
+      ),
     enabled: !!agentId && !!source,
   })
 
@@ -894,6 +995,59 @@ export const useAgentSkillDetail = (agentId: string, skillName: string | null) =
       apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/detail`, signal),
     enabled: !!skillName,
   })
+
+// H-042 — the reviewable diff-merge surface: version timeline, eval provenance,
+// server-computed diff between two candidates, and the one gated mutation (rollback).
+
+export const useAgentSkillEvals = (agentId: string, skillName: string | null) =>
+  useQuery<SkillEvalCasesResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'evals'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/evals`, signal),
+    enabled: !!skillName,
+  })
+
+export const useAgentSkillVersions = (agentId: string, skillName: string | null) =>
+  useQuery<SkillVersionsResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'versions'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/versions`, signal),
+    enabled: !!skillName,
+  })
+
+/** Lazy diff between two candidate ids — only fetched once the operator picks both sides. */
+export const useAgentSkillVersionDiff = (
+  agentId: string,
+  skillName: string | null,
+  a: string | null,
+  b: string | null,
+) =>
+  useQuery<SkillVersionDiffResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'versions', 'diff', a, b],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/versions/diff` +
+          `?a=${encodeURIComponent(a!)}&b=${encodeURIComponent(b!)}`,
+        signal,
+      ),
+    enabled: !!skillName && !!a && !!b && a !== b,
+  })
+
+export const useRollbackSkill = (agentId: string, skillName: string | null) => {
+  const client = useQueryClient()
+  return useMutation<SkillRollbackResponse, Error, { candidateId: string }>({
+    mutationFn: ({ candidateId }) =>
+      apiPost(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/rollback`, {
+        candidate_id: candidateId,
+        confirm: true,
+      }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'skill', skillName, 'versions'] }),
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'skill', skillName] }),
+      ]),
+  })
+}
 
 export interface DurableInboxThread extends Dict {
   thread_id: string

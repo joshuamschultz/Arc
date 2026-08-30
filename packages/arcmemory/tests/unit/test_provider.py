@@ -13,18 +13,24 @@ from typing import Any
 
 import arcllm
 import pytest
+from arctrust.identity import AgentIdentity
 
 import arcmemory
 from arcmemory import build_brain
+
+# build_brain now requires an identity that both matches ``agent_did`` and owns the
+# workspace (H-047). A real generated identity satisfies both: ``agent_did`` is its
+# own ``did`` and the first build binds the fresh workspace to its key.
+_IDENTITY = AgentIdentity.generate(org="default", agent_type="executor")
 
 
 def _context(tmp_path: Path, **backend: object) -> dict[str, Any]:
     return {
         "workspace": tmp_path,
-        "agent_did": "did:arc:a",
+        "agent_did": _IDENTITY.did,
         "tier": "personal",
         "audit_sink": None,
-        "identity": None,
+        "identity": _IDENTITY,
         "policy_pipeline": None,
         "backend_config": dict(backend),
     }
@@ -52,7 +58,9 @@ def test_build_brain_threads_model_identity_and_pipeline(
 
     monkeypatch.setattr("arcmemory.provider.ArcMemoryBrain", _SpyBrain)
     monkeypatch.setattr(arcllm, "load_model", lambda *_a, **_k: "MODEL")
-    ident, pipe = object(), object()
+    # The identity must pass the H-047 isolation guard (its DID owns the workspace),
+    # so it is the context identity itself rather than a bare sentinel.
+    ident, pipe = _IDENTITY, object()
 
     ctx = _context(
         tmp_path, embed_backend="none", distill_provider="anthropic", distill_model="claude"
