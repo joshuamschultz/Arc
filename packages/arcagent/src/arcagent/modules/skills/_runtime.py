@@ -223,12 +223,18 @@ async def run_lifecycle_sweep() -> None:
     if st is None or not st.active:
         return
     st.sweep_turn += 1
-    await st.adapter.review_lifecycle(turn=st.last_turn or st.sweep_turn)
+    turn_label = st.last_turn or st.sweep_turn
+    await st.adapter.review_lifecycle(turn=turn_label)
     # Suite-bootstrap backstop (SPEC-054 REQ-107) piggybacks the Curator cadence.
     # getattr-guarded so a BYO adapter predating sweep_suites never breaks the sweep.
     sweep_suites = getattr(st.adapter, "sweep_suites", None)
     if sweep_suites is not None:
         await sweep_suites()
+    # Consolidation sweep (H-042): same cadence, same getattr guard — a BYO adapter
+    # predating review_consolidation never breaks the sweep.
+    review_consolidation = getattr(st.adapter, "review_consolidation", None)
+    if review_consolidation is not None:
+        await review_consolidation(turn=turn_label)
     await reconcile_suppression()
 
 

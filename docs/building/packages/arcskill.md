@@ -320,6 +320,110 @@ retain lineage, never a destructive delete.
 
 ---
 
+## Operating the improver (H-042)
+
+Everything above describes the mechanism. This section is for the person who
+has to actually watch it run, seed it, and approve what it proposes.
+
+**The loop does nothing until a skill has a golden suite.** `ArcSkillImprover`
+is wired end-to-end from the day `adapter = "arcskill"` is set, but the golden-
+task gate (`EvalGate`, above) is fail-closed: a code mutation with no
+`evals/` suite is blocked at every tier, and a prose mutation with no suite is
+only auto-allowed (audit-warn) at personal tier — enterprise/federal block
+that too. So the eval-bootstrap is not optional polish, it is the on-ramp:
+
+1. **A human authors ≥3 golden cases** in `<skill>/evals/test_*.py` — plain
+   pytest functions that assert something true about the skill's own
+   contract (see `blueprints/personal-assistant/skills/daily-brief/evals/
+   test_golden.py` for a worked example: three cases pinning the five-item
+   cap, the fact/inference labeling, and the quiet-day short-circuit — the
+   properties that make that skill's output trustworthy). A file whose
+   module docstring carries no `@generated` marker classifies
+   human-authored (`arcskill.improver.evalgate`).
+2. Once ANY cases exist, a **prose** mutation's gate runs — it's a suite,
+   not a count, that unlocks prose. `sweep_suites()` will also
+   auto-generate cases for a suite-less skill
+   (`[modules.skills.improver.suite] autogen = true`), and those
+   machine-authored anchors run and count toward strict-improvement too.
+   **Code-repair** mutation is stricter: it additionally requires
+   `min_golden_cases` (default 3) cases, and at enterprise/federal only
+   human-authored cases count toward that floor — machine anchors alone
+   never unlock code mutation there. Ship the first few cases by hand if
+   you want either gate live immediately rather than waiting on autogen.
+3. A mutation only *applies* on **strict improvement**: at least one
+   previously-failing golden case must now pass, and none may regress. No
+   suite, no gate, no unlock — a "no-op forever" skill is not broken, it is
+   simply one you have not seeded yet.
+
+**The Curator's three sweeps**, run on the same periodic tick
+(`[modules.skills] sweep_poll_seconds`, default hourly):
+
+| Sweep | What it does | Reversible? |
+|---|---|---|
+| `review_lifecycle` | Retires a skill that's been idle past `inactivity_window_days`, or has failed past `improve_attempts_before_retire` attempts below `failure_floor`. | Yes — the improver's `revive(skill_name)`. Lineage is retained; nothing is deleted. |
+| `sweep_suites` | Bootstraps a golden suite for any suite-less skill, most-used first. | N/A — additive only. |
+| `review_consolidation` | Flags two active skills whose `SKILL.md` bodies are near-duplicates, proposes a merged skill, and — only if the merge passes **both** originals' golden suites with zero regressions — applies it to the survivor and marks the absorbed skill `merged`. | Yes — same lineage/revive mechanism as retire. The absorbed skill's own file is untouched; only its lifecycle state changes. |
+
+A retired or merged skill is excluded from the agent's offering
+(`retired_skills()`) but its history is never destroyed — `revive()` undoes
+either transition and restores the prior `active_candidate_id`. **As shipped,
+`revive` has no `arc skill` CLI verb or ArcUI button** — today it's reachable
+only by calling `ArcSkillImprover.revive(skill_name)` directly (the same gap
+retire already had before H-042; consolidation inherited it rather than
+introducing it). Rollback (below) does have both a route and a UI — reviving
+a wrongly-retired-or-merged skill in the meantime means driving the improver
+from a script, or rolling the survivor's candidate back and leaving the
+absorbed skill's lifecycle state as-is.
+
+**Reviewing and approving.** At personal tier, mutations, retirements, and
+consolidations apply automatically with an audit event (no human in the
+loop — "audit-warn", not "audit-block"). At enterprise tier, code mutations
+and consolidations require approval; at federal tier, *everything* does
+(prose, code, retire, revive, consolidate). Every gated action surfaces the
+same way any other Lethal-Trifecta-style gate does:
+
+```bash
+arc approve list          # see what's waiting — skill mutations show tool
+                           # "skill.mutation:<action>" (e.g.
+                           # skill.mutation:skill.lifecycle.consolidate)
+arc approve <id>          # sign a grant with the operator key
+arc approve <id> --deny   # refuse it
+```
+
+A denial with no approver wired at all is not silent — it's an audited
+`denied_no_approver` event, so "nothing happened" is always traceable to a
+specific missing wire, not a mystery.
+
+**Inspecting what actually changed.** Every applied mutation — prose,
+code-repair, or a Curator consolidation — lands as one more candidate in
+that skill's version timeline, visible in ArcUI's skill drawer under the
+**Versions** tab: pick any two versions (A/B) to see the real unified diff
+between their `SKILL.md` bodies before deciding whether to roll back.
+Rollback is itself just another gated, audited mutation
+(`POST .../skills/{name}/rollback`) — it flips which candidate is active, it
+does not re-run the gate.
+
+**Managing eval suites from the CLI** (`arc skill evals`, `arccli.commands.
+skill_evals`):
+
+```bash
+arc skill evals <skill_path>                        # list cases + provenance
+arc skill evals edit <skill_path> <file> [--force]   # edit a case in $VISUAL/$EDITOR;
+                                                      # warns on suite-floor breach or
+                                                      # passing-anchor loss before commit
+arc skill evals regen <skill_path> [--yes]           # preview a diff of what regenerating
+                                                      # the machine-authored files would
+                                                      # touch (actual regen needs a live
+                                                      # agent — run it from inside one)
+```
+
+Editing a machine-generated file by hand — even without a `@generated`
+removal — reclassifies it human-authored the moment its bytes no longer
+match the harness manifest (`evals/.manifest.json`), which is exactly the
+"a human edited this" signal the gate trusts.
+
+---
+
 ## The SkillAdapter seam
 
 arcagent ships **improver-less by default**, mirroring the memory `Brain` seam.
@@ -340,8 +444,9 @@ concrete adapter:
   unless operator-allowlisted (ASI04).
 
 The `SkillAdapter` methods are `observe`, `on_turn_end`, `maybe_improve`,
-`review_lifecycle`, `sweep_suites`, and `retired_skills` — the last excludes
-retired skills from the agent's offering. arcagent hands the arcskill improver a
+`review_lifecycle`, `sweep_suites`, `review_consolidation` (H-042), and
+`retired_skills` — the last excludes both retired **and merged-away** skills
+from the agent's offering. arcagent hands the arcskill improver a
 prompt-resolve closure (from `arcprompt`, via arcagent) so operator prompt edits
 reach the improver's own prompts, while arcskill still never imports `arcprompt`.
 

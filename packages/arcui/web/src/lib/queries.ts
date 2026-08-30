@@ -66,6 +66,10 @@ import type {
   SharedKnowledgeSearchResponse,
   SharedKnowledgeDetail,
   SkillDetail,
+  SkillEvalCasesResponse,
+  SkillRollbackResponse,
+  SkillVersionDiffResponse,
+  SkillVersionsResponse,
   ToolDetail,
   PolicyBulletsResponse,
   PolicyResponse,
@@ -918,6 +922,59 @@ export const useAgentSkillDetail = (agentId: string, skillName: string | null) =
       apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/detail`, signal),
     enabled: !!skillName,
   })
+
+// H-042 — the reviewable diff-merge surface: version timeline, eval provenance,
+// server-computed diff between two candidates, and the one gated mutation (rollback).
+
+export const useAgentSkillEvals = (agentId: string, skillName: string | null) =>
+  useQuery<SkillEvalCasesResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'evals'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/evals`, signal),
+    enabled: !!skillName,
+  })
+
+export const useAgentSkillVersions = (agentId: string, skillName: string | null) =>
+  useQuery<SkillVersionsResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'versions'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/versions`, signal),
+    enabled: !!skillName,
+  })
+
+/** Lazy diff between two candidate ids — only fetched once the operator picks both sides. */
+export const useAgentSkillVersionDiff = (
+  agentId: string,
+  skillName: string | null,
+  a: string | null,
+  b: string | null,
+) =>
+  useQuery<SkillVersionDiffResponse>({
+    queryKey: ['agent', agentId, 'skill', skillName, 'versions', 'diff', a, b],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/versions/diff` +
+          `?a=${encodeURIComponent(a!)}&b=${encodeURIComponent(b!)}`,
+        signal,
+      ),
+    enabled: !!skillName && !!a && !!b && a !== b,
+  })
+
+export const useRollbackSkill = (agentId: string, skillName: string | null) => {
+  const client = useQueryClient()
+  return useMutation<SkillRollbackResponse, Error, { candidateId: string }>({
+    mutationFn: ({ candidateId }) =>
+      apiPost(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/rollback`, {
+        candidate_id: candidateId,
+        confirm: true,
+      }),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'skill', skillName, 'versions'] }),
+        client.invalidateQueries({ queryKey: ['agent', agentId, 'skill', skillName] }),
+      ]),
+  })
+}
 
 export interface DurableInboxThread extends Dict {
   thread_id: string

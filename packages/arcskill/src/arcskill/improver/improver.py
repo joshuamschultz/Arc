@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,17 +31,25 @@ from arcskill.improver.engine import SkillOptimizer
 from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.guardrails import ChangeBound, Guardrails
-from arcskill.improver.lifecycle import SkillLifecycle
+from arcskill.improver.lifecycle import ConsolidationCandidate, SkillLifecycle
 from arcskill.improver.models import (
     BundlePatch,
     BundleView,
+    Candidate,
     LifecycleEvent,
     MutationEvent,
     SkillTrace,
 )
-from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
+from arcskill.improver.mutate import LLMCodeMutator, LLMSkillMerger, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
-from arcskill.improver.seams import ApprovalProvider, EvalRunner, LLMInvoker, Mutator, Signer
+from arcskill.improver.seams import (
+    ApprovalProvider,
+    EvalRunner,
+    LLMInvoker,
+    Merger,
+    Mutator,
+    Signer,
+)
 from arcskill.improver.suitegen import SuiteGenerator
 from arcskill.improver.trace_store import TraceStore
 
@@ -96,6 +105,7 @@ class ArcSkillImprover:
         signer: Signer | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
+        merger: Merger | None = None,
         suite_generator: SuiteTrigger | None = None,
         approval_provider: ApprovalProvider | None = None,
         audit_sink: Any = None,
@@ -131,6 +141,11 @@ class ArcSkillImprover:
         # LLM seam is present; provider-free, so tests inject a deterministic Mutator.
         self._mutator: Mutator | None = mutator or (
             LLMCodeMutator(llm, resolve=prompt_resolve) if llm else None
+        )
+        # Consolidation merger (Curator consolidate): default to the arcllm-backed
+        # merger when an LLM seam is present — same default-wiring shape as the mutator.
+        self._merger: Merger | None = merger or (
+            LLMSkillMerger(llm, resolve=prompt_resolve) if llm else None
         )
         # Suite trigger (SPEC-054 COMP-004): default to the production adapter over the
         # concrete SuiteGenerator when an LLM seam is present — mirrors the mutator default.
@@ -168,6 +183,7 @@ class ArcSkillImprover:
             self._config.lifecycle,
             load_traces=self._store.load_traces,
             generation_of=self._guardrails.get_generation,
+            text_of=self._read_skill_text,
         )
         self._tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -181,16 +197,17 @@ class ArcSkillImprover:
         return self._tier
 
     def retired_skills(self) -> frozenset[str]:
-        """Names of skills currently retired (disabled) — the offering filter (REQ-043).
+        """Names of skills currently retired OR merged-away — the offering filter (REQ-043).
 
-        A retired skill must not be advertised to or loaded by the agent loop. Read from
-        the candidate-store manifest so it survives restarts; revive clears it (lineage
-        retained, D-8).
+        Neither a retired nor a merged skill should be advertised to or loaded by the
+        agent loop (a merged skill's capability lives on in its survivor). Read from the
+        candidate-store manifest so it survives restarts; revive clears either state
+        (lineage retained, D-8).
         """
         return frozenset(
             name
             for name in self._candidate_store.list_skills()
-            if self._candidate_store.lifecycle_state(name) == "retired"
+            if self._candidate_store.lifecycle_state(name) in ("retired", "merged")
         )
 
     # -- SkillAdapter surface ------------------------------------------------
@@ -254,10 +271,128 @@ class ArcSkillImprover:
         """Operator-initiated revive of a retired skill (REQ-044); gated + audited.
 
         Federal requires operator approval even for revive (D-10); fail-closed if unwired.
+        Restores either a retired or a merged skill (both use the same lineage).
         """
         if not await self._authorize("skill.lifecycle.revive", "revive", skill_name, "revive"):
             return
         self._emit_lifecycle_audit(self._lifecycle.revive(skill_name))
+
+    async def review_consolidation(self, *, turn: int) -> None:
+        """Curator sweep: propose + gate consolidation of overlapping skills.
+
+        A merge candidate is proposed by the injected :class:`Merger`, then checked
+        through the SAME :class:`EvalGate` against BOTH skills' own golden suites
+        (parity, not improvement — the merge must not regress either skill's behavior)
+        and the SAME operator-approval ladder as any other mutation — never a hot-swap.
+        A no-op when no ``Merger``/``skill_path`` seam is wired.
+        """
+        if self._merger is None or self._skill_path is None:
+            return
+        for candidate in self._lifecycle.consolidation_candidates():
+            await self._propose_merge(candidate)
+
+    async def _propose_merge(self, candidate: ConsolidationCandidate) -> None:
+        if self._merger is None or self._skill_path is None:  # narrow for the type checker
+            return
+        path_a = self._skill_path(candidate.skill_a)
+        path_b = self._skill_path(candidate.skill_b)
+        if path_a is None or path_b is None:
+            return
+        view_a = build_bundle_view(candidate.skill_a, path_a)
+        view_b = build_bundle_view(candidate.skill_b, path_b)
+        patch = await self._merger.propose(a=view_a, b=view_b, insight=candidate.reason)
+        merged_bytes = patch.files.get("SKILL.md") if patch is not None else None
+        if not merged_bytes:
+            return
+        merged_text = merged_bytes.decode("utf-8")
+        gate_ok = await self._merge_gate_passes(
+            candidate, view_a, view_b, merged_text, path_a, path_b
+        )
+        if not gate_ok:
+            return
+        detail = f"merge {candidate.skill_b} into {candidate.skill_a}: {candidate.reason}"
+        if not await self._authorize(
+            "skill.lifecycle.consolidate", "consolidate", candidate.skill_a, detail
+        ):
+            return
+        self._apply_merge(candidate, path_a, merged_text, patch.summary if patch else "")
+
+    async def _merge_gate_passes(
+        self,
+        candidate: ConsolidationCandidate,
+        view_a: BundleView,
+        view_b: BundleView,
+        merged_text: str,
+        path_a: Path,
+        path_b: Path,
+    ) -> bool:
+        """Both originals' golden suites must accept the merged text (parity, not
+        improvement — ``require_improvement=False``): a merge preserves behavior, it
+        does not need to fix a failing case to be safe to apply."""
+        gate = EvalGate(self._eval_runner, min_golden_cases=self._config.min_golden_cases)
+        for name, before, skill_dir in (
+            (candidate.skill_a, view_a, path_a.parent),
+            (candidate.skill_b, view_b, path_b.parent),
+        ):
+            decision = await gate.decide(
+                before=before,
+                after=BundleView(name, merged_text, skill_dir),
+                cases=load_suite(skill_dir),
+                tier=self._tier,
+                kind="merge",
+                require_improvement=False,
+            )
+            if not decision.accepted:
+                _logger.info(
+                    "skill consolidation %s<-%s rejected on %s's suite: %s",
+                    candidate.skill_a,
+                    candidate.skill_b,
+                    name,
+                    decision.reason,
+                )
+                return False
+        return True
+
+    def _apply_merge(
+        self, candidate: ConsolidationCandidate, path_a: Path, merged_text: str, summary: str
+    ) -> None:
+        """Write the merged text to the survivor, mark the absorbed skill merged, audit."""
+        apply_bundle_patch(
+            path_a.parent,
+            BundlePatch(files={"SKILL.md": merged_text.encode("utf-8")}, summary=summary),
+            signer=self._signer,
+        )
+        prior_active = self._candidate_store.load_manifest(candidate.skill_a).get(
+            "active_candidate_id"
+        )
+        generation = self._guardrails.get_generation(candidate.skill_a) + 1
+        new_candidate = Candidate(
+            id=uuid.uuid4().hex,
+            text=merged_text,
+            parent_id=prior_active if isinstance(prior_active, str) else None,
+            generation=generation,
+        )
+        # Registered as a normal candidate version (SAME timeline/diff/rollback surface
+        # as a prose or code mutation) — an operator inspects and can roll it back
+        # exactly like any other applied change.
+        self._candidate_store.save(candidate.skill_a, new_candidate, active=True, frontier=True)
+        self._guardrails.set_generation(candidate.skill_a, generation)
+        merge_event = self._lifecycle.merge(
+            candidate.skill_b, into=candidate.skill_a, reason=candidate.reason
+        )
+        self._emit_lifecycle_audit(merge_event)
+        self._emit_audit(
+            candidate.skill_a,
+            "skill.mutation.applied",
+            "applied",
+            extra={
+                "merged_from": candidate.skill_b,
+                "candidate_id": new_candidate.id,
+                "summary": summary,
+            },
+        )
+        if self._reload is not None:
+            self._reload()
 
     def rollback(self, skill_name: str, candidate_id: str) -> None:
         """Revert to a prior candidate, cool off, and operator-audit the reversal (REQ-052)."""
@@ -487,13 +622,15 @@ class ArcSkillImprover:
     def _approval_required(self, kind: str) -> bool:
         """Whether the tier ladder (D-10 / PRD §7) requires operator approval for ``kind``.
 
-        federal → every mutation + retire/revive; enterprise → code mutations only;
-        personal → never (auto + audit). ``kind`` ∈ {code, prose, retire, revive}.
+        federal → every mutation + retire/revive/consolidate; enterprise → code
+        mutations + consolidate (a merge touches two skills' applied bodies — the same
+        integrity class as code); personal → never (auto + audit).
+        ``kind`` ∈ {code, prose, retire, revive, consolidate}.
         """
         if self._tier == "federal":
             return True
         if self._tier == "enterprise":
-            return kind == "code"
+            return kind in ("code", "consolidate")
         return False
 
     async def _authorize(self, action: str, kind: str, skill_name: str, detail: str) -> bool:
@@ -585,10 +722,27 @@ class ArcSkillImprover:
 
     def _emit_lifecycle_audit(self, event: LifecycleEvent) -> None:
         """Emit a tier-stamped lifecycle-transition audit event (operator-signed WORM)."""
-        action = (
-            "skill.lifecycle.revived" if event.to_state == "active" else "skill.lifecycle.retired"
-        )
+        action = {
+            "active": "skill.lifecycle.revived",
+            "merged": "skill.lifecycle.merged",
+        }.get(event.to_state, "skill.lifecycle.retired")
         self._emit_audit(event.skill_name, action, event.to_state, extra=event.to_dict())
+
+    def _read_skill_text(self, skill_name: str) -> str | None:
+        """Current SKILL.md text for ``skill_name``, or ``None`` when unresolvable.
+
+        The Curator consolidate signal (:meth:`SkillLifecycle.consolidation_candidates`)
+        reads live text, not a stored candidate — it compares what's actually loaded.
+        """
+        if self._skill_path is None:
+            return None
+        path = self._skill_path(skill_name)
+        if path is None:
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return None
 
     def _skill_override(self, skill_name: str) -> ChangeBoundConfig | None:
         """Read a per-skill change-bound override from the skill's frontmatter, if any."""
