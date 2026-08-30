@@ -392,3 +392,7 @@ Grounded by two research passes (knowledge/connected-data map; arcskill-improver
 ## Docs/version wave TODO (accumulating; execute after all rows MERGED)
 - **tsx guidance fallback drift (H-026):** knowledge-connections.tsx renders `data.guidance ?? '<hardcoded copy>'`; if the server string (operator.py:292) is edited later the fallback drifts. Tidy: drop the hardcoded fallback or keep them in sync. (Planner note, harmless for batch.)
 - Per Planner close-out directive: ALPHA-HOTFIXES NEEDS-JOSH section; root + per-package CHANGELOGs; version bumps (root 0.4.0→0.5.0; arcui/arcmemory/arcllm/arcrun/arcteam/arcagent/arcskill/arccli per-package MINOR where features added); READMEs; package CLAUDE.md layout sections (new files/seams); docs/ walkthrough pages + `mkdocs --strict`; spec status sync (SPEC-044/054 improver firing); final `npm run build` → static/ committed + restart note.
+
+## Post-deploy checks (DGX)
+- **H-033b two-DSN verify:** confirm arcui embedded-agent service reads the SAME ArcStore DSN the running sync writes to. Single-process today reads self._store (same DSN), so the key-mismatch fix suffices; if a genuine two-DSN split exists on the box, the correct key is necessary but not sufficient — verify counters on a real synced source.
+- **H-033b product follow-up:** documents_indexed counts document-home (.md) inventory; a MEMORY/DATASTORE-only source shows 0 documents (accurate). Decide later if the card should also surface memory/datastore item counts.
