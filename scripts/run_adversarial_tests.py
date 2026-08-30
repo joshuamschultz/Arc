@@ -41,6 +41,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_trust_store_security.py",
         "packages/arcagent/tests/security/test_multi_agent_runtime_isolation.py",
         "packages/arcmemory/tests/security/test_no_read_up_real_paths.py",
+        # H-024 connected-data explorer: chunks/tables bound to one connection's
+        # source-scope — no cross-connection leak, no cross-agent pool read, no
+        # count-inference of a hidden chunk, viewer is 403, vector degrades LOUD.
+        "packages/arcmemory/tests/unit/test_operator_connected_explorer.py",
+        "packages/arcui/tests/integration/test_connected_explorer_routes.py",
     ),
     "dashboard symlink deletion and key/control-plane exfiltration (H-018)": (
         "packages/arcui/tests/integration/test_file_delete_routes.py",

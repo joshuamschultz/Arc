@@ -658,7 +658,7 @@ class ArcMemoryBrain:
         sample_limit = self._cfg.datastore_sample_limit if self._cfg.datastore_sample_values else 0
         ontology = await datastore.introspect(sample_limit=sample_limit)
         overlaid = overlay(layer_key, ontology, classification=classification)
-        await datastore.persist_ontology(store)
+        await datastore.persist_ontology(store, source_id=source_id)
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
         self._datastore_connection_id[source_id] = layer_key

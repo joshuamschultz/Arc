@@ -39,8 +39,8 @@ class _Datastore:
     async def introspect(self) -> str:
         return "schema"
 
-    async def persist_ontology(self, store: Any) -> None:
-        del store
+    async def persist_ontology(self, store: Any, *, source_id: str) -> None:
+        del store, source_id
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:
         return {"op": op, "table": table, "args": args}

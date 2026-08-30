@@ -86,7 +86,7 @@ class DatastorePort(Protocol):
 
     async def introspect(self, *, sample_limit: int = 0) -> DatastoreOntology: ...
 
-    async def persist_ontology(self, store: SemanticStore) -> None: ...
+    async def persist_ontology(self, store: SemanticStore, *, source_id: str) -> None: ...
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object: ...
 
@@ -189,16 +189,23 @@ class SqliteDatastore:
                 break
         return [redact_text(text, detector.detect(text)) for text in seen]
 
-    def persist_ontology(self, store: SemanticStore) -> None:
-        """Write each table as a ``db_table`` Entity — Facts: primary_key, row_count,
-        searchable_columns, and one fact per foreign key. Entity+Fact projection,
-        glass-box (COMP-008)."""
+    def persist_ontology(self, store: SemanticStore, *, source_id: str) -> None:
+        """Write each table as a ``db_table`` Entity — Facts: source_id, table_name,
+        primary_key, row_count, searchable_columns, and one fact per foreign key.
+        Entity+Fact projection, glass-box (COMP-008).
+
+        The slug carries ``source_id`` (``db-table-<source_id>-<name>``) so two
+        connected datastores that share a table name stay distinct entities and the
+        explorer can scope its schema view to exactly one connection (H-024).
+        """
         ontology = self._ontology or self.introspect()
         for name, info in ontology.tables.items():
-            slug = f"db-table-{name}"
+            slug = f"db-table-{source_id}-{name}"
             store.write_fact(
                 slug, "primary_key", info.primary_key or "", name=name, entity_type="db_table"
             )
+            store.write_fact(slug, "source_id", source_id, entity_type="db_table")
+            store.write_fact(slug, "table_name", name, entity_type="db_table")
             store.write_fact(slug, "row_count", str(self._row_count(name)), entity_type="db_table")
             store.write_fact(
                 slug,
@@ -300,8 +307,8 @@ class SqliteDatastorePort:
     async def introspect(self, *, sample_limit: int = 0) -> DatastoreOntology:
         return await asyncio.to_thread(self._introspect, sample_limit)
 
-    async def persist_ontology(self, store: SemanticStore) -> None:
-        await asyncio.to_thread(self._persist_ontology, store)
+    async def persist_ontology(self, store: SemanticStore, *, source_id: str) -> None:
+        await asyncio.to_thread(self._persist_ontology, store, source_id)
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:
         return await asyncio.to_thread(self._query, op, table, args)
@@ -310,9 +317,9 @@ class SqliteDatastorePort:
         with closing(self._open()) as conn:
             return SqliteDatastore(conn).introspect(sample_limit=sample_limit)
 
-    def _persist_ontology(self, store: SemanticStore) -> None:
+    def _persist_ontology(self, store: SemanticStore, source_id: str) -> None:
         with closing(self._open()) as conn:
-            SqliteDatastore(conn).persist_ontology(store)
+            SqliteDatastore(conn).persist_ontology(store, source_id=source_id)
 
     def _query(self, op: str, table: str, args: dict[str, object]) -> object:
         with closing(self._open()) as conn:

@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.doc_index import DocHit
+from arcmemory.doc_index import DocHit, doc_scope
 from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -453,11 +453,23 @@ class MemoryOperator:
         prefix = f"blob-{source_id}-"
         return [f for f in folders if f.slug.startswith(prefix)]
 
-    def list_datastore_tables(self, *, session_id: str | None = None) -> list[EntityRecord]:
-        """The introspected ``db-table-<name>`` ontology entities."""
-        return [
+    def list_datastore_tables(
+        self, source_id: str | None = None, *, session_id: str | None = None
+    ) -> list[EntityRecord]:
+        """The introspected ``db-table-<source_id>-<name>`` ontology entities.
+
+        Optionally scoped to one connection (mirrors :meth:`list_blob_folders`):
+        each table is persisted under a source-prefixed slug at register time, so
+        the explorer shows exactly that connection's schema — read from the
+        PERSISTED ontology, so it works with the backing datastore unreachable.
+        """
+        tables = [
             e for e in self.list_entities(session_id=session_id) if e.entity_type == "db_table"
         ]
+        if source_id is None:
+            return tables
+        prefix = f"db-table-{source_id}-"
+        return [t for t in tables if t.slug.startswith(prefix)]
 
     async def document_search(
         self, source_id: str, query: str, *, top_k: int = 10
@@ -609,15 +621,23 @@ class MemoryOperator:
         offset: int = 0,
         clearance: str = "unclassified",
         session_id: str | None = None,
+        source_id: str | None = None,
     ) -> ChunkPage:
-        """One gated, paginated page of the recall-scope's chunks, newest first.
+        """One gated, paginated page of chunks, newest first.
+
+        Without ``source_id`` this browses the agent's recall scope. With one it
+        is BOUND to exactly that connected source's isolated document pool
+        (``doc_scope`` = ``"<did>:doc:<source_id>"``) — the H-024 explorer view —
+        so the page shows only that connection's chunks, never the recall scope's
+        and never another source's or agent's.
 
         The no-read-up gate runs BEFORE pagination: ``total`` and the page slice
         both reflect only what ``clearance`` may see, so a caller can never infer
         the existence of an over-clearance chunk from a shifted count.
         """
-        scope = self._scope(session_id)
-        await self._index_chunks(scope, embed=False)
+        scope, freshen = self._chunk_scope(session_id, source_id)
+        if freshen:
+            await self._index_chunks(scope, embed=False)
         ids = await self._backend.recency_order(scope.key)
         recalls, meta = await self._hydrate_chunks(scope.key, ids)
         kept = self._gate_chunks(recalls, clearance)
@@ -637,8 +657,14 @@ class MemoryOperator:
         limit: int = 10,
         clearance: str = "unclassified",
         session_id: str | None = None,
+        source_id: str | None = None,
     ) -> ChunkSearchResult:
         """Search chunks by ``mode`` — ``"literal"`` (BM25) or ``"vector"`` (cosine).
+
+        Without ``source_id`` this searches the agent's recall scope. With one it
+        is BOUND to exactly that connected source's isolated document pool (the
+        H-024 explorer view), so results never include the recall scope's chunks
+        nor another source's or agent's.
 
         A ``"vector"`` request degrades LOUD to literal (``degraded=True``,
         ``mode="literal"``) when no embedder or sqlite-vec is available, or the
@@ -649,9 +675,10 @@ class MemoryOperator:
         visible one from the result. Any ``mode`` other than exactly ``"vector"``
         runs literal — there is no third, silently-empty mode.
         """
-        scope = self._scope(session_id)
+        scope, freshen = self._chunk_scope(session_id, source_id)
         want_vector = mode == "vector"
-        await self._index_chunks(scope, embed=want_vector)
+        if freshen:
+            await self._index_chunks(scope, embed=want_vector)
 
         degraded = False
         actual_mode = "vector" if want_vector else "literal"
@@ -680,6 +707,22 @@ class MemoryOperator:
             degraded=degraded,
             query=query,
         )
+
+    def _chunk_scope(self, session_id: str | None, source_id: str | None) -> tuple[Scope, bool]:
+        """The scope a chunk browse/search runs in, and whether to freshen it first.
+
+        No ``source_id`` -> the agent's recall scope, freshened by ``_index_chunks``
+        before reading (its markdown/event corpus may have changed). A ``source_id``
+        -> that connection's isolated document pool (``doc_scope``), which is
+        populated only by the ingestion lifecycle; freshening it here would pull the
+        agent's OWN memory files INTO the doc pool (``doc_index`` module docstring),
+        so we read it as-is. ``doc_scope`` binds the DID half to THIS operator's
+        ``agent_did`` — a caller-supplied ``source_id`` can never reach another
+        agent's pool.
+        """
+        if source_id is not None:
+            return doc_scope(self._agent_did, source_id), False
+        return self._scope(session_id), True
 
     async def _index_chunks(self, scope: Scope, *, embed: bool) -> None:
         """Freshen this scope's chunk/fts(/vec) rows before reading the backend.
