@@ -90,8 +90,17 @@ before this batch is complete.
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
+| H-044 | Knowledge | Uniform DB parity: explore/schema-layer/query for ALL databases (postgres, supabase, aws-rds, azure, mysql) via DatastorePort — only SqliteDatastorePort exists today | L | DESIGN | |
+| H-045 | Knowledge | Uniform FILE parity: same experience for s3/onedrive/dropbox/gdrive/smb through the DocIndex/OKF seam — audit + fill gaps | L | AUDIT | |
+| H-046 | Knowledge | Uniform MESSAGE parity: email/slack/teams as searchable knowledge (SourceDataShape.MAIL), same ingestion path — audit + fill gaps | L | AUDIT | |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
+
+## Connection Parity (Josh directive, 2026-08-30)
+
+> "Agentic interaction should be the SAME for: RDS databases (aws, azure, supabase, sqlite, postgresql, etc); files (s3, onedrive, dropbox, etc); message context (emails, slack, teams, etc)."
+
+The seam is already vendor-neutral: `SourceDataShape` (DOCUMENT/MAIL/DATASTORE/BLOB) + `DatastorePort` Protocol (introspect/persist_ontology/query). Adding a backend = one adapter; explorer (H-024), schema layer (H-025), OKF index (H-026), Brain, and agent tools do NOT change. Gap today: only `SqliteDatastorePort` exists. `ParityAudit` (Explore) is inventorying concrete-vs-missing across all three categories; Planner does a design pass on the Postgres/RDS adapter before it codes. H-044/045/046 refine from the audit.
 
 **Advisor:** a standing **Fable** planner/advisor (`Planner`) reviews each issue's plan for correctness, architecture fit (four pillars), and best outcome before it is coded, and reviews the result before merge.
 
