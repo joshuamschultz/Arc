@@ -80,7 +80,7 @@ before this batch is complete.
 | H-033b | Knowledge | Connector sync counters wrong (Last sync Never / 0 bytes) — missing last_synced_at + two-DB split (separate from connect path) | M | CODING | |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
 | H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
-| H-036 | UI | Fully keyboard-drivable (command palette + focus order) | L | CODING | |
+| H-036 | UI | Fully keyboard-drivable (command palette + focus order) | L | MERGED | e3f31f60 |
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | MERGED | b37f1417 |
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
