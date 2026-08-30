@@ -402,22 +402,35 @@ progress. Two implementations satisfy the `SourceSyncBackend` Protocol:
 
 `SourceSyncState`: `agent_did`, `source_id`, `cursor`, `status`
 (`idle`/`running`/`complete`/`failed`/`cancelled`/`lease_lost`/`awaiting_mapping`),
-`pages`, `bytes_processed`, `fencing_token`, `generation`, `error_code`. A worker
+`pages`, `bytes_processed`, `fencing_token`, `generation`, `error_code`, and
+`last_synced_at` (stamped only on `COMPLETE` — see PROB-009 below). A worker
 `acquire_lease`s (bumping the fencing token), `commit_page`s idempotently under
 that token (the page is deduped by `page_id`; a stale token is rejected),
 `renew_lease`s, and `release_lease`s. `reset` / `purge` only fire when no live
 lease is held; `purge` bumps `generation` to fence an old source incarnation.
 
-> **Known gap — PROB-009 (OPEN).** `connected_source_sync` has **no
-> `last_synced_at` column**, and none of `SourceRuntimeStatus` / `SyncState` /
-> `SourceSyncState` carries the attribute the connector card's `_status_wire`
-> reads — so the arcui card always shows "Never". The `pages` / `bytes_processed`
-> counters *are* cumulative and durable here, but on a real deployment they are
-> written to the **agent-runtime DSN** and the card reads the **observe/arcui
-> DSN** (see the two-DB split below), so the card reads a database the sync never
-> wrote. The fix is scoped: a schema field + migration for `last_synced_at`,
-> reconciling the two DSNs, and wiring an index-derived count — not a tail-end
-> patch.
+> **PROB-009 — RESOLVED (H-033b, migration v8).** This shipped. The real root
+> cause was **not** a missing column: the durable sync row is keyed by
+> `connection_id` (the coordinator's key) but was read back by
+> `canonical_source_id`, so `_status_wire` looked up an empty row and the arcui
+> card showed `0` / "Never". The fix keys the read to the store that holds the
+> row, and:
+>
+> - `SourceSyncState` now carries **`last_synced_at`** (migration v8 adds the
+>   `connected_source_sync.last_synced_at timestamptz` column), stamped **only
+>   when a sync reaches `COMPLETE`** — a failed or still-running pass has no
+>   successful-sync time, so it legitimately reads "Never" until the first clean
+>   run.
+> - `SourceRuntimeStatus` gained **`documents_indexed`**, wired to the index.
+> - `arcui/routes/connected_data.py` reads `last_synced_at`, `documents_indexed`,
+>   `pages`, and `bytes_processed` from that reconciled status — the card now
+>   reflects real counters, and they survive a restart without a re-sync.
+>
+> One honest caveat remains on a **two-DSN** deployment: if the agent-runtime
+> DSN and the observe/arcui DSN are genuinely separate databases (see the
+> two-DB split below), the card reads counters only once they are present in the
+> DSN arcui queries — reconciling the two DSNs is the operational precondition,
+> not further code work.
 
 ---
 
