@@ -90,9 +90,9 @@ before this batch is complete.
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
-| H-044 | Knowledge | Uniform DB parity: Postgres-first DatastorePort (RDS/Azure/Supabase) + conformance harness, then warehouses/mysql/sqlserver | L | NEXT-PROGRAM | |
-| H-045 | Knowledge | Uniform FILE parity: s3/onedrive/dropbox/gdrive/smb through DocIndex/OKF seam | L | NEXT-PROGRAM | |
-| H-046 | Knowledge | Uniform MESSAGE parity: email/slack/teams as knowledge (SourceDataShape.MAIL) | L | NEXT-PROGRAM | |
+| H-044 | Knowledge | DB parity: Postgres/Supabase/RDS-PG/Azure/Aurora-PG ALREADY SHIP (extensions/postgresql, asyncpg — full port). REMAINING: MySQL family (clone template+driver), Mongo, Snowflake, BigQuery + conformance harness | L | NEXT-PROGRAM | |
+| H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
+| H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
