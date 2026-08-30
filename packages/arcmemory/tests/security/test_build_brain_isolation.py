@@ -179,16 +179,23 @@ def test_foreign_owned_memory_data_without_marker_fails_closed(tmp_path: Path) -
     assert _fault_events(sink)
 
 
-def test_mixed_own_plus_one_foreign_scope_row_fails_closed(tmp_path: Path) -> None:
-    """ZERO-TOLERANCE: a workspace whose data is mostly the builder's but carries a
-    SINGLE foreign scope row is refused — not adopted on a majority."""
+def test_mixed_own_plus_foreign_bleed_is_adopted(tmp_path: Path) -> None:
+    """A CONTAMINATED OWN workspace — the builder's own data plus pre-existing foreign
+    bleed rows (the known cross-agent-bleed bug) — is adopted, NOT bricked.
+
+    build_brain binds the brain to THIS agent's scope; the foreign rows are never
+    rebound and the read-time no-read-up scope gate keeps them out of recall. Failing
+    the whole agent closed here (the old zero-tolerance rule) bricked every deployed
+    agent that carried historical bleed. The victim shape — foreign data and NONE of
+    the builder's — still fails closed (see the test above).
+    """
     owner = _identity()
     stranger = _identity()
-    _seed_memory_scopes(tmp_path, owner.did, owner.did, stranger.did)  # one foreign row
-    sink = _RecordingSink()
-    with pytest.raises(MemoryIsolationError):
-        build_brain(_context(tmp_path, identity=owner, audit_sink=sink))
-    assert _fault_events(sink)
+    _seed_memory_scopes(tmp_path, owner.did, owner.did, stranger.did)  # own + one foreign
+    brain = build_brain(_context(tmp_path, identity=owner))
+    assert isinstance(brain, arcmemory.ArcMemoryBrain)
+    # Adopted for the owner; the foreign row is not rebound (marker is the owner's key).
+    assert (tmp_path / "memory" / "owner.pub").read_bytes() == owner.public_key
 
 
 def test_memory_data_with_no_attributable_rows_fails_closed(tmp_path: Path) -> None:

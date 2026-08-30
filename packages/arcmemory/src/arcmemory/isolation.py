@@ -28,15 +28,18 @@ adopted here on the first build:
 
 * marker PRESENT → its key must exactly match the building identity's key, always;
 * marker ABSENT + no memory data → fresh workspace: bind it to this identity;
-* marker ABSENT + memory data present → ZERO-TOLERANCE ownership. The workspace's own
-  recorded owners (the ``scope`` column of ``memory/index.db``) must be EVERY-row this
-  agent's — a single foreign scope row anywhere fails closed (not majority, not
-  "mostly mine"), and so does data with NO attributable scope rows at all (a legit
-  agent always leaves attributable rows; unattributable data is the suspicious shape).
-  Only a workspace whose every attributable row belongs to the building agent is
-  adopted in place — that is how the deployed fleet, which predates the marker,
-  upgrades without a stumble, while a victim workspace (another agent's private recall)
-  is never rebound to this identity.
+* marker ABSENT + memory data present → OWN-DATA ownership. The workspace's recorded
+  owners (the ``scope`` column of ``memory/index.db``) are read. Fail closed for a
+  VICTIM workspace: it holds scoped data but NONE of it is this agent's (rebinding it
+  would adopt another agent's private recall), and likewise for data with NO
+  attributable scope rows at all. But a workspace this agent DOES own — at least one
+  scope row is its own — is adopted in place even when PRE-EXISTING foreign scope rows
+  are also present (the known cross-agent-bleed bug that predates the marker). Those
+  foreign rows are never rebound and the read-time no-read-up scope gate already keeps
+  them out of this agent's recall; bricking a contaminated own-workspace at build time
+  is the wrong layer. That is how the deployed fleet — which predates the marker and
+  carries historical bleed — upgrades without a stumble, while a victim workspace is
+  still never rebound to this identity. Foreign rows are logged LOUD for cleanup.
 
 On any failure this raises :class:`MemoryIsolationError` and emits a
 ``memory.isolation_fault`` audit event — the SAME failure vocabulary the
@@ -159,16 +162,36 @@ def _enforce_workspace_ownership(
         _write_owner_marker(marker, public_key, workspace, agent_did, audit_sink, tier)
         return
     scopes = _recorded_scopes(memory_dir)
-    foreign = {s for s in scopes if s != agent_did and not s.startswith(f"{agent_did}:")}
-    if foreign:
-        _fail_closed(
-            workspace, agent_did, sorted(foreign)[0], audit_sink, tier,
-            "workspace memory data is owned by a different agent DID",
-        )
     if not scopes:
         _fail_closed(
             workspace, agent_did, "", audit_sink, tier,
             "workspace holds memory data with no attributable owner",
+        )
+    own = {s for s in scopes if s == agent_did or s.startswith(f"{agent_did}:")}
+    if not own:
+        # A victim workspace: it holds scoped memory data, but NONE of it is this
+        # agent's — rebinding it would adopt another agent's private recall.
+        _fail_closed(
+            workspace, agent_did, sorted(scopes)[0], audit_sink, tier,
+            "workspace memory data is owned only by a different agent DID",
+        )
+    # This agent owns its own data here. Adopt in place even when PRE-EXISTING foreign
+    # scope rows are also present (the known cross-agent-bleed bug that predates this
+    # guard): those rows are NOT rebound to this agent, and the read-time no-read-up
+    # scope gate already keeps them out of this agent's recall. Bricking a contaminated
+    # OWN workspace over data the read gate isolates is the wrong layer — build_brain's
+    # job is to bind the brain to THIS agent's scope, which it can do safely. The bleed
+    # is logged LOUD for cleanup, never silently rebound.
+    foreign = {s for s in scopes if s not in own}
+    if foreign:
+        _logger.warning(
+            "memory workspace %s holds %d pre-existing foreign scope value(s) "
+            "(cross-agent bleed) — adopting for %s; foreign rows stay read-gated, not "
+            "rebound (first: %s)",
+            workspace,
+            len(foreign),
+            agent_did,
+            sorted(foreign)[0],
         )
     _write_owner_marker(marker, public_key, workspace, agent_did, audit_sink, tier)
 
