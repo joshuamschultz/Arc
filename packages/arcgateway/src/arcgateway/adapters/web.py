@@ -164,6 +164,11 @@ class WebPlatformAdapter:
         # expires; this trades latency-of-cleanup for replay liveness across
         # transient disconnects.
         self._eviction_tasks: dict[str, asyncio.Task[None]] = {}
+        # Pending run-cancellation tasks per chat_id. Created on
+        # last-socket-unregister, cancelled on register before the grace window
+        # expires — so a tab refresh, a network blip, or a restart-reconnect
+        # keeps the in-flight run instead of killing it ("browser disconnected").
+        self._disconnect_cancel_tasks: dict[str, asyncio.Task[None]] = {}
         self._n_connections = 0
 
     def set_disconnect_handler(
@@ -189,6 +194,11 @@ class WebPlatformAdapter:
         for task in list(self._eviction_tasks.values()):
             task.cancel()
         self._eviction_tasks.clear()
+        # …and pending run-cancellations: on shutdown the run dies with the
+        # process, so never fire a spurious "browser disconnected" cancel.
+        for task in list(self._disconnect_cancel_tasks.values()):
+            task.cancel()
+        self._disconnect_cancel_tasks.clear()
 
     def to_parts(self, payload: Any) -> list[DraftPart]:
         """Turn one browser frame into parts (COMP-004).
@@ -290,6 +300,10 @@ class WebPlatformAdapter:
         pending_eviction = self._eviction_tasks.pop(chat_id, None)
         if pending_eviction is not None:
             pending_eviction.cancel()
+        # …and the pending run-cancellation: a returning observer keeps its run.
+        pending_cancel = self._disconnect_cancel_tasks.pop(chat_id, None)
+        if pending_cancel is not None:
+            pending_cancel.cancel()
 
         self._sockets.setdefault(chat_id, set()).add(ws)
         self._socket_meta[ws] = (chat_id, agent_did, user_did)
@@ -362,23 +376,54 @@ class WebPlatformAdapter:
     def _schedule_disconnect_cancellation(
         self, chat_id: str, agent_did: str, user_did: str
     ) -> None:
-        """Cancel an interactive run when its final browser observer leaves."""
+        """Cancel an interactive run when its final browser observer leaves —
+        but only after a grace window a reconnect can cancel.
+
+        Cancelling the run the instant the last socket closed killed real work
+        on every tab refresh, network blip, and service restart-reconnect (the
+        "Run cancelled by did:arc:gateway: browser disconnected" a user sees,
+        and the reason the replay buffer beside this had nothing left to replay).
+        Deferring by ``replay_ttl_seconds`` — the same window the replay state is
+        kept, and cancelled by the same ``register_socket`` reconnect — means a
+        returning browser keeps its run; only a genuinely abandoned run (no
+        reconnect within the window) is cancelled.
+        """
         handler = self._on_last_socket_disconnect
         if handler is None:
             return
+        existing = self._disconnect_cancel_tasks.pop(chat_id, None)
+        if existing is not None:
+            existing.cancel()
         task: asyncio.Task[None] = asyncio.create_task(
-            self._cancel_after_disconnect(handler, chat_id, agent_did, user_did)
+            self._cancel_after_disconnect(handler, chat_id, agent_did, user_did),
+            name=f"web:disc-cancel:{chat_id}",
         )
+        self._disconnect_cancel_tasks[chat_id] = task
         task.add_done_callback(self._log_disconnect_cancellation)
 
-    @staticmethod
     async def _cancel_after_disconnect(
+        self,
         handler: Callable[[str, str, str], Awaitable[None]],
         chat_id: str,
         agent_did: str,
         user_did: str,
     ) -> None:
-        """Await a transport-provided cancellation hook in a task."""
+        """Wait the grace window, then cancel the run — unless a reconnect
+        cancelled us first (``register_socket``) or a socket is live again.
+
+        Self-removes from ``_disconnect_cancel_tasks`` on completion or
+        cancellation, mirroring ``_evict_after_ttl`` beside it.
+        """
+        try:
+            await asyncio.sleep(self.replay_ttl_seconds)
+        except asyncio.CancelledError:
+            self._disconnect_cancel_tasks.pop(chat_id, None)
+            raise
+        self._disconnect_cancel_tasks.pop(chat_id, None)
+        # A register may have raced the cancel: if the chat is live again, the
+        # observer came back — keep the run.
+        if chat_id in self._sockets:
+            return
         await handler(chat_id, agent_did, user_did)
 
     @staticmethod

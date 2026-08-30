@@ -222,23 +222,54 @@ async def test_ingest_builds_correct_inbound_event() -> None:
     await adapter.disconnect()
 
 
-async def test_final_socket_disconnect_requests_run_cancellation() -> None:
-    """A disconnected final browser observer cancels its interactive run."""
+async def test_abandoned_run_is_cancelled_after_the_grace_window() -> None:
+    """A truly abandoned final observer cancels its run — but only AFTER the
+    grace window (no reconnect), never the instant the socket closed."""
     cancelled: list[tuple[str, str, str]] = []
 
     async def cancel(chat_id: str, agent_did: str, user_did: str) -> None:
         cancelled.append((chat_id, agent_did, user_did))
 
-    adapter = WebPlatformAdapter(on_message=_noop_on_message, on_last_socket_disconnect=cancel)
+    adapter = WebPlatformAdapter(
+        on_message=_noop_on_message,
+        on_last_socket_disconnect=cancel,
+        replay_ttl_seconds=0.05,
+    )
     ws = FakeWebSocket()
     adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
     adapter.unregister_socket(ws)
-    for _ in range(5):
-        if cancelled:
-            break
-        await asyncio.sleep(0)
-
+    # Not cancelled immediately — the grace window is still open.
+    await asyncio.sleep(0)
+    assert cancelled == []
+    # After the window, with no reconnect, the abandoned run is cancelled.
+    await asyncio.sleep(0.12)
     assert cancelled == [("chat-1", "did:arc:agent:a", "did:arc:viewer:u")]
+    await adapter.disconnect()
+
+
+async def test_reconnect_within_grace_preserves_the_run() -> None:
+    """A tab refresh / blip / restart-reconnect must NOT cancel the run: a new
+    socket for the same chat_id within the grace window cancels the pending
+    run-cancellation, so no 'browser disconnected' cancel is ever emitted."""
+    cancelled: list[tuple[str, str, str]] = []
+
+    async def cancel(chat_id: str, agent_did: str, user_did: str) -> None:
+        cancelled.append((chat_id, agent_did, user_did))
+
+    adapter = WebPlatformAdapter(
+        on_message=_noop_on_message,
+        on_last_socket_disconnect=cancel,
+        replay_ttl_seconds=0.05,
+    )
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    adapter.unregister_socket(ws)  # schedules a deferred cancellation
+    # Reconnect immediately (same chat_id) — the returning browser.
+    ws2 = FakeWebSocket()
+    adapter.register_socket(ws2, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    # Wait well past the grace window: the run must survive.
+    await asyncio.sleep(0.12)
+    assert cancelled == []
     await adapter.disconnect()
 
 
