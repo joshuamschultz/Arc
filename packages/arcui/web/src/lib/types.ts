@@ -1273,6 +1273,28 @@ export interface DocumentsResponse {
   items: DocHitItem[]
 }
 
+/** One authorized document in a verified collection index (mirror of
+ *  `arcmemory.operator.CollectionIndexEntry`). */
+export interface CollectionIndexEntry {
+  path: string
+  title: string
+  summary: string
+  digest: string
+}
+
+/** A connected document source's verified OKF `index.md` — what's inside +
+ *  purpose (mirror of `arcmemory.operator.CollectionIndexView`). Fail-closed:
+ *  `markdown`/`entries` are populated ONLY when `verified` is true. */
+export interface CollectionIndexView {
+  source_id: string
+  present: boolean
+  verified: boolean
+  document_count: number
+  entries: CollectionIndexEntry[]
+  markdown: string
+  error: string | null
+}
+
 /** A live datastore read. `result` is the raw connector payload (a row, a list
  *  of rows, or null) — shape is source-defined, so it stays `unknown`. */
 export interface DatastoreQueryResponse {

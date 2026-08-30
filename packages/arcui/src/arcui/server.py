@@ -58,6 +58,7 @@ from arcui.routes import config as config_routes
 from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
+from arcui.routes import doc_repo_index as doc_repo_index_routes
 from arcui.routes import export as export_routes
 from arcui.routes import gateway as gateway_routes
 from arcui.routes import home as home_routes
@@ -274,6 +275,7 @@ def create_app(
         *chat_ws_routes.routes,
         *attachments_routes.routes,
         *knowledge_routes.routes,
+        *doc_repo_index_routes.routes,
         *connected_data_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,

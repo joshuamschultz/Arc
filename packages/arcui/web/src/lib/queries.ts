@@ -28,6 +28,7 @@ import type {
   ChunkPage,
   ChunkSearchMode,
   ChunkSearchResponse,
+  CollectionIndexView,
   ConnectedDataActivationResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
@@ -669,6 +670,19 @@ export const useDocuments = (agentId: string | null, source: string, q: string) 
         signal,
       ),
     // A source with no query lists what it holds; a query filters that list.
+    enabled: !!agentId && !!source,
+  })
+
+/** One document source's verified OKF `index.md` — what's inside + purpose
+ *  (H-026). Operator-gated + audited server-side; fail-closed on tamper. */
+export const useSourceIndex = (agentId: string | null, source: string) =>
+  useQuery<CollectionIndexView>({
+    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index`,
+        signal,
+      ),
     enabled: !!agentId && !!source,
   })
 

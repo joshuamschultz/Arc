@@ -25,11 +25,13 @@ There is no invented score — a default-salience memory reads as importance ``1
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from arcokf import validate_collection_index
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
@@ -240,6 +242,47 @@ class ChunkSearchResult(BaseModel):
     mode: str = "literal"
     degraded: bool = False
     query: str = ""
+
+
+class CollectionIndexEntry(BaseModel):
+    """One authorized document as the verified collection index lists it (H-026).
+
+    A projection of arcokf's ``CollectionEntry`` — the document's workspace-relative
+    path, its human title, a one-line purpose summary, and the SHA-256 the index
+    committed for it. Only unclassified documents ever enter a shared index, so an
+    entry carries no classification of its own.
+    """
+
+    path: str
+    title: str
+    summary: str = ""
+    digest: str
+
+
+class CollectionIndexView(BaseModel):
+    """The OKF ``index.md`` for one connected document source — what's inside + purpose.
+
+    Fail-closed by construction (H-026 / ASI06): the ``markdown`` and ``entries``
+    are populated ONLY when arcokf verified the on-disk index against every listed
+    document. A tampered, stale, or corrupt index yields ``verified=False`` with an
+    empty body and the verifier's reason in ``error`` — the unverified artifact is
+    never rendered. ``present=False`` means the source has no index yet (never
+    ingested, or an ungranted/unknown source id): an empty, successful result.
+    """
+
+    source_id: str
+    present: bool = False
+    verified: bool = False
+    document_count: int = 0
+    entries: list[CollectionIndexEntry] = Field(default_factory=list)
+    markdown: str = ""
+    error: str | None = None
+
+
+#: A connector source id names a workspace subfolder, so it must be a single safe
+#: path segment — no separators, no traversal, no NUL. The reader rejects anything
+#: else before it ever touches the filesystem (path-substitution abuse case).
+_SAFE_SOURCE_ID = re.compile(r"[A-Za-z0-9._:@-]{1,256}")
 
 
 def _importance(scalar: float) -> int:
@@ -476,6 +519,56 @@ class MemoryOperator:
 
         index = DocIndex(self._db, self._workspace, self._cfg, embedder=self._embedder)
         return await index.list_documents(self._agent_did, source_id=source_id, limit=limit)
+
+    def read_collection_index(self, source_id: str) -> CollectionIndexView:
+        """Read one document source's verified OKF ``index.md`` (H-026).
+
+        The index is hosted under the agent WORKSPACE
+        (``<workspace>/memory/connected/<source_id>``), never the remote origin;
+        this is a plain file read of that host, gated by arcokf verification. The
+        body is returned ONLY when :func:`arcokf.validate_collection_index` confirms
+        the index is canonical AND every listed document's digest still matches —
+        so an operator-edited index, a stale inventory, or a tampered document all
+        fail closed to ``verified=False`` with an empty body rather than rendering an
+        unverified artifact (ASI06). An absent index (never ingested, or an ungranted
+        source) is an empty ``present=False`` result, not an error.
+        """
+        if _SAFE_SOURCE_ID.fullmatch(source_id) is None:
+            return CollectionIndexView(source_id=source_id, error="invalid source id")
+        base = (self._workspace / "memory" / "connected").resolve()
+        root = (base / source_id).resolve()
+        # Defense in depth: a source id that survived the regex must still resolve
+        # to a direct child of the connected root (no symlink/parent escape).
+        if root.parent != base:
+            return CollectionIndexView(source_id=source_id, error="invalid source id")
+        index_path = root / "index.md"
+        if not index_path.is_file():
+            return CollectionIndexView(source_id=source_id, present=False)
+        validation = validate_collection_index(index_path, root)
+        if not validation.valid:
+            return CollectionIndexView(
+                source_id=source_id, present=True, verified=False, error=validation.error
+            )
+        try:
+            markdown = index_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            return CollectionIndexView(
+                source_id=source_id, present=True, verified=False, error=str(exc)
+            )
+        entries = [
+            CollectionIndexEntry(
+                path=entry.path, title=entry.title, summary=entry.summary, digest=entry.digest
+            )
+            for entry in validation.entries
+        ]
+        return CollectionIndexView(
+            source_id=source_id,
+            present=True,
+            verified=True,
+            document_count=len(entries),
+            entries=entries,
+            markdown=markdown,
+        )
 
     def list_provenances(self, item_id: str) -> list[Provenance]:
         """Every provenance recorded against one canonical item."""
@@ -975,6 +1068,8 @@ __all__ = [
     "ChunkPage",
     "ChunkRecord",
     "ChunkSearchResult",
+    "CollectionIndexEntry",
+    "CollectionIndexView",
     "EntityRecord",
     "GraphEdge",
     "GraphNode",
