@@ -67,9 +67,9 @@ before this batch is complete.
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | MERGED | 6e36436e |
 | H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | NEW | |
-| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | NEW | |
+| H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | CODING | |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
-| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | NEW | |
+| H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | CODING | |
 | H-028 | Model usage | Stop comparing embedding model to inference (bad savings) | S | MERGED | a8ac861b |
 | H-029 | Model usage | Apply the LLM-call detail/naming changes here too (H-007) | S | MERGED | 7489edc0 |
 | H-030 | Tools/Skills | Uploading a skill/tool: right place, signed, loaded, injected | M | MERGED | 1f65e6a1 |
@@ -85,7 +85,7 @@ before this batch is complete.
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
-| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | NEW | |
+| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | CODING | |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
