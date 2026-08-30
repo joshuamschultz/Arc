@@ -38,7 +38,7 @@ from arcmemory import ingest
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
-from arcmemory.datastore import DatastorePort, SqliteDatastorePort
+from arcmemory.datastore import DatastoreOntology, DatastorePort, SqliteDatastorePort
 from arcmemory.db import MemoryDB
 from arcmemory.detectors import Decision, WindowDedup, WorkingSet, evaluate_moment
 from arcmemory.distill import Distiller
@@ -49,6 +49,8 @@ from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever, attributed_cards
 from arcmemory.security import render_recalls
+from arcmemory.semantic_layer import describe as describe_layer
+from arcmemory.semantic_layer import layer_for, overlay
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
@@ -163,6 +165,15 @@ class ArcMemoryBrain:
         # so datastore_query gates the caller's clearance against this label.
         self._datastores: dict[str, DatastorePort] = {}
         self._datastore_classification: dict[str, str] = {}
+        # The connection_id each source_id was registered under (H-025): the
+        # semantic layer file is keyed by connection_id, not the opaque
+        # source-instance hash, so this is what makes overlay()/describe() find
+        # the right operator-editable file for a given registered datastore.
+        self._datastore_connection_id: dict[str, str] = {}
+        # The overlaid (operator-narrowed) ontology from registration time, held
+        # so describe_datastore() can compose meaning without re-introspecting a
+        # live connection on every describe call.
+        self._datastore_ontology: dict[str, DatastoreOntology] = {}
         # Proactive detected-moment recall (SPEC-071): one sliding-window dedup
         # across the brain, plus the per-session prior-cue baseline the
         # topic_shift detector compares against.
@@ -617,6 +628,7 @@ class ArcMemoryBrain:
         source_id: str,
         datastore: DatastorePort,
         *,
+        connection_id: str = "",
         classification: str = "unclassified",
         caller_did: str = "",
     ) -> None:
@@ -626,14 +638,31 @@ class ArcMemoryBrain:
         (set at connect/approval time); :meth:`datastore_query` gates the caller's
         clearance against it (no-read-up), so a lower-cleared caller cannot read a
         higher-classified datastore's rows.
+
+        ``connection_id`` is the operator-facing connection name (e.g. the one
+        ``arc connector semantic`` opens); ``source_id`` is the opaque per-agent
+        source-instance hash used to key live dispatch. The semantic layer file
+        (H-025) is keyed by ``connection_id`` — falling back to ``source_id``
+        when a caller omits it (e.g. a direct ``register_sqlite_datastore`` call
+        with no connector behind it) keeps behavior sane rather than keying a
+        hash-named file nobody can find.
+
+        Sampling real column values into that file is bounded and redacted (see
+        ``datastore.py``), gated by ``MemoryConfig.datastore_sample_values``
+        (off by default at federal — an operator opts in explicitly).
         """
         if not await self._guard("datastore.register", caller_did=caller_did, target=source_id):
             return
+        layer_key = connection_id or source_id
         store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
-        await datastore.introspect()
+        sample_limit = self._cfg.datastore_sample_limit if self._cfg.datastore_sample_values else 0
+        ontology = await datastore.introspect(sample_limit=sample_limit)
+        overlaid = overlay(layer_key, ontology, classification=classification)
         await datastore.persist_ontology(store)
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
+        self._datastore_connection_id[source_id] = layer_key
+        self._datastore_ontology[source_id] = overlaid
 
     async def unregister_datastore(self, source_id: str, *, caller_did: str = "") -> bool:
         """Detach a revoked datastore so it cannot be queried through this Brain."""
@@ -641,6 +670,8 @@ class ArcMemoryBrain:
             return False
         self._datastores.pop(source_id, None)
         self._datastore_classification.pop(source_id, None)
+        self._datastore_connection_id.pop(source_id, None)
+        self._datastore_ontology.pop(source_id, None)
         SemanticStore(self._workspace, self._graph, self._scope(None).key).remove(
             f"source-{source_id}"
         )
@@ -651,6 +682,7 @@ class ArcMemoryBrain:
         source_id: str,
         conn: sqlite3.Connection,
         *,
+        connection_id: str = "",
         classification: str = "unclassified",
         caller_did: str = "",
     ) -> None:
@@ -658,6 +690,7 @@ class ArcMemoryBrain:
         await self.register_datastore(
             source_id,
             SqliteDatastorePort(conn),
+            connection_id=connection_id,
             classification=classification,
             caller_did=caller_did,
         )
@@ -779,18 +812,63 @@ class ArcMemoryBrain:
         datastore = self._datastores.get(source_id)
         if datastore is None:
             return None
-        # No-read-up: the caller's clearance must dominate the datastore's registered
-        # label, or no rows are returned (fail-closed on an unparseable label).
+        if not self._datastore_clearance_dominates(source_id, clearance):
+            return None
+        return await datastore.query(op, table, args)
+
+    async def describe_datastore(
+        self,
+        source_id: str,
+        *,
+        table: str | None = None,
+        clearance: str = "unclassified",
+        caller_did: str = "",
+    ) -> str:
+        """The semantic layer's meaning for a registered datastore — describe-before-query.
+
+        Composes the operator's table/column descriptions and any bounded, redacted
+        sample values (H-025) so an agent reads what the data MEANS before it reads
+        its rows. Backs both the agent-facing ``datastore_describe`` tool and the
+        ``datastore_query`` compose step — same no-read-up gate as a row query, so a
+        caller who cannot read the rows gets no hint about their shape either.
+
+        ``table`` scopes the description to one table (the compose-before-a-query
+        path); omitted, every visible table in the connection is described.
+        """
+        if not await self._guard(
+            "memory.datastore_describe", caller_did=caller_did, target=source_id
+        ):
+            return ""
+        if not self._cfg.datastore_enabled:
+            return ""
+        ontology = self._datastore_ontology.get(source_id)
+        if ontology is None:
+            return ""
+        if not self._datastore_clearance_dominates(source_id, clearance):
+            return ""
+        if table is not None:
+            info = ontology.tables.get(table)
+            if info is None:
+                return ""
+            ontology = DatastoreOntology(tables={table: info}, entity_map={})
+        connection_id = self._datastore_connection_id.get(source_id, source_id)
+        return describe_layer(ontology, layer_for(connection_id))
+
+    def _datastore_clearance_dominates(self, source_id: str, clearance: str) -> bool:
+        """No-read-up: True iff ``clearance`` dominates the datastore's registered label.
+
+        Shared by :meth:`datastore_query` and :meth:`describe_datastore` so the two
+        surfaces (rows vs. meaning) can never drift apart on who may see either.
+        Fails closed on an unparseable label.
+        """
         strict = self._cfg.tier == "federal"
         source_label = self._datastore_classification.get(source_id, "unclassified")
         try:
             clr = parse_classification(clearance, strict=strict)
             resource = parse_classification(source_label, strict=strict)
         except ValueError:
-            return None
-        if not dominates(clr, resource):
-            return None
-        return await datastore.query(op, table, args)
+            return False
+        return dominates(clr, resource)
 
     # -- internals ---------------------------------------------------------
 

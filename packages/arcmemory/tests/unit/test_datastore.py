@@ -142,5 +142,64 @@ async def test_sqlite_adapter_implements_backend_neutral_async_port(
     assert isinstance(row, dict) and row["id"] == "001"
 
 
+class TestSampleValues:
+    """H-025 — bounded, deduplicated, REDACTED per-column example values."""
+
+    def test_sample_limit_zero_captures_nothing(self, invoices_conn: sqlite3.Connection) -> None:
+        ontology = SqliteDatastore(invoices_conn).introspect(sample_limit=0)
+
+        assert ontology.tables["invoices"].sample_values == {}
+
+    def test_sample_limit_captures_bounded_deduplicated_values(
+        self, invoices_conn: sqlite3.Connection
+    ) -> None:
+        invoices_conn.execute(
+            "INSERT INTO invoices (id, amount, customer_id) VALUES ('002', 10.0, 'cust-77')"
+        )
+        invoices_conn.commit()
+
+        ontology = SqliteDatastore(invoices_conn).introspect(sample_limit=5)
+
+        samples = ontology.tables["invoices"].sample_values["customer_id"]
+        assert samples == ["cust-77"]  # deduplicated, not one row per insert
+
+    def test_a_secret_shaped_value_is_redacted_before_it_is_returned(
+        self, invoices_conn: sqlite3.Connection
+    ) -> None:
+        invoices_conn.execute(
+            "INSERT INTO invoices (id, amount, customer_id) "
+            "VALUES ('003', 5.0, 'key AKIA1234567890ABCDEF here')"
+        )
+        invoices_conn.commit()
+
+        ontology = SqliteDatastore(invoices_conn).introspect(sample_limit=5)
+
+        samples = ontology.tables["invoices"].sample_values["customer_id"]
+        assert not any("AKIA1234567890ABCDEF" in s for s in samples)
+        assert any("[SECRET:AWS_ACCESS_KEY]" in s for s in samples)
+
+    def test_sampling_never_issues_a_distinct_query(self, tmp_path: Path) -> None:
+        """Bounded LIMIT-only reads, never a full-table ``SELECT DISTINCT`` — a
+        query planner can still execute that as an unbounded scan+sort on an
+        unindexed column, which is exactly what H-025 forbids."""
+        executed: list[str] = []
+
+        class _RecordingConnection(sqlite3.Connection):
+            def execute(self, sql: str, *args: object) -> sqlite3.Cursor:  # type: ignore[override]
+                executed.append(sql)
+                return super().execute(sql, *args)
+
+        conn = sqlite3.connect(str(tmp_path / "rec.db"), factory=_RecordingConnection)
+        conn.execute("CREATE TABLE invoices (id TEXT PRIMARY KEY, customer_id TEXT)")
+        conn.execute("INSERT INTO invoices VALUES ('001', 'cust-77')")
+        conn.commit()
+        executed.clear()
+
+        SqliteDatastore(conn).introspect(sample_limit=5)
+
+        assert not any("DISTINCT" in sql.upper() for sql in executed)
+        assert any("LIMIT" in sql.upper() for sql in executed)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

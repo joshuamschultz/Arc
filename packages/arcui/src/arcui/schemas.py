@@ -190,6 +190,34 @@ class PromptWriteResponse(BaseModel):
     message: str
 
 
+class SemanticLayerResponse(BaseModel):
+    """Body of ``GET /api/connections/{instance}/semantic-layer`` (H-025).
+
+    ``content`` is the raw TOML — this file is hand-edited, so the browser
+    round-trips exact text rather than a reconstructed model. ``signed`` is
+    whether a verified ``.arcsig`` sidecar is currently backing it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: str
+    exists: bool
+    content: str
+    classification: str
+    signed: bool
+
+
+class SemanticLayerWriteResponse(BaseModel):
+    """Body of ``PUT /api/connections/{instance}/semantic-layer`` — a signed save."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: str
+    signer_did: str
+    sha256: str
+    message: str
+
+
 class PromptResetResponse(BaseModel):
     """Body of ``DELETE /api/agents/{id}/prompts/{package}/{name}`` — override removed."""
 

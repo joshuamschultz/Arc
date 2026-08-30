@@ -64,6 +64,7 @@ from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
+from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
 from arcui.routes import tasks as tasks_routes
@@ -281,6 +282,7 @@ def create_app(
         # SPEC-064: provider keys (fleet-wide) and connectors (per agent).
         *keys_routes.routes,
         *connectors_routes.routes,
+        *semantic_layer_routes.routes,
         *gateway_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
