@@ -648,3 +648,57 @@ def test_knowledge_summary_unknown_agent_is_404(app_with_memories: Any) -> None:
     with TestClient(app_with_memories) as client:
         resp = client.get("/api/knowledge/nope", headers=_viewer())
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET .../knowledge/graph — windowed neighborhood view (H-016)
+# ---------------------------------------------------------------------------
+
+
+class TestGraph:
+    def test_viewer_gets_nodes_and_edges(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/graph?node=alice&hops=1", headers=_viewer()
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        node_ids = {n["id"] for n in body["nodes"]}
+        assert node_ids == {"alice", "bob"}
+        # Both the wiki-link (write_fact) and the co-occurrence (episodic capture)
+        # edges land between the same pair — assert the link edge is among them.
+        assert any(
+            {e["src"], e["dst"]} == {"alice", "bob"} and e["kind"] == "link" for e in body["edges"]
+        )
+
+    def test_no_node_returns_whole_scope_window(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 200
+        node_ids = {n["id"] for n in resp.json()["nodes"]}
+        assert {"alice", "bob"} <= node_ids
+
+    def test_unknown_agent_returns_404(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/ghost/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 404
+
+    def test_no_auth_is_401(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/graph")
+        assert resp.status_code == 401
+
+    def test_empty_agent_is_200_empty_graph(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["nodes"] == []
+        assert body["edges"] == []
+
+    def test_bad_hops_is_400(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/graph?hops=not-a-number", headers=_viewer()
+            )
+        assert resp.status_code == 400

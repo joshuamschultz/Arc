@@ -151,6 +151,21 @@ class WeightedGraph:
         ).fetchall()
         return [(r[0], r[1], float(r[2])) for r in rows]
 
+    def all_edges(self, scope: str) -> list[tuple[str, str, str, float, float, str | None, int]]:
+        """Every edge in ``scope`` as ``(src, dst, kind, weight, salience, last_hit, hits)``.
+
+        Unlike :meth:`neighbor_edges` (which drops salience/recency/hit-count for a
+        single-node's lightweight ``LinkRecord`` view), this carries the full row so
+        a whole-graph consumer (the H-016 graph viewer, via ``MemoryOperator.graph``)
+        can render *why* an edge matters without a second query path.
+        """
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT src, dst, kind, weight, salience, last_hit, hits FROM edges WHERE scope=?",
+            (scope,),
+        ).fetchall()
+        return [(r[0], r[1], r[2], float(r[3]), float(r[4]), r[5], int(r[6])) for r in rows]
+
     def rename_node(self, scope: str, old: str, new: str) -> int:
         """Repoint every edge touching ``old`` onto ``new`` (cue-merge, T-054).
 

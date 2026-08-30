@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from arctrust.classification import parse_classification
+from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
@@ -140,6 +140,55 @@ class MemorySummary(BaseModel):
     graph_edges: int = 0
 
 
+class GraphNode(BaseModel):
+    """One graph node, classification-gated before it ever leaves the operator (H-016).
+
+    ``node_type`` mirrors :meth:`MemoryOperator._target_type` — ``entity`` (a
+    backed semantic-store card) or ``cue`` (a bare co-occurrence term with no
+    file). A cue carries no classification of its own, so it reads as
+    ``unclassified`` (dominated by every clearance) rather than inventing a label.
+    """
+
+    id: str
+    node_type: str  # "entity" | "cue"
+    classification: str
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class GraphEdge(BaseModel):
+    """One graph edge with the metadata ``neighbor_edges`` drops (H-016).
+
+    Backed by :meth:`WeightedGraph.all_edges` so the viewer can render weight,
+    salience, and recency for a hovered edge without a second query path.
+    """
+
+    src: str
+    dst: str
+    kind: str
+    weight: float
+    salience: float = 0.0
+    last_hit: str | None = None
+    hits: int = 0
+
+
+class MemoryGraph(BaseModel):
+    """A windowed neighborhood view of the associative graph (H-016).
+
+    Never a whole-graph dump: :meth:`MemoryOperator.graph` caps both the hop
+    radius and the node count server-side. An edge whose far endpoint failed the
+    no-read-up gate (or fell outside the window) is dropped entirely — it leaves
+    no trace in ``nodes``, in any node's metadata, or in a count/degree here.
+    """
+
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+
+
+# H-016 hard ceiling on returned nodes, independent of any caller-supplied
+# ``max_nodes`` — the graph endpoint is a neighborhood window, never a dump.
+_GRAPH_HARD_MAX_NODES = 500
+
+
 def _importance(scalar: float) -> int:
     """Project a 0..1 salience/confidence onto a 1..10 curator score."""
     return max(1, min(10, round(scalar * 10)))
@@ -226,6 +275,58 @@ class MemoryOperator:
             graph_nodes=int(nodes),
             graph_edges=int(edges),
         )
+
+    def graph(
+        self,
+        *,
+        session_id: str | None = None,
+        node: str | None = None,
+        hops: int = 1,
+        clearance: str = "unclassified",
+        max_nodes: int = _GRAPH_HARD_MAX_NODES,
+    ) -> MemoryGraph:
+        """Windowed neighborhood view of the associative graph (H-016).
+
+        With ``node`` set, walks up to ``hops`` undirected steps from it; with
+        ``node=None``, returns a deterministic (sorted-id) slice of the whole
+        scope. Either way the result is capped: ``hops`` never exceeds the
+        tier's own spreading-activation cap (``MemoryConfig.max_hops``) and the
+        node count never exceeds ``_GRAPH_HARD_MAX_NODES`` regardless of what a
+        caller requests — this is a neighborhood window, never a whole-graph dump.
+
+        Classification gating runs ONCE, here, through :meth:`_gated_node` — the
+        same read path a hover/re-center call reuses by calling ``graph`` again.
+        A node above ``clearance`` is dropped; an edge is kept only when BOTH
+        endpoints survived the gate, so a hidden node leaves no trace anywhere
+        in the response — not in ``nodes``, not in an edge, not in a count.
+        """
+        scope = self._scope(session_id)
+        clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
+        hops = max(1, min(hops, self._cfg.max_hops))
+        max_nodes = max(1, min(max_nodes, _GRAPH_HARD_MAX_NODES))
+        raw_edges = self._graph.all_edges(scope.key)
+        window = self._graph_window(raw_edges, node, hops, max_nodes)
+
+        nodes: dict[str, GraphNode] = {}
+        for node_id in window:
+            record = self._gated_node(session_id, node_id, clr)
+            if record is not None:
+                nodes[node_id] = record
+
+        edges = [
+            GraphEdge(
+                src=src,
+                dst=dst,
+                kind=kind,
+                weight=weight,
+                salience=salience,
+                last_hit=last_hit,
+                hits=hits,
+            )
+            for src, dst, kind, weight, salience, last_hit, hits in raw_edges
+            if src in nodes and dst in nodes
+        ]
+        return MemoryGraph(nodes=list(nodes.values()), edges=edges)
 
     def list_entities(self, *, session_id: str | None = None) -> list[EntityRecord]:
         """Return every semantic entity with its metadata (REQ-084)."""
@@ -550,6 +651,77 @@ class MemoryOperator:
         """A link target is an ``entity`` if it has a file, else a bare graph ``cue``."""
         return "entity" if self._semantic(session_id).path_for(slug).exists() else "cue"
 
+    def _graph_window(
+        self,
+        raw_edges: list[tuple[str, str, str, float, float, str | None, int]],
+        start: str | None,
+        hops: int,
+        max_nodes: int,
+    ) -> list[str]:
+        """Node ids in the requested window: a ``hops``-radius BFS from ``start``,
+        or a deterministic capped slice of every node when ``start`` is None.
+        """
+        adjacency: dict[str, set[str]] = {}
+        all_ids: set[str] = set()
+        for src, dst, *_rest in raw_edges:
+            adjacency.setdefault(src, set()).add(dst)
+            adjacency.setdefault(dst, set()).add(src)
+            all_ids.add(src)
+            all_ids.add(dst)
+
+        if start is None:
+            return sorted(all_ids)[:max_nodes]
+
+        visited = {start}
+        frontier = {start}
+        for _ in range(hops):
+            frontier = {neighbor for n in frontier for neighbor in adjacency.get(n, set())}
+            frontier -= visited
+            if not frontier:
+                break
+            visited |= frontier
+            if len(visited) >= max_nodes:
+                break
+        return sorted(visited)[:max_nodes]
+
+    def _visible(self, label: str, clearance: Classification) -> bool:
+        """No-read-up predicate for one classification label (fail-closed on unknown)."""
+        try:
+            resource = parse_classification(label, strict=self._cfg.tier == "federal")
+        except ValueError:
+            return False
+        return dominates(clearance, resource)
+
+    def _gated_node(
+        self, session_id: str | None, node_id: str, clearance: Classification
+    ) -> GraphNode | None:
+        """Resolve + classification-gate one node id — the ONE read path both
+        :meth:`graph` and any hover/re-center call (re-invoking ``graph``) share.
+
+        Returns ``None`` when the node's classification does not dominate under
+        ``clearance``; the caller drops it and every edge touching it, with no
+        further trace (no id, no count, no degree) surviving in the response.
+        """
+        node_type = self._target_type(session_id, node_id)
+        entity = self._semantic(session_id).read(node_id) if node_type == "entity" else None
+        if entity is not None:
+            if not self._visible(entity.classification, clearance):
+                return None
+            metadata: dict[str, object] = {
+                "name": entity.name,
+                "entity_type": entity.entity_type,
+                "tags": entity.tags,
+            }
+            return GraphNode(
+                id=node_id,
+                node_type="entity",
+                classification=entity.classification,
+                metadata=metadata,
+            )
+        # A bare cue (co-occurrence term with no backing file) carries no
+        # classification of its own — unclassified, dominated by every clearance.
+        return GraphNode(id=node_id, node_type="cue", classification="unclassified", metadata={})
+
     def _to_record(self, scope_key: str, event: Event) -> MemoryRecord:
         return MemoryRecord(
             entry_id=event.event_id,
@@ -583,7 +755,10 @@ class MemoryOperator:
 
 __all__ = [
     "EntityRecord",
+    "GraphEdge",
+    "GraphNode",
     "LinkRecord",
+    "MemoryGraph",
     "MemoryOperator",
     "MemoryPage",
     "MemoryRecord",
