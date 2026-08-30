@@ -34,6 +34,7 @@ import arcllm
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig, Tier
+from arcmemory.isolation import enforce_brain_isolation
 
 # API key for a remote ``provider`` embedding endpoint. Environment only —
 # credentials never touch the agent TOML (ADR-019, LLM07).
@@ -58,6 +59,20 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         config = MemoryConfig(**{**config.model_dump(), **dynamics})
 
     agent_did = context["agent_did"]
+    workspace = context["workspace"]
+    identity = context.get("identity")
+    # H-047: kill accidental cross-agent brain wiring BEFORE any state is touched.
+    # An unguarded factory would build a Brain for whatever {workspace, agent_did}
+    # the (polite) caller passed; enforce that the claimed DID is the proven one,
+    # the identity is self-consistent, and the identity owns the workspace. Fails
+    # closed with the shared MemoryIsolationError / memory.isolation_fault vocab.
+    enforce_brain_isolation(
+        workspace=workspace,
+        agent_did=agent_did,
+        identity=identity,
+        audit_sink=context.get("audit_sink"),
+        tier=tier,
+    )
     agent_name = str(context.get("agent_name", ""))
     embed_backend = str(backend.get("embed_backend", "local"))
     embed_model = str(backend.get("embed_model", ""))
@@ -76,7 +91,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     capture_tool_io = bool(backend.get("capture_tool_io", tier == "personal"))
 
     return ArcMemoryBrain(
-        context["workspace"],
+        workspace,
         agent_did,
         config=config,
         embedder=build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url),
@@ -85,7 +100,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         model_factory=_build_loop_model_factory(
             distill_provider, distill_model, agent_did, agent_name
         ),
-        identity=context.get("identity"),
+        identity=identity,
         policy_pipeline=context.get("policy_pipeline"),
         store_raw_bodies=capture_tool_io,
     )

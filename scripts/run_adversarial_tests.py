@@ -46,6 +46,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # count-inference of a hidden chunk, viewer is 403, vector degrades LOUD.
         "packages/arcmemory/tests/unit/test_operator_connected_explorer.py",
         "packages/arcui/tests/integration/test_connected_explorer_routes.py",
+        # H-047 build_brain identity guard: zero-tolerance cross-agent isolation.
+        "packages/arcmemory/tests/security/test_build_brain_isolation.py",
     ),
     "dashboard symlink deletion and key/control-plane exfiltration (H-018)": (
         "packages/arcui/tests/integration/test_file_delete_routes.py",

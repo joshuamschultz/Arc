@@ -233,7 +233,17 @@ async def test_active_brain_injects_no_disabled_note() -> None:
 async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> None:
     """brain='arcmemory' -> capture persists the raw stream; recall activates."""
     pytest.importorskip("arcmemory")
-    _runtime.configure(config={"brain": "arcmemory"}, workspace=tmp_path, agent_did=_DID)
+    from arctrust.identity import AgentIdentity
+
+    # The real build_brain path enforces cross-agent isolation (H-047): the identity
+    # must match agent_did and own the (fresh) workspace, exactly as ArcAgent wires it.
+    identity = AgentIdentity.generate(org="default", agent_type="executor")
+    _runtime.configure(
+        config={"brain": "arcmemory"},
+        workspace=tmp_path,
+        agent_did=identity.did,
+        identity=identity,
+    )
     st = _runtime.state()
     assert st.active is True
     assert type(st.brain).__name__ == "ArcMemoryBrain"
