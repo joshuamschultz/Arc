@@ -1005,21 +1005,30 @@ async def refresh_index_once() -> None:
 
 
 async def consolidate_poll_once(*, now: float | None = None) -> bool:
-    """Run one consolidation iff the trigger fired; return whether it ran.
+    """Run one consolidation iff the agent is idle with pending events.
 
-    Trigger (DC-5): accumulated capture events cross ``consolidate_event_threshold``,
-    or events are pending and the agent has been idle past ``consolidate_idle_seconds``.
+    Trigger (DC-5): there are pending capture events AND the agent has been idle
+    past ``consolidate_idle_seconds``. Consolidation is a background sleep (a heavy
+    window review) — it deliberately does NOT fire on an event count or a bare
+    time interval while the agent is active; an always-busy agent is swept by the
+    nightly hygiene path instead, so the sleep never lands on an interactive turn.
     """
     st = _runtime.state()
     if not st.active or st.events_since_consolidate <= 0:
         return False
     clock = time.monotonic() if now is None else now
     idle = clock - st.last_activity
-    elapsed = clock - st.last_consolidate_at
-    threshold_hit = st.events_since_consolidate >= st.config.consolidate_event_threshold
-    idle_hit = idle >= st.config.consolidate_idle_seconds
-    interval_hit = elapsed >= st.config.consolidate_interval_seconds
-    if not (threshold_hit or idle_hit or interval_hit):
+    # Consolidation is a background "sleep" — a full recent-episode window review
+    # (a 100k+-token model call). It must ONLY run when the agent is genuinely
+    # IDLE, never inline with an interactive burst. Previously an event-threshold
+    # OR a bare 1h interval fired it on their own, so a quick chat that left one
+    # pending capture event dropped the whole sleep right after the turn the
+    # moment >1h had elapsed. Idleness is now the sole heartbeat gate: the agent
+    # must have been quiet for ``consolidate_idle_seconds`` (and, per the guard
+    # above, have pending events). An agent that is never idle accumulates events
+    # and is swept by the nightly hygiene path (brain ``hygiene_due``) instead —
+    # the heavy window review never lands on an active, interactive agent.
+    if idle < st.config.consolidate_idle_seconds:
         return False
 
     result = await st.brain.consolidate()

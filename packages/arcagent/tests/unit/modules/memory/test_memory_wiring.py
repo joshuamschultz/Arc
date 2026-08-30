@@ -493,27 +493,30 @@ async def test_acl_allow_asks_provider_then_retrieves() -> None:
 # -- Consolidation trigger (fake clock + event counter, T-082) -----------
 
 
-async def test_consolidate_fires_on_event_threshold() -> None:
+async def test_consolidation_never_fires_while_the_agent_is_active() -> None:
+    """Pending events — even past the threshold — must NOT consolidate while the
+    agent is active. The heavy sleep only lands when the agent is idle; a busy
+    agent is swept nightly instead. Regression for the 125k-token consolidation
+    that fired right after a quick interactive chat."""
     spy = _SpyBrain()
-    _configure_with(spy, {"consolidate_event_threshold": 3})
+    _configure_with(spy, {"consolidate_event_threshold": 3, "consolidate_idle_seconds": 60.0})
     st = _runtime.state()
-    st.events_since_consolidate = 2
-    assert await consolidate_poll_once(now=st.last_activity) is False  # below threshold
-    st.events_since_consolidate = 3
-    assert await consolidate_poll_once(now=st.last_activity) is True  # threshold hit
-    assert spy.consolidations == 1
-    assert st.events_since_consolidate == 0  # reset after run
+    st.last_activity = 0.0
+    st.events_since_consolidate = 5  # well past the threshold
+    # Just active (idle == 0) — no consolidation, no matter how many events.
+    assert await consolidate_poll_once(now=st.last_activity) is False
+    assert spy.consolidations == 0
 
 
-async def test_consolidate_fires_on_idle() -> None:
+async def test_consolidate_fires_only_when_idle() -> None:
     spy = _SpyBrain()
     _configure_with(spy, {"consolidate_event_threshold": 100, "consolidate_idle_seconds": 60.0})
     st = _runtime.state()
     st.events_since_consolidate = 1
     st.last_activity = 0.0
-    # Not yet idle enough.
+    # Not yet idle enough — even with pending events.
     assert await consolidate_poll_once(now=30.0) is False
-    # Idle past the gap -> fires.
+    # Idle past the quiet window -> fires (pending events flushed on idle).
     assert await consolidate_poll_once(now=120.0) is True
     assert spy.consolidations == 1
 
