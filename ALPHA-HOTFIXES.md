@@ -43,7 +43,7 @@ before this batch is complete.
 | # | Area | Title | Size | Status | Commit |
 |---|------|-------|------|--------|--------|
 | H-001 | Home | Approvals + needs bubble up to "NEEDS YOU" | M | MERGED | 03cb871a |
-| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (arcteam waiting-on-human reader; action_required gate; no double-count) | L | VERIFY | 30e3d3ad |
+| H-001b | Home | Held/waiting-gate runs in NEEDS YOU (arcteam waiting-on-human reader; action_required gate; no double-count) | L | MERGED | 30e3d3ad |
 | H-002 | Home | Recent Activity shows the sub-process (job) | S | MERGED | W2a |
 | H-003 | Home | Token Volume in a real unit (M/B), fix axis labels | S | MERGED | b01d22e6 |
 | H-004 | Home | Tasks + Runs counts time-bound to 24h | M | MERGED | W3a |
