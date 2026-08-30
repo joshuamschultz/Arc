@@ -25,6 +25,9 @@ import type {
   AuthMeResponse,
   BlobFoldersResponse,
   ChannelsResponse,
+  ChunkPage,
+  ChunkSearchMode,
+  ChunkSearchResponse,
   ConnectedDataActivationResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
@@ -395,6 +398,25 @@ export const useMemoryLinks = (agentId: string | null, entryId: string | null) =
     queryFn: ({ signal }) =>
       apiGet(`/api/agents/${agentId}/knowledge/memories/${entryId}/links`, signal),
     enabled: !!agentId && !!entryId,
+  })
+
+export const useChunks = (agentId: string | null, limit = 50, offset = 0) =>
+  useQuery<ChunkPage>({
+    queryKey: ['agent', agentId, 'knowledge', 'chunks', limit, offset],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/chunks?limit=${limit}&offset=${offset}`, signal),
+    enabled: !!agentId,
+  })
+
+export const useChunkSearch = (agentId: string | null, q: string, mode: ChunkSearchMode) =>
+  useQuery<ChunkSearchResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'chunks', 'search', q, mode],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/chunks?q=${encodeURIComponent(q)}&mode=${mode}`,
+        signal,
+      ),
+    enabled: !!agentId && q.trim().length > 0,
   })
 
 export const useEntities = (agentId: string | null) =>

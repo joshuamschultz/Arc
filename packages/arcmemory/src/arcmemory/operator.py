@@ -30,15 +30,19 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import parse_classification
 from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.doc_index import DocHit
+from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.rebuild import Embedder
+from arcmemory.index.rebuild import Embedder, embed_or_none
+from arcmemory.index.surface import SurfaceIndex, _fts_query
 from arcmemory.retrieve import Retriever
+from arcmemory.security import gate_no_read_up
 from arcmemory.status import SemanticStatus
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
@@ -58,6 +62,10 @@ from arcmemory.types import (
     Situation,
     SourceMapping,
 )
+
+#: Chunk text is capped independent of result count — a chunk browser must never
+#: become a full-document dump (LLM02/threat-surface: sensitive info disclosure).
+_CHUNK_TEXT_CAP = 500
 
 
 class MutationStatus(StrEnum):
@@ -140,6 +148,51 @@ class MemorySummary(BaseModel):
     graph_edges: int = 0
 
 
+class ChunkRecord(BaseModel):
+    """One indexed chunk (embedded and/or literal) with its metadata (H-023).
+
+    ``text`` is capped to ``_CHUNK_TEXT_CAP`` chars regardless of how many
+    results were returned — a chunk browser must never become a full-document
+    dump; ``truncated`` says whether this record's text was cut. ``score`` is
+    rank-derived (``1/(rank+1)``): ``IndexBackend`` returns ranked chunk ids,
+    not comparable raw scores across bm25/vec/recency, so this is the one
+    scale the browser can sort or display consistently.
+    """
+
+    chunk_id: str
+    source: str  # source_path (file, event, or ingested document) this chunk came from
+    scope: str
+    classification: str
+    mtime: float | None = None
+    score: float
+    text: str
+    truncated: bool = False
+
+
+class ChunkPage(BaseModel):
+    """A gated, paginated page of an agent's chunks, newest first (H-023)."""
+
+    items: list[ChunkRecord] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
+class ChunkSearchResult(BaseModel):
+    """Chunk search result — literal (BM25) or vector, with an honest degrade flag.
+
+    ``mode`` is the mode actually used, which may differ from what was
+    requested: a ``"vector"`` request with no embedder/sqlite-vec wired
+    degrades LOUD to ``"literal"`` (``degraded=True``) rather than raising or
+    returning an empty result that looks like "no matches" (H-023).
+    """
+
+    items: list[ChunkRecord] = Field(default_factory=list)
+    mode: str = "literal"
+    degraded: bool = False
+    query: str = ""
+
+
 def _importance(scalar: float) -> int:
     """Project a 0..1 salience/confidence onto a 1..10 curator score."""
     return max(1, min(10, round(scalar * 10)))
@@ -166,6 +219,7 @@ class MemoryOperator:
         config: MemoryConfig | None = None,
         embedder: Embedder | None = None,
         seed_vocabulary: Iterable[str] | None = None,
+        audit_sink: AuditSink | None = None,
     ) -> None:
         if not agent_did:
             raise ValueError("MemoryOperator requires an agent_did (no memory without identity)")
@@ -174,6 +228,7 @@ class MemoryOperator:
         self._cfg = config or MemoryConfig()
         self._embedder = embedder
         self._seed_vocab = list(seed_vocabulary or [])
+        self._audit = audit_sink if audit_sink is not None else NullSink()
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._episodic = EpisodicStore(self._db, self._workspace)
@@ -181,6 +236,7 @@ class MemoryOperator:
         self._procedures = ProceduralStore(self._workspace)
         self._events = EventStore(self._workspace)
         self._daily = DailyNotesStore(self._workspace)
+        self._backend: IndexBackend = open_index_backend(self._cfg.index_backend, db=self._db)
 
     # -- reads -------------------------------------------------------------
 
@@ -443,6 +499,168 @@ class MemoryOperator:
         )
         return bundle.recalls
 
+    # -- chunks (H-023) ------------------------------------------------------
+
+    async def browse_chunks(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        clearance: str = "unclassified",
+        session_id: str | None = None,
+    ) -> ChunkPage:
+        """One gated, paginated page of the recall-scope's chunks, newest first.
+
+        The no-read-up gate runs BEFORE pagination: ``total`` and the page slice
+        both reflect only what ``clearance`` may see, so a caller can never infer
+        the existence of an over-clearance chunk from a shifted count.
+        """
+        scope = self._scope(session_id)
+        await self._index_chunks(scope, embed=False)
+        ids = await self._backend.recency_order(scope.key)
+        recalls, meta = await self._hydrate_chunks(scope.key, ids)
+        kept = self._gate_chunks(recalls, clearance)
+        page = kept[offset : offset + limit]
+        return ChunkPage(
+            items=[self._to_chunk_record(r, meta, scope.key) for r in page],
+            total=len(kept),
+            limit=limit,
+            offset=offset,
+        )
+
+    async def search_chunks(
+        self,
+        query: str,
+        *,
+        mode: str = "literal",
+        limit: int = 10,
+        clearance: str = "unclassified",
+        session_id: str | None = None,
+    ) -> ChunkSearchResult:
+        """Search chunks by ``mode`` — ``"literal"`` (BM25) or ``"vector"`` (cosine).
+
+        A ``"vector"`` request degrades LOUD to literal (``degraded=True``,
+        ``mode="literal"``) when no embedder or sqlite-vec is available, or the
+        embed call itself fails — this method never raises for that reason and
+        never silently returns empty as if nothing matched. Every candidate is
+        gated through the same no-read-up predicate ``retrieve.py`` uses, BEFORE
+        ``limit`` is applied, so a dropped over-clearance chunk never displaces a
+        visible one from the result. Any ``mode`` other than exactly ``"vector"``
+        runs literal — there is no third, silently-empty mode.
+        """
+        scope = self._scope(session_id)
+        want_vector = mode == "vector"
+        await self._index_chunks(scope, embed=want_vector)
+
+        degraded = False
+        actual_mode = "vector" if want_vector else "literal"
+        ids: list[str] = []
+        if want_vector:
+            vector_ready = self._backend.vec_available and self._embedder is not None
+            vectors = (
+                await embed_or_none(self._embedder, [query], operation="operator:search_chunks")
+                if vector_ready
+                else None
+            )
+            if vectors:
+                ids = await self._backend.vec_search(scope.key, vectors[0])
+            else:
+                degraded = True
+                actual_mode = "literal"
+        if actual_mode == "literal":
+            fts = _fts_query(query)
+            ids = await self._backend.bm25_search(scope.key, fts) if fts else []
+
+        recalls, meta = await self._hydrate_chunks(scope.key, ids)
+        kept = self._gate_chunks(recalls, clearance)
+        return ChunkSearchResult(
+            items=[self._to_chunk_record(r, meta, scope.key) for r in kept[:limit]],
+            mode=actual_mode,
+            degraded=degraded,
+            query=query,
+        )
+
+    async def _index_chunks(self, scope: Scope, *, embed: bool) -> None:
+        """Freshen this scope's chunk/fts(/vec) rows before reading the backend.
+
+        A separate ``SurfaceIndex`` per call, exactly the pattern :meth:`search`
+        already uses for ``Retriever`` — indexing is incremental and content-
+        gated, so a call with nothing new to index is nearly free (T-040).
+        """
+        surface = SurfaceIndex(
+            self._db,
+            self._workspace,
+            scope,
+            config=self._cfg,
+            embedder=self._embedder,
+            audit_sink=self._audit,
+            seed_vocabulary=self._seed_vocab,
+        )
+        await surface.index_if_needed(embed=embed)
+
+    async def _hydrate_chunks(
+        self, scope_key: str, chunk_ids: list[str]
+    ) -> tuple[list[Recall], dict[str, tuple[str, float | None]]]:
+        """Turn ranked chunk ids into gate-ready ``Recall``s + their source/mtime.
+
+        ``Recall`` is reused as the gate's input shape (it is exactly what
+        ``gate_no_read_up`` accepts); ``source``/``mtime`` ride alongside in a
+        side table since ``Recall.source`` is repurposed here to carry the chunk
+        id, not the file path.
+        """
+        recalls: list[Recall] = []
+        meta_by_id: dict[str, tuple[str, float | None]] = {}
+        for rank, chunk_id in enumerate(chunk_ids):
+            meta = await self._backend.chunk_meta(scope_key, chunk_id)
+            text = await self._backend.chunk_text(scope_key, chunk_id)
+            if meta is None or text is None:
+                continue  # vanished between ranking and hydration — skip, don't fail
+            source_path, classification, mtime = meta
+            meta_by_id[chunk_id] = (source_path, mtime)
+            recalls.append(
+                Recall(
+                    source=chunk_id,
+                    content=text,
+                    score=1.0 / (rank + 1),  # rank-derived (backend exposes no raw score)
+                    kind="chunk",
+                    classification=classification,
+                )
+            )
+        return recalls, meta_by_id
+
+    def _gate_chunks(self, recalls: list[Recall], clearance: str) -> list[Recall]:
+        """Drop every chunk ``clearance`` does not dominate (reuses ``retrieve.py``'s gate)."""
+        strict = self._cfg.tier == "federal"
+        clr = parse_classification(clearance, strict=strict)
+        return gate_no_read_up(
+            recalls,
+            clearance=clr,
+            strict=strict,
+            actor_did=self._agent_did,
+            tier=self._cfg.tier,
+            audit_sink=self._audit,
+        )
+
+    def _to_chunk_record(
+        self,
+        recall: Recall,
+        meta_by_id: dict[str, tuple[str, float | None]],
+        scope_key: str,
+    ) -> ChunkRecord:
+        source_path, mtime = meta_by_id.get(recall.source, (recall.source, None))
+        truncated = len(recall.content) > _CHUNK_TEXT_CAP
+        text = recall.content[:_CHUNK_TEXT_CAP] if truncated else recall.content
+        return ChunkRecord(
+            chunk_id=recall.source,
+            source=source_path,
+            scope=scope_key,
+            classification=recall.classification,
+            mtime=mtime,
+            score=recall.score,
+            text=text,
+            truncated=truncated,
+        )
+
     # -- mutations ---------------------------------------------------------
 
     def edit_entry(
@@ -582,6 +800,9 @@ class MemoryOperator:
 
 
 __all__ = [
+    "ChunkPage",
+    "ChunkRecord",
+    "ChunkSearchResult",
     "EntityRecord",
     "LinkRecord",
     "MemoryOperator",
