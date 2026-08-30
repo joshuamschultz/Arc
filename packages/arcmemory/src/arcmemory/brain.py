@@ -55,6 +55,7 @@ from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
     ConsolidationResult,
+    Entity,
     IngestResult,
     MemoryHome,
     Recall,
@@ -94,6 +95,14 @@ def _augment_query(text: str, cues: list[str]) -> str:
     if not extra:
         return text
     return f"{text} {' '.join(extra)}".strip()
+
+
+def _entity_fact(entity: Entity, predicate: str) -> str | None:
+    """First value of ``predicate`` on ``entity`` (None if it carries no such fact)."""
+    for fact in entity.facts:
+        if fact.predicate == predicate:
+            return fact.value
+    return None
 
 
 class _ScopeBundle:
@@ -659,10 +668,41 @@ class ArcMemoryBrain:
         ontology = await datastore.introspect(sample_limit=sample_limit)
         overlaid = overlay(layer_key, ontology, classification=classification)
         await datastore.persist_ontology(store, source_id=source_id)
+        self._purge_stale_db_table_cards(store, source_id, set(ontology.tables))
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
         self._datastore_connection_id[source_id] = layer_key
         self._datastore_ontology[source_id] = overlaid
+
+    def _purge_stale_db_table_cards(
+        self, store: SemanticStore, source_id: str, current_tables: set[str]
+    ) -> None:
+        """Collect ``db_table`` cards the source-scoped slug scheme left behind.
+
+        Two classes are removed, by FACT equality — never slug prefix, which would
+        let source ``a`` over-purge source ``a-b``'s ``db-table-a-b-…`` cards:
+
+        * a pre-scoping card (old global ``db-table-<name>`` shape) carries no
+          ``source_id`` fact and is dead the moment any source registers under the
+          scoped scheme;
+        * a card owned by THIS ``source_id`` whose table is no longer in
+          ``current_tables`` is a dropped table. An empty ``current_tables`` (from
+          :meth:`unregister_datastore`) therefore removes every card this source
+          owns, closing the pre-existing revoke leak.
+
+        Runs inside ``register_datastore`` — which the coordinator calls per sync —
+        so deployed boxes carrying old-shape rows converge with no manual migration.
+        """
+        for slug in store.slugs():
+            entity = store.read(slug)
+            if entity is None or entity.entity_type != "db_table":
+                continue
+            card_source = _entity_fact(entity, "source_id")
+            if card_source is None:
+                store.remove(slug)
+            elif card_source == source_id:
+                if _entity_fact(entity, "table_name") not in current_tables:
+                    store.remove(slug)
 
     async def unregister_datastore(self, source_id: str, *, caller_did: str = "") -> bool:
         """Detach a revoked datastore so it cannot be queried through this Brain."""
@@ -672,9 +712,9 @@ class ArcMemoryBrain:
         self._datastore_classification.pop(source_id, None)
         self._datastore_connection_id.pop(source_id, None)
         self._datastore_ontology.pop(source_id, None)
-        SemanticStore(self._workspace, self._graph, self._scope(None).key).remove(
-            f"source-{source_id}"
-        )
+        store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
+        store.remove(f"source-{source_id}")
+        self._purge_stale_db_table_cards(store, source_id, set())
         return True
 
     async def register_sqlite_datastore(
