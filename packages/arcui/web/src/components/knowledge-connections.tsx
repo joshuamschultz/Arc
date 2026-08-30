@@ -4,6 +4,7 @@ import {
   Database,
   FileText,
   FolderTree,
+  Library,
   Pause,
   Play,
   Plug,
@@ -45,6 +46,7 @@ import {
   useDatastoreQuery,
   useDatastoreTables,
   useDocuments,
+  useSourceIndex,
   useIndexHealth,
   useProvenance,
   useMappingProposal,
@@ -61,6 +63,7 @@ import type { ChunkSearchMode, ConnectedSourceItem, EntityRecord } from '@/lib/t
 const SECTIONS = [
   { value: 'sources', label: 'Sources' },
   { value: 'explorer', label: 'Explorer' },
+  { value: 'repository', label: 'Repository' },
   { value: 'documents', label: 'Documents' },
   { value: 'datastore', label: 'Datastore' },
   { value: 'blob', label: 'Blob folders' },
@@ -507,6 +510,95 @@ function SourcesSection({
           }
         }}
       />
+    </div>
+  )
+}
+
+// --- Repository index -------------------------------------------------------
+
+/** The per-source OKF `index.md` — "what's in this repo and what's it for"
+ *  (H-026). The server verifies the index fail-closed and only sends a body
+ *  when it is trusted; an unverified index shows a tamper banner, never its
+ *  contents. Operator-gated + audited server-side. */
+function RepoIndexSection({ agentId }: { agentId: string }) {
+  const [source, setSource] = useState('')
+  const index = useSourceIndex(agentId, source)
+  const ready = !!source
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+      </div>
+      {!ready ? (
+        <EmptyState
+          icon={<Library className="size-5" />}
+          title="Pick a source"
+          description="Choose a connected document source to see what its repository holds and what it is for."
+        />
+      ) : (
+        <QueryState
+          query={index}
+          isEmpty={(d) => !d.present}
+          empty={
+            <EmptyState
+              title="No repository index yet"
+              description="This source has not written an index. Run a sync from the Sources tab."
+            />
+          }
+        >
+          {(data) =>
+            !data.verified ? (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+                <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-foreground">
+                    Index could not be verified —{' '}
+                    {data.guidance ?? 'Re-sync this source to restore its repository index.'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    The repository index failed verification and is not shown, so a local
+                    edit can never be read as trusted knowledge.
+                    {data.error ? ` Reason: ${data.error}.` : ''}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip>
+                    {data.document_count} document{data.document_count === 1 ? '' : 's'}
+                  </Chip>
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <ShieldCheck className="size-3.5 text-emerald-500" />
+                    verified
+                  </span>
+                </div>
+                {data.entries.length === 0 ? (
+                  <EmptyState title="Repository is empty" description="No documents are indexed for this source yet." />
+                ) : (
+                  <ul className="space-y-2">
+                    {data.entries.map((entry) => (
+                      <li
+                        key={entry.path}
+                        className="space-y-1 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">{entry.title}</span>
+                          <MonoChip>{entry.path}</MonoChip>
+                        </div>
+                        {entry.summary && (
+                          <p className="text-sm text-muted-foreground">{entry.summary}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          }
+        </QueryState>
+      )}
     </div>
   )
 }
@@ -1156,6 +1248,9 @@ export function ConnectionsBrowser({
       </TabsContent>
       <TabsContent value="explorer">
         <ConnectionExplorerSection agentId={agentId} />
+      </TabsContent>
+      <TabsContent value="repository">
+        <RepoIndexSection agentId={agentId} />
       </TabsContent>
       <TabsContent value="documents">
         <DocumentsSection agentId={agentId} />
