@@ -38,6 +38,7 @@ def _msg(
     seconds_ago: float = 60.0,
     msg_type: MsgType = MsgType.INFO,
     meta: dict[str, object] | None = None,
+    action_required: bool = True,
     mid: str = "m1",
 ) -> Message:
     return Message(
@@ -48,6 +49,7 @@ def _msg(
         to=["channel://ops"],
         body=body,
         msg_type=msg_type,
+        action_required=action_required,
         meta=meta or {},
     )
 
@@ -77,30 +79,51 @@ class TestPredicate:
 
     def test_a_later_agent_reply_does_not_clear_the_question(self) -> None:
         # Direction (b) waits on a PERSON. Another agent chattering after the
-        # question must not clear it — only a human message does, so "q" stays.
-        # (The peer message itself also qualifies — see the v1-limitation test.)
+        # flagged ask must not clear it — only a human message does, so "q"
+        # stays; the peer's plain (unflagged) statement is not itself an ask.
         messages = [
             _msg(signer_did=_AGENT, seconds_ago=120, mid="q"),
-            _msg(signer_did=_AGENT_2, seconds_ago=60, body="I agree", mid="peer"),
+            _msg(
+                signer_did=_AGENT_2,
+                seconds_ago=60,
+                body="I agree",
+                action_required=False,
+                mid="peer",
+            ),
         ]
         out = unanswered_by_human(
             messages, agents={_AGENT, _AGENT_2}, humans={_HUMAN}, now=_NOW
         )
-        assert "q" in {m.id for m in out}
+        assert {m.id for m in out} == {"q"}
 
-    def test_v1_surfaces_any_unanswered_agent_message_not_only_questions(self) -> None:
-        # DOCUMENTED v1 limitation (Planner-accepted): "silent" is presence-based
-        # — any agent message with no later human reply qualifies, including a
-        # plain statement. Question-vs-statement detection is explicitly out of
-        # scope for v1. Both the ask and the peer statement are returned.
+    def test_an_auto_posted_final_reply_is_excluded(self) -> None:
+        # deliver_channel_reply auto-posts every completed channel turn's closing
+        # text with action_required False (default). The agent ANSWERED — this is
+        # not a waiting ask — so the flag gate must keep it out.
         messages = [
-            _msg(signer_did=_AGENT, seconds_ago=120, mid="q"),
-            _msg(signer_did=_AGENT_2, seconds_ago=60, body="I agree", mid="peer"),
+            _msg(signer_did=_AGENT, body="Done, report attached.", action_required=False)
         ]
         out = unanswered_by_human(
-            messages, agents={_AGENT, _AGENT_2}, humans={_HUMAN}, now=_NOW
+            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
         )
-        assert {m.id for m in out} == {"q", "peer"}
+        assert out == []
+
+    def test_a_plain_statement_is_excluded(self) -> None:
+        # An FYI the agent did not flag is channel noise, not an operator action.
+        messages = [
+            _msg(signer_did=_AGENT, body="FYI I started the migration.", action_required=False)
+        ]
+        out = unanswered_by_human(
+            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
+        )
+        assert out == []
+
+    def test_a_flagged_ask_with_no_human_reply_is_included(self) -> None:
+        messages = [_msg(signer_did=_AGENT, body="Approve the deploy?", action_required=True)]
+        out = unanswered_by_human(
+            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
+        )
+        assert [m.id for m in out] == ["m1"]
 
     def test_human_question_no_agent_reply_is_not_returned(self) -> None:
         # This is direction (a) — the agent's backlog, sweep.unanswered's job.
@@ -111,12 +134,18 @@ class TestPredicate:
         )
         assert out == []
 
-    def test_narration_is_excluded_by_structural_provenance(self) -> None:
+    def test_narration_is_excluded_even_when_flagged(self) -> None:
         # A workflow run narrates itself onto the channel under an agent DID; it
         # is already surfaced via approvals / review-tasks. Excluded on the
-        # RunNarrator's structural mark, never by matching body text.
+        # RunNarrator's structural mark, never by body text — and the meta gate
+        # holds even if the narration were (wrongly) flagged action_required.
         messages = [
-            _msg(signer_did=_AGENT, body="Waiting on gate g1", meta={"class": "narration"})
+            _msg(
+                signer_did=_AGENT,
+                body="Waiting on gate g1",
+                meta={"class": "narration"},
+                action_required=True,
+            )
         ]
         out = unanswered_by_human(
             messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
@@ -126,8 +155,10 @@ class TestPredicate:
     @pytest.mark.parametrize(
         "kind", [MsgType.TASK, MsgType.TASK_ASSIGNED, MsgType.RESULT, MsgType.ACK]
     )
-    def test_structured_work_envelopes_are_excluded(self, kind: MsgType) -> None:
-        messages = [_msg(signer_did=_AGENT, msg_type=kind)]
+    def test_structured_work_envelopes_are_excluded_even_when_flagged(
+        self, kind: MsgType
+    ) -> None:
+        messages = [_msg(signer_did=_AGENT, msg_type=kind, action_required=True)]
         out = unanswered_by_human(
             messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
         )

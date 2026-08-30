@@ -69,7 +69,9 @@ class _BrokenChannels:
         raise RuntimeError("broker unreachable")
 
 
-def _agent_question(agent_did: str, *, meta: dict[str, object] | None = None) -> Message:
+def _agent_question(
+    agent_did: str, *, meta: dict[str, object] | None = None, action_required: bool = True
+) -> Message:
     return Message(
         id="q1",
         ts="2026-08-29T11:00:00+00:00",
@@ -78,6 +80,7 @@ def _agent_question(agent_did: str, *, meta: dict[str, object] | None = None) ->
         to=["channel://ops"],
         body="Should I proceed with the migration?",
         msg_type=MsgType.INFO,
+        action_required=action_required,
         meta=meta or {},
     )
 

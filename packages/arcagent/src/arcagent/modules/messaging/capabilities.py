@@ -628,6 +628,11 @@ async def messaging_send(
     ``to`` accepts a comma-separated list for multi-target dispatch.
     ``msg_type`` must be one of: info, request, task, result, alert, ack.
     ``priority`` must be one of: low, normal, high, critical.
+
+    Set ``action_required=True`` when you are asking the operator a question or
+    request that needs their reply or decision before you can proceed — this is
+    what surfaces the message in the operator's "Needs you" queue. Leave it
+    False (the default) for FYIs, acknowledgements, and plain statements.
     """
     from arcteam.types import DeliveryKind, Message, MsgType, Priority
 

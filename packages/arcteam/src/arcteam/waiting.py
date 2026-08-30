@@ -27,11 +27,14 @@ Three properties make it safe to surface on Home's "NEEDS YOU" panel:
   Task/result/ack envelopes carry their work on the task queue and are excluded
   the same structural way.
 
-* **Silent is defined, and orphans age out.** "Silent" means no human message
-  appears later in the channel than the question (documented v1 limitation
-  below). A question older than :data:`MAX_WAIT_AGE_SECONDS` has outlived its
-  run and leaves the queue, because a permanent orphan on NEEDS YOU trains the
-  operator to ignore the panel.
+* **Only a deliberate ask, and orphans age out.** A message counts only when
+  the agent flagged it ``action_required=True`` — the signed, unforgeable line
+  between "should I proceed?" and an agent's auto-posted closing reply or a
+  plain FYI, which both leave the flag False and are excluded. "Silent" then
+  means no human message appears later in the channel than the ask (documented
+  v1 limitation below). A question older than :data:`MAX_WAIT_AGE_SECONDS` has
+  outlived its run and leaves the queue, because a permanent orphan on NEEDS YOU
+  trains the operator to ignore the panel.
 
 Read-only over messenger storage: it advances no cursor and writes nothing.
 """
@@ -58,6 +61,13 @@ _LOOKBACK = 200
 # sat for a week is an orphan whose originating run is long dead; a permanent
 # orphan in NEEDS YOU is worse than absent, because it teaches the operator that
 # the panel lies. Named, not a magic literal, and part of the reader's contract.
+#
+# The time cap is a proxy for run-liveness, not the ideal signal: ideally an ask
+# would leave the moment its originating run ends. That eviction is deferred for
+# one concrete reason — an arcteam Message carries no run_id/request_id, so
+# liveness has nothing to join on. (arcteam legally reads the arcstore runs
+# substrate, so this is a missing field, not a forbidden reach-through.) It
+# becomes a cheap follow-up if/when messages gain a run_id.
 MAX_WAIT_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 days
 
 # A structured work envelope is not a free-form question to a person: a task, its
@@ -105,13 +115,23 @@ def _age_seconds(ts: str, now: datetime) -> float:
     return (now - stamped).total_seconds()
 
 
-def _is_free_form_question(message: Message) -> bool:
-    """Whether *message* is a free-form ask with no backing artifact.
+def _is_waiting_question(message: Message) -> bool:
+    """Whether *message* is an ask the agent flagged as needing the operator.
 
-    Excludes run/gate narration (a paused run already counted elsewhere) and
-    structured task envelopes (their work lives on the task queue). Judged on
-    structural fields — ``meta["class"]`` and ``msg_type`` — never on body text.
+    Three structural gates, no body text:
+
+    * ``action_required`` must be True — the agent deliberately asked the
+      operator to act (``messaging_send(action_required=True)``). This is the
+      line between a question and noise: an agent's auto-posted final reply
+      (``deliver_channel_reply``) and a plain FYI both leave it False, so both
+      are excluded, and it is unforgeable — ``action_required`` is in the
+      Ed25519-signed field set (``arcteam.crypto._SIGNED_FIELDS``).
+    * not run/gate narration (a paused run is already counted elsewhere), and
+    * not a structured task/result/ack envelope (its work lives on the task
+      queue).
     """
+    if not message.action_required:
+        return False
     if str(message.meta.get("class", "")) == _NARRATION_CLASS:
         return False
     return message.msg_type not in _STRUCTURED_KINDS
@@ -136,23 +156,24 @@ def unanswered_by_human(
     does not clear it — the whole point of direction (b) is that a *person* has
     not, so only a human message in the set ``humans`` counts as a reply.
 
-    **Known v1 limitations (Planner-accepted, deliberate):**
+    **A "waiting question" (v1 definition):** an agent message the agent flagged
+    ``action_required=True`` (see :func:`_is_waiting_question`), no human has
+    answered, and that is not stale. The ``action_required`` gate is what makes
+    this the operator's *action* queue rather than a channel firehose: an
+    agent's auto-posted final reply and a plain FYI both leave the flag False
+    and are excluded, so only a deliberate ask surfaces — and the flag is
+    Ed25519-signed, so it cannot be forged.
 
-    * *Presence, not pairing.* "Silent" is presence-of-a-later-human-message,
-      not thread pairing. Two questions from the same agent where a human
-      answers only the second mark BOTH answered.
-    * *Statements, not only questions.* v1 does not detect question-vs-statement,
-      so any agent message with no later human reply qualifies — a plain
-      "done, FYI" surfaces the same as "should I proceed?". The structural
-      exclusions (narration, task/result/ack) keep out the artifact-backed
-      noise; free-form conversational chatter is not separated from a genuine
-      ask in v1.
+    **Known v1 limitation (Planner-accepted, deliberate):** "silent" is
+    presence-of-a-later-human-message, not thread pairing. Two flagged questions
+    from the same agent where a human answers only the second mark BOTH
+    answered.
     """
     result: list[Message] = []
     for index, message in enumerate(messages):
         if signed_author(message) not in agents:
             continue
-        if not _is_free_form_question(message):
+        if not _is_waiting_question(message):
             continue
         if _age_seconds(str(message.ts), now) > max_age_seconds:
             continue
