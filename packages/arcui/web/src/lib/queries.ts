@@ -25,6 +25,9 @@ import type {
   AuthMeResponse,
   BlobFoldersResponse,
   ChannelsResponse,
+  ChunkPage,
+  ChunkSearchMode,
+  ChunkSearchResponse,
   ConnectedDataActivationResponse,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
@@ -397,6 +400,25 @@ export const useMemoryLinks = (agentId: string | null, entryId: string | null) =
     enabled: !!agentId && !!entryId,
   })
 
+export const useChunks = (agentId: string | null, limit = 50, offset = 0) =>
+  useQuery<ChunkPage>({
+    queryKey: ['agent', agentId, 'knowledge', 'chunks', limit, offset],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/chunks?limit=${limit}&offset=${offset}`, signal),
+    enabled: !!agentId,
+  })
+
+export const useChunkSearch = (agentId: string | null, q: string, mode: ChunkSearchMode) =>
+  useQuery<ChunkSearchResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'chunks', 'search', q, mode],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/chunks?q=${encodeURIComponent(q)}&mode=${mode}`,
+        signal,
+      ),
+    enabled: !!agentId && q.trim().length > 0,
+  })
+
 export const useEntities = (agentId: string | null) =>
   useQuery<EntitiesResponse>({
     queryKey: ['agent', agentId, 'knowledge', 'entities'],
@@ -410,6 +432,43 @@ export const useEntityLinks = (agentId: string | null, slug: string | null) =>
     queryFn: ({ signal }) =>
       apiGet(`/api/agents/${agentId}/knowledge/entities/${slug}/links`, signal),
     enabled: !!agentId && !!slug,
+  })
+
+// --- Graph viewer (H-016 — windowed neighborhood view) ----------------------
+
+export interface GraphNode {
+  id: string
+  node_type: string
+  classification: string
+  metadata: Record<string, unknown>
+}
+
+export interface GraphEdge {
+  src: string
+  dst: string
+  kind: string
+  weight: number
+  salience?: number
+  last_hit?: string | null
+  hits?: number
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+/** Windowed neighborhood view: `node=null` is the whole (capped) scope window;
+ *  `node` re-centers the BFS window on a clicked node (neighborhood expand). */
+export const useKnowledgeGraph = (agentId: string | null, node: string | null, hops = 1) =>
+  useQuery<GraphResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'graph', node, hops],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({ hops: String(hops) })
+      if (node) params.set('node', node)
+      return apiGet(`/api/agents/${agentId}/knowledge/graph?${params}`, signal)
+    },
+    enabled: !!agentId,
   })
 
 // --- Connections data views (SPEC-073 — connected-source projections) -------

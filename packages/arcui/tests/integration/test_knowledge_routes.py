@@ -115,6 +115,18 @@ def _make_agent_dir(team_root: Path, name: str) -> Path:
     return agent_dir
 
 
+def _make_agent_dir_no_embedder(team_root: Path, name: str) -> Path:
+    """Same as ``_make_agent_dir`` but ``embed_backend = "none"`` — the
+    deterministic fixture for the chunk vector-search degrade case (H-023)."""
+    agent_dir = team_root / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "arcagent.toml").write_text(
+        f"[agent]\nname = '{name}'\n\n[modules.memory]\nembed_backend = 'none'\n"
+    )
+    (agent_dir / "workspace").mkdir()
+    return agent_dir
+
+
 def _roster(team_root: Path, agent_dir: Path) -> list[RosterEntry]:
     return [
         RosterEntry(
@@ -176,6 +188,40 @@ def app_no_memories(tmp_path: Path) -> Iterator[Any]:
             provider="anthropic",
             online=True,
             display_name="Fresh",
+            color="#1abc9c",
+            role_label="Test",
+            hidden=False,
+        )
+    ]
+    yield app
+
+
+@pytest.fixture
+def app_with_chunks_no_embedder(tmp_path: Path) -> Iterator[Any]:
+    """Seeded memory DB, ``embed_backend = "none"`` — deterministic vector degrade."""
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    agent_dir = _make_agent_dir_no_embedder(team_root, "no-embed")
+    workspace = agent_dir / "workspace"
+
+    import asyncio
+
+    asyncio.run(_seed_episodic(workspace))
+
+    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN})
+    app = create_app(team_root=team_root, auth_config=auth)
+    app.state.roster_provider = lambda: [
+        RosterEntry(
+            agent_id="no-embed",
+            name="no-embed",
+            did=_DID,  # matches _seed_episodic's scope
+            org=None,
+            type="agent",
+            workspace_path=str(agent_dir),
+            model="claude-3-5-sonnet",
+            provider="anthropic",
+            online=True,
+            display_name="No Embed",
             color="#1abc9c",
             role_label="Test",
             hidden=False,
@@ -603,6 +649,68 @@ class TestDailyNotes:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/agents/{agent_id}/knowledge/chunks — browse + literal/vector (H-023)
+# ---------------------------------------------------------------------------
+
+
+class TestListChunks:
+    def test_viewer_can_browse_paged_with_metadata(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/chunks?limit=2&offset=0", headers=_viewer()
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
+        assert data["limit"] == 2 and data["offset"] == 0
+        item = data["items"][0]
+        assert item["chunk_id"]
+        assert item["source"]
+        assert item["scope"]
+        assert "classification" in item
+        assert "score" in item
+        assert "text" in item
+        assert "truncated" in item
+
+    def test_viewer_literal_search_finds_match(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/chunks?q=deployment&mode=literal",
+                headers=_viewer(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mode"] == "literal"
+        assert data["degraded"] is False
+        assert any("deployment" in item["text"] for item in data["items"])
+
+    def test_vector_search_degrades_loud_without_embedder(
+        self, app_with_chunks_no_embedder: Any
+    ) -> None:
+        """No embedder wired -> falls back to literal, 200, never raises (H-023)."""
+        with TestClient(app_with_chunks_no_embedder) as client:
+            resp = client.get(
+                "/api/agents/no-embed/knowledge/chunks?q=deployment&mode=vector",
+                headers=_viewer(),
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["degraded"] is True
+        assert data["mode"] == "literal"
+        assert any("deployment" in item["text"] for item in data["items"])
+
+    def test_unknown_agent_returns_404(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/ghost/knowledge/chunks", headers=_viewer())
+        assert resp.status_code == 404
+
+    def test_no_auth_is_401(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/chunks")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # Empty vs unreadable store (REQ-097)
 # ---------------------------------------------------------------------------
 
@@ -648,3 +756,57 @@ def test_knowledge_summary_unknown_agent_is_404(app_with_memories: Any) -> None:
     with TestClient(app_with_memories) as client:
         resp = client.get("/api/knowledge/nope", headers=_viewer())
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET .../knowledge/graph — windowed neighborhood view (H-016)
+# ---------------------------------------------------------------------------
+
+
+class TestGraph:
+    def test_viewer_gets_nodes_and_edges(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/graph?node=alice&hops=1", headers=_viewer()
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        node_ids = {n["id"] for n in body["nodes"]}
+        assert node_ids == {"alice", "bob"}
+        # Both the wiki-link (write_fact) and the co-occurrence (episodic capture)
+        # edges land between the same pair — assert the link edge is among them.
+        assert any(
+            {e["src"], e["dst"]} == {"alice", "bob"} and e["kind"] == "link" for e in body["edges"]
+        )
+
+    def test_no_node_returns_whole_scope_window(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 200
+        node_ids = {n["id"] for n in resp.json()["nodes"]}
+        assert {"alice", "bob"} <= node_ids
+
+    def test_unknown_agent_returns_404(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/ghost/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 404
+
+    def test_no_auth_is_401(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/graph")
+        assert resp.status_code == 401
+
+    def test_empty_agent_is_200_empty_graph(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/graph", headers=_viewer())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["nodes"] == []
+        assert body["edges"] == []
+
+    def test_bad_hops_is_400(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/graph?hops=not-a-number", headers=_viewer()
+            )
+        assert resp.status_code == 400

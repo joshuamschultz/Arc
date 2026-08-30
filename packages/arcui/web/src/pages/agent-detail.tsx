@@ -72,6 +72,7 @@ import { ApprovalRequest } from '@/components/hitl'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
 import { MemoryBrowser } from '@/components/knowledge-memories'
+import { ChunkBrowser } from '@/components/knowledge-chunks'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
 import { ProcedureBrowser } from '@/components/knowledge-procedures'
@@ -1552,6 +1553,7 @@ const KNOWLEDGE_TABS = [
   { value: 'events', label: 'Events' },
   { value: 'daily-notes', label: 'Daily Notes' },
   { value: 'memories', label: 'Raw stream' },
+  { value: 'chunks', label: 'Chunks' },
 ]
 
 /** GAP-1: the full Knowledge surface, scoped to this agent (reuses the browsers). */
@@ -1598,6 +1600,9 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
       </TabsContent>
       <TabsContent value="memories">
         <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
+      </TabsContent>
+      <TabsContent value="chunks">
+        <ChunkBrowser agentId={agentId} />
       </TabsContent>
     </Tabs>
   )

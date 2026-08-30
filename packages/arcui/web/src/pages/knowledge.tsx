@@ -5,7 +5,9 @@ import { PageHeader } from '@/components/page-header'
 import { QueryState, EmptyState } from '@/components/states'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
+import { GraphViewer } from '@/components/knowledge-graph'
 import { MemoryBrowser } from '@/components/knowledge-memories'
+import { ChunkBrowser } from '@/components/knowledge-chunks'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
 import { ProcedureBrowser } from '@/components/knowledge-procedures'
@@ -24,6 +26,7 @@ import { useKnowledge, useRoster } from '@/lib/queries'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'graph', label: 'Graph' },
   { value: 'insights', label: 'Insights' },
   { value: 'procedures', label: 'Procedures' },
   { value: 'entities', label: 'Entities' },
@@ -31,6 +34,7 @@ const TABS = [
   { value: 'daily-notes', label: 'Daily Notes' },
   { value: 'connections', label: 'Connections' },
   { value: 'memories', label: 'Raw stream' },
+  { value: 'chunks', label: 'Chunks' },
 ]
 
 export function KnowledgePage() {
@@ -106,6 +110,10 @@ export function KnowledgePage() {
             </QueryState>
           </TabsContent>
 
+          <TabsContent value="graph" className="flex-1 overflow-auto p-6">
+            <GraphViewer agentId={agentId} />
+          </TabsContent>
+
           <TabsContent value="insights" className="flex-1 overflow-auto p-6">
             <InsightBrowser agentId={agentId} />
           </TabsContent>
@@ -139,6 +147,10 @@ export function KnowledgePage() {
 
           <TabsContent value="memories" className="flex-1 overflow-auto p-6">
             <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
+          </TabsContent>
+
+          <TabsContent value="chunks" className="flex-1 overflow-auto p-6">
+            <ChunkBrowser agentId={agentId} />
           </TabsContent>
         </Tabs>
       )}

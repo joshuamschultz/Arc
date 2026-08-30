@@ -453,6 +453,35 @@ export interface MemorySearchResponse {
   query: string
 }
 
+// --- Knowledge chunks (H-023 — arcmemory.operator browse_chunks/search_chunks) --
+
+export interface ChunkRecord {
+  chunk_id: string
+  source: string // source_path (file, event, or ingested document)
+  scope: string
+  classification: string
+  mtime: number | null
+  score: number // rank-derived — not comparable across bm25/vec/recency at the raw level
+  text: string // capped to ~500 chars regardless of result count
+  truncated: boolean
+}
+
+export interface ChunkPage {
+  items: ChunkRecord[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type ChunkSearchMode = 'literal' | 'vector'
+
+export interface ChunkSearchResponse {
+  items: ChunkRecord[]
+  mode: ChunkSearchMode
+  degraded: boolean
+  query: string
+}
+
 export type MutationStatus = 'applied' | 'error'
 
 export interface MutationResult {
