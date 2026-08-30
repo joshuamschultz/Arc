@@ -11,6 +11,16 @@ export type Dict = Record<string, unknown>
 
 // --- Domain shapes (permissive: known fields typed, rest passthrough) -------
 
+/** One labeled, expandable section of an LLM call's assembled prompt (H-049).
+ *  Built server-side (arcui.prompt_sections) from the persisted request, in the
+ *  operator-legible order; `body` is the raw section text for {@link LlmContent}. */
+export interface PromptSection {
+  key: string
+  label: string
+  body: string
+  tokens: number
+}
+
 export interface Trace {
   [key: string]: unknown
   trace_id?: string
@@ -39,6 +49,12 @@ export interface Trace {
   tools?: unknown
   request?: unknown
   response?: unknown
+  // H-049: the request re-presented as ordered, labeled prompt sections
+  // (system prompt · identity · strategies · policies · tool list · skill list
+  // · context · session data, then any other real section). Server-built read
+  // projection over what was actually sent; absent when the body wasn't stored
+  // (metadata-only / federal-encrypted default).
+  prompt_sections?: PromptSection[]
   // H-028/H-029: what the call WAS — "inference" (chat/completion) or
   // "embedding" — classified from the recorded call type, never the model name.
   capability_class?: 'inference' | 'embedding'
