@@ -1,0 +1,9 @@
+{
+  "files": {
+    "test_golden.py": {
+      "sha256": "10f3a08dcdedb7646137b3f67a644dd3d9bea6aeba27b8fc0f1260ca0bca6b07",
+      "authored_by": "human",
+      "note": "Seeded for H-042. No '@generated' marker, so arcskill.improver.evalgate classifies it human-authored regardless of this record — this entry documents provenance for operators, not the machine-authorship gate."
+    }
+  }
+}

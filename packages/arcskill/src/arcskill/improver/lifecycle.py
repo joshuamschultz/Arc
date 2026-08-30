@@ -12,6 +12,7 @@ Josh-locked: inactivity window default 30 days; all sweep settings live in
 
 from __future__ import annotations
 
+import difflib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,6 +27,28 @@ _logger = logging.getLogger("arcskill.improver.lifecycle")
 STATE_ACTIVE = "active"
 STATE_UNDERPERFORMING = "underperforming"
 STATE_RETIRED = "retired"
+STATE_MERGED = "merged"
+
+# Two skills whose SKILL.md bodies are at least this similar (difflib ratio) are
+# flagged as consolidation candidates. Deliberately conservative — a false positive
+# only costs one wasted (and gated) merge proposal; the sweep never applies anything
+# on its own (D-10).
+_DEFAULT_SIMILARITY_THRESHOLD = 0.72
+
+
+@dataclass(frozen=True)
+class ConsolidationCandidate:
+    """One proposed merge: ``skill_b`` folds into ``skill_a`` (SPEC-044 Curator).
+
+    Pure output of :meth:`SkillLifecycle.consolidation_candidates` — nothing is
+    proposed, gated, or applied until the caller (``ArcSkillImprover.review_consolidation``)
+    drives it through the Merger seam + EvalGate + approval ladder.
+    """
+
+    skill_a: str
+    skill_b: str
+    similarity: float
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -53,11 +76,16 @@ class SkillLifecycle:
         *,
         load_traces: Callable[[str], list[SkillTrace]],
         generation_of: Callable[[str], int],
+        text_of: Callable[[str], str | None] | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._load_traces = load_traces
         self._generation_of = generation_of
+        # Optional (REQ-consolidate): resolves a skill's current SKILL.md text so the
+        # sweep can flag overlapping content. ``None`` (a BYO caller predating this)
+        # degrades consolidation_candidates() to an empty list — never an error.
+        self._text_of = text_of
 
     def state(self, skill_name: str) -> str:
         return self._store.lifecycle_state(skill_name)
@@ -116,18 +144,73 @@ class SkillLifecycle:
         return LifecycleEvent(datetime.now(UTC), skill_name, previous, STATE_RETIRED, reason)
 
     def revive(self, skill_name: str) -> LifecycleEvent:
-        """Operator-initiated restore from lineage → active (REQ-044)."""
+        """Operator-initiated restore from lineage → active (REQ-044).
+
+        Un-merges the same way it un-retires: :meth:`consolidation_candidates` and
+        :meth:`merge` never touch ``prior_active_id``/``active_candidate_id`` — restoring
+        the pre-merge state is exactly the retire/revive machinery, reused.
+        """
         previous = self._store.set_lifecycle_state(skill_name, STATE_ACTIVE, reason="revived")
         _logger.info("skill %s revived by operator", skill_name)
         return LifecycleEvent(
             datetime.now(UTC), skill_name, previous, STATE_ACTIVE, "operator revive"
         )
 
+    def consolidation_candidates(
+        self, *, threshold: float = _DEFAULT_SIMILARITY_THRESHOLD
+    ) -> list[ConsolidationCandidate]:
+        """Flag pairs of active skills whose bodies overlap enough to merit a merge.
+
+        Pure — identifies, proposes nothing, commits nothing (mirrors
+        :meth:`pending_retirements`). Deterministic text-similarity signal (no LLM call):
+        the improver only spends a model call once a pair clears this bar. Retired and
+        already-merged skills are excluded on both sides — they are not live duplicates.
+        """
+        if self._text_of is None:
+            return []
+        names = [n for n in self._store.list_skills() if self.state(n) == STATE_ACTIVE]
+        texts = {n: self._text_of(n) for n in names}
+        candidates: list[ConsolidationCandidate] = []
+        for i, a in enumerate(names):
+            text_a = texts[a]
+            if not text_a:
+                continue
+            for b in names[i + 1 :]:
+                text_b = texts[b]
+                if not text_b:
+                    continue
+                ratio = difflib.SequenceMatcher(None, text_a, text_b).ratio()
+                if ratio >= threshold:
+                    candidates.append(
+                        ConsolidationCandidate(
+                            skill_a=a,
+                            skill_b=b,
+                            similarity=ratio,
+                            reason=f"body similarity {ratio:.2f} >= threshold {threshold:.2f}",
+                        )
+                    )
+        return candidates
+
+    def merge(self, skill_name: str, *, into: str, reason: str) -> LifecycleEvent:
+        """Non-destructive consolidation (D-8): mark ``skill_name`` merged into ``into``.
+
+        Reversible exactly like retire — the candidate/lineage is retained and
+        :meth:`revive` restores ``skill_name`` to ``active`` (its own prior text,
+        untouched). Never a delete; the caller is responsible for the survivor's
+        applied text (a normal candidate mutation on ``into``, gated the usual way).
+        """
+        previous = self._store.set_lifecycle_state(skill_name, STATE_MERGED, reason=reason)
+        self._store.set_merge_target(skill_name, into)
+        _logger.info("skill %s merged into %s: %s", skill_name, into, reason)
+        return LifecycleEvent(datetime.now(UTC), skill_name, previous, STATE_MERGED, reason)
+
 
 __all__ = [
     "STATE_ACTIVE",
+    "STATE_MERGED",
     "STATE_RETIRED",
     "STATE_UNDERPERFORMING",
+    "ConsolidationCandidate",
     "SkillLifecycle",
     "UsageStats",
 ]

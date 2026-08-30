@@ -51,6 +51,23 @@ class Mutator(Protocol):
 
 
 @runtime_checkable
+class Merger(Protocol):
+    """Proposes a consolidated skill from two overlapping skills (Curator consolidate).
+
+    The default production impl is :class:`~arcskill.improver.mutate.LLMSkillMerger`
+    (arcllm-backed via :class:`LLMInvoker`); deterministic fakes satisfy it in tests.
+    Returns ``None`` when no safe merge is proposed — consolidation then no-ops for
+    that pair. The returned :class:`BundlePatch` carries the merged ``SKILL.md`` body
+    under ``files["SKILL.md"]`` — the same shape a code patch uses, so it flows through
+    the identical sign + gate + apply machinery (never a bespoke merge-apply path).
+    """
+
+    async def propose(
+        self, *, a: BundleView, b: BundleView, insight: str
+    ) -> BundlePatch | None: ...
+
+
+@runtime_checkable
 class EvalRunner(Protocol):
     """Runs a skill's golden-task suite in isolation; the security boundary (REQ-023).
 
@@ -75,4 +92,4 @@ class Signer(Protocol):
     def sign(self, path: Path, content: bytes) -> None: ...
 
 
-__all__ = ["ApprovalProvider", "EvalRunner", "LLMInvoker", "Mutator", "Signer"]
+__all__ = ["ApprovalProvider", "EvalRunner", "LLMInvoker", "Merger", "Mutator", "Signer"]

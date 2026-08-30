@@ -66,8 +66,12 @@ class SkillAdapter(Protocol):
         """Bootstrap golden suites for suite-less skills on the Curator tick (REQ-107)."""
         ...
 
+    async def review_consolidation(self, *, turn: int) -> None:
+        """Run the consolidate/merge sweep for overlapping skills (H-042)."""
+        ...
+
     def retired_skills(self) -> frozenset[str]:
-        """Names of currently-retired skills — excluded from the agent's offering."""
+        """Names of currently-retired (or merged-away) skills — excluded from the offering."""
         ...
 
 
@@ -101,6 +105,9 @@ class NullSkillAdapter:
         return None
 
     async def sweep_suites(self) -> None:
+        return None
+
+    async def review_consolidation(self, *, turn: int) -> None:
         return None
 
     def retired_skills(self) -> frozenset[str]:

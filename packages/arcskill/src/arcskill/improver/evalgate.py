@@ -142,8 +142,15 @@ class EvalGate:
         cases: list[EvalCase],
         tier: str,
         kind: str,
+        require_improvement: bool = True,
     ) -> GateDecision:
-        """Return the accept/reject decision for a candidate ``after`` vs ``before``."""
+        """Return the accept/reject decision for a candidate ``after`` vs ``before``.
+
+        ``require_improvement`` is ``True`` for every bug-fix mutation (code/prose): a
+        candidate must flip ≥1 failing case to passing. Consolidation (Curator merge,
+        kind="merge") passes ``False`` — a merge's job is to *preserve* both skills'
+        behavior, not improve either one, so "zero regression" alone is acceptance.
+        """
         if not cases:
             return self._no_suite_decision(tier, kind)
         if kind == "code" and _countable_cases(cases, tier) < self._min_cases:
@@ -155,12 +162,19 @@ class EvalGate:
         before_pass = {o.case_id for o in await self._runner.run(before, cases) if o.passed}
         after_outcomes = await self._runner.run(after, cases)
         after_pass = {o.case_id for o in after_outcomes if o.passed}
-        return self._strict_improvement(before_pass, after_pass, len(cases))
+        return self._strict_improvement(
+            before_pass, after_pass, len(cases), require_improvement=require_improvement
+        )
 
     def _strict_improvement(
-        self, before_pass: set[str], after_pass: set[str], total: int
+        self,
+        before_pass: set[str],
+        after_pass: set[str],
+        total: int,
+        *,
+        require_improvement: bool = True,
     ) -> GateDecision:
-        """Accept iff ≥1 previously-failing case now passes AND none regressed."""
+        """Accept iff none regressed, and (when required) ≥1 previously-failing case passes."""
         regressed = before_pass - after_pass
         newly = after_pass - before_pass
         if regressed:
@@ -170,16 +184,21 @@ class EvalGate:
                 before_pass=len(before_pass),
                 after_pass=len(after_pass),
             )
-        if not newly:
+        if require_improvement and not newly:
             return GateDecision(
                 accepted=False,
                 reason="no strict improvement (no previously-failing case now passes)",
                 before_pass=len(before_pass),
                 after_pass=len(after_pass),
             )
+        reason = (
+            "strict improvement: fixed failing case(s), no regression"
+            if newly
+            else "no regression (parity preserved)"
+        )
         return GateDecision(
             accepted=True,
-            reason="strict improvement: fixed failing case(s), no regression",
+            reason=reason,
             before_pass=len(before_pass),
             after_pass=len(after_pass),
             newly_passing=len(newly),

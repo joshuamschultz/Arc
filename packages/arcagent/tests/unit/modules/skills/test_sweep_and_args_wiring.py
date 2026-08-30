@@ -42,6 +42,9 @@ class _SweepAdapter:
     async def sweep_suites(self) -> None:
         self.calls.append("sweep_suites")
 
+    async def review_consolidation(self, *, turn: int) -> None:
+        self.calls.append("review_consolidation")
+
     def retired_skills(self) -> frozenset[str]:
         return frozenset()
 
@@ -117,7 +120,7 @@ async def test_lifecycle_sweep_calls_sweep_suites_after_review(tmp_path: Path) -
 
     await _runtime.run_lifecycle_sweep()
 
-    assert adapter.calls == ["review_lifecycle", "sweep_suites"]
+    assert adapter.calls == ["review_lifecycle", "sweep_suites", "review_consolidation"]
 
 
 @pytest.mark.asyncio
@@ -131,15 +134,26 @@ async def test_lifecycle_sweep_tolerates_adapter_without_sweep_suites(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_sweep_tolerates_adapter_without_review_consolidation(
+    tmp_path: Path,
+) -> None:
+    """A BYO adapter predating H-042's consolidate seam must not crash the sweep."""
+    adapter = _LegacyAdapter()
+    _bind(adapter, tmp_path)
+
+    await _runtime.run_lifecycle_sweep()  # must not raise AttributeError
+
+    assert adapter.reviews == 1
+
+
+@pytest.mark.asyncio
 async def test_null_adapter_gains_additive_noop_surface() -> None:
+    """Every hook is inert — the call must not raise (a ``-> None`` seam has nothing else
+    to assert against, so mypy correctly rejects comparing its result to ``None``)."""
     null = NullSkillAdapter()
-    assert await null.sweep_suites() is None
-    assert (
-        await null.observe(
-            skill_name="s", tool_name="t", status="ok", error_type=None, args={"x": 1}
-        )
-        is None
-    )
+    await null.sweep_suites()
+    await null.review_consolidation(turn=1)
+    await null.observe(skill_name="s", tool_name="t", status="ok", error_type=None, args={"x": 1})
 
 
 # -- REQ-117: post_tool forwards args only to adapters that accept them ---------

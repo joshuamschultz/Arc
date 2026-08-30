@@ -755,6 +755,46 @@ export interface SkillDetail {
   write_path: string | null // relative to write_root
 }
 
+// --- Skill version timeline + diff (H-042: the reviewable diff-merge surface) ------
+
+export interface SkillEvalCase {
+  nodeid: string
+  provenance: 'machine' | 'human'
+}
+
+export interface SkillEvalCasesResponse {
+  items: SkillEvalCase[]
+}
+
+export interface SkillVersionItem {
+  candidate_id: string
+  generation: number | null
+  parent_id: string | null
+  scores: Record<string, number>
+  active: boolean
+  body_hash: string | null
+  tombstone: boolean
+  ts: string | null
+}
+
+export interface SkillVersionsResponse {
+  items: SkillVersionItem[]
+}
+
+export interface SkillVersionDiffResponse {
+  a: string
+  b: string
+  diff: string
+}
+
+export interface SkillRollbackResponse {
+  status: string
+  skill_name: string
+  from_candidate_id: string | null
+  to_candidate_id: string
+  warning: string
+}
+
 export interface ToolDetail {
   name: string
   transport: string

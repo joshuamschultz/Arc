@@ -187,8 +187,9 @@ class CandidateStore:
     def set_lifecycle_state(self, skill_name: str, state: str, *, reason: str = "") -> str:
         """Persist a lifecycle-state transition; return the previous state.
 
-        Retire is non-destructive (D-8): the candidates/lineage are retained and the
-        prior active id is recorded so :meth:`revive` can restore it.
+        Retire and merge are both non-destructive (D-8): the candidates/lineage are
+        retained and the prior active id is recorded so :meth:`revive` can restore
+        either one — a merged skill un-merges the same way a retired skill un-retires.
         """
         _validate_skill_name(skill_name)
         manifest = self.load_manifest(skill_name)
@@ -197,8 +198,24 @@ class CandidateStore:
         if state == "retired":
             manifest["retire_reason"] = reason
             manifest.setdefault("prior_active_id", manifest.get("active_candidate_id"))
+        elif state == "merged":
+            manifest["merged_reason"] = reason
+            manifest.setdefault("prior_active_id", manifest.get("active_candidate_id"))
         self._save_manifest(skill_name, manifest)
         return previous
+
+    def set_merge_target(self, skill_name: str, target: str) -> None:
+        """Record which surviving skill ``skill_name`` was consolidated into (lineage)."""
+        _validate_skill_name(skill_name)
+        _validate_skill_name(target)
+        manifest = self.load_manifest(skill_name)
+        manifest["merged_into"] = target
+        self._save_manifest(skill_name, manifest)
+
+    def merge_target(self, skill_name: str) -> str | None:
+        """The surviving skill ``skill_name`` was merged into, or ``None``."""
+        value = self.load_manifest(skill_name).get("merged_into")
+        return str(value) if value else None
 
     def rollback(self, skill_name: str, candidate_id: str) -> None:
         """Revert to a previous candidate version."""
