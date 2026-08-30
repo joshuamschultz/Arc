@@ -115,6 +115,7 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "approvals": {"count": 0, "items": []},
             "capabilities": {"count": 1, "items": [{"agent_id": "olivia", "name": "reporter"}]},
             "review_tasks": {"count": 0, "items": []},
+            "waiting_on_human": {"count": 0, "items": []},
             "total": 1,
         },
     ),
