@@ -515,9 +515,21 @@ class ArcSkillImprover:
             )
             return
 
-        # Operator-approval gate (D-10): federal approves every mutation. Fail-closed if
-        # required but unwired — a prose candidate never applies unapproved at federal.
-        if not await self._authorize("skill.mutation", "prose", skill_name, decision.reason):
+        # Operator-approval gate (D-10) + judge-gate guard (H-041c): federal approves every
+        # mutation; and at ANY tier a suite carrying a judge_rubric case forces the review
+        # route, because the deterministic sandbox can't score that case — it waved through
+        # the strict-improvement gate unevaluated. Fail-closed if approval is required but
+        # unwired — a prose candidate never applies unapproved.
+        review = self._suite_requires_review(skill_path)
+        if review:
+            _logger.info(
+                "skill %s: judge_rubric case in suite — routing candidate to operator "
+                "review (auto-promotion disallowed)",
+                skill_name,
+            )
+        if not await self._authorize(
+            "skill.mutation", "prose", skill_name, decision.reason, force_review=review
+        ):
             return
 
         engine.apply_result(
@@ -589,9 +601,21 @@ class ArcSkillImprover:
             _logger.info("skill %s code patch rejected: %s", skill_name, decision.reason)
             self._record_rejection(skill_name, patch, decision.reason)
             return
-        # Operator-approval gate (D-10): enterprise + federal approve code mutations.
-        # Fail-closed if required but unwired — never apply model-authored code unapproved.
-        if not await self._authorize("skill.mutation", "code", skill_name, patch.summary):
+        # Operator-approval gate (D-10) + judge-gate guard (H-041c): enterprise + federal
+        # approve code mutations; and at ANY tier a judge_rubric case in the suite forces the
+        # review route, because the sandbox can't score it — it waved through the gate
+        # unevaluated. Fail-closed if required but unwired — never apply model-authored code
+        # (or a judge-gated candidate) unapproved.
+        review = any(c.gate_type == "judge_rubric" for c in cases)
+        if review:
+            _logger.info(
+                "skill %s: judge_rubric case in suite — routing code patch to operator "
+                "review (auto-promotion disallowed)",
+                skill_name,
+            )
+        if not await self._authorize(
+            "skill.mutation", "code", skill_name, patch.summary, force_review=review
+        ):
             return
         apply_bundle_patch(skill_dir, patch, signer=self._signer)
         self._audit_code_mutation(skill_name, current, patch, [t.trace_id for t in traces])
@@ -637,14 +661,38 @@ class ArcSkillImprover:
             return kind in ("code", "consolidate")
         return False
 
-    async def _authorize(self, action: str, kind: str, skill_name: str, detail: str) -> bool:
+    def _suite_requires_review(self, skill_path: Path) -> bool:
+        """H-041c: does the golden suite carry a case the deterministic auto-gate can't score?
+
+        A ``judge_rubric`` case needs an LLM verdict, which the sandbox :class:`EvalRunner`
+        cannot produce — so such a case passes unchanged BEFORE and AFTER a candidate, unable
+        to cause OR prevent auto-promotion. A suite with any judge case therefore must NOT
+        auto-promote: the candidate routes to operator review (the approval ladder), where
+        ``arc skill evals judge`` computes the real verdict. "Never automatic-AND-gated at
+        once" — a case the auto gate cannot evaluate is never treated as silently passed.
+        """
+        return any(c.gate_type == "judge_rubric" for c in load_suite(skill_path.parent))
+
+    async def _authorize(
+        self,
+        action: str,
+        kind: str,
+        skill_name: str,
+        detail: str,
+        *,
+        force_review: bool = False,
+    ) -> bool:
         """Gate a consequential transition through the operator-approval ladder (D-10).
 
         Returns ``True`` to proceed. **Fail-closed**: when approval is required but no
         approver is wired, the action is blocked. Every decision that reaches an approver
         (or is blocked for lack of one) is an operator-signed audit event.
+
+        ``force_review`` (H-041c) forces the operator-review route regardless of the tier
+        ladder: a candidate whose suite carries an un-auto-scorable judge case must never
+        auto-promote, even at personal tier where prose mutation is normally auto-applied.
         """
-        if not self._approval_required(kind):
+        if not force_review and not self._approval_required(kind):
             return True
         if self._approval_provider is None:
             self._emit_audit(
