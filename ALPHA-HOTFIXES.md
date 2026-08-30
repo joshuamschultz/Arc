@@ -85,7 +85,7 @@ before this batch is complete.
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
 | H-040 | Fleet | arcteam holds multiple agent TYPES (arcagent/hermes/openclaw), shared memory/ui/fleet | L | NEW | |
 | H-041 | arcskill | Real skill improvement loop: pick traces → edit ideal → golden set → improve | L | NEW | |
-| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | CODING | |
+| H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
 | H-REG-1 | arcmemory | Regression: 6 proactive/context recall journey tests fail after query-only recall change (index=False); deployed since f7bc31d8 | M | MERGED | 55e9f716 |
