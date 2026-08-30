@@ -77,7 +77,7 @@ before this batch is complete.
 | H-031 | Tools/Skills | Filters (agent / tool·skill / builtin·agent·ext·module); all show | M | MERGED | 1f65e6a1 |
 | H-032 | Connections | Cards only need half screen | S | MERGED | 284fdbec |
 | H-033 | Connections | Connect/save-keys/probe all work in arcui AND arccli | M | MERGED | 6dc93100 |
-| H-033b | Knowledge | Connector sync counters wrong (Last sync Never / 0 bytes) — missing last_synced_at + two-DB split (separate from connect path) | M | CODING | |
+| H-033b | Knowledge | Connector sync counters wrong — RC was source_id KEY MISMATCH (write connection_id, read canonical) + missing last_synced_at + unwired index count; migration v8 | M | MERGED | f84efafc |
 | H-034 | Menu | Collapse = a button at top of the menu | S | MERGED | 284fdbec |
 | H-035 | Menu | Operator mode lives in the operator avatar (top-right) | M | MERGED | 9d5a |
 | H-036 | UI | Fully keyboard-drivable (command palette + focus order) | L | MERGED | e3f31f60 |
