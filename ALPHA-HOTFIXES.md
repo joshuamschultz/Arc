@@ -97,6 +97,8 @@ before this batch is complete.
 | H-045 | Knowledge | FILE parity: s3/dropbox/onedrive SHIP. REMAINING: Google Drive knowledge (tools-only today — TOP value), SMB, Box | L | NEXT-PROGRAM | |
 | H-046 | Knowledge | MSG parity: gmail/outlook/slack SHIP. REMAINING: Teams, IMAP; Slack shape DOCUMENT→MAIL (1-line) | L | NEXT-PROGRAM | |
 | H-047 | Security | build_brain identity guard (3 checks + zero-tolerance owner bootstrap) | S | MERGED | 168a8ab6 |
+| H-048 | Gateway | Browser disconnect instantly cancels the run ("browser disconnected") on refresh/blip/restart — now deferred by grace window, reconnect preserves run | M | MERGED | (batch) |
+| H-049 | arcui | LLM/context view lost expandable sections; prompt construction must show ordered sections: system prompt·identity·strategies·policies·tools·skills·context·session data | M | CODING | |
 
 **Batch exit gate:** every row `MERGED` **and** H-043 green (all CI jobs pass) before the batch ships.
 
