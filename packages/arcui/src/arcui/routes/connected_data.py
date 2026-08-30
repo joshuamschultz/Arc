@@ -107,7 +107,13 @@ def _status_wire(status: Any) -> dict[str, Any]:
             _value(state, "bytes_processed", _value(status, "bytes_processed", 0)) or 0
         ),
         "error_code": _value(state, "error_code", _value(status, "error_code", None)),
-        "last_synced_at": _iso(_value(status, "last_synced_at", None)),
+        # The last successful-sync time is stamped on the durable sync state, not
+        # the transient runtime status — reading it off the status alone was
+        # always None, so the card read "Never" even for a source that had synced.
+        "last_synced_at": _iso(
+            _value(state, "last_synced_at", _value(status, "last_synced_at", None))
+        ),
+        "documents_indexed": int(_value(status, "documents_indexed", 0) or 0),
         "allowed_homes": [str(home) for home in _value(status, "allowed_homes", ())],
     }
 

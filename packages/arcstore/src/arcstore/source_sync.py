@@ -35,6 +35,10 @@ class SourceSyncState(BaseModel):
     fencing_token: int = Field(default=0, ge=0)
     generation: int = Field(default=1, ge=1)
     error_code: str | None = None
+    #: The time of the last *successful* full sync, stamped only when a run
+    #: reaches COMPLETE. It reads "Never" on the card until then — a failed or
+    #: still-running pass has no successful-sync time to show.
+    last_synced_at: datetime | None = None
 
 
 class SourceSyncLease(BaseModel):
@@ -162,9 +166,10 @@ class InMemorySourceSyncStore:
             if not self._lease_is_current(agent_did, source_id, owner_id, fencing_token):
                 return False
             key = (agent_did, source_id)
-            self._states[key] = self._states[key].model_copy(
-                update={"status": status, "error_code": error_code}
-            )
+            update: dict[str, Any] = {"status": status, "error_code": error_code}
+            if status == SourceSyncStatus.COMPLETE:
+                update["last_synced_at"] = self._clock()
+            self._states[key] = self._states[key].model_copy(update=update)
             return True
 
     async def release_lease(
@@ -216,6 +221,7 @@ class InMemorySourceSyncStore:
                     "pages": 0,
                     "bytes_processed": 0,
                     "error_code": None,
+                    "last_synced_at": None,
                 }
             )
             self._pages = {page for page in self._pages if page[:2] != key}
@@ -238,6 +244,7 @@ class InMemorySourceSyncStore:
                     "pages": 0,
                     "bytes_processed": 0,
                     "error_code": None,
+                    "last_synced_at": None,
                     "generation": state.generation + 1,
                 }
             )

@@ -419,6 +419,7 @@ function SourceDetail({
               <dt className="text-muted-foreground">Status</dt><dd className="font-medium">{source.status}</dd>
               <dt className="text-muted-foreground">Batches read</dt><dd>{source.pages}</dd>
               <dt className="text-muted-foreground">Downloaded</dt><dd>{fmtBytes(source.bytes_processed)}</dd>
+              <dt className="text-muted-foreground">Documents indexed</dt><dd>{source.documents_indexed}</dd>
               <dt className="text-muted-foreground">Last sync</dt><dd>{source.last_synced_at ?? 'Never'}</dd>
               {source.error_code && <><dt className="text-muted-foreground">Error</dt><dd className="text-destructive">{source.error_code}</dd></>}
               {source.detail && <><dt className="text-muted-foreground">Detail</dt><dd>{source.detail}</dd></>}

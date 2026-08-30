@@ -301,6 +301,16 @@ class ArcMemoryIngestAdapter(IngestPort):
         module = import_module("arcmemory.connected_data")
         return str(module.source_instance_id(self._agent_did, self._source_model(module, source)))
 
+    async def documents_indexed(self, source: SourceDescription) -> int:
+        """Count this source's indexed document inventory for the operator card.
+
+        Reads ArcMemory's per-source document inventory — the searchable
+        documents the operator actually connected — without exposing any body.
+        """
+        service = self._connected_service()
+        module = import_module("arcmemory.connected_data")
+        return len(await service.list_documents(self._source_model(module, source)))
+
     async def mapping_approval_status(self, approval_id: str) -> str:
         """Read the generic approval state without accepting caller-supplied authority."""
         if self._approval_store is None:

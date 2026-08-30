@@ -530,3 +530,95 @@ async def test_release_gate_sqlite_file_resource_is_reopenable_and_read_only(
         )
     ] == ["customers"]
     await reopened.close_source()
+
+
+async def _wait_status(service: ConnectedDataService, expected: str) -> Any:
+    for _ in range(300):
+        statuses = await service.list_sources()
+        if statuses and statuses[0].status == expected:
+            return statuses[0]
+        await asyncio.sleep(0)
+    raise AssertionError(f"source never reached {expected}: {await service.list_sources()}")
+
+
+@pytest.mark.asyncio
+async def test_card_counters_are_read_from_the_store_the_sync_wrote(tmp_path: Path) -> None:
+    """A reader that never re-syncs still shows real pages/bytes/last-sync/doc-count.
+
+    The counters must come from the durable store keyed by the ``connection_id``
+    the coordinator wrote — not the doc pool's canonical source id — and
+    ``last_synced_at`` plus the indexed-document count must reach the card.
+    """
+    backend = FakeBackend()
+    approval = ApprovalStore(backend)
+    sync_state = InMemorySourceSyncStore()
+    source = _MutableProvider(source_kind="blob", home="document")
+    catalog = SourceCatalog()
+    await catalog.register("dropbox-alpha", source)
+    object_state = ArcStoreObjectState(backend, actor_did=_DID)
+    resource_state = ArcStoreResourceSelection(backend, actor_did=_DID)
+    ingest = ArcMemoryIngestAdapter(
+        tmp_path, _DID, approval_store=approval, object_state=object_state
+    )
+
+    async def open_sync() -> InMemorySourceSyncStore:
+        return sync_state
+
+    async def open_resources() -> ArcStoreResourceSelection:
+        return resource_state
+
+    def build() -> ConnectedDataService:
+        return ConnectedDataService(
+            catalog,
+            agent_did=_DID,
+            sync_store_opener=open_sync,
+            ingest_factory=lambda _: ingest,
+            resource_selection_store_opener=open_resources,
+            limits=SyncLimits(max_pages=4, max_bytes=1_000_000),
+            global_concurrency=1,
+            interval_seconds=3600,
+        )
+
+    service = build()
+    await service.start()
+    await _wait(service, "awaiting_mapping")
+    await service.select_resources("dropbox-alpha", resource_ids=("inbox",))
+    proposal = await service.stage_mapping(
+        "dropbox-alpha", homes=(KnowledgeHome.DOCUMENT, KnowledgeHome.BLOB)
+    )
+    assert proposal is not None
+    await _approve_mapping(approval, proposal.approval_id)
+    assert (await service.sync_now("dropbox-alpha")).status == "scheduled"
+    await _wait(service, "complete")
+    await service.close()
+
+    # The durable counters live under the connection id the coordinator wrote,
+    # with a stamped last-successful-sync time.
+    durable = await sync_state.get_state(_DID, "dropbox-alpha")
+    assert durable.pages > 0
+    assert durable.bytes_processed > 0
+    assert durable.last_synced_at is not None
+
+    # They are NOT under the doc pool's canonical source id — reading that key
+    # (the old bug) finds an empty default row.
+    canonical = ingest.canonical_source_id(
+        SourceDescription(
+            connection_id="dropbox-alpha", source_kind="blob", account_id="blob-account"
+        )
+    )
+    assert canonical != "dropbox-alpha"
+    assert (await sync_state.get_state(_DID, canonical)).pages == 0
+
+    # A fresh reader that is PAUSED never re-syncs, so its only truth is the
+    # durable read. It must still surface the real counters, the last-sync time,
+    # and the indexed-document count on the card.
+    reader = build()
+    await reader.pause("dropbox-alpha")
+    await reader.start()
+    status = await _wait_status(reader, "complete")
+    assert status.state is not None
+    assert status.state.pages == durable.pages
+    assert status.state.bytes_processed == durable.bytes_processed
+    assert status.state.last_synced_at is not None
+    assert status.documents_indexed > 0
+    await reader.close()

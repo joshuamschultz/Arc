@@ -1162,6 +1162,7 @@ export interface ConnectedSourceItem {
   bytes_processed: number
   error_code: string | null
   last_synced_at: string | null
+  documents_indexed: number
   allowed_homes: string[]
 }
 
