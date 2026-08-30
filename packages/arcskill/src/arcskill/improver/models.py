@@ -25,12 +25,22 @@ class EvalCase:
     ``machine_authored`` records provenance (REQ-109): cases bootstrapped by the
     improver are supplemental at enterprise/federal tiers and never count toward
     ``min_golden_cases`` there.
+
+    ``gate_type`` is per-case DATA (H-041), not a code branch — ``exact_match``
+    (deterministic tool output), ``assertions`` (operator-written checks), or
+    ``judge_rubric`` (semantic/prose). Whichever default an operator later prefers
+    is a value on the case, never a rewrite. ``curated`` marks a case emitted by the
+    operator-facing curation loop (H-041): curated cases are human-authored by
+    construction (they count toward ``min_golden_cases`` at every tier) and WIN over
+    a machine case that collides on the same node id.
     """
 
     id: str
     node: str = ""
     description: str = ""
     machine_authored: bool = False
+    gate_type: str = "exact_match"
+    curated: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +150,11 @@ class SkillTrace:
     task_summary: str = ""
     task_outcome: str | None = None  # "success" | "failure" | "partial"
     outcome_source: str | None = None  # "heuristic" | "evaluator"
+    # arcllm request/trace ids this span made (H-041). METADATA ONLY — the read-time
+    # join (arcskill.improver.trace_join) resolves the full LLM payloads from arcllm's
+    # JSONLTraceStore by these ids, so a trace body is never duplicated into a second
+    # store (LLM02/LLM07). Empty = nothing to join (heuristic-only or pre-H-041 span).
+    llm_trace_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -156,6 +171,7 @@ class SkillTrace:
             "task_summary": self.task_summary,
             "task_outcome": self.task_outcome,
             "outcome_source": self.outcome_source,
+            "llm_trace_ids": list(self.llm_trace_ids),
         }
 
     @classmethod
@@ -178,6 +194,7 @@ class SkillTrace:
             task_summary=str(data.get("task_summary", "")),
             task_outcome=str(data["task_outcome"]) if data.get("task_outcome") else None,
             outcome_source=str(data["outcome_source"]) if data.get("outcome_source") else None,
+            llm_trace_ids=[str(t) for t in data.get("llm_trace_ids", [])],
         )
 
 

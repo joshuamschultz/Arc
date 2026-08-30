@@ -82,6 +82,7 @@ from arcui.routes.agent_detail.skill_versions import (
     get_skill_version_body,
     get_skill_version_diff,
     get_skill_versions,
+    post_skill_promote_golden,
     post_skill_rollback,
 )
 from arcui.routes.agent_detail.skills import get_skill_detail, get_skills
@@ -113,6 +114,11 @@ routes = [
     Route(
         "/api/agents/{id}/skills/{skill_name}/rollback",
         post_skill_rollback,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/promote",
+        post_skill_promote_golden,
         methods=["POST"],
     ),
     Route("/api/agents/{id}/prompts", get_prompts, methods=["GET"]),

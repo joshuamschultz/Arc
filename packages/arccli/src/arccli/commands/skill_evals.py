@@ -13,6 +13,11 @@ Dispatched from ``arc skill``:
 * ``arc skill evals regen <skill_path> [--yes]`` — unified-diff preview of the
   machine-authored files; actual regeneration needs agent context (LLM invoker
   + sandbox runner), so a confirmed regen errors clearly.
+* ``arc skill evals promote <skill_path> <spec.json>`` — the operator-facing golden
+  curation loop (H-041). Reads a curation spec (gate_type + ideal/assertions/rubric),
+  and emits a SIGNED + REDACTED golden case under ``evals/curated/`` via the ONE
+  ``arcskill.improver.emit_golden_case`` operation the arcui surface also wraps. A
+  ``judge_rubric`` spec without a pinned judge id + rubric sha256 is rejected.
 """
 
 from __future__ import annotations
@@ -51,6 +56,14 @@ def evals_handler(args: argparse.Namespace) -> None:
             err("Usage: arc skill evals regen <skill_path> [--yes]")
             sys.exit(2)
         _regen(Path(target[1]).expanduser().resolve(), yes=args.yes)
+    elif target[0] == "promote":
+        if len(target) != 3:
+            err("Usage: arc skill evals promote <skill_path> <spec.json>")
+            sys.exit(2)
+        _promote(
+            Path(target[1]).expanduser().resolve(),
+            Path(target[2]).expanduser().resolve(),
+        )
     else:
         if len(target) != 1:
             err("Usage: arc skill evals <skill_path>")
@@ -74,8 +87,15 @@ def _list_cases(skill_dir: Path) -> None:
     if not cases:
         _write("No eval cases found.")
         return
-    rows = [[case.id, "machine" if case.machine_authored else "human"] for case in cases]
-    _print_table(["Case", "Provenance"], rows)
+    rows = [[case.id, _provenance(case), case.gate_type] for case in cases]
+    _print_table(["Case", "Provenance", "Gate"], rows)
+
+
+def _provenance(case: EvalCase) -> str:
+    """Human-readable provenance: curated wins, else machine/human."""
+    if case.curated:
+        return "curated"
+    return "machine" if case.machine_authored else "human"
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +239,40 @@ def _regen(skill_dir: Path, *, yes: bool) -> None:
         "run the improver inside an agent instead."
     )
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# promote — the operator-facing golden curation loop (H-041)
+# ---------------------------------------------------------------------------
+
+
+def _promote(skill_dir: Path, spec_path: Path) -> None:
+    """Emit a signed + redacted golden from a curation spec — the ONE emit operation."""
+    try:
+        from arcskill.improver import CuratedGoldenCase, emit_golden_case
+        from arcskill.improver.goldencase import CurationError
+    except ImportError:
+        err("Error: arcskill is not installed; install it to curate golden cases.")
+        sys.exit(1)
+    import json
+
+    if not spec_path.is_file():
+        err(f"Error: no such spec file: {spec_path}")
+        sys.exit(1)
+    try:
+        raw = json.loads(spec_path.read_text(encoding="utf-8"))
+        case = CuratedGoldenCase.model_validate(raw)
+    except (ValueError, OSError) as exc:
+        err(f"Error: invalid curation spec: {exc}")
+        sys.exit(1)
+    try:
+        # Same operation the arcui "promote to golden" surface wraps. The CLI path is
+        # personal-tier (no agent signer in scope); federal signing rides the agent.
+        emitted = emit_golden_case(skill_dir, case)
+    except CurationError as exc:
+        err(f"Error: {exc}")
+        sys.exit(1)
+    _write(f"Emitted curated golden {emitted.nodeid} (gate_type={emitted.case.gate_type}).")
 
 
 def _print_regen_diff(skill_dir: Path, rel: str) -> None:

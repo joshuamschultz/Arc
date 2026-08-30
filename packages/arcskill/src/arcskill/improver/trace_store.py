@@ -60,8 +60,14 @@ class TraceStore:
         status: str,
         error_type: str | None,
         args: dict[str, Any] | None = None,
+        llm_trace_id: str | None = None,
     ) -> None:
-        """Open a span for ``skill_name`` on first sight this turn, then record the call."""
+        """Open a span for ``skill_name`` on first sight this turn, then record the call.
+
+        ``llm_trace_id`` (H-041) is the arcllm request/trace id for the LLM call this
+        tool step belongs to; it is recorded as span METADATA so the read-time join can
+        later resolve the payload from arcllm's store. The body itself is never copied.
+        """
         span = self._active.get(skill_name)
         if span is None:
             span = SkillTrace(
@@ -74,6 +80,8 @@ class TraceStore:
             )
             self._active[skill_name] = span
             self._usage_counts[skill_name] = self._usage_counts.get(skill_name, 0) + 1
+        if llm_trace_id and llm_trace_id not in span.llm_trace_ids:
+            span.llm_trace_ids.append(llm_trace_id)
         args_hash = ""
         captured: dict[str, Any] | None = None
         if args is not None:

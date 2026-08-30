@@ -440,12 +440,13 @@ class ToolsResponse(BaseModel):
 
 
 class SkillEvalCase(BaseModel):
-    """One golden eval case: pytest nodeid + machine/human provenance."""
+    """One golden eval case: pytest nodeid + provenance + gate type (H-041)."""
 
     model_config = ConfigDict(extra="forbid")
 
     nodeid: str
-    provenance: str  # "machine" | "human"
+    provenance: str  # "machine" | "human" | "curated"
+    gate_type: str = "exact_match"  # exact_match | assertions | judge_rubric
 
 
 class SkillEvalCasesResponse(BaseModel):
@@ -454,6 +455,17 @@ class SkillEvalCasesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[SkillEvalCase]
+
+
+class SkillPromoteGoldenResponse(BaseModel):
+    """Body of ``POST /api/agents/{id}/skills/{skill_name}/promote`` (H-041)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str  # "emitted"
+    skill_name: str
+    nodeid: str
+    gate_type: str
 
 
 class SkillVersionsResponse(BaseModel):
