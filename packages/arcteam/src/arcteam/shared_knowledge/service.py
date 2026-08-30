@@ -71,12 +71,50 @@ class SharedKnowledgeUnavailableError(RuntimeError):
 class FleetSharedKnowledgeService:
     """Own fleet promotion policy while delegating collection mechanics to ArcMemory."""
 
-    def __init__(self, backend: FleetSharedKnowledgeBackend) -> None:
+    def __init__(
+        self,
+        backend: FleetSharedKnowledgeBackend,
+        *,
+        promotable_document_types: frozenset[str] | set[str] | None = None,
+    ) -> None:
         self._backend = backend
+        # None → no operator restriction (personal zero-config); a set → only those
+        # document types may be promoted, so the operator controls WHAT is shared
+        # rather than every personal note becoming fleet-wide by default.
+        self._promotable_document_types = (
+            frozenset(promotable_document_types) if promotable_document_types is not None else None
+        )
 
     @classmethod
-    def for_arc_team(cls, base: Path | str | None = None) -> FleetSharedKnowledgeService:
-        return cls(FleetSharedKnowledgeBackend.for_arc_team(base=base))
+    def for_arc_team(
+        cls,
+        base: Path | str | None = None,
+        *,
+        promotable_document_types: frozenset[str] | set[str] | None = None,
+    ) -> FleetSharedKnowledgeService:
+        return cls(
+            FleetSharedKnowledgeBackend.for_arc_team(base=base),
+            promotable_document_types=promotable_document_types,
+        )
+
+    @classmethod
+    def for_team_root(
+        cls,
+        team_root: Path | str,
+        *,
+        promotable_document_types: frozenset[str] | set[str] | None = None,
+    ) -> FleetSharedKnowledgeService:
+        """Bind the collection to a concrete operator team root (``<root>/shared/knowledge``).
+
+        The always-on fleet writes and the dashboard reads through the SAME root,
+        so a custom ``--team-root`` deployment keeps its shared knowledge beside the
+        agents that produced it instead of the default home.
+        """
+        root = Path(team_root) / "shared" / "knowledge"
+        return cls(
+            FleetSharedKnowledgeBackend(root),
+            promotable_document_types=promotable_document_types,
+        )
 
     @property
     def backend(self) -> FleetSharedKnowledgeBackend:
@@ -94,6 +132,7 @@ class FleetSharedKnowledgeService:
         """Promote one owned personal export through the fleet's authorization gate."""
         source: Any = await personal.export_for_promotion(reference, access)
         self._validate_promotion(source)
+        self._enforce_promotable_type(source)
         collection = self._collection(access.caller_did, signer, audit_sink)
         result = await collection.save(
             _Draft(
@@ -111,6 +150,10 @@ class FleetSharedKnowledgeService:
 
     async def read(self, reference: str, access: _Access) -> Any:
         return await self._backend.read(reference, access)
+
+    async def list_documents(self, access: _Access) -> list[Any]:
+        """Every promoted document the caller may read, attributed to its owner DID."""
+        return await self._backend.list_documents(access)
 
     async def search(self, query: str, access: _Access) -> list[Any]:
         return await self._backend.search(query, access)
@@ -132,6 +175,14 @@ class FleetSharedKnowledgeService:
             signer=signer,
             audit_sink=audit_sink,
         )
+
+    def _enforce_promotable_type(self, source: _Source) -> None:
+        """Fail closed when the operator's allowlist does not cover this type."""
+        allowed = self._promotable_document_types
+        if allowed is not None and source.document_type not in allowed:
+            raise PermissionError(
+                f"document type {source.document_type!r} is not promotable to shared knowledge"
+            )
 
     @staticmethod
     def _validate_promotion(source: _Source) -> None:

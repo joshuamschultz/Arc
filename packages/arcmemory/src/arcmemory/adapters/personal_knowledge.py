@@ -41,6 +41,7 @@ class _Document:
     content: str
     classification: str
     tags: tuple[str, ...]
+    document_type: str = "note"
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,7 @@ class PersonalKnowledgeAdapter:
                 content.strip(),
                 classification,
                 tuple(metadata["tags"]),
+                str(metadata["type"]),
             )
         except (KeyError, TypeError, ValueError) as error:
             if "tampered" in str(error) or "different agent" in str(error):
@@ -179,4 +181,5 @@ class PersonalKnowledgeAdapter:
             document.classification,
             document.title,
             document.tags,
+            document.document_type,
         )

@@ -63,6 +63,7 @@ from arcui.routes import gateway as gateway_routes
 from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
+from arcui.routes import knowledge_shared as knowledge_shared_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
@@ -274,6 +275,7 @@ def create_app(
         *chat_ws_routes.routes,
         *attachments_routes.routes,
         *knowledge_routes.routes,
+        *knowledge_shared_routes.routes,
         *connected_data_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,

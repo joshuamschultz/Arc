@@ -1314,3 +1314,42 @@ export interface IndexHealthItem {
 export interface IndexHealthResponse {
   item: IndexHealthItem
 }
+
+// --- H-027: fleet-shared knowledge (documents agents promoted into the
+// signed fleet collection) ---------------------------------------------------
+
+/** One document an agent has promoted into the shared fleet collection. */
+export interface SharedKnowledgeDocument {
+  identifier: string
+  title: string
+  classification: string
+  tags: string[]
+  owner_did: string
+  owner_display: string
+  excerpt: string
+}
+
+export interface SharedKnowledgeResponse {
+  documents: SharedKnowledgeDocument[]
+}
+
+/** One search hit against the shared fleet collection. */
+export interface SharedKnowledgeSearchHit {
+  identifier: string
+  title: string
+  excerpt: string
+}
+
+export interface SharedKnowledgeSearchResponse {
+  hits: SharedKnowledgeSearchHit[]
+}
+
+/** Full content of one shared document (403 above the viewer's clearance,
+ *  404 if missing — surfaced as `ApiError` by `apiGet`). */
+export interface SharedKnowledgeDetail {
+  identifier: string
+  title: string
+  content: string
+  classification: string
+  tags: string[]
+}
