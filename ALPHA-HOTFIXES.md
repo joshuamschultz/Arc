@@ -66,7 +66,7 @@ before this batch is complete.
 | H-021 | Audit | Not loading (HTTP 500) | M | MERGED | a1c949c8 |
 | H-022 | Audit | Rows unreadable — show what/who/which tool/agent/process | M | MERGED | 6aca9805 |
 | H-023 | Knowledge | View/search chunks (embedded + literal) + metadata | L | MERGED | 6e36436e |
-| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | CODING | |
+| H-024 | Knowledge | Explore connected data (its SQL + its embedded chunks) | L | MERGED | ec6ddfb0 |
 | H-025 | Knowledge | DB semantic layer: auto-create on connect, view/edit, hit first | L | MERGED | 53ffcdbd |
 | H-026 | Knowledge | OKF index.md for doc repos, hosted on ~/arc, refreshed on reindex | L | NEW | |
 | H-027 | Knowledge | Promote-to-shared-memory active + filter + shared view | M | MERGED | 2f126606 |
