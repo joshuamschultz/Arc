@@ -171,11 +171,11 @@ class _AuthorizedDatastorePort:
             self._datastore.introspect,
         )
 
-    async def persist_ontology(self, store: Any) -> None:
+    async def persist_ontology(self, store: Any, *, source_id: str) -> None:
         await self._source._authorized(
             "datastore_ontology",
             self._source._connection_id,
-            lambda: self._datastore.persist_ontology(store),
+            lambda: self._datastore.persist_ontology(store, source_id=source_id),
         )
 
     async def query(self, op: str, table: str, args: dict[str, object]) -> object:

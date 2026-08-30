@@ -41,6 +41,10 @@ class UIAuditEvent(StrEnum):
     # specific verb rides in the ``operation`` field, so the taxonomy stays
     # stable as mutation routes are added.
     UI_MUTATION = "ui.mutation"
+    # H-024: one event name for every operator-gated READ of a connection's
+    # explorer surface (its datastore schema, its indexed chunks). The specific
+    # read rides in the ``operation`` field, matching the UI_MUTATION pattern.
+    CONNECTED_DATA_READ = "ui.connected_data_read"
 
 
 class SessionStartFields(BaseModel):
@@ -327,6 +331,38 @@ def emit_mutation_audit(
         worm.write(fields)
 
 
+def emit_read_audit(
+    request: Any,
+    *,
+    target: str,
+    operation: str,
+    outcome: str,
+    detail: str = "",
+) -> None:
+    """Single emission point for an operator-gated connected-data EXPLORER read (H-024).
+
+    Four-pillars Audit: every read of a connection's schema or chunks is recorded
+    with actor role + session id, the ``target`` (agent/source), the ``operation``
+    (verb), and an ``outcome`` (``ok`` | ``denied`` | ``error``). Unlike a mutation
+    this does NOT write the signed WORM chain — a read changes nothing, so the
+    ephemeral log + OTel span on ``app.state.audit`` is the compliance record. A
+    bare test app with no ``audit`` sink is tolerated (matches the mutation emitter).
+    """
+    role = getattr(request.state, "role", None) or "unknown"
+    session_id = getattr(request.state, "session_id", None) or "unknown"
+    fields = MutationAuditFields(
+        actor_role=role,
+        session_id=session_id,
+        target=target,
+        operation=operation,
+        outcome=outcome,
+        detail=detail,
+    )
+    audit = getattr(request.app.state, "audit", None)
+    if audit is not None:
+        audit.audit_event(UIAuditEvent.CONNECTED_DATA_READ, fields.model_dump())
+
+
 #: Actor recorded when no operator key exists to name one. The deployment is
 #: uninitialised; the action still happened and still gets an actor.
 _UI_ACTOR_DID = "did:arc:ui:operator"
@@ -366,6 +402,7 @@ __all__ = [
     "UIAuditLogger",
     "build_mutation_worm_writer",
     "emit_mutation_audit",
+    "emit_read_audit",
     "operator_actor_did",
     "operator_audit_sink",
 ]

@@ -39,6 +39,9 @@ import {
   useBlobFolders,
   useConnectedSourceAction,
   useConnectedSources,
+  useConnectionChunks,
+  useConnectionChunkSearch,
+  useConnectionTables,
   useDatastoreQuery,
   useDatastoreTables,
   useDocuments,
@@ -53,10 +56,11 @@ import {
   useStageSourceMapping,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import type { ConnectedSourceItem, EntityRecord } from '@/lib/types'
+import type { ChunkSearchMode, ConnectedSourceItem, EntityRecord } from '@/lib/types'
 
 const SECTIONS = [
   { value: 'sources', label: 'Sources' },
+  { value: 'explorer', label: 'Explorer' },
   { value: 'documents', label: 'Documents' },
   { value: 'datastore', label: 'Datastore' },
   { value: 'blob', label: 'Blob folders' },
@@ -584,6 +588,126 @@ function DocumentsSection({ agentId }: { agentId: string }) {
   )
 }
 
+// --- Connection explorer (H-024) --------------------------------------------
+
+const SECTION_HEADING =
+  'text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground'
+
+/** Operator-only read of ONE connection: its datastore schema + its indexed
+ *  chunks. Schema is read from the PERSISTED ontology (works with the backing
+ *  datastore unreachable); chunks are bound to that connection's document pool,
+ *  gated no-read-up, and a ?mode=vector search degrades LOUD rather than looking
+ *  empty. Schema only — no row values are ever shown here (H-024). */
+function ConnectionExplorerSection({ agentId }: { agentId: string }) {
+  const [source, setSource] = useState('')
+  const [q, setQ] = useState('')
+  const [mode, setMode] = useState<ChunkSearchMode>('literal')
+  const sourceId = source || null
+  const tables = useConnectionTables(agentId, sourceId)
+  const browse = useConnectionChunks(agentId, sourceId)
+  const search = useConnectionChunkSearch(agentId, sourceId, q, mode)
+  const searching = q.trim().length > 0
+
+  if (!source) {
+    return (
+      <div className="space-y-3">
+        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+        <EmptyState
+          icon={<Database className="size-5" />}
+          title="Pick a connection"
+          description="Choose a connected source to explore its tables and indexed chunks."
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+
+      <section className="space-y-2">
+        <h3 className={SECTION_HEADING}>Tables &amp; schema</h3>
+        <QueryState
+          query={tables}
+          isEmpty={(d) => d.items.length === 0}
+          empty={
+            <EmptyState
+              icon={<Database className="size-5" />}
+              title="No datastore tables"
+              description="This connection exposes no introspected datastore schema."
+            />
+          }
+        >
+          {(data) => <EntityTable items={data.items} typeLabel="Type" />}
+        </QueryState>
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className={SECTION_HEADING}>Chunks</h3>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search chunks…"
+            className="max-w-sm"
+          />
+          <div className="flex gap-1">
+            {(['literal', 'vector'] as ChunkSearchMode[]).map((m) => (
+              <Button
+                key={m}
+                size="sm"
+                variant={mode === m ? 'default' : 'outline'}
+                onClick={() => setMode(m)}
+              >
+                {m}
+              </Button>
+            ))}
+          </div>
+        </div>
+        {searching && search.data?.degraded && (
+          <p className="flex items-center gap-1.5 text-xs text-amber-600">
+            <TriangleAlert className="size-3.5" />
+            Vector search is unavailable for this agent — showing literal (BM25) results.
+          </p>
+        )}
+        <QueryState
+          query={searching ? search : browse}
+          isEmpty={(d) => d.items.length === 0}
+          empty={
+            <EmptyState
+              icon={<FileText className="size-5" />}
+              title={searching ? 'No matching chunks' : 'No chunks indexed'}
+              description={
+                searching
+                  ? undefined
+                  : 'This connection has indexed no document chunks. Run a sync from the Sources tab.'
+              }
+            />
+          }
+        >
+          {(data) => (
+            <ul className="space-y-2">
+              {data.items.map((c) => (
+                <li
+                  key={c.chunk_id}
+                  className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <MonoChip>{c.source || c.chunk_id}</MonoChip>
+                    <Chip>{c.classification}</Chip>
+                    {c.truncated && <Chip>truncated</Chip>}
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{c.text}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </section>
+    </div>
+  )
+}
+
 // --- Datastore --------------------------------------------------------------
 
 function DatastoreLookup({ agentId }: { agentId: string }) {
@@ -1029,6 +1153,9 @@ export function ConnectionsBrowser({
       </TabsList>
       <TabsContent value="sources">
         <SourcesSection agentId={agentId} initialConnectionId={initialConnectionId} />
+      </TabsContent>
+      <TabsContent value="explorer">
+        <ConnectionExplorerSection agentId={agentId} />
       </TabsContent>
       <TabsContent value="documents">
         <DocumentsSection agentId={agentId} />

@@ -660,6 +660,51 @@ export const useDatastoreTables = (agentId: string | null) =>
     enabled: !!agentId,
   })
 
+/** H-024 explorer: ONE connection's introspected datastore schema (operator-only). */
+export const useConnectionTables = (agentId: string | null, sourceId: string | null) =>
+  useQuery<DatastoreTablesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'tables'],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/tables`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+/** H-024 explorer: browse ONE connection's indexed chunks, gated (operator-only). */
+export const useConnectionChunks = (
+  agentId: string | null,
+  sourceId: string | null,
+  limit = 50,
+) =>
+  useQuery<ChunkPage>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'chunks', limit],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/chunks?limit=${limit}`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId,
+  })
+
+/** H-024 explorer: literal/vector search over ONE connection's chunks, gated + LOUD-degrade. */
+export const useConnectionChunkSearch = (
+  agentId: string | null,
+  sourceId: string | null,
+  q: string,
+  mode: ChunkSearchMode,
+) =>
+  useQuery<ChunkSearchResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'connected-sources', sourceId, 'chunks', 'search', q, mode],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/knowledge/connected-sources/${encodeURIComponent(sourceId!)}/chunks?q=${encodeURIComponent(q)}&mode=${mode}`,
+        signal,
+      ),
+    enabled: !!agentId && !!sourceId && q.trim().length > 0,
+  })
+
 export const useDocuments = (agentId: string | null, source: string, q: string) =>
   useQuery<DocumentsResponse>({
     queryKey: ['agent', agentId, 'knowledge', 'documents', source, q],

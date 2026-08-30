@@ -631,7 +631,7 @@ class ArcMemoryBrain:
             return
         store = SemanticStore(self._workspace, self._graph, self._scope(None).key)
         await datastore.introspect()
-        await datastore.persist_ontology(store)
+        await datastore.persist_ontology(store, source_id=source_id)
         self._datastores[source_id] = datastore
         self._datastore_classification[source_id] = classification
 

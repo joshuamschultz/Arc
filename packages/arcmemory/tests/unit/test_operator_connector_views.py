@@ -199,7 +199,7 @@ def test_list_datastore_tables_returns_the_introspected_table(seeded_workspace: 
     tables = operator.list_datastore_tables()
 
     slugs = {t.slug for t in tables}
-    assert "db-table-invoices" in slugs
+    assert f"db-table-{_SOURCE_ID}-invoices" in slugs
 
 
 # ---------------------------------------------------------------------------
