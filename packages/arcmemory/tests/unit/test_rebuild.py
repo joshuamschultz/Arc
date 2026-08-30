@@ -71,6 +71,30 @@ async def test_wipe_rebuild_is_byte_identical(
     assert first == second, "rebuild must reproduce every derived table identically"
 
 
+async def test_rebuild_reuses_vectors_for_unchanged_content(
+    workspace: Path, db: MemoryDB, scope: Scope, embedder
+):
+    """A rebuild re-embeds only NEW/changed content, reusing existing vectors for
+    unchanged chunks. Regression for the 4.8M-token whole-corpus re-embed a
+    crash-recovery rebuild did on an unchanged corpus."""
+    if not db.vec_available:
+        return  # embedding path only
+    _seed_agent(workspace, db, scope)
+    rebuilder = IndexRebuilder(
+        db, workspace, scope, config=MemoryConfig(), embedder=embedder, seed_vocabulary=_VOCAB
+    )
+    await rebuilder.rebuild()
+    embedded_first = embedder.calls
+    assert embedded_first > 0  # the corpus was embedded once
+
+    # A second rebuild over the SAME truth must embed NOTHING — every content hash
+    # already has a vector to reuse — while still reproducing the index.
+    await rebuilder.rebuild()
+    assert embedder.calls == embedded_first, "unchanged content must not be re-embedded"
+    # And the vectors are still present (reused, not dropped).
+    assert db.connect().execute("SELECT COUNT(*) FROM vec0").fetchone()[0] > 0
+
+
 async def test_rebuild_clears_orphaned_trigger_vectors(
     workspace: Path, db: MemoryDB, scope: Scope, embedder
 ) -> None:

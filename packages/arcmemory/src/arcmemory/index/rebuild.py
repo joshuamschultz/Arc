@@ -17,7 +17,7 @@ import contextvars
 from collections.abc import Iterable
 from itertools import combinations
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.config import MemoryConfig
@@ -177,6 +177,12 @@ class IndexRebuilder:
         CollectionIndexStore(self._mem_dir).sync()
         conn = self._db.connect()
         scope = self._scope.key
+        # Snapshot existing vectors keyed by content hash BEFORE the wipe, so a
+        # rebuild re-embeds only genuinely new/changed content. A crash-recovery
+        # rebuild (stale manifest, unchanged corpus) otherwise re-embedded the
+        # ENTIRE corpus — a 4.8M-token embed for a single quick chat. fts/graph
+        # still re-derive fully (cheap + deterministic); the embed is the cost.
+        reuse = self._snapshot_embeddings(conn, scope) if self._db.vec_available else {}
         if self._db.vec_available:
             # vec0 carries no scope column; drop only this scope's vectors by id.
             ids = [
@@ -194,23 +200,52 @@ class IndexRebuilder:
         conn.execute("DELETE FROM insight_trigger WHERE scope=?", (scope,))
         conn.commit()
 
-        await self._rebuild_chunks()
+        await self._rebuild_chunks(reuse)
         self._rebuild_link_edges()
         self._rebuild_assoc_edges()
 
     # -- chunks + fts + vectors -------------------------------------------
 
-    async def _rebuild_chunks(self) -> None:
+    def _snapshot_embeddings(self, conn: Any, scope: str) -> dict[str, bytes]:
+        """``content_hash -> serialized embedding`` for this scope's current
+        vectors, so an unchanged chunk keeps its vector across a rebuild instead
+        of paying to re-embed it. Read BEFORE the wipe; empty when none exist."""
+        hash_by_id = {
+            cid: ch
+            for cid, ch in conn.execute(
+                "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (scope,)
+            ).fetchall()
+            if ch
+        }
+        if not hash_by_id:
+            return {}
+        out: dict[str, bytes] = {}
+        for cid, emb in conn.execute("SELECT chunk_id, embedding FROM vec0").fetchall():
+            ch = hash_by_id.get(cid)
+            if ch is not None and ch not in out and emb is not None:
+                out[ch] = emb
+        return out
+
+    async def _rebuild_chunks(self, reuse: dict[str, bytes] | None = None) -> None:
         """Chunk every source file + every raw event; index into fts + vec.
 
         ``mtime`` is written ``None`` (not the file/event time the shared iterator
         carries) so a rebuild is byte-identical regardless of on-disk stats.
+
+        ``reuse`` (``content_hash -> serialized embedding``) lets an unchanged
+        chunk keep its existing vector, so only NEW/changed content is embedded —
+        a crash-recovery of an unchanged corpus pays zero embed cost.
         """
+        reuse = reuse or {}
         conn = self._db.connect()
         events = self._episodic.events(self._scope.key)
         chunks = list(iter_source_chunks(self._mem_dir, self._workspace, events))
 
-        embeddings = await self._embed([sc.text for sc in chunks])
+        hashes = [content_hash(sc.text) for sc in chunks]
+        # Embed ONLY the chunks whose content we don't already hold a vector for.
+        to_embed = [i for i, h in enumerate(hashes) if h not in reuse]
+        fresh = await self._embed([chunks[i].text for i in to_embed]) if to_embed else None
+        fresh_by_idx = dict(zip(to_embed, fresh, strict=True)) if fresh is not None else {}
         for i, sc in enumerate(chunks):
             conn.execute(
                 "INSERT OR REPLACE INTO chunks "
@@ -222,17 +257,25 @@ class IndexRebuilder:
                     sc.source_path,
                     None,
                     sc.classification,
-                    content_hash(sc.text),
+                    hashes[i],
                 ),
             )
             conn.execute(
                 "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
                 (sc.chunk_id, self._scope.key, sc.text),
             )
-            if embeddings is not None:
+            if not self._db.vec_available:
+                continue
+            reused = reuse.get(hashes[i])
+            if reused is not None:
                 conn.execute(
                     "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
-                    (sc.chunk_id, sqlite_vec.serialize_float32(embeddings[i])),
+                    (sc.chunk_id, reused),
+                )
+            elif i in fresh_by_idx:
+                conn.execute(
+                    "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
+                    (sc.chunk_id, sqlite_vec.serialize_float32(fresh_by_idx[i])),
                 )
         conn.commit()
 
