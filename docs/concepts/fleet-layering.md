@@ -97,6 +97,37 @@ The CLI and ArcUI use the same durable service, with sender signing resolved
 from the selected agent identity. ArcUI mutations are operator-only and
 audited; the operator signer is not accepted as an agent sender.
 
+The durable path — sign first, then commit the inbox and the outbox in one
+transaction, then let a leased worker deliver — is what makes a network blip
+recoverable rather than a lost message:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as "Sender agent"
+    participant M as "AgentMailService.send"
+    participant DB as "ArcStore (inbox + PostgresMailOutbox)"
+    participant W as "MailDeliveryWorker"
+    participant T as "NATS / memory backend"
+
+    S->>M: MailSendRequest(to, body, conversation_id)
+    M->>M: _sign_envelope (sign BEFORE persistence)
+    M->>DB: atomic commit — participant inbox copies + outbox row
+    Note over DB: row leased with SKIP LOCKED;<br/>expired leases reclaimed after a crash
+    W->>DB: lease next outbox row
+    W->>T: deliver signed envelope
+    alt transport ack
+        T-->>W: ack
+        W->>DB: mark sent
+    else transport failure
+        W->>DB: keep pending (bounded backoff → dead-letter)
+    end
+```
+
+Signing happens **before** persistence so an edit to a stored outbox row can
+never become new, validly-signed mail; a send reports `sent` only after
+transport acknowledgement, and `pending` while durable delivery is still queued.
+
 ## Zero-trust rules
 
 Every fleet boundary keeps the four pillars intact:
@@ -134,3 +165,27 @@ uv run python scripts/run_adversarial_tests.py
 
 Run the tests relevant to a changed implementation. Documentation changes can
 be checked with `uv run mkdocs build --strict` and `git diff --check`.
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **inter-agent message** flow, shared verbatim with
+the shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
+numbers drift; the **symbol name** is the durable anchor. Full text for each
+`D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcteam `mail` → arcstore outbox |
+| **What calls what** | `AgentMailService.send` → `_sign_envelope` → atomic inbox + outbox commit → leased delivery worker → NATS / memory backend |
+| **What passes — where / when / to** | a signed envelope + `conversation_id` → the atomic commit; the outbox row leased with `SKIP LOCKED`; `sent` only after transport ack, else `pending`; one access-controlled copy per participant |
+| **Security / modularity reason** | a mail body is untrusted data, never fleet control-plane; the durable store is authoritative and mail is only a wakeup; every sender, recipient, and backend op carries a scoped DID |
+| **`D-NNN` / ADR** | D-538, D-539, D-510, D-647 · ADR-007 |
+| **Code anchor** | `arcteam/mail.py:213,342,188` (`send`, `_sign_envelope`, `AgentMailService`) · `arcstore/mail_outbox.py:199` (`PostgresMailOutbox`, `SKIP LOCKED`) |
+
+**Set it up:** the Track 1 counterpart is
+[Build a fleet](../runbooks/operate/teams.md) — registering agents and turning
+on team mail. The turn that a delivered message can wake is
+[Anatomy of a turn](../walkthrough/03-anatomy-of-a-turn.md).

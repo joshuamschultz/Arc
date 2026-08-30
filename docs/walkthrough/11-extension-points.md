@@ -265,6 +265,29 @@ deployment never silently serves a subset of its configured platforms.
 See [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md)
 and [`docs/arcgateway/`](../building/packages/arcgateway.md) for the full data-plane design.
 
+**The inbound path a platform message travels.** An adapter normalizes its
+platform's payload into one `InboundEvent`, and the gateway owns the session
+boundary from there — the message body reaches the agent as **user content
+only**, never as control-plane instruction:
+
+```mermaid
+flowchart LR
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
+
+    P["platform update<br/>(+ media)"]:::surface --> AD["adapter.normalize<br/>→ InboundEvent"]:::surface
+    AD --> SR["SessionRouter.handle<br/>owns the session identity"]:::found
+    SR --> EX["Executor.run<br/>(asyncio / subprocess by tier)"]:::agent
+    EX --> RUN["ArcAgent.run<br/>body → user content, never control"]:::agent
+```
+
+Inbound is untrusted (LLM01): the gateway authenticates the session and the
+pairing gate, and the body is injected as the user turn — it can never steer the
+control plane. Where inbound **media bytes** are stored, the untrusted-media
+posture, and their retention (D-672 / D-674 / D-675) are decided in the log but
+not yet anchored in prose — **needs confirmation**.
+
 ### 11.5 LLM providers — one adapter file plus one TOML
 
 `packages/arcllm/src/arcllm/adapters/` holds one file per provider (16
@@ -619,3 +642,27 @@ stateDiagram-v2
 [`docs/10-security-model.md`](10-security-model.md) ·
 [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md) ·
 [`docs/arcgateway/`](../building/packages/arcgateway.md)
+
+---
+
+## Flow footer — decision & anchors
+
+The six-field record for the **gateway inbound → agent** flow (§11.4 above),
+shared verbatim with the shared *Decision Index* catalog
+(`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
+the durable anchor. Full text for each `D-NNN` lives in
+[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+
+| Field | This flow |
+|---|---|
+| **Where it lives** | arcgateway (+ adapter extensions) |
+| **What calls what** | adapter normalizes the platform update → `InboundEvent` → `SessionRouter.handle` → `Executor.run` → `ArcAgent.run` |
+| **What passes — where / when / to** | the platform message + media → the gateway session identity; the inbound body injected **only** as user content, never as control; media stored, trust-posture applied |
+| **Security / modularity reason** | the gateway owns the session boundary; inbound is untrusted (LLM01); media trust / retention are explicit decisions, not defaults |
+| **`D-NNN` / ADR** | D-668, D-670, D-677, D-678, D-679, D-325 · ADR-020 · (media D-672 / D-674 / D-675 — **needs confirmation**) |
+| **Code anchor** | `arcgateway/adapters/base.py` (`BasePlatformAdapter`) · `arcgateway/session.py:132,386` (`SessionRouter`, `handle`) · `arcgateway/executor.py:169,185,236` (`Executor`, `run`, `AsyncioExecutor`) |
+
+**Set it up:** the Track 1 counterpart is
+[Gateways (chat)](../building/packages/arcgateway.md) — connecting Telegram /
+Slack and the one-bot-per-agent token custody. The turn an inbound message
+starts is [Anatomy of a turn](03-anatomy-of-a-turn.md).
