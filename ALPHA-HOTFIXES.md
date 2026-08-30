@@ -87,6 +87,7 @@ before this batch is complete.
 | H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) | L | MERGED | a8fd4364 |
 | H-041 | arcskill | Real skill improvement loop (curation + producer wiring + real-path E2E + judge-fail-blocks-promotion) | L | MERGED | 20ef4e8f+0ae5bf6b |
 | H-041b | arcui | "Promote to golden" frontend button on the existing skill-versions route (CLI-first shipped; small UI follow-up; H-037 parity sweep will surface it) | S | NEXT-PROGRAM | |
+| H-041c | arcskill | Judge-gate hole: judge_rubric cases pass before+after so auto-gate can neither promote NOR block on them → a semantically-degraded candidate auto-promotes on exact/assertion cases alone; AND evaluate_curated (real judge) has no caller. FIX: any judge_rubric case in a suite → DISALLOW auto-promote, route to operator review; wire `arc skill evals judge`; 2 tests | S | CODING | |
 | H-040b | Fleet | H-040 Slice 2: dynamic roster for ALL member kinds (native + foreign) through ONE freshness model (not a foreign-only path); + private MemoryPort DID gate, revocation CLI, quarantine provenance | L | NEXT-PROGRAM | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
