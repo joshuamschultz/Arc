@@ -87,6 +87,7 @@ before this batch is complete.
 | H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) — DONE, queued for merge | L | VERIFY | d3719973 |
 | H-041 | arcskill | Real skill improvement loop — merged 20ef4e8f but REOPENED: producer wiring REQUIRED (arcagent stamps llm_trace_id on real runs) + real-path E2E test + judge-fail-blocks-promotion test | L | VERIFY | 20ef4e8f+wiring |
 | H-041b | arcui | "Promote to golden" frontend button on the existing skill-versions route (CLI-first shipped; small UI follow-up; H-037 parity sweep will surface it) | S | NEXT-PROGRAM | |
+| H-040b | Fleet | H-040 Slice 2: dynamic roster for ALL member kinds (native + foreign) through ONE freshness model (not a foreign-only path); + private MemoryPort DID gate, revocation CLI, quarantine provenance | L | NEXT-PROGRAM | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
 | H-043 | CI | All CI jobs red — **billing** (jobs run 0 steps); code gates green | M | BLOCKED/part-done | e3ab74de |
 | H-BATTERY | tests | Pre-existing: test_operator_approve_mints_verifiable_pinned_grant fails only under run_adversarial_tests.py isolated HOME (passes standalone); predates batch. Out of batch scope; needs an owner/fix eventually (stripped-HOME break in operator-key bootstrap may hide a one-resolver-family fallback bug) | S | CONFIRMED-PREEXISTING | base 8c176ed8 red |
