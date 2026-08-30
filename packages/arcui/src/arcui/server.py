@@ -705,6 +705,12 @@ def create_app(
     # call this through app.state — they never import the registry or
     # team_root directly.
     app.state.team_root = team_root
+    # H-040 §4: foreign (non-arcagent) members have no arcagent.toml, so they are
+    # surfaced from the registry, not the disk scan. A startup snapshot of enrolled
+    # foreign members is stashed here; the roster provider merges it with the disk
+    # scan so a foreign member appears in the fleet with its harness badge. Empty
+    # by default → native-only roster, unchanged behavior.
+    app.state.foreign_members = []
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
@@ -713,7 +719,11 @@ def create_app(
         # arcagent.toml [agent].name == the directory name minus _agent).
         agents = app.state.agent_registry.list_agents()
         online = {a.agent_id for a in agents}
-        return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
+        base = team_roster.list_team(team_root=app.state.team_root, online_ids=online)
+        foreign = list(getattr(app.state, "foreign_members", []) or [])
+        if not foreign:
+            return base
+        return team_roster.merge_foreign_members(base, foreign, online)
 
     app.state.roster_provider = _roster_provider
 

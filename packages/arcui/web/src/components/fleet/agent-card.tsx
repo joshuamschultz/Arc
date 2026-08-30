@@ -74,6 +74,20 @@ function ActivityBadge({ activity, online }: { activity?: string; online?: boole
 }
 
 /**
+ * H-040: the runtime-kind badge. A native `arcagent` member carries no badge
+ * (it is the unmarked default); a foreign harness — hermes, openclaw, … — shows
+ * its harness name so the fleet reads at a glance which members are foreign.
+ */
+function HarnessBadge({ harness }: { harness?: string }) {
+  if (!harness || harness === 'arcagent') return null
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+      {harness}
+    </span>
+  )
+}
+
+/**
  * Agent card, mockup-faithful: who the agent is, what it's doing right now, and
  * a calm proof-of-work footer — how many LLM calls it has made today, with a
  * 24h token-activity sparkline. The whole card opens the agent's detail.
@@ -104,7 +118,10 @@ export function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void 
           </div>
           <div className="truncate text-xs text-muted-foreground">{a.role_label || 'Agent'}</div>
         </div>
-        <ActivityBadge activity={a.activity} online={a.online} />
+        <div className="flex shrink-0 items-center gap-2">
+          <HarnessBadge harness={a.harness} />
+          <ActivityBadge activity={a.activity} online={a.online} />
+        </div>
       </div>
 
       <div className="min-h-5 text-sm text-muted-foreground">

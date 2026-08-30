@@ -82,6 +82,8 @@ export interface Agent {
   role_label?: string
   hidden?: boolean
   workspace_path?: string
+  /** H-040: runtime kind — "arcagent" (native) or a foreign harness name. */
+  harness?: string
   identity?: AgentIdentityShape
 }
 

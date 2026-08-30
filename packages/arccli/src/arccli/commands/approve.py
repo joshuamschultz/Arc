@@ -124,11 +124,21 @@ def _resolve(args: argparse.Namespace) -> None:
                 _write(f"Denied {args.id}." if resolved else f"Could not deny {args.id}.")
                 return
 
-            # Mint an operator-signed grant over the stored call_hash. The operator
-            # key IS the authority — the agent's gate verifies + pins to its DID.
             from arccli.commands.operator import resolve_operator_signer
 
             operator = OperatorApprovalAuthority(resolve_operator_signer())
+
+            # H-040 §3.3: a foreign-harness enrollment row is signed into an
+            # EnrollmentGrant and the verified member is admitted to the registry,
+            # rather than an ApprovalGrant over a blocked tool call.
+            from arccli.commands.enroll import is_enrollment
+
+            if is_enrollment(row):
+                await _approve_enrollment(store, row, operator)
+                return
+
+            # Mint an operator-signed grant over the stored call_hash. The operator
+            # key IS the authority — the agent's gate verifies + pins to its DID.
             grant = sign_approval_for_hash(row.call_hash, operator)
             resolved = await store.resolve(
                 args.id,
@@ -146,6 +156,49 @@ def _resolve(args: argparse.Namespace) -> None:
             await backend.stop()
 
     asyncio.run(_run())
+
+
+async def _approve_enrollment(
+    store: ApprovalStore, row: PendingApproval, operator: OperatorApprovalAuthority
+) -> None:
+    """Sign a foreign-harness enrollment grant and admit the member (H-040 §3.3).
+
+    The signed grant rides on the member ``Entity`` in wire form; writing it to the
+    registry re-verifies it against the trust-store operator key (chokepoint 1), so
+    a bad row never becomes a live member. The row is then marked ``approved`` with
+    the grant recorded for the audit trail.
+    """
+    from arcteam.harness.enrollment import EnrollmentDenied
+
+    from arccli.commands.enroll import sign_enrollment_from_row
+    from arccli.commands.team import _build_service, _get_root, _shutdown
+
+    grant, entity = sign_enrollment_from_row(row, operator)
+
+    root = _get_root(argparse.Namespace(root=None))  # TeamConfig().root default
+    _, registry, _, backend = await _build_service(root)
+    try:
+        try:
+            await registry.register(entity)
+        except EnrollmentDenied as exc:
+            _err(f"arc approve: enrollment refused — {exc}")
+            sys.exit(1)
+    finally:
+        await _shutdown(backend)
+
+    from arctrust.policy import enrollment_to_wire
+
+    resolved = await store.resolve(
+        row.id,
+        status="approved",
+        actor_did=operator.did,
+        resolved_by=operator.did,
+        grant=enrollment_to_wire(grant),
+    )
+    if resolved is None:
+        _err(f"arc approve: {row.id!r} raced out of pending; not approved")
+        sys.exit(1)
+    _write(f"Enrolled {entity.handle} (harness={entity.harness}, did={entity.did}).")
 
 
 def _build_parser() -> argparse.ArgumentParser:

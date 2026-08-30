@@ -49,6 +49,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # H-047 build_brain identity guard: zero-tolerance cross-agent isolation.
         "packages/arcmemory/tests/security/test_build_brain_isolation.py",
     ),
+    "foreign harness enrollment and admission (H-040)": (
+        "packages/arctrust/tests/test_enrollment_grant.py",
+        "packages/arcteam/tests/security/test_enrollment_abuse.py",
+        "packages/arcteam/tests/unit/test_harness_enrollment.py",
+    ),
     "dashboard symlink deletion and key/control-plane exfiltration (H-018)": (
         "packages/arcui/tests/integration/test_file_delete_routes.py",
         "packages/arcui/tests/integration/test_path_traversal_e2e.py",
