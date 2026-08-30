@@ -68,6 +68,11 @@ class _State:
     # counts feeding its attribution fallback; both reset as the turn closes.
     outcome_classifier: OutcomeClassifier | None = None
     error_counts: dict[str, int] = field(default_factory=dict)
+    # The arcllm request/trace id of the LLM call driving the CURRENT turn (H-041). Stashed
+    # from ``llm:call_complete`` (the arcllm bridge) so the turn's tool observations can link
+    # to the exact payload arcllm persisted; cleared at turn end so a turn with no LLM call
+    # never inherits a stale id. Same DID-scoped state as the rest of the module.
+    current_llm_trace_id: str | None = None
     # Curator lifecycle-sweep cadence (CRITICAL-1): how often the @background_task loop
     # wakes. The 30-day inactivity *window* lives in the improver's LifecycleConfig.
     sweep_poll_seconds: float = 3_600.0

@@ -84,7 +84,7 @@ before this batch is complete.
 | H-037 | UI | Every arcui action has an arccli equal (and vice versa) | L | NEW | |
 | H-038 | System | Inject day/time per LLM call (not in cached system prompt) | M | MERGED | b37f1417 |
 | H-039 | System | Every config in TOML (even off), shown in arcui, in new-agent startup | M | MERGED | H-039 |
-| H-040 | Fleet | arcteam holds multiple agent TYPES — HarnessAdapter seam (Slice 1: enroll+badge+message+audit, out-of-process, 3 fail-closed chokepoints) | L | CODING | |
+| H-040 | Fleet | Multi-agent-type HarnessAdapter seam Slice 1 (enroll+badge+message+OOP-dispatch+audit; 3 fail-closed chokepoints; hermes e2e) — DONE, queued for merge | L | VERIFY | d3719973 |
 | H-041 | arcskill | Real skill improvement loop — merged 20ef4e8f but REOPENED: producer wiring REQUIRED (arcagent stamps llm_trace_id on real runs) + real-path E2E test + judge-fail-blocks-promotion test | L | VERIFY | 20ef4e8f+wiring |
 | H-041b | arcui | "Promote to golden" frontend button on the existing skill-versions route (CLI-first shipped; small UI follow-up; H-037 parity sweep will surface it) | S | NEXT-PROGRAM | |
 | H-042 | arcskill | Hermes-type skill/tool improvements instilled, working, documented | L | MERGED | 3c3f8c79 |
