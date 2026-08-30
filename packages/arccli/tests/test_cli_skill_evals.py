@@ -175,6 +175,53 @@ class TestEvalsList:
         assert "machine" in result.stdout.lower()
         assert "human" in result.stdout.lower()
 
+
+# ---------------------------------------------------------------------------
+# arc skill evals promote <skill_path> <spec.json>  (H-041 golden curation)
+# ---------------------------------------------------------------------------
+
+
+class TestEvalsPromote:
+    def test_promote_emits_curated_golden_shown_in_listing(self, tmp_path: Path) -> None:
+        """A promote spec emits a curated golden that the listing then shows."""
+        skill_dir = _make_skill(tmp_path, human_cases=["test_human_1"])
+        spec = tmp_path / "spec.json"
+        spec.write_text(
+            json.dumps(
+                {
+                    "case_id": "invoice",
+                    "skill_name": "evals-skill",
+                    "gate_type": "exact_match",
+                    "ideal_output": "Acme owes $42",
+                }
+            )
+        )
+        promoted = _arc("skill", "evals", "promote", str(skill_dir), str(spec))
+        assert promoted.returncode == 0, f"stderr: {promoted.stderr}"
+        assert "curated golden" in promoted.stdout.lower()
+
+        listing = _arc("skill", "evals", str(skill_dir))
+        assert "curated" in listing.stdout.lower()
+        assert "exact_match" in listing.stdout
+
+    def test_promote_rejects_unpinned_judge_rubric(self, tmp_path: Path) -> None:
+        """A judge_rubric spec without a pinned judge id + rubric sha256 is rejected."""
+        skill_dir = _make_skill(tmp_path, human_cases=["test_human_1"])
+        spec = tmp_path / "spec.json"
+        spec.write_text(
+            json.dumps(
+                {
+                    "case_id": "quality",
+                    "skill_name": "evals-skill",
+                    "gate_type": "judge_rubric",
+                    "rubric": "Pass iff polite.",
+                }
+            )
+        )
+        result = _arc("skill", "evals", "promote", str(skill_dir), str(spec))
+        assert result.returncode != 0
+        assert "pin" in result.stderr.lower() or "judge" in result.stderr.lower()
+
     def test_list_never_executes_eval_code(self, tmp_path: Path) -> None:
         """Listing is a static AST walk: a module that explodes at import time still lists."""
         skill_dir = _make_skill(tmp_path, machine_cases=["test_gen_1"])

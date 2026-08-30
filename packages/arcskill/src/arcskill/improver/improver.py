@@ -221,13 +221,17 @@ class ArcSkillImprover:
         error_type: str | None,
         session_id: str | None = None,
         args: dict[str, Any] | None = None,
+        llm_trace_id: str | None = None,
     ) -> None:
+        # ``llm_trace_id`` (H-041) records the arcllm request/trace id this tool step
+        # belongs to — span METADATA the read-time curation join later resolves.
         self._store.observe(
             skill_name=skill_name,
             tool_name=tool_name,
             status=status,
             error_type=error_type,
             args=args,
+            llm_trace_id=llm_trace_id,
         )
 
     async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
@@ -787,6 +791,73 @@ class ArcSkillImprover:
             return []
         tags = fm.get("tags", [])
         return list(tags) if isinstance(tags, list) else []
+
+    # -- operator-facing golden curation (H-041) -----------------------------
+    #
+    # ONE curation operation, wired here so the CLI (`arc skill evals promote`) and
+    # arcui ("promote to golden") both drive the SAME emit path (locked design §6).
+    # Imports are lazy so this block stays independent of the module's import head.
+
+    def trace_join(self, payload_source: Any) -> Any:
+        """Build the read-time trace join over this improver's spans (H-041).
+
+        ``payload_source`` is an ``async (trace_id) -> record|None`` resolver bound to
+        arcllm's ``JSONLTraceStore.get`` — the payloads are joined at read time, never
+        copied into the improver's store (locked design §3).
+        """
+        from arcskill.improver.trace_join import TraceJoin
+
+        return TraceJoin(self._store, payload_source)
+
+    async def curatable_traces(self, skill_name: str, payload_source: Any) -> list[Any]:
+        """Every span for ``skill_name`` joined to its arcllm payloads (or declared
+        unavailable, with a reason — never a silent empty)."""
+        from arcskill.improver.trace_join import TraceJoin
+
+        join = TraceJoin(self._store, payload_source)
+        return list(await join.curatable(skill_name))
+
+    def curate_golden(self, case: Any, *, redactor: Any = None) -> Any:
+        """Emit ``case`` as a signed + redacted golden under the skill's ``evals/``.
+
+        Fail-closed: a ``judge_rubric`` case without judge id + rubric sha256 raises
+        before anything is written (locked design §2).
+        """
+        from arcskill.improver.curation import emit_golden_case
+
+        if self._skill_path is None:
+            raise RuntimeError("no skill_path resolver wired; cannot locate the skill's evals/")
+        path = self._skill_path(case.skill_name)
+        if path is None:
+            raise RuntimeError(f"no such skill on disk: {case.skill_name}")
+        return emit_golden_case(
+            path.parent,
+            case,
+            signer=self._signer,
+            redactor=redactor,
+            audit_sink=self._audit_sink,
+            actor_did=self._agent_did,
+            tier=self._tier,
+        )
+
+    async def evaluate_curated(
+        self, skill_name: str, candidate_output: str, *, judge: Any = None
+    ) -> list[Any]:
+        """Compare a candidate output against every curated case PER its gate type."""
+        from arcskill.improver.curation import load_curated_cases
+        from arcskill.improver.goldencase import evaluate_curated_case
+
+        if self._skill_path is None:
+            return []
+        path = self._skill_path(skill_name)
+        if path is None:
+            return []
+        verdicts = []
+        for case in load_curated_cases(path.parent):
+            verdicts.append(
+                await evaluate_curated_case(case, candidate_output, judge=judge or self._llm)
+            )
+        return verdicts
 
     async def aclose(self) -> None:
         """Await in-flight improvement tasks (graceful shutdown)."""

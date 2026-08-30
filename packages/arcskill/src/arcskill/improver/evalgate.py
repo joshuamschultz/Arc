@@ -48,20 +48,30 @@ class GateDecision:
 
 
 def load_suite(skill_dir: Path | None) -> list[EvalCase]:
-    """Discover pytest golden cases under ``<skill_dir>/evals/`` (static AST scan)."""
+    """Discover pytest golden cases under ``<skill_dir>/evals/`` (static AST scan).
+
+    Curated cases (H-041) carry ``provenance: "curated"`` + ``gate_type`` in the
+    manifest entry for their anchor file: they are human-authored (count toward the
+    gate minimum at every tier) and WIN over a machine case that collides on the same
+    node id.
+    """
     if skill_dir is None:
         return []
     evals_dir = skill_dir / "evals"
     if not evals_dir.is_dir():
         return []
-    manifest = _load_manifest(evals_dir)
-    cases: list[EvalCase] = []
+    entries = _load_manifest_entries(evals_dir)
+    manifest = {name: str(e["sha256"]) for name, e in entries.items() if "sha256" in e}
+    by_nodeid: dict[str, EvalCase] = {}
     for path in sorted(evals_dir.rglob("test_*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except (OSError, SyntaxError):
             continue
         machine = _is_machine_authored(path, tree, evals_dir, manifest)
+        entry = entries.get(path.relative_to(evals_dir).as_posix(), {})
+        curated = entry.get("provenance") == "curated"
+        gate_type = str(entry.get("gate_type", "exact_match"))
         rel = path.relative_to(skill_dir).as_posix()
         for node in ast.walk(tree):
             if (
@@ -70,12 +80,22 @@ def load_suite(skill_dir: Path | None) -> list[EvalCase]:
                 and not _is_placeholder(node)
             ):
                 nodeid = f"{rel}::{node.name}"
-                cases.append(EvalCase(id=nodeid, node=nodeid, machine_authored=machine))
-    return cases
+                case = EvalCase(
+                    id=nodeid,
+                    node=nodeid,
+                    machine_authored=machine and not curated,
+                    gate_type=gate_type,
+                    curated=curated,
+                )
+                existing = by_nodeid.get(nodeid)
+                # Curated wins on conflict (locked design §5); otherwise first-seen holds.
+                if existing is None or (curated and not existing.curated):
+                    by_nodeid[nodeid] = case
+    return list(by_nodeid.values())
 
 
-def _load_manifest(evals_dir: Path) -> dict[str, str]:
-    """Read the harness manifest: evals-relative filename → recorded sha256 of file bytes."""
+def _load_manifest_entries(evals_dir: Path) -> dict[str, dict[str, object]]:
+    """Read the harness manifest: evals-relative filename → its full metadata entry."""
     try:
         raw = json.loads((evals_dir / ".manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -83,11 +103,7 @@ def _load_manifest(evals_dir: Path) -> dict[str, str]:
     files = raw.get("files") if isinstance(raw, dict) else None
     if not isinstance(files, dict):
         return {}
-    return {
-        str(name): str(entry["sha256"])
-        for name, entry in files.items()
-        if isinstance(entry, dict) and "sha256" in entry
-    }
+    return {str(name): entry for name, entry in files.items() if isinstance(entry, dict)}
 
 
 def _is_machine_authored(
