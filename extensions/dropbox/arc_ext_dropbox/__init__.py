@@ -92,6 +92,22 @@ class DropboxAttachment:
         self._source_root = ""
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
 
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        """The shared httpx client, recreated if a prior ``close_source`` closed it.
+
+        ONE ``DropboxAttachment`` serves BOTH seams: the connected-source
+        lifecycle (``close_source`` releases the client after a sync) AND the
+        agent's interactive tools (``invoke``). ``close_source`` closing the
+        shared client left every later tool call raising "client has been closed"
+        even though the connection card still probed green from a fresh instance.
+        Recreating on demand lets the two seams coexist on one long-lived instance
+        — a connection stays usable after any source operation.
+        """
+        if self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=_TIMEOUT)
+        return self._client
+
     # --- the hook contract ---------------------------------------------------
 
     def requirements(self) -> list[Requirement]:
@@ -461,13 +477,14 @@ class DropboxAttachment:
         refreshed = False
         for attempt in range(_MAX_ATTEMPTS):
             token = await self._access_token()
-            request = self._client.build_request(
+            client = self._http
+            request = client.build_request(
                 method,
                 url,
                 headers={"Authorization": f"Bearer {token}", **headers},
                 content=content,
             )
-            response = await self._client.send(request, stream=stream)
+            response = await client.send(request, stream=stream)
             if response.status_code == 401 and not refreshed:
                 await response.aclose()
                 self._token = ""
@@ -496,7 +513,7 @@ class DropboxAttachment:
         async with self._token_lock:
             if self._token and time.monotonic() < self._token_expiry:
                 return self._token
-            response = await self._client.post(
+            response = await self._http.post(
                 _OAUTH_ENDPOINT,
                 data={"grant_type": "refresh_token", "refresh_token": self._refresh_token},
                 auth=(self._app_key, self._app_secret),

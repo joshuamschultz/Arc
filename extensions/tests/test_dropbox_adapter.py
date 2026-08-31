@@ -104,6 +104,18 @@ async def test_probe_mints_a_token_then_reads_the_account(recorder: _Recorder) -
     assert recorder.token_mints == 1
 
 
+async def test_a_call_works_after_close_source_closed_the_client(recorder: _Recorder) -> None:
+    """close_source() closes the shared httpx client (source-lifecycle teardown),
+    but the SAME instance also serves the agent's interactive tools. A later call
+    must recreate the client, not raise 'client has been closed'. Regression for a
+    connection that probed green yet failed every tool call after a sync."""
+    att = _attachment()
+    assert (await att.probe()).reachable  # first use
+    await att.close_source()  # a source operation releases the client
+    # The connection must still be usable — the client is recreated on demand.
+    assert (await att.probe()).reachable
+
+
 async def test_a_malformed_refresh_token_is_named_not_hidden_behind_a_generic_400(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
