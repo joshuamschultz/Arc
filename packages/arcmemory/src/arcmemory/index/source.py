@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 
-from arcokf import validate_collection_index
+from arcokf import OKFValidationError, validate_collection_index
 from pydantic import BaseModel
 
 from arcmemory.mdfile import parse_document
@@ -23,6 +23,18 @@ from arcmemory.types import Event
 
 # Curated markdown source directories, in a fixed order (determinism).
 _SOURCE_SUBDIRS = ("entities", "insights", "procedures", "events", "daily-log")
+
+#: Per-chunk byte ceiling. An append-only daily-log (or a giant ingested event)
+#: grows without bound, and the Postgres index backend feeds each chunk's text to
+#: ``to_tsvector``, which rejects any single string over 1,048,575 bytes with
+#: ``ProgramLimitExceededError`` — one such chunk aborted the whole refresh pass
+#: and left every OTHER chunk unembedded, so the next poll re-embedded the entire
+#: corpus, forever. Splitting every source into windows this far under the hard
+#: limit means no single chunk can ever overflow the tsvector, keeps the vector
+#: (whose embedder truncates a huge blob to garbage anyway) meaningful, and bounds
+#: what one changed window costs to re-embed. Window 0 keeps the plain ``file:``/
+#: ``event:`` id — a small file is the one-window case, so existing ids never move.
+MAX_CHUNK_BYTES = 60_000
 
 
 class SourceChunk(BaseModel):
@@ -92,27 +104,97 @@ def iter_source_chunks(
             if skip_file is not None and skip_file(chunk_id, mtime):
                 continue
             text = path.read_text(encoding="utf-8")
-            fm, _ = parse_document(text)
-            yield SourceChunk(
-                chunk_id=chunk_id,
-                source_path=rel,
-                text=text,
-                # A genuinely missing label passes through empty — the no-read-up
-                # gate decides fail-closed (federal) vs default (personal), never
-                # the index (SDD §8).
-                classification=str(fm.get("classification") or ""),
-                mtime=mtime,
-            )
+            # A file OKF rejects — most importantly one past ``MAX_DOCUMENT_BYTES``,
+            # which an append-only daily-log crosses as it grows — must NOT abort
+            # the whole walk (and with it all of the agent's indexing). Degrade to
+            # raw text with an EMPTY classification, which the no-read-up gate reads
+            # as fail-closed (federal) / default (personal), and still window it so
+            # the content stays searchable. Same blast-radius rule as the size split.
+            try:
+                fm, _ = parse_document(text)
+                classification = str(fm.get("classification") or "")
+            except OKFValidationError:
+                classification = ""
+            yield from _bounded_chunks(chunk_id, rel, text, classification, mtime)
     for event in events:
-        yield SourceChunk(
-            chunk_id=f"event:{event.event_id}",
-            source_path="episodic",
-            text=event.text,
+        yield from _bounded_chunks(
+            f"event:{event.event_id}",
+            "episodic",
+            event.text,
             # The stored stream label — NOT a literal — so a classified capture is
             # gated on the raw-stream channel too (empty => fail-closed).
-            classification=event.classification,
-            mtime=_iso_epoch(event.ts),
+            event.classification,
+            _iso_epoch(event.ts),
         )
+
+
+def _bounded_chunks(
+    base_id: str, source_path: str, text: str, classification: str, mtime: float
+) -> Iterator[SourceChunk]:
+    """Yield ``text`` as one or more ``SourceChunk`` windows, each ≤ ``MAX_CHUNK_BYTES``.
+
+    Window 0 carries ``base_id`` unchanged (the common one-window case, so a small
+    card's id never gains a suffix); further windows are ``base_id#1``, ``base_id#2``…
+    The split is deterministic (a pure function of ``text``), so the byte-identical
+    rebuild path yields identical chunks. An empty file still yields its single
+    window, so window 0 always exists for the mtime-skip sentinel.
+    """
+    for i, window in enumerate(_split_windows(text)):
+        yield SourceChunk(
+            chunk_id=base_id if i == 0 else f"{base_id}#{i}",
+            source_path=source_path,
+            text=window,
+            classification=classification,
+            mtime=mtime,
+        )
+
+
+def _split_windows(text: str) -> list[str]:
+    """Pack paragraphs into ``\\n\\n``-joined windows, each ≤ ``MAX_CHUNK_BYTES`` bytes.
+
+    A paragraph that alone exceeds the budget is hard-split on character
+    boundaries (never mid-multibyte-char). Text at or under the budget returns as
+    a single window, so the overwhelming common case is a one-element list.
+    """
+    if len(text.encode("utf-8")) <= MAX_CHUNK_BYTES:
+        return [text]
+    units: list[str] = []
+    for para in text.split("\n\n"):
+        if len(para.encode("utf-8")) > MAX_CHUNK_BYTES:
+            units.extend(_hard_split(para))
+        else:
+            units.append(para)
+    windows: list[str] = []
+    current: list[str] = []
+    current_bytes = 0
+    for unit in units:
+        unit_bytes = len(unit.encode("utf-8")) + (2 if current else 0)  # "\n\n" join cost
+        if current and current_bytes + unit_bytes > MAX_CHUNK_BYTES:
+            windows.append("\n\n".join(current))
+            current, current_bytes = [], 0
+            unit_bytes = len(unit.encode("utf-8"))
+        current.append(unit)
+        current_bytes += unit_bytes
+    if current:
+        windows.append("\n\n".join(current))
+    return windows or [""]
+
+
+def _hard_split(unit: str) -> list[str]:
+    """Split one over-budget paragraph into byte-bounded pieces, char-aligned."""
+    pieces: list[str] = []
+    current = ""
+    current_bytes = 0
+    for ch in unit:
+        ch_bytes = len(ch.encode("utf-8"))
+        if current and current_bytes + ch_bytes > MAX_CHUNK_BYTES:
+            pieces.append(current)
+            current, current_bytes = "", 0
+        current += ch
+        current_bytes += ch_bytes
+    if current:
+        pieces.append(current)
+    return pieces
 
 
 def _iso_epoch(ts: str) -> float:
@@ -123,4 +205,4 @@ def _iso_epoch(ts: str) -> float:
         return 0.0
 
 
-__all__ = ["SourceChunk", "iter_source_chunks"]
+__all__ = ["MAX_CHUNK_BYTES", "SourceChunk", "iter_source_chunks"]

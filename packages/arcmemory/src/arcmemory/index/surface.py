@@ -25,6 +25,7 @@ injected, the vec list is simply dropped — BM25 + graph still answer, a
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +45,8 @@ from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Recall, Scope
+
+_logger = logging.getLogger(__name__)
 
 
 class SurfaceResult(BaseModel):
@@ -189,18 +192,32 @@ class SurfaceIndex:
             return 0
 
         embeddings = await self._embed([c.text for c in targets]) if embed else None
+        indexed = 0
         for i, chunk in enumerate(targets):
-            await self._backend.upsert_chunk(
-                scope=self._scope.key,
-                chunk_id=chunk.chunk_id,
-                source_path=chunk.source_path,
-                mtime=chunk.mtime,
-                classification=chunk.classification,
-                content_hash=chunk.content_hash,
-                text=chunk.text,
-                embedding=embeddings[i] if embeddings is not None else None,
-            )
-        return len(targets)
+            try:
+                await self._backend.upsert_chunk(
+                    scope=self._scope.key,
+                    chunk_id=chunk.chunk_id,
+                    source_path=chunk.source_path,
+                    mtime=chunk.mtime,
+                    classification=chunk.classification,
+                    content_hash=chunk.content_hash,
+                    text=chunk.text,
+                    embedding=embeddings[i] if embeddings is not None else None,
+                )
+            except Exception as exc:  # reason: contain one bad chunk; never abort the pass
+                # Blast-radius containment: one chunk that fails to upsert (a
+                # backend limit, a transient store error) must NEVER abort the
+                # whole pass. Before this guard a single oversized chunk raised
+                # here, the pass unwound, and every OTHER chunk lost its
+                # embedded_hash stamp — so the next poll re-embedded the entire
+                # corpus, forever. Skipping the one bad chunk leaves it pending
+                # (it retries next pass, alone) while every healthy chunk still
+                # gets stamped. The failure is emitted, never swallowed silently.
+                self._emit_index_failure(chunk.chunk_id, exc)
+                continue
+            indexed += 1
+        return indexed
 
     def _collect_chunks(
         self, *, skip_file: Callable[[str, float], bool] | None = None
@@ -316,6 +333,27 @@ class SurfaceIndex:
     def _vocabulary(self) -> set[str]:
         """Tagging vocabulary: seed terms + slugs of existing entity files."""
         return entity_vocabulary(self._mem_dir, self._seed_vocab)
+
+    def _emit_index_failure(self, chunk_id: str, exc: Exception) -> None:
+        """Record (loudly, never silently) that one chunk failed to index.
+
+        The pass continues without it — see the guard in ``index_if_needed``. A
+        persistently-failing chunk therefore re-costs only itself each pass, and
+        stays visible in the audit trail rather than vanishing into a swallowed
+        exception the way the whole-corpus re-embed loop did.
+        """
+        _logger.warning("surface index: chunk %s failed to upsert: %s", chunk_id, exc)
+        emit(
+            AuditEvent(
+                actor_did=self._scope.agent_did,
+                action="index.chunk_failed",
+                target=chunk_id,
+                outcome="error",
+                tier=self._cfg.tier,
+                extra={"reason": type(exc).__name__},
+            ),
+            self._audit,
+        )
 
     def _emit_degraded(self, text: str) -> None:
         """Signal (never raise) that retrieval ran without the vector channel."""
