@@ -188,7 +188,11 @@ class ToolConfig(BaseModel):
 
     allow: list[str] = []
     deny: list[str] = []
-    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    # Per-tool wall-clock dispatch cap. Raised from 30 → 120 (ceiling 300 → 600)
+    # so a builtin tool that makes an LLM call (e.g. workpad_update via the eval
+    # model) survives a slow local reasoning model; operators on such models set
+    # this higher via [tools.policy].
+    timeout_seconds: int = Field(default=120, ge=1, le=600)
     allowed_paths: list[str] = []
     # SPEC-035 REQ-002 — operator-declared paths that are read-only to the
     # agent's mutating tools, unioned with the goal-file defaults. Resolved once

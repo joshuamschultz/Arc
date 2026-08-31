@@ -165,7 +165,7 @@ class TestToolsConfig:
         cfg = ToolConfig()
         assert cfg.allow == []
         assert cfg.deny == []
-        assert cfg.timeout_seconds == 30
+        assert cfg.timeout_seconds == 120
 
 
 class TestTelemetryConfig:
