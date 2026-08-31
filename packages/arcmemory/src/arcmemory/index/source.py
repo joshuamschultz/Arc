@@ -79,17 +79,17 @@ def iter_source_chunks(
     collection_index = mem_dir / "index.md"
     if validate_collection_index(collection_index, mem_dir).valid:
         index_text = collection_index.read_text(encoding="utf-8")
-        yield SourceChunk(
-            chunk_id="file:" + collection_index.relative_to(workspace).as_posix(),
-            source_path=collection_index.relative_to(workspace).as_posix(),
-            # Keep the machine comments on disk for verification, but index the
-            # compact human routing lines so one large collection cannot consume
-            # the entire bounded recall budget as a single chunk.
-            text="\n".join(
-                line for line in index_text.splitlines() if line.startswith(("# ", "- ["))
-            ),
-            classification="",
-            mtime=collection_index.stat().st_mtime,
+        rel = collection_index.relative_to(workspace).as_posix()
+        # Keep the machine comments on disk for verification, but index the compact
+        # human routing lines only. A large inventory's routing lines can STILL run
+        # to megabytes, though (a fleet with thousands of memory files), so this too
+        # goes through the size bound — one collection index must never become a
+        # single chunk that overflows the Postgres tsvector limit.
+        routing_text = "\n".join(
+            line for line in index_text.splitlines() if line.startswith(("# ", "- ["))
+        )
+        yield from _bounded_chunks(
+            f"file:{rel}", rel, routing_text, "", collection_index.stat().st_mtime
         )
     for subdir in _SOURCE_SUBDIRS:
         directory = mem_dir / subdir

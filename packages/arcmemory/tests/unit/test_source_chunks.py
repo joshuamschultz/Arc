@@ -9,7 +9,11 @@ entirely — these tests pin the low-level primitive that guarantee rests on.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from arcmemory.index import source as source_mod
 from arcmemory.index.source import MAX_CHUNK_BYTES, iter_source_chunks
 from arcmemory.types import Event
 
@@ -135,6 +139,29 @@ def test_file_too_large_for_okf_degrades_instead_of_aborting_the_walk(workspace:
     assert len(log_chunks) >= 2, "the too-large log is degraded into raw windows, not dropped"
     assert all(c.classification == "" for c in log_chunks), "degraded windows are fail-closed"
     for c in log_chunks:
+        assert len(c.text.encode("utf-8")) <= MAX_CHUNK_BYTES
+
+
+def test_oversized_collection_index_splits_into_bounded_windows(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A large memory ``index.md`` (a fleet with thousands of routing lines) must
+    not become one chunk that overflows the tsvector limit — it too is bounded.
+    The validator is stubbed valid so the test exercises only the size path."""
+    mem = workspace / "memory"
+    mem.mkdir(parents=True)
+    routing = "\n".join(f"- [entities/item_{i:05d}.md](entities/item_{i:05d}.md)" for i in range(2000))
+    (mem / "index.md").write_text(f"# Inventory\n{routing}\n", encoding="utf-8")
+    assert len((mem / "index.md").read_text("utf-8").encode("utf-8")) > MAX_CHUNK_BYTES
+    monkeypatch.setattr(
+        source_mod, "validate_collection_index", lambda *a, **k: SimpleNamespace(valid=True)
+    )
+
+    chunks = [c for c in iter_source_chunks(mem, workspace, []) if c.source_path == "memory/index.md"]
+
+    assert len(chunks) >= 2
+    assert chunks[0].chunk_id == "file:memory/index.md"
+    for c in chunks:
         assert len(c.text.encode("utf-8")) <= MAX_CHUNK_BYTES
 
 
