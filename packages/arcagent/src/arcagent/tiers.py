@@ -76,6 +76,18 @@ RELAXABLE_KNOBS: tuple[RelaxableKnob, ...] = (
     RelaxableKnob("budget.max_cost_usd", 10.0, True, True, "smaller", enforcement="dispatch"),
     RelaxableKnob("budget.max_requests", 500, True, True, "smaller", enforcement="dispatch"),
     RelaxableKnob("allow_all_imports", False, True, True, "exact", enforcement="dynamic_loader"),
+    # Personal may drop agent-authored tool execution to a bare subprocess
+    # (sandbox off); enterprise/federal are floored at the container. Enforced
+    # in capabilities.inventory._resolve_isolation_relax and re-checked by
+    # arcrun's execute router.
+    RelaxableKnob(
+        "capabilities.isolation_relax",
+        "container",
+        True,
+        False,
+        "exact",
+        enforcement="capability_loader",
+    ),
 )
 
 SECURITY_CONFIG_KNOBS: tuple[RelaxableKnob, ...] = tuple(

@@ -192,11 +192,23 @@ def _annotation_schema(annotation: ast.expr | None) -> dict[str, Any]:
 
 
 class ArcRunIsolatedRunner:
-    """Run authored functions through ArcRun's configured isolation backend."""
+    """Run authored functions through ArcRun's configured isolation backend.
 
-    def __init__(self, *, tier: str, timeout_seconds: float = 30) -> None:
+    ``relax`` is ArcRun's personal-tier isolation relaxation (``None`` keeps the
+    tier floor — container at personal/enterprise, VM at federal; ``"local"`` /
+    ``"off"`` / ``"none"`` drop a personal-tier run to a bare host subprocess).
+    Without it a personal-tier host with no Docker cannot execute a signed,
+    approved capability-folder tool at all. The value is resolved and tier-gated
+    upstream (``resolve_trust_posture``); ArcRun's router still refuses a relax
+    below the tier floor as defence in depth.
+    """
+
+    def __init__(
+        self, *, tier: str, relax: str | None = None, timeout_seconds: float = 30
+    ) -> None:
         self._tool = arcrun.make_execute_tool(
             tier=tier,
+            relax=relax,
             timeout_seconds=timeout_seconds,
             max_output_bytes=64 * 1024,
         )

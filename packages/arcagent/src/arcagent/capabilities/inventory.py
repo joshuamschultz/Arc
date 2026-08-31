@@ -218,6 +218,10 @@ class TrustPosture:
     require_signature: bool
     trusted_public_keys: tuple[bytes, ...]
     import_policy: ImportPolicy
+    #: ArcRun isolation relaxation for agent-authored tools. None keeps the tier
+    #: floor (container); an off-value ("local"/"off"/"none") runs a personal-tier
+    #: tool in a bare subprocess. Tier-gated by :func:`_resolve_isolation_relax`.
+    isolation_relax: str | None
 
 
 def resolve_trust_posture(
@@ -253,7 +257,47 @@ def resolve_trust_posture(
         require_signature=tier in ("enterprise", "federal"),
         trusted_public_keys=_union_trusted_keys(trusted_public_key, security.validators),
         import_policy=import_policy,
+        isolation_relax=_resolve_isolation_relax(tier, capabilities.isolation_relax),
     )
+
+
+#: Personal-tier relax values that turn the agent-authored sandbox fully OFF.
+#: Mirrors arcrun's execute router so the two agree on what "sandbox off" means.
+_ISOLATION_OFF_VALUES = frozenset({"off", "none", "local"})
+
+
+def _resolve_isolation_relax(tier: str, requested: str | None) -> str | None:
+    """Resolve + tier-gate the agent-authored execution-backend relaxation.
+
+    Returns the value handed to :func:`arcrun.make_execute_tool` as ``relax``:
+    ``None`` for the tier floor (the router then selects container/VM), or a
+    personal-tier off-value for a bare-subprocess run. Fails closed:
+
+    * ``None`` / ``"container"`` → ``None`` (the floor; "container" is the
+      default expressed to the router, which rejects a non-None relax at federal).
+    * An off-value at personal → returned as-is (sandbox off).
+    * An off-value at enterprise/federal → ``ValueError`` (below their floor).
+    * Any other string → ``ValueError`` (unknown relaxation).
+
+    ArcRun's router re-checks the tier floor when the tool is built, so this is
+    the config-boundary half of a defence-in-depth pair, not the only guard.
+    """
+    if requested is None:
+        return None
+    value = requested.lower()
+    if value == "container":
+        return None
+    if value not in _ISOLATION_OFF_VALUES:
+        raise ValueError(
+            f"unknown capabilities.isolation_relax {requested!r}; "
+            "use 'container', 'local', or 'off'"
+        )
+    if str(tier).lower() != "personal":
+        raise ValueError(
+            f"{tier} tier may not relax capabilities.isolation_relax below its "
+            f"container floor (requested {requested!r}) — fail-closed"
+        )
+    return value
 
 
 def _union_trusted_keys(

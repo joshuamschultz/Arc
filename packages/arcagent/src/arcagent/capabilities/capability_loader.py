@@ -267,6 +267,7 @@ class CapabilityLoader:
         trust_backend: TrustBackend | None = None,
         spawn_background_tasks: bool = True,
         isolation_tier: str = "personal",
+        isolation_relax: str | None = None,
         isolated_runner: IsolatedRunner | None = None,
         ignored_python_paths: frozenset[Path] = frozenset(),
     ) -> None:
@@ -301,6 +302,11 @@ class CapabilityLoader:
         self._import_policy = import_policy
         self._ast_cache = AstValidationCache(policy=import_policy)
         self._isolation_tier = isolation_tier
+        # Personal-tier isolation relaxation for agent-authored tools. None keeps
+        # the tier floor (container); an off-value runs them in a bare host
+        # subprocess so a Dockerless personal host can still execute a signed,
+        # approved capability. Resolved and tier-gated by resolve_trust_posture.
+        self._isolation_relax = isolation_relax
         # Construct the tier backend only when an authored tool is actually
         # present. Manifest-only extensions and skill-only roots must remain
         # inspectable/installable on hosts that cannot execute that tier.
@@ -365,6 +371,7 @@ class CapabilityLoader:
             trust_backend=self._trust_backend,
             spawn_background_tasks=False,
             isolation_tier=self._isolation_tier,
+            isolation_relax=self._isolation_relax,
             isolated_runner=self._isolated_runner,
             ignored_python_paths=self._ignored_python_paths,
         )
@@ -527,7 +534,9 @@ class CapabilityLoader:
     def _isolated_runner_for_tool(self) -> IsolatedRunner:
         runner = self._isolated_runner
         if runner is None:
-            runner = ArcRunIsolatedRunner(tier=self._isolation_tier)
+            runner = ArcRunIsolatedRunner(
+                tier=self._isolation_tier, relax=self._isolation_relax
+            )
             self._isolated_runner = runner
         return runner
 

@@ -246,9 +246,20 @@ Arc's ASI05 answer is a tier-routed isolation ladder:
 
 | Rung | Backend | Class |
 |---|---|---|
-| `host` | `arcrun/backends/local.py` | Stripped local subprocess — dev/personal default |
-| `container` | `arcrun/backends/docker.py` | Shared-kernel container |
-| `vm` | `arcrun/backends/vm.py` | Firecracker microVM — hardware isolation |
+| `host` | `arcrun/backends/local.py` | Stripped local subprocess — personal, sandbox off |
+| `container` | `arcrun/backends/docker.py` | Shared-kernel container — personal/enterprise floor |
+| `vm` | `arcrun/backends/vm.py` | Firecracker microVM — hardware isolation, federal floor |
+
+The tier floor is the **container** at personal and enterprise, and the **VM** at
+federal. Personal may drop to the host subprocess with `[capabilities]
+isolation_relax = "off"` (also `"local"` / `"none"`) — the escape hatch for a
+host with no Docker (demos, slim VMs). Enterprise and federal **fail closed** if
+it is set below their floor; the value is tier-gated by
+`arcagent.capabilities.inventory._resolve_isolation_relax` and re-checked by
+arcrun's execute router, which emits `code_exec.isolation.downgraded` on every
+relaxed run. It relaxes the execution backend **only** — the signature floor,
+TOFU approval, and import allowlist stay enforced. Operator procedure:
+[Signing a Gated Capability, section 10](../runbooks/signing-capabilities.md#10-running-an-approved-tool-on-a-host-without-docker).
 
 The tool set is frozen for the run, not just policy-gated per call. `arcrun.registry.ToolRegistry.freeze()` seals the set before turn 0 of every run — no mutable window mid-run for injection.
 

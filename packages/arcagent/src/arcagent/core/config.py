@@ -625,6 +625,17 @@ class CapabilitiesConfig(BaseModel):
             "subtracted from the blocklist; at federal they are the allowlist itself."
         ),
     )
+    isolation_relax: str | None = Field(
+        default=None,
+        description=(
+            "Execution-backend relaxation for signed+approved agent-authored tools "
+            "(NOT a signature or import relaxation — those stay enforced). None keeps "
+            "the tier floor (container). 'off'/'local'/'none' drop a PERSONAL-tier run "
+            "to a bare host subprocess so a host without Docker can still execute a "
+            "verified capability; 'container' is the explicit default. Personal-only: "
+            "enterprise/federal fail closed if it is set below their container floor."
+        ),
+    )
 
 
 class SandboxSettings(BaseModel):

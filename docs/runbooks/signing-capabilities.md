@@ -257,6 +257,7 @@ tier. What differs is what the loader demands.
 | Signed, approved, bytes match | Loads | Loads | Loads |
 | Bytes drifted after approval | The signature stops verifying, so the artifact counts as unsigned again: `deny` unless `auto_run_agent_code` is on | `deny` | `deny` |
 | Operator-key custody default | `in_process` | `vault_transit` (may be relaxed) | `vault_transit` (forced) |
+| Agent-tool execution backend | Container, relaxable to a host subprocess via `[capabilities] isolation_relax` ([section 10](#10-running-an-approved-tool-on-a-host-without-docker)) | Container (forced) | VM (forced) |
 
 Read the middle column pair carefully. **Federal is signed AND
 operator-approved.** It is strictly stronger than enterprise, not a different
@@ -285,6 +286,50 @@ surfaces in this runbook.
 
 Every sign, revoke, and refusal is an audit event carrying the operator DID, the
 artifact path, and the source hash.
+
+---
+
+## 10. Running an approved tool on a host without Docker
+
+Approval clears the **proof** gate: who wrote these bytes, and that you
+authorized them. It does not choose the **backend** that runs them. An
+agent-authored capability-folder tool still executes inside an isolation
+backend, and at every tier the personal floor is a **container (Docker)**.
+
+So on a box with no Docker — a demo container, a slim VM — an approved tool
+shows `Status: loaded` and then fails the moment the agent calls it, because
+the container backend cannot start. The proof was fine; the sandbox was
+missing.
+
+Personal tier may drop that container floor to a bare host subprocess. Set one
+key in the **agent's** `arcagent.toml`:
+
+```toml
+[capabilities]
+isolation_relax = "off"
+```
+
+- Values: `"off"` / `"local"` / `"none"` all mean *sandbox off* (host
+  subprocess). `"container"` or omitting the key keeps the Docker floor.
+- **Personal only.** Enterprise and federal **fail closed** if this is set
+  below their container floor — the agent refuses to start. Federal's VM floor
+  is never relaxable. This is a demo-and-prototype convenience, not a
+  production posture.
+- It relaxes the **execution backend only**. The signature floor, the TOFU
+  approval, and the import allowlist all stay enforced exactly as in the rest
+  of this runbook.
+
+### The full demo procedure
+
+1. Add the `[capabilities] isolation_relax = "off"` block above to each demo
+   agent's `arcagent.toml`.
+2. **Sign and approve the tool** — `arc trust approve <name>` (section 3), or
+   pin the operator key by approving any capability on the agent once.
+3. Launch the agent. The approved tool now runs in a subprocess, no Docker
+   needed.
+
+Every relaxed run still audits: arcrun emits `code_exec.isolation.downgraded`
+when it drops to the host subprocess, so the weaker isolation is on the record.
 
 ---
 

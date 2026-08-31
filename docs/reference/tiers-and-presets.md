@@ -62,9 +62,12 @@ tier = "personal"
 auto_run_agent_code = true
 require_operator_approval = false
 
-[security.sandbox]
-backend = "docker"
-relax_to_local = true  # Falls back to subprocess if Docker unavailable
+[capabilities]
+# Personal-only: run agent-authored tools in a bare host subprocess instead of
+# a Docker container, for hosts without Docker (demos, slim VMs). Enterprise and
+# federal fail closed if set below their container/VM floor. See the
+# signing-capabilities runbook, section 10.
+isolation_relax = "off"
 ```
 
 ### Use Cases
@@ -248,9 +251,8 @@ tier = "personal"
 auto_run_agent_code = true
 require_operator_approval = false
 
-[security.sandbox]
-backend = "docker"
-relax_to_local = true
+[capabilities]
+isolation_relax = "off"  # personal-only: host subprocess instead of Docker
 
 [llm]
 model = "anthropic/claude-sonnet-4-5-20250929"

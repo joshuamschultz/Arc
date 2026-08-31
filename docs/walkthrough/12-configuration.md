@@ -252,7 +252,7 @@ The model, precisely:
  called on the blueprint-apply path, since a Pydantic validator can't do I/O
  itself).
 
-`RELAXABLE_KNOBS` (`packages/arcagent/src/arcagent/tiers.py:67-79`):
+`RELAXABLE_KNOBS` (`packages/arcagent/src/arcagent/tiers.py`):
 
 | Knob | Federal floor | Relax @ personal | Relax @ enterprise | Stricter is | Enforced at |
 |---|---|---|---|---|---|
@@ -265,11 +265,20 @@ The model, precisely:
 | `budget.max_cost_usd` | `10.0` | yes | yes | smaller | dispatch (budget resolver) |
 | `budget.max_requests` | `500` | yes | yes | smaller | dispatch (budget resolver) |
 | `allow_all_imports` | `False` | yes | yes | exact | dynamic loader (import policy) |
+| `capabilities.isolation_relax` | `"container"` | yes | **no** | exact | capability loader (execution backend) |
+
+`capabilities.isolation_relax` is the only knob personal may relax but
+enterprise may **not**: it drops the agent-tool execution backend from a
+container to a bare host subprocess (for a host with no Docker), which
+enterprise and federal refuse below their container/VM floor. It is resolved by
+`capabilities.inventory._resolve_isolation_relax` and re-checked by arcrun's
+execute router. See
+[Signing a Gated Capability §10](../runbooks/signing-capabilities.md#10-running-an-approved-tool-on-a-host-without-docker).
 
 The first five rows are enforced by `SecurityConfig._enforce_tier_crypto_floor`,
 a `model_validator(mode="after")` that runs every knob through
 `resolve_tier_floor` at config-load time — this is the delegating hook the
-module's docstring refers to. **The last four rows are declarative reference
+module's docstring refers to. **The remaining rows are declarative reference
 rows**, not enforced in `tiers.py` itself: they document the same policy for
 `arc ext verify` and audit tooling, but the actual gate lives at the
 dispatch-time budget resolver and the workspace-capability dynamic loader,
