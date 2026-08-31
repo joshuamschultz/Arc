@@ -246,7 +246,26 @@ class StreamAccumulator:
         )
 
     def _add_tool_call(self, delta: ToolCallDelta) -> None:
-        parts = self._tools.setdefault(delta.index, _ToolCallParts())
+        index = delta.index
+        existing = self._tools.get(index)
+        # OpenAI streams one rising ``index`` per parallel call and follows each
+        # with id-less argument fragments at that same index. But some OpenAI-
+        # compatible servers (Ollama / vLLM behind a LiteLLM proxy) instead
+        # stream every parallel call WHOLE in its own delta while reusing the
+        # same ``index`` (usually 0) for all of them. Detect that — a delta
+        # carrying a NEW id at an index already holding a different id-bearing
+        # call — and move it to a fresh slot so parallel calls are preserved
+        # instead of merged (which raised "conflicting tool call name" and
+        # dropped every call after the first). An id-less fragment keeps the
+        # OpenAI continuation semantics: it stays on its index.
+        if (
+            existing is not None
+            and delta.id is not None
+            and existing.id is not None
+            and existing.id != delta.id
+        ):
+            index = max(self._tools) + 1
+        parts = self._tools.setdefault(index, _ToolCallParts())
         self._set_field(parts, "id", delta.id, "conflicting tool call id")
         self._set_field(parts, "name", delta.name, "conflicting tool call name")
         if delta.arguments is not None:
