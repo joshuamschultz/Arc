@@ -2,15 +2,33 @@
 
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 import httpx
 
-from arcllm.config import ModelMetadata, ProviderConfig
+from arcllm.config import ModelMetadata, ProviderConfig, load_global_config
 from arcllm.exceptions import ArcLLMConfigError, ArcLLMParseError
 from arcllm.types import LLMProvider
 
-DEFAULT_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_MAX_OUTPUT_TOKENS = 10240
+
+
+@lru_cache(maxsize=1)
+def _default_max_output_tokens() -> int:
+    """The system-wide output cap, read from arcllm's ``[defaults]``.
+
+    Every model reached through the LiteLLM proxy lands here, because that
+    catalogue is not knowable at packaging time and so carries no packaged
+    ``max_output_tokens``. Reading ``[defaults]`` rather than a module
+    constant means the deployment's own ``~/.arc/arcllm.toml`` sets the cap
+    and there is exactly one number to change -- a constant here silently
+    outranked every value an operator wrote in config.
+    """
+    try:
+        return int(load_global_config().defaults.max_tokens)
+    except Exception:
+        return DEFAULT_MAX_OUTPUT_TOKENS
 
 
 class BaseAdapter(LLMProvider):
@@ -80,9 +98,10 @@ class BaseAdapter(LLMProvider):
 
     def _resolve_defaults(self, **kwargs: Any) -> tuple[int, float]:
         """Resolve max_tokens and temperature from kwargs, model meta, or config."""
+        meta = self._model_meta
         max_tokens = kwargs.get(
             "max_tokens",
-            self._model_meta.max_output_tokens if self._model_meta else DEFAULT_MAX_OUTPUT_TOKENS,
+            meta.max_output_tokens if meta else _default_max_output_tokens(),
         )
         temperature = kwargs.get("temperature", self._config.provider.default_temperature)
         return max_tokens, temperature

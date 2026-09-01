@@ -60,7 +60,7 @@ class TestThreeFileScaffold:
         # Real compose/boot: llm from arcllm.toml, loop cap from arcrun.toml,
         # a module setting from arcagent.toml.
         assert cfg.llm.model == "anthropic/claude-sonnet-4-5-20250929"
-        assert cfg.llm.max_tokens == 8192
+        assert cfg.llm.max_tokens is None
         assert cfg.eval.max_input_tokens == 100000
         assert cfg.arcrun.max_turns == 120
         assert cfg.modules["memory"].config["brain"] == "arcmemory"

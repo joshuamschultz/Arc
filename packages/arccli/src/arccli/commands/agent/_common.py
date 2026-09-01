@@ -220,10 +220,11 @@ _ARCLLM_HEADER = """\
 # ~/.arc/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
 """
 
-# The default agent model + its deliberately larger-than-model-default output
-# cap (ArcLLM's own LLMConfig.max_tokens is 4096; 8192 is the scaffold's
-# choice for headroom on a general-purpose agent).
-_DEFAULT_ARCLLM_OVERRIDES = {"model": "anthropic/claude-sonnet-4-5-20250929", "max_tokens": 8192}
+# The default agent model. The output cap is NOT set here: arcllm owns that
+# number (arcllm.config.DefaultsConfig.max_tokens), and a per-agent arcllm.toml
+# is the one place to override it. Carrying a second default here is how a
+# generous value in one file sat behind a stingy one in another.
+_DEFAULT_ARCLLM_OVERRIDES = {"model": "anthropic/claude-sonnet-4-5-20250929"}
 
 
 def _build_default_arcllm_config() -> str:

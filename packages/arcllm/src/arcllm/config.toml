@@ -1,7 +1,7 @@
 [defaults]
 provider = "anthropic"
 temperature = 0.7
-max_tokens = 4096
+max_tokens = 10240
 
 [vault]
 backend = ""

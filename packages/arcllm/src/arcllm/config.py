@@ -245,7 +245,7 @@ class DefaultsConfig(BaseModel):
 
     provider: str = "anthropic"
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 10240
 
 
 class ModuleConfig(BaseModel):

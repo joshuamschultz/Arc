@@ -196,5 +196,5 @@ def test_all_three_files_compose_through_the_real_config_model(tmp_path: Any) ->
     config = arcagent.load_config(agent_dir / "arcagent.toml")
 
     assert config.agent.name == "probe"
-    assert config.llm.max_tokens == 8192
+    assert config.llm.max_tokens is None
     assert config.arcrun.max_turns == 120

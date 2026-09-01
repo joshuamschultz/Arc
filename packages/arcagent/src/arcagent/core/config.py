@@ -123,7 +123,12 @@ class LLMConfig(BaseModel):
     # The ``model`` above remains the default route. Routing is always on in
     # arcllm; with no routes declared it is a pass-through to that default.
     routes: dict[str, AgentRoute] = Field(default_factory=dict)
-    max_tokens: int = Field(default=4096, gt=0)
+    # No cap is set here. arcllm owns the generation budget: its
+    # ``[defaults].max_tokens`` is the system value and a per-agent
+    # ``arcllm.toml`` is the one place to override it. A default on this
+    # mirror-field would be a second source for one budget -- which is how
+    # a low number in one file silently outranked a high one in another.
+    max_tokens: int | None = Field(default=None, gt=0)
     temperature: float = 0.7
     # Per-agent arcllm module overrides. Keyed by arcllm module name
     # (``queue``, ``retry``, ``rate_limit``, ``telemetry``, …); each value

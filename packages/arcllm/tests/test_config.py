@@ -26,7 +26,7 @@ def test_load_global_config():
     assert isinstance(config, GlobalConfig)
     assert config.defaults.provider == "anthropic"
     assert config.defaults.temperature == 0.7
-    assert config.defaults.max_tokens == 4096
+    assert config.defaults.max_tokens == 10240
 
 
 def test_global_config_modules_default_state():
