@@ -62,6 +62,34 @@ class EpisodicStore:
         ).fetchall()
         return [self._row_to_event(r) for r in rows]
 
+    def events_since(
+        self, scope_key: str, after_seq: int, *, limit: int | None = None
+    ) -> tuple[list[Event], int]:
+        """Events with ``seq > after_seq`` in stream order, and the highest seq returned.
+
+        The high-water is what the consolidation watermark advances to: it is the
+        seq of the last event in the batch, or ``after_seq`` unchanged when nothing
+        is newer. ``limit`` caps the batch so a large backlog drains in bounded
+        steps — the events beyond the cap keep their higher seq and are read next
+        run. Advancing the watermark only past events actually returned here keeps
+        the guarantee at-least-once: a run interrupted before it records progress
+        re-reads the same batch.
+        """
+        conn = self._db.connect()
+        sql = (
+            "SELECT event_id, ts, scope, kind, text, hash, classification, refs, "
+            "salience, entities, source_updated_at, seq FROM episodic "
+            "WHERE scope = ? AND seq > ? ORDER BY seq"
+        )
+        params: list[Any] = [scope_key, after_seq]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        events = [self._row_to_event(r) for r in rows]
+        high_seq = int(rows[-1][11]) if rows else after_seq
+        return events, high_seq
+
     def page(self, scope_key: str, *, limit: int, offset: int) -> list[Event]:
         """Return one page of a scope's events, newest first (for the operator view)."""
         conn = self._db.connect()

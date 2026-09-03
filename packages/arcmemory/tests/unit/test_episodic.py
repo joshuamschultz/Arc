@@ -92,3 +92,34 @@ def test_update_and_delete_report_affected(workspace: Path, db: MemoryDB) -> Non
     assert store.update_text("did:a", "gone", "x") is False
     assert store.update_salience("did:a", "gone", 0.1) is False
     assert store.delete("did:a", "gone") is False
+
+
+def test_events_since_returns_only_newer_with_high_water(workspace: Path, db: MemoryDB) -> None:
+    store = EpisodicStore(db, workspace)
+    for i in range(5):
+        store.append(_event(i))  # seq 0..4
+    events, high = store.events_since("did:a", 1)  # past seq 1 -> seq 2,3,4
+    assert [e.event_id for e in events] == ["e2", "e3", "e4"]
+    assert high == 4
+
+
+def test_events_since_caps_batch_and_reports_batch_high_water(
+    workspace: Path, db: MemoryDB
+) -> None:
+    store = EpisodicStore(db, workspace)
+    for i in range(5):
+        store.append(_event(i))
+    events, high = store.events_since("did:a", -1, limit=2)  # first two of the whole stream
+    assert [e.event_id for e in events] == ["e0", "e1"]
+    assert high == 1  # advance only past what this batch returned
+
+
+def test_events_since_at_head_returns_nothing_and_keeps_watermark(
+    workspace: Path, db: MemoryDB
+) -> None:
+    store = EpisodicStore(db, workspace)
+    for i in range(3):
+        store.append(_event(i))
+    events, high = store.events_since("did:a", 2)  # already at the head (max seq 2)
+    assert events == []
+    assert high == 2  # unchanged, so the watermark never regresses

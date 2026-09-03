@@ -30,7 +30,7 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Event, Procedure, Scope
+from arcmemory.types import Event, Procedure, Scope, TimeWindow
 
 _NOW = datetime(2026, 7, 7, tzinfo=UTC)
 _30_DAYS_AGO = "2026-06-07T00:00:00+00:00"
@@ -1075,3 +1075,93 @@ async def test_a_dedup_pass_over_procedures_is_always_recorded(workspace, db, sc
     ]
     assert len(passes) == 1
     assert passes[0].extra["procedures"] == 2
+
+
+# -- watermark: the automatic sleep path distills only NEW episodes -----------
+
+
+async def test_run_advances_watermark_and_skips_reprocessing(workspace, db, scope) -> None:
+    """A first run distills the batch and advances the watermark; a second run
+    with nothing new does no work — the stream is not re-chewed every cycle."""
+    _seed_day(workspace, db, scope)  # 5 conversation events, seq 0..4
+    first = await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+    assert first.window_events == 5
+    # A fresh instance reads the persisted watermark (survives restarts).
+    assert _consolidator(workspace, db, scope, _distiller()).watermark() == 4
+    second = await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+    assert second.window_events == 0 and second.facts_updated == 0
+
+
+async def test_run_processes_only_events_after_watermark(workspace, db, scope) -> None:
+    _seed_day(workspace, db, scope)
+    await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)  # watermark -> 4
+    episodic = EpisodicStore(db, workspace)
+    for i in range(2):
+        episodic.append(
+            Event(
+                event_id=f"n{i}",
+                scope=scope.key,
+                kind="respond",
+                text=f"new {i}",
+                ts=f"2026-07-07T01:00:0{i}+00:00",
+            )
+        )
+    result = await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+    assert result.window_events == 2  # only the two new episodes, not all seven
+
+
+async def test_per_run_cap_drains_backlog_in_bounded_batches(workspace, db, scope) -> None:
+    _seed_day(workspace, db, scope)  # 5 events
+    cfg = MemoryConfig(consolidate_max_events_per_run=2)
+
+    def run_once() -> Consolidator:
+        return Consolidator(db, workspace, scope, distiller=_distiller(), config=cfg)
+
+    assert (await run_once().run(now=_NOW)).window_events == 2
+    assert (await run_once().run(now=_NOW)).window_events == 2
+    assert (await run_once().run(now=_NOW)).window_events == 1
+    assert (await run_once().run(now=_NOW)).window_events == 0
+    assert run_once().watermark() == 4
+
+
+async def test_interrupted_run_leaves_watermark_unmoved(workspace, db, scope) -> None:
+    """A run that crashes before it commits must not advance the watermark, so its
+    episodes are re-read next time (at-least-once, no silently-dropped memory)."""
+    _seed_day(workspace, db, scope)
+    raiser = RaisingDistiller(
+        FactExtraction(facts=[FactCandidate(slug="alice", predicate="role", value="manager")])
+    )
+    consolidator = _consolidator(workspace, db, scope, raiser)
+    with pytest.raises(RuntimeError):
+        await consolidator.run(now=_NOW)
+    assert consolidator.watermark() == -1
+
+
+async def test_explicit_window_ignores_and_preserves_watermark(workspace, db, scope) -> None:
+    """A manual re-consolidation over an explicit window full-scans that range and
+    never consults or moves the watermark (backward-compatible)."""
+    _seed_day(workspace, db, scope)
+    consolidator = _consolidator(workspace, db, scope, _distiller())
+    result = await consolidator.run(window=TimeWindow(), now=_NOW)
+    assert result.window_events == 5
+    assert consolidator.watermark() == -1
+
+
+async def test_curated_out_batch_still_advances_watermark(workspace, db, scope) -> None:
+    """A batch that is all machinery (no conversation) distills nothing but still
+    advances past those episodes, so it can never wedge and re-read forever."""
+    episodic = EpisodicStore(db, workspace)
+    for i in range(3):
+        episodic.append(
+            Event(
+                event_id=f"t{i}",
+                scope=scope.key,
+                kind="tool",
+                text="machinery",
+                ts=f"2026-07-07T00:00:0{i}+00:00",
+            )
+        )
+    consolidator = _consolidator(workspace, db, scope, _distiller())
+    result = await consolidator.run(now=_NOW)
+    assert result.window_events == 0
+    assert consolidator.watermark() == 2

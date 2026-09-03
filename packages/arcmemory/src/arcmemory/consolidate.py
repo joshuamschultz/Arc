@@ -83,6 +83,11 @@ _T = TypeVar("_T")
 _MANIFEST_NAME = ".consolidate-manifest.json"
 _LAST_RUN_NAME = ".consolidate-last-run"
 _HYGIENE_LAST_NAME = ".hygiene-last-run"
+# The highest episodic ``seq`` already distilled on the automatic sleep path.
+# Persisted so each run reads only NEW episodes instead of rescanning the whole
+# stream — the difference between "catching up" and re-chewing all of history
+# every cycle. ``-1`` (or an absent file) means nothing has been consolidated yet.
+_WATERMARK_NAME = ".consolidate-watermark"
 # Cosine at/above which two cue embeddings are treated as the same concept (T-054).
 _CUE_MERGE_THRESHOLD = 0.92
 # Key facts summarized onto an EntityRef for the LLM merge-confirmer (bounded input).
@@ -188,6 +193,7 @@ class Consolidator:
         self._manifest_path = self._workspace / "memory" / _MANIFEST_NAME
         self._last_run_path = self._workspace / "memory" / _LAST_RUN_NAME
         self._hygiene_last_path = self._workspace / "memory" / _HYGIENE_LAST_NAME
+        self._watermark_path = self._workspace / "memory" / _WATERMARK_NAME
 
     @property
     def pending_recovery(self) -> bool:
@@ -213,19 +219,56 @@ class Consolidator:
         last = self.last_run()
         return last is None or (now - last) >= timedelta(minutes=interval_minutes)
 
+    def watermark(self) -> int:
+        """Highest episodic seq already distilled here (-1 if never)."""
+        try:
+            return int(self._watermark_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return -1
+
+    def _stamp_watermark(self, seq: int) -> None:
+        """Record the high-water seq so the next sleep reads only newer episodes.
+
+        Written only after a run fully commits, so an interrupted run leaves the
+        watermark behind and its episodes are re-read next time (at-least-once).
+        """
+        self._watermark_path.parent.mkdir(parents=True, exist_ok=True)
+        self._watermark_path.write_text(str(seq), encoding="utf-8")
+
     async def run(
         self, window: TimeWindow | None = None, *, now: datetime | None = None
     ) -> ConsolidationResult:
-        """Run one bounded consolidation cycle; return its mutation counts."""
-        window = window or TimeWindow()
+        """Run one bounded consolidation cycle; return its mutation counts.
+
+        Automatic sleep (``window is None``) distills only episodes past the
+        watermark, capped per run, and advances the watermark on success — so the
+        backlog shrinks instead of the whole stream being re-read every cycle. An
+        explicit window is a manual re-consolidation: it full-scans that range and
+        leaves the watermark untouched.
+        """
         now = now or datetime.now(UTC)
-        events = [e for e in self._episodic.events(self._scope.key) if window.contains(e.ts)]
+        if window is None:
+            raw_events, high_seq = self._episodic.events_since(
+                self._scope.key,
+                self.watermark(),
+                limit=self._cfg.consolidate_max_events_per_run,
+            )
+            advance: int | None = high_seq
+        else:
+            all_events = self._episodic.events(self._scope.key)
+            raw_events = [e for e in all_events if window.contains(e.ts)]
+            advance = None
         # Distillation learns from the session CONVERSATION only — the user's turns and the
         # agent's responses. Tool frames and other machinery are dropped (curate.py), so the
         # LLM never distills the agent's own operational mechanics into facts/insights/methods.
-        events = curate_for_distillation(events, self._cfg)
+        events = curate_for_distillation(raw_events, self._cfg)
         if not events:
+            # No conversational episodes in this batch — still advance past the raw
+            # events we read (they are curated out for good) so a batch of pure
+            # machinery can never wedge the watermark and re-read forever.
             self._stamp_last_run(now)
+            if advance is not None:
+                self._stamp_watermark(advance)
             return ConsolidationResult()
 
         self._begin_manifest(len(events))
@@ -238,6 +281,8 @@ class Consolidator:
         await self._surface.index_if_needed()
         self._commit_manifest()
         self._stamp_last_run(now)
+        if advance is not None:
+            self._stamp_watermark(advance)
 
         return ConsolidationResult(
             facts_updated=len(facts),

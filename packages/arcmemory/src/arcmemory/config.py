@@ -117,6 +117,14 @@ class MemoryConfig(BaseModel):
     consolidate_engine: Literal["agentic", "pipeline"] = Field(
         default="agentic", description="DISTILL engine; agentic degrades to pipeline"
     )
+    # Per-run episode budget for the automatic sleep path. Each run distills at
+    # most this many NEW episodes (those past the persisted watermark), advancing
+    # the watermark by the batch, so a large backlog drains over several bounded
+    # runs instead of one unbounded pass that keeps getting interrupted before it
+    # can record progress. Explicit-window (manual) re-consolidation ignores it.
+    consolidate_max_events_per_run: int = Field(
+        default=500, gt=0, description="max NEW episodes distilled per automatic sleep run"
+    )
     consolidate_agent_max_turns: int = Field(
         default=16, description="max ReAct turns for one agentic consolidation (LLM10)"
     )
