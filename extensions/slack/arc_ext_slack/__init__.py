@@ -70,6 +70,29 @@ _MAX_DOC_CHARS: Final = 100_000
 #: The conversation types a user token can enumerate.
 _CONV_TYPES: Final = "public_channel,private_channel,mpim,im"
 
+#: The "everything you're in" selection sentinel — all readable types, resolved
+#: fresh on every sync so a conversation created after selection is still indexed.
+_ALL: Final = "__all__"
+
+#: Per-type "all of this kind" sentinels, each mapped to the Slack conversation
+#: type it stands for. Selecting one indexes every present AND future conversation
+#: of that type, so the operator never returns to tick a newly-created DM.
+_ALL_BY_TYPE: Final[dict[str, str]] = {
+    "__all_public_channel__": "public_channel",
+    "__all_private_channel__": "private_channel",
+    "__all_im__": "im",
+    "__all_mpim__": "mpim",
+}
+
+#: How each category row reads in the picker.
+_ALL_LABEL: Final[dict[str, str]] = {
+    _ALL: "All conversations you're in (channels + DMs, including new ones)",
+    "__all_public_channel__": "All public channels (including new ones)",
+    "__all_private_channel__": "All private channels (including new ones)",
+    "__all_im__": "All direct messages (including new ones)",
+    "__all_mpim__": "All group DMs (including new ones)",
+}
+
 _STRING: Final[dict[str, str]] = {"type": "string"}
 
 
@@ -203,61 +226,65 @@ class SlackAttachment:
     async def list_source_resources(
         self, request: ListSourceResources
     ) -> tuple[SourceResource, ...]:
-        """List the conversations the user may select for indexing."""
+        """List what the operator may select: whole categories, then each conversation.
+
+        The category rows (``_ALL`` and the per-type sentinels) come first so
+        "all DMs" is one tick rather than a hunt through every conversation, and
+        each is offered only for a type this token can actually read — a category
+        the scopes cannot see is not presented as selectable.
+        """
         del request
-        resources: list[SourceResource] = []
-        cursor = ""
-        for _ in range(20):  # bound the enumeration (≤ 20k conversations)
-            try:
-                payload = await self._conversations(limit=1000, cursor=cursor)
-            except httpx.HTTPStatusError as exc:
-                raise _source_http_failure(exc.response) from exc
-            except (httpx.HTTPError, ValueError) as exc:
-                raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from exc
-            for chan in payload.get("channels", []):
-                if not isinstance(chan, dict):
-                    continue
-                cid = str(chan.get("id") or "")
-                if cid:
-                    resources.append(
-                        SourceResource(
-                            resource_id=cid,
-                            label=_channel_label(chan),
-                            resource_kind="channel",
-                            locator=cid,
-                        )
+        try:
+            channels = await self._list_conversations()
+        except httpx.HTTPStatusError as exc:
+            raise _source_http_failure(exc.response) from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from exc
+        resources: list[SourceResource] = [_all_resource(_ALL, self._selected)]
+        for rid, conv_type in _ALL_BY_TYPE.items():
+            if conv_type in self._types:
+                resources.append(_all_resource(rid, self._selected))
+        for chan in channels:
+            cid = str(chan.get("id") or "")
+            if cid:
+                resources.append(
+                    SourceResource(
+                        resource_id=cid,
+                        label=_channel_label(chan),
+                        resource_kind="channel",
+                        locator=cid,
+                        selected=cid in self._selected,
                     )
-            cursor = str(_cursor(payload))
-            if not cursor:
-                break
+                )
         return tuple(resources)
 
     async def select_source_resources(self, request: SelectSourceResources) -> None:
-        """Pin the selected conversation ids; sync/fetch operate on exactly these."""
+        """Pin the selection; a category sentinel here means "all of that kind, always"."""
         selected = tuple(cid for cid in request.resource_ids if cid)
         if not selected:
             raise SourceError(SourceFailureCode.UNSUPPORTED_CONTENT, "select at least one channel")
         self._selected = selected
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
-        """One page: every selected conversation as an object at its latest ts.
+        """One page: every targeted conversation as an object at its latest ts.
 
         The whole set fits one page (channels, not messages), so there is no
         cursor to carry — each sync is a fresh snapshot and the coordinator
         re-fetches only the conversations whose version (latest ts) advanced.
 
-        The sync runs on a FRESH adapter instance, so ``self._selected`` (set by
-        an earlier ``select_source_resources`` call) is empty here — fall back to
-        every conversation the token can read, exactly as the github bundle falls
-        back to all repos. Otherwise the sync would emit zero objects and download
-        nothing.
+        Targets are resolved fresh here (``_resolve_sync_targets``): a category
+        sentinel expands to every current conversation of its type, so a DM
+        created since selection is picked up with no operator action. An empty
+        selection (never narrowed) still means everything the token can read,
+        exactly as the github bundle falls back to all repos.
         """
-        channels = self._selected
-        if not channels:
-            resources = await self.list_source_resources(
-                ListSourceResources(connection_id=request.connection_id)
-            )
-            channels = tuple(resource.resource_id for resource in resources)
+        del request
+        try:
+            channels = await self._resolve_sync_targets()
+        except httpx.HTTPStatusError as exc:
+            raise _source_http_failure(exc.response) from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from exc
         objects: list[SourceObject] = []
         for cid in channels:
             latest = await self._latest_ts(cid)
@@ -365,6 +392,46 @@ class SlackAttachment:
                     continue
             raise ValueError(_ok_error("conversations.list", payload))
         raise ValueError("Slack conversations.list: scope narrowing exhausted")
+
+    async def _list_conversations(self) -> list[dict[str, Any]]:
+        """Every conversation the token can read, paged and bounded (≤ 20k)."""
+        channels: list[dict[str, Any]] = []
+        cursor = ""
+        for _ in range(20):
+            payload = await self._conversations(limit=1000, cursor=cursor)
+            for chan in payload.get("channels", []):
+                if isinstance(chan, dict) and chan.get("id"):
+                    channels.append(chan)
+            cursor = str(_cursor(payload))
+            if not cursor:
+                break
+        return channels
+
+    async def _resolve_sync_targets(self) -> tuple[str, ...]:
+        """The conversation ids to sync, expanding any category sentinel live.
+
+        Explicit ids pass through unchanged; ``_ALL`` and the per-type sentinels
+        widen to every current conversation of the wanted types — so new DMs
+        arrive automatically — and the two are unioned when both are selected.
+        """
+        wanted_types: set[str] = set()
+        explicit: list[str] = []
+        for rid in self._selected:
+            if rid == _ALL:
+                wanted_types.update(self._types)
+            elif rid in _ALL_BY_TYPE:
+                wanted_types.add(_ALL_BY_TYPE[rid])
+            else:
+                explicit.append(rid)
+        if not self._selected:  # never narrowed → everything the token can read
+            wanted_types.update(self._types)
+        targets: list[str] = list(explicit)
+        if wanted_types:
+            for chan in await self._list_conversations():
+                cid = str(chan.get("id") or "")
+                if cid and _conv_type(chan) in wanted_types:
+                    targets.append(cid)
+        return tuple(dict.fromkeys(targets))  # de-dupe, preserve order
 
     # --- history + rendering --------------------------------------------------
 
@@ -490,6 +557,28 @@ def _ok_error(method: str, payload: dict[str, Any]) -> str:
     needed = payload.get("needed")
     hint = f" (needs scope: {needed})" if needed else ""
     return f"Slack {method} refused: {err}{hint}"
+
+
+def _conv_type(chan: dict[str, Any]) -> str:
+    """The Slack conversation type of one ``conversations.list`` entry."""
+    if chan.get("is_im"):
+        return "im"
+    if chan.get("is_mpim"):
+        return "mpim"
+    if chan.get("is_private"):
+        return "private_channel"
+    return "public_channel"
+
+
+def _all_resource(rid: str, selected: tuple[str, ...]) -> SourceResource:
+    """One synthetic 'select a whole category' row for the picker."""
+    return SourceResource(
+        resource_id=rid,
+        label=_ALL_LABEL[rid],
+        resource_kind="all",
+        locator=rid,
+        selected=rid in selected,
+    )
 
 
 def _channel_label(chan: dict[str, Any]) -> str:

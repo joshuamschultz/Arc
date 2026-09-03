@@ -72,7 +72,9 @@ class _Recorder:
                     "ok": True,
                     "channels": [
                         {"id": "C1", "name": "deals", "is_private": False},
+                        {"id": "P1", "name": "secret", "is_private": True},
                         {"id": "D1", "is_im": True, "user": "U9"},
+                        {"id": "G1", "is_mpim": True, "name": "mpdm-a--b"},
                     ],
                     "response_metadata": {"next_cursor": ""},
                 },
@@ -181,7 +183,16 @@ async def test_source_seams_make_a_channel_a_document(recorder: _Recorder) -> No
     assert desc.source_kind == "slack" and desc.account_id == "T123"
 
     resources = await a.list_source_resources(ListSourceResources(connection_id="c"))
-    assert {r.resource_id for r in resources} == {"C1", "D1"}
+    channel_ids = {r.resource_id for r in resources if r.resource_kind == "channel"}
+    assert channel_ids == {"C1", "P1", "D1", "G1"}
+    category_ids = {r.resource_id for r in resources if r.resource_kind == "all"}
+    assert category_ids == {  # a whole-category tick per readable type
+        "__all__",
+        "__all_public_channel__",
+        "__all_private_channel__",
+        "__all_im__",
+        "__all_mpim__",
+    }
 
     await a.select_source_resources(SelectSourceResources(connection_id="c", resource_ids=("C1",)))
     page = await a.sync_source(SyncSource(connection_id="c"))
@@ -196,3 +207,36 @@ async def test_source_seams_make_a_channel_a_document(recorder: _Recorder) -> No
     assert "first" in text and "second" in text  # rendered oldest-first
     assert content.version == "200.0"
     await a.close_source()
+
+
+async def _synced_locators(resource_ids: tuple[str, ...], recorder: _Recorder) -> set[str]:
+    a = _attachment()
+    await a.select_source_resources(
+        SelectSourceResources(connection_id="c", resource_ids=resource_ids)
+    )
+    page = await a.sync_source(SyncSource(connection_id="c"))
+    await a.close_source()
+    return {obj.locator for obj in page.objects}
+
+
+async def test_all_dms_category_syncs_only_dms(recorder: _Recorder) -> None:
+    assert await _synced_locators(("__all_im__",), recorder) == {"D1"}
+
+
+async def test_all_group_dms_category_syncs_only_mpims(recorder: _Recorder) -> None:
+    assert await _synced_locators(("__all_mpim__",), recorder) == {"G1"}
+
+
+async def test_everything_category_syncs_every_conversation(recorder: _Recorder) -> None:
+    assert await _synced_locators(("__all__",), recorder) == {"C1", "P1", "D1", "G1"}
+
+
+async def test_a_category_and_an_explicit_id_are_unioned(recorder: _Recorder) -> None:
+    assert await _synced_locators(("__all_im__", "C1"), recorder) == {"C1", "D1"}
+
+
+async def test_an_unnarrowed_source_still_syncs_everything(recorder: _Recorder) -> None:
+    a = _attachment()  # no selection at all
+    page = await a.sync_source(SyncSource(connection_id="c"))
+    await a.close_source()
+    assert {obj.locator for obj in page.objects} == {"C1", "P1", "D1", "G1"}

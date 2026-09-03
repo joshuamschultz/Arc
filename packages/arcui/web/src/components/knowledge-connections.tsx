@@ -370,6 +370,14 @@ function SourceResourceControl({ agentId, source }: { agentId: string; source: C
         : [...current, resourceId]
     })
 
+  const row = (resource: { resource_id: string; label: string; resource_kind: string }) => (
+    <label key={resource.resource_id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50">
+      <input type="checkbox" checked={selected.includes(resource.resource_id)} onChange={() => toggle(resource.resource_id)} className="size-4 accent-primary" />
+      <span className="min-w-0 flex-1 truncate">{resource.label}</span>
+      <Chip>{resource.resource_kind === "all" ? "category" : resource.resource_kind}</Chip>
+    </label>
+  )
+
   return (
     <section className="space-y-3">
       <div>
@@ -377,27 +385,32 @@ function SourceResourceControl({ agentId, source }: { agentId: string; source: C
           Connected account scope
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Choose folders, mailboxes, or labels before sync. Only selected resources can be ingested.
+          Pick a whole category to sync everything of that kind, including ones created later, or choose individual resources. Only selected resources can be ingested.
         </p>
       </div>
       <QueryState query={resources} isEmpty={(data) => data.items.length === 0} empty={<p className="text-xs text-muted-foreground">This connector has no selectable resources.</p>}>
-        {(data) => (
-          <>
-            <div className="max-h-48 space-y-1 overflow-auto rounded-md border border-border p-2">
-              {data.items.map((resource) => (
-                <label key={resource.resource_id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50">
-                  <input type="checkbox" checked={selected.includes(resource.resource_id)} onChange={() => toggle(resource.resource_id)} className="size-4 accent-primary" />
-                  <span className="min-w-0 flex-1 truncate">{resource.label}</span>
-                  <Chip>{resource.resource_kind}</Chip>
-                </label>
-              ))}
-            </div>
-            <Button size="sm" variant="outline" disabled={selected.length === 0 || select.isPending} onClick={() => select.mutate(selected, { onSuccess: () => setChosen(null) })}>
-              Save selected resources
-            </Button>
-            {select.isError && <p role="alert" className="text-xs text-destructive">{select.error.message}</p>}
-          </>
-        )}
+        {(data) => {
+          const categories = data.items.filter((item) => item.resource_kind === "all")
+          const individual = data.items.filter((item) => item.resource_kind !== "all")
+          return (
+            <>
+              <div className="max-h-48 space-y-1 overflow-auto rounded-md border border-border p-2">
+                {categories.length > 0 && (
+                  <>
+                    <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Whole categories</p>
+                    {categories.map(row)}
+                    {individual.length > 0 && <div className="my-1 border-t border-border" />}
+                  </>
+                )}
+                {individual.map(row)}
+              </div>
+              <Button size="sm" variant="outline" disabled={selected.length === 0 || select.isPending} onClick={() => select.mutate(selected, { onSuccess: () => setChosen(null) })}>
+                Save selected resources
+              </Button>
+              {select.isError && <p role="alert" className="text-xs text-destructive">{select.error.message}</p>}
+            </>
+          )
+        }}
       </QueryState>
     </section>
   )

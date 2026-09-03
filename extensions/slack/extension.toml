@@ -51,7 +51,7 @@ entrypoint = "arc_ext_slack"
 # again; it does not expire, so the connection made once keeps working.
 [[secrets]]
 name = "user_token"
-prompt = "Your Slack User OAuth Token (starts with xoxp-). In your Slack app at api.slack.com/apps, open OAuth & Permissions, add the User Token Scopes (channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, search:read, and chat:write), click Install to Workspace, then copy the User OAuth Token shown there."
+prompt = "Your Slack User OAuth Token (starts with xoxp-). In your Slack app at api.slack.com/apps, open OAuth & Permissions, add the User Token Scopes (channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, search:read, search:read.im, search:read.mpim, search:read.files, and chat:write), click Install to Workspace (or Reinstall, if you added scopes to an existing app — a token only carries the scopes present when it was minted), then copy the User OAuth Token shown there."
 format = "api_token"
 
 [tools]
