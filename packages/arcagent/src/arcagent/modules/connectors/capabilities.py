@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,6 +118,11 @@ class Connectors:
         self._reconcile_queue: ConnectorReconcileQueue | None = None
         self._reconcile_task: asyncio.Task[None] | None = None
         self._queue_unavailable_reported = False
+        # Fingerprint of the grant set last attached. The timer re-attaches only
+        # when this changes — attaching every connection each tick reloaded every
+        # bundle, re-read every secret, and tore down every source adapter on a
+        # 5-second loop. None means "not yet attached".
+        self._grant_signature: str | None = None
 
     async def setup(self, ctx: Any) -> None:
         del ctx  # Loader passes None; state lives in _runtime.
@@ -124,6 +130,9 @@ class Connectors:
         self._registry = state.tool_registry
         result = await self.reconcile()
         self._registered = result.tools
+        # Record what we just attached so the first timer tick is a no-op rather
+        # than a redundant rebuild.
+        self._grant_signature = _grant_signature(state)
         self._reconcile_queue = ConnectorReconcileQueue(
             _reconcile_backend_opener(state), actor_did=str(state.identity.did)
         )
@@ -219,8 +228,21 @@ class Connectors:
             await asyncio.sleep(_RECONCILE_INTERVAL_SECONDS)
 
     async def _reconcile_cycle(self) -> None:
-        """Apply the current grant snapshot, then acknowledge queued wakeups."""
-        await self.reconcile()
+        """Re-attach only when the grant set changed, then acknowledge queued wakeups.
+
+        The timer is a safety net for a mutation whose queued work never ran — not
+        a rebuild-everything heartbeat. Gating on a cheap grant fingerprint (one
+        deployment-file read, no bundle load, no secret read) turns an unchanged
+        deployment into a no-op instead of reloading every bundle and tearing down
+        every source adapter every 5 seconds. Real mutations still converge at once
+        through the queue drain below, which calls ``reconcile()`` directly; an
+        unreadable grants file (``None``) is left to the next tick rather than
+        dropping every live connection on a transient blip.
+        """
+        signature = _grant_signature(_runtime.state())
+        if signature is not None and signature != self._grant_signature:
+            await self.reconcile()
+            self._grant_signature = signature
         await self._drain_reconcile_commands()
 
     def _report_queue_unavailable(self, state: _runtime._State, exc: Exception) -> None:
@@ -410,6 +432,24 @@ async def _attach_one(
                     audit_sink=_audit_sink(state.telemetry),
                 )
     return report.registered
+
+
+def _grant_signature(state: _runtime._State) -> str | None:
+    """A cheap fingerprint of this agent's current grants — no bundle load, no
+    secret read. ``None`` when the grants can't be read, so the caller keeps what
+    is attached rather than tearing it down on a transient error.
+
+    Only the grant config is fingerprinted. A bundle or credential change takes
+    effect on the agent's next start (or when its mutation reconciles through the
+    queue), which is the connector contract — the timer's job is just to notice a
+    grant that was added or removed while a mutation's queued work was lost.
+    """
+    try:
+        granted = ConnectionRegistry(state.arc_dir).granted_to(state.agent_dir.name)
+    except ExtensionError:
+        return None
+    payload = sorted((name, conn.model_dump_json()) for name, conn in granted.items())
+    return hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()
 
 
 def _granted_source_ids(state: _runtime._State) -> set[str]:
