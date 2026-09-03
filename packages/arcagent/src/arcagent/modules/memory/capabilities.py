@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from html import escape
@@ -972,17 +973,31 @@ async def procedure_get(slug: str) -> str:
 # -- Consolidation scheduler ---------------------------------------------
 
 
+#: Operator kill switch for the whole sleep loop — index refresh AND
+#: consolidation. Set ``ARC_MEMORY_CONSOLIDATE_OFF=1`` (in the fleet's arc.env)
+#: to stop every agent from embedding or consolidating, e.g. while the sleep path
+#: is being repaired, without disabling capture or recall. Read per tick so it
+#: takes effect at the next poll without a code change.
+_CONSOLIDATE_OFF_ENV = "ARC_MEMORY_CONSOLIDATE_OFF"
+
+
+def _consolidation_off() -> bool:
+    """Whether the operator has disabled the sleep loop via the environment."""
+    return os.environ.get(_CONSOLIDATE_OFF_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @background_task(name="memory_consolidate_loop", interval=_CONSOLIDATE_POLL_INTERVAL)
 async def memory_consolidate_loop(_ctx: Any) -> None:
     """Poll the event-count / idle trigger; consolidate when it fires (DC-5)."""
     while True:
-        try:
-            await refresh_index_once()
-            await consolidate_poll_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # reason: fail-open — a sleep-path error must not crash the agent
-            _logger.warning("memory consolidation poll failed", exc_info=True)
+        if not _consolidation_off():
+            try:
+                await refresh_index_once()
+                await consolidate_poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # reason: fail-open — a sleep-path error must not crash the agent
+                _logger.warning("memory consolidation poll failed", exc_info=True)
         await asyncio.sleep(_CONSOLIDATE_POLL_INTERVAL)
 
 
