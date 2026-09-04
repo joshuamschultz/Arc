@@ -76,6 +76,16 @@ class MemoryConfig(BaseModel):
     entity_merge_candidate_threshold: float = Field(
         default=0.80, description="min cosine for a same-type candidate-duplicate cluster"
     )
+    # Procedures cluster on their TRIGGER (title + when_to_use), a longer, more
+    # variably-worded string than an entity name, so two cards describing the same
+    # playbook embed lower than two spellings of one name — the same-method pair
+    # measured at ~0.60, well under the entity threshold, so it never even reached
+    # the confirmer. A wider candidate band feeds those pairs to the LLM, which
+    # makes the actual same-or-not call; unrelated pairs in the band are declined.
+    procedure_merge_candidate_threshold: float = Field(
+        default=0.55,
+        description="min cosine of two procedure triggers to reach the LLM merge-confirmer",
+    )
     # Search-before-write disambiguation band: a same-type candidate whose name
     # cosine falls in ``[entity_disambiguate_min, entity_merge_threshold)`` is too
     # close to mint blindly yet too far to fold automatically — it is an "ambiguous

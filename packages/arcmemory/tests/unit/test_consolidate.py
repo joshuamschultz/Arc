@@ -1010,7 +1010,7 @@ async def test_two_cards_for_one_method_are_folded(workspace, db, scope) -> None
         distiller=_distiller(),
         config=MemoryConfig(),
         embedder=SubstringEmbedder(),
-        confirmer=ContradictionFinder(),
+        confirmer=RecordingConfirmer(),  # the LLM positively confirms the same-method pair
     )
 
     merged = await consolidator.merge_duplicate_procedures()
@@ -1042,6 +1042,32 @@ async def test_genuinely_different_methods_are_left_apart(workspace, db, scope) 
         config=MemoryConfig(),
         embedder=SubstringEmbedder(),
         confirmer=ContradictionFinder(),
+    )
+
+    assert await consolidator.merge_duplicate_procedures() == []
+    assert len(store.list_summaries()) == 2
+
+
+async def test_clustered_procedures_the_confirmer_rejects_stay_apart(workspace, db, scope) -> None:
+    """The wider candidate band is safe: two procedures can embed close enough to be
+    NOMINATED yet still be left apart because the confirmer declines them. This is
+    what lets us lower the band to catch real duplicates without fusing a 'start'
+    procedure into an 'update' one.
+    """
+    from arcmemory.stores.procedural import ProceduralStore
+
+    store = ProceduralStore(workspace)
+    store.upsert("start-thesis", "Start a Josh thesis", when_to_use="Josh begins a thesis", steps=["a"])
+    store.upsert("update-thesis", "Update a Josh thesis", when_to_use="Josh revises a thesis", steps=["b"])
+
+    consolidator = Consolidator(
+        db,
+        workspace,
+        scope,
+        distiller=_distiller(),
+        config=MemoryConfig(),
+        embedder=SubstringEmbedder(),  # both share "josh" -> they cluster
+        confirmer=RejectingConfirmer(),  # ...but the LLM says they are different methods
     )
 
     assert await consolidator.merge_duplicate_procedures() == []

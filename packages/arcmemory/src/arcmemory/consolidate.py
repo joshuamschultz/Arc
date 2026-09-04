@@ -745,39 +745,46 @@ class Consolidator:
         vectors = dict(zip([c.slug for c in cards], embedded, strict=True))
         by_slug = {c.slug: c for c in cards}
         clusters = self._procedure_clusters(cards, vectors)
+        # Positive LLM confirmation, exactly as entity de-dup: the wide band only
+        # NOMINATES candidates; the confirmer decides which are the same playbook and
+        # declines the rest, so widening the band never fuses two real methods (a
+        # "start" and an "update" procedure stay apart unless the model says they are one).
         merged: list[tuple[str, str]] = []
-        for cluster in clusters:
-            refs = [
-                distill.EntityRef(
-                    slug=c.slug,
-                    name=c.title,
-                    entity_type="procedure",
-                    facts=[f"when_to_use: {c.when_to_use}"],
-                )
-                for c in cluster
+        if clusters:
+            groups = [
+                [
+                    distill.EntityRef(
+                        slug=c.slug,
+                        name=c.title,
+                        entity_type="procedure",
+                        facts=[f"when_to_use: {c.when_to_use}"],
+                    )
+                    for c in cluster
+                ]
+                for cluster in clusters
             ]
             try:
-                contradicting = set(await self._confirmer.find_contradictions(refs))
-                contradicting |= set(await self._confirmer.find_contradictions(refs))
+                confirmed = await self._confirmer.confirm_entity_merges(groups)
             except Exception as exc:  # reason: never fuse two real methods on an error
-                _log.warning("arcmemory procedure de-dup: contradiction check failed: %s", exc)
-                self._emit_dedup_skipped("procedure-contradiction-check-failed")
-                continue
-            keep = [c for c in cluster if c.slug not in contradicting]
-            if len(keep) < 2:
-                continue
-            # Richest first: the card with the most steps survives, so the merge adds
-            # to the fuller method rather than rebuilding it from the thinner one.
-            keep.sort(key=lambda c: (-len(c.steps), c.slug))
-            survivor, folded = keep[0].slug, [c.slug for c in keep[1:]]
-            card = merge_procedures(self._procedures, survivor=survivor, folded=folded)
-            if card is None:
-                continue
-            await self._consolidate_steps(card)
-            for slug in folded:
-                self._graph.rename_node(self._scope.key, slug, survivor)
-                self._emit("memory.procedure_merged", f"{slug}->{survivor}")
-                merged.append((slug, survivor))
+                _log.warning("arcmemory procedure de-dup: confirm failed: %s", exc)
+                self._emit_dedup_skipped("procedure-confirm-failed")
+                confirmed = []
+            for subgroup in confirmed:
+                keep = [by_slug[s] for s in subgroup if s in by_slug]
+                if len(keep) < 2:
+                    continue
+                # Richest first: the card with the most steps survives, so the merge adds
+                # to the fuller method rather than rebuilding it from the thinner one.
+                keep.sort(key=lambda c: (-len(c.steps), c.slug))
+                survivor, folded = keep[0].slug, [c.slug for c in keep[1:]]
+                card = merge_procedures(self._procedures, survivor=survivor, folded=folded)
+                if card is None:
+                    continue
+                await self._consolidate_steps(card)
+                for slug in folded:
+                    self._graph.rename_node(self._scope.key, slug, survivor)
+                    self._emit("memory.procedure_merged", f"{slug}->{survivor}")
+                    merged.append((slug, survivor))
         self._emit(
             "memory.procedure_dedup_pass",
             "memory",
@@ -829,7 +836,7 @@ class Consolidator:
         self, cards: list[Procedure], vectors: dict[str, list[float]]
     ) -> list[list[Procedure]]:
         """Group procedures whose triggers embed close enough to be one method."""
-        threshold = self._cfg.entity_merge_candidate_threshold
+        threshold = self._cfg.procedure_merge_candidate_threshold
         by_slug = {c.slug: c for c in cards}
         parent = {c.slug: c.slug for c in cards}
 
