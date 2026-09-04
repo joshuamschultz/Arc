@@ -446,9 +446,15 @@ class Consolidator:
         now = now or datetime.now(UTC)
         total = ConsolidationResult()
         for _ in range(_MAX_NIGHTLY_BATCHES):
+            before = self.watermark()
             batch = await self.run(now=now)
             total = _add_results(total, batch)
-            if batch.window_events == 0:
+            # Stop when a batch consumed no raw events (the watermark did not move),
+            # NOT when it distilled nothing: a 500-event batch can be all tool
+            # frames (zero conversation to distill) while real conversation still
+            # waits deeper in the backlog — breaking on window_events==0 there
+            # stranded the rest of the gap.
+            if self.watermark() == before:
                 break
         self._merge_entities_deterministic()
         self._repair_backlinks()

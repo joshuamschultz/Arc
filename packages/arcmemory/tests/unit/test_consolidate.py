@@ -1259,3 +1259,36 @@ async def test_nightly_hygiene_drains_the_whole_backlog_in_one_pass(workspace, d
     ).run_hygiene(now=_NOW)
     assert result.window_events == 7  # 2+2+2+1 drained across batches in one pass
     assert Consolidator(db, workspace, scope, distiller=_distiller(), config=cfg).watermark() == 6
+
+
+async def test_nightly_drain_does_not_stop_on_an_all_machinery_batch(workspace, db, scope) -> None:
+    """A batch of pure tool frames distills nothing but still advances the watermark;
+    the drain must keep going to conversation deeper in the backlog, not stop at the
+    first zero-distill batch (regression: a 500-frame batch stranded the rest)."""
+    episodic = EpisodicStore(db, workspace)
+    for i in range(4):  # seq 0..3 — machinery, curated out
+        episodic.append(
+            Event(
+                event_id=f"t{i}",
+                scope=scope.key,
+                kind="tool",
+                text="frame",
+                ts=f"2026-07-07T00:00:0{i}+00:00",
+            )
+        )
+    for i in range(2):  # seq 4..5 — real conversation, past the machinery
+        episodic.append(
+            Event(
+                event_id=f"c{i}",
+                scope=scope.key,
+                kind="respond",
+                text=f"said {i}",
+                ts=f"2026-07-07T00:00:1{i}+00:00",
+            )
+        )
+    cfg = MemoryConfig(consolidate_max_events_per_run=2)
+    result = await Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=cfg
+    ).run_hygiene(now=_NOW)
+    assert result.window_events == 2  # the conversation, reached past 2 machinery batches
+    assert Consolidator(db, workspace, scope, distiller=_distiller(), config=cfg).watermark() == 5
