@@ -74,6 +74,13 @@ class MemoryConfig(ModuleConfig):
     # fleet so all agents do not call the model at once.
     consolidate_hour: int = 3
     consolidate_window_hours: int = 3
+    # Superseded by the nightly window above and no longer read, but kept as
+    # accepted fields so agent TOMLs deployed with the old intraday-trigger keys
+    # still validate (the config model forbids unknown keys, so removing these
+    # would brick every already-deployed agent on restart).
+    consolidate_event_threshold: int = 20
+    consolidate_idle_seconds: float = 900.0
+    consolidate_interval_seconds: float = 3600.0
 
     # Backend (arcmemory) settings exposed at the [modules.memory] level for
     # operator convenience (SPEC-041 README) and folded into backend so the
