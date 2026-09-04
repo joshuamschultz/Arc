@@ -8417,3 +8417,54 @@ Phase: architecture | Status: adopted | ID range: D-726 to D-726
   - **Why it's key to proper management:** counting background churn made a quiet agent keep crossing its trigger and re-running expensive maintenance on nothing new — a $159/day consolidation runaway (see problem-log PROB-013) and a workpad firing every ~10 min instead of once ~15 min after the last message. "New context to manage" means new *human* context, full stop.
   - **Applies to:** `arcmemory` consolidation trigger (`_capture`), `arcagent` workpad (`track_runs` / `_should_maintain`); the same gate is required for any future background maintainer.
   - **Alternatives rejected:** the `automated` flag (pulse/scheduler dispatch with `automated=False`, so it does not distinguish real from background); a pure wall-clock timer per process (more moving parts than gating the existing per-turn hook).
+
+---
+
+## Voice Channel ("Hey Olivia") — 2026-09-04
+
+Full detail + pillar/threat rationale: `.claude/builds/voice-channel/decisions.md`.
+Vision: `.claude/brainstorms/2026-09-04-voice-channel.md`. Resolved by four-pillars + Arc
+patterns per Josh's directive; only the Mac/GPU tradeoff was put to him.
+
+- **D-727** First-party in-tree gateway adapter `arcgateway/adapters/voice/` (AdapterSpec, SPEC-065), one agent per adapter like telegram/slack. *Simplicity+Modularity; gateway already owns audit/session/pairing/splitting.*
+- **D-728** Three seams: `AudioEndpoint` client, `VoiceEngine` (PersonaPlex default, pluggable), adapter bridge. Deleting `adapters/voice/` breaks nothing else. *Modularity.*
+- **D-729** No relay; own signed WS; wake word on the client so audio streams only post-wake. *Security/privacy.*
+- **D-730** Content authority = Arc agent; PersonaPlex never answers substantively (thin-face). *Security; no shadow memory (ASI06).*
+- **D-731/732** No new content entity; a voice turn is a normal session turn; audio never enters envelope/session/prompt; transcripts encrypted at rest, raw audio not stored by default. *Simplicity; LLM02/LLM07.*
+- **D-733** `VoicePairing` in the existing mechanical-approval grant store (SPEC-035). *Simplicity+IA.*
+- **D-734** Client↔DGX WS: Opus frames + control, mTLS, signed handshake w/ nonce+timestamp replay protection. *ASI07.*
+- **D-735** Adapter↔agent unchanged (existing text-Part dispatch). *Modularity.*
+- **D-736** CLI: `arc connect voice <agent>`, `arc voice start`. *Consistency with connect-telegram.*
+- **D-737** One OTEL span/turn with latency marks (first_ack/first_token/done) + wake/false-wake/barge-in metrics.
+- **D-738** (auto: fedramp/nist AU) `arctrust.audit.emit` on every voice op, carrying caller_did + mic identity. *ASI03/AU.*
+- **D-739/740** Federal-forbidden by a config load-gate (not a branch); loads on personal+enterprise only.
+- **D-741** Personal = one signed mic pairing at setup; enterprise = TOFU via mechanical approval. *IA/ASI03.*
+- **D-742** Trusted mic is still untrusted content; utterance never control-plane; consequential actions still hit PolicyPipeline + human gate. *LLM01/LLM05/ASI02/ASI09/trifecta.*
+- **D-743** mTLS transport; non-exportable keys (capability handle); replay protection.
+- **D-744** Encrypt transcripts (and opt-in audio) at rest.
+- **D-745** PersonaPlex signed + provenance-checked at load despite MIT. *LLM03/ASI04.*
+- **D-746** PersonaPlex behind a `VoiceEngine` Protocol; NVIDIA dep imported inside the boundary only; engine-down → typed degraded result; circuit breaker + timeout. *Modularity+Scalability.*
+- **D-747** Barge-in reuses `enter_held_messages` steering; no new path. *Simplicity.*
+- **D-748** Fast spoken "on it" ack decoupled from the ~97s turn. *"Never silent" principle.*
+- **D-749** Wake word = openWakeWord (MIT), local; chosen over Picovoice to dodge a license/key server. *Security+Simplicity+CMMC.*
+- **D-750** One PersonaPlex per DGX, shared across sessions; target first-ack < 1s. *Scalability.*
+- **D-751** Config `[adapters.voice]` per agent; engine + audio seams swappable. *Modularity.*
+- **D-752** Short-form spoken output contract as a signed arcprompt overlay (protected artifact, model can't edit). *Josh's v1-win; LLM07.*
+- **D-753/754/755** Contract+architecture tests (seam deletable, Fake engine); one journey test faking only audio+LLM wires; abuse battery in run_adversarial_tests.py (forged/replayed pairing, wake spoof, federal-load, spoken injection, stolen handle, barge-in flood, TOFU race). Gates 80/75/90.
+- **D-756/757** PersonaPlex weights as a signed bundle on the DGX; client in arccli; deploy from main; `arc voice start` as systemd with DBUS_SESSION_BUS_ADDRESS=/dev/null.
+- **D-758/759/760** Audible-only UX (chime→"on it"→short answer→confirm→barge-in); reply stays with voice origin; arcui connection-card pairing status (optional for v1).
+
+**Mac/GPU tradeoff (Josh):** Mac = thin client, DGX runs PersonaPlex (LAN, mTLS). Rejected DGX-only-v1 and a second CPU voice path.
+
+### Voice Channel — /deepen revisions (2026-09-04)
+
+Research (3 parallel Explore agents) forced one pivot and several refinements. Detail + sources: `.claude/builds/voice-channel/decisions.md → Research Insights`.
+
+- **D-761 (Josh; supersedes the PersonaPlex engine in D-730/D-746)** PersonaPlex can't voice external text (E2E speech-to-speech, no text input, 1 session/GPU, ~160s ctx). Default `VoiceEngine` = **cascade**: STT (Whisper/Voxtral) → Arc agent → TTS (Olivia-cloned voice). PersonaPlex demoted to an optional `FullDuplexEngine` behind the same seam. Thin-face now true by construction; STT/TTS scale statelessly (no GPU-per-call cap). *All four pillars favor cascade.*
+- **D-762 (supersedes D-734)** Transport = **WebRTC** (aiortc/LiveKit), Opus 20ms/VOIP/~24kbps, 24kHz, RTCDataChannel for control/barge-in. WebRTC's AEC is what makes barge-in over open speakers work. DTLS-SRTP + mTLS signaling, host candidates only (no external STUN/TURN). *ASI07.*
+- **D-763 (adds to D-749)** Wake = openWakeWord self-trained "hey Olivia" (ONNX, on client; train own to dodge CC-BY-NC prebuilt license; pin runtime+model). Endpoint = **Silero VAD** on AEC'd audio + tuned hangover; WebRTC-VAD cheap gate. macOS mic TCC permission; Linux system PortAudio + pinned ALSA device.
+- **D-764 (supersedes D-752)** Voice Output Contract = signed arcprompt overlay for style **+ a code post-processor** (hard word cap, strip markdown/links, list→summary). Prompt alone is unenforceable; the code filter is also the guard on reading injected text aloud. *LLM05/LLM07.*
+- **D-765 (supersedes D-748)** Latency/Progress Manager: audible silence never > ~1s. Instant ack → periodic earcon/heartbeat during the ~97s turn → hard-timeout failure. Fillers generic, never narrate unverified content.
+- **D-766 (hardens D-742)** Confirmation Gate: risk-tiered; reversible → implicit; irreversible → explicit read-back of actual params + bounded yes/no; ambiguity/silence → abort. The load-bearing guard (human = commit authority) vs misheard AND injected actions. *LLM01/ASI02/ASI09/trifecta.*
+- **D-767 (supersedes D-758 cues, refines D-747)** Audio-Feedback + Interruption: fixed earcon set (wake/listening/working/done/error) on state events; stop on confirmed speech but distinguish backchannels; raise barge-in bar during a confirmation read-back; content redirect still via `enter_held_messages`.
+- **D-768** Mac push-to-talk as a wake fallback (has a keyboard); DGX wake-word only; both emit the same "utterance start" event.
