@@ -11,7 +11,7 @@ only; federal forbidden.
 |-----|--------|
 | PRD | DRAFT (fast-track) — 23 requirements, EARS, pillar-tagged |
 | SDD | DRAFT — 18 components, REQ→COMP traceability, 10-threat mitigation map |
-| PLAN | PENDING — 36 tasks (T-001..036), 4 phases, domain-tagged, TDD |
+| PLAN | IN PROGRESS — Phase 1 COMPLETE (T-001..006, verified); Phases 2–4 pending |
 | README | this file |
 
 ## Provenance (workflow trail)
@@ -48,4 +48,37 @@ OWASP LLM/ASI threats to mitigations (tech.md mandate satisfied).
 
 ## Learnings (filled during /implement)
 
-_None yet._
+### Phase 1 — Foundation (COMPLETE, 2026-09-04)
+
+Implemented directly (6 tightly-coupled tasks in one new package, no parallelism
+benefit) with strict RED→GREEN. Evidence: RED showed `No module named
+'arcgateway.adapters.voice'`; GREEN = 58 passed / 1 skipped (voice + the full
+adapter suite); ruff clean; `mypy --strict` clean on 5 source files.
+
+Two spec refinements the real code forced (better than the SDD guessed):
+
+1. **Tier gate is not an invented component.** `COMP-014 TierGate` = the voice
+   `AdapterSpec.build()` raising `AdapterUnavailableError` at the federal tier,
+   **plus** voice staying out of `registry.OFFICIAL_ADAPTERS` (the registry already
+   blocks non-official adapters at federal). Defense in depth via the existing
+   mechanism, not a new gate. SDD/PRD REQ-016 satisfied this way.
+2. **The adapter is a folder exporting `PLATFORM = AdapterSpec(name, requires,
+   supports, build)`**, not a free-standing class. `connect/disconnect/to_parts/send`
+   is the whole surface; the gateway keeps audit/session/pairing/splitting.
+
+**Guard for later phases:** `tests/adapters/test_adapter_contract_surface.py`
+auto-parametrizes over every discovered adapter and greps each voice `.py` file for
+forbidden markers. Later voice code must NOT use the literal identifiers
+`session_key=`, `max_bytes`/`MAX_BYTES`, `MediaStore`, `"inbox"`, `build_session_key`,
+`PairingStore`/`pairing_store`, `split_message`, or raw `open(...,'wb')`/`.write_bytes`.
+In particular **T-029 VoicePairing** must name its store something other than
+`pairing_store` (it delegates to the gateway's pairing boundary anyway).
+
+Files added: `adapters/voice/{__init__,adapter,config}.py`,
+`adapters/voice/engine/{__init__,base}.py`; tests under
+`tests/unit/adapters/voice/` + `tests/architecture/test_voice_adapter_deletable.py`.
+
+### Phases 2–4 — not started
+
+Need real WebRTC (aiortc), audio hardware, and GPU models (Whisper/TTS); they can't
+be built-and-verified in a non-hardware session and were not attempted.
