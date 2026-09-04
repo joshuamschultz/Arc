@@ -1191,3 +1191,71 @@ async def test_curated_out_batch_still_advances_watermark(workspace, db, scope) 
     result = await consolidator.run(now=_NOW)
     assert result.window_events == 0
     assert consolidator.watermark() == 2
+
+
+# -- nightly cadence: gap-only catch-up + one-pass drain ----------------------
+
+
+async def test_gap_only_seed_skips_already_consolidated_history(workspace, db, scope) -> None:
+    """A workspace that consolidated before the watermark existed (a last-run stamp,
+    no watermark file) seeds past everything already distilled, so the first run
+    processes ONLY the gap since the last run — not the whole history."""
+    episodic = EpisodicStore(db, workspace)
+    for i in range(3):  # seq 0..2 — already consolidated (before the stamp)
+        episodic.append(
+            Event(
+                event_id=f"old{i}",
+                scope=scope.key,
+                kind="respond",
+                text=f"old {i}",
+                ts=f"2026-07-06T00:00:0{i}+00:00",
+            )
+        )
+    _consolidator(workspace, db, scope, _distiller())._stamp_last_run(
+        datetime(2026, 7, 6, 1, 0, 0, tzinfo=UTC)  # after the old events, before the new
+    )
+    for i in range(2):  # seq 3..4 — the gap, captured after the last run
+        episodic.append(
+            Event(
+                event_id=f"new{i}",
+                scope=scope.key,
+                kind="respond",
+                text=f"new {i}",
+                ts=f"2026-07-07T00:00:0{i}+00:00",
+            )
+        )
+    result = await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+    assert result.window_events == 2  # only the gap, not the 3 already-consolidated
+    assert _consolidator(workspace, db, scope, _distiller()).watermark() == 4
+
+
+async def test_fresh_workspace_without_last_run_still_learns_from_all_events(
+    workspace, db, scope
+) -> None:
+    """No prior consolidation (no last-run stamp) means nothing is 'already done' —
+    the first run must process the whole stream, not seed past it."""
+    _seed_day(workspace, db, scope)  # 5 events, no last-run stamp
+    result = await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+    assert result.window_events == 5
+
+
+async def test_nightly_hygiene_drains_the_whole_backlog_in_one_pass(workspace, db, scope) -> None:
+    """run_hygiene loops the bounded batch until the backlog is drained, so a big
+    gap catches up in one night rather than one batch per night."""
+    episodic = EpisodicStore(db, workspace)
+    for i in range(7):
+        episodic.append(
+            Event(
+                event_id=f"e{i}",
+                scope=scope.key,
+                kind="respond",
+                text=f"t{i}",
+                ts=f"2026-07-07T00:00:0{i}+00:00",
+            )
+        )
+    cfg = MemoryConfig(consolidate_max_events_per_run=2)
+    result = await Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=cfg
+    ).run_hygiene(now=_NOW)
+    assert result.window_events == 7  # 2+2+2+1 drained across batches in one pass
+    assert Consolidator(db, workspace, scope, distiller=_distiller(), config=cfg).watermark() == 6

@@ -88,6 +88,9 @@ _HYGIENE_LAST_NAME = ".hygiene-last-run"
 # stream — the difference between "catching up" and re-chewing all of history
 # every cycle. ``-1`` (or an absent file) means nothing has been consolidated yet.
 _WATERMARK_NAME = ".consolidate-watermark"
+# Upper bound on batches drained in one nightly pass, so a huge or pathological
+# backlog catches up over a couple of nights instead of running unbounded in one.
+_MAX_NIGHTLY_BATCHES = 50
 # Cosine at/above which two cue embeddings are treated as the same concept (T-054).
 _CUE_MERGE_THRESHOLD = 0.92
 # Key facts summarized onto an EntityRef for the LLM merge-confirmer (bounded input).
@@ -95,6 +98,20 @@ _ENTITY_REF_MAX_FACTS = 5
 # Steps at or below this need no rewrite — a short card is already followable, and
 # rewriting it would churn the operator's own wording for no gain.
 _STEP_CONSOLIDATION_FLOOR = 10
+
+
+def _add_results(a: ConsolidationResult, b: ConsolidationResult) -> ConsolidationResult:
+    """Sum two consolidation results field-wise (accumulate drained batches)."""
+    return ConsolidationResult(
+        facts_updated=a.facts_updated + b.facts_updated,
+        insights_minted=a.insights_minted + b.insights_minted,
+        procedures_promoted=a.procedures_promoted + b.procedures_promoted,
+        events_recorded=a.events_recorded + b.events_recorded,
+        days_summarized=a.days_summarized + b.days_summarized,
+        edges_decayed=a.edges_decayed + b.edges_decayed,
+        files_rewritten=a.files_rewritten + b.files_rewritten,
+        window_events=a.window_events + b.window_events,
+    )
 
 
 def _is_exact_cluster(cluster: list[tuple[str, Entity]]) -> bool:
@@ -235,6 +252,20 @@ class Consolidator:
         self._watermark_path.parent.mkdir(parents=True, exist_ok=True)
         self._watermark_path.write_text(str(seq), encoding="utf-8")
 
+    def _seed_watermark_from_last_run(self) -> None:
+        """Gap-only catch-up: on a workspace that consolidated before this feature
+        existed (a last-run stamp but no watermark), seed the watermark past
+        everything already distilled, so the first run processes only the gap since
+        the last successful consolidation — not the whole history. A fresh workspace
+        (no last-run) is left at -1 so it still learns from all of its events.
+        """
+        if self._watermark_path.exists():
+            return
+        last = self.last_run()
+        if last is None:
+            return
+        self._stamp_watermark(self._episodic.seq_at_or_before(self._scope.key, last.isoformat()))
+
     async def run(
         self, window: TimeWindow | None = None, *, now: datetime | None = None
     ) -> ConsolidationResult:
@@ -248,6 +279,7 @@ class Consolidator:
         """
         now = now or datetime.now(UTC)
         if window is None:
+            self._seed_watermark_from_last_run()
             raw_events, high_seq = self._episodic.events_since(
                 self._scope.key,
                 self.watermark(),
@@ -402,19 +434,27 @@ class Consolidator:
         return last is None or last < self._local_date(now)
 
     async def run_hygiene(self, *, now: datetime | None = None) -> ConsolidationResult:
-        """Run the light pass, then the day-level hygiene: merge + backlink repair + dedup.
+        """The nightly pass: drain the whole backlog, then day-level hygiene.
 
-        Every step is idempotent and file-driven (independent of the window), so running
-        hygiene on a quiet day still reconciles the glass-box files. Stamps the hygiene
-        date last so a same-day re-entry stays a light pass.
+        ``run`` distills one bounded batch and advances the watermark; the nightly
+        pass loops it until the backlog is drained (a bounded number of batches, so a
+        pathological stream can't run forever in one night) so the agent catches up in
+        one night rather than one batch per night. Then the idempotent, file-driven
+        hygiene — merge + backlink repair + dedup — reconciles the glass-box files.
+        Stamps the hygiene date last so a same-day re-entry stays a light pass.
         """
         now = now or datetime.now(UTC)
-        result = await self.run(now=now)
+        total = ConsolidationResult()
+        for _ in range(_MAX_NIGHTLY_BATCHES):
+            batch = await self.run(now=now)
+            total = _add_results(total, batch)
+            if batch.window_events == 0:
+                break
         self._merge_entities_deterministic()
         self._repair_backlinks()
         self._dedup_workspace()
         self._stamp_hygiene(now)
-        return result
+        return total
 
     def _merge_entities_deterministic(self) -> None:
         """Fold alias-related duplicate cards WITHOUT an embedder (closes the re-dup loop).

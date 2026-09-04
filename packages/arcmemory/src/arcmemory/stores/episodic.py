@@ -109,6 +109,21 @@ class EpisodicStore:
         ).fetchone()
         return int(total)
 
+    def seq_at_or_before(self, scope_key: str, iso_ts: str) -> int:
+        """Highest seq of an event at/before ``iso_ts`` (-1 if none).
+
+        Seeds the consolidation watermark from the last-run stamp: everything up to
+        the last successful consolidation is already distilled, so catch-up starts
+        just past it instead of re-reading the whole history. Event ts and the stamp
+        are both UTC ISO-8601, which orders lexicographically.
+        """
+        conn = self._db.connect()
+        (seq,) = conn.execute(
+            "SELECT COALESCE(MAX(seq), -1) FROM episodic WHERE scope = ? AND ts <= ?",
+            (scope_key, iso_ts),
+        ).fetchone()
+        return int(seq)
+
     def get(self, scope_key: str, event_id: str) -> Event | None:
         """Fetch a single event by id within a scope (None if absent)."""
         conn = self._db.connect()

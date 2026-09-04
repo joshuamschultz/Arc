@@ -63,12 +63,17 @@ class MemoryConfig(ModuleConfig):
     # folded into backend dynamics so it reaches the arcmemory Brain.
     working_set_enabled: bool = True
 
-    # Consolidation scheduling: fires on ANY of event-count / idle / interval (DC-5).
-    consolidate_event_threshold: int = 20
-    consolidate_idle_seconds: float = 900.0
-    # Time-based cadence: consolidate at least this often while events are pending
-    # (default hourly), so curated memory stays fresh even on a steady low volume.
-    consolidate_interval_seconds: float = 3600.0
+    # Consolidation scheduling: the sleep pass runs ONCE PER NIGHT per agent, in a
+    # quiet early-morning window, so a heavy window-review never lands on an
+    # interactive turn and the fleet does not re-run it every few minutes.
+    # ``consolidate_hour`` is the local hour the window opens; the pass may fire any
+    # time in the ``consolidate_window_hours``-long window after it (so a brief
+    # downtime at the exact hour does not skip the night). arcmemory still runs the
+    # heavy work at most once per local day, so extra polls inside the window are
+    # cheap no-ops. A per-agent minute offset (derived from the DID) staggers the
+    # fleet so all agents do not call the model at once.
+    consolidate_hour: int = 3
+    consolidate_window_hours: int = 3
 
     # Backend (arcmemory) settings exposed at the [modules.memory] level for
     # operator convenience (SPEC-041 README) and folded into backend so the

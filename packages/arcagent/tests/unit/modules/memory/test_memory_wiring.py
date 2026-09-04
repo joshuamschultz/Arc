@@ -10,6 +10,7 @@ Two acceptance proofs live here (DECISIONS-LOCKED hard requirement):
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from arcagent.brain import NullBrain
 from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
+    _agent_minute_offset,
     backfill_digest_from_holdings,
     capture_respond,
     capture_tool,
@@ -132,18 +134,18 @@ async def test_a_real_interactive_turn_advances_consolidation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_background_only_agent_never_consolidates() -> None:
-    """No interactive turns means no pending events, so the poll never fires."""
+async def test_a_background_only_agent_still_consolidates_at_night() -> None:
+    """Every agent consolidates once a night — the cadence is time-gated, not
+    interactivity-gated — so a background-only agent is no longer starved (and,
+    being once a night, does not reintroduce the idle-runaway cost)."""
     brain = _SpyBrain()
     _configure_with(brain)
     turn_context.set_interactive(False)
-    for _ in range(50):
-        await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "tick"}]}))
 
-    fired = await consolidate_poll_once(now=1_000_000.0)
+    fired = await consolidate_poll_once(now_local=datetime(2026, 1, 1, 4, 0))
 
-    assert fired is False
-    assert brain.consolidations == 0
+    assert fired is True
+    assert brain.consolidations == 1
 
 
 # -- Hotfix: bind() survives a sibling asyncio.Task (task 36) ------------
@@ -490,42 +492,47 @@ async def test_acl_allow_asks_provider_then_retrieves() -> None:
     assert "recall" in sections
 
 
-# -- Consolidation trigger (fake clock + event counter, T-082) -----------
+# -- Consolidation trigger (nightly window, per-agent offset) -------------
 
 
-async def test_consolidation_never_fires_while_the_agent_is_active() -> None:
-    """Pending events — even past the threshold — must NOT consolidate while the
-    agent is active. The heavy sleep only lands when the agent is idle; a busy
-    agent is swept nightly instead. Regression for the 125k-token consolidation
-    that fired right after a quick interactive chat."""
+async def test_consolidation_does_not_fire_during_the_day() -> None:
+    """The heavy sleep runs once per NIGHT — never on a daytime (interactive) poll.
+    Regression for the 125k-token consolidation that fired right after a chat and
+    for the every-few-minutes re-run loop."""
     spy = _SpyBrain()
-    _configure_with(spy, {"consolidate_event_threshold": 3, "consolidate_idle_seconds": 60.0})
-    st = _runtime.state()
-    st.last_activity = 0.0
-    st.events_since_consolidate = 5  # well past the threshold
-    # Just active (idle == 0) — no consolidation, no matter how many events.
-    assert await consolidate_poll_once(now=st.last_activity) is False
+    _configure_with(spy)
+    assert await consolidate_poll_once(now_local=datetime(2026, 1, 1, 14, 0)) is False
     assert spy.consolidations == 0
 
 
-async def test_consolidate_fires_only_when_idle() -> None:
+async def test_consolidation_fires_inside_the_nightly_window() -> None:
     spy = _SpyBrain()
-    _configure_with(spy, {"consolidate_event_threshold": 100, "consolidate_idle_seconds": 60.0})
-    st = _runtime.state()
-    st.events_since_consolidate = 1
-    st.last_activity = 0.0
-    # Not yet idle enough — even with pending events.
-    assert await consolidate_poll_once(now=30.0) is False
-    # Idle past the quiet window -> fires (pending events flushed on idle).
-    assert await consolidate_poll_once(now=120.0) is True
+    _configure_with(spy)
+    # 04:00 is inside the default [3,6) window and past the opening hour, so the
+    # per-agent minute offset does not gate it.
+    assert await consolidate_poll_once(now_local=datetime(2026, 1, 1, 4, 0)) is True
     assert spy.consolidations == 1
 
 
-async def test_consolidate_noop_when_no_events() -> None:
+async def test_consolidation_is_a_noop_when_inactive() -> None:
     spy = _SpyBrain()
-    _configure_with(spy, {"consolidate_event_threshold": 1})
-    assert await consolidate_poll_once() is False
+    _configure_with(spy)
+    _runtime.state().active = False
+    assert await consolidate_poll_once(now_local=datetime(2026, 1, 1, 4, 0)) is False
     assert spy.consolidations == 0
+
+
+async def test_the_opening_hour_is_staggered_per_agent() -> None:
+    """Within the opening hour the pass is delayed to a per-agent minute offset, so
+    the fleet does not all call the model at the same instant."""
+    spy = _SpyBrain()
+    _configure_with(spy)
+    offset = _agent_minute_offset(_DID)  # 0..59, stable for this DID
+    if offset:  # before the offset minute in the opening hour: held back
+        assert await consolidate_poll_once(now_local=datetime(2026, 1, 1, 3, offset - 1)) is False
+    # from the offset minute on: fires
+    assert await consolidate_poll_once(now_local=datetime(2026, 1, 1, 3, offset)) is True
+    assert spy.consolidations == 1
 
 
 # -- Digest backfill: seed the routing index from existing memory ---------

@@ -415,12 +415,11 @@ class ArcMemoryBrain:
         to ground reflection (SPEC-041 Phase 9). A brain with no distiller cannot
         distill facts/insights, so it returns an empty result rather than erroring.
 
-        arcmemory owns the cadence, not arcagent: the caller's poll heartbeat invokes
-        this every trigger; arcmemory decides internally which pass to run. The first
-        call after the local date rolls over escalates to the heavier nightly hygiene
-        pass (full merge + backlink repair + dedup); otherwise the light per-interval
-        consolidation runs at most once per ``consolidate_interval_minutes`` (default
-        60), and a call inside both windows is a no-op.
+        Consolidation is now NIGHT-ONLY: the first call after the local date rolls
+        over runs the full nightly pass (drain the whole backlog, then merge +
+        backlink repair + dedup); any later call the same day is a no-op. The caller
+        (arcagent) only invokes this inside the quiet nightly window, so the heavy
+        window review runs once per night per agent and never on an interactive turn.
         """
         consolidator = self._bundle(session_id).consolidator
         if consolidator is None:
@@ -430,8 +429,6 @@ class ArcMemoryBrain:
         now = datetime.now(UTC)
         if consolidator.hygiene_due(now=now):
             return self._summarize(await consolidator.run_hygiene(now=now))
-        if consolidator.due(now=now, interval_minutes=self._cfg.consolidate_interval_minutes):
-            return self._summarize(await consolidator.run(now=now))
         return self._summarize(ConsolidationResult())
 
     async def refresh_index(self, *, session_id: str | None = None) -> None:

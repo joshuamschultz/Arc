@@ -20,10 +20,12 @@ hook short-circuits — a truly silent no-op that writes nothing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
 import time
+from datetime import datetime
 from html import escape
 from typing import Any
 
@@ -402,15 +404,13 @@ async def capture_respond(ctx: Any) -> None:
 async def _capture(st: _runtime._State, text: str, *, kind: str) -> None:
     """ACL-gated Brain capture + consolidation-trigger bookkeeping.
 
-    Capture always records the content. The consolidation TRIGGER, though, only
+    Capture always records the content. The pending-events counter, though, only
     advances on a turn a real person drove (``turn_context.interactive()``): the
     agent's own background machinery — the pulse tick, the proactive scheduler,
-    consolidation itself — runs turns constantly, and counting those meant a quiet
-    agent kept crossing the event threshold and re-running an expensive
-    consolidation on nothing new. Now background churn neither adds an event nor
-    resets the idle clock, so consolidation fires once after real activity settles
-    (idle past ``consolidate_idle_seconds``) and then stays quiet until a person
-    interacts again.
+    consolidation itself — runs turns constantly, and counting those made a quiet
+    agent look like it always had new memory, re-embedding the index for nothing.
+    The counter now gates only the index refresh; consolidation runs once per night
+    (see :func:`consolidate_poll_once`), not on this counter.
     """
     if not text:
         return
@@ -1019,36 +1019,47 @@ async def refresh_index_once() -> None:
     st.index_warmed = True
 
 
-async def consolidate_poll_once(*, now: float | None = None) -> bool:
-    """Run one consolidation iff the agent is idle with pending events.
+def _agent_minute_offset(agent_did: str) -> int:
+    """A stable 0-59 minute offset from the DID, so the fleet's nightly passes do
+    not all call the model at the same instant."""
+    return int(hashlib.sha256(agent_did.encode("utf-8")).hexdigest(), 16) % 60
 
-    Trigger (DC-5): there are pending capture events AND the agent has been idle
-    past ``consolidate_idle_seconds``. Consolidation is a background sleep (a heavy
-    window review) — it deliberately does NOT fire on an event count or a bare
-    time interval while the agent is active; an always-busy agent is swept by the
-    nightly hygiene path instead, so the sleep never lands on an interactive turn.
+
+def _in_nightly_window(st: Any, now_local: datetime | None = None) -> bool:
+    """Whether local time is inside this agent's quiet nightly window.
+
+    The window opens at ``consolidate_hour`` (local) and stays open for
+    ``consolidate_window_hours``, so a brief downtime at the exact hour does not
+    skip the night. A per-agent minute offset delays the open within the first hour
+    to stagger the fleet. arcmemory still runs the heavy pass at most once per local
+    day, so every poll after the first inside the window is a cheap no-op.
+    """
+    now_local = now_local or datetime.now().astimezone()
+    start = st.config.consolidate_hour
+    end = start + st.config.consolidate_window_hours
+    if not (start <= now_local.hour < end):
+        return False
+    if now_local.hour == start and now_local.minute < _agent_minute_offset(st.agent_did):
+        return False
+    return True
+
+
+async def consolidate_poll_once(*, now_local: datetime | None = None) -> bool:
+    """Run the nightly consolidation iff we are in this agent's quiet window.
+
+    Consolidation is a background "sleep" — a full-backlog window review plus dedup,
+    a heavy multi-call model pass. It runs ONCE PER NIGHT per agent, inside the quiet
+    early-morning window (never on an interactive turn, never every few minutes).
+    arcmemory gates the heavy work to once per local day, so repeated polls inside
+    the window are no-ops; ``now_local`` is injectable for tests.
     """
     st = _runtime.state()
-    if not st.active or st.events_since_consolidate <= 0:
-        return False
-    clock = time.monotonic() if now is None else now
-    idle = clock - st.last_activity
-    # Consolidation is a background "sleep" — a full recent-episode window review
-    # (a 100k+-token model call). It must ONLY run when the agent is genuinely
-    # IDLE, never inline with an interactive burst. Previously an event-threshold
-    # OR a bare 1h interval fired it on their own, so a quick chat that left one
-    # pending capture event dropped the whole sleep right after the turn the
-    # moment >1h had elapsed. Idleness is now the sole heartbeat gate: the agent
-    # must have been quiet for ``consolidate_idle_seconds`` (and, per the guard
-    # above, have pending events). An agent that is never idle accumulates events
-    # and is swept by the nightly hygiene path (brain ``hygiene_due``) instead —
-    # the heavy window review never lands on an active, interactive agent.
-    if idle < st.config.consolidate_idle_seconds:
+    if not st.active or not _in_nightly_window(st, now_local):
         return False
 
     result = await st.brain.consolidate()
     st.events_since_consolidate = 0
-    st.last_consolidate_at = clock
+    st.last_consolidate_at = time.monotonic()
     await _audit("memory.consolidated", {"summary": str(result.get("episode_summary", ""))})
     if st.bus is not None:
         await st.bus.emit(
