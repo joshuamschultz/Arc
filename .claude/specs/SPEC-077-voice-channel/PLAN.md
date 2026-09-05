@@ -38,11 +38,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
 
 ## Phase 2: Core (cascade engine, capture, transport)
 
-- [ ] **T-007**: Contract tests for `STTEngine`/`TTSEngine` (fake + one real each); `CascadeEngine` yields agent-authored text only (stubbed agent → exact spoken string). (COMP-003/004/005, REQ-005)
+- [x] **T-007**: Contract tests for `STTEngine`/`TTSEngine` (fake + one real each); `CascadeEngine` yields agent-authored text only (stubbed agent → exact spoken string). (COMP-003/004/005, REQ-005)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_cascade_engine.py
   - parallel: true
-- [ ] **T-008**: `CascadeEngine` = STT → agent dispatch → TTS; optional model deps inside the boundary; engine-down → typed degraded result. (COMP-003, REQ-004, REQ-005)
+- [x] **T-008**: `CascadeEngine` = STT → agent dispatch → TTS; optional model deps inside the boundary; engine-down → typed degraded result. (COMP-003, REQ-004, REQ-005)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/cascade.py
   - parallel: false
@@ -93,11 +93,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
 
 ## Phase 3: Integration (UX modules, identity, audit)
 
-- [ ] **T-020**: Test `OutputContract` collapses a long markdown reply to short markup-free speech even with the prompt overlay bypassed. (COMP-009, REQ-012)
+- [x] **T-020**: Test `OutputContract` collapses a long markdown reply to short markup-free speech even with the prompt overlay bypassed. (COMP-009, REQ-012)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_output_contract.py
   - parallel: true
-- [ ] **T-021**: `OutputContract`: code post-processor (word cap, strip markdown/links, list→summary, spoken/detail split) + signed arcprompt overlay. (COMP-009, REQ-012)
+- [x] **T-021**: `OutputContract`: code post-processor (word cap, strip markdown/links, list→summary, spoken/detail split) + signed arcprompt overlay. (COMP-009, REQ-012)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/output_contract.py
   - parallel: true
@@ -109,11 +109,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/progress.py
   - parallel: true
-- [ ] **T-024**: Test `ConfirmationGate`: irreversible action needs explicit "yes" against param read-back; ambiguity/silence aborts; reversible implicit. (COMP-011, REQ-014, REQ-018)
+- [x] **T-024**: Test `ConfirmationGate`: irreversible action needs explicit "yes" against param read-back; ambiguity/silence aborts; reversible implicit. (COMP-011, REQ-014, REQ-018)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_confirmation_gate.py
   - parallel: true
-- [ ] **T-025**: `ConfirmationGate`: risk-tiered gate between intent and tool exec; read-back of actual params; bounded yes/no; ambiguity→abort; sits with PolicyPipeline. (COMP-011, REQ-014, REQ-018)
+- [x] **T-025**: `ConfirmationGate`: risk-tiered gate between intent and tool exec; read-back of actual params; bounded yes/no; ambiguity→abort; sits with PolicyPipeline. (COMP-011, REQ-014, REQ-018)
   - domain: auth
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/confirmation.py
   - parallel: true
