@@ -12,6 +12,7 @@ follow-up; push-to-talk needs neither and is enough to talk today.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import os
 import wave
@@ -133,6 +134,53 @@ class VoiceDeskClient:
             stream.close()
             await self._client.close()
 
+    async def run_stt_wake(
+        self,
+        *,
+        frames: Any,
+        transcribe: Callable[[bytes], Awaitable[str]],
+        playback: Playback,
+        wake_words: tuple[str, ...] = ("olivia",),
+        rms_threshold: float = 500.0,
+        silence_frames: int = 15,
+    ) -> None:
+        """Always-on without a trained model: local STT gates on the wake phrase.
+
+        Segments speech by energy (dropping pre-speech silence, so nothing is
+        acted on until you speak), transcribes each segment LOCALLY, and only when
+        the transcript contains a wake word ("olivia") sends the utterance to the
+        gateway and plays Olivia's reply. Works today with no wake-model training;
+        openWakeWord (``run_always_on``) is the lower-power upgrade.
+        """
+        import numpy as np  # lazy
+
+        await self._client.connect()
+        buffer: list[bytes] = []
+        silence = 0
+        spoke = False
+        try:
+            async for frame in frames:
+                samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
+                rms = float(np.sqrt(np.mean(samples**2) + 1e-9))
+                if rms >= rms_threshold:
+                    buffer.append(frame)
+                    spoke = True
+                    silence = 0
+                elif spoke:
+                    buffer.append(frame)
+                    silence += 1
+                    if silence < silence_frames:
+                        continue
+                    segment = b"".join(buffer)
+                    buffer, silence, spoke = [], 0, False
+                    text = (await transcribe(segment)).lower()
+                    if any(word in text for word in wake_words):
+                        wav = await self._client.send_utterance(segment)
+                        if wav:
+                            await playback(wav)
+        finally:
+            await self._client.close()
+
 
 def _record_ptt() -> bytes:
     import numpy as np  # lazy: optional [voice] dep
@@ -174,6 +222,35 @@ async def _default_playback(wav: bytes) -> None:
     await asyncio.to_thread(_play_wav, wav)
 
 
+async def _alsa_frame_source(device: str, frame_bytes: int = 2560) -> Any:
+    """Yield 16 kHz mono PCM-16 frames from ``arecord`` (no PortAudio needed)."""
+    proc = await asyncio.create_subprocess_exec(
+        "arecord", "-q", "-D", device, "-f", "S16_LE", "-r", str(_SAMPLE_RATE),
+        "-c", "1", "-t", "raw",
+        stdout=asyncio.subprocess.PIPE,
+    )
+    if proc.stdout is None:  # pragma: no cover - PIPE always yields a stream
+        raise RuntimeError("arecord produced no stdout stream")
+    try:
+        while True:
+            try:
+                yield await proc.stdout.readexactly(frame_bytes)
+            except asyncio.IncompleteReadError:
+                return
+    finally:
+        proc.terminate()
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()
+
+
+async def _alsa_play(wav: bytes, device: str) -> None:
+    """Play WAV bytes through ``aplay`` (no PortAudio needed)."""
+    proc = await asyncio.create_subprocess_exec(
+        "aplay", "-q", "-D", device, stdin=asyncio.subprocess.PIPE
+    )
+    await proc.communicate(wav)
+
+
 def main() -> None:
     """Console entry (`arc-voice`). URI + token come from the environment."""
     uri = os.environ.get("ARC_VOICE_URI", "ws://127.0.0.1:8790")
@@ -181,11 +258,30 @@ def main() -> None:
     if not token:
         raise SystemExit("set ARC_VOICE_TOKEN (the pairing token) to connect")
     wake_model = os.environ.get("ARC_VOICE_WAKE_MODEL")
+    always_on = os.environ.get("ARC_VOICE_ALWAYS_ON")  # STT-wake, no model needed
     desk = VoiceDeskClient(VoiceClient(uri=uri, token=token))
     try:
         if wake_model:
             print(f"Always-on 'hey Olivia' ({wake_model}) → {uri}  (Ctrl-C to quit)")  # noqa: T201
             asyncio.run(desk.run_always_on(detector=OpenWakeWordDetector(model_path=wake_model)))
+        elif always_on:
+            mic = os.environ.get("ARC_VOICE_MIC", "plughw:CARD=MV7i,DEV=0")
+            spk = os.environ.get("ARC_VOICE_SPEAKER", mic)
+            from arcgateway.adapters.voice.engine.stt import WhisperSTT
+
+            stt = WhisperSTT(model=os.environ.get("ARC_VOICE_STT", "tiny"))
+            print(f"Always-on (say 'olivia …') via {mic} → {uri}  (Ctrl-C to quit)")  # noqa: T201
+
+            async def _play(wav: bytes) -> None:
+                await _alsa_play(wav, spk)
+
+            asyncio.run(
+                desk.run_stt_wake(
+                    frames=_alsa_frame_source(mic),
+                    transcribe=stt.listen,
+                    playback=_play,
+                )
+            )
         else:
             print(f"Push-to-talk → {uri}  (Ctrl-C to quit)")  # noqa: T201 - CLI user output
             asyncio.run(desk.run_loop(capture=_default_capture, playback=_default_playback))

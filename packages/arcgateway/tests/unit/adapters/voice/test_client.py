@@ -6,6 +6,10 @@ microphone is needed. The real capture/playback use sounddevice on the Mac.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
+import numpy as np
+
 from arcgateway.adapters.voice.client import VoiceDeskClient
 
 
@@ -77,3 +81,34 @@ async def test_run_loop_connects_and_closes() -> None:
         pass
     assert fake.connected is True
     assert fake.closed is True
+
+
+async def test_stt_wake_sends_only_the_segment_with_the_wake_word() -> None:
+    fake = _FakeClient(reply=b"WAV-reply")
+    desk = VoiceDeskClient(fake)  # type: ignore[arg-type]
+    played: list[bytes] = []
+
+    loud = (np.ones(1280, dtype=np.int16) * 3000).tobytes()
+    quiet = np.zeros(1280, dtype=np.int16).tobytes()
+    seq = [loud] * 3 + [quiet] * 15 + [loud] * 3 + [quiet] * 15  # two speech segments
+
+    async def frames() -> AsyncIterator[bytes]:
+        for frame in seq:
+            yield frame
+
+    calls = {"n": 0}
+
+    async def transcribe(_pcm: bytes) -> str:
+        calls["n"] += 1
+        return "hey olivia what time is it" if calls["n"] == 1 else "talking to myself"
+
+    async def playback(wav: bytes) -> None:
+        played.append(wav)
+
+    await desk.run_stt_wake(
+        frames=frames(), transcribe=transcribe, playback=playback, silence_frames=15
+    )
+
+    assert calls["n"] == 2  # both segments transcribed locally
+    assert len(fake.sent) == 1  # only the "olivia" one reached the gateway
+    assert played == [b"WAV-reply"]

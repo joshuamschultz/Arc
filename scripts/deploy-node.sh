@@ -187,6 +187,19 @@ rsync -a --delete \
 log "uv sync (building $RUNTIME_DIR/.venv)..."
 "$UV" sync --project "$RUNTIME_DIR"
 
+# SPEC-077 voice channel: its optional stack (STT/TTS/transport/wake) is NOT in the
+# base sync. Install it into the new runtime venv when [platforms.voice] is enabled,
+# so a deploy-from-main is self-sufficient and voice never has to be hand-fixed on
+# the box. Models stay per-box (see docs/runbooks/voice-channel-deploy.md). A warn,
+# not a fail: a voice-deps hiccup must not block the whole fleet deploy.
+GATEWAY_TOML="${ARC_GATEWAY_CONFIG:-$HOME/arc/config/gateway.toml}"
+if [ -f "$GATEWAY_TOML" ] && grep -q '^\[platforms\.voice\]' "$GATEWAY_TOML"; then
+  log "voice channel enabled — installing arcgateway[voice] deps into the runtime venv..."
+  "$RUNTIME_DIR/.venv/bin/python" -m pip install -q \
+    websockets faster-whisper piper-tts onnxruntime numpy sounddevice webrtcvad openwakeword \
+    || log "WARNING: voice deps install failed — voice channel will be degraded until fixed"
+fi
+
 # The flip is atomic: a reader sees the old runtime or the new one, never a gap.
 # A pre-symlink install leaves a real `current/` directory here; activate_runtime
 # moves it aside rather than deleting it, so its modules are recoverable.
