@@ -11,7 +11,7 @@ only; federal forbidden.
 |-----|--------|
 | PRD | DRAFT (fast-track) — 23 requirements, EARS, pillar-tagged |
 | SDD | DRAFT — 18 components, REQ→COMP traceability, 10-threat mitigation map |
-| PLAN | IN PROGRESS — 20/36 done: all pure-logic (Phase 1 + engine/UX/guards) verified; hardware/integration tasks pending |
+| PLAN | IN PROGRESS — 22/36 done: pure-logic core + real STT/TTS (DGX-verified); transport/wake/pairing/audit/UI/deploy pending |
 | README | this file |
 
 ## Provenance (workflow trail)
@@ -94,11 +94,19 @@ incl. the adapter contract-surface suite parametrized over voice):
 - **T-026/027** AudioFeedback + Interruption — earcons + barge-in classifier.
 - **T-015/016** Endpointer — utterance segmentation over an injected VAD.
 
-### Remaining — hardware / real-integration bound (not attempted here)
+### Real models — DONE + DGX-verified (2026-09-04)
 
-Cannot be built-and-verified without the DGX, audio devices, and real models:
+- **T-009/010** WhisperSTT (faster-whisper) + PiperTTS (Piper) impls of the seam,
+  verified end-to-end on `spark-0290` (GB10, aarch64): real Piper→WAV→whisper
+  round-trip through the actual classes returns the phrase exactly. `[voice]`
+  optional extra declares the stack; models are per-box (never vendored). Mac dev
+  parity: libs installed, no models. Deploy guide:
+  `docs/runbooks/voice-channel-deploy.md`. Design note: the artifact verifier is
+  wired but accepts a self-signed local model at personal/enterprise; cryptographic
+  arctrust/Sigstore signing of model artifacts is the deferred integration.
 
-- **T-009/010** real STT (Whisper/Voxtral) + TTS (Olivia-cloned) impls of the seam.
+### Remaining — transport / client / integration (still pending)
+
 - **T-013/014** WakeGate (openWakeWord ONNX) + Mac PTT — needs the model + a mic.
 - **T-017/018/019** WebRTC transport (aiortc, DTLS-SRTP + mTLS) + `arc voice start` client.
 - **T-028/029** VoicePairing — wire to the SPEC-035 grant store (note: must NOT name its
