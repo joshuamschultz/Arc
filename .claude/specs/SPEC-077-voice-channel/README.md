@@ -11,7 +11,7 @@ only; federal forbidden.
 |-----|--------|
 | PRD | DRAFT (fast-track) — 23 requirements, EARS, pillar-tagged |
 | SDD | DRAFT — 18 components, REQ→COMP traceability, 10-threat mitigation map |
-| PLAN | IN PROGRESS — Phase 1 COMPLETE (T-001..006, verified); Phases 2–4 pending |
+| PLAN | IN PROGRESS — 20/36 done: all pure-logic (Phase 1 + engine/UX/guards) verified; hardware/integration tasks pending |
 | README | this file |
 
 ## Provenance (workflow trail)
@@ -78,7 +78,33 @@ Files added: `adapters/voice/{__init__,adapter,config}.py`,
 `adapters/voice/engine/{__init__,base}.py`; tests under
 `tests/unit/adapters/voice/` + `tests/architecture/test_voice_adapter_deletable.py`.
 
-### Phases 2–4 — not started
+### Pure-logic core — COMPLETE (2026-09-04)
 
-Need real WebRTC (aiortc), audio hardware, and GPU models (Whisper/TTS); they can't
-be built-and-verified in a non-hardware session and were not attempted.
+Done and verified (TDD, RED→GREEN, ruff + mypy --strict clean, 93 passed / 1 skipped
+incl. the adapter contract-surface suite parametrized over voice):
+
+- **T-007/008** CascadeEngine — STT+TTS behind the seam; agent dispatch stays the
+  adapter/gateway's, so `speak` only voices given text (thin-face). Design note: the
+  SDD's "STT → agent → TTS" was corrected — the engine must NOT hold the agent or it
+  re-implements a gateway responsibility.
+- **T-020/021** OutputContract — code-enforced ear-friendly replies.
+- **T-024/025** ConfirmationGate — the load-bearing guard (explicit-yes / fail-closed).
+- **T-022/023** ProgressManager — never-silent pacing + hard timeout.
+- **T-011/012** ArtifactVerifier — fail-closed pin/digest/signature.
+- **T-026/027** AudioFeedback + Interruption — earcons + barge-in classifier.
+- **T-015/016** Endpointer — utterance segmentation over an injected VAD.
+
+### Remaining — hardware / real-integration bound (not attempted here)
+
+Cannot be built-and-verified without the DGX, audio devices, and real models:
+
+- **T-009/010** real STT (Whisper/Voxtral) + TTS (Olivia-cloned) impls of the seam.
+- **T-013/014** WakeGate (openWakeWord ONNX) + Mac PTT — needs the model + a mic.
+- **T-017/018/019** WebRTC transport (aiortc, DTLS-SRTP + mTLS) + `arc voice start` client.
+- **T-028/029** VoicePairing — wire to the SPEC-035 grant store (note: must NOT name its
+  store `pairing_store` — contract-surface guard).
+- **T-030/031** VoiceAudit — wire to `arctrust.audit.emit` + transcript encryption.
+- **T-032** VoiceTelemetry (OTEL). **T-033** arcui card. **T-034** journey e2e.
+  **T-035** abuse battery. **T-036** deploy (systemd, signed bundles).
+
+Next: resume on the DGX with `arcgateway[voice]` extras installed.
