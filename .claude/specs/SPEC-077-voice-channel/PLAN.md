@@ -70,11 +70,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arccli/src/arccli/voice/wake.py
   - parallel: false
-- [ ] **T-015**: Test `Endpointer` declares exactly one utterance for speech + ~0.7 s trailing silence. (COMP-008, REQ-010)
+- [x] **T-015**: Test `Endpointer` declares exactly one utterance for speech + ~0.7 s trailing silence. (COMP-008, REQ-010)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_endpointer.py
   - parallel: true
-- [ ] **T-016**: `Endpointer`: Silero VAD over AEC'd audio + WebRTC-VAD gate + tuned hangover. (COMP-008, REQ-010)
+- [x] **T-016**: `Endpointer`: Silero VAD over AEC'd audio + WebRTC-VAD gate + tuned hangover. (COMP-008, REQ-010)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/endpoint.py
   - parallel: false
