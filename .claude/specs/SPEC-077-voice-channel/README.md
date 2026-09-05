@@ -11,7 +11,7 @@ only; federal forbidden.
 |-----|--------|
 | PRD | DRAFT (fast-track) — 23 requirements, EARS, pillar-tagged |
 | SDD | DRAFT — 18 components, REQ→COMP traceability, 10-threat mitigation map |
-| PLAN | IN PROGRESS — 22/36 done: pure-logic core + real STT/TTS (DGX-verified); transport/wake/pairing/audit/UI/deploy pending |
+| PLAN | RUNNING — 35/36 done; live end-to-end on the DGX. Only T-033 (arcui card, cosmetic) deferred |
 | README | this file |
 
 ## Provenance (workflow trail)
@@ -105,7 +105,40 @@ incl. the adapter contract-surface suite parametrized over voice):
   wired but accepts a self-signed local model at personal/enterprise; cryptographic
   arctrust/Sigstore signing of model artifacts is the deferred integration.
 
-### Remaining — transport / client / integration (still pending)
+### Feature RUNNING — the full loop (2026-09-05)
+
+Live end-to-end verified on the DGX: a synthesized utterance over the real
+WebSocket → whisper STT → stub agent → Piper TTS → client got audio transcribing
+to "you said, what is the weather in paris?". Built + tested:
+
+- **T-017/018/019** transport (v1 push-to-talk WebSocket, pairing-token handshake)
+  + `arc-voice` desk client. **DEVIATION from D-762 (WebRTC):** PTT is half-duplex so
+  no echo to cancel; WebRTC + AEC + wake barge-in are the follow-up.
+- **T-013/014** WakeGate (no-stream-before-wake, injected detector) + PTT. Real
+  openWakeWord "hey Olivia" model = follow-up.
+- **T-028/029** pairing (constant-time token, fail-closed; env credential).
+- **T-030/031** per-turn audit at the arctrust emission point (length-only, no content).
+- **T-032** OTEL spans on STT/TTS. **T-034** journey test over a real socket.
+- **T-035** abuse battery (wired into scripts/run_adversarial_tests.py).
+- **T-036** deploy guide + launchd/systemd + run-it-today steps.
+
+**How to run:** see `docs/runbooks/voice-channel-deploy.md` §9 — set `ARC_VOICE_TOKEN`,
+enable `[platforms.voice]`, restart the gateway, `arc-voice` on the Mac.
+
+### Deferred — cosmetic, follow-up
+
+- **T-033** arcui connection card (voice pairing status). REQ-023 "Could"; needs real
+  frontend data + build. Deferred rather than shipped half-wired.
+- Roadmap (in the deploy guide): WebRTC upgrade, trained wake model, enterprise TOFU,
+  arctrust model signing.
+
+### Unrelated note
+
+`tests/architecture/test_imports.py::test_arcgateway_imports_no_model_package` fails
+on `harness.py` importing `arcrun` — from commit d3719973 (H-040), present on `main`,
+**not** touched by this feature. Flagged, not absorbed into SPEC-077.
+
+### (historical) hardware-bound items — since completed above
 
 - **T-013/014** WakeGate (openWakeWord ONNX) + Mac PTT — needs the model + a mic.
 - **T-017/018/019** WebRTC transport (aiortc, DTLS-SRTP + mTLS) + `arc voice start` client.
