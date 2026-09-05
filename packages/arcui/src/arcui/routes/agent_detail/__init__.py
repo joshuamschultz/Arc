@@ -46,6 +46,7 @@ from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
 from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
 from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
+from arcui.routes.agent_detail.connect_voice import connect_voice_route, get_voice_status
 from arcui.routes.agent_detail.files_write import delete_file, put_file_write
 from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
@@ -158,6 +159,8 @@ routes = [
     Route("/api/agents/{id}/schedules/{sid}", patch_schedule, methods=["PATCH"]),
     Route("/api/agents/{id}/channels", get_channels, methods=["GET"]),
     Route("/api/agents/{id}/connect-telegram", connect_telegram_route, methods=["POST"]),
+    Route("/api/agents/{id}/connect-voice", connect_voice_route, methods=["POST"]),
+    Route("/api/agents/{id}/voice", get_voice_status, methods=["GET"]),
 ]
 
 __all__ = ["routes"]

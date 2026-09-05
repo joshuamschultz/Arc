@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
-import { ApiError, apiPost } from '@/lib/api'
+import { ApiError, apiGet, apiPost } from '@/lib/api'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { StatusDot } from '@/components/status-badge'
 import { StatCard } from '@/components/stat-card'
@@ -1476,7 +1476,135 @@ function ConnectTab({ agentId }: { agentId: string }) {
           <RestartGatewayButton />
         </div>
       </InfoCard>
+      <VoicePanel agentId={agentId} />
     </div>
+  )
+}
+
+type VoiceStatus = {
+  enabled: boolean
+  bound_to_this_agent?: boolean
+  bound_agent_did?: string
+  tts?: string
+  stt?: string
+  blend?: string
+  speed?: number
+}
+
+/** Desk voice channel ("hey Olivia") — status + operator-gated connect (SPEC-077). */
+function VoicePanel({ agentId }: { agentId: string }) {
+  const [operatorMode] = useOperatorMode()
+  const [blend, setBlend] = useState('af_jessica:0.6,af_nicole:0.4')
+  const [speed, setSpeed] = useState('1.12')
+  const [busy, setBusy] = useState(false)
+  const [token, setToken] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<VoiceStatus | null>(null)
+
+  const loadStatus = async () => {
+    try {
+      setStatus(await apiGet<VoiceStatus>(`/api/agents/${agentId}/voice`))
+    } catch {
+      /* status is best-effort */
+    }
+  }
+  useEffect(() => {
+    void loadStatus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId])
+
+  const submit = async () => {
+    setBusy(true)
+    setError(null)
+    setToken(null)
+    try {
+      const res = await apiPost<{ token?: string }>(`/api/agents/${agentId}/connect-voice`, {
+        blend: blend.trim(),
+        speed: Number(speed) || 1.12,
+      })
+      setToken(res.token ?? null)
+      await loadStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to connect voice')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <InfoCard title="Voice — hey Olivia">
+      {!operatorMode && (
+        <p className="mb-3 rounded-md border border-border bg-muted/40 p-2 text-sm text-muted-foreground">
+          Turn on operator mode (top-right) to connect voice.
+        </p>
+      )}
+      <p className="mb-4 text-sm text-muted-foreground">
+        Hands-free desk voice. Say “Olivia …” into the mic and she answers in a natural voice. The
+        wake word runs locally on the mic box; a token is generated once for the client.
+      </p>
+      {status?.enabled && (
+        <dl className="mb-4 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Bound to</dt>
+            <dd className="font-mono">
+              {status.bound_to_this_agent ? 'this agent' : status.bound_agent_did || '—'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Engine</dt>
+            <dd className="font-mono">
+              {status.tts ?? '—'} / {status.stt ?? '—'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Voice</dt>
+            <dd className="font-mono">
+              {status.blend ?? '—'} @ {status.speed ?? '—'}
+            </dd>
+          </div>
+        </dl>
+      )}
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+            Voice blend (Kokoro)
+          </label>
+          <Input
+            value={blend}
+            onChange={(e) => setBlend(e.target.value)}
+            placeholder="af_jessica:0.6,af_nicole:0.4"
+            disabled={!operatorMode || busy}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+            Speed
+          </label>
+          <Input
+            value={speed}
+            onChange={(e) => setSpeed(e.target.value)}
+            placeholder="1.12"
+            disabled={!operatorMode || busy}
+          />
+        </div>
+        <Button onClick={submit} disabled={!operatorMode || busy || !blend.trim()}>
+          {busy ? 'Connecting…' : 'Connect voice'}
+        </Button>
+        {token && (
+          <p className="text-sm text-foreground">
+            Pairing token (copy for the mic client — shown once):{' '}
+            <span className="break-all font-mono text-xs">{token}</span>
+          </p>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </div>
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
+        <span className="text-xs text-muted-foreground">
+          Voice goes live on the next gateway restart.
+        </span>
+        <RestartGatewayButton />
+      </div>
+    </InfoCard>
   )
 }
 
