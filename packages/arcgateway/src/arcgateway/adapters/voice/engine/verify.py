@@ -8,7 +8,18 @@ missing any of the three is refused at load, not warned about.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def digest_file(path: str | Path, *, chunk: int = 1 << 20) -> str:
+    """SHA-256 of a model file — the content-address / provenance anchor."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
 
 
 class UnverifiedArtifactError(RuntimeError):
@@ -44,4 +55,4 @@ class ArtifactVerifier:
             raise UnverifiedArtifactError(f"{artifact.name}: signature did not verify")
 
 
-__all__ = ["ArtifactVerifier", "ModelArtifact", "UnverifiedArtifactError"]
+__all__ = ["ArtifactVerifier", "ModelArtifact", "UnverifiedArtifactError", "digest_file"]

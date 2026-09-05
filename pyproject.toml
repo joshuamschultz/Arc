@@ -201,6 +201,22 @@ module = [
     "asyncpg.*",
     "pgvector",
     "pgvector.*",
+    "faster_whisper",
+    "faster_whisper.*",
+    "piper",
+    "piper.*",
+    "ctranslate2",
+    "ctranslate2.*",
+    "onnxruntime",
+    "onnxruntime.*",
+    "aiortc",
+    "aiortc.*",
+    "openwakeword",
+    "openwakeword.*",
+    "sounddevice",
+    "sounddevice.*",
+    "webrtcvad",
+    "webrtcvad.*",
 ]
 ignore_missing_imports = true
 

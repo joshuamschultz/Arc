@@ -46,11 +46,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/cascade.py
   - parallel: false
-- [ ] **T-009**: `STTEngine` (Whisper/Voxtral adapter) behind the seam. (COMP-004, REQ-004)
+- [x] **T-009**: `STTEngine` (Whisper/Voxtral adapter) behind the seam. (COMP-004, REQ-004)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/stt.py
   - parallel: true
-- [ ] **T-010**: `TTSEngine` (Olivia-cloned voice) behind the seam. (COMP-005, REQ-005)
+- [x] **T-010**: `TTSEngine` (Olivia-cloned voice) behind the seam. (COMP-005, REQ-005)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/tts.py
   - parallel: true
