@@ -1,27 +1,32 @@
 """Voice platform config (SPEC-077 COMP-001).
 
 The ``[platforms.voice]`` block: which agent, where the WebSocket engine listens,
-the pairing-token env var (a credential, never inline), and the cascade engine's
-model settings. Absent an engine voice model, the adapter falls back to the fake
-engine so it loads and pairs even without models installed (dev / CI).
+the pairing-token env var (a credential, never inline), and the engine selection.
+
+``engine`` is config-only and registry-driven: ``engine.tts`` / ``engine.stt``
+name a registered engine, and ``engine.<name>`` is that engine's own config
+sub-table (models, voices, blend, speed, …), which the engine validates itself.
+Absent an engine, the adapter runs the fake engine so it loads without models.
+
+Example (TOML):
+
+    [platforms.voice.engine]
+    tts = "kokoro"
+    stt = "whisper"
+    [platforms.voice.engine.kokoro]
+    model_path = "/…/kokoro-v1.0.onnx"
+    voices_path = "/…/voices-v1.0.bin"
+    blend = "af_jessica:0.6,af_nicole:0.4"
+    speed = 1.12
+    [platforms.voice.engine.whisper]
+    model = "tiny"
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-
-class VoiceEngineConfig(BaseModel):
-    """Cascade model settings (see docs/runbooks/voice-channel-deploy.md)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    stt_model: str = "tiny"
-    stt_device: str = "cpu"
-    stt_compute: str = "int8"
-    stt_model_path: str | None = None
-    #: Path to a Piper ``.onnx`` voice. None -> fake engine (no models needed).
-    tts_voice: str | None = None
 
 
 class VoicePlatformConfig(BaseModel):
@@ -37,7 +42,8 @@ class VoicePlatformConfig(BaseModel):
     token_env: str = "ARC_VOICE_TOKEN"  # noqa: S105 - env var NAME, not a secret value
     operator_did: str = "did:arc:operator"
     chat_id: str = "voice"
-    engine: VoiceEngineConfig = Field(default_factory=VoiceEngineConfig)
+    #: Engine selection + per-engine config sub-tables (registry-resolved by name).
+    engine: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("chat_id")
     @classmethod
@@ -53,4 +59,4 @@ class VoicePlatformConfig(BaseModel):
         return value
 
 
-__all__ = ["VoiceEngineConfig", "VoicePlatformConfig"]
+__all__ = ["VoicePlatformConfig"]

@@ -63,7 +63,8 @@ mattermost = ["aiohttp>=3.14.3,<4"]
 # Models are downloaded per-box, never vendored — see docs/runbooks/voice-channel-deploy.md.
 voice = [
     "faster-whisper>=1.2",      # STT (CTranslate2, no torch) — cascade listen()
-    "piper-tts>=1.2",           # TTS (ONNX, ARM-friendly) — the Olivia voice
+    "piper-tts>=1.2",           # TTS (ONNX, ARM-friendly) — a stock voice
+    "kokoro-onnx>=0.3",         # TTS (ONNX) — the natural Olivia voice (blendable)
     "onnxruntime>=1.17",        # piper + openwakeword runtime
     "numpy>=1.26",              # PCM <-> float for STT
     "aiortc>=1.9",              # WebRTC transport (Opus, AEC, DataChannel) — follow-up

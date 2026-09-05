@@ -205,6 +205,8 @@ module = [
     "faster_whisper.*",
     "piper",
     "piper.*",
+    "kokoro_onnx",
+    "kokoro_onnx.*",
     "ctranslate2",
     "ctranslate2.*",
     "onnxruntime",

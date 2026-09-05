@@ -16,8 +16,10 @@ self-signed local model, matching the tier stringency model).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
+from arcgateway.adapters.voice.engine.registry import register_stt
 from arcgateway.adapters.voice.engine.verify import (
     ArtifactVerifier,
     ModelArtifact,
@@ -84,6 +86,17 @@ class WhisperSTT:
 
     async def aclose(self) -> None:
         self._model = None
+
+
+@register_stt("whisper")
+def _build_whisper(config: Mapping[str, Any]) -> WhisperSTT:
+    return WhisperSTT(
+        model=str(config.get("model", "tiny")),
+        model_path=config.get("model_path"),
+        device=str(config.get("device", "cpu")),
+        compute_type=str(config.get("compute_type", "int8")),
+        expected_sha256=config.get("sha256"),
+    )
 
 
 __all__ = ["WhisperSTT"]

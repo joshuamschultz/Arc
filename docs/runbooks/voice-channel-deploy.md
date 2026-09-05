@@ -85,18 +85,36 @@ agent_did = "did:arc:olivia"          # the agent this mic talks to
 chat_id   = "olivia"                   # MUST NOT contain ':' (collides with the
                                        # platform:chat_id:thread reply address)
 
-# engine (cascade) settings — consumed by the adapter in later phases
+# Engine selection is config-only and registry-driven: engine.tts / engine.stt
+# name a registered engine, and engine.<name> is that engine's own config.
 [platforms.voice.engine]
-stt_model    = "tiny"                  # or a local model path
-stt_device   = "cpu"                   # "cuda" once the CTranslate2 CUDA build is in
-stt_compute  = "int8"
-tts_voice    = "/home/<user>/voicedev/voices/en_US-lessac-medium.onnx"
+tts = "kokoro"                         # natural voice (registered leaf)
+stt = "whisper"                        # faster-whisper
+
+[platforms.voice.engine.kokoro]
+model_path  = "/home/<user>/voicedev/kokoro/kokoro-v1.0.onnx"
+voices_path = "/home/<user>/voicedev/kokoro/voices-v1.0.bin"
+blend       = "af_jessica:0.6,af_nicole:0.4"   # mix voices; drop for a single voice
+speed       = 1.12
+
+[platforms.voice.engine.whisper]
+model        = "tiny"                  # or a local model path via model_path
+device       = "cpu"                   # "cuda" once the CTranslate2 CUDA build is in
+compute_type = "int8"
 ```
 
+**Change Olivia's voice — just edit TOML and restart, no code change:**
+- `blend` mixes any Kokoro voices by weight (e.g. `af_heart:0.7,af_nicole:0.3`); omit
+  `blend` and set `voice = "af_heart"` for a single voice.
+- `speed` (0.8–1.3) sets pace. `tts = "piper"` swaps back to Piper (needs
+  `[platforms.voice.engine.piper] voice_path = "…/en_US-lessac-medium.onnx"`).
+- Add a new engine (ElevenLabs, XTTS, …) as a registered leaf or a pip-installed
+  extension (`arcgateway.voice_engines` entry point) — then just name it in `tts`.
+
 > Personal/enterprise accept a **self-signed local model** (audit warns). To pin a
-> model, add its `sha256`; the artifact verifier then refuses anything that does
-> not match (fail-closed). Cryptographic (arctrust/Sigstore) signing of model
-> artifacts is the deferred integration.
+> model, add its `sha256` under the engine's sub-table; the artifact verifier then
+> refuses anything that does not match (fail-closed). Cryptographic
+> (arctrust/Sigstore) signing of model artifacts is the deferred integration.
 
 ## 6. Verify (round-trip smoke)
 

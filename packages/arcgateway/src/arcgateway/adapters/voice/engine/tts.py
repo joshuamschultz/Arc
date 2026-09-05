@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import struct
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from arcgateway.adapters.voice.engine.registry import register_tts
 from arcgateway.adapters.voice.engine.verify import (
     ArtifactVerifier,
     ModelArtifact,
@@ -90,6 +92,11 @@ class PiperTTS:
 
     async def aclose(self) -> None:
         self._voice = None
+
+
+@register_tts("piper")
+def _build_piper(config: Mapping[str, Any]) -> PiperTTS:
+    return PiperTTS(voice_path=str(config["voice_path"]), expected_sha256=config.get("sha256"))
 
 
 __all__ = ["PiperTTS", "wav_bytes"]

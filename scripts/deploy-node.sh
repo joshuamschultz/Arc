@@ -196,7 +196,7 @@ GATEWAY_TOML="${ARC_GATEWAY_CONFIG:-$HOME/arc/config/gateway.toml}"
 if [ -f "$GATEWAY_TOML" ] && grep -q '^\[platforms\.voice\]' "$GATEWAY_TOML"; then
   log "voice channel enabled — installing arcgateway[voice] deps into the runtime venv..."
   "$RUNTIME_DIR/.venv/bin/python" -m pip install -q \
-    websockets faster-whisper piper-tts onnxruntime numpy sounddevice webrtcvad openwakeword \
+    websockets faster-whisper piper-tts kokoro-onnx onnxruntime numpy sounddevice webrtcvad openwakeword \
     || log "WARNING: voice deps install failed — voice channel will be degraded until fixed"
 fi
 

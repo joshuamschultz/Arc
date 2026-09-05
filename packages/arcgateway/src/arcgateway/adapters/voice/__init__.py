@@ -8,14 +8,15 @@ absent from ``registry.OFFICIAL_ADAPTERS`` so the registry blocks it there too.
 
 The pairing token is a credential read from an env var, never inline config (LLM07).
 Absent a token the adapter still loads but refuses every connection (fail-closed);
-absent a Piper voice it runs the fake engine, so it loads without models installed.
-The real cascade (faster-whisper + Piper) is wired when ``[platforms.voice.engine]``
-names a ``tts_voice`` — see docs/runbooks/voice-channel-deploy.md.
+absent an engine selection it runs the fake engine, so it loads without models.
+The engine is chosen by config name and resolved through the voice-engine registry
+(swap Kokoro/Piper/Whisper/… by config) — see docs/runbooks/voice-channel-deploy.md.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from arcgateway.adapters.registry import (
     AdapterBuildContext,
@@ -23,29 +24,28 @@ from arcgateway.adapters.registry import (
     AdapterUnavailableError,
 )
 from arcgateway.adapters.voice.adapter import VoiceAdapter
-from arcgateway.adapters.voice.config import VoiceEngineConfig, VoicePlatformConfig
-from arcgateway.adapters.voice.engine.base import FakeVoiceEngine, VoiceEngine
+from arcgateway.adapters.voice.config import VoicePlatformConfig
+from arcgateway.adapters.voice.engine import (
+    FakeVoiceEngine,
+    VoiceEngine,
+    build_stt,
+    build_tts,
+)
 from arcgateway.adapters.voice.pairing import VoicePairing
 from arcgateway.audit import emit_event
 
 
-def _build_engine(cfg: VoiceEngineConfig) -> VoiceEngine:
-    """Real cascade when a Piper voice is configured; else the fake (no models)."""
-    if not cfg.tts_voice:
+def _build_engine(engine_cfg: dict[str, Any]) -> VoiceEngine:
+    """Resolve the cascade from config via the registry; fake when unconfigured."""
+    tts_name = engine_cfg.get("tts")
+    stt_name = engine_cfg.get("stt")
+    if not tts_name and not stt_name:
         return FakeVoiceEngine()
     from arcgateway.adapters.voice.engine.cascade import CascadeEngine
-    from arcgateway.adapters.voice.engine.stt import WhisperSTT
-    from arcgateway.adapters.voice.engine.tts import PiperTTS
 
-    return CascadeEngine(
-        stt=WhisperSTT(
-            model=cfg.stt_model,
-            model_path=cfg.stt_model_path,
-            device=cfg.stt_device,
-            compute_type=cfg.stt_compute,
-        ),
-        tts=PiperTTS(voice_path=cfg.tts_voice),
-    )
+    stt = build_stt(str(stt_name), engine_cfg.get(str(stt_name), {})) if stt_name else None
+    tts = build_tts(str(tts_name), engine_cfg.get(str(tts_name), {})) if tts_name else None
+    return CascadeEngine(stt=stt, tts=tts)
 
 
 def build(ctx: AdapterBuildContext) -> VoiceAdapter:
