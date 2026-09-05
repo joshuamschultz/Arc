@@ -96,4 +96,62 @@ def _write_gateway_block(
     gateway_config.write_text(arcagent.dumps_toml(data), encoding="utf-8")
 
 
-__all__ = ["connect_telegram"]
+def connect_voice(
+    *,
+    agent_did: str,
+    gateway_config: Path,
+    env_file: Path,
+    token: str | None = None,
+    model_dir: str = "~/voicedev/kokoro",
+    blend: str = "af_jessica:0.6,af_nicole:0.4",
+    speed: float = 1.12,
+    chat_id: str = "olivia",
+    port: int = 8790,
+) -> dict[str, str]:
+    """Wire the desk voice channel to ``agent_did``. Returns ``{token_env, agent_did, token}``.
+
+    Generates (or accepts) a pairing token, stores it in ``env_file`` (0600) under
+    ``ARC_VOICE_TOKEN``, and writes a ``[platforms.voice]`` block bound to the agent
+    with a Kokoro cascade engine (blend + speed are config, tunable later). Models
+    are per-box under ``model_dir`` (never vendored). Shared by the CLI and arcui.
+    """
+    import secrets
+
+    if not agent_did.strip():
+        raise ValueError("no agent DID to bind voice to. Nothing was written.")
+    if ":" in chat_id:
+        raise ValueError("chat_id must not contain ':' (collides with the reply address).")
+    token = (token or secrets.token_hex(32)).strip()
+    token_env = "ARC_VOICE_TOKEN"  # noqa: S105 - env var NAME, not a secret value
+    _upsert_env(env_file, token_env, token)
+
+    md = str(Path(model_dir).expanduser())
+    existing = gateway_config.read_text(encoding="utf-8") if gateway_config.exists() else ""
+    data: dict[str, Any] = tomllib.loads(existing) if existing else {}
+    platforms = data.setdefault("platforms", {})
+    platforms["voice"] = {
+        "enabled": True,
+        "agent_did": agent_did.strip(),
+        "host": "0.0.0.0",  # noqa: S104 - LAN reachability for the desk mic client
+        "port": port,
+        "token_env": token_env,
+        "chat_id": chat_id,
+        "engine": {
+            "tts": "kokoro",
+            "stt": "whisper",
+            "kokoro": {
+                "model_path": f"{md}/kokoro-v1.0.onnx",
+                "voices_path": f"{md}/voices-v1.0.bin",
+                "blend": blend,
+                "speed": speed,
+            },
+            "whisper": {"model": "tiny", "device": "cpu", "compute_type": "int8"},
+        },
+    }
+    data.setdefault("security", {})["require_pairing"] = True
+    gateway_config.parent.mkdir(parents=True, exist_ok=True)
+    gateway_config.write_text(arcagent.dumps_toml(data), encoding="utf-8")
+    return {"token_env": token_env, "agent_did": agent_did.strip(), "token": token}
+
+
+__all__ = ["connect_telegram", "connect_voice"]

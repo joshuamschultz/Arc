@@ -508,6 +508,20 @@ def _gateway_connect_telegram_handler(args: list[str]) -> None:
     gateway_connect_telegram_handler(args)
 
 
+def _gateway_connect_voice_handler(args: list[str]) -> None:
+    """Wire the desk voice channel to an agent — delegates to gateway_connect."""
+    from arccli.commands.gateway_connect import gateway_connect_voice_handler
+
+    gateway_connect_voice_handler(args)
+
+
+def _gateway_voice_engines_handler(args: list[str]) -> None:
+    """List registered voice engines — delegates to gateway_connect."""
+    from arccli.commands.gateway_connect import gateway_voice_engines_handler
+
+    gateway_voice_engines_handler(args)
+
+
 COMMAND_REGISTRY: list[CommandDef] = [
     # --- Info ---
     CommandDef(
@@ -792,6 +806,22 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="--agent <dir> [--user-id <id>]",
         cli_only=True,
         handler=_gateway_connect_telegram_handler,
+    ),
+    CommandDef(
+        name="gateway connect-voice",
+        description="Connect an agent to the desk voice channel (hey Olivia, Kokoro voice)",
+        category="Configuration",
+        args_hint="--agent <dir> [--blend a:0.6,b:0.4] [--speed 1.12]",
+        cli_only=True,
+        handler=_gateway_connect_voice_handler,
+    ),
+    CommandDef(
+        name="gateway voice engines",
+        description="List registered voice engines (config-selectable by name)",
+        category="Configuration",
+        args_hint="",
+        gateway_only=True,
+        handler=_gateway_voice_engines_handler,
     ),
     # --- Exit ---
     CommandDef(
