@@ -1,0 +1,33 @@
+{
+  "feature": "voice-channel",
+  "status": "deepened",
+  "created": "2026-09-04",
+  "deepened": "2026-09-04",
+  "vision": ".claude/brainstorms/2026-09-04-voice-channel.md",
+  "decisions_doc": ".claude/builds/voice-channel/decisions.md",
+  "decision_ids": ["D-727", "D-768"],
+  "categories_walked": [
+    "architecture", "data-model", "api", "observability", "audit-compliance",
+    "security", "integration", "performance", "extensibility", "testing",
+    "deployment", "ui-ux"
+  ],
+  "user_decisions": {
+    "mac_gpu": "Mac = thin client, DGX runs the engine",
+    "audience": "personal + enterprise together",
+    "v1_win": "ask -> agentic run -> short spoken answer, parity with Telegram, succinct + confirmation-first",
+    "voice_engine": "cascade now (STT -> Arc -> TTS), PersonaPlex optional/deferred behind the same seam"
+  },
+  "deepen_findings": {
+    "R-1": "PersonaPlex not thin-face capable -> cascade (D-761)",
+    "R-2": "transport = WebRTC not raw WS, AEC enables barge-in (D-762)",
+    "R-3": "openWakeWord self-trained + Silero VAD endpointing (D-763)",
+    "R-4": "four UX modules: output contract(code), progress mgr, confirmation gate, audio-feedback/interruption (D-764..767)",
+    "extra": "Mac push-to-talk fallback (D-768)"
+  },
+  "resolved_by": "four-pillars + arc patterns + 3 parallel research agents",
+  "open_for_deepen": [],
+  "spec": ".claude/specs/SPEC-077-voice-channel/",
+  "status_after_specify": "specified (PRD 23 reqs, SDD 18 comps, PLAN 36 tasks)",
+  "next": "/implement SPEC-077",
+  "meta": { "last_updated": "2026-09-04" }
+}

@@ -59,9 +59,23 @@ slack = ["slack-bolt>=1.18", "slack-sdk>=3", "aiohttp>=3.14.3,<4"]
 # (PYSEC-2026-3546/3547), both reachable by anything that serves or dials a
 # WebSocket, plus the C-parser out-of-bounds read (PYSEC-2026-3545).
 mattermost = ["aiohttp>=3.14.3,<4"]
+# SPEC-077 voice channel. Cascade engine (STT+TTS) + WebRTC transport + wake word.
+# Models are downloaded per-box, never vendored — see docs/runbooks/voice-channel-deploy.md.
+voice = [
+    "faster-whisper>=1.2",      # STT (CTranslate2, no torch) — cascade listen()
+    "piper-tts>=1.2",           # TTS (ONNX, ARM-friendly) — the Olivia voice
+    "onnxruntime>=1.17",        # piper + openwakeword runtime
+    "numpy>=1.26",              # PCM <-> float for STT
+    "aiortc>=1.9",              # WebRTC transport (Opus, AEC, DataChannel) — follow-up
+    "websockets>=12",           # v1 push-to-talk transport (client <-> engine host)
+    "openwakeword>=0.6",        # local "hey Olivia" wake word (client) — follow-up
+    "sounddevice>=0.4",         # mic/speaker on the client (PortAudio)
+    "webrtcvad>=2.0.10",        # cheap VAD gate for the endpointer
+]
 
 [project.scripts]
 arcgateway = "arcgateway.cli:main"
+arc-voice = "arcgateway.adapters.voice.client:main"  # SPEC-077 desk voice client
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
@@ -109,6 +123,28 @@ ignore_missing_imports = true
 # ships complete stubs — suppress missing-import noise so --strict stays clean.
 [[tool.mypy.overrides]]
 module = ["telegram.*", "slack_bolt.*", "slack_sdk.*", "aiohttp.*"]
+ignore_missing_imports = true
+
+# SPEC-077 voice models/transport — optional [voice] extras, no complete stubs.
+[[tool.mypy.overrides]]
+module = [
+    "faster_whisper",
+    "faster_whisper.*",
+    "piper",
+    "piper.*",
+    "ctranslate2",
+    "ctranslate2.*",
+    "onnxruntime",
+    "onnxruntime.*",
+    "aiortc",
+    "aiortc.*",
+    "openwakeword",
+    "openwakeword.*",
+    "sounddevice",
+    "sounddevice.*",
+    "webrtcvad",
+    "webrtcvad.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
