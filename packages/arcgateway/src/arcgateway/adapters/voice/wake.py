@@ -8,13 +8,44 @@ openWakeWord ONNX model (follow-up); the gate logic here is model-free and teste
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class WakeDetector(Protocol):
     """Local wake-word decision for one audio frame."""
 
     def detect(self, frame: bytes) -> bool: ...
+
+
+class OpenWakeWordDetector:
+    """Real "hey Olivia" detector backed by an openWakeWord ONNX model.
+
+    Feed 16 kHz mono PCM-16 frames (openWakeWord uses 80 ms / 1280-sample chunks).
+    ``detect`` returns True once any model score crosses the threshold. The model
+    path is a self-trained "hey Olivia" ONNX (see the deploy guide's training
+    recipe); the heavy import is lazy so this module stays cheap without [voice].
+    """
+
+    def __init__(
+        self, *, model_path: str, threshold: float = 0.5, model: Any | None = None
+    ) -> None:
+        self._model_path = model_path
+        self._threshold = threshold
+        self._model = model  # injectable for tests
+
+    def _ensure(self) -> Any:
+        if self._model is None:
+            from openwakeword.model import Model  # lazy: optional [voice] dep
+
+            self._model = Model(wakeword_model_paths=[self._model_path])
+        return self._model
+
+    def detect(self, frame: bytes) -> bool:
+        import numpy as np  # lazy
+
+        samples = np.frombuffer(frame, dtype=np.int16)
+        scores = self._ensure().predict(samples)
+        return any(score >= self._threshold for score in scores.values())
 
 
 class WakeGate:
@@ -51,4 +82,4 @@ class WakeGate:
         self._awake = False
 
 
-__all__ = ["WakeDetector", "WakeGate"]
+__all__ = ["OpenWakeWordDetector", "WakeDetector", "WakeGate"]

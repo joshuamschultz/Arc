@@ -191,11 +191,44 @@ WantedBy=default.target
 `systemctl --user enable --now arc-voice`. On macOS use a launchd agent, and grant
 the launching binary microphone access (TCC) — a background agent gets no prompt.
 
-## 11. Not yet wired (roadmap)
+## 11. Always-on "hey Olivia" (DGX USB mic)
 
-- **Wake word model:** the `WakeGate` logic and push-to-talk are wired; still to do
-  is training a "hey Olivia" openWakeWord ONNX model (do not ship the CC-BY-NC
-  prebuilt voices) and feeding its frames to the gate on the client.
+The always-on client runs on the box with the mic. For the DGX, plug in a **USB
+mic + speaker** and run the client there (no network hop — local loop to
+`127.0.0.1:8790`).
+
+1. **Audio device (ALSA):** plug in the USB mic/speaker; `arecord -l` / `aplay -l`
+   to find the card; set it as default in `~/.asoundrc` or pass the device to
+   sounddevice. Confirm capture: `arecord -d 3 -f S16_LE -r 16000 test.wav`.
+
+2. **Train the "hey Olivia" wake model** (one-time; needs a GPU + Piper, both on the
+   DGX). Use openWakeWord's synthetic-data training (Piper generates the positive
+   samples, so no recording):
+   ```bash
+   pip install 'openwakeword[training]'
+   # follow openWakeWord's automatic training with wake_phrase="hey olivia"
+   # -> produces hey_olivia.onnx.  Do NOT ship the CC-BY-NC prebuilt voices.
+   ```
+   Put the resulting `hey_olivia.onnx` under `~/voicedev/wakewords/`.
+
+3. **Run always-on:** the client switches from push-to-talk to always-listening
+   automatically when `ARC_VOICE_WAKE_MODEL` is set:
+   ```bash
+   export ARC_VOICE_URI="ws://127.0.0.1:8790"
+   export ARC_VOICE_TOKEN="<token from config/arc.env>"
+   export ARC_VOICE_WAKE_MODEL="$HOME/voicedev/wakewords/hey_olivia.onnx"
+   arc-voice        # streams NOTHING until "hey Olivia" fires, then captures + sends
+   ```
+   The client feeds mic frames to the wake gate; on "hey Olivia" it captures the
+   utterance (energy-based endpointing, ~1.2 s trailing silence), sends it, plays
+   Olivia's reply, and re-arms. `Ctrl-C` to stop; run under systemd (§10) to keep it
+   resident.
+
+## 12. Not yet wired (roadmap)
+
+- **Wake word model:** the always-on client, `WakeGate`, and `OpenWakeWordDetector`
+  are wired (§11); the only remaining step is running the training to produce
+  `hey_olivia.onnx` and plugging in the USB mic.
 - **WebRTC upgrade (D-762):** replace the v1 WebSocket with `aiortc` — Opus/AEC,
   DataChannel barge-in, DTLS-SRTP + **mTLS**, host-only candidates — for
   talk-over-the-assistant barge-in on open speakers.

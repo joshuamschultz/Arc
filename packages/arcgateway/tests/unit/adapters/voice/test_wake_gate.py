@@ -5,7 +5,46 @@ No audio streams before a wake; the wake word and push-to-talk both wake it.
 
 from __future__ import annotations
 
-from arcgateway.adapters.voice.wake import WakeGate
+import queue
+
+import numpy as np
+
+from arcgateway.adapters.voice.client import _collect_utterance
+from arcgateway.adapters.voice.wake import OpenWakeWordDetector, WakeGate
+
+
+class _FakeOWW:
+    def __init__(self, score: float) -> None:
+        self.score = score
+
+    def predict(self, _samples: object) -> dict[str, float]:
+        return {"hey_olivia": self.score}
+
+
+def test_oww_detector_fires_only_above_threshold() -> None:
+    frame = np.zeros(1280, dtype=np.int16).tobytes()
+    assert OpenWakeWordDetector(model_path="x", threshold=0.5, model=_FakeOWW(0.9)).detect(frame)
+    assert not OpenWakeWordDetector(model_path="x", threshold=0.5, model=_FakeOWW(0.2)).detect(frame)
+
+
+def test_collect_utterance_stops_after_trailing_silence() -> None:
+    q: queue.Queue[bytes] = queue.Queue()
+    loud = (np.ones(1280, dtype=np.int16) * 3000).tobytes()
+    quiet = np.zeros(1280, dtype=np.int16).tobytes()
+    for _ in range(3):
+        q.put(loud)
+    for _ in range(20):
+        q.put(quiet)
+    pcm = _collect_utterance(q, np, silence_frames=15)
+    assert len(pcm) == (3 + 15) * 1280 * 2  # 3 speech + 15 trailing-silence frames
+
+
+def test_collect_utterance_returns_empty_on_pure_silence() -> None:
+    q: queue.Queue[bytes] = queue.Queue()
+    quiet = np.zeros(1280, dtype=np.int16).tobytes()
+    for _ in range(20):
+        q.put(quiet)
+    assert _collect_utterance(q, np, silence_frames=15) == b""
 
 
 class _FakeDetector:
