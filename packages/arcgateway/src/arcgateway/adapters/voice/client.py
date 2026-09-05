@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import logging
 import os
 import wave
 from collections.abc import Awaitable, Callable
@@ -26,6 +27,7 @@ Capture = Callable[[], Awaitable[bytes]]
 Playback = Callable[[bytes], Awaitable[None]]
 
 _SAMPLE_RATE = 16000
+_log = logging.getLogger("arcgateway.voice.client")
 
 
 def _collect_utterance(
@@ -58,6 +60,14 @@ def _collect_utterance(
             if silence >= silence_frames:
                 break
     return b"".join(collected) if spoke else b""
+
+
+def _normalize(pcm: bytes, np: Any, target_peak: float) -> bytes:
+    """Peak-normalize a segment toward ``target_peak`` so a quiet mic transcribes."""
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    peak = float(np.max(np.abs(samples))) or 1.0
+    gain = min(20.0, target_peak / peak)  # cap so pure noise isn't blown up
+    return bytes(np.clip(samples * gain, -32768, 32767).astype(np.int16).tobytes())
 
 
 class VoiceDeskClient:
@@ -143,18 +153,22 @@ class VoiceDeskClient:
         wake_words: tuple[str, ...] = ("olivia",),
         rms_threshold: float = 500.0,
         silence_frames: int = 15,
+        target_peak: float = 0.0,
     ) -> None:
         """Always-on without a trained model: local STT gates on the wake phrase.
 
         Segments speech by energy (dropping pre-speech silence, so nothing is
         acted on until you speak), transcribes each segment LOCALLY, and only when
         the transcript contains a wake word ("olivia") sends the utterance to the
-        gateway and plays Olivia's reply. Works today with no wake-model training;
-        openWakeWord (``run_always_on``) is the lower-power upgrade.
+        gateway and plays Olivia's reply. ``target_peak`` (>0) peak-normalizes each
+        segment before STT so a quiet mic still transcribes. Logs what it hears so
+        the wake path is debuggable. openWakeWord (``run_always_on``) is the upgrade.
         """
         import numpy as np  # lazy
 
         await self._client.connect()
+        _log.info("stt-wake listening (rms>=%.0f, wake=%s, target_peak=%.0f)",
+                  rms_threshold, wake_words, target_peak)
         buffer: list[bytes] = []
         silence = 0
         spoke = False
@@ -173,9 +187,12 @@ class VoiceDeskClient:
                         continue
                     segment = b"".join(buffer)
                     buffer, silence, spoke = [], 0, False
-                    text = (await transcribe(segment)).lower()
-                    if any(word in text for word in wake_words):
-                        wav = await self._client.send_utterance(segment)
+                    audio = _normalize(segment, np, target_peak) if target_peak > 0 else segment
+                    text = (await transcribe(audio)).lower().strip()
+                    _log.info("heard %.1fs: %r", len(segment) / 2 / _SAMPLE_RATE, text)
+                    if text and any(word in text for word in wake_words):
+                        _log.info("wake word matched -> sending to Olivia")
+                        wav = await self._client.send_utterance(audio)
                         if wav:
                             await playback(wav)
         finally:
@@ -257,6 +274,7 @@ def main() -> None:
     token = os.environ.get("ARC_VOICE_TOKEN", "")
     if not token:
         raise SystemExit("set ARC_VOICE_TOKEN (the pairing token) to connect")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s voice-client %(message)s")
     wake_model = os.environ.get("ARC_VOICE_WAKE_MODEL")
     always_on = os.environ.get("ARC_VOICE_ALWAYS_ON")  # STT-wake, no model needed
     desk = VoiceDeskClient(VoiceClient(uri=uri, token=token))
@@ -280,6 +298,8 @@ def main() -> None:
                     frames=_alsa_frame_source(mic),
                     transcribe=stt.listen,
                     playback=_play,
+                    rms_threshold=float(os.environ.get("ARC_VOICE_RMS", "500")),
+                    target_peak=float(os.environ.get("ARC_VOICE_TARGET_PEAK", "0")),
                 )
             )
         else:
