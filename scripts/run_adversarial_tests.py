@@ -58,6 +58,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/integration/test_file_delete_routes.py",
         "packages/arcui/tests/integration/test_path_traversal_e2e.py",
     ),
+    "voice channel abuse — pairing, tier gate, spoken injection (SPEC-077)": (
+        "packages/arcgateway/tests/security/test_voice_abuse.py",
+    ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",

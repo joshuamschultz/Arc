@@ -75,6 +75,7 @@ voice = [
 
 [project.scripts]
 arcgateway = "arcgateway.cli:main"
+arc-voice = "arcgateway.adapters.voice.client:main"  # SPEC-077 desk voice client
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"

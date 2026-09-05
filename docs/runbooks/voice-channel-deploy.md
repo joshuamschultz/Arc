@@ -148,14 +148,57 @@ Runs the mic/speaker/wake word and streams to the engine host.
 - GPU contention: on a shared box, size the whisper model so inference does not
   starve the live fleet.
 
-## 9. Not yet wired (roadmap)
+## 9. Run it today
 
-These land in later SPEC-077 phases and are **not** covered by this deploy yet:
+The engine (STT + TTS), the WebSocket transport, pairing and per-turn audit are
+wired. To talk:
 
-- **Wake word:** train a "hey Olivia" openWakeWord ONNX model and ship it with the
-  client (do not use the CC-BY-NC prebuilt models for a shipped product).
-- **WebRTC transport:** `aiortc` peer, Opus/AEC, DataChannel barge-in, DTLS-SRTP +
-  mTLS, host-only candidates.
-- **`arc voice start`** client command + reconnect watcher.
-- **Pairing + audit wiring** into the SPEC-035 grant store and `arctrust.audit.emit`.
-- **systemd** unit for the client, and signed model bundles.
+1. **Set the pairing token** on the engine host (a credential — env, `0600`, never
+   config): `export ARC_VOICE_TOKEN=$(openssl rand -hex 32)`.
+2. **Enable `[platforms.voice]`** in the running gateway's `gateway.toml` (§5) and
+   restart the gateway. It now serves the voice channel for that agent.
+3. **On the Mac (client):** `pip install 'arcgateway[voice]'`, then:
+   ```bash
+   export ARC_VOICE_URI="ws://<engine-host>:8790"
+   export ARC_VOICE_TOKEN="<the same token>"
+   arc-voice          # push-to-talk: Enter, speak, Enter — hear the reply
+   ```
+
+Verify the whole loop first with the §6 round-trip smoke; then `arc-voice` for the
+live push-to-talk experience.
+
+## 10. Run the client under launchd / systemd
+
+The client is push-to-talk (interactive), so it is usually run in a terminal. To
+keep it resident, wrap `arc-voice` in a user service. Linux desk box:
+
+```ini
+# ~/.config/systemd/user/arc-voice.service
+[Unit]
+Description=Arc desk voice client
+[Service]
+Environment=ARC_VOICE_URI=ws://<engine-host>:8790
+Environment=ARC_VOICE_TOKEN=<token>
+Environment=DBUS_SESSION_BUS_ADDRESS=/dev/null
+ExecStart=%h/.local/bin/arc-voice
+Restart=on-failure
+[Install]
+WantedBy=default.target
+```
+
+`systemctl --user enable --now arc-voice`. On macOS use a launchd agent, and grant
+the launching binary microphone access (TCC) — a background agent gets no prompt.
+
+## 11. Not yet wired (roadmap)
+
+- **Wake word model:** the `WakeGate` logic and push-to-talk are wired; still to do
+  is training a "hey Olivia" openWakeWord ONNX model (do not ship the CC-BY-NC
+  prebuilt voices) and feeding its frames to the gate on the client.
+- **WebRTC upgrade (D-762):** replace the v1 WebSocket with `aiortc` — Opus/AEC,
+  DataChannel barge-in, DTLS-SRTP + **mTLS**, host-only candidates — for
+  talk-over-the-assistant barge-in on open speakers.
+- **Enterprise TOFU pairing:** approve-once via the SPEC-035 grant store (v1 uses a
+  single operator token).
+- **arctrust model signing:** cryptographic Sigstore/arctrust signatures on model
+  artifacts (v1 verifies content digest + accepts self-signed local models).
+- **arcui connection card:** voice pairing status per agent (cosmetic; REQ-023 Could).

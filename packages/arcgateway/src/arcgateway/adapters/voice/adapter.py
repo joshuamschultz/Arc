@@ -19,6 +19,7 @@ from typing import Any
 from arcgateway.adapters.base import DraftPart, InboundDraft, Outbound, as_parts
 from arcgateway.adapters.registry import OnMessage
 from arcgateway.adapters.voice.engine.base import FakeVoiceEngine, VoiceEngine
+from arcgateway.adapters.voice.telemetry import voice_span
 from arcgateway.adapters.voice.transport import Authenticate, VoiceLink, VoiceServer
 from arcgateway.adapters.voice.ux.output_contract import OutputContract
 from arcgateway.audit import emit_event
@@ -59,6 +60,10 @@ class VoiceAdapter:
         await self._server.start()
         emit_event("voice.server.started", f"voice:{self.agent_did}", "allow", tier=self._tier)
 
+    def bound_port(self) -> int:
+        """The port the voice server is listening on (useful when started on 0)."""
+        return self._server.bound_port()
+
     async def disconnect(self) -> None:
         await self._server.stop()
         await self.engine.aclose()
@@ -74,7 +79,8 @@ class VoiceAdapter:
             tier=self._tier,
             extra={"bytes": len(pcm)},
         )
-        transcript = await self.engine.listen(pcm)
+        with voice_span("voice.stt", chat_id=link.chat_id, bytes=len(pcm)):
+            transcript = await self.engine.listen(pcm)
         parts = self.to_parts({"transcript": transcript})
         if not parts:
             return
@@ -119,7 +125,8 @@ class VoiceAdapter:
         if link is None:
             emit_event("voice.reply.no_link", f"voice:{target.chat_id}", "warn", tier=self._tier)
             return
-        audio = await self.engine.speak(spoken)
+        with voice_span("voice.tts", chat_id=target.chat_id, words=len(spoken.split())):
+            audio = await self.engine.speak(spoken)
         await link.send_audio(audio)
         emit_event(
             "voice.reply.spoken",
