@@ -78,7 +78,7 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/endpoint.py
   - parallel: false
-- [ ] **T-017**: Transport tests: unauthenticated/fingerprint-mismatch peer refused; barge-in fires while playback active. (COMP-007, REQ-008, REQ-009)
+- [x] **T-017**: Transport tests: unauthenticated/fingerprint-mismatch peer refused; barge-in fires while playback active. (COMP-007, REQ-008, REQ-009)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_transport.py
   - parallel: true
@@ -125,11 +125,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/audio_feedback.py
   - parallel: true
-- [ ] **T-028**: Test `VoicePairing`: personal refuses unpaired mic; enterprise unapproved mic raises a pending grant (no action). (COMP-013, REQ-017)
+- [x] **T-028**: Test `VoicePairing`: personal refuses unpaired mic; enterprise unapproved mic raises a pending grant (no action). (COMP-013, REQ-017)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_pairing.py
   - parallel: true
-- [ ] **T-029**: `VoicePairing`: personal operator-signed pairing; enterprise TOFU via mechanical approval (SPEC-035 grant store). (COMP-013, REQ-017)
+- [x] **T-029**: `VoicePairing`: personal operator-signed pairing; enterprise TOFU via mechanical approval (SPEC-035 grant store). (COMP-013, REQ-017)
   - domain: auth
   - files: packages/arcgateway/src/arcgateway/adapters/voice/pairing.py
   - parallel: false
@@ -137,7 +137,7 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_audit.py
   - parallel: true
-- [ ] **T-031**: `VoiceAudit` wiring: `arctrust.audit.emit` per op; transcript encryption at rest; audio never in session/prompt; opt-in short-TTL encrypted audio. (COMP-015, REQ-019, REQ-020)
+- [x] **T-031**: `VoiceAudit` wiring: `arctrust.audit.emit` per op; transcript encryption at rest; audio never in session/prompt; opt-in short-TTL encrypted audio. (COMP-015, REQ-019, REQ-020)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/audit.py
   - parallel: false

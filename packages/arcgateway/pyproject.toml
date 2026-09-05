@@ -66,8 +66,9 @@ voice = [
     "piper-tts>=1.2",           # TTS (ONNX, ARM-friendly) — the Olivia voice
     "onnxruntime>=1.17",        # piper + openwakeword runtime
     "numpy>=1.26",              # PCM <-> float for STT
-    "aiortc>=1.9",              # WebRTC transport (Opus, AEC, DataChannel)
-    "openwakeword>=0.6",        # local "hey Olivia" wake word (client)
+    "aiortc>=1.9",              # WebRTC transport (Opus, AEC, DataChannel) — follow-up
+    "websockets>=12",           # v1 push-to-talk transport (client <-> engine host)
+    "openwakeword>=0.6",        # local "hey Olivia" wake word (client) — follow-up
     "sounddevice>=0.4",         # mic/speaker on the client (PortAudio)
     "webrtcvad>=2.0.10",        # cheap VAD gate for the endpointer
 ]

@@ -12,8 +12,19 @@ from arcgateway.adapters.base import BasePlatformAdapter
 from arcgateway.adapters.registry import AdapterBuildContext, AdapterSpec
 from arcgateway.adapters.voice import PLATFORM, build
 from arcgateway.adapters.voice.engine.base import FakeVoiceEngine
+from arcgateway.adapters.voice.transport import VoiceLink
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.parts import TextPart
+
+
+class _FakeWS:
+    """Records what the adapter pushes down a link."""
+
+    def __init__(self) -> None:
+        self.sent: list[object] = []
+
+    async def send(self, data: object) -> None:
+        self.sent.append(data)
 
 
 async def _noop(_event: object) -> None:  # pragma: no cover
@@ -56,10 +67,21 @@ def test_to_parts_is_empty_for_a_blank_utterance() -> None:
     assert adapter.to_parts({}) == []
 
 
-async def test_send_voices_the_reply_through_the_engine() -> None:
+async def test_send_voices_the_reply_to_its_origin_link() -> None:
     engine = FakeVoiceEngine()
     adapter = build(_ctx())
-    adapter.engine = engine  # inject the fake for observation
+    adapter.engine = engine
+    ws = _FakeWS()
+    adapter._links["mic:desk"] = VoiceLink(chat_id="mic:desk", user_did="did:user:josh", _ws=ws)
     target = DeliveryTarget(platform="voice", chat_id="mic:desk")
     await adapter.send(target, [TextPart(text="You have two meetings.")])
     assert engine.spoken == ["You have two meetings."]
+    assert ws.sent  # the reply audio went back down the origin link
+
+
+async def test_send_without_a_link_does_not_speak() -> None:
+    engine = FakeVoiceEngine()
+    adapter = build(_ctx())
+    adapter.engine = engine
+    await adapter.send(DeliveryTarget(platform="voice", chat_id="unknown"), [TextPart(text="hi")])
+    assert engine.spoken == []  # no link -> nothing voiced (fail-safe)
