@@ -54,11 +54,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/tts.py
   - parallel: true
-- [ ] **T-011**: Test `ArtifactVerifier` refuses an unpinned/unverified model artifact. (COMP-017, REQ-022)
+- [x] **T-011**: Test `ArtifactVerifier` refuses an unpinned/unverified model artifact. (COMP-017, REQ-022)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_artifact_verifier.py
   - parallel: true
-- [ ] **T-012**: `ArtifactVerifier` hook on engine load (sign + provenance + version-pin). (COMP-017, REQ-022)
+- [x] **T-012**: `ArtifactVerifier` hook on engine load (sign + provenance + version-pin). (COMP-017, REQ-022)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/engine/verify.py
   - parallel: false
@@ -101,11 +101,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/output_contract.py
   - parallel: true
-- [ ] **T-022**: Test `ProgressManager`: ack < 1 s on a stubbed 90 s turn, ≥1 heartbeat, hard-timeout failure on a hung turn. (COMP-010, REQ-013)
+- [x] **T-022**: Test `ProgressManager`: ack < 1 s on a stubbed 90 s turn, ≥1 heartbeat, hard-timeout failure on a hung turn. (COMP-010, REQ-013)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_progress_manager.py
   - parallel: true
-- [ ] **T-023**: `ProgressManager`: ack → periodic earcon/heartbeat → hard timeout; wraps dispatch; generic fillers only. (COMP-010, REQ-013)
+- [x] **T-023**: `ProgressManager`: ack → periodic earcon/heartbeat → hard timeout; wraps dispatch; generic fillers only. (COMP-010, REQ-013)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/progress.py
   - parallel: true
@@ -117,11 +117,11 @@ Package home: `packages/arcgateway/src/arcgateway/adapters/voice/`; client in `p
   - domain: auth
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/confirmation.py
   - parallel: true
-- [ ] **T-026**: Test `AudioFeedback`/`Interruption`: earcons on state events; backchannel does not cut off; noise during read-back does not confirm. (COMP-012, REQ-015)
+- [x] **T-026**: Test `AudioFeedback`/`Interruption`: earcons on state events; backchannel does not cut off; noise during read-back does not confirm. (COMP-012, REQ-015)
   - domain: test
   - files: packages/arcgateway/tests/unit/adapters/voice/test_audio_feedback.py
   - parallel: true
-- [ ] **T-027**: `AudioFeedback` + `Interruption`: fixed earcon set; barge-in classifier; raised bar during read-back; content redirect via `enter_held_messages`. (COMP-012, REQ-015)
+- [x] **T-027**: `AudioFeedback` + `Interruption`: fixed earcon set; barge-in classifier; raised bar during read-back; content redirect via `enter_held_messages`. (COMP-012, REQ-015)
   - domain: backend
   - files: packages/arcgateway/src/arcgateway/adapters/voice/ux/audio_feedback.py
   - parallel: true
