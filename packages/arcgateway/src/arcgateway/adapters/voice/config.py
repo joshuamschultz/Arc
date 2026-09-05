@@ -8,7 +8,7 @@ engine so it loads and pairs even without models installed (dev / CI).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class VoiceEngineConfig(BaseModel):
@@ -38,6 +38,19 @@ class VoicePlatformConfig(BaseModel):
     operator_did: str = "did:arc:operator"
     chat_id: str = "voice"
     engine: VoiceEngineConfig = Field(default_factory=VoiceEngineConfig)
+
+    @field_validator("chat_id")
+    @classmethod
+    def _chat_id_has_no_colon(cls, value: str) -> str:
+        # The agent's reply address is "platform:chat_id[:thread_id]", split on
+        # ":" — a colon in chat_id mangles the reply target so the spoken answer
+        # never routes back. Reject it loudly rather than fail silently.
+        if ":" in value:
+            raise ValueError(
+                "chat_id must not contain ':' — it collides with the "
+                "'platform:chat_id:thread' delivery address"
+            )
+        return value
 
 
 __all__ = ["VoiceEngineConfig", "VoicePlatformConfig"]

@@ -48,3 +48,14 @@ def test_build_permits_personal_and_enterprise() -> None:
     for tier in ("personal", "enterprise"):
         adapter = build(_ctx(tier))
         assert adapter.name == "voice"
+
+
+def test_config_rejects_a_colon_in_chat_id() -> None:
+    from pydantic import ValidationError
+
+    from arcgateway.adapters.voice.config import VoicePlatformConfig
+
+    # A colon collides with the "platform:chat_id:thread" reply address (this bug
+    # silently dropped Olivia's spoken reply until it was caught live).
+    with pytest.raises(ValidationError):
+        VoicePlatformConfig(chat_id="voice:olivia")

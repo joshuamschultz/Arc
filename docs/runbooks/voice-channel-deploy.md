@@ -82,6 +82,8 @@ Add a `[platforms.voice]` block to the gateway's `gateway.toml`, one per agent
 [platforms.voice]
 enabled   = true
 agent_did = "did:arc:olivia"          # the agent this mic talks to
+chat_id   = "olivia"                   # MUST NOT contain ':' (collides with the
+                                       # platform:chat_id:thread reply address)
 
 # engine (cascade) settings — consumed by the adapter in later phases
 [platforms.voice.engine]
