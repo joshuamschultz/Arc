@@ -123,7 +123,7 @@ async def test_search_becomes_a_bounded_jql_query(spawn: _Recorder) -> None:
         "workitem",
         "search",
         "--json",
-        "--fields=issuetype,key,assignee,priority,status,summary,reporter,labels",
+        "--fields=issuetype,key,assignee,priority,status,summary,reporter,labels,description",
         "--jql=project = KAN",
         "--limit=25",
     ]

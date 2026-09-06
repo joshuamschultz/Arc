@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from arcagent.extension.attachment import ToolOutcome
@@ -38,6 +38,11 @@ class JiraSourceAdapter:
         self._attachment = attachment
         self._projects: tuple[str, ...] = ()
         self._content: dict[str, tuple[str, bytes]] = {}
+        # The whole issue set, listed ONCE at the start of a crawl and paged from
+        # memory. Re-listing every project on every page — and fetching each issue
+        # in its own `acli` call — put a 657-issue account past the 900s deadline
+        # every hour (one issue view is ~7s; one search returns all 657 in ~0.5s).
+        self._records: list[dict[str, Any]] | None = None
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
         await self._call("jira_list_projects", {})
@@ -89,12 +94,33 @@ class JiraSourceAdapter:
         self._projects = request.resource_ids
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        start = int(request.checkpoint or "0")
+        # List the whole account once, at the start of a crawl (or on a resumed
+        # run whose cache is cold), then page it from memory. The search payload
+        # is indexed directly — its ``--fields`` already carry the description, so
+        # there is no per-issue ``jira_get_issue`` (~7s each) to make.
+        if start == 0 or self._records is None:
+            self._records = await self._list_all_records(request.connection_id)
+        records = self._records
+        page = records[start : start + request.page_size]
+        objects = tuple(self._object(item) for item in page)
+        end = start + len(page)
+        has_more = end < len(records)
+        return SyncSourcePage(
+            objects=objects,
+            next_checkpoint=str(end) if has_more else "0",
+            has_more=has_more,
+        )
+
+    async def _list_all_records(self, connection_id: str) -> list[dict[str, Any]]:
+        """Every issue in every selected project, in one pass. ``_call_all`` grows
+        the page size until a project's whole issue set comes back in one call."""
         projects = self._projects
         if not projects:
             projects = tuple(
                 resource.resource_id
                 for resource in await self.list_source_resources(
-                    ListSourceResources(connection_id=request.connection_id)
+                    ListSourceResources(connection_id=connection_id)
                 )
             )
         records: list[dict[str, Any]] = []
@@ -102,21 +128,10 @@ class JiraSourceAdapter:
             records.extend(
                 await self._call_all(
                     "jira_search_issues",
-                    {
-                        "jql": f'project = "{project}" ORDER BY updated ASC',
-                        "limit": str(request.page_size),
-                    },
+                    {"jql": f'project = "{project}" ORDER BY updated ASC'},
                 )
             )
-        start = int(request.checkpoint or "0")
-        page = records[start : start + request.page_size]
-        objects = tuple([await self._full_object(item) for item in page])
-        next_checkpoint = str(start + len(page))
-        return SyncSourcePage(
-            objects=objects,
-            next_checkpoint=next_checkpoint if start + len(page) < len(records) else "0",
-            has_more=start + len(page) < len(records),
-        )
+        return records
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         cached = self._content.get(request.object_id)
@@ -140,6 +155,7 @@ class JiraSourceAdapter:
 
     async def close_source(self) -> None:
         self._content.clear()
+        self._records = None
 
     async def _call(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         result = await self._attachment.invoke(tool, args)
@@ -199,16 +215,9 @@ class JiraSourceAdapter:
             metadata={
                 "project": str(issue.get("project", "")),
                 "classification": "unclassified",
-                "revision": _timestamp_revision(issue.get("updated")),
+                "revision": _revision_for(issue),
             },
         )
-
-    async def _full_object(self, issue: dict[str, Any]) -> SourceObject:
-        key = str(issue.get("key") or issue.get("id") or "")
-        if not key:
-            return self._object(issue)
-        details = await self._call("jira_get_issue", {"issue_key": key})
-        return self._object({**issue, **details[0]} if details else issue)
 
 
 def _version(content: bytes) -> str:
@@ -219,6 +228,22 @@ def _timestamp_revision(value: object) -> int:
     if not isinstance(value, str) or not value:
         return 1
     return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1_000_000)
+
+
+def _revision_for(issue: dict[str, Any]) -> int:
+    """A monotonic revision for an issue.
+
+    ArcMemory skips an unchanged object by its content ``version`` and only
+    consults the revision when the content changed, where it must be strictly
+    greater than what it stored. Jira's ``updated`` cannot be returned as a
+    search field (``acli`` refuses it), so when it is absent the current time is
+    used: a later crawl always carries a higher revision, so a changed issue is
+    accepted while an unchanged one is skipped on its version before this matters.
+    """
+    updated = issue.get("updated")
+    if isinstance(updated, str) and updated:
+        return _timestamp_revision(updated)
+    return int(datetime.now(tz=UTC).timestamp() * 1_000_000)
 
 
 def build_source_adapter(context: dict[str, Any]) -> JiraSourceAdapter:

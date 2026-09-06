@@ -226,7 +226,7 @@ argv = [
   "workitem",
   "search",
   "--json",
-  "--fields=issuetype,key,assignee,priority,status,summary,reporter,labels",
+  "--fields=issuetype,key,assignee,priority,status,summary,reporter,labels,description",
 ]
 description = "Search issues with a JQL query. Jira refuses an unbounded query, so always constrain it — by project, assignee, status or a date."
 classification = "read_only"

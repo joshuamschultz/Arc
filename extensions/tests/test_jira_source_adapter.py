@@ -71,7 +71,36 @@ async def test_jira_source_discovers_selects_syncs_and_fetches_projects() -> Non
         )
     )
     assert json.loads(fetched.content)["key"] == "ARC-1"
-    assert attachment.calls[-1][0] == "jira_get_issue"
+    # The search payload is indexed directly — no per-issue ``jira_get_issue``
+    # (~7s each on a real account) during listing OR fetch. That N+1 is what put
+    # a 657-issue account past the 900s deadline every hour.
+    assert "jira_get_issue" not in [tool for tool, _ in attachment.calls]
+
+
+async def test_jira_lists_each_project_once_across_pages() -> None:
+    """A crawl lists the account once and pages it from memory.
+
+    Re-running the whole per-project search on every page — the old behavior —
+    multiplied the cost by the page count and never finished inside the deadline.
+    """
+    adapter = JiraSourceAdapter(_PagedJiraAttachment())
+    await adapter.select_source_resources(
+        SelectSourceResources(connection_id="jira", resource_ids=("P0",))
+    )
+
+    first = await adapter.sync_source(SyncSource(connection_id="jira", page_size=200))
+    searches_after_first = sum(
+        1 for tool, _ in adapter._attachment.calls if tool == "jira_search_issues"  # type: ignore[attr-defined]
+    )
+    await adapter.sync_source(
+        SyncSource(connection_id="jira", page_size=200, checkpoint=first.next_checkpoint)
+    )
+    searches_after_second = sum(
+        1 for tool, _ in adapter._attachment.calls if tool == "jira_search_issues"  # type: ignore[attr-defined]
+    )
+
+    # Page two adds no new search calls: it pages the cached listing.
+    assert searches_after_second == searches_after_first
 
 
 async def test_jira_source_rejects_unavailable_project() -> None:
