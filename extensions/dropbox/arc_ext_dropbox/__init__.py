@@ -25,6 +25,7 @@ import asyncio
 import json
 import mimetypes
 import time
+from datetime import datetime
 from typing import Any, Final
 
 import httpx
@@ -628,6 +629,12 @@ def _source_object(entry: dict[str, Any]) -> SourceObject:
         )
     kind = SourceObjectKind.FOLDER if tag == "folder" else SourceObjectKind.FILE
     object_id = str(entry.get("id") or f"path:{locator.lower()}")
+    # A monotonic revision so a CHANGED file re-indexes. Dropbox's ``rev`` is the
+    # content version but is not monotonic, and ArcMemory refuses an update whose
+    # revision is not strictly greater than the stored one — so without this a
+    # file was ingested once and every later edit was rejected as out of order.
+    # ``server_modified`` moves forward on every edit.
+    metadata = {**entry, "revision": _modified_revision(entry.get("server_modified"))}
     return SourceObject(
         object_id=object_id,
         locator=locator,
@@ -637,7 +644,7 @@ def _source_object(entry: dict[str, Any]) -> SourceObject:
         size=_optional_int(entry.get("size")),
         modified_at=_optional_string(entry.get("server_modified")),
         media_type=_media_type(locator) if kind is SourceObjectKind.FILE else None,
-        metadata=entry,
+        metadata=metadata,
     )
 
 
@@ -695,6 +702,20 @@ def _optional_string(value: Any) -> str | None:
 
 def _optional_int(value: Any) -> int | None:
     return value if isinstance(value, int) and value >= 0 else None
+
+
+def _modified_revision(value: Any) -> int:
+    """A monotonic revision from Dropbox's ``server_modified`` ISO timestamp.
+
+    Returns 1 when absent or unparseable — a file with no modified time never
+    re-indexes on edit, but it also never wrongly blocks its own first ingest.
+    """
+    if not isinstance(value, str) or not value:
+        return 1
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1_000_000)
+    except ValueError:
+        return 1
 
 
 def _schema(

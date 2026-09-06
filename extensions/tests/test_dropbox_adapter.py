@@ -423,3 +423,41 @@ async def test_concurrent_connections_and_token_mints_are_isolated(
 
     assert [result.account_id for result in results] == ["dbid:a", "dbid:a", "dbid:b"]
     assert mints == {"a": 1, "b": 1}
+
+
+def test_a_changed_file_gets_a_higher_revision_so_edits_reindex() -> None:
+    """A later edit must carry a strictly higher revision, or ArcMemory rejects it.
+
+    Dropbox's ``rev`` is the content version but is not monotonic, so without a
+    real revision an edited file was ingested once and every later change was
+    refused as out of order. ``server_modified`` supplies the monotonic value.
+    """
+    from extensions.dropbox.arc_ext_dropbox import _source_object
+
+    older = _source_object(
+        {
+            ".tag": "file",
+            "id": "id:x",
+            "path_display": "/a.txt",
+            "rev": "r1",
+            "server_modified": "2026-08-01T10:00:00Z",
+        }
+    )
+    newer = _source_object(
+        {
+            ".tag": "file",
+            "id": "id:x",
+            "path_display": "/a.txt",
+            "rev": "r2",
+            "server_modified": "2026-08-02T10:00:00Z",
+        }
+    )
+
+    assert isinstance(older.metadata["revision"], int)
+    assert newer.metadata["revision"] > older.metadata["revision"]
+
+    # A file with no modified time still ingests the first time (revision 1).
+    no_time = _source_object(
+        {".tag": "file", "id": "id:y", "path_display": "/b.txt", "rev": "r1"}
+    )
+    assert no_time.metadata["revision"] == 1
