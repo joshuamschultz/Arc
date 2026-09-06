@@ -68,6 +68,24 @@ async def _service(request: Request, agent_id: str) -> Any | None:
     return getattr(getattr(entry, "instance", None), "service", None)
 
 
+async def _connection_id(service: Any, identifier: str) -> str | None:
+    """Map a wire source identifier to the connection_id the service acts on.
+
+    The status projection exposes a canonical ``source_id`` (a hash, once a source
+    has synced) alongside its ``connection_id``, but every service action keys on
+    the connection_id. A surface that sent the ``source_id`` back — which the card
+    does — hit "source not found" on every mapping, resource and sync action the
+    moment a source had synced once. Accept either form.
+    """
+    for status in await service.list_sources():
+        if identifier in (
+            str(getattr(status, "source_id", "") or ""),
+            str(getattr(status, "connection_id", "") or ""),
+        ):
+            return str(status.connection_id)
+    return None
+
+
 def _operator(request: Request) -> JSONResponse | None:
     if getattr(request.state, "role", None) != "operator":
         return JSONResponse(
@@ -200,8 +218,11 @@ async def get_mapping_proposal(request: Request) -> JSONResponse:
     if service is None:
         return JSONResponse({"item": None, "status": "degraded"})
     source_id = request.path_params["source_id"]
+    connection_id = await _connection_id(service, source_id)
+    if connection_id is None:
+        return JSONResponse({"item": None})
     try:
-        proposal = await service.get_mapping_proposal(source_id)
+        proposal = await service.get_mapping_proposal(connection_id)
     except arcagent.SourceRefusedError as refusal:
         return _refused(refusal)
     except arcagent.SourceUnreachableError:
@@ -238,8 +259,11 @@ async def stage_mapping(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
         )
+    connection_id = await _connection_id(service, source_id)
+    if connection_id is None:
+        return JSONResponse(ErrorResponse(error="source not found").model_dump(), status_code=404)
     try:
-        proposal = await service.stage_mapping(source_id, homes=tuple(homes))
+        proposal = await service.stage_mapping(connection_id, homes=tuple(homes))
     except arcagent.SourceRefusedError as refusal:
         return _refused(refusal)
     except arcagent.SourceUnreachableError:
@@ -346,8 +370,11 @@ async def list_resources(request: Request) -> JSONResponse:
     if service is None:
         return JSONResponse({"items": []})
     source_id = request.path_params["source_id"]
+    connection_id = await _connection_id(service, source_id)
+    if connection_id is None:
+        return JSONResponse({"items": []})
     try:
-        items = await service.list_resources(source_id)
+        items = await service.list_resources(connection_id)
     except arcagent.SourceRefusedError as refusal:
         return _refused(refusal)
     except arcagent.SourceUnreachableError:
@@ -385,8 +412,11 @@ async def select_resources(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
         )
+    connection_id = await _connection_id(service, source_id)
+    if connection_id is None:
+        return JSONResponse(ErrorResponse(error="source not found").model_dump(), status_code=404)
     try:
-        resources = await service.select_resources(source_id, resource_ids=tuple(resource_ids))
+        resources = await service.select_resources(connection_id, resource_ids=tuple(resource_ids))
     except arcagent.SourceRefusedError as refusal:
         emit_mutation_audit(
             request,
@@ -441,7 +471,10 @@ async def sync_action(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="unsupported sync action").model_dump(), status_code=400
         )
-    result = await operation(source_id)
+    connection_id = await _connection_id(service, source_id)
+    if connection_id is None:
+        return JSONResponse(ErrorResponse(error="source not found").model_dump(), status_code=404)
+    result = await operation(connection_id)
     result_status = getattr(result, "status", "scheduled" if result else "not_found")
     applied = result is True or result_status in {"scheduled", "paused", "revoked"}
     emit_mutation_audit(

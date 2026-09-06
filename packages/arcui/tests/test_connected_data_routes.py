@@ -269,6 +269,20 @@ def test_reindex_is_an_audited_operator_lifecycle_action() -> None:
     assert service.action == ("reindex", "dropbox-olivia")
 
 
+def test_sync_action_accepts_the_wire_source_id_not_only_the_connection_id() -> None:
+    """The card sends back the canonical source_id, which the service keys none of
+    its actions on. Once a source had synced (source_id becomes a hash != the
+    connection_id), every Sync/Reindex/Pause button returned 'source not found'.
+    The route now resolves the wire source_id to the connection_id it acts on."""
+    client, service = _client()
+    response = client.post(
+        "/api/agents/olivia/knowledge/sync/source-7c2/sync",
+        headers={"Authorization": "Bearer operator"},
+    )
+    assert response.status_code == 200
+    assert service.action == ("sync", "dropbox-olivia")
+
+
 def test_resource_scope_is_visible_and_operator_gated() -> None:
     client, service = _client()
     path = "/api/agents/olivia/knowledge/connected-sources/dropbox-olivia/resources"
