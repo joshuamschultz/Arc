@@ -135,7 +135,9 @@ async def test_failed_ingest_does_not_advance_cursor() -> None:
     ingest = FakeIngest()
     ingest.fail = True
     store = InMemorySourceSyncStore()
-    with pytest.raises(RuntimeError):
+    # The only object on the page fails, so the whole page fails (the honesty
+    # guard) and the cursor must not advance past data that was never indexed.
+    with pytest.raises(SyncError):
         await ConnectedDataCoordinator(source, ingest, store).run(
             SourceDescription(connection_id="source", source_kind="test", account_id="account"),
             agent_did="did:a",
@@ -313,9 +315,14 @@ async def test_retry_sleep_is_capped_by_remaining_deadline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_first_ingest_failure_cancels_siblings() -> None:
-    started: list[str] = []
-    cancelled: list[str] = []
+async def test_one_ingest_failure_does_not_stop_siblings() -> None:
+    """One object's unexpected error is charged to it, not to the page.
+
+    The old design cancelled every sibling on the first ingest error and failed
+    the whole account. A single flaky object must cost only itself: the rest of
+    the page still lands and the object is reported as failed, not the account.
+    """
+    events: list[tuple[str, dict[str, object]]] = []
 
     class Ingest(FakeIngest):
         async def ingest(
@@ -325,24 +332,26 @@ async def test_first_ingest_failure_cancels_siblings() -> None:
             content: SourceContent | None,
             mapping: MappingPlan,
         ) -> None:
-            started.append(source_object.object_id)
             if source_object.object_id == "a":
-                raise RuntimeError("failed")
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                cancelled.append(source_object.object_id)
-                raise
+                raise RuntimeError("one flaky object")
+            await super().ingest(source, source_object, content, mapping)
 
-    with pytest.raises(RuntimeError):
-        await ConnectedDataCoordinator(
-            FakeSource([page("a", "b", cursor="")]), Ingest(), InMemorySourceSyncStore()
-        ).run(
-            SourceDescription(connection_id="source", source_kind="test", account_id="account"),
-            agent_did="did:a",
-            owner_id="worker",
-        )
-    assert "b" in cancelled
+    ingest = Ingest()
+    result = await ConnectedDataCoordinator(
+        FakeSource([page("a", "b", cursor="")]),
+        ingest,
+        InMemorySourceSyncStore(),
+        audit=lambda event, payload: events.append((event, dict(payload))),
+    ).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+        limits=SyncLimits(retries=0),
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert ingest.ingested == ["b"]
+    assert any(event == "connected_data.sync.object_failed" for event, _ in events)
 
 
 @pytest.mark.asyncio
@@ -642,25 +651,68 @@ async def test_an_object_the_source_calls_too_large_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_any_other_refusal_still_ends_the_run() -> None:
-    """A broken account must never be mistaken for a pile of big files.
+async def test_an_account_wide_refusal_still_ends_the_run() -> None:
+    """A broken account must never be mistaken for a pile of skippable files.
 
-    Deciding this from the exception's text skipped every object of every kind
-    and reported a healthy, empty sync over a source that was refusing outright.
+    An account-wide reason (a revoked credential) ends the run and leaves the
+    source FAILED, so a surface can say "reconnect this account" rather than
+    reporting a healthy, empty sync over a source that was refusing outright.
     """
-    source = _RefusingFetchSource([page("thing", cursor="")], SourceFailureCode.NOT_FOUND)
+    source = _RefusingFetchSource([page("thing", cursor="")], SourceFailureCode.AUTH_REQUIRED)
     ingest = FakeIngest()
 
     store = InMemorySourceSyncStore()
 
-    with pytest.raises(SyncError, match="refused"):
+    with pytest.raises(SyncError) as caught:
         await ConnectedDataCoordinator(source, ingest, store).run(
             SourceDescription(connection_id="source", source_kind="test", account_id="account"),
             agent_did="did:a",
             owner_id="worker",
         )
 
+    assert caught.value.code == "auth_required"
     assert (await store.get_state("did:a", "source")).status is SyncStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_an_object_the_source_cannot_find_is_skipped_not_fatal() -> None:
+    """A file deleted or renamed mid-crawl is one skipped object, not a dead sync.
+
+    The whole-run abort on NOT_FOUND meant a single blob vanishing during a
+    GitHub crawl failed the entire account. It is object-specific: skip it.
+    """
+    source = _RefusingFetchSource([page("gone", cursor="")], SourceFailureCode.NOT_FOUND)
+    events: list[str] = []
+
+    result = await ConnectedDataCoordinator(
+        source,
+        FakeIngest(),
+        InMemorySourceSyncStore(),
+        audit=lambda event, payload: events.append(event),
+    ).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert "connected_data.sync.object_skipped" in events
+
+
+@pytest.mark.asyncio
+async def test_an_object_of_unreadable_content_is_skipped_not_fatal() -> None:
+    """A content type nothing can parse is one skipped object, not a dead sync."""
+    source = _RefusingFetchSource([page("weird", cursor="")], SourceFailureCode.UNSUPPORTED_CONTENT)
+    ingest = FakeIngest()
+
+    result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
+        SourceDescription(connection_id="source", source_kind="test", account_id="account"),
+        agent_did="did:a",
+        owner_id="worker",
+    )
+
+    assert result.status is SyncStatus.COMPLETE
+    assert ingest.ingested == []
 
 
 class _CapRecordingSource(FakeSource):
@@ -735,16 +787,23 @@ async def test_one_unreadable_object_does_not_cost_the_whole_account() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_ingest_failure_that_is_not_about_one_object_still_fails() -> None:
-    """A broken store must not be mistaken for a pile of unreadable files."""
-    source = FakeSource([page("a", cursor="")])
-    ingest = _RefusingIngest("a", RuntimeError("ingest store is down"))
+async def test_a_page_where_every_object_fails_still_fails() -> None:
+    """A broken store must not be mistaken for a pile of unreadable files.
 
-    with pytest.raises(RuntimeError, match="store is down"):
+    One flaky object is charged to itself, but a page on which EVERY object
+    fails is a broken store or source: fail the sync rather than advance the
+    cursor past data that was never indexed and report a healthy empty run.
+    """
+    source = FakeSource([page("a", "b", cursor="")])
+    ingest = FakeIngest()
+    ingest.fail = True  # every object raises
+
+    with pytest.raises(SyncError, match="every object"):
         await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(
             SourceDescription(connection_id="source", source_kind="test", account_id="account"),
             agent_did="did:a",
             owner_id="worker",
+            limits=SyncLimits(retries=0),
         )
 
 

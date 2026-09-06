@@ -34,6 +34,33 @@ from arcagent.connected_data import (
     TransientSyncError,
 )
 
+# Failures that are about ONE object, not the account. The source is healthy — it
+# knows a size, a deletion, a content type or a version this side only guessed at —
+# so the object is left out and the crawl keeps going. Everything NOT here means the
+# source itself is unusable this run and the sync aborts.
+_OBJECT_SKIP_CODES = frozenset(
+    {
+        SourceFailureCode.TOO_LARGE,
+        SourceFailureCode.NOT_FOUND,
+        SourceFailureCode.VERSION_CHANGED,
+        SourceFailureCode.UNSUPPORTED_CONTENT,
+    }
+)
+
+# Reasons that condemn the whole run, not one object: a revoked credential, a rate
+# limit, a checkpoint the source rejects, a transient outage that survived retries.
+# On any of these an ingest task re-raises and ends the page; every other ingest
+# error is charged to its one object so the rest of the page still lands. Values,
+# because a wrapped SyncError carries the code as a string.
+_FATAL_SYNC_CODES = frozenset(
+    {
+        SourceFailureCode.AUTH_REQUIRED.value,
+        SourceFailureCode.RATE_LIMITED.value,
+        SourceFailureCode.CHECKPOINT_INVALID.value,
+        SourceFailureCode.TRANSIENT.value,
+    }
+)
+
 
 class ConnectedDataCoordinator:
     """Run pages through mapping and ingest before advancing a checkpoint."""
@@ -304,24 +331,23 @@ class ConnectedDataCoordinator:
                         cancel_event,
                     )
                 except SyncError as exc:
-                    # The source knows sizes this side only estimated. An object
-                    # IT refuses as too large is skipped like any other; every
-                    # other refusal still ends the run, because a source that is
-                    # actually broken must never look like a pile of big files.
-                    # Read from the original verdict, not from the message text.
+                    # A failure about THIS object — too large, gone, an unreadable
+                    # content type, a version that moved under us — is one skipped
+                    # file, not a dead account. An account-wide refusal (auth, a
+                    # rate limit, a rejected checkpoint) still ends the run, because
+                    # a source that is actually broken must never look like a pile
+                    # of skippable files. Read the typed verdict, not the message.
                     cause = exc.__cause__
-                    too_large = (
-                        isinstance(cause, SourceError)
-                        and cause.code is SourceFailureCode.TOO_LARGE
-                    )
-                    if not too_large:
+                    code = cause.code if isinstance(cause, SourceError) else None
+                    if code not in _OBJECT_SKIP_CODES:
                         raise
-                    await self._emit_skip(source, source_object, "object_too_large")
+                    await self._emit_skip(source, source_object, f"object_{code.value}")
                     continue
                 page_bytes += _content_bytes(content)
             page_bytes += _metadata_bytes(source_object)
             mappings.append((source_object, content, mapping))
         semaphore = asyncio.Semaphore(limits.max_concurrency)
+        outcomes = {"ok": 0, "failed": 0}
 
         async def apply(
             source_object: SourceObject, content: SourceContent | None, mapping: MappingPlan
@@ -339,6 +365,21 @@ class ConnectedDataCoordinator:
                     # can read must not cost an operator every other document
                     # beside it.
                     await self._emit_skip(source, source_object, refusal.reason)
+                except (LeaseLostError, MappingPendingError, _CancellationError):
+                    raise
+                except SyncError as exc:
+                    # An account-wide reason (revoked credential, rate limit, lost
+                    # lease) ends the whole run; anything else is charged to this
+                    # one object so the rest of the page still lands.
+                    if exc.code in _FATAL_SYNC_CODES:
+                        raise
+                    outcomes["failed"] += 1
+                    await self._emit_object_failed(source, source_object, exc.code)
+                except Exception:  # reason: one object's unexpected error is not the account's
+                    outcomes["failed"] += 1
+                    await self._emit_object_failed(source, source_object, "ingest_error")
+                else:
+                    outcomes["ok"] += 1
 
         try:
             async with asyncio.TaskGroup() as group:
@@ -346,6 +387,12 @@ class ConnectedDataCoordinator:
                     group.create_task(apply(*entry))
         except ExceptionGroup as errors:
             raise errors.exceptions[0] from None
+        # Every object on the page failing unexpectedly is a broken store or source,
+        # not a run of bad files: fail the sync rather than advance the cursor past
+        # data that was never indexed. A page that only SKIPPED objects (typed as
+        # un-takeable) is a healthy empty page and advances normally.
+        if outcomes["failed"] and not outcomes["ok"]:
+            raise SyncError("every object on the page failed to ingest")
         return page_bytes
 
     async def _register_live_datastore(
@@ -451,6 +498,22 @@ class ConnectedDataCoordinator:
         """One object left out, named so an operator can see what was not taken."""
         await self._emit(
             "object_skipped",
+            source,
+            {"object": _safe_id(source_object.object_id), "reason": reason},
+        )
+
+    async def _emit_object_failed(
+        self, source: SourceDescription, source_object: SourceObject, reason: str
+    ) -> None:
+        """One object that failed unexpectedly, named so an operator can see it.
+
+        Distinct from a skip: a skip is an object the source or ingest typed as
+        un-takeable (too large, gone, unreadable); a failure is an unexpected error
+        charged to this one object so the rest of the page still lands. A page made
+        entirely of failures is not survivable — see ``_ingest_page``.
+        """
+        await self._emit(
+            "object_failed",
             source,
             {"object": _safe_id(source_object.object_id), "reason": reason},
         )
