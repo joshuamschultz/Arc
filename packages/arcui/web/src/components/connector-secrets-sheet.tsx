@@ -11,8 +11,9 @@ import { Button } from '@/components/ui/button'
 import { HostSetupPanel } from '@/components/host-setup-panel'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useConnectorAuthorization, useInstallConnector, useReauthConnector } from '@/lib/queries'
+import type { ConnectorProbeResponse } from '@/lib/types'
 import { agentLabel, grantName } from '@/lib/agent-names'
-import { ApiError } from '@/lib/api'
+import { ApiError, apiPost } from '@/lib/api'
 import {
   asUnsatisfiedHost,
   type Agent,
@@ -53,8 +54,10 @@ export function ConnectorSecretsSheet({
   const [unsatisfied, setUnsatisfied] = useState<HostRequirement[]>([])
   const [operatorMode] = useOperatorMode()
 
+  const [okMsg, setOkMsg] = useState<string | null>(null)
+  const [verifying, setVerifying] = useState(false)
   const rotating = instance !== undefined
-  const busy = install.isPending || reauth.isPending
+  const busy = install.isPending || reauth.isPending || verifying
 
   // On a rotation, show the non-sensitive fields as already configured. Only
   // those come back with a value — a credential is never read out of the store —
@@ -90,6 +93,35 @@ export function ConnectorSecretsSheet({
     setValues({})
     setError(null)
     setUnsatisfied([])
+    setOkMsg(null)
+  }
+
+  // Writing a credential and reporting nothing is what made a good save look
+  // like a reset: the panel closed, the card status never re-ran, and the
+  // operator could not tell a working token from a dead one. So after the
+  // credential is stored, probe the connection live and show the answer —
+  // "reached Slack as …" or the exact failure (a missing scope, a bad token) —
+  // instead of silently closing.
+  const verify = async (inst: string) => {
+    setVerifying(true)
+    try {
+      const result = await apiPost<ConnectorProbeResponse>(
+        `/api/connections/${encodeURIComponent(inst)}/probe`,
+      )
+      if (result.reachable) {
+        setOkMsg(result.detail || 'Connected.')
+      } else {
+        setError(
+          result.detail ||
+            'Saved, but the connection did not answer. Check the credential and its scopes.',
+        )
+      }
+    } catch {
+      // The credential is stored; only the live check could not run.
+      setOkMsg('Saved. A live check could not be run right now.')
+    } finally {
+      setVerifying(false)
+    }
   }
 
   const handleOpenChange = (o: boolean) => {
@@ -119,18 +151,20 @@ export function ConnectorSecretsSheet({
   const submit = () => {
     setError(null)
     setUnsatisfied([])
-    if (rotating) {
-      reauth.mutate(submitted(), { onSuccess: done, onError: fail })
+    setOkMsg(null)
+    if (rotating && instance) {
+      reauth.mutate(submitted(), { onSuccess: () => verify(instance), onError: fail })
       return
     }
+    const newInstance = name.trim()
     install.mutate(
       {
         extension: bundle.name,
-        instance: name.trim(),
+        instance: newInstance,
         agents: granted,
         secrets: submitted(),
       },
-      { onSuccess: done, onError: fail },
+      { onSuccess: () => verify(newInstance), onError: fail },
     )
   }
 
@@ -154,6 +188,11 @@ export function ConnectorSecretsSheet({
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {error}
+            </div>
+          )}
+          {okMsg && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+              {okMsg}
             </div>
           )}
           {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
@@ -262,9 +301,15 @@ export function ConnectorSecretsSheet({
               check or renew that sign-in.
             </p>
           )}
-          <Button className="w-full" disabled={!canSubmit} onClick={submit}>
-            {busy ? 'Working…' : rotating ? 'Replace credentials' : 'Connect'}
-          </Button>
+          {okMsg ? (
+            <Button className="w-full" variant="outline" onClick={done}>
+              Done
+            </Button>
+          ) : (
+            <Button className="w-full" disabled={!canSubmit} onClick={submit}>
+              {busy ? 'Working…' : rotating ? 'Replace credentials' : 'Connect'}
+            </Button>
+          )}
         </div>
       </SheetContent>
     </Sheet>
