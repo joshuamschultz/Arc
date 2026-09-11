@@ -49,26 +49,25 @@ flowchart LR
 
 ## Provisioning ArcStore Postgres
 
-`scripts/deploy-node.sh` provisions a dedicated `arcstore-postgres` container
+`scripts/install-postgres.sh` provisions a dedicated `arcstore-postgres` container
 with the `arcstore-pg-data` named volume, binds PostgreSQL to loopback, waits for
 `pg_isready`, and starts the backend once to apply and verify the packaged
-schema. The database and role are both named `arcstore` by default. The deploy is
-safe to re-run: it reuses the container, volume, environment file, and migrated
-schema.
+schema. The database and role are both named `arcstore` by default. It is safe to
+re-run: it reuses the container, volume, environment file, and migrated schema.
 
-The complete `ARCSTORE_DATABASE_URL` is written **only** to `~/arc/config/arc.env`
-(mode `0600`) and passed to the runtime through its environment. It is never put
-in TOML, command output, or the repository.
+Your deploy automation should write the complete `ARCSTORE_DATABASE_URL` **only**
+to `~/arc/config/arc.env` (mode `0600`) and pass it to the runtime through its
+environment. It is never put in TOML, command output, or the repository.
 
 ```dotenv
 # ~/arc/config/arc.env  (0600)
 ANTHROPIC_API_KEY=...
-# Optional; deploy-node.sh generates one when omitted.
+# Optional; the deploy automation generates one when omitted.
 ARCSTORE_DATABASE_PASSWORD=...
 ```
 
 ```bash
-scripts/deploy-node.sh
+scripts/install-postgres.sh
 ```
 
 The `[arcstore]` config block never holds the secret URL — only non-secret pool
@@ -109,9 +108,9 @@ This is a *separate* database. Deployment uses
 `arc-memory-pg-data`); it never reuses the ArcStore container or DSN. Two things
 switch it on:
 
-- `ARC_MEMORY_INDEX_BACKEND=postgres` in `~/arc/.env` — written by
-  `scripts/deploy-node.sh` (around `:401`); it selects the postgres index backend
-  (config field `index_backend`, default `sqlite`).
+- `ARC_MEMORY_INDEX_BACKEND=postgres` in `~/arc/.env` — written by your deploy
+  automation; it selects the postgres index backend (config field `index_backend`,
+  default `sqlite`).
 - `ARC_MEMORY_PG_DSN` — the arcmemory DSN, read at
   `packages/arcmemory/src/arcmemory/index/backend.py:614` inside
   `open_index_backend`, which requires the `asyncpg`/`pgvector` extra.
@@ -124,7 +123,7 @@ worth it.
 
 ```bash
 # Deterministic checks (no live DB needed)
-bash -n scripts/install-postgres.sh scripts/deploy-node.sh
+bash -n scripts/install-postgres.sh scripts/install-memory-postgres.sh
 uv run pytest packages/arcstore/tests/unit/test_provisioning.py
 
 # Against a live DB: proves connectivity + migration, then checks the schema

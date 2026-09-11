@@ -89,11 +89,22 @@ reports diffs + test evidence.
 
 Same schema as the user-wide config (see [single-node.md](../deploy/local.md)
 §Configure), applied per-agent so the improver and policy eval run on the
-right model even if the user-wide merge is ever bypassed:
+right model even if the user-wide merge is ever bypassed. Set the `[eval]`
+provider/model and enable `[modules.skills]` in each agent's
+`team/<agent>/arcagent.toml`:
 
-```bash
-.venv/bin/python scripts/deploy_node_overlays.py agent-config \
-  team/coder_agent/arcagent.toml --provider anthropic --model claude-sonnet-5
+```toml
+# team/coder_agent/arcagent.toml
+[eval]
+provider = "anthropic"
+model = "claude-sonnet-5"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
+tier = "personal"
 ```
 
 Then validate:
@@ -102,10 +113,11 @@ Then validate:
 .venv/bin/arc agent build team/coder_agent --check
 ```
 
-Repeat for every agent. (`scripts/deploy-node.sh <agent1> <agent2>...`
-does steps 1 and 3 for a whole list of agent names in one call — it does
-NOT handle persona or team/channel setup, which are one-time roster
-decisions rather than repeatable bootstrap actions.)
+Repeat for every agent. Your deploy automation should apply this per-agent
+config delta while bootstrapping the node — alongside creating each agent
+(§1) — so a fresh node comes up at parity in one pass. It does NOT handle
+persona or team/channel setup, which are one-time roster decisions rather
+than repeatable bootstrap actions.
 
 ## 4. Team + roles
 

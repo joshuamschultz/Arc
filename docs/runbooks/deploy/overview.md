@@ -8,14 +8,14 @@
 
 ## Golden rule: deploy from `main`
 
-Production nodes (DGX, Azure) always run an `origin/main` commit. **Merge every
-change to `main` before deploying** — `scripts/deploy-vm.sh dgx` hard-resets the
-node's source to `origin/main` and installs it as a new runtime. Deploying a
-feature branch (`--branch`) is only for throwaway testing on a scratch node,
+Production nodes always run an `origin/main` commit. **Merge every
+change to `main` before deploying** — your deploy automation should hard-reset the
+node's source to `origin/main` and install it as a new runtime. Deploying a
+feature branch is only for throwaway testing on a scratch node,
 never for a real change: it puts code in production that is not on `main`, so
 `main` stops being the source of truth for what the fleet runs.
 
-Standard flow: feature branch → merge to `main` → push → `scripts/deploy-vm.sh dgx`.
+Standard flow: feature branch → merge to `main` → push → deploy to the node.
 
 ---
 
@@ -417,10 +417,10 @@ DGX Spark is a validated single-node deployment target. The image works directly
 
 ```mermaid
 flowchart LR
-    classDef dgx fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef node fill:#0073FE,stroke:#0055BC,color:#FFFFFF
     classDef arc fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    DGX[DGX Spark]:::dgx --> Docker[Docker Engine]
+    DGX[DGX Spark]:::node --> Docker[Docker Engine]
     Docker --> ArcContainer[Arc Container]:::arc
     ArcContainer --> Agents[Agent Fleet]
     ArcContainer --> Telegram[Telegram Adapter]
@@ -436,13 +436,14 @@ flowchart LR
 #### Deployment
 
 ```bash
-# Copy the SOURCE to the DGX. This is a tarball, not the install: the runtime is
+# Copy the SOURCE to the node. This is a tarball, not the install: the runtime is
 # built from it under ~/.arc/runtime/<version>/ and nothing ever runs from here.
-rsync -az --exclude .venv --exclude __pycache__ --exclude team /local/arc/ dgx:/home/user/arc/
+rsync -az --exclude .venv --exclude __pycache__ --exclude team /local/arc/ user@host:~/arc/
 
-# Install the runtime, create agents, and wire the systemd unit — every step of
-# it, idempotently. See docs/runbooks/deploy/local.md for what it does and why.
-ssh dgx '~/arc/scripts/deploy-node.sh researcher'
+# On the node, install the runtime, create agents, and wire the systemd unit.
+# See docs/runbooks/deploy/local.md for the manual steps and why each matters.
+ssh user@host    # then follow the Local runbook: uv sync, arc init,
+                 # agent create, arc install, wire the systemd unit
 ```
 
 ---

@@ -175,7 +175,7 @@ Once the server answers, the one check that cannot precede it is printed:
 |------|-----------|
 | `arc install` | **Installing, without starting.** The same preflight + module stages, then it exits. What an upgrade and a systemd `ExecStartPre` run. |
 | `arc up` | **Bringing a node up**, every time. Provisioning is already done. |
-| [`scripts/deploy-node.sh`](local.md) | **First-time provisioning** — uv sync, installing `nats-server`, `arc init`, agent creation, `arc install`, the systemd unit. Run once. |
+| [First-time provisioning](local.md) | **The one-time setup** — uv sync, installing `nats-server`, `arc init`, agent creation, `arc install`, the systemd unit. Run once. |
 | `arc ui start` | The server itself. `arc up` calls it. Use directly when you have already verified the node. |
 | `scripts/arc-stack.sh` | Local-dev only, explicitly non-canonical. Not a deployment path. |
 
@@ -260,7 +260,7 @@ Skip it and the agents come back with zero modules, still answering chat.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `nats-server on PATH ... FAIL` | Broker binary absent. | Install from the [nats-server releases](https://github.com/nats-io/nats-server/releases) onto PATH, or re-run `scripts/deploy-node.sh`. |
+| `nats-server on PATH ... FAIL` | Broker binary absent. | Install from the [nats-server releases](https://github.com/nats-io/nats-server/releases) onto PATH (`scripts/install-nats.sh` sets up a local broker), or re-run your provisioning. |
 | `operator key ... FAIL` | No key under `${ARC_CONFIG_DIR:-~/.arc}`. | `arc init`. `arc up` will not mint one for you. |
 | `team root ... FAIL` | No `<name>/arcagent.toml` under the team root. | `arc agent create <name> --dir team`, or pass `--team-root`. |
 | `REFUSED ... does not accept a development signature` | Enterprise/federal box, no staged bundle. | `arc module bundle <name>` on the low side; stage it and `arc module install --from <bundle>`. |

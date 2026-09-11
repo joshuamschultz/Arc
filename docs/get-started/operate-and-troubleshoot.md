@@ -49,10 +49,10 @@ clean teardown ("disconnect = delete the pool").
 
 A connector whose auth lives in the OS keyring (Gmail's `gog`, for example) will
 **hang a CLI** on a headless box because the keyring tries to reach a D-Bus
-session that isn't there. The deploy neutralizes this by exporting
-`DBUS_SESSION_BUS_ADDRESS=/dev/null`
-(`scripts/deploy-node.sh:314`). If you invoke a connector CLI by hand on a
-headless node and it hangs, set that variable in your shell:
+session that isn't there. Your deploy automation should neutralize this by
+exporting `DBUS_SESSION_BUS_ADDRESS=/dev/null` for the service and for deploy
+commands. If you invoke a connector CLI by hand on a headless node and it hangs,
+set that variable in your shell:
 
 ```bash
 export DBUS_SESSION_BUS_ADDRESS=/dev/null

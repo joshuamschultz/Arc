@@ -7,7 +7,7 @@ named volume, runtime environment file, and migrated schema.
 
 ## Local first-alpha node
 
-`scripts/deploy-node.sh` provisions a dedicated `arcstore-postgres` container
+`scripts/install-postgres.sh` provisions a dedicated `arcstore-postgres` container
 with the `arcstore-pg-data` named volume, binds PostgreSQL to loopback, waits
 for `pg_isready`, runs an authenticated query, and starts the ArcStore backend
 once to apply and verify the packaged schema. The database and role are both
@@ -16,19 +16,19 @@ named `arcstore` by default.
 The deploy creates `~/arc/config/arc.env` with mode `0600`. The complete
 `ARCSTORE_DATABASE_URL` is written only there and is passed to the runtime via
 its environment; it is never put in TOML, command output, or the repository.
-Provide a password in the source environment file or let the deploy generate a
-random one:
+Provide a password in the source environment file or let the provisioning
+generate a random one:
 
 ```dotenv
 ANTHROPIC_API_KEY=...
-# Optional; deploy-node.sh generates one when omitted.
+# Optional; provisioning generates one when omitted.
 ARCSTORE_DATABASE_PASSWORD=...
 ```
 
-Run the normal deployment:
+Run the store provisioning as part of your deploy:
 
 ```bash
-scripts/deploy-node.sh
+scripts/install-postgres.sh
 ```
 
 The provisioning script is independently re-runnable for release checks. Set
@@ -56,8 +56,8 @@ container or DSN.
 
 ## Supabase direct and transaction pooler URLs
 
-Put one of these values in the protected source environment file before running
-`deploy-node.sh`; the deploy copies it to `arc.env` with mode `0600`:
+Put one of these values in the protected source environment file before you
+provision; the deploy copies it to `arc.env` with mode `0600`:
 
 ```dotenv
 # Direct connection: session features are available.
@@ -88,7 +88,7 @@ database smoke check without a resolved secret.
 The focused deterministic checks are:
 
 ```bash
-bash -n scripts/install-postgres.sh scripts/deploy-node.sh
+bash -n scripts/install-postgres.sh
 uv run pytest packages/arcstore/tests/unit/test_provisioning.py
 ```
 

@@ -24,9 +24,9 @@ standalone `arcgateway start` daemon and no separate `arc agent serve`
 process per agent — the embedded gateway's agent factory loads each agent
 from `--team-root` on demand.
 
-`scripts/deploy-node.sh` automates every step below and is safe to re-run
-(idempotent). This doc explains what it does and why, for anyone deploying
-by hand or debugging a failed run.
+Deploy automation can wrap every step below, and each step is safe to re-run
+(idempotent). This doc explains what those steps do and why, whether you run
+them by hand or debug a failed automated run.
 
 
 ## The layout: two directories
@@ -66,24 +66,24 @@ systemctl --user restart arc.service  # pick up whichever is now current
 
 Three rules follow, and each has already cost a live box:
 
-* **The checkout is not the install.** `deploy-node.sh` copies the source into
+* **The checkout is not the install.** The deploy copies the source into
   `~/.arc/runtime/<version>/` and builds *that copy's* venv there. A service
   that runs `~/arc/.venv/bin/arc` has no disposable install at all: the tree an
   update replaces and the tree a `git pull` rewrites are the same one, so there
   is neither an atomic update nor a rollback.
 * **The fleet is never inside the install.** `~/arc/team` sits a directory
   further out than anything an update touches, resolved by
-  `arctrust.paths.arc_team()`. The unit and the deploy script both read it from
-  there rather than spelling it out — a deploy that starts from the wrong empty
-  root does not fail, it reports healthy and serves no agents.
+  `arctrust.paths.arc_team()`. The unit and any deploy automation both read it
+  from there rather than spelling it out — a deploy that starts from the wrong
+  empty root does not fail, it reports healthy and serves no agents.
 * **Never overwrite `~/arc/state` wholesale.** It holds the operator signing
   key. Every WORM audit chain is signed with it; destroy it and the chains it
   signed can no longer be verified. Replace `runtime/`, nothing else.
 
 Because the fleet lives in `~/arc` and the source is rsynced there too, the
-runtime install **excludes `team/`** from that copy. `deploy-node.sh` checks
-the result of that exclusion and aborts before activating anything if a fleet
-was captured; don't hand-roll an rsync that skips the check.
+runtime install **excludes `team/`** from that copy. Your deploy automation
+should check the result of that exclusion and abort before activating anything
+if a fleet was captured; don't hand-roll an rsync that skips the check.
 
 ### Migrating an existing box
 
@@ -98,7 +98,7 @@ home, and the migration has no path that can reach it. Of the two irreplaceable
 things a box holds, one is never renamed and the other moves within a single
 directory.
 
-`scripts/deploy-node.sh` runs it for you, before any stage reads a config path.
+Deploy automation should run it for you, before any stage reads a config path.
 Doing it by hand on a box you are not redeploying:
 
 ```bash
@@ -142,7 +142,7 @@ captured, traces stored).
  auto-spawns `nats-server -js` as a supervised child of `arc ui start` if
  one isn't already reachable, but only if the binary is on `PATH`. Install
  the official release binary for the host architecture to `~/.local/bin`;
- `scripts/deploy-node.sh` resolves the latest release via the GitHub API
+ `scripts/install-nats.sh` resolves the latest release via the GitHub API
  and verifies its `SHA256SUMS` before installing.
 - **Secrets** — `ANTHROPIC_API_KEY` (required) and, if enabling Telegram,
  a bot token from [@BotFather](https://t.me/BotFather). Keep them in a
@@ -157,13 +157,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 The installer wires `~/.local/bin` into `~/.profile`/`~/.bashrc` for
 **login** shells. Non-interactive `ssh host 'cmd'` sessions don't source
 those files, so scripted commands should either use the absolute path or
-export `PATH` explicitly — `deploy-node.sh` does this for you.
+export `PATH` explicitly — deploy automation should do this for you.
 
 ## Install
 
 Sync the repo (rsync from a dev machine, or `git clone` directly on the
-target — either works; `deploy-node.sh` assumes it's already run from the
-repo root):
+target — either works; the steps below assume you are running from the
+repo root on the target):
 
 ```bash
 rsync -az --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
@@ -172,8 +172,8 @@ rsync -az --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
   /local/path/to/arc/ host:~/arc/
 ```
 
-Then install that source as a runtime version and make it active. This is what
-`deploy-node.sh` step 2 does; by hand it is a copy, a sync, and a flip:
+Then install that source as a runtime version and make it active. This is the
+build-and-flip step; by hand it is a copy, a sync, and a flip:
 
 ```bash
 ssh host 'bash -s' <<'REMOTE'
@@ -207,10 +207,9 @@ ssh host 'ARC=~/.arc/runtime/current; $ARC/.venv/bin/python -m pip install -e $A
 
 Verify Telegram: `.venv/bin/python -c "import arcgateway_telegram"` should
 succeed with no traceback straight after `uv sync`, with no manual install
-step. `deploy-node.sh` still carries a defensive check (greps
-`pyproject.toml`, falls back to a manual install only if the dependency
-somehow isn't there) — a no-op today, kept as a safety net rather than
-deleted.
+step. A defensive deploy can still carry a check (grep
+`pyproject.toml`, fall back to a manual install only if the dependency
+somehow isn't there) — a no-op today, worth keeping as a safety net.
 
 If an enabled adapter's package is missing at runtime, the gateway doesn't
 crash — it logs a warning and skips that platform (see Troubleshooting).
@@ -247,7 +246,7 @@ Generate `VIEWER_TOKEN`/`OPERATOR_TOKEN` **once** and persist them —
 regenerating on every restart breaks the (agent, user) → chat-session-id
 mapping the UI derives from the viewer token, stranding prior session
 history. `scripts/arc-stack.sh` encodes the same lesson via its own pinned
-token file; `deploy-node.sh` leaves `arc.env` untouched if it already
+token file; deploy automation should leave `arc.env` untouched if it already
 exists for the same reason.
 
 ### `arc init` and the three config files
@@ -256,8 +255,8 @@ exists for the same reason.
 ssh host '~/.arc/runtime/current/.venv/bin/arc init --tier personal --provider anthropic'
 ```
 
-Writes `~/arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. `deploy-node.sh`
-skips this step if `gateway.toml` already exists — re-running `arc init`
+Writes `~/arc/config/{arcllm.toml,arcagent.toml,gateway.toml}`. Deploy automation
+should skip this step if `gateway.toml` already exists — re-running `arc init`
 against an already-customized host would either hang on an interactive
 overwrite prompt or (with `--quick`) silently clobber those customizations.
 
@@ -267,10 +266,10 @@ overwrite prompt or (with `--quick`) silently clobber those customizations.
 below) now ships in the baseline `arcagent.toml` — reapplying it is
 harmless but no longer necessary. `[eval].provider`/`.model` are still
 generated empty (`""`) and need setting by hand; that's the one delta
-below that isn't yet part of `arc init`'s output. `scripts/
-deploy_node_overlays.py` applies all of these idempotently via `tomlkit`
-(preserves comments/formatting, safe to re-run, never clobbers a value you
-set by hand unless you re-pass the matching flag):
+below that isn't yet part of `arc init`'s output. If you apply these overlays
+from automation, edit the TOML with a format-preserving library such as
+`tomlkit` (preserves comments/formatting, safe to re-run, and it never
+clobbers a value you set by hand):
 
 **`~/arc/config/arcagent.toml`** — model for policy eval and the skill improver,
 plus the skills adapter:
@@ -329,8 +328,8 @@ Auto-registers with arcteam if the NATS broker is reachable — it will be,
 once `arc ui start` has run once and spawned its managed broker (see
 below), or if you start `nats-server -js` yourself first. Prints the
 minted DID; copy it into `gateway.toml`'s `[gateway].agent_did` so the
-embedded gateway knows which identity to route platform DMs to
-(`deploy_node_overlays.py gateway-config --agent-did <DID>`).
+embedded gateway knows which identity to route platform DMs to (set
+`[gateway].agent_did` to the minted DID, editing the TOML in place).
 
 Apply the same `[eval]`/`[modules.skills]` deltas to
 `~/arc/team/<agent>/arcagent.toml` too, even though the user-wide
@@ -353,7 +352,7 @@ For multiple agents (a fleet) and the team/channel/persona flow, see
 ## systemd user unit
 
 `~/.config/systemd/user/arc.service` (the exact file — `deploy/systemd/
-arc.service` in this repo, installed verbatim by `deploy-node.sh`):
+arc.service` in this repo, installed verbatim):
 
 ```ini
 [Unit]

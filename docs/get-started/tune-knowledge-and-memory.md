@@ -115,7 +115,7 @@ Opt into a shared pgvector index only when you need it (`index_backend` field,
 default `"sqlite"`, `arcmemory/config.py:221`):
 
 - `ARC_MEMORY_INDEX_BACKEND=postgres` in `~/arc/.env` selects the postgres
-  backend (written by `scripts/deploy-node.sh:401`).
+  backend (written by your deploy automation).
 - `ARC_MEMORY_PG_DSN` supplies the DSN, read at
   `arcmemory/index/backend.py:614` (`open_index_backend`), which needs the
   `asyncpg`/`pgvector` extra.

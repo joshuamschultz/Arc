@@ -110,7 +110,7 @@ flowchart TB
         TEAM["team/ · one folder per agent"]:::operator
         ENV["config/arc.env · provider keys"]:::operator
     end
-    SRC -->|"deploy-node.sh builds a runtime FROM here"| R
+    SRC -->|"the deploy builds a runtime FROM here"| R
     N["Nothing is ever executed from ~/arc"]:::note
 ```
 
@@ -120,7 +120,7 @@ flowchart TB
 | **`~/arc`** (the operator's) | The operator's own working copy: the source checkout plus the fleet beside it. **Nothing runs from here.** | The source tarball, `team/` (one directory per agent), `config/arc.env` (the provider keys, `0600`). |
 
 On a dev laptop you often only touch `~/.arc` and your project directory. On a
-deployed node the split matters: `scripts/deploy-node.sh` reads the source in
+deployed node the split matters: the deploy automation reads the source in
 `~/arc`, builds a **new** runtime under `~/.arc/runtime/<version>/`, then flips
 `~/.arc/runtime/current` to point at it. The source you edited in `~/arc` never
 executes directly — that is what makes an upgrade a clean, atomic swap and a

@@ -38,10 +38,10 @@ Restart the service afterwards so the agents reload:
 systemctl --user restart arc.service
 ```
 
-`scripts/deploy-node.sh` runs the per-agent sync on every deploy, so a
-bootstrapped node stays at parity without this being run by hand. Use the
-commands above on a box that has not been redeployed yet, or to inspect drift
-before deploying.
+Your deploy automation should run the per-agent sync (`arc agent config --sync
+--team-root ~/arc/team`) on every deploy, so a bootstrapped node stays at parity
+without this being run by hand. Use the commands above on a box that has not been
+redeployed yet, or to inspect drift before deploying.
 
 ## What it never touches
 

@@ -1,7 +1,7 @@
 # Deploy
 
 > **Get Started**  ·  Set up & tune  
-> **You'll finish with:** your stack running the right way for your target — `arc up` on a box, Docker for a single node, or the VM scripts for DGX/Azure — and the ability to roll a runtime back in one command.  
+> **You'll finish with:** your stack running the right way for your target — `arc up` on a box, Docker for a single node, or a versioned host runtime for a production node — and the ability to roll a runtime back in one command.  
 > **Before this:** [Provision the operational store](../runbooks/deploy/arcstore-postgres.md) (the required PostgreSQL step)  
 > [Docs home](../README.md)
 
@@ -9,20 +9,22 @@
 
 ## What you'll achieve
 
-Deployment is where the two homes pay off. This page shows the three real paths —
-supervised bring-up on a box, a single-node Docker image, and the VM scripts for
-production nodes — and the one guarantee that makes upgrades safe: a runtime is
+Deployment is where the two homes pay off. This page shows the deployment
+methods — supervised bring-up on a box, a single-node Docker image, and a
+versioned host runtime for production nodes — plus the techniques and gotchas
+that keep a deploy safe. The one guarantee that makes upgrades safe: a runtime is
 **built fresh and swapped atomically**, so activating a new version, or rolling
 back, is a single flip that a reader never sees half-done.
 
-> **Golden rule: deploy from `main`.** Production nodes always run an `origin/main`
-> commit. Merge every change to `main` before deploying — the VM scripts hard-reset
-> the node's source to `origin/main`. Deploying a feature branch is throwaway-test
-> only; it puts code in production that isn't the source of truth.
+> **Golden rule: deploy from `main`.** A production node should always run an
+> `origin/main` commit. Merge every change to `main` before deploying, and reset
+> the node's source to `origin/main` as the first build step. Deploying a feature
+> branch is throwaway-test only; it puts code in production that isn't the source
+> of truth.
 
 ---
 
-## Path 1 — supervised bring-up (`arc up`)
+## Method 1 — supervised bring-up (`arc up`)
 
 `arc up` brings the whole stack up on a box *and proves it came up whole* — the
 agents, their modules, NATS, the gateway, and the dashboard. It exists because
@@ -58,7 +60,7 @@ arc install --team-root ~/arc/team
 
 ---
 
-## Path 2 — single-node Docker
+## Method 2 — single-node Docker
 
 Arc ships as one container image with the install decisions already made (uv, the
 NATS broker, the local embedding model, config wiring). It's the canonical
@@ -75,11 +77,18 @@ tokens, and starts the dashboard on `:8420` against the persistent `/data`
 volume. Restarting reuses the same agent, memory, and tokens instead of minting
 new ones.
 
+For a registry-based rollout (build once, deploy many), build the image in your
+container registry, pin the tag to the commit SHA so a node can't drift, pull it
+on the target, and `docker compose up -d`. Keep agent state in a Docker **named
+volume** so it survives every redeploy.
+
 ---
 
-## Path 3 — production VMs (DGX / Azure)
+## Method 3 — versioned host runtime (production nodes)
 
-There are two production lanes. Pick by target.
+The production technique on a plain host is a **versioned runtime with an atomic
+flip**. It works over SSH against any systemd-user node and is the same four
+steps whether you run them by hand or wrap them in your own deploy script.
 
 ```mermaid
 flowchart TB
@@ -87,37 +96,29 @@ flowchart TB
     classDef node fill:#0073FE,stroke:#0055BC,color:#FFFFFF
     classDef flip fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    L["your laptop<br/>scripts/deploy-vm.sh dgx|azure"]:::laptop -->|"1. git reset --hard origin/main on the node"| N["node source (~/arc)"]:::node
-    N -->|"2. deploy-node.sh builds a runtime"| R["~/.arc/runtime/&lt;version&gt;/ (uv sync)"]:::node
+    L["operator<br/>(over SSH)"]:::laptop -->|"1. git reset --hard origin/main on the node"| N["node source (~/arc)"]:::node
+    N -->|"2. build a runtime"| R["~/.arc/runtime/&lt;version&gt;/ (uv sync)"]:::node
     R -->|"3. arc runtime activate &lt;version&gt;"| CUR["~/.arc/runtime/current<br/>(atomic os.replace)"]:::flip
     CUR -->|"4. restart + verify /api/health"| OK["serving"]:::flip
 ```
 
-**Host-runtime lane** (`scripts/deploy-vm.sh dgx|azure`) — runs from your laptop
-over SSH against a systemd-user node:
+The four steps:
 
-```bash
-scripts/deploy-vm.sh dgx                 # sync main → build runtime → restart → verify
-scripts/deploy-vm.sh azure               # same against the Azure VM
-scripts/deploy-vm.sh --host user@ip      # any bootstrapped systemd-user node
-```
+1. **Reset the node's source to `origin/main`.** Nothing is ever run from the
+   source checkout itself — it is only the input to a build.
+2. **Build a versioned runtime.** Compute a version (a good scheme is
+   `<pyproject version>-<source fingerprint>`), rsync the source into
+   `~/.arc/runtime/<version>/`, and run `uv sync` **there**. The live install is
+   never mutated in place.
+3. **Flip atomically.** `arc runtime activate <version>` stages a new symlink and
+   `os.replace`s it onto `~/.arc/runtime/current`, so a reader sees the old
+   version or the new one, never a missing one. Prune old runtimes afterward.
+4. **Restart and verify.** Restart the systemd-user service, then health-poll
+   `:8420`, confirm the adapter imports, and check the UI bundle hash.
 
-It hard-resets the node to `origin/main`, discovers the fleet roster from
-`team/*/`, then runs `scripts/deploy-node.sh <roster>` on the box. `deploy-node.sh`
-computes a runtime version (`<pyproject version>-<source fingerprint>`), rsyncs
-the source into `~/.arc/runtime/<version>/`, runs `uv sync` there, and then does
-the atomic flip — `arc runtime activate <version>` — before pruning old runtimes.
-Finally it health-polls `:8420` and checks the adapter import and UI bundle hash.
-
-**Docker/ACR lane** (`scripts/deploy-azure.sh`) — the container path for the Azure
-VM: builds the image in Azure Container Registry (`az acr build`), pins the image
-to the commit SHA, mints a short-lived registry token, and `docker compose up -d`
-on the box. Agent state persists in a Docker named volume across every redeploy.
-
-```bash
-scripts/deploy-azure.sh              # build, push, deploy, health-check
-scripts/deploy-azure.sh --skip-build # redeploy the tag already in ACR
-```
+Because step 2 builds a self-contained directory and step 3 is a single atomic
+flip, an upgrade and a rollback are the *same* operation pointed at a different
+version.
 
 ---
 
@@ -134,6 +135,21 @@ arc runtime activate <version>   # point current at a version — upgrade OR rol
 The flip stages a new symlink and `os.replace`s it onto `current`, so a reader
 sees the old version or the new one, never a missing one. A bad deploy is a
 one-command rollback to the prior version.
+
+---
+
+## Gotchas
+
+Deployment failures cluster around a few things. Check these first.
+
+| Gotcha | What bites, and the fix |
+|---|---|
+| **NATS not on PATH** | The message bus must be reachable or agents come up silently degraded. Ensure `nats-server` is installed and on PATH before bring-up (`scripts/install-nats.sh` sets up a local broker). `arc up` preflight catches this and stops. |
+| **PostgreSQL store missing** | The operational store is a required step, not optional. Provision it first — see [Provision the operational store](../runbooks/deploy/arcstore-postgres.md) (`scripts/install-postgres.sh`). |
+| **Modules silently empty** | Modules are separately signed bundles that are **not** in the wheel. A plain `git pull && uv sync && restart` can leave every agent with zero modules and still boot green. Always bring a node up with `arc up` (or `arc install`), which materializes and verifies modules before starting. |
+| **Headless node hangs on the keyring** | On a box with no desktop session, CLIs that touch the OS keyring can block forever waiting on a D-Bus prompt. Export `DBUS_SESSION_BUS_ADDRESS=/dev/null` for the service and for deploy commands so keyring lookups fail fast instead of hanging. |
+| **Deploying a non-`main` commit** | Production runs `origin/main`. Reset the node to `origin/main` as step 1; a feature-branch deploy is throwaway-test only. |
+| **In-place upgrades** | Never `uv sync` over the live install. Build a new versioned runtime directory and flip — that is what makes rollback a single command. |
 
 ---
 

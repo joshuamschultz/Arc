@@ -22,11 +22,10 @@ The [Docker runbook](docker.md) covers the image itself. This page covers the
 Azure specifics: where the image is built, how the VM authenticates to pull it,
 where state lives, and how to redeploy and reset.
 
-One command does a redeploy:
-
-```bash
-scripts/deploy-azure.sh
-```
+A redeploy is a build, a push, a pull on the VM, and a health check. The
+[Redeploy](#redeploy) section below gives the concrete `az acr build` and
+`docker` commands for each step; wrap them in your own deploy script once they
+work.
 
 Validated on: Ubuntu 22.04 LTS, Standard_D4s_v5, ACR Basic, personal tier, four
 agents from four blueprints.
@@ -44,8 +43,8 @@ the operator's own `az` session (see [Registry auth](#registry-auth)).
 > **`--build-arg TARGETARCH=amd64` is required.** `TARGETARCH` is a buildx
 > variable. ACR Tasks uses the classic builder, which does not populate it, so
 > the `nats-server` download in the Dockerfile fails on an unset parameter.
-> `scripts/deploy-azure.sh` passes it; a hand-rolled `az acr build` must too.
-> The Dockerfile is deliberately left correct for the multi-arch buildx path it
+> Every `az acr build` invocation must pass it (see [Redeploy](#redeploy)). The
+> Dockerfile is deliberately left correct for the multi-arch buildx path it
 > documents rather than weakened to paper over this.
 
 ## Sizing
@@ -162,26 +161,39 @@ ARC_AGENTS=personal_assistant:personal-assistant bdr:sales-exec-assistant ceo:st
 
 ARC_DOMAIN=arc.example.com
 ARC_ACME_EMAIL=you@example.com
-ARC_IMAGE=            # set by the deploy script on every run
+ARC_IMAGE=            # pinned to the SHA-tagged image on every redeploy
 ARC_ENABLE_TELEGRAM=0
 ```
 
-Then `scripts/deploy-azure.sh`.
+Then build, push, and deploy — see [Redeploy](#redeploy).
 
 ## Redeploy
 
+A redeploy is four steps: build the image in ACR, have the VM pull it, recreate
+the container, and health-check. Build and push, tagging with the **commit SHA**
+so a restart cannot drift onto a newer `:latest` pushed in the meantime:
+
 ```bash
-scripts/deploy-azure.sh              # build, push, deploy, health-check
-scripts/deploy-azure.sh --skip-build # redeploy the tag already in ACR
+TAG="$(git rev-parse --short HEAD)"
+az acr build --registry "$ACR" --image "arc:$TAG" \
+  --build-arg TARGETARCH=amd64 .
 ```
 
-The script tags the image with the **commit SHA** and pins that exact tag into
-`.env`, so `docker image ls` on the box answers "what is actually running"
-without trusting a deploy log, and a restart cannot drift onto a newer `:latest`
-pushed in the meantime.
+Pin that exact tag into `/opt/arc/.env` (`ARC_IMAGE=$ACR.azurecr.io/arc:$TAG`),
+then recreate the container on the VM (see [Registry auth](#registry-auth) for
+the `docker login` that authorizes the pull):
+
+```bash
+ssh "$HOST" 'cd /opt/arc && sudo docker compose pull && sudo docker compose up -d'
+curl -fsS "https://$ARC_DOMAIN/api/health"   # 200 once serving
+```
+
+Pinning the SHA tag rather than `:latest` lets `docker image ls` on the box
+answer "what is actually running" without trusting a deploy log. To redeploy a
+tag already in ACR, skip the build and reuse the pinned `ARC_IMAGE`.
 
 The build context is the **working tree**, not the commit. Uncommitted changes
-ship; the script warns when the tree is dirty.
+ship; check `git status` before building.
 
 Agent state survives every redeploy: the container is recreated, the named
 volume is not.
@@ -214,7 +226,7 @@ ssh "$HOST" 'cd /opt/arc && sudo docker compose down && sudo docker compose up -
 
 ```bash
 ssh "$HOST" 'cd /opt/arc && sudo docker compose down -v'
-scripts/deploy-azure.sh
+# then rebuild and redeploy — see Redeploy above
 ```
 
 `down -v` removes the `arc-data` volume: every agent's memory, its minted DID
