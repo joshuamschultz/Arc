@@ -642,7 +642,7 @@ exactly what `HarnessAdapter.dispatch` returns.
    posture is not deferred, because the memory-isolation argument (§5) depends on it.
 7. **Enrollment abuse battery (moved up from Slice 2 — the admission chokepoint
    ships here, so per the project rule it is incomplete without its abuse cases).**
-   Add to `scripts/run_adversarial_tests.py`: forged grant signature, self-supplied
+   Add to `tests/run_adversarial_tests.py`: forged grant signature, self-supplied
    approver key (grant verified against a key the member supplies rather than the
    trust-store operator key), replayed enrollment (nonce/duplicate-DID), tampered
    `Entity.public_key` after signing (TOCTOU), and an un-enrolled-member dispatch

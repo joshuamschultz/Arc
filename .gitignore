@@ -109,3 +109,19 @@ deploy/lib/
 
 
 site/
+
+# AI development tooling — kept local, not part of the public repo.
+# These files stay on disk; they are just not tracked or shipped.
+.claude/
+.codex/
+.entire/
+CLAUDE.md
+AGENTS.md
+ALPHA-HOTFIXES.md
+
+# Personal deploy scripts — target the operator's own machines (DGX / Azure VM).
+scripts/deploy-node.sh
+scripts/deploy-vm.sh
+scripts/deploy-azure.sh
+scripts/deploy_node_overlays.py
+scripts/migrate_unhide_capabilities.py

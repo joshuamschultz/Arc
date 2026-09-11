@@ -3,7 +3,7 @@
 Real production boundaries that must fail closed: a wrong/absent pairing token is
 refused, the channel refuses to load at federal, spoken content stays data (never
 control), and an ambiguous/injected confirmation cannot commit an irreversible
-action. Wired into scripts/run_adversarial_tests.py.
+action. Wired into tests/run_adversarial_tests.py.
 """
 
 from __future__ import annotations

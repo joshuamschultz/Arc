@@ -826,7 +826,7 @@ fleet membership or credential authority.
 Run the separately named regression gate before release:
 
 ```bash
-uv run python scripts/run_adversarial_tests.py -q
+uv run python tests/run_adversarial_tests.py -q
 ```
 
 The authoritative engineering rules and expanded threat inventory live in root

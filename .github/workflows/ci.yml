@@ -96,7 +96,7 @@ jobs:
 
       - name: Run complete monorepo suite
         if: runner.os == 'Linux' && matrix.python-version == '3.12'
-        run: uv run python scripts/run_all_tests.py -q --tb=short -m "not slow"
+        run: uv run python tests/run_all_tests.py -q --tb=short -m "not slow"
 
   security:
     name: Security & SBOM
@@ -112,7 +112,7 @@ jobs:
         run: uv sync --all-packages --all-groups
 
       - name: Run zero-trust adversarial battery
-        run: uv run python scripts/run_adversarial_tests.py -q --tb=short
+        run: uv run python tests/run_adversarial_tests.py -q --tb=short
 
       - name: Export harness runtime closure
         # Scope the vulnerability gate to what Arc actually ships: every

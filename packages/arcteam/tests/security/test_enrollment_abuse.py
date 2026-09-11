@@ -12,7 +12,7 @@ production boundary — ``EntityRegistry.register`` (admission) or
   4. tampered ``Entity.public_key`` after signing (TOCTOU)
   5. un-enrolled-member dispatch attempt
 
-Registered in ``scripts/run_adversarial_tests.py`` under the H-040 scenario.
+Registered in ``tests/run_adversarial_tests.py`` under the H-040 scenario.
 """
 
 from __future__ import annotations

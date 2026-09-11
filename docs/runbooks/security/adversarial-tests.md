@@ -18,7 +18,7 @@ flowchart LR
 
 **Version**: 2.0
 **Date**: 2026-08-22
-**Manifest**: `scripts/run_adversarial_tests.py`
+**Manifest**: `tests/run_adversarial_tests.py`
 
 ## Overview
 
@@ -34,7 +34,7 @@ authority.
 ## Run it
 
 ```bash
-uv run python scripts/run_adversarial_tests.py -q
+uv run python tests/run_adversarial_tests.py -q
 ```
 
 Pass normal pytest flags after the script name. The command validates its
@@ -186,13 +186,13 @@ Tests that concurrent operations don't cause deadlocks, interleaving, or corrupt
 
 ```bash
 # Cross-Arc hostile-insider release gate
-uv run python scripts/run_adversarial_tests.py -v
+uv run python tests/run_adversarial_tests.py -v
 
 # Package-local extended suite (example)
 uv run pytest packages/arcrun/tests/security/ -v
 
 # Cross-Arc gate with coverage enabled
-uv run python scripts/run_adversarial_tests.py --cov=arcrun --cov=arcagent
+uv run python tests/run_adversarial_tests.py --cov=arcrun --cov=arcagent
 ```
 
 ## Shared Fixtures (`conftest.py`)

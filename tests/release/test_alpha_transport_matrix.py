@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.validate_alpha_transport import CHECKS, ROOT
+from tests.validate_alpha_transport import CHECKS, ROOT
 
 
 def test_alpha_transport_matrix_covers_all_streaming_surfaces() -> None:

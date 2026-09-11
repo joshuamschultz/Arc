@@ -160,7 +160,7 @@ For the landed components, validate the seams with:
 uv run pytest packages/arcteam/tests/unit packages/arcteam/tests/integration
 uv run pytest packages/arcmemory/tests/architecture packages/arcmemory/tests/security
 uv run pytest packages/arcagent/tests/architecture
-uv run python scripts/run_adversarial_tests.py
+uv run python tests/run_adversarial_tests.py
 ```
 
 Run the tests relevant to a changed implementation. Documentation changes can

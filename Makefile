@@ -132,7 +132,7 @@ m1-gates: architecture-tests loc-budgets race-stress
 # test — standard test run (excludes slow-marked tests)
 # ---------------------------------------------------------------------------
 test:
-	$(UV_RUN) python scripts/run_all_tests.py -v --tb=short -m "not slow"
+	$(UV_RUN) python tests/run_all_tests.py -v --tb=short -m "not slow"
 
 # ---------------------------------------------------------------------------
 # lint — ruff linter

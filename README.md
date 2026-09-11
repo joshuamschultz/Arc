@@ -48,7 +48,7 @@ audit—not possession of a path, socket, database row or runtime entry point. R
 the dedicated hostile-insider release gate with:
 
 ```bash
-uv run python scripts/run_adversarial_tests.py -q
+uv run python tests/run_adversarial_tests.py -q
 ```
 
 See the [seam model](docs/concepts/seam-model.md), [threat

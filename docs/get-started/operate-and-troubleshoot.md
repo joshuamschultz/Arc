@@ -75,7 +75,7 @@ The repository gate uses deterministic provider doubles plus a live PostgreSQL
 contract when requested:
 
 ```bash
-UV_CACHE_DIR=/tmp/arc-uv-cache uv run python scripts/run_connected_data_release_gate.py
+UV_CACHE_DIR=/tmp/arc-uv-cache uv run python tests/run_connected_data_release_gate.py
 ```
 
 It does **not** claim a live call to a real Dropbox / Microsoft / Google / AWS /

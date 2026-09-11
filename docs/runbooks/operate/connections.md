@@ -227,7 +227,7 @@ semantic channel explicitly.
 Run the deterministic cross-package lifecycle and ArcUI gate:
 
 ```bash
-UV_CACHE_DIR=/tmp/arc-uv-cache uv run python scripts/run_connected_data_release_gate.py
+UV_CACHE_DIR=/tmp/arc-uv-cache uv run python tests/run_connected_data_release_gate.py
 ```
 
 Include the real PostgreSQL source-sync contract when a disposable database is
@@ -237,7 +237,7 @@ available. The runner refuses to pretend this passed when the DSN is missing:
 ARC_RELEASE_GATE_POSTGRES=1 \
 ARCSTORE_TEST_POSTGRES_DSN='postgresql://arc:secret@127.0.0.1:5432/arc_test' \
 UV_CACHE_DIR=/tmp/arc-uv-cache \
-uv run python scripts/run_connected_data_release_gate.py
+uv run python tests/run_connected_data_release_gate.py
 ```
 
 The repository gate uses deterministic provider doubles plus a live PostgreSQL
