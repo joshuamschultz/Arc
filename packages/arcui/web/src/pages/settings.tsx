@@ -2,6 +2,7 @@ import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { OperatorModeToggle } from "@/components/operator-mode-toggle";
+import { RestartStackButton } from "@/components/restart-stack-button";
 import { ContextNote } from "@/components/hitl";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -63,6 +64,7 @@ export function SettingsPage() {
         description={description}
         actions={
           <>
+            <RestartStackButton />
             <OperatorModeToggle />
             <Select value={scope ?? ""} onValueChange={setPicked}>
               <SelectTrigger className="w-52">

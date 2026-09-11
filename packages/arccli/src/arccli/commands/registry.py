@@ -178,6 +178,13 @@ def _up_handler(args: list[str]) -> None:
     up_handler(args)
 
 
+def _restart_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.restart import restart_handler
+
+    restart_handler(args)
+
+
 def _prompt_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.prompt import prompt_handler
@@ -693,6 +700,15 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[--check] [--team-root <dir>]",
         cli_only=True,
         handler=_up_handler,
+    ),
+    CommandDef(
+        name="restart",
+        description="Restart the whole stack — arc + NATS + fleet + companions (--with-db bounces Postgres)",
+        category="Session",
+        aliases=("reboot",),
+        args_hint="[--with-db] [--no-wait]",
+        cli_only=True,
+        handler=_restart_handler,
     ),
     CommandDef(
         name="prompt",
