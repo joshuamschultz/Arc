@@ -154,13 +154,12 @@ flowchart LR
 
 ## Architecture Decision Records
 
-Repo-level ADRs live in `.claude/architecture/decisions/`, one file per decision. Others are
-recorded inline in the spec that produced them, and a few sit in `.claude/adrs/`.
+Most ADRs are recorded one file per decision; others are recorded inline in the spec that
+produced them, and a few are grouped together.
 
-**The full inventory — every ADR, its status, and which number is free next — is the index at
-[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md).**
-This page deliberately does not repeat it; a second copy is a second thing to forget to update,
-which is exactly how this page came to claim eleven ADRs existed when there were far more.
+**The full inventory — every ADR, its status, and which number is free next — lives in the ADR
+index.** This page deliberately does not repeat it; a second copy is a second thing to forget to
+update, which is exactly how this page came to claim eleven ADRs existed when there were far more.
 
 ---
 

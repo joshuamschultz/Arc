@@ -24,9 +24,9 @@ where something is built but not yet wired up, the entry says so.
 
 Each entry is one row: the **term**, a plain-language sentence anyone can
 follow, a technical sentence for contributors, and the file where it lives.
-Entries marked `> ⚠️ **Unverified**` name something referenced in `CLAUDE.md`
-or team memory that could not be confirmed in the current code — treat those
-as design intent, not shipped behavior, until a human checks.
+Entries marked `> ⚠️ **Unverified**` name something referenced in the
+application design or team memory that could not be confirmed in the current
+code — treat those as design intent, not shipped behavior, until a human checks.
 
 ---
 
@@ -38,7 +38,7 @@ dependency table: [`docs/PACKAGE_INDEX.md`](../building/package-index.md#the-pac
 
 | Package | Plain language | Technical precision | Code |
 |---|---|---|---|
-| **arcagent** | The "agent" itself — identity, tools, skills, memory-as-tools, extensions, all wired together. | Orchestrates `arcrun` to execute; never makes an LLM call or runs a loop itself (`CLAUDE.md`'s "don't mix concerns" rule). | `packages/arcagent/src/arcagent/core/agent.py` |
+| **arcagent** | The "agent" itself — identity, tools, skills, memory-as-tools, extensions, all wired together. | Orchestrates `arcrun` to execute; never makes an LLM call or runs a loop itself (the "don't mix concerns" rule). | `packages/arcagent/src/arcagent/core/agent.py` |
 | **arccli** | The `arc …` command you type in a terminal. | Click-based CLI: create/serve/run agents, `arc ui`, `arc store`, `arc team`, `arc trust approve`. | `packages/arccli/src/arccli/` |
 | **arcgateway** | The front door — how a chat platform reaches an agent. | Channel sessions, the executor, the built-in `web` adapter; owns agent data-plane reads (`fs_reader`, `fs_watcher`). | `packages/arcgateway/src/arcgateway/` |
 | **arcgateway-mattermost** | The Mattermost plug-in for the front door. | Platform adapter plugin, built for air-gapped DOE/lab chat surfaces; imported by nothing in gateway core. | `packages/arcgateway-mattermost/src/arcgateway_mattermost/` |
@@ -133,9 +133,9 @@ tier, not a federal-only feature. Full model: [`docs/SECURITY.md`](security.md).
 | **sandbox** | An isolated environment where untrusted code runs without touching the real machine. | `arcrun` backends (`DockerBackend`, `VmBackend`) and `arcskill`'s dry-run sandbox both provide this, at different strengths. | `packages/arcrun/src/arcrun/backends/docker.py:53`, `packages/arcrun/src/arcrun/backends/vm.py:154` |
 | **Firecracker microVM** | A lightweight, hardware-isolated virtual machine — stronger isolation than a container. | `FirecrackerEngine`, the strongest sandbox tier for both `arcrun` execution and `arcskill` dry-run install verification; required (not optional) at federal tier. | `packages/arcrun/src/arcrun/backends/vm.py:104`, `packages/arcskill/src/arcskill/hub/_firecracker.py` |
 | **AST scan** | Reading a skill's code structurally (as a parse tree) before running it, to catch dangerous patterns without executing anything. | Part of the install scan stage — regex bank + AST + semgrep + bandit. | `packages/arcskill/src/arcskill/hub/scanner.py`, `packages/arcskill/src/arcskill/hub/_ast_scanner.py` |
-| **SBOM** | ⚠️ **Unverified.** A "Software Bill of Materials" — a manifest of every dependency in a build. `CLAUDE.md` names it as an LLM03 supply-chain mitigation ("SBOM generation"); no `sbom` symbol or tool was found in the codebase. | Dependency auditing exists via `pip-audit` (a quality-gate command); SBOM generation itself was not located. | — |
+| **SBOM** | ⚠️ **Unverified.** A "Software Bill of Materials" — a manifest of every dependency in a build. The application design names it as an LLM03 supply-chain mitigation ("SBOM generation"); no `sbom` symbol or tool was found in the codebase. | Dependency auditing exists via `pip-audit` (a quality-gate command); SBOM generation itself was not located. | — |
 | **PII redaction** | Automatically finding and masking personal information before it leaves the agent. | Regex-based detection with a pluggable override in `arcllm`; separate PII/redaction logic also exists in `arcagent`'s user-profile and voice modules. | `packages/arcllm/src/arcllm/_pii.py` |
-| **the Four Pillars** | Identity, Sign, Authorize, Audit — the four guarantees every Arc deployment enforces, at every tier. | Codified in `ADR-019`: every entity has a DID; every artifact is verified before use; every tool call goes through `PolicyPipeline`; every operation emits an `AuditEvent`. | `.claude/architecture/decisions/ADR-019-four-pillars-universal.md` |
+| **the Four Pillars** | Identity, Sign, Authorize, Audit — the four guarantees every Arc deployment enforces, at every tier. | Codified in `ADR-019`: every entity has a DID; every artifact is verified before use; every tool call goes through `PolicyPipeline`; every operation emits an `AuditEvent`. | ADR-019 (architecture decision record) |
 
 ---
 
@@ -222,12 +222,12 @@ Full picture: [`docs/API_REFERENCE.md`](../walkthrough/04-unified-adapter.md).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
-| **ADR** | "Architecture Decision Record" — a short doc explaining one design choice and why. | Repo-level ADRs are one file per decision at `.claude/architecture/decisions/ADR-NNN-*.md`. Some are instead recorded inline inside the spec that produced them, and a spec's own `### ADR-NNN` headings are numbered locally to that spec — so an ADR number only identifies a decision together with where it lives. The index is the authority on what exists and which number is free. | [`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md) |
-| **spec (PRD / SDD / PLAN)** | The three-document trail from "what should this do" to "how will it work" to "what tasks build it." | Product Requirements Doc → Solution Design Doc → task Plan, each under `.claude/specs/<feature>/`. | `.claude/specs/` (gitignored per team memory) |
-| **producers-unwired** | A pattern where the *shape* for a feature exists in code (an enum, a config field) but nothing actually drives it yet. | Named in `CLAUDE.md`; the clearest live examples are `ToolTransport.HTTP` and `ToolTransport.PROCESS` — declared, never dispatched. `ToolTransport.MCP` is declared and undispatched too, but do not read that as "Arc has no MCP": per ADR-030 the MCP client ships as an extension attachment, not through this enum. | `packages/arcagent/src/arcagent/tools/_transport.py:29`, `packages/arcagent/src/arcagent/extension/mcp_attachment.py` |
-| **LOC budget** | A hard ceiling on how big the security-critical core is allowed to get, to keep it reviewable. | `< 3,500` lines for `arcagent/core/`, enforced as a quality gate. | `CLAUDE.md` |
+| **ADR** | "Architecture Decision Record" — a short doc explaining one design choice and why. | Most ADRs are one file per decision. Some are instead recorded inline inside the spec that produced them, and a spec's own `### ADR-NNN` headings are numbered locally to that spec — so an ADR number only identifies a decision together with where it lives. The index is the authority on what exists and which number is free. | ADR index |
+| **spec (PRD / SDD / PLAN)** | The three-document trail from "what should this do" to "how will it work" to "what tasks build it." | Product Requirements Doc → Solution Design Doc → task Plan, one folder per feature. | Kept local, not in shared history |
+| **producers-unwired** | A pattern where the *shape* for a feature exists in code (an enum, a config field) but nothing actually drives it yet. | Named in the application design; the clearest live examples are `ToolTransport.HTTP` and `ToolTransport.PROCESS` — declared, never dispatched. `ToolTransport.MCP` is declared and undispatched too, but do not read that as "Arc has no MCP": per ADR-030 the MCP client ships as an extension attachment, not through this enum. | `packages/arcagent/src/arcagent/tools/_transport.py:29`, `packages/arcagent/src/arcagent/extension/mcp_attachment.py` |
+| **LOC budget** | A hard ceiling on how big the security-critical core is allowed to get, to keep it reviewable. | `< 3,500` lines for `arcagent/core/`, enforced as a quality gate. | Design & build standards |
 | **architecture test** | An automated test that fails the build if a layering rule is broken (e.g. "arcrun must never import arcagent"). | Live under each package's `tests/architecture/` directory. | `packages/arcagent/tests/architecture/test_no_module_global_agent_state.py` |
-| **quality gate** | The set of thresholds a change must clear before it's considered done (coverage, lint, types, complexity). | Line coverage ≥ 80%, branch ≥ 75%, core ≥ 90%, ruff/mypy 0 errors. | `CLAUDE.md` |
+| **quality gate** | The set of thresholds a change must clear before it's considered done (coverage, lint, types, complexity). | Line coverage ≥ 80%, branch ≥ 75%, core ≥ 90%, ruff/mypy 0 errors. | Design & build standards |
 | **walkthrough notebook** | A runnable Jupyter notebook that demonstrates one real workflow end-to-end. | Per-package notebooks under `walkthroughs/<package>/`. | `walkthroughs/arcagent/`, `walkthroughs/arcllm/`, etc. |
 | **knowledge graph / code-review-graph** | A structural map of the codebase (who calls what, who tests what) used to answer review questions without reading every file. | The `code-review-graph` MCP server; queried via tools like `query_graph_tool`, `get_impact_radius_tool`. | MCP server, not an in-repo package |
 | **Mission Control** | The in-progress task-coordination system for multi-agent work. | Referenced in scaffolding/tests; the broader system is a roadmap item, partially landed as the task reliability engine. | `packages/arccli/src/arccli/commands/agent/_common.py`, `packages/arcstore/src/arcstore/tasks.py` |
@@ -240,15 +240,15 @@ Full picture: [`docs/API_REFERENCE.md`](../walkthrough/04-unified-adapter.md).
 
 | Term | Plain language | Technical precision | Code |
 |---|---|---|---|
-| **NIST 800-53** | The US federal catalog of security and privacy controls agencies must implement. | Referenced compliance target; the **IA** (Identification & Authentication), **AU** (Audit & Accountability), and **AC** (Access Control) families map most directly onto arctrust's identity/audit/policy layers. | `CLAUDE.md` |
-| **FedRAMP** | The US federal program that authorizes cloud services for government use. | A named compliance target for Arc's eventual authorization. | `CLAUDE.md` |
-| **CMMC** | The Cybersecurity Maturity Model Certification — a DoD contractor security standard. | A named compliance target. | `CLAUDE.md` |
-| **SCIF** | A "Sensitive Compartmented Information Facility" — a room built to prevent electronic eavesdropping. | Cited as a deployment environment Arc must run in (`CLAUDE.md`: "DOE machines, in labs, in SCIFs"). | `CLAUDE.md` |
+| **NIST 800-53** | The US federal catalog of security and privacy controls agencies must implement. | Referenced compliance target; the **IA** (Identification & Authentication), **AU** (Audit & Accountability), and **AC** (Access Control) families map most directly onto arctrust's identity/audit/policy layers. | Design & build standards |
+| **FedRAMP** | The US federal program that authorizes cloud services for government use. | A named compliance target for Arc's eventual authorization. | Design & build standards |
+| **CMMC** | The Cybersecurity Maturity Model Certification — a DoD contractor security standard. | A named compliance target. | Design & build standards |
+| **SCIF** | A "Sensitive Compartmented Information Facility" — a room built to prevent electronic eavesdropping. | Cited as a deployment environment Arc must run in (by design: "DOE machines, in labs, in SCIFs"). | Design & build standards |
 | **air-gapped** | A machine or network with no physical connection to the internet. | The deployment context `arcgateway-mattermost` is explicitly built for. | `docs/deploy/single-node.md` |
-| **OWASP LLM Top 10 (LLM01–LLM10)** | The industry-standard list of the ten biggest risks specific to LLM-powered applications. | Each code mapped to a concrete mitigation in `CLAUDE.md`'s threat-surface table (e.g. LLM06 Excessive Agency → tool allowlists + `HumanGate`). | `CLAUDE.md` |
-| **OWASP Agentic Top 10 (ASI01–ASI10)** | The equivalent list for autonomous *agents* specifically, not just chat LLMs. | Same table format; e.g. ASI05 (Unexpected Code Execution) → Firecracker microVM isolation. | `CLAUDE.md` |
+| **OWASP LLM Top 10 (LLM01–LLM10)** | The industry-standard list of the ten biggest risks specific to LLM-powered applications. | Each code mapped to a concrete mitigation in the threat-surface table (e.g. LLM06 Excessive Agency → tool allowlists + `HumanGate`). | Design & build standards |
+| **OWASP Agentic Top 10 (ASI01–ASI10)** | The equivalent list for autonomous *agents* specifically, not just chat LLMs. | Same table format; e.g. ASI05 (Unexpected Code Execution) → Firecracker microVM isolation. | Design & build standards |
 | **CUI** | "Controlled Unclassified Information" — sensitive-but-not-classified US government data. | A `Classification` enum value, ranked above `UNCLASSIFIED`. | `packages/arctrust/src/arctrust/classification.py:27` |
-| **mTLS** | Mutual TLS — both sides of a connection prove their identity, not just the server. | ⚠️ **Unverified.** Named as a design requirement for all internal comms (`CLAUDE.md`), including NATS channels (ASI07 mitigation); no `mtls`/`mTLS` symbol was found in the current code. | — |
+| **mTLS** | Mutual TLS — both sides of a connection prove their identity, not just the server. | ⚠️ **Unverified.** Named as a design requirement for all internal comms (by design), including NATS channels (ASI07 mitigation); no `mtls`/`mTLS` symbol was found in the current code. | — |
 | **NATS** | The message bus Arc uses for agent-to-agent communication. | `arcteam`'s transport backend. | `packages/arcteam/src/arcteam/backends/nats.py` |
 | **OpenTelemetry** | The open standard Arc uses for traces, metrics, and structured logs. | Wired through `arcllm`'s telemetry module and the audit/OTel hooks in `arcskill`'s install pipeline. | `packages/arcllm/src/arcllm/modules/otel.py` |
 
@@ -307,4 +307,4 @@ bring assumptions from elsewhere:
 | **brain** | The memory implementation itself. | A **port** — a Protocol arcagent defines and depends on structurally, satisfied by `NullBrain` (default, does nothing) or `ArcMemoryBrain` (the real thing, in a separate package). arcagent never imports memory code. |
 | **extension** vs **module** vs **skill** vs **capability** | Four names for the same idea. | Four distinct layers: a **capability** is anything discoverable (tool or skill); a **skill** is a signed `SKILL.md` folder; a **module** is an official built-in behavior on the event bus; an **extension** is a named seam (like `brain`) where you swap the *implementation* via config, independent of the module system. |
 | **spool** vs **WORM** | The same durable log. | The **spool** is arcstore's own append-only operational log (run/tool/LLM events). **WORM** is the broader tamper-evident audit-chain storage discipline used by `arctrust`'s audit sink — a different, security-focused write path with its own hash chain. |
-| **JsonlSink / SignedChainSink** | Real class names. | `CLAUDE.md` uses these as descriptive labels; the actual classes are `NullSink` and `WormSink` (`packages/arctrust/src/arctrust/audit.py`). Same behavior, different names — use the code names when reading source. |
+| **JsonlSink / SignedChainSink** | Real class names. | The application design uses these as descriptive labels; the actual classes are `NullSink` and `WormSink` (`packages/arctrust/src/arctrust/audit.py`). Same behavior, different names — use the code names when reading source. |

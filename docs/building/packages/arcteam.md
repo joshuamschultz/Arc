@@ -62,7 +62,7 @@ engine.
 
 ### Fleet composition points the other way
 
-This is the alpha fleet invariant (repo `CLAUDE.md`, and
+This is the alpha fleet invariant (by design, and
 [fleet layering](../../concepts/fleet-layering.md)): the direction is
 **`arcteam → arcagent`** and **`arcteam → arcmemory`**. arcteam composes agents
 and their memory; **neither `arcagent` nor `arcmemory` may import `arcteam`.**
@@ -668,7 +668,7 @@ delivers its summary to the pinned channel.
 ## Threat surface
 
 arcteam is a coordination boundary between mutually-distrusting agents, so it is
-designed against an attacker already inside (repo `CLAUDE.md`,
+designed against an attacker already inside (by the security policy,
 [seam model](../../concepts/seam-model.md)).
 
 | Vector | Mitigation in arcteam |

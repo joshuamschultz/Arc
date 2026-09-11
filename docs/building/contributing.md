@@ -152,7 +152,7 @@ in that list, still run `mypy <pkg>/src/<pkg>/ --strict` locally and fix what
 it finds — the project rule ("leave it correct") does not wait for CI to
 catch up.
 
-**Thresholds** (`CLAUDE.md`):
+**Thresholds** (by policy):
 
 | Gate | Threshold |
 |---|---|
@@ -210,7 +210,7 @@ flowchart LR
 
 ### The non-negotiable house rules
 
-These get PRs rejected. Stated bluntly, from `CLAUDE.md`:
+These get PRs rejected. Stated bluntly, by policy:
 
 - **No legacy or backward-compat code.** This is a local-only repository, not
  a published library with external consumers to protect. Never write
@@ -237,7 +237,7 @@ These get PRs rejected. Stated bluntly, from `CLAUDE.md`:
 
 ### Testing
 
-The pyramid, from `CLAUDE.md`: unit 70% / integration 20% / e2e 10%, plus
+The pyramid, by policy: unit 70% / integration 20% / e2e 10%, plus
 dedicated security and performance suites. In practice:
 
 | Location | What lives there |
@@ -327,14 +327,12 @@ Branch naming: `<type>/<description>` (e.g. `feat/quick-deploy`,
 `fix/login-redirect-bug`). Never commit directly to `main`. Conventional
 commit types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`.
 
-Specs live under `.claude/specs/<ID>/` as PRD → SDD → PLAN
-(`-kimi-provider`, `-mission-control`, etc.) — `.claude/` is
-gitignored, so specs are **local to your machine**, not part of the shared
-history. They're a planning artifact, not a substitute for the commit
-history or this doc set. A spec's status field must be committed together
-with the implementation that closes it, or the two drift: don't mark a spec
-`VERIFIED` in one session and commit the code that verifies it in a later,
-separate one.
+Specs follow a PRD → SDD → PLAN progression, one folder per feature. They're
+kept local to your machine, not part of the shared history — a planning
+artifact, not a substitute for the commit history or this doc set. A spec's
+status field must be committed together with the implementation that closes
+it, or the two drift: don't mark a spec `VERIFIED` in one session and commit
+the code that verifies it in a later, separate one.
 
 ```mermaid
 stateDiagram-v2
@@ -353,19 +351,16 @@ stateDiagram-v2
 
 Write an Architecture Decision Record when a choice is non-obvious enough
 that a future contributor will otherwise re-litigate it — a scope cut, a
-layering rule, a storage split, a security invariant. New ones go in
-`.claude/architecture/decisions/` as `ADR-NNN-<slug>.md`, following the existing
-template: `Status`, `Date`, `Spec` (if applicable), `Context`, `Decision`,
-`Rationale`.
+layering rule, a storage split, a security invariant. New ones follow the
+existing template: `Status`, `Date`, `Spec` (if applicable), `Context`,
+`Decision`, `Rationale`.
 
-**Before you pick a number, read
-[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md).**
-It is the single index — every ADR, where it lives, and which number is free
-next. Do not infer the free number from the filenames in that directory: some
-ADRs are recorded inline in the spec that produced them and some live in
-`.claude/adrs/`, so numbers that look unused are already taken. Never renumber
-an existing ADR to close an apparent gap; the references are spread across
-docs, specs, and source.
+**Before you pick a number, read the ADR index.** It is the single list —
+every ADR, where it lives, and which number is free next. Do not infer the
+free number from filenames: some ADRs are recorded inline in the spec that
+produced them and some are grouped together, so numbers that look unused are
+already taken. Never renumber an existing ADR to close an apparent gap; the
+references are spread across docs, specs, and source.
 
 Once your ADR is written, add its row to the index and bump the next-free number
 there. That index is the only list to update — the pages in this documentation
@@ -421,7 +416,7 @@ Two things bite people on a deployed box:
 
 This repo has a `code-review-graph` MCP server providing a persistent,
 incrementally-updated structural graph of the codebase (parsed with
-Tree-sitter). Per the root `CLAUDE.md`, **use it before Grep/Glob/Read** when
+Tree-sitter). By policy, **use it before Grep/Glob/Read** when
 exploring code — it's faster, cheaper in tokens, and gives you relationships
 (callers, dependents, test coverage) that scanning files can't.
 
@@ -454,8 +449,7 @@ graph doesn't cover what you need.
 | `scripts/check_loc_budgets.py` | LOC budget definitions and enforcement | A package is bumping against its LOC ceiling |
 | `scripts/coverage_report.py` | Per-package coverage thresholds | Coverage gate is failing or a new package needs a threshold |
 | `tests/architecture/` | Repo-wide layering invariants | Any change to which package imports which |
-| `.claude/architecture/decisions/` | ADRs | Recording a non-obvious architectural choice |
 | `docs/deploy/` | Deployment runbooks | Deploying, or changing how Arc is deployed |
 | `Dockerfile`, `deploy/entrypoint.sh`, `docker-compose.yml` | The single install path | Changing what ships in the image or first-boot behavior |
 | `sbom/security-suppressions.txt` | Documented, accepted vulnerability exceptions | A `pip-audit` finding needs a compensating-control writeup instead of a fix |
-| `packages/<pkg>/CLAUDE.md` | Per-package build standards (mirrors the root, package-scoped) | Working inside one specific package |
+| `docs/building/packages/<pkg>.md` | Per-package build standards (mirrors the repo-wide standards, package-scoped) | Working inside one specific package |

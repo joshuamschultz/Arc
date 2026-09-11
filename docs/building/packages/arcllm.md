@@ -31,7 +31,7 @@ flowchart LR
     arcllm --> store[arcstore<br/>operational spool]:::leaf
 ```
 
-**The concern boundary (repo `CLAUDE.md`, `.claude/rules/core.md`):**
+**The concern boundary (by policy):**
 
 | Concern | Package | arcllm's rule |
 |---|---|---|
@@ -130,8 +130,7 @@ adapter absorbs the provider difference.
 ## The always-on router
 
 `load_model` **always returns a `RoutingModule`** — never a bare adapter (see
-`registry.py`, and the package rule in
-`CLAUDE.md`). This removed an old
+`registry.py`, and the package's design contract). This removed an old
 "adapter-or-router" fork where routing and load-balancing fought over one slot
 and the loser was silently dropped.
 

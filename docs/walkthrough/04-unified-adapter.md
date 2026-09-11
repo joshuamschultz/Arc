@@ -397,8 +397,7 @@ Walkthrough: `walkthroughs/arcllm/04-agentic-loop.ipynb`.
 `ProviderSettings.enable_prompt_caching` (default on) and `cache_ttl`
 (`"5m"` or `"1h"`) are read by every provider's config, but only
 `AnthropicAdapter` acts on them — it places up to three `cache_control`
-breakpoints (last tool, system block, rolling tail message) per
-[ADR-025](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-025-cache-control-confined-to-anthropic-adapter.md).
+breakpoints (last tool, system block, rolling tail message) per ADR-025.
 `cache_control` is never added to a shared `arcllm` type, and `arcrun` and
 `arcagent` never see the concept. Anthropic's cache-breakpoint model is a
 vendor-specific wire concept — a `cache: bool` field on the shared

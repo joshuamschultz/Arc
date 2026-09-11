@@ -159,7 +159,6 @@ the way they are.
 
 Architecture Decision Records are project history rather than published guides,
 so they stay with the repository's system files instead of appearing in this set.
-Most are one file per decision under `.claude/architecture/decisions/`; some are
-recorded inline in the spec that produced them, and a few sit in `.claude/adrs/`.
-[`.claude/architecture/decisions/README.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/README.md)
-indexes all of them and is the authority on which number is free next.
+Most are one file per decision; some are recorded inline in the spec that produced
+them, and a few are grouped together. The ADR index lists all of them and is the
+authority on which number is free next.

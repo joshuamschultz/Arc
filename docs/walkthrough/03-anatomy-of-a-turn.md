@@ -33,7 +33,7 @@ This is a deliberate design decision, not an accident:
 > "arcrun is the execution loop and the single runtime path to arcllm.
 > Routing is already unified — chat from any channel goes `adapter →
 > SessionRouter → executor → agent → arcrun`, and the CLI goes `agent.run →
-> arcrun`." — [`.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md)
+> arcrun`." — ADR-024, unified streaming run entry
 
 **`arc` CLI.** `arc agent chat` is the interactive entry a human actually
 types a message into. It loads the agent's config, opens a session, and
@@ -219,7 +219,7 @@ sandbox) resolved once per tier in
 `RunState`, it calls `registry.freeze()`
 (`packages/arcrun/src/arcrun/streams.py:69`, inside the shared `_build_state`
 helper). This matches
-[`ADR-027`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md)
+`ADR-027` (per-run tool-set freeze security invariant)
 exactly: after `freeze()`, `add`/`remove` raise `RuntimeError` and emit a
 `tool.mutation_denied` anomaly audit event. No tool can be injected mid-run —
 not by a prompt-injected instruction, not by any code path — because the
@@ -231,7 +231,7 @@ three independent code paths — `run()` wraps `run_async()`
 (`packages/arcrun/src/arcrun/loop.py:160-191`), and `run_stream()` wraps
 `run()` in a queue-fed async generator
 (`packages/arcrun/src/arcrun/streams.py:307-354`). This matches
-[`ADR-024`](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-024-unified-streaming-run-entry.md),
+`ADR-024` (unified streaming run entry),
 which explicitly deleted the old `chat` / `run_async` / `run_stream` fork at
 the *agent* layer in favor of one streaming `agent.run()` — the ADR's own
 before/after table documents the fork it closed.
@@ -381,8 +381,8 @@ individual model call gets written to the operational spool as a
 
 ### 6. Tool execution — the four pillars, in code
 
-This is where CLAUDE.md's "Authorize" and "Audit" pillars stop being
-assertions and become a specific, verifiable call order. The dispatchable
+This is where the application design's "Authorize" and "Audit" pillars stop
+being assertions and become a specific, verifiable call order. The dispatchable
 tools arcrun invokes are not raw handlers — they are wrapped once, at
 `ArcAgent` startup, by `ToolRegistry._create_wrapped_execute()`, whose own
 docstring states the order:
@@ -446,7 +446,7 @@ hash-chained append-only JSONL file (see §7). `NullSink`
 (`arctrust/audit.py:137`) is the explicit no-op used in tests and
 unconfigured agents.
 
-> ⚠️ **Naming correction:** CLAUDE.md's Four Pillars description names
+> ⚠️ **Naming correction:** The application design's Four Pillars description names
 > separate `JsonlSink`, `SignedChainSink`, and `arcui.bridge.UIBridgeSink`
 > classes. In the code, `arctrust.audit` exposes only `WormSink` (a
 > single class that is both the JSONL writer and the hash chain) and
@@ -665,8 +665,7 @@ flowchart TD
 The six-field record for the **run / turn** flow, shared verbatim with the
 shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
 numbers drift; the **symbol name** is the durable anchor. Full text and
-alternatives for each `D-NNN` live in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+alternatives for each `D-NNN` live in the project's decision log.
 
 | Field | This flow |
 |---|---|

@@ -262,7 +262,7 @@ deployment never silently serves a subset of its configured platforms.
 > `arcagent/modules/telegram` and `.../slack` modules were removed in favor of
 > this one seam.
 
-See [ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md)
+See ADR-020 (arcgateway as data plane)
 and [`docs/arcgateway/`](../building/packages/arcgateway.md) for the full data-plane design.
 
 **The inbound path a platform message travels.** An adapter normalizes its
@@ -640,7 +640,7 @@ stateDiagram-v2
 **See also:** [`docs/04-the-unified-adapter.md`](04-unified-adapter.md) ·
 [`docs/06-prompts-tools-skills.md`](06-prompts-tools-skills.md) ·
 [`docs/10-security-model.md`](10-security-model.md) ·
-[ADR-020](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-020-arcgateway-as-data-plane.md) ·
+ADR-020 (arcgateway as data plane) ·
 [`docs/arcgateway/`](../building/packages/arcgateway.md)
 
 ---
@@ -650,8 +650,7 @@ stateDiagram-v2
 The six-field record for the **gateway inbound → agent** flow (§11.4 above),
 shared verbatim with the shared *Decision Index* catalog
 (`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
-the durable anchor. Full text for each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+the durable anchor. Full text for each `D-NNN` lives in the project's decision log.
 
 | Field | This flow |
 |---|---|

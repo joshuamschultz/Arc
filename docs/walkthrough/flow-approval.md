@@ -120,5 +120,4 @@ Self-approval is barred here too (`:642`).
 | **D-NNN / ADR** | D-523, D-525, D-557, D-111, D-651; ADR-034 |
 | **Code anchor** | `arcstore/approvals.py:33,134,166` · `arccli/commands/approve.py:162` · `arctrust/operator.py:90` · `arctrust/policy.py:123,569,624,640,676` |
 
-The full text of every `D-NNN` above lives in the decision log
-([`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md)).
+The full text of every `D-NNN` above lives in the project's decision log.

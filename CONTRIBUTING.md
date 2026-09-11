@@ -278,20 +278,16 @@ Write an Architecture Decision Record when a choice is non-obvious enough
 that a future contributor would otherwise re-litigate it — a scope cut, a
 layering rule, a storage split, a security invariant.
 
-New ADRs go at `.claude/architecture/decisions/ADR-NNN-<slug>.md` (this
-directory is tracked in git, not ignored).
+Do not work out the next free number by scanning for existing files. ADRs
+are recorded in more than one place: most as one file per decision, a handful
+grouped together (ADR-017A through 017D), and others recorded inline inside
+the spec that produced them under `### ADR-NNN` headings. A number with no
+standalone file is usually still taken.
 
-Do not work out the next free number by looking at that directory. ADRs sit
-in three places: one file per decision there, a handful at `.claude/adrs/`
-(ADR-017A through 017D), and others recorded inline inside the spec that
-produced them under `### ADR-NNN` headings in `.claude/specs/*/SDD.md`. A
-number with no file is usually still taken.
-
-`.claude/architecture/decisions/README.md` is the index and the authority:
-it lists every ADR, says which of the three places it lives in, and states
-the next free number. Take the number from there, then add your ADR's row
-and bump that number in the same PR. Never renumber an existing ADR to close
-a gap — the references run through docs, specs, and source.
+The ADR index is the authority: it lists every ADR, says where it lives, and
+states the next free number. Take the number from there, then add your ADR's
+row and bump that number in the same PR. Never renumber an existing ADR to
+close a gap — the references run through docs, specs, and source.
 
 ## Docs
 
@@ -316,7 +312,6 @@ inside the docs site.
 | `scripts/check_loc_budgets.py` | LOC budget definitions |
 | `scripts/coverage_report.py` | Per-package coverage thresholds |
 | `tests/architecture/` | Repo-wide layering invariants |
-| `.claude/architecture/decisions/` | ADRs |
 | `docs/` | The documentation site source |
 | `sbom/security-suppressions.txt` | Documented, accepted vulnerability exceptions |
-| `packages/<pkg>/CLAUDE.md` | Per-package build standards |
+| `docs/building/packages/<pkg>.md` | Per-package build standards |

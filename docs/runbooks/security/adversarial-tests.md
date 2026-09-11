@@ -54,7 +54,7 @@ instead of silently reducing coverage.
 
 The manifest is intentionally curated. Package-local security suites remain
 broader; this battery is the fast release gate for the hostile-insider threat
-model in root `AGENTS.md` and `CLAUDE.md`.
+model defined by the application's design and build standards.
 
 ## Test Categories
 

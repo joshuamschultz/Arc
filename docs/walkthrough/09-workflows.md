@@ -382,7 +382,7 @@ capability runtime and any tool factory build byte-identical services.
 
 > ⚠️ **Unverified as implemented:** `packages/arcteam/src/arcteam/backends/nats.py`
 > connects with `nats.connect(servers,...)` and no TLS/certificate options
-> visible in that call — the CLAUDE.md invariant of mTLS on all inter-agent
+> visible in that call — the security-policy invariant of mTLS on all inter-agent
 > NATS traffic does not appear wired into the connection itself. Treat mTLS
 > as a deployment-level expectation (a TLS-terminating NATS server / service
 > mesh), not something this backend enforces in-process, until confirmed
@@ -648,8 +648,8 @@ Full config precedence and every key above: [`docs/12-configuration.md`](12-conf
 The six-field record for the **workflow / schedule fire → task** flow, shared
 verbatim with the shared *Decision Index* catalog
 (`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
-the durable anchor. Full text for each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+the durable anchor. Full text for each `D-NNN` lives in the project's decision
+log.
 
 | Field | This flow |
 |---|---|

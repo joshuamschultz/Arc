@@ -102,7 +102,7 @@ indexes each object. The isolation invariant is the **doc scope**:
 (`packages/arcmemory/src/arcmemory/doc_index.py:36`) returns a `Scope` whose key
 is `<did>:doc:<source_id>`. Each source gets its **own** `SurfaceIndex` — N
 indices, one per source, not one shared index with a filter (D-686;
-`doc_index.py:173`, decision text at `.claude/decisions-log.md:7280`). Writes go
+`doc_index.py:173`). Writes go
 straight through the `IndexBackend` so the agent's *own* memory files can never
 bleed into a document pool (`doc_index.py:9`,`:85`). Reindex and purge are
 first-class: `reindex_source` (`connected_data.py:850`), `purge_source`
@@ -149,5 +149,4 @@ surface, not connected-source retrieval.
 | **D-NNN / ADR** | D-683, D-684, D-686, D-688, D-691; SPEC-073 |
 | **Code anchor** | `connected_data/coordinator.py:54,82` · `extension/source.py:159` · `arcmemory/connected_data.py:297,358,570,850` · `doc_index.py:36,153` · `memory/capabilities.py:617` |
 
-The full text of every `D-NNN` above lives in the decision log
-([`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md)).
+The full text of every `D-NNN` above lives in the project's decision log.

@@ -271,9 +271,9 @@ TASK TYPE: <REWRITE existing | CREATE new>
 TARGET PACKAGE: packages/<pkg>/
 
 READ THESE BEFORE WRITING:
-1. /Users/joshschultz/Projects/arc/walkthroughs/PLAN.md sections 1, 2, 3
+1. /path/to/arc/walkthroughs/PLAN.md sections 1, 2, 3
    — quality bar, conventions, process
-2. /Users/joshschultz/Projects/arc/walkthroughs/PLAN.md §5.X.Y (your specific entry)
+2. /path/to/arc/walkthroughs/PLAN.md §5.X.Y (your specific entry)
    — exact scope for THIS notebook
 3. packages/<pkg>/src/<pkg>/__init__.py — public exports
 4. packages/<pkg>/CHANGELOG.md — recent changes

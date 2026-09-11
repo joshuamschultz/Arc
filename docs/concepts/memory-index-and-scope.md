@@ -193,8 +193,8 @@ rebuildable convenience.
 
 ## Threat surface
 
-Design every part of this against an attacker already inside (see
-the project threat-surface guide):
+Design every part of this against an attacker already inside, per the project's
+threat model:
 
 - **Cross-agent / cross-tenant leakage (LLM08).** One database per agent, and
   every search filtered by scope — including the `vec0`→`chunks` join that scopes
@@ -235,7 +235,7 @@ Because it is glass-box, you can check every claim above:
 
 ## Known failure modes (documented so we learn from them)
 
-Recorded in full in `.claude/problem-log.md`:
+Recorded in full in the project's problem log:
 
 - **A rebuild emptied sibling scopes.** `rebuild()` deleted `chunks`/`vec`
   globally (no `WHERE scope`) while re-indexing only its own scope, so any

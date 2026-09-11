@@ -107,7 +107,7 @@ exported from `adapters/<name>/`, discovered by a directory scan
 (`arcgateway/adapters/registry.py:58` `_DESCRIPTOR = "PLATFORM"`,
 `:165` `discover_adapters()`, `:192` `_load_descriptor` which rejects anything not
 an `AdapterSpec` at `:221-223`). Deleting the folder deletes the platform and the
-registry learns neither name (`arcgateway/CLAUDE.md`, "A platform is a folder").
+registry learns neither name (by design, "a platform is a folder").
 An `AgentType` follows the same rule — a folder exporting the descriptor, scanned,
 deletable, with the core learning nothing about hermes or openclaw:
 
@@ -171,20 +171,20 @@ format, it will still work") — the fleet talks only to `HarnessAdapter`.
 
 `arcteam/harness/` is the natural home: arcteam already owns roster, messaging,
 and coordination and legally imports `arcstore` + `arctrust` but never `arcagent`
-(`packages/arcteam/CLAUDE.md`, "Layer"). The `HarnessAdapter` **Protocol** is
+(by design, arcteam is a "Layer" above them). The `HarnessAdapter` **Protocol** is
 defined in arcteam (it speaks primitives + `Entity` + `Message`, all arcteam/
 arctrust types — no arcagent import). `ArcAgentHarness` (the native impl) lives
 in `arcgateway` (which legally imports arcagent), alongside the existing
 `FleetRegistry`. Foreign harnesses ship as **extensions** — a folder exporting an
 `AgentType`, scanned the way adapters and connectors are, deletable with no core
-change (build-principles "Module vs Extension").
+change (the project's Module vs Extension distinction).
 
 ### 2.4 `MemberOutput` — an arcteam-owned envelope, never an arcllm type
 
-arcteam's legal imports are `arcstore` + `arctrust` only (`arcteam/CLAUDE.md`,
-"Layer"). `Delta` is an **arcllm** wire type; putting it in the `HarnessAdapter`
-Protocol would drag arcllm into arcteam and break the concern split (root
-`core.md` §1). So arcteam defines its own minimal **`MemberOutput`** envelope,
+arcteam's legal imports are `arcstore` + `arctrust` only (by design, arcteam is a
+"Layer" above them). `Delta` is an **arcllm** wire type; putting it in the
+`HarnessAdapter` Protocol would drag arcllm into arcteam and break the concern
+split (the project's concern-purity rule). So arcteam defines its own minimal **`MemberOutput`** envelope,
 mirroring the JSON-lines shape the subprocess worker protocol already speaks
 (`arccli/agent_worker.py`: "One Delta JSON object per line … ending with a
 Delta(kind='done', is_final=True)") — a `kind` (`text` / `done` / `error`), a text
@@ -196,18 +196,18 @@ arcteam-owned name.
 
 ### 2.5 Layering: Protocol in arcteam, native impl in arcgateway (satisfies both readings)
 
-Two build docs read differently at a glance: root `core.md` says "the alpha fleet
-direction is **arcteam → arcagent**", while `arcteam/CLAUDE.md` says arcteam
+Two design rules read differently at a glance: the project's stated fleet
+direction is **arcteam → arcagent**, while the arcteam layering policy says arcteam
 depends on arcstore + arctrust and is **"Not arcagent"** with "No upward imports of
-arcagent". H-040's split resolves both, and the builder must not cite `core.md` to
-justify importing arcagent into arcteam:
+arcagent". H-040's split resolves both, and the builder must not cite the
+fleet-direction rule to justify importing arcagent into arcteam:
 
 - The **`HarnessAdapter` / `AgentType` / `MemberOutput` Protocol and types live in
   arcteam** and reference only arcteam + arctrust types (`Entity`, `Message`,
   `EnrollmentGrant`, primitives). **arcteam imports no arcagent** — the existing
   layering test stays green.
 - The **native `ArcAgentHarness` implementation lives in arcgateway**, which
-  already legally imports arcagent (`arcgateway/CLAUDE.md`, "Use `import arcagent`")
+  already legally imports arcagent (by design, "Use `import arcagent`")
   and holds the `FleetRegistry` today (`arcgateway/fleet.py:31`). The
   "arcteam → arcagent" *conceptual* direction (orchestration knows about agents) is
   realized through the Protocol seam, not a Python import edge.
@@ -283,15 +283,14 @@ class EnrollmentGrant(BaseModel):        # arctrust/policy.py or identity.py
 ```
 
 Signed with the deployment **operator** authority (the same key that signs the
-audit chain and approvals — never an agent key; `arctrust/CLAUDE.md`, "Operator
+audit chain and approvals — never an agent key; by the security policy, "operator
 key ≠ agent identity"). Canonicalization goes through `canonical_json`
 (`arctrust/canonical.py`), like every other signed artifact.
 
 ### 3.3 Who signs, and the flow
 
-Reuse the **mechanical approval subsystem** already shipped (memory pointer
-`project_mechanical_approval_subsystem`): a pending row → `arc approve` signs a
-grant. Concretely:
+Reuse the **mechanical approval subsystem** already shipped: a pending row →
+`arc approve` signs a grant. Concretely:
 
 1. `arc team register <handle> --type agent --harness hermes --pubkey <hex> --caps ...`
    — instead of writing the `Entity` directly, writes a **pending enrollment
@@ -324,7 +323,7 @@ Fail-closed at three chokepoints:
   in.
 
 Because `member_public_key` is pinned inside the signed grant, a later swap of
-the Entity's `public_key` (TOCTOU, `threat-surface.md`) breaks verification. The
+the Entity's `public_key` (a TOCTOU attack) breaks verification. The
 member's message/ToolCall signatures must validate against that pinned key.
 
 ### 3.5 Replay / nonce / revocation
@@ -420,7 +419,7 @@ agent-detail tab is hard-wired to arcagent's config layout
   reads it **via arcteam** (the legal arcui → arcteam edge), and the registry path
   **replaces** the filesystem scan — it must **not** add a new direct `team/` read
   in arcui: SPEC-022 stays intact (arcui must not touch `team/` directly; go
-  through `fs_reader` — `arcgateway/CLAUDE.md`). The `RosterEntry` gains a
+  through `fs_reader` — by the architecture). The `RosterEntry` gains a
   `harness` field (`team_roster.py:32-47`).
 - **Type badge.** Render `harness` as a first-class badge on the fleet card
   (next to the existing online/activity dot, `fleet/agent-card.tsx:56-74`) and in
@@ -445,7 +444,7 @@ agent-detail tab is hard-wired to arcagent's config layout
 `registry.py:40-65`) and able to receive a wake/notice (`HarnessAdapter.deliver`,
 mapping to the existing `FleetMessengerAdapter.send_notice` path,
 `arcteam/agent_fleet.py:58-73`). Relevance-triage (agents publish digests, a
-ranker picks the responder — `arcteam/CLAUDE.md`) works for a foreign member as
+ranker picks the responder — by design) works for a foreign member as
 long as it publishes an `AgentDigest`; a member that publishes none is simply
 never auto-selected (graceful, not broken).
 
@@ -617,7 +616,7 @@ all tiers** — the `arc-agent-worker` subprocess model already
 exists for federal isolation (`arccli/agent_worker.py`: own event loop, own
 connection pool, own audit chain; resource limits applied by `SubprocessExecutor`
 via `preexec_fn`). Foreign members reuse that isolation boundary; federal tier
-can escalate to a microVM (`threat-surface.md` ASI05). The fleet talks to the
+can escalate to a microVM (ASI05). The fleet talks to the
 subprocess over the same JSON-lines `InboundEvent → Delta` protocol, which is
 exactly what `HarnessAdapter.dispatch` returns.
 
@@ -683,11 +682,11 @@ radius is one sandboxed member. This is the posture for a bundled hermes/opencla
 adapter shipped as an extension.
 
 **Posture B — attach as remote peer.** An already-running foreign agent, elsewhere
-on the network, connects to the fleet (the way arctui attaches over `/ws/chat`,
-memory pointer `project_arctui_spec058`). Different threat model: Arc controls
+on the network, connects to the fleet (the way arctui attaches over `/ws/chat`).
+Different threat model: Arc controls
 **neither its lifecycle nor its host**, so it must be treated as a fully external,
-mutually-authenticated peer — mTLS on the NATS/WS boundary (`threat-surface.md`
-ASI07), enrollment signature verified on connect, replay/nonce on every message
+mutually-authenticated peer — mTLS on the NATS/WS boundary (ASI07),
+enrollment signature verified on connect, replay/nonce on every message
 (`arcteam/types.py:120-152`), and **no in-process trust ever** (a remote peer can
 never be `sandbox = in_process`). It cannot hold a native workspace path; its
 memory access is shared-only via `TeamMemoryService` unless it presents a signed
@@ -747,8 +746,8 @@ The registry admission check (§3.4) enforces this: at federal tier, a grant who
   (`arcagent/modules/memory/_runtime.py:179`), and REQ-030 all stay. Native agents
   gain a thin `ArcAgentHarness` wrapper (§2.2) and nothing else.
 - **Dependency direction is preserved.** The fleet direction stays
-  `arcteam → {arcagent, arcmemory}` (memory pointer `project_arcteam_comms_direction`;
-  `arcteam/CLAUDE.md` "Not arcagent"). The `HarnessAdapter` Protocol lives in
+  `arcteam → {arcagent, arcmemory}` (by the architecture, arcteam is "Not
+  arcagent"). The `HarnessAdapter` Protocol lives in
   arcteam and speaks only arcteam/arctrust types — **no `arcagent` import in
   arcteam**, enforced by the existing layering tests. `ArcAgentHarness` (the native
   impl) lives in arcgateway, which already legally imports arcagent.

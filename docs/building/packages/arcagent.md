@@ -67,8 +67,8 @@ be installed and rewritten alone (see [Concern split](#the-concern-split)).
 
 ## The concern split
 
-Three concerns, three packages. The rule (repo `.claude/rules/core.md`) is that
-`arcagent` never reaches past its neighbour:
+Three concerns, three packages. By design, `arcagent` never reaches past its
+neighbour:
 
 | Concern | Package | `arcagent`'s relationship |
 |---|---|---|

@@ -393,11 +393,9 @@ Semantic guardrails (grounding, factual correctness, toxicity) are deliberately 
 of scope and live in `arcagent`/`arcrun`, which have the agent's world model.
 
 The docstring in `packages/arcllm/src/arcllm/modules/guardrails.py` cites this as
-"ADR-429". That is not one of the repo-level ADRs in
-`.claude/architecture/decisions/` — it is a spec-local decision record, `ADR-429:
-Semantic guardrails out of scope`, in
-`.claude/specs/015-content-guardrails/SDD.md`, part of that spec's own ADR-419–434
-series.
+"ADR-429". That is not one of the repo-level ADRs — it is a spec-local decision
+record, `ADR-429: Semantic guardrails out of scope`, recorded inline in the
+content-guardrails spec as part of that spec's own ADR-419–434 series.
 
 ```python
 from arcllm import GuardrailsModule

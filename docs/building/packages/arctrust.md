@@ -45,9 +45,9 @@ PyNaCl (Ed25519), PyCA `cryptography` (ECDSA-P256 / FIPS), and Pydantic 2 —
 ## The Four Pillars, and who consumes them
 
 Each pillar is a primitive here and a consumer relationship upstairs. arctrust
-provides the machinery; the layers above *call* it — they never re-implement it
-(`.claude/rules/core.md`: "Identity, Sign, Authorize, Audit belong here — do not
-reimplement upstairs").
+provides the machinery; the layers above *call* it — they never re-implement it.
+Identity, Sign, Authorize, and Audit belong here and are not reimplemented
+upstairs.
 
 | Pillar | Primitive in arctrust | Consumed by |
 |--------|----------------------|-------------|
@@ -740,7 +740,7 @@ assert sink.verify_chain()                  # chain intact, signature valid
 
 ---
 
-## Package rules (from `packages/arctrust/CLAUDE.md`)
+## Package rules (from the package's design contract)
 
 - **Never** add an import of another Arc package — this is the leaf.
 - **Never compose an arc-home path by hand** — call the accessor.

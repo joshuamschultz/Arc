@@ -125,3 +125,6 @@ scripts/deploy-vm.sh
 scripts/deploy-azure.sh
 scripts/deploy_node_overlays.py
 scripts/migrate_unhide_capabilities.py
+
+# Stray coverage artifacts (incl. macOS ".coverage 2" duplicates)
+.coverage*

@@ -200,7 +200,7 @@ runs up to five passes: a Hermes-derived regex bank, a text-field injection scan
 (a NamedTuple) with a `verdict` of `safe` / `caution` / `dangerous`. A `dangerous`
 verdict with `require_scan_pass` raises `ScanVerdictFailed`. Critical auto-blocks
 include remote fetch-and-exec (`curl | sh`) and writes to control-plane files
-(`CLAUDE.md`, `AGENTS.md`, `identity.md`, `policy/*`) — the covert-config-persistence
+(agent identity, policy, and known AI-assistant config files) — the covert-config-persistence
 vector (ASI06).
 
 **5 · Dry-run** — `run_dry_run(bundle_path, config)` executes the skill's
@@ -463,7 +463,7 @@ threat surfaces.
 | **LLM03 — Supply chain** | Signed bundles (Sigstore + Fulcio + Rekor inclusion proof), SLSA build-level enforcement, and a multi-pass scanner gate every install; the lock file is a tamper-evident inventory. |
 | **ASI04 — Agentic supply chain** | Verify-before-activate, load-time re-verification, CRL revocation with fail-closed federal behavior, and a sandboxed dry-run before a skill can ever run. BYO improver adapters are allowlist-gated above personal. |
 | **ASI05 — Unexpected code execution** | The dry-run runs in a Firecracker microVM (federal) or Docker, never in-process; RestrictedPython is prohibited for its escape CVEs. Tarball extraction blocks symlinks and path traversal. |
-| **ASI06 — Memory & context poisoning** | The scanner critical-auto-blocks writes to control-plane files (`CLAUDE.md`, `AGENTS.md`, `identity.md`, `policy/*`) and text-field prompt injection. |
+| **ASI06 — Memory & context poisoning** | The scanner critical-auto-blocks writes to control-plane files (agent identity, policy, and known AI-assistant config files) and text-field prompt injection. |
 | **LLM10 — Unbounded consumption** | Improver change bounds cap edits/lines/files per step; the golden-task gate and background isolation keep a runaway optimization off the agent loop. |
 
 Every stage that decides trust fails **closed** at federal: absent sigstore,

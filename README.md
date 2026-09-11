@@ -344,8 +344,8 @@ arc ui tail --viewer-token <token> --layer llm
 ```
 
 > For a full node — systemd unit, secrets, Telegram/Slack, verification —
-> see [`docs/runbooks/deploy/local.md`](docs/runbooks/deploy/local.md) and
-> `scripts/deploy-node.sh`. `scripts/arc-stack.sh` is a separate,
+> see [`docs/runbooks/deploy/local.md`](docs/runbooks/deploy/local.md).
+> `scripts/arc-stack.sh` is a separate,
 > non-canonical dev-convenience wrapper around the older per-agent
 > `arc agent serve` pattern — see its header comment before reaching for it.
 
@@ -451,8 +451,6 @@ embedded pattern as above, no separate daemon per agent — **one
 
 > For a full node — systemd, secrets, remote platforms (Telegram/Slack),
 > multiple agents, a real team + channels — skip straight to
-> [`scripts/deploy-node.sh`](scripts/deploy-node.sh) (bootstraps everything
-> below in one idempotent run) and
 > [`docs/runbooks/operate/teams.md`](docs/runbooks/operate/teams.md) (the
 > validated team/channel/persona flow, with example department rosters).
 > The steps here are the manual walkthrough.
@@ -553,7 +551,7 @@ roster read-only).
 > wrapper predating the embedded gateway (SPEC-023) — it runs every agent as
 > its own `arc agent serve` daemon rather than the on-demand pattern above.
 > See its header comment before reaching for it; prefer `arc ui start
-> --team-root` (or `scripts/deploy-node.sh` for a full node) for anything
+> --team-root` for anything
 > serving real traffic.
 
 ---

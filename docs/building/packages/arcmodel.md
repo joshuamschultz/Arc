@@ -55,10 +55,10 @@ The entire source of the package is:
 __version__ = "0.0.2"
 ```
 
-That is not an omission in this document — it is the package. The package-local
-`CLAUDE.md` states the rule plainly: *"Status = early scaffolding. Do not invent
-a public API or dump ad-hoc routing here without an explicit product/design
-decision."*
+That is not an omission in this document — it is the package. The package's
+design contract states the rule plainly: *"Status = early scaffolding. Do not
+invent a public API or dump ad-hoc routing here without an explicit
+product/design decision."*
 
 ---
 
@@ -89,7 +89,7 @@ until `arcmodel` has a defined, spec-owned seam with `arcllm`.
 
 When a spec owns this package, it is expected to sit **beside `arcllm`**,
 lifting routing and model-selection concerns out of provider configs. The
-planned scope, from the package README and `CLAUDE.md`:
+planned scope, from the package README and its design contract:
 
 - **Capability-aware routing** — pick the right model per call (tools / vision /
   long context / JSON mode).

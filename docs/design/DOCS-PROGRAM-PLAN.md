@@ -145,7 +145,7 @@ is the expansion.
 | T2.1 | The seam model | Everything is a plugin; three shapes; five invariants | T2.0 | REUSE | `concepts/seam-model.md` | (exists) | mermaid (seam boundary — exists) + canvas (seam/dependency explorer) |
 | T2.2 | Package layering & dependency direction | One-way graph; why `arcagent` never imports `arcllm` | T2.1 | REVISE | `walkthrough/02`; `data-flows.md` layer diagram; D-620,621,626,632,635 | 1500 | mermaid (dependency graph) |
 | T2.3 | The Four Pillars | Identity/Sign/Authorize/Audit ride every seam at every tier | T2.1 | REVISE | `walkthrough/10`; `reference/security.md`; ADR-019; verify-before-load D-474,636 | 2000 | mermaid (pillars-per-seam) + nanobanana hero |
-| T2.4 | **Decision Index** (keystone) | Every seam → its governing `D-NNN` + ADRs; the rationale map | T2.1 | NEW | this plan §5–§6; `.claude/decisions-log.md`; `.claude/architecture/decisions/` | 2200 | table (linked index) |
+| T2.4 | **Decision Index** (keystone) | Every seam → its governing `D-NNN` + ADRs; the rationale map | T2.1 | NEW | this plan §5–§6; the project's decision log and ADRs | 2200 | table (linked index) |
 | T2.5 | Anatomy of a run/turn | One request end-to-end; run_id pinning; tool-set freeze | T2.2 | REVISE | `walkthrough/03`; `agent.py:739`; `agent_dispatch.py:296,42`; `arcrun/loop.py:67,82`; `strategies/react.py:237` | 2000 | mermaid (run sequence) |
 | T2.6 | A tool call through policy | The ordered guard chain; first-DENY-wins; fail-closed | T2.5, T2.3 | REVISE | `data-flows.md` tool pipeline; `tool_registry.py:646,512,537`; `policy.py:1186,1221` | 1900 | mermaid (7-layer pipeline) + canvas (policy simulator) |
 | T2.7 | Audit emission & the WORM chain | `emit` → sinks; hash-chain fields; single-writer; fail-open | T2.3 | NEW | `data-flows.md` WORM §; `arctrust/audit.py:518,174,291,316`; `arcui/audit.py:235` | 1700 | mermaid (hash-chain) |
@@ -257,7 +257,7 @@ Keep to openers; a diagram does the teaching, the hero sets the frame.
 
 One row per major flow. **This table is the source of truth for T2.4 (Decision
 Index) and the footer of every Track-2 flow page.** Anchors are absolute under
-`/Users/joshschultz/Projects/arc`. "Passes (where/when/to)" is the load-bearing
+`/path/to/arc`. "Passes (where/when/to)" is the load-bearing
 column Josh asked for.
 
 | Flow | Where it lives | What calls what | What passes — where / when / to | Security / modularity reason | D-NNN / ADR | Code anchor (entry) |
@@ -334,7 +334,7 @@ store — a distinct surface. T2.8 cites `capabilities.py:617` as verified.
   classes — they appear only as prose contrasts in `audit.py:11`. The real sinks
   are `NullSink` and `WormSink`; arcui durable capture is `MutationWormWriter`
   (`arcui/audit.py:235`), ephemeral logging is `UIAuditLogger` (`:187`).
-  `docs/concepts` and the project CLAUDE.md still name `UIBridgeSink` — the
+  `docs/concepts` and the application design still name `UIBridgeSink` — the
   Track-2 audit page should quietly correct this, not propagate it.
 - `building/packages/arcstore.md:412` frames the `last_synced_at` fix as future
   work though `arcui/routes/connected_data.py:110` already reads it — update the
@@ -412,7 +412,7 @@ they can be built by a frontend agent in parallel with the mermaid pass.
 ## 8. Appendix — verified code-anchor index (for authors)
 
 Handed to page authors so diagrams and footers cite real symbols. All under
-`/Users/joshschultz/Projects/arc`.
+`/path/to/arc`.
 
 **Run / turn:** `agent.py:739` (`ArcAgent.run`) · `agent_dispatch.py:296`
 (`dispatch_stream`), `:42` (`build_run_context`) · `arcrun/streams.py:175,274`
@@ -481,7 +481,7 @@ Docker/ACR lane).
 
 ## 9. Report summary (for the team lead)
 
-- **Plan path:** `/Users/joshschultz/Projects/arc/docs/design/DOCS-PROGRAM-PLAN.md`
+- **Plan path:** `/path/to/arc/docs/design/DOCS-PROGRAM-PLAN.md`
 - **Page counts:** Track 1 = **17** (6 NEW · 10 REVISE · 1 link) · Track 2 =
   **18** (5 NEW · 11 REVISE · 2 REUSE). Program = **35 pages, ~60,500 words**.
 - **Top 10 mermaid:** layer/dependency stack · seam boundary · connection

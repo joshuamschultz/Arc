@@ -242,15 +242,14 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 | HTTP | `HTTP` | **Enum + config only.** `HTTPToolEntry` is declared (`core/config.py:161`); no dispatch path constructs `transport=ToolTransport.HTTP`. |
 | Process | `PROCESS` | **Enum + config only.** Same pattern — `ProcessToolEntry` is declared, never wired. |
 
-> ⚠️ This is the "producers unwired" pattern named in `CLAUDE.md`: the shape
+> ⚠️ This is the "producers unwired" pattern named by the architecture: the shape
 > exists for a future transport, but today only `NATIVE` tools run through this
 > registry. Building an HTTP- or process-backed tool means writing the wiring,
 > not configuring it.
 
 > **MCP is a live capability, reached through extensions — not through the
 > `ToolTransport.MCP` enum.** ADR-018 originally excluded an MCP client from
-> scope, and older documentation still reads that way, but
-> [ADR-030](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md)
+> scope, and older documentation still reads that way, but ADR-030
 > reversed exactly that exclusion (leaving the migration-tooling and ACP
 > exclusions standing). An MCP client ships today as an *extension attachment*:
 > `McpAttachment` in `packages/arcagent/src/arcagent/extension/mcp_attachment.py`,
@@ -263,7 +262,7 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 > exists. So "the `MCP` enum is unwired" and "Arc has no MCP" are two different
 > statements, and only the first is true.
 
-**Builtins split across two packages, by ownership (`CLAUDE.md`'s "don't mix
+**Builtins split across two packages, by ownership (the "don't mix
 concerns" rule):**
 
 | Package | Path | Contents |
@@ -381,15 +380,15 @@ load-time verify doesn't fail closed on a self-inflicted mismatch.
 | `packages/arcagent/src/arcagent/capabilities/capability_registry.py` | Where discovered tools/skills/hooks land |
 | `packages/arcagent/src/arcagent/capabilities/inventory.py` | Read-only enumeration seam for arcui |
 | `packages/arcagent/src/arcagent/capabilities/provider.py` | `AgentCapabilityProvider` — arcrun's `CapabilityProvider` contract |
-| `.claude/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md` | The original scope cut — read with ADR-030, which reverses its MCP-client half |
-| `.claude/architecture/decisions/ADR-030-mcp-capability-and-extension-placement.md` | Why agents do get MCP, and where an extension's pieces belong |
+| ADR-018 (no MCP, no migration, no ACP) | The original scope cut — read with ADR-030, which reverses its MCP-client half |
+| ADR-030 (MCP capability and extension placement) | Why agents do get MCP, and where an extension's pieces belong |
 | `packages/arcagent/src/arcagent/extension/mcp_attachment.py` | The MCP client itself, as an extension attachment |
-| `.claude/architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md` | Lazy-load contract, precedence, trust axis |
+| ADR-023 (capability resolution and arcrun provider) | Lazy-load contract, precedence, trust axis |
 | `walkthroughs/arcagent/02-tool-integration.ipynb` | Runnable walkthrough of registering and calling a tool |
 
 If you're adding a tool, start in `builtins/capabilities/` (identity-aware)
 or `arcrun/builtins/` (pure loop mechanic) depending on which side of the
-`CLAUDE.md` concern boundary it falls on. If you're changing authorization,
+concern boundary it falls on. If you're changing authorization,
 start in `arctrust.policy` (the engine), not `tool_registry.py` (the
 integration point) — see `docs/10-security-model.md`.
 
@@ -601,8 +600,7 @@ not `improver/evaluator.py` (that's the ranker, not the gate).
 The six-field record for the **prompt assembly** flow (Part A above), shared
 verbatim with the shared *Decision Index* catalog
 (`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
-the durable anchor. Full text for each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+the durable anchor. Full text for each `D-NNN` lives in the project's decision log.
 
 | Field | This flow |
 |---|---|

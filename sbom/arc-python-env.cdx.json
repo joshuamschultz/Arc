@@ -658,7 +658,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcagent"
+          "url": "file:///path/to/arc/packages/arcagent"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -709,7 +709,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arccli"
+          "url": "file:///path/to/arc/packages/arccli"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -746,7 +746,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcgateway"
+          "url": "file:///path/to/arc/packages/arcgateway"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -783,7 +783,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcgateway-mattermost"
+          "url": "file:///path/to/arc/packages/arcgateway-mattermost"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -820,7 +820,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcgateway-slack"
+          "url": "file:///path/to/arc/packages/arcgateway-slack"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -857,7 +857,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcgateway-telegram"
+          "url": "file:///path/to/arc/packages/arcgateway-telegram"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -902,7 +902,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcllm"
+          "url": "file:///path/to/arc/packages/arcllm"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -939,7 +939,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcmas"
+          "url": "file:///path/to/arc/packages/arcmas"
         },
         {
           "comment": "from packaging metadata Project-URL: Documentation",
@@ -981,7 +981,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcmodel"
+          "url": "file:///path/to/arc/packages/arcmodel"
         },
         {
           "comment": "from packaging metadata Project-URL: Repository",
@@ -1013,7 +1013,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcprompt"
+          "url": "file:///path/to/arc/packages/arcprompt"
         },
         {
           "comment": "from packaging metadata Project-URL: Repository",
@@ -1045,7 +1045,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcrun"
+          "url": "file:///path/to/arc/packages/arcrun"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -1082,7 +1082,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcskill"
+          "url": "file:///path/to/arc/packages/arcskill"
         },
         {
           "comment": "from packaging metadata Project-URL: Repository",
@@ -1114,7 +1114,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcstore"
+          "url": "file:///path/to/arc/packages/arcstore"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -1151,7 +1151,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcteam"
+          "url": "file:///path/to/arc/packages/arcteam"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -1188,7 +1188,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arctrust"
+          "url": "file:///path/to/arc/packages/arctrust"
         },
         {
           "comment": "from packaging metadata Project-URL: Issues",
@@ -1225,7 +1225,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arctui"
+          "url": "file:///path/to/arc/packages/arctui"
         },
         {
           "comment": "from packaging metadata Project-URL: Repository",
@@ -1257,7 +1257,7 @@
         {
           "comment": "PackageSource: Local",
           "type": "distribution",
-          "url": "file:///Users/joshschultz/Projects/arc/packages/arcui"
+          "url": "file:///path/to/arc/packages/arcui"
         },
         {
           "comment": "from packaging metadata Project-URL: Repository",

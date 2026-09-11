@@ -41,8 +41,8 @@ flowchart LR
 
 ## The concern boundary
 
-Arc's non-negotiable rule is that three concerns never mix (repo `CLAUDE.md`,
-`.claude/rules/core.md`). `arcrun` sits in the middle of the split:
+Arc's non-negotiable rule is that three concerns never mix (by policy).
+`arcrun` sits in the middle of the split:
 
 | Concern | Package | What it must **not** do |
 |---|---|---|
@@ -314,7 +314,7 @@ overlay is honored — never inline in Python.
 
 The dynamic strategy is the only place a model's *code* executes, so it is
 built as a security boundary, not a convenience (`arcrun/dynamic/`, and the
-package `CLAUDE.md` flags the grammar as "a security boundary, not a style
+security policy flags the grammar as "a security boundary, not a style
 choice"). The flow (`strategies/dynamic.py`):
 
 1. One forced `emit_script` model call authors a script (first shot + exactly

@@ -9,9 +9,9 @@
 
 Arc records **why** it is built the way it is. Every non-trivial design choice
 gets a global, monotonic ID — `D-001`, `D-002`, … up to `D-726` today — written
-down in [`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md)
-the moment it is made, and never renumbered. A superseded decision keeps its ID
-and gains a note; it is not deleted and not reused.
+into the project's decision log the moment it is made, and never renumbered. A
+superseded decision keeps its ID and gains a note; it is not deleted and not
+reused.
 
 This page is the **map from a data flow to the decisions that govern it**. The
 big table below (the *data-flow / decision catalog*) is the shared reference:
@@ -27,20 +27,19 @@ code anchor where one is verifiable.
 ## How to read this page
 
 - **`D-NNN`** — a decision ID. The full text, alternatives considered, and
-  rationale live in [`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md),
-  grouped by concern (Architecture, Data Model, API Design, Identity & Trust,
-  Security, Audit & Compliance, Observability, Integration, Performance,
-  Extensibility, …). Appendix A of that file is the exhaustive ID lookup; this
-  page is the *curated* subset the documentation actually leans on.
+  rationale live in the project's decision log, grouped by concern
+  (Architecture, Data Model, API Design, Identity & Trust, Security, Audit &
+  Compliance, Observability, Integration, Performance, Extensibility, …). The
+  log's appendix is the exhaustive ID lookup; this page is the *curated* subset
+  the documentation actually leans on.
 - **Code anchor** — a `path:line` into the source tree, verified against the
   current code at authoring time. Line numbers drift; the **symbol name** in the
   cell is the durable anchor. Paths are under the repo root; `packages/*/src/`
   segments are elided in the tables for width and shown in full in each seam
   section.
-- **`ADR-NNN`** — a longer-form Architecture Decision Record under
-  [`.claude/architecture/decisions/`](https://github.com/joshuamschultz/Arc/tree/main/.claude/architecture/decisions).
-  ADRs and `D-NNN` decisions cross-reference each other; a `D-NNN` is the atomic
-  choice, an ADR is the essay.
+- **`ADR-NNN`** — a longer-form Architecture Decision Record. ADRs and `D-NNN`
+  decisions cross-reference each other; a `D-NNN` is the atomic choice, an ADR
+  is the essay.
 - Where the decision log or the code does **not** clearly support a claim, the
   cell says **needs confirmation** rather than inventing a rationale.
 
@@ -275,11 +274,9 @@ operator) is guarded by `tests/architecture/test_arc_home_single_resolver.py`.
 
 ## Where the full record lives
 
-- Every decision, in full, with alternatives and rationale:
-  [`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md)
-  (Appendix A is the exhaustive `D-NNN` lookup).
-- The longer-form essays: [`.claude/architecture/decisions/`](https://github.com/joshuamschultz/Arc/tree/main/.claude/architecture/decisions)
-  (`ADR-NNN`).
+- Every decision, in full, with alternatives and rationale, is kept in the
+  project's decision log (whose appendix is the exhaustive `D-NNN` lookup).
+- The longer-form essays are the Architecture Decision Records (`ADR-NNN`).
 - The doctrine these decisions serve: [The Seam Model](seam-model.md) ·
   [2. Architecture](../walkthrough/02-architecture.md) ·
   [Memory, the Index, and Scope](memory-index-and-scope.md) ·

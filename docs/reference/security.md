@@ -829,6 +829,6 @@ Run the separately named regression gate before release:
 uv run python tests/run_adversarial_tests.py -q
 ```
 
-The authoritative engineering rules and expanded threat inventory live in root
-`AGENTS.md` and `CLAUDE.md`; the scenario map is in the [adversarial test
+The authoritative engineering rules and expanded threat inventory live in the
+application's design and build standards; the scenario map is in the [adversarial test
 runbook](../runbooks/security/adversarial-tests.md).

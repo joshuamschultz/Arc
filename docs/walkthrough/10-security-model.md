@@ -25,7 +25,7 @@ strict the settings are. The floor itself never moves.
 ## The Four Pillars are universal, not federal-mode features
 
 This is the most commonly misunderstood thing about Arc, stated first because
-it governs everything below: [ADR-019](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-019-four-pillars-universal.md)
+it governs everything below: ADR-019
 declares Identity, Sign, Authorize, and Audit **non-optional defaults at every
 tier**. Earlier code drifted toward gating these behind `tier == "federal"` —
 `UnsafeNoOp` bypasses, `skip_sandbox=True`, `require_manifest =
@@ -228,7 +228,7 @@ bootstrap** (`O_CREAT|O_EXCL` + `O_NOFOLLOW`); **swap detection**
 (`_verify_recorded_pubkey` fails closed on a fingerprint mismatch).
 
 > ⚠️ The `0600` on-disk operator key is the *interim* posture for
-> personal/enterprise (`CLAUDE.md` says credentials never touch the
+> personal/enterprise (the security policy says credentials never touch the
 > filesystem). The `vault_resolver` seam is the compliant path; federal
 > should resolve the seed from a vault/HSM so it never materializes on disk.
 
@@ -296,7 +296,7 @@ flowchart LR
 | Enterprise | Identity, Global, Classification, Provider, Agent, Sandbox | 6 |
 | Federal | Identity, Global, Classification, Provider, Agent, Team, Sandbox | 7 |
 
-> ⚠️ **Correction to `CLAUDE.md`:** it says "all 5 policy layers" at federal.
+> ⚠️ **Correction to the security policy:** it says "all 5 policy layers" at federal.
 > There are **seven** layer classes in `policy.py` — `IdentityLayer` (:546),
 > `GlobalLayer` (:600), `ClassificationLayer` (:651), `ProviderLayer` (:718),
 > `AgentLayer` (:809), `TeamLayer` (:838), `SandboxLayer` (:913) — and
@@ -455,7 +455,7 @@ eval) and `WormSink` (`audit.py:176`, the durable chain, below). "Single
 emission point, sinks fan out" currently means "single emission point, one
 durable sink" — there is no multi-sink fan-out in the code as written.
 
-> ⚠️ **Correction to `CLAUDE.md` / ADR-019 wording:** they describe the sink
+> ⚠️ **Correction to the security policy / ADR-019 wording:** they describe the sink
 > fan-out as `JsonlSink` + `SignedChainSink` + `arcui.bridge.UIBridgeSink`.
 > None of those classes exist in the current tree. `audit.py`'s own docstring
 > confirms they were **replaced** by a single sink, `WormSink` ("replaces the

@@ -55,8 +55,8 @@ from any concrete destination. Two real sinks ship:
 | `NullSink` | Discards everything — tests and air-gapped evaluation | `audit.py:139` |
 | `WormSink` | The durable, append-only, signed, hash-chained log | `audit.py:174` |
 
-> **Naming correction — three sinks that are not classes.** The project
-> `CLAUDE.md` and some older prose name `JsonlSink`, `SignedChainSink`, and
+> **Naming correction — three sinks that are not classes.** The application
+> design and some older prose name `JsonlSink`, `SignedChainSink`, and
 > `arcui.bridge.UIBridgeSink` as if they were importable sinks. They are not.
 > The module docstring (`audit.py:9-14`) states it directly: `WormSink`
 > *"replaces the old unchained `JsonlSink` and the in-memory-only
@@ -169,8 +169,7 @@ span is `UIAuditLogger` (`arcui/audit.py:183`). Everything the dashboard shows i
 The six-field record for the **audit emission (WORM)** flow, shared verbatim
 with the shared *Decision Index* catalog (`docs/concepts/decision-index.md`).
 Line numbers drift; the **symbol name** is the durable anchor. Full text for
-each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+each `D-NNN` lives in the project's decision log.
 
 | Field | This flow |
 |---|---|

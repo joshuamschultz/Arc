@@ -145,7 +145,7 @@ registered lazily in `STRATEGIES`:
 answers once and holds no tools must never be auto-picked for an agentic task.
 It exists so that cheap inference has a first-class home reached through
 `arcrun.run_oneshot`, rather than callers above `arcrun` reaching a provider
-handle directly — which is what [ADR-032](https://github.com/joshuamschultz/Arc/blob/main/.claude/architecture/decisions/ADR-032-channel-responder-selection-routes-on-published-indexes.md)
+handle directly — which is what ADR-032
 removed from five places at once.
 
 ### react
@@ -606,4 +606,4 @@ Runnable reference: `walkthroughs/arcrun/06-task-completion-budgets.ipynb`.
 | `packages/arcrun/src/arcrun/backends/` | `base.py` (Protocol), `local.py`/`docker.py`/`vm.py` (implementations), `loader.py`/`policy.py`/`_verifier.py`/`_manifest.py`/`_audit.py` (signed discovery). |
 | `packages/arcrun/src/arcrun/builtins/execute.py`, `task_complete.py` | Tier-routed `execute_python`/`run_shell`, and the one terminator vocabulary (success, budget breach, cancel). |
 | `packages/arcagent/src/arcagent/modules/runcontrol/`, `packages/arcstore/src/arcstore/cancellations.py` | The operator kill-switch watcher and the `CancelRequest`/`CancelStore` it polls. |
-| `.claude/architecture/decisions/ADR-023-*.md`, `ADR-024-*.md`, `ADR-026-*.md`, `ADR-027-*.md`, `ADR-028-*.md`, `ADR-031-*.md` | Design rationale for capability resolution, the unified streaming entry, the append-only context contract, the tool-set freeze, and why `dynamic` is a restricted script rather than a declared graph. |
+| ADR-023, ADR-024, ADR-026, ADR-027, ADR-028, ADR-031 | Design rationale for capability resolution, the unified streaming entry, the append-only context contract, the tool-set freeze, and why `dynamic` is a restricted script rather than a declared graph. |

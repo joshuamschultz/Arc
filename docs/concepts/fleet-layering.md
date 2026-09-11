@@ -173,8 +173,7 @@ be checked with `uv run mkdocs build --strict` and `git diff --check`.
 The six-field record for the **inter-agent message** flow, shared verbatim with
 the shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
 numbers drift; the **symbol name** is the durable anchor. Full text for each
-`D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+`D-NNN` lives in the project's decision log.
 
 | Field | This flow |
 |---|---|

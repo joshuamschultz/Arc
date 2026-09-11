@@ -29,8 +29,8 @@ Azure/OpenAI-compat seam), and how an **endpoint pool** is declared and driven.
 
 `arcllm.load_model(...)` never returns a bare adapter. It builds a
 `RoutingModule` as the innermost element of every stack and returns that
-(`packages/arcllm/src/arcllm/registry.py:629`; the package rule is stated in
-`packages/arcllm/CLAUDE.md` — *"`load_model` always returns a `RoutingModule`"*).
+(`packages/arcllm/src/arcllm/registry.py:629`; the package rule is stated by
+design — *"`load_model` always returns a `RoutingModule`"*).
 A single-provider deployment still gets a router; it simply has one route.
 
 Selection is a **four-tier ladder** in `RoutingModule._select`
@@ -196,6 +196,5 @@ today's single-endpoint behaviour (`config.py:210`).
 | **D-NNN / ADR** | D-190, D-197, D-232, D-233, D-449, D-453, D-458; ADR-035, ADR-025 |
 | **Code anchor** | `arcllm/registry.py:629,244,500` · `modules/routing.py:588,610` · `modules/load_balancer.py:308,342,98` · `config.py:445,457,178` · `adapters/azure_openai.py:29,39` |
 
-The full text of every `D-NNN` above lives in the decision log
-([`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md));
+The full text of every `D-NNN` above lives in the project's decision log;
 the seam catalog that indexes these footers is the Decision Index concept page.

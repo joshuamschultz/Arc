@@ -25,7 +25,7 @@ stop you from losing an afternoon to it.
 ## The file set
 
 An agent's configuration is split across **three sibling TOML files in the
-same directory**, one per concern boundary (`CLAUDE.md`: "don't mix
+same directory**, one per concern boundary (by policy: "don't mix
 concerns"):
 
 | File | Owns | Declares |
@@ -572,8 +572,8 @@ or `rm -rf ~/.arc` — costs only a reinstall. The full disk layout is in
 The six-field record for the **config load + tier resolution** flow, shared
 verbatim with the shared *Decision Index* catalog
 (`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
-the durable anchor. Full text for each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+the durable anchor. Full text for each `D-NNN` lives in the project's decision
+log.
 
 | Field | This flow |
 |---|---|

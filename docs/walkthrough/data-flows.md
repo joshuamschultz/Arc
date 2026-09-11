@@ -404,8 +404,7 @@ missing state — so tightening a tier never silently weakens a lower one.
 The six-field record for the **tool call → policy** flow, shared verbatim with
 the shared *Decision Index* catalog (`docs/concepts/decision-index.md`). Line
 numbers drift; the **symbol name** is the durable anchor. Full text for each
-`D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+`D-NNN` lives in the project's decision log.
 
 | Field | This flow |
 |---|---|
@@ -585,8 +584,8 @@ way to verify an arbitrary installed package.
 The six-field record for the **dynamic tool / sandbox exec** flow, shared
 verbatim with the shared *Decision Index* catalog
 (`docs/concepts/decision-index.md`). Line numbers drift; the **symbol name** is
-the durable anchor. Full text for each `D-NNN` lives in
-[`.claude/decisions-log.md`](https://github.com/joshuamschultz/Arc/blob/main/.claude/decisions-log.md).
+the durable anchor. Full text for each `D-NNN` lives in the project's decision
+log.
 
 | Field | This flow |
 |---|---|

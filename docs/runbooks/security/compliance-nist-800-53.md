@@ -97,7 +97,7 @@ code references, and test evidence. 38 controls across 8 families are addressed.
 | SA-8 | Security/Privacy Engineering Principles | Implemented (P4) | Secure-by-default container settings; defense-in-depth tool execution pipeline | `contained_execute.py`, `executor.py` | `test_contained_execute.py`, `security/` |
 | SA-10 | Developer Configuration Management | Implemented | ruff + mypy + pytest in CI; quality gates enforced | `pyproject.toml` | CI pipeline |
 | SA-11 | Developer Testing | Implemented (P4) | 235+ tests including 36 adversarial security tests across 8 OWASP categories | `tests/`, `tests/security/` | Full test suite |
-| SA-15 | Development Process | Implemented | TDD workflow enforced; spec-driven development | CLAUDE.md | Process documentation |
+| SA-15 | Development Process | Implemented | TDD workflow enforced; spec-driven development | Design & build standards | Process documentation |
 
 ### CA — Security Assessment and Authorization
 
