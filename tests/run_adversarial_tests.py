@@ -76,6 +76,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/capabilities/test_capability_import_skill_no_load_execution_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_capability_import_rich_skill_invalidation_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_integrity_spec081.py",
+        "packages/arcagent/tests/security/capabilities/test_skill_script_runner_skillname_jail_spec081.py",
     ),
 }
 

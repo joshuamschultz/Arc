@@ -379,7 +379,13 @@ class TestEnterpriseJail:
         )
         # A sibling secret OUTSIDE the mounted skill folder.
         (tmp_path / "skills" / "secret.txt").write_text("top secret\n")
-        runner = SkillScriptRunner(capabilities_root=tmp_path, tier="enterprise")
+        # Enterprise now requires a verified signature before exec (T-1072), so
+        # sign the script and pin its key — this test exercises the JAIL, not the
+        # integrity gate, so it must clear the gate to reach the real container.
+        trusted = _sign_skill_script(skill_folder)
+        runner = SkillScriptRunner(
+            capabilities_root=tmp_path, tier="enterprise", trusted_public_keys=trusted
+        )
 
         result = await runner.run("attacker", "run.py")
 

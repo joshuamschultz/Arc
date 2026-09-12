@@ -108,7 +108,7 @@ class SkillScriptRunner:
             arcrun.ExecutionIsolationError: tier isolation cannot be provided
                 (e.g. federal with no VM support) — never downgraded.
         """
-        skill_folder = (self._skills_root / skill_name).resolve()
+        skill_folder = self._resolve_skill_folder(skill_name)
         script_path = self._resolve_script_inside(skill_folder, script_relpath)
 
         if script_path.suffix != ".py":
@@ -133,6 +133,34 @@ class SkillScriptRunner:
             timeout=self.timeout,
         )
         return self._parse_result(raw, backend)
+
+    def _resolve_skill_folder(self, skill_name: str) -> Path:
+        """Resolve ``skill_name`` and confirm it is a DIRECT child of the skills root.
+
+        The skill folder is the ONLY sandbox root handed to arcrun, so
+        ``skill_name`` must name exactly one skill: a single clean path segment —
+        non-empty, not ``.`` or ``..``, and free of any path separator (``/`` or
+        ``\\``). This rejects the skills root itself (``.`` would mount the WHOLE
+        tree), grandchildren (``a/b``), and sibling redirects (``skillA/../skillB``
+        confused-deputy) before they can anchor the jail somewhere other than the
+        one named skill. The resolve + containment + direct-child check stays as
+        defense-in-depth against traversal and absolute paths. Reject before the
+        language gate, integrity gate, and backend selection (ASI03
+        confused-deputy, ASI05 code execution, LLM06).
+        """
+        if not skill_name or skill_name in (".", "..") or "/" in skill_name or "\\" in skill_name:
+            raise ScriptPathError(
+                f"skill name {skill_name!r} must be a single path segment "
+                "(non-empty, not '.'/'..', no separator)."
+            )
+        candidate = (self._skills_root / skill_name).resolve()
+        is_direct_child = candidate.parent == self._skills_root
+        if not is_direct_child or not candidate.is_relative_to(self._skills_root):
+            raise ScriptPathError(
+                f"skill name {skill_name!r} must resolve to a direct child of "
+                f"skills root {self._skills_root}."
+            )
+        return candidate
 
     def _resolve_script_inside(self, skill_folder: Path, script_relpath: str) -> Path:
         """Resolve ``script_relpath`` and confirm it stays inside the skill folder.
