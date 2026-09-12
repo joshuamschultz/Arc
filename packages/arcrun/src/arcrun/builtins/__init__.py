@@ -15,6 +15,7 @@ from arcrun.builtins.execute import (
     IsolationRelaxationError,
     IsolationUnavailableError,
     make_execute_tool,
+    platform_supports_vm,
     resolve_execution_backend,
     run_shell,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "make_budget_breach_args",
     "make_execute_tool",
     "make_task_complete_tool",
+    "platform_supports_vm",
     "resolve_execution_backend",
     "run_shell",
 ]
