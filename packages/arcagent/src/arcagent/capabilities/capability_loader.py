@@ -771,6 +771,37 @@ class CapabilityLoader:
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
         entry = validation.entry
+        # COMP-003 anti-shadow guard (REQ-402): a SKILL.md is injected into the
+        # agent prompt (LLM01/ASI06). A skill from a NON-TRUSTED root (UNTRUSTED
+        # or VERIFIED) whose frontmatter name is already owned by a TRUSTED
+        # built-in must be REFUSED — last-wins would otherwise let a later-scanned
+        # agent-writable root silently replace a shipped built-in. Builtins scan
+        # first, so the trusted incumbent is already registered by the time a
+        # non-trusted shadow is processed. Untrusted-vs-untrusted stays last-wins:
+        # only a TRUSTED incumbent is protected.
+        if root_trust(root_name) is not RootTrust.TRUSTED:
+            incumbent = await self._registry.get_skill(entry.name)
+            if incumbent is not None and root_trust(incumbent.scan_root) is RootTrust.TRUSTED:
+                detail = (
+                    f"skill {entry.name!r} is owned by trusted built-in root "
+                    f"{incumbent.scan_root!r}; refusing shadow from {root_name!r}"
+                )
+                delta.outcomes.append(
+                    CapabilityOutcome(
+                        kind="skill",
+                        name=entry.name,
+                        version=entry.version,
+                        description=entry.description,
+                        scan_root=root_name,
+                        source_path=str(skill_md),
+                        status="refused",
+                        status_detail=detail,
+                    )
+                )
+                await self._emit_registration_refused(
+                    skill_md, entry.name, "builtin_name_collision", detail
+                )
+                return
         # SKILL.md is injected into the agent prompt (LLM01/ASI06), so any skill
         # folder outside the wheel passes the same Sign/TOFU gate as a .py —
         # agent-writable (UNTRUSTED) and bundle-delivered (VERIFIED) alike.
@@ -879,6 +910,21 @@ class CapabilityLoader:
         if self._bus is not None:
             await self._bus.emit(event="capability:registration_failed", data=payload)
         self._audit("capability:registration_failed", payload)
+
+    async def _emit_registration_refused(
+        self, path: Path, name: str, reason: str, detail: str
+    ) -> None:
+        """Emit the bus + audit event for a name-collision refusal (COMP-003).
+
+        Mirrors :meth:`_emit_registration_failed`'s shape. ``reason`` is the
+        machine-readable collision code (``builtin_name_collision``); ``detail``
+        is the human string. The refused skill's ``name`` rides in the payload so
+        an operator can see which shadow was rejected.
+        """
+        payload = {"path": str(path), "skill": name, "reason": reason, "detail": detail}
+        if self._bus is not None:
+            await self._bus.emit(event="capability:registration_refused", data=payload)
+        self._audit("capability:registration_refused", payload)
 
     async def _emit_registration_warning(self, path: Path, code: str, detail: str) -> None:
         payload = {"path": str(path), "code": code, "detail": detail}

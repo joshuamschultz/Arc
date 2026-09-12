@@ -23,6 +23,7 @@ from arctrust import (
 )
 from pydantic import ValidationError
 
+import arcagent.builtins.capabilities as _builtins_pkg
 from arcagent.capabilities.artifact_signing import write_signature_with_signer
 from arcagent.capabilities.capability_loader import pin_name_for_path
 from arcagent.capabilities.import_trust import revoke_import_artifact as revoke_capability
@@ -175,6 +176,7 @@ class CapabilityImportService:
             target_agent_did=target_agent_did,
             archive_sha256=intake.archive_sha256,
             limits=limits,
+            reserved_skill_names=_reserved_builtin_skill_names(),
         )
         write_evidence(intake.staging_dir, manifest)
         self._ledger.set(
@@ -275,6 +277,7 @@ class CapabilityImportService:
                     target_agent_did=manifest.target_agent_did,
                     archive_sha256=manifest.archive_sha256,
                     limits=effective_limits,
+                    reserved_skill_names=_reserved_builtin_skill_names(),
                 )
             except CapabilityImportError as exc:
                 raise ValueError("edited capability failed static validation") from exc
@@ -572,6 +575,25 @@ class CapabilityImportService:
             ),
             target,
         )
+
+
+def _reserved_builtin_skill_names() -> frozenset[str]:
+    """Return the TRUSTED built-in skill names the loader protects from shadowing.
+
+    Resolves the package builtins-skills root the same way ``inventory.py`` does
+    (``Path(_builtins_pkg.__file__).parent / "skills"``) and collects each folder
+    that carries a ``SKILL.md``. The loader's anti-shadow guard keys collisions on
+    a skill's frontmatter ``name``, and every shipped built-in keeps folder name
+    == frontmatter name, so the folder names are the reserved set to flag against.
+    Wiring these into review makes the loader's silent refusal visible as a review
+    finding before an operator promotes a shadowing import (REQ-402, COMP-003).
+    """
+    root = Path(_builtins_pkg.__file__).parent / "skills"
+    if not root.is_dir():
+        return frozenset()
+    return frozenset(
+        folder.name for folder in root.iterdir() if (folder / "SKILL.md").is_file()
+    )
 
 
 def _is_capability(path: str) -> bool:

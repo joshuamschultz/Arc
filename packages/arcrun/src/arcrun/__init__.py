@@ -11,6 +11,8 @@ from arcrun.builtins import (
     SandboxTimeoutError,
     SandboxUnavailableError,
     make_execute_tool,
+    platform_supports_vm,
+    resolve_execution_backend,
     run_shell,
 )
 from arcrun.capabilities import (
@@ -170,7 +172,9 @@ __all__ = [
     "model_config_path",
     "model_identity",
     "model_provider_keys",
+    "platform_supports_vm",
     "provider_tools",
+    "resolve_execution_backend",
     "run",
     "run_async",
     "run_oneshot",

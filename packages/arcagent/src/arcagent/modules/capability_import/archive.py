@@ -34,8 +34,26 @@ from arcagent.modules.capability_import.models import (
 
 _CHUNK_SIZE = 64 * 1024
 _NESTED_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".gz")
-_RESOURCE_DIRS = frozenset({"references", "scripts", "templates", "assets"})
 _ROOT_FILES = frozenset({"capability-import.toml", "sbom.cdx.json", "README.md", "LICENSE"})
+#: Compiled/opaque artifacts a reviewer cannot read. Banned by extension here
+#: and by content magic in ``_reject_opaque_content`` so an ELF blob renamed
+#: ``notes.md`` cannot slip past the extension check.
+_BINARY_SUFFIXES = frozenset({".so", ".dylib", ".dll", ".exe", ".o", ".a", ".class", ".wasm"})
+#: Leading bytes of the executable formats we refuse: ELF, Mach-O (thin BE/LE,
+#: 32/64-bit) and fat, and PE/DOS (``MZ``). Java ``.class`` shares the fat
+#: Mach-O ``\xca\xfe\xba\xbe`` magic, so both are covered by one prefix.
+_BINARY_MAGIC: tuple[bytes, ...] = (
+    b"\x7fELF",
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"MZ",
+)
+#: Bytes read from each staged file to match against ``_BINARY_MAGIC``; the
+#: longest prefix is four bytes, so a short peek is sufficient.
+_MAGIC_PEEK = 8
 #: Archive-manager noise that ordinary "Compress" actions add — macOS Finder's
 #: ``__MACOSX/`` AppleDouble tree and ``.DS_Store``, Windows ``Thumbs.db`` /
 #: ``desktop.ini``. It is metadata, never capability content, so intake drops it
@@ -69,6 +87,7 @@ def intake(
     limits = limits or CapabilityImportLimits()
     candidates, archive_sha256, archive_bytes = _preflight(source, limits)
     _validate_layout(candidate.path for candidate in candidates)
+    _reject_opaque_content(source, candidates)
     import_id = archive_sha256
     imports_root = Path(capabilities_root) / "imports"
     quarantine = imports_root / ".quarantine" / import_id / "source.zip"
@@ -162,7 +181,9 @@ def _preflight_directory(source: Path, limits: CapabilityImportLimits) -> list[_
             _safe_path(relative, seen, limits=limits, directory=True)
             continue
         if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
-            raise CapabilityImportSourceError("source tree contains a non-regular or linked file")
+            raise CapabilityImportSourceError(
+                f"source tree contains a non-regular or linked file: {relative}"
+            )
         normalized = _safe_path(relative, seen, limits=limits)
         _check_file_size(status.st_size, limits)
         total += status.st_size
@@ -191,16 +212,17 @@ def _safe_path(
 
 
 def _reject_zip_special(info: zipfile.ZipInfo) -> None:
+    name = info.filename
     mode = info.external_attr >> 16
     kind = stat.S_IFMT(mode)
     if info.flag_bits & 0x1:
-        raise CapabilityImportSourceError("encrypted ZIP entries are not accepted")
+        raise CapabilityImportSourceError(f"encrypted ZIP entries are not accepted: {name}")
     if _is_zip_directory(info):
         if kind not in (0, stat.S_IFDIR):
-            raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
+            raise CapabilityImportSourceError(f"ZIP contains a non-regular file entry: {name}")
         return
     if kind not in (0, stat.S_IFREG):
-        raise CapabilityImportSourceError("ZIP contains a non-regular file entry")
+        raise CapabilityImportSourceError(f"ZIP contains a non-regular file entry: {name}")
 
 
 def _is_zip_directory(info: zipfile.ZipInfo) -> bool:
@@ -296,15 +318,20 @@ def _check_count(candidates: Iterable[_Candidate], limits: CapabilityImportLimit
 def _validate_layout(paths: Iterable[PurePosixPath]) -> None:
     saw_capability = False
     for path in paths:
+        name = path.as_posix()
         lowered = path.name.casefold()
         if lowered.endswith(_NESTED_ARCHIVE_SUFFIXES):
-            raise CapabilityImportLayoutError("nested archives are not accepted")
-        if lowered in {"__init__.py"} or path.suffix.casefold() in {".pyc", ".pyo"}:
-            raise CapabilityImportLayoutError("Python packages and bytecode are not accepted")
+            raise CapabilityImportLayoutError(f"nested archives are not accepted: {name}")
+        if lowered == "__init__.py" or path.suffix.casefold() in {".pyc", ".pyo"}:
+            raise CapabilityImportLayoutError(
+                f"Python packages and bytecode are not accepted: {name}"
+            )
+        if path.suffix.casefold() in _BINARY_SUFFIXES:
+            raise CapabilityImportLayoutError(f"compiled binaries are not accepted: {name}")
         if _allowed_path(path):
             saw_capability = saw_capability or path.parts[0] in {"tools", "skills"}
             continue
-        raise CapabilityImportLayoutError("source contains an unsupported path")
+        raise CapabilityImportLayoutError(f"source contains an unsupported path: {name}")
     if not saw_capability:
         raise CapabilityImportLayoutError("source contains no tool or skill")
 
@@ -314,10 +341,35 @@ def _allowed_path(path: PurePosixPath) -> bool:
     if len(parts) == 2 and parts[0] == "tools" and path.suffix == ".py":
         return path.stem.isidentifier() and not path.name.startswith("_")
     if len(parts) >= 3 and parts[0] == "skills" and _safe_name(parts[1]):
-        return (parts[2] == "SKILL.md" and len(parts) == 3) or (
-            len(parts) >= 4 and parts[2] in _RESOURCE_DIRS
-        )
+        return True
     return len(parts) == 1 and (path.name in _ROOT_FILES or path.name.startswith("LICENSE"))
+
+
+def _reject_opaque_content(source: Path, candidates: Iterable[_Candidate]) -> None:
+    """Refuse compiled binaries hiding under an innocent extension.
+
+    Reads only each staged file's leading magic bytes — never imports, links, or
+    executes them — so an ELF/Mach-O/PE/Java-class blob renamed ``notes.md`` is
+    rejected before anything is staged. Raises a typed layout error naming the
+    offending path so review surfaces can report it.
+    """
+    archive_context = zipfile.ZipFile(source) if source.is_file() else nullcontext(None)
+    with archive_context as archive:
+        for candidate in candidates:
+            if archive is None:
+                if not isinstance(candidate.source, Path):
+                    raise CapabilityImportSourceError("invalid local source entry")
+                with candidate.source.open("rb") as stream:
+                    head = stream.read(_MAGIC_PEEK)
+            else:
+                if not isinstance(candidate.source, zipfile.ZipInfo):
+                    raise CapabilityImportSourceError("invalid ZIP source entry")
+                with archive.open(candidate.source) as stream:
+                    head = stream.read(_MAGIC_PEEK)
+            if any(head.startswith(magic) for magic in _BINARY_MAGIC):
+                raise CapabilityImportLayoutError(
+                    f"compiled binary content is not accepted: {candidate.path.as_posix()}"
+                )
 
 
 def _safe_name(name: str) -> bool:

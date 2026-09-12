@@ -71,6 +71,20 @@ def _write_skill(folder: Path, name: str, *, version: str = "1.0.0") -> None:
     (folder / "SKILL.md").write_text(body)
 
 
+class _RecordingBus:
+    """Minimal module-bus double that records every ``emit`` the loader makes.
+
+    The loader emits with keyword args (``emit(event=..., data=...)``); mirror
+    that exactly so a real refusal event is observable without a live bus.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(self, *, event: str, data: dict[str, object]) -> None:
+        self.events.append((event, data))
+
+
 @pytest.fixture
 def four_roots(tmp_path: Path) -> dict[str, Path]:
     """Build four empty scan-root directories."""
@@ -474,3 +488,125 @@ class TestCapabilityLifecycleOrder:
         # A is rolled back. B and C don't teardown (B did not finish
         # setup; C did not start).
         assert order == ["setup:A", "setup:B", "teardown:A"]
+
+
+@pytest.mark.asyncio
+class TestAntiShadowGuard:
+    """SPEC-081 T-1060 / REQ-402 / COMP-003 — anti-shadow guard.
+
+    A SKILL.md is injected into the agent prompt (LLM01/ASI06). A skill loaded
+    from a NON-TRUSTED scan root that declares a ``name`` already owned by a
+    TRUSTED built-in must be REFUSED — otherwise a later-scanned agent-writable
+    root silently replaces a shipped built-in by last-wins precedence.
+
+    ``builtins`` is a TRUSTED root (``_TRUSTED_ROOTS``); ``workspace`` and
+    ``agent`` are UNTRUSTED (``root_trust`` default). The loader is bare (no
+    TOFU / no signature floor), so the Sign/TOFU gate short-circuits to ALLOW
+    and an untrusted skill would otherwise register today.
+    """
+
+    async def test_untrusted_skill_named_after_builtin_is_refused(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        """RED: the built-in wins the name; the untrusted shadow never replaces it.
+
+        Fails today because skills are last-wins by bare name — ``workspace`` is
+        scanned after ``builtins`` and overwrites the built-in entry.
+        """
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_skill(four_roots["builtins"] / "humanize", "humanize", version="1.0.0")
+        _write_skill(four_roots["workspace"] / "humanize", "humanize", version="9.9.9")
+
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(scan_roots=list(four_roots.items()), registry=reg)
+        await loader.scan_and_register()
+
+        skill = await reg.get_skill("humanize")
+        assert skill is not None
+        # The TRUSTED built-in must remain the registered entry, unshadowed.
+        assert skill.scan_root == "builtins"
+        assert skill.version == "1.0.0"
+
+    async def test_builtin_name_collision_emits_registration_refused(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        """RED: the refusal is observable as a bus event with the collision reason.
+
+        Fails today because no refusal path exists — the untrusted skill is
+        accepted silently, so no ``capability:registration_refused`` is emitted.
+        """
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_skill(four_roots["builtins"] / "humanize", "humanize")
+        _write_skill(four_roots["workspace"] / "humanize", "humanize")
+
+        bus = _RecordingBus()
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(
+            scan_roots=list(four_roots.items()), registry=reg, bus=bus
+        )
+        await loader.scan_and_register()
+
+        refusals = [
+            data for (event, data) in bus.events if event == "capability:registration_refused"
+        ]
+        assert refusals, (
+            "expected a capability:registration_refused event for the shadowing skill; "
+            f"saw events: {[e for e, _ in bus.events]}"
+        )
+        assert any(data.get("reason") == "builtin_name_collision" for data in refusals)
+        # The refused skill's identity is observable in the payload.
+        assert any("humanize" in str(data.values()) for data in refusals)
+
+    async def test_non_colliding_untrusted_skill_still_registers(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        """Scope guard: the refusal is NARROW — an untrusted skill with a name no
+        built-in owns still registers normally, and the built-in is untouched.
+
+        Green today and after; it fails only if T-1061 over-broadens the guard
+        to refuse untrusted skills that do not actually collide.
+        """
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_skill(four_roots["builtins"] / "humanize", "humanize")
+        _write_skill(four_roots["workspace"] / "my-note-taker", "my-note-taker")
+
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(scan_roots=list(four_roots.items()), registry=reg)
+        await loader.scan_and_register()
+
+        authored = await reg.get_skill("my-note-taker")
+        assert authored is not None
+        assert authored.scan_root == "workspace"
+        builtin = await reg.get_skill("humanize")
+        assert builtin is not None
+        assert builtin.scan_root == "builtins"
+
+    async def test_untrusted_vs_untrusted_collision_stays_last_wins(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        """Scope guard: the rule targets ONLY trusted-name shadowing.
+
+        A collision between two NON-TRUSTED roots (``agent`` and ``workspace``)
+        is out of scope and stays last-wins. Green today and after; it fails
+        only if T-1061 wrongly extends the guard to same-tier collisions.
+        """
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_skill(four_roots["agent"] / "foo", "foo", version="1.0.0")
+        _write_skill(four_roots["workspace"] / "foo", "foo", version="2.0.0")
+
+        reg = CapabilityRegistry()
+        scan_roots = [
+            ("agent", four_roots["agent"]),
+            ("workspace", four_roots["workspace"]),
+        ]
+        loader = CapabilityLoader(scan_roots=scan_roots, registry=reg)
+        await loader.scan_and_register()
+
+        skill = await reg.get_skill("foo")
+        assert skill is not None
+        assert skill.scan_root == "workspace"
+        assert skill.version == "2.0.0"

@@ -133,7 +133,7 @@ export function CapabilityImportPanel() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><Archive className="size-4" /> Import agent capabilities</CardTitle>
-        <CardDescription>Drag a signed-source ZIP here to stage skills and tools for one agent.</CardDescription>
+        <CardDescription>Drag a signed skill ZIP — a SKILL.md plus any files and folders — here to stage it for one agent.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <label className="flex max-w-sm flex-col gap-1 text-xs font-medium text-muted-foreground" htmlFor="capability-import-agent">
@@ -188,7 +188,7 @@ export function CapabilityImportPanel() {
           <input ref={inputRef} type="file" accept=".zip,application/zip" className="sr-only" onChange={(event) => { choose(event.target.files ?? []); event.currentTarget.value = '' }} />
           {importer.status === 'uploading' ? <Upload className="size-5 animate-pulse text-primary" /> : <FileArchive className="size-5 text-muted-foreground" />}
           <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting archive…' : 'Drop ZIP or browse'}</span>
-          <span className="text-xs text-muted-foreground">Only agent-local skills/tools are accepted; nothing executes during review.</span>
+          <span className="text-xs text-muted-foreground">A signed skill ZIP with a SKILL.md and any internal files or folders is accepted. Scripts run only when the model calls them — nothing executes during review or import.</span>
         </div>
 
         {importer.status === 'rejected' && (

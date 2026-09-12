@@ -67,6 +67,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcrun/tests/security/test_resource_exhaustion.py",
         "packages/arcrun/tests/security/test_spawn_depth_bomb.py",
     ),
+    # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
+    # subtree, but never an auto-run/opaque artifact, never load-time execution,
+    # and a promoted script that is swapped or unsigned must not run at
+    # enterprise/federal. Covers ASI04/ASI05/LLM03 for the new execute path.
+    "open skill-package intake and tiered script execution (SPEC-081)": (
+        "packages/arcagent/tests/security/capabilities/test_capability_import_binary_rejection_spec081.py",
+        "packages/arcagent/tests/security/capabilities/test_capability_import_skill_no_load_execution_spec081.py",
+        "packages/arcagent/tests/security/capabilities/test_capability_import_rich_skill_invalidation_spec081.py",
+        "packages/arcagent/tests/security/capabilities/test_skill_script_runner_integrity_spec081.py",
+        "packages/arcagent/tests/security/capabilities/test_skill_script_runner_skillname_jail_spec081.py",
+    ),
 }
 
 

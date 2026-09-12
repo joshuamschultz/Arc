@@ -26,11 +26,13 @@ def build_manifest(
     target_agent_did: str,
     archive_sha256: str,
     limits: CapabilityImportLimits,
+    reserved_skill_names: frozenset[str] = frozenset(),
 ) -> CapabilityImportManifest:
     """Validate staged bytes without execution and return their review manifest."""
     files = _files(staging_dir)
     tools = _validate_tools(staging_dir)
     skills = _validate_skills(staging_dir)
+    findings = _collision_findings(skills, reserved_skill_names)
     metadata = _supplier_metadata(staging_dir)
     supplier_sbom = _supplier_sbom_digest(staging_dir)
     payload = _payload(
@@ -40,7 +42,7 @@ def build_manifest(
         files,
         tools,
         skills,
-        (),
+        findings,
         limits,
         metadata,
         supplier_sbom,
@@ -53,7 +55,7 @@ def build_manifest(
         files=files,
         tools=tools,
         skills=skills,
-        findings=(),
+        findings=findings,
         limits=limits,
         supplier_metadata=metadata,
         supplier_sbom_sha256=supplier_sbom,
@@ -168,6 +170,15 @@ def _validate_skills(staging_dir: Path) -> tuple[str, ...]:
             raise CapabilityImportLayoutError("skill failed validation")
         names.append(result.entry.name)
     return tuple(names)
+
+
+def _collision_findings(
+    skills: tuple[str, ...], reserved_skill_names: frozenset[str]
+) -> tuple[str, ...]:
+    """Flag every staged skill whose name shadows a reserved built-in name."""
+    return tuple(
+        f"builtin_name_collision: {name}" for name in skills if name in reserved_skill_names
+    )
 
 
 def _supplier_metadata(staging_dir: Path) -> dict[str, Any]:
