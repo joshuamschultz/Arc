@@ -34,6 +34,9 @@ from typing import Any
 
 import arcrun
 import pytest
+from arctrust.identity import AgentIdentity
+
+from arcagent.capabilities import artifact_signing
 
 # NOTE: This import is EXPECTED to fail (ModuleNotFoundError) in the RED wave —
 # the module does not exist yet. That is the correct "feature absent" signal.
@@ -136,6 +139,27 @@ def _seed_skill(capabilities_root: Path, skill_name: str, script_relpath: str = 
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text("print('hello from skill')\n")
     return folder
+
+
+def _sign_skill_script(skill_folder: Path, script_relpath: str = "run.py") -> frozenset[bytes]:
+    """Sign the seeded script with a fresh keypair; return its public key as the
+    trusted-key set to pin the runner to.
+
+    Added for T-1072 (REQ-409): under the new integrity contract, enterprise and
+    federal runs REQUIRE a signed script verified against a pinned key. These
+    backend-selection / VM-floor tests keep their original intent — they just now
+    hand the runner a properly signed fixture and its trusted key, so they exercise
+    the happy path of the integrity gate instead of tripping its refusal.
+    """
+    identity = AgentIdentity.generate(org="blackarc", agent_type="executor")
+    script = skill_folder / script_relpath
+    artifact_signing.write_signature(
+        script,
+        script.read_bytes(),
+        signer_did=identity.did,
+        private_key=identity.signing_seed,
+    )
+    return frozenset({identity.public_key})
 
 
 def _backend_selected_events(sink: _SpySink) -> list[Any]:
@@ -255,7 +279,10 @@ class TestEnterpriseJail:
         captured: dict[str, Any] = {}
         _install_arcrun_seam(monkeypatch, captured, supports_vm=False)
         skill_folder = _seed_skill(tmp_path, "reporter")
-        runner = SkillScriptRunner(capabilities_root=tmp_path, tier="enterprise")
+        trusted = _sign_skill_script(skill_folder)
+        runner = SkillScriptRunner(
+            capabilities_root=tmp_path, tier="enterprise", trusted_public_keys=trusted
+        )
 
         result = await runner.run("reporter", "run.py")
 
@@ -271,7 +298,10 @@ class TestEnterpriseJail:
         captured: dict[str, Any] = {}
         _install_arcrun_seam(monkeypatch, captured, supports_vm=False)
         skill_folder = _seed_skill(tmp_path, "reporter")
-        runner = SkillScriptRunner(capabilities_root=tmp_path, tier="enterprise")
+        trusted = _sign_skill_script(skill_folder)
+        runner = SkillScriptRunner(
+            capabilities_root=tmp_path, tier="enterprise", trusted_public_keys=trusted
+        )
 
         await runner.run("reporter", "run.py")
 
@@ -369,8 +399,11 @@ class TestFederalFailClosed:
     ) -> None:
         captured: dict[str, Any] = {}
         _install_arcrun_seam(monkeypatch, captured, supports_vm=True)
-        _seed_skill(tmp_path, "classified")
-        runner = SkillScriptRunner(capabilities_root=tmp_path, tier="federal")
+        skill_folder = _seed_skill(tmp_path, "classified")
+        trusted = _sign_skill_script(skill_folder)
+        runner = SkillScriptRunner(
+            capabilities_root=tmp_path, tier="federal", trusted_public_keys=trusted
+        )
 
         result = await runner.run("classified", "run.py")
 
@@ -383,8 +416,14 @@ class TestFederalFailClosed:
     ) -> None:
         captured: dict[str, Any] = {}
         _install_arcrun_seam(monkeypatch, captured, supports_vm=False)
-        _seed_skill(tmp_path, "classified")
-        runner = SkillScriptRunner(capabilities_root=tmp_path, tier="federal")
+        skill_folder = _seed_skill(tmp_path, "classified")
+        # Sign + pin so the integrity gate PASSES — this test's intent is the VM
+        # fail-closed path, not signature refusal. With a valid signature the run
+        # proceeds to backend selection, where federal-without-VM fails closed.
+        trusted = _sign_skill_script(skill_folder)
+        runner = SkillScriptRunner(
+            capabilities_root=tmp_path, tier="federal", trusted_public_keys=trusted
+        )
 
         # Fail closed — refuse, never downgrade to docker/local.
         with pytest.raises((IsolationUnavailableError, SkillScriptError)):

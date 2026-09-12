@@ -25,6 +25,8 @@ from typing import Any
 import arcrun
 from arctrust import AuditEvent, emit
 
+from arcagent.capabilities import artifact_signing
+
 # Sentinel actor DID for a runner invoked without a caller identity.
 _RUNNER_ACTOR = "did:arc:system:skill-script-runner"
 
@@ -44,6 +46,17 @@ class UnsupportedScriptError(SkillScriptError):
     """The script's language is not supported in this phase (Python-only)."""
 
 
+class ScriptIntegrityError(SkillScriptError):
+    """The resolved script's current bytes do not verify against a pinned key.
+
+    Raised for a missing ``.arcsig`` sidecar, a post-sign content mutation
+    (TOCTOU / supply-chain tamper), or a signature that matches no pinned trusted
+    key. A required verification with no pinned key is the same unpinned-floor
+    refusal — no key means nothing to trust, so it fails closed (ASI04, ASI05,
+    LLM03).
+    """
+
+
 @dataclass(frozen=True)
 class SkillScriptResult:
     """Typed result of a skill-script run — data, never instructions."""
@@ -60,6 +73,7 @@ class SkillScriptRunner:
 
     capabilities_root: Path
     tier: str
+    trusted_public_keys: frozenset[bytes] = frozenset()
     relax: str | None = None
     caller_did: str | None = None
     audit_sink: Any | None = None
@@ -88,6 +102,9 @@ class SkillScriptRunner:
         Raises:
             ScriptPathError: ``script_relpath`` escapes the skill folder.
             UnsupportedScriptError: the script is not a ``.py`` file.
+            ScriptIntegrityError: verification is required for this tier and the
+                resolved script's current bytes do not verify against a pinned
+                key — refused before any backend selection or execution.
             arcrun.ExecutionIsolationError: tier isolation cannot be provided
                 (e.g. federal with no VM support) — never downgraded.
         """
@@ -98,6 +115,9 @@ class SkillScriptRunner:
             raise UnsupportedScriptError(
                 f"unsupported script {script_relpath!r}; only .py is supported in this phase."
             )
+
+        if self._integrity_required():
+            self._verify_script_integrity(script_path)
 
         backend = self._select_backend()
         self._emit_backend_selected(backend, outcome="allow")
@@ -126,6 +146,52 @@ class SkillScriptRunner:
                 f"script path {script_relpath!r} escapes skill folder {skill_folder}."
             )
         return candidate
+
+    def _integrity_required(self) -> bool:
+        """Whether the resolved script must verify before it may run.
+
+        Enterprise and federal ALWAYS require a verified signature. Personal
+        requires it only when trusted keys are pinned — a documented dev-flexibility
+        allowance lets an unsigned script run when no key is configured, but a
+        pinned personal deployment still refuses a tampered one.
+        """
+        if self.tier in ("enterprise", "federal"):
+            return True
+        return bool(self.trusted_public_keys)
+
+    def _verify_script_integrity(self, script_path: Path) -> None:
+        """Re-verify the script's CURRENT bytes against its ``.arcsig`` sidecar.
+
+        Mirrors the loader's pinned-key loop: accept only when a sidecar exists,
+        the content hash matches (no post-sign tamper), and the signature verifies
+        against at least one pinned trusted key. A required verification with no
+        pinned key is an unpinned floor — nothing to trust — so it fails closed.
+        Any verification error is likewise refused.
+
+        Raises:
+            ScriptIntegrityError: no pinned key, no matching key, missing sidecar,
+                content tamper, or an error during verification.
+        """
+        if not self.trusted_public_keys:
+            raise ScriptIntegrityError(
+                f"script {script_path.name!r} requires a verified signature "
+                "but no trusted key is pinned."
+            )
+        try:
+            content = script_path.read_bytes()
+            verified = any(
+                artifact_signing.verify_file(script_path, content, trusted_public_key=key)
+                for key in self.trusted_public_keys
+            )
+        except Exception as exc:  # reason: fail-closed — any verification error refuses
+            raise ScriptIntegrityError(
+                f"integrity verification failed for script {script_path.name!r}: {exc}"
+            ) from exc
+        if not verified:
+            raise ScriptIntegrityError(
+                f"script {script_path.name!r} failed signature verification "
+                "(missing sidecar, post-sign tamper, or no pinned key matches)."
+            )
 
     def _select_backend(self) -> str:
         """Resolve the tier-appropriate backend via arcrun; fail closed on refusal.
@@ -179,6 +245,7 @@ class SkillScriptRunner:
 
 
 __all__ = [
+    "ScriptIntegrityError",
     "ScriptPathError",
     "SkillScriptError",
     "SkillScriptResult",
