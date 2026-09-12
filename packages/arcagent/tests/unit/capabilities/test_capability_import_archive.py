@@ -146,3 +146,67 @@ def test_limits_are_enforced_before_staging(
         intake(archive, target, limits=limits)
 
     assert not (target / "imports" / ".staging").exists()
+
+
+def test_intake_accepts_kebab_case_skill_folder_names(tmp_path: Path) -> None:
+    """Real skills use kebab-case folders (create_skill allows dashes)."""
+    archive = _zip(tmp_path / "kebab.zip", {"skills/my-blog-post/SKILL.md": _skill()})
+
+    result = intake(archive, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == ["skills/my-blog-post/SKILL.md"]
+
+
+def test_intake_reparents_a_bare_skill_folder_under_skills(tmp_path: Path) -> None:
+    """A single skill folder zipped on its own lands under ``skills/``."""
+    archive = _zip(
+        tmp_path / "bare.zip",
+        {
+            "my-blog-post/SKILL.md": _skill(),
+            "my-blog-post/references/guide.md": b"guide",
+        },
+    )
+
+    result = intake(archive, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == [
+        "skills/my-blog-post/SKILL.md",
+        "skills/my-blog-post/references/guide.md",
+    ]
+
+
+def test_intake_drops_platform_metadata_junk(tmp_path: Path) -> None:
+    """macOS/Windows archive noise is dropped, never rejected or staged."""
+    archive = _zip(
+        tmp_path / "junk.zip",
+        {
+            "skills/imported/SKILL.md": _skill(),
+            "skills/imported/.DS_Store": b"junk",
+            "__MACOSX/skills/imported/._SKILL.md": b"junk",
+            "Thumbs.db": b"junk",
+        },
+    )
+
+    result = intake(archive, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == ["skills/imported/SKILL.md"]
+
+
+def test_intake_accepts_a_finder_compressed_single_skill(tmp_path: Path) -> None:
+    """The exact shape macOS Finder 'Compress' produces for one skill folder."""
+    archive = _zip(
+        tmp_path / "finder.zip",
+        {
+            "my-blog-post/SKILL.md": _skill(),
+            "my-blog-post/references/guide.md": b"guide",
+            "my-blog-post/.DS_Store": b"junk",
+            "__MACOSX/my-blog-post/._SKILL.md": b"junk",
+        },
+    )
+
+    result = intake(archive, tmp_path / "agent" / "capabilities")
+
+    assert [entry.path for entry in result.files] == [
+        "skills/my-blog-post/SKILL.md",
+        "skills/my-blog-post/references/guide.md",
+    ]

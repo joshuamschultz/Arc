@@ -111,3 +111,40 @@ def test_local_links_hardlinks_and_special_files_are_rejected(tmp_path: Path) ->
     os.link(tool, source / "tools" / "hard.py")
     with pytest.raises(CapabilityImportError):
         intake(source, tmp_path / "two" / "capabilities")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "__MACOSX/../../tools/escape.py",
+        "__MACOSX/../evil.py",
+    ],
+)
+def test_junk_prefixes_cannot_smuggle_traversal(tmp_path: Path, name: str) -> None:
+    """Dropping ``__MACOSX`` noise must not bypass path-traversal rejection."""
+    archive = _archive(tmp_path / "smuggle.zip", [name, "skills/imported/SKILL.md"])
+    target = tmp_path / "agent" / "capabilities"
+
+    with pytest.raises(CapabilityImportError):
+        intake(archive, target)
+
+    assert not (target / "imports" / ".staging").exists()
+
+
+def test_bare_folder_with_unsafe_name_is_not_reparented(tmp_path: Path) -> None:
+    """A single skill folder whose name is unsafe is rejected, never re-parented."""
+    archive = _archive(tmp_path / "unsafe.zip", ["bad name/SKILL.md"])
+
+    with pytest.raises(CapabilityImportError):
+        intake(archive, tmp_path / "agent" / "capabilities")
+
+
+def test_dropping_all_content_as_junk_still_rejects_empty_import(tmp_path: Path) -> None:
+    """An archive of nothing but metadata has no capability and is rejected."""
+    archive = _archive(
+        tmp_path / "onlyjunk.zip",
+        ["__MACOSX/skills/imported/._SKILL.md", ".DS_Store"],
+    )
+
+    with pytest.raises(CapabilityImportError):
+        intake(archive, tmp_path / "agent" / "capabilities")

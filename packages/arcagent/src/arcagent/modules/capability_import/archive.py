@@ -36,6 +36,12 @@ _CHUNK_SIZE = 64 * 1024
 _NESTED_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".gz")
 _RESOURCE_DIRS = frozenset({"references", "scripts", "templates", "assets"})
 _ROOT_FILES = frozenset({"capability-import.toml", "sbom.cdx.json", "README.md", "LICENSE"})
+#: Archive-manager noise that ordinary "Compress" actions add — macOS Finder's
+#: ``__MACOSX/`` AppleDouble tree and ``.DS_Store``, Windows ``Thumbs.db`` /
+#: ``desktop.ini``. It is metadata, never capability content, so intake drops it
+#: rather than rejecting the whole upload. Dropped entries never reach staging.
+_JUNK_ROOT_DIRS = frozenset({"__MACOSX"})
+_JUNK_FILE_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 
 
 @dataclass(frozen=True)
@@ -141,8 +147,7 @@ def _preflight_zip(
                 candidates.append(_Candidate(path, info.file_size, info.compress_size, info))
     except (OSError, zipfile.BadZipFile, NotImplementedError) as exc:
         raise CapabilityImportSourceError("unreadable ZIP source") from exc
-    candidates = _strip_single_wrapper(candidates)
-    _check_count(candidates, limits)
+    candidates = _finalize_candidates(candidates, limits)
     return candidates, _file_digest(source), source.stat().st_size
 
 
@@ -164,8 +169,7 @@ def _preflight_directory(source: Path, limits: CapabilityImportLimits) -> list[_
         if total > limits.max_expanded_bytes:
             raise CapabilityImportLimitError("source tree exceeds configured expanded limit")
         candidates.append(_Candidate(normalized, status.st_size, status.st_size, path))
-    _check_count(candidates, limits)
-    return candidates
+    return _finalize_candidates(candidates, limits)
 
 
 def _safe_path(
@@ -211,22 +215,65 @@ def _is_zip_directory(info: zipfile.ZipInfo) -> bool:
     return info.is_dir() or (info.create_system == 0 and dos_attributes & 0x10 != 0)
 
 
-def _strip_single_wrapper(candidates: list[_Candidate]) -> list[_Candidate]:
-    """Accept the one top-level folder produced by ordinary ZIP applications."""
-    if not candidates or any(len(candidate.path.parts) < 2 for candidate in candidates):
+def _finalize_candidates(
+    candidates: list[_Candidate], limits: CapabilityImportLimits
+) -> list[_Candidate]:
+    """Drop archive-manager noise, normalize the top level, then bound the count.
+
+    Junk-dropping and normalization run after per-entry path validation, so an
+    unsafe path is still rejected by ``_safe_path`` before it can be silently
+    discarded here. The count is checked last, against the real payload the
+    operator will review.
+    """
+    kept = [candidate for candidate in candidates if not _is_platform_junk(candidate.path)]
+    kept = _normalize_roots(kept)
+    _check_count(kept, limits)
+    return kept
+
+
+def _is_platform_junk(path: PurePosixPath) -> bool:
+    """Recognize macOS/Windows archive metadata that is never a capability."""
+    return path.parts[0] in _JUNK_ROOT_DIRS or path.name in _JUNK_FILE_NAMES
+
+
+def _normalize_roots(candidates: list[_Candidate]) -> list[_Candidate]:
+    """Reshape a single-folder archive into the ``skills/``/``tools/`` layout.
+
+    Two shapes a person actually produces are accepted here:
+
+    * a skill folder zipped on its own (``my-skill/SKILL.md``) — re-parented
+      under ``skills/`` so its own name is preserved; and
+    * one generic wrapper folder around a ``skills/``/``tools/`` bundle — the
+      wrapper is stripped, as ordinary ZIP applications add it.
+    """
+    if not candidates:
         return candidates
     roots = {candidate.path.parts[0] for candidate in candidates}
-    if len(roots) != 1 or next(iter(roots)) in {"skills", "tools"}:
+    if len(roots) != 1:
         return candidates
-    return [
-        _Candidate(
-            PurePosixPath(*candidate.path.parts[1:]),
-            candidate.size,
-            candidate.compressed_size,
-            candidate.source,
-        )
+    root = next(iter(roots))
+    if root in {"skills", "tools"}:
+        return candidates
+    holds_skill_manifest = any(
+        len(candidate.path.parts) == 2 and candidate.path.parts[1] == "SKILL.md"
         for candidate in candidates
-    ]
+    )
+    if holds_skill_manifest and _safe_name(root):
+        return [
+            _reparent(candidate, ("skills", *candidate.path.parts)) for candidate in candidates
+        ]
+    if any(len(candidate.path.parts) < 2 for candidate in candidates):
+        return candidates
+    return [_reparent(candidate, candidate.path.parts[1:]) for candidate in candidates]
+
+
+def _reparent(candidate: _Candidate, parts: tuple[str, ...]) -> _Candidate:
+    return _Candidate(
+        PurePosixPath(*parts),
+        candidate.size,
+        candidate.compressed_size,
+        candidate.source,
+    )
 
 
 def _check_zip_limits(info: zipfile.ZipInfo, limits: CapabilityImportLimits) -> None:
@@ -274,7 +321,15 @@ def _allowed_path(path: PurePosixPath) -> bool:
 
 
 def _safe_name(name: str) -> bool:
-    return name.isidentifier() and not name.startswith("_")
+    """Accept the skill-folder names ``create_skill`` writes — dashes included.
+
+    ``create_skill`` validates a new skill's name as ``name.replace("-", "_")``
+    being a Python identifier, so every real skill folder is kebab-case
+    (``blog-post``, ``cadence-review``). Requiring a bare identifier here would
+    reject the exact naming convention the rest of the system produces. Path
+    safety is already guaranteed upstream by ``_safe_path``.
+    """
+    return name.replace("-", "_").isidentifier() and not name.startswith(("_", "-"))
 
 
 def _copy_candidates(
