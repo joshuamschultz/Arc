@@ -29,6 +29,7 @@ did land, then clear the marker" — deterministic, no LLM, no partial state.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -647,7 +648,9 @@ class Consolidator:
         if embedded is None:
             return []
         vectors = dict(zip(cues, embedded, strict=True))
-        canonical_of = self._cluster_cues(cues, vectors)
+        # O(N^2) pure-Python cosine sweep — off the loop so a large store's nightly
+        # "sleep" can't pin the single asyncio thread and starve NATS/websocket auth.
+        canonical_of = await asyncio.to_thread(self._cluster_cues, cues, vectors)
 
         merges: list[tuple[str, str]] = []
         for cue, canonical in canonical_of.items():
@@ -698,7 +701,8 @@ class Consolidator:
             return []
         vectors = {slug: vec for (slug, _), vec in zip(entities, embedded, strict=True)}
 
-        clusters = self._candidate_clusters(entities, vectors)
+        # O(N^2) pure-Python cosine sweep — off the loop (see merge_cues).
+        clusters = await asyncio.to_thread(self._candidate_clusters, entities, vectors)
         if not clusters:
             self._emit_dedup_pass(len(entities), 0, 0)
             return []
@@ -790,7 +794,8 @@ class Consolidator:
 
         vectors = dict(zip([c.slug for c in cards], embedded, strict=True))
         by_slug = {c.slug: c for c in cards}
-        clusters = self._procedure_clusters(cards, vectors)
+        # O(N^2) pure-Python cosine sweep — off the loop (see merge_cues).
+        clusters = await asyncio.to_thread(self._procedure_clusters, cards, vectors)
         # Positive LLM confirmation, exactly as entity de-dup: the wide band only
         # NOMINATES candidates; the confirmer decides which are the same playbook and
         # declines the rest, so widening the band never fuses two real methods (a
