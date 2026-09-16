@@ -80,11 +80,35 @@ async def _connect_backend() -> Any | None:
     async def _swallow(_exc: Exception) -> None:
         return None
 
+    async def _on_disconnect() -> None:
+        # reason: a dropped connection is why messaging "goes unavailable every
+        # morning" — say so loudly so the log names the blip, not the symptom.
+        logger.warning("embedded messaging: NATS connection dropped — reconnecting")
+
+    async def _on_reconnect() -> None:
+        logger.info("embedded messaging: NATS reconnected — team messaging restored")
+
     url = _nats_url()
     try:
         await _preflight(url)
+        # allow_reconnect=True + unlimited attempts: this connection lives for the
+        # whole dashboard lifespan and is built exactly once (server.py caches the
+        # handle on app.state; nothing rebuilds it). With reconnect off, the first
+        # overnight broker blip killed it for good and every channel route answered
+        # team_messaging_unavailable until arcui was restarted by hand. Startup still
+        # fails fast because _preflight guards the initial connect; reconnect only
+        # governs behaviour after a healthy connection already existed.
         nc = await asyncio.wait_for(
-            nats.connect(url, connect_timeout=2, allow_reconnect=False, error_cb=_swallow),
+            nats.connect(
+                url,
+                connect_timeout=2,
+                allow_reconnect=True,
+                max_reconnect_attempts=-1,
+                reconnect_time_wait=2,
+                error_cb=_swallow,
+                disconnected_cb=_on_disconnect,
+                reconnected_cb=_on_reconnect,
+            ),
             timeout=_CONNECT_TIMEOUT,
         )
     except Exception:  # reason: fail-open — broker down => routes report unavailable
