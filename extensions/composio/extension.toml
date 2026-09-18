@@ -1,0 +1,113 @@
+# Composio's long-tail integrations over its HOSTED MCP surface.
+#
+# D-588 ranks a connector's options: the vendor's own CLI first, a maintained MCP
+# server second, an adapter we write only as a last resort. Composio is the second
+# option in its strongest form — a first-party, vendor-hosted MCP endpoint that
+# fronts hundreds of SaaS integrations — so this bundle attaches over MCP and not
+# through an adapter we would have to keep in step with every upstream.
+#
+# The transport is HTTP, not stdio: there is no binary to install and nothing to
+# place on PATH. The endpoint is pinned here (a floating host is the same
+# supply-chain hole as a floating version), and the API key travels to the broker
+# as an `Authorization: Bearer` header named by `[config.mcp].credential_field`,
+# never onto a child process's environment or argv.
+#
+# Composio's catalog is enormous, which is exactly why `[tools].allow` is short and
+# explicit. An omitted allowlist is the same unbounded grant as "*" and is refused
+# above personal tier. A verb the broker starts serving that is not on this list —
+# an admin or delete action the catalog grows tomorrow — can never register.
+#
+# This bundle ships Composio's READ-ONLY discovery verbs only: search the catalog,
+# list toolkits and triggers, describe one tool. Action (egress) verbs are not
+# granted here; a deployment that wants them adds them to its own copy once its
+# egress posture (D-580) is set, so the shipped bundle sends nothing by default.
+
+[extension]
+name = "composio"
+display_name = "Composio"
+version = "1.0.0"
+description = "Search and browse Composio's catalog of integrations, toolkits, and triggers."
+attachment = "mcp"
+tier_floor = "personal"
+
+# Composio brokers ACTIONS across other people's SaaS; it is not itself a document
+# store Arc ingests into Knowledge. Declared non_indexable with the architectural
+# reason, rather than silently dropping out of the Knowledge lifecycle.
+[knowledge]
+mode = "non_indexable"
+reason = "Composio is an action broker over third-party APIs, not a data-bearing source Arc can enumerate, map, and incrementally index; its own catalog is discovery metadata, not operator content."
+
+# One credential: a Composio API key. It reaches the hosted MCP endpoint as a
+# bearer token (see [config.mcp].credential_field), and the [secrets.placement]
+# below records the destination every stored connector credential must declare —
+# the environment name a locally spawned Composio helper would read it from — so a
+# stored value never lacks a named home.
+[[secrets]]
+name = "api_key"
+prompt = "Your Composio API key. In the Composio dashboard at app.composio.dev open Settings, then API Keys, click Generate (or copy an existing key), and paste it here. It looks like a long random string and grants access to the connected accounts on your Composio project."
+format = "api_token"
+sensitive = true
+
+[secrets.placement]
+variable = "COMPOSIO_API_KEY"
+
+[tools]
+# Read-only discovery verbs. Equality with [[tools.declared]] is enforced by the
+# bundle suite: a declared verb missing here can never register, and an allowed
+# verb with no declaration would silently take the restrictive default.
+allow = [
+  "COMPOSIO_SEARCH_TOOLS",
+  "COMPOSIO_LIST_TOOLKITS",
+  "COMPOSIO_GET_TOOL",
+  "COMPOSIO_LIST_TRIGGERS",
+]
+
+[[tools.declared]]
+name = "COMPOSIO_SEARCH_TOOLS"
+description = "Search the Composio catalog for tools matching a query."
+classification = "read_only"
+
+[[tools.declared]]
+name = "COMPOSIO_LIST_TOOLKITS"
+description = "List the integration toolkits Composio exposes."
+classification = "read_only"
+
+[[tools.declared]]
+name = "COMPOSIO_GET_TOOL"
+description = "Read one Composio tool's schema and metadata by slug."
+classification = "read_only"
+
+[[tools.declared]]
+name = "COMPOSIO_LIST_TRIGGERS"
+description = "List the triggers available for the connected toolkits."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+
+# The hosted MCP endpoint, pinned. `transport = "http"` selects the no-binary
+# branch of build_attachment; `credential_field` names which [[secrets]] carries
+# the bearer token to the broker. The per-tool classifications are defence in
+# depth behind the allowlist: they fix each verb's classification rather than
+# letting a poisoned upstream describe itself.
+[config.mcp]
+transport = "http"
+url = "https://apollo.composio.dev/v3/mcp"
+credential_field = "api_key"
+client_name = "arc"
+
+[config.mcp.resilience]
+timeout_seconds = 60.0
+max_attempts = 3
+
+[config.mcp.tools.COMPOSIO_SEARCH_TOOLS]
+classification = "read_only"
+
+[config.mcp.tools.COMPOSIO_LIST_TOOLKITS]
+classification = "read_only"
+
+[config.mcp.tools.COMPOSIO_GET_TOOL]
+classification = "read_only"
+
+[config.mcp.tools.COMPOSIO_LIST_TRIGGERS]
+classification = "read_only"

@@ -1,6 +1,6 @@
 """Document-repository index route — the verified OKF ``index.md`` per source (H-026).
 
-A connected DOCUMENT/MAIL source (smb / dropbox / s3 / onedrive / gmail) keeps a
+A connected document or mail source (file shares, cloud drives, mailboxes) keeps a
 reserved OKF ``index.md`` under the agent workspace — "what's in this repo and
 what's it for." This route surfaces exactly that one artifact, read-only, so an
 operator can see a connected repository's contents and purpose from the Knowledge

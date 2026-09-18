@@ -886,13 +886,35 @@ class ConnectionsResponse(BaseModel):
     extensions_roots: list[str]
 
 
+class AgentConnectorInstance(ConnectorInstance):
+    """One connected account on the per-agent panel, plus its sync health.
+
+    ``needs_attention`` (SPEC-082 COMP-008) is True when THIS agent's
+    connected-data sync backed the source off after a terminal credential
+    failure — a revoked/expired token no retry can clear, waiting on a human.
+    Absent a health record it is False: a connection with no sync trouble reads
+    as healthy, never as an error. It rides only the agent-scoped view because
+    sync health is per-agent; the deployment listing keeps the leaner
+    :class:`ConnectorInstance` shape.
+    """
+
+    needs_attention: bool = False
+
+
 class AgentConnectorsResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/connectors`` — what this agent can reach."""
+    """Body of ``GET /api/agents/{id}/connectors`` — what this agent can reach.
+
+    ``mcp_door_enabled`` (SPEC-082 COMP-008) reports whether this agent's MCP
+    server door is open — i.e. ``[modules.mcp_server]`` is enabled in the agent
+    config. The door is DEFAULT OFF and this field fails closed to ``False``
+    whenever the agent or its config cannot be read.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    instances: list[ConnectorInstance]
+    instances: list[AgentConnectorInstance]
     extensions_roots: list[str]
+    mcp_door_enabled: bool = False
 
 
 class ConnectorInstallResponse(BaseModel):

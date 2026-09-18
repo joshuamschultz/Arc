@@ -192,6 +192,13 @@ def _prompt_handler(args: list[str]) -> None:
     prompt_handler(args)
 
 
+def _mcp_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.mcp import mcp_handler
+
+    mcp_handler(args)
+
+
 def _approve_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.approve import approve_handler
@@ -703,7 +710,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         name="restart",
-        description="Restart the whole stack — arc + NATS + fleet + companions (--with-db bounces Postgres)",
+        description=(
+            "Restart the whole stack — arc + NATS + fleet + companions "
+            "(--with-db bounces Postgres)"
+        ),
         category="Session",
         aliases=("reboot",),
         args_hint="[--with-db] [--no-wait]",
@@ -764,6 +774,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_workflow_handler,
+    ),
+    CommandDef(
+        name="mcp serve",
+        description="Serve this agent's MCP door over stdio (default) or HTTP",
+        category="Tools & Skills",
+        args_hint="[--stdio | --http --host H --port P] --agent <dir>",
+        cli_only=True,
+        handler=_mcp_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.

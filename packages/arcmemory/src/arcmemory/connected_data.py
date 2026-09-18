@@ -235,6 +235,14 @@ class ConnectedDataService:
         self._reviews = review_port or ProfileReviewStore(
             self._workspace, agent_did=self._agent_did, audit_sink=self._audit
         )
+        # Per-run cache of mapping ``call_hash`` values already verified approved.
+        # The service is built fresh per sync run (arcagent's ingest factory), so
+        # this is a run-scoped cache: approval is verified once per mapping per
+        # run instead of once per object. Keyed by ``call_hash`` so a structural
+        # change re-derives a new hash and re-triggers approval — the durable-
+        # approval invariant is preserved, and one mapping's approval can never
+        # authorize a structurally different mapping.
+        self._approved_call_hashes: set[str] = set()
 
     def _source_id(self, source: ConnectedSource) -> str:
         return source_instance_id(self._agent_did, source)
@@ -864,17 +872,24 @@ class ConnectedDataService:
     async def _mapping_is_approved(self, mapping: ApprovedMapping) -> bool:
         if self._approval is None:
             return False
-        await self._approval.start()
         target = mapping_call_hash(
             mapping.source_id,
             mapping.homes,
             revision=mapping.revision,
             content_hash_value=mapping.content_hash,
         )
+        # Verified once per run: a mapping already confirmed approved this run is
+        # not re-consulted per object. This narrows the window in which two
+        # objects in the same run could disagree, and cuts N approval-spine round
+        # trips to one. The cache holds only positive verdicts, keyed by call_hash.
+        if target in self._approved_call_hashes:
+            return True
+        await self._approval.start()
         # An approved mapping is durable — expiry gates only the pending window
         # (see require_approved_mapping), so an aged-out grant still authorizes ingest.
         for row in await self._approval.list(status="approved"):
             if row.id == mapping.mapping_id and row.call_hash == target:
+                self._approved_call_hashes.add(target)
                 return True
         return False
 

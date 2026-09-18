@@ -16,10 +16,19 @@ from arcagent.connected_data import (
     KnowledgeHome,
     ListSourceResources,
     SourceDescription,
+    SyncError,
     SyncLimits,
     SyncState,
     SyncStatePort,
 )
+from arcagent.extension.credentials import (
+    ConnectedAccount,
+    CredentialLifecycle,
+    CredentialRenewalError,
+    RenewedCredential,
+    RenewFn,
+)
+from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.source import (
     InspectSource,
     SelectSourceResources,
@@ -27,11 +36,88 @@ from arcagent.extension.source import (
     SourceResource,
 )
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
+from arcagent.extension.state import ConnectionHealth
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
+from arcagent.modules.connected_data.health import (
+    ConnectionHealthTracker,
+    is_terminal_sync_failure,
+)
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 
 IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
+
+#: Called once when a connection needs a human — connection id + reason. The
+#: health tracker guarantees it fires exactly once per outage.
+OperatorNotifier = Callable[[str, str], Awaitable[None]]
+
+
+class _NullSecretBackend:
+    """A secret backend that stores nothing — the default when no vault is wired."""
+
+    async def get(self, ref: SecretRef) -> str | None:
+        return None
+
+    async def put(self, ref: SecretRef, value: str) -> None:
+        return None
+
+    async def delete(self, ref: SecretRef) -> bool:
+        return False
+
+
+class _NullCredentialState:
+    """A credential-metadata store that holds nothing.
+
+    With no durable expiry, ``CredentialLifecycle`` finds nothing due and never
+    renews: proactive renewal stays inert until a real credential plane is handed
+    in through the ``credentials`` seam, rather than silently pretending to renew.
+    """
+
+    async def get(self, connection: str) -> None:
+        return None
+
+    async def record_credential_metadata(
+        self,
+        connection: str,
+        *,
+        expires_at: str | None = None,
+        issuer: str | None = None,
+        audience: str | None = None,
+        last_refresh_at: str | None = None,
+        actor_did: str,
+    ) -> bool:
+        return False
+
+    async def set_health(
+        self, connection: str, health: ConnectionHealth, *, actor_did: str
+    ) -> bool:
+        return False
+
+
+class _NullEscalation:
+    """The operator path when none is wired — a no-op, never the agent's chat."""
+
+    async def request_operator_attention(
+        self, *, connection: str, reason: str, detail: str
+    ) -> None:
+        return None
+
+
+async def _unsupported_renew(secret: Secret) -> RenewedCredential:
+    """Placeholder renewer: never invoked while no credential expiry is known."""
+    raise CredentialRenewalError(
+        error_code="renewal_unsupported",
+        message="no credential renewer is wired for this connection",
+    )
+
+
+def _default_credential_lifecycle() -> CredentialLifecycle:
+    """A structurally-complete, inert lifecycle (null default for the seam)."""
+    return CredentialLifecycle(
+        secrets=SecretStore(_NullSecretBackend()),
+        state=_NullCredentialState(),
+        escalation=_NullEscalation(),
+    )
 
 
 class SourceSelectionStore(Protocol):
@@ -141,6 +227,9 @@ class ConnectedDataService:
         mapping_proposal_store_opener: Callable[[], Awaitable[MappingProposalStore]] | None = None,
         audit: AuditCallback | None = None,
         interval_seconds: float = 3600.0,
+        credentials: CredentialLifecycle | None = None,
+        credential_renew: RenewFn | None = None,
+        operator_notifier: OperatorNotifier | None = None,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -165,6 +254,13 @@ class ConnectedDataService:
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
         self._closed = False
+        # Proactive credential renewal (COMP-007) and terminal-failure health
+        # (COMP-008). The lifecycle defaults to an inert null so the seam is
+        # always present; a real credential plane is handed in by the runtime.
+        self._credentials = credentials or _default_credential_lifecycle()
+        self._credential_renew = credential_renew or _unsupported_renew
+        self._operator_notifier = operator_notifier
+        self._health = ConnectionHealthTracker()
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -244,6 +340,8 @@ class ConnectedDataService:
         registration = await self._find(connection_id)
         if registration is None:
             return SourceOperationResult(connection_id, "not_found")
+        # An explicit operator sync clears any needs-attention backoff.
+        self._health.clear(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -259,6 +357,7 @@ class ConnectedDataService:
         if await self._find(connection_id) is None:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.discard(connection_id)
+        self._health.clear(connection_id)
         self._wake.set()
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -287,6 +386,7 @@ class ConnectedDataService:
         self._mapping_statuses.pop(connection_id, None)
         self._selected_resources.pop(connection_id, None)
         self._descriptions.pop(connection_id, None)
+        self._health.clear(connection_id)
         await self._catalog.unregister(connection_id)
         return SourceOperationResult(connection_id, "revoked")
 
@@ -308,6 +408,7 @@ class ConnectedDataService:
         if self._store is None or not await self._store.reset(self._agent_did, connection_id):
             return SourceOperationResult(connection_id, "refused", "sync_lease_active")
         self._paused.discard(connection_id)
+        self._health.clear(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -482,14 +583,19 @@ class ConnectedDataService:
         while not self._closed:
             registrations = await self._catalog.snapshot()
             for registration in registrations:
-                if registration.connection_id not in self._paused:
-                    self._statuses.setdefault(
-                        registration.connection_id,
-                        SourceRuntimeStatus(
-                            connection_id=registration.connection_id, status="inspecting"
-                        ),
-                    )
-                    self._schedule(registration)
+                if registration.connection_id in self._paused:
+                    continue
+                # A source that needs a human is backed off: re-running it every
+                # tick just hammers a dead credential and floods the audit log.
+                if self._health.is_backed_off(registration.connection_id):
+                    continue
+                self._statuses.setdefault(
+                    registration.connection_id,
+                    SourceRuntimeStatus(
+                        connection_id=registration.connection_id, status="inspecting"
+                    ),
+                )
+                self._schedule(registration)
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self._interval)
             except TimeoutError:
@@ -515,6 +621,18 @@ class ConnectedDataService:
                 await self._run_leased(leased)
         except asyncio.CancelledError:
             raise
+        except SyncError as exc:
+            # A terminal failure (a revoked credential) needs a human, not a
+            # retry: surface it as needs_attention, notify once, and back the
+            # source off the timer. Anything else is an ordinary failure a later
+            # tick may clear.
+            if is_terminal_sync_failure(exc.code):
+                await self._mark_needs_attention(connection_id, exc.code or "auth_required")
+            else:
+                _logger.warning("connected-data source failed: %s", connection_id, exc_info=True)
+                self._statuses[connection_id] = SourceRuntimeStatus(
+                    connection_id=connection_id, status="failed", detail=exc.code or ""
+                )
         except Exception as exc:
             _logger.warning("connected-data source failed: %s", connection_id, exc_info=True)
             self._statuses[connection_id] = SourceRuntimeStatus(
@@ -531,6 +649,20 @@ class ConnectedDataService:
                 return
             if self._ingest_factory is None:
                 self._set_degraded(connection_id, "ingest_port_unavailable")
+                return
+            # Renew the credential proactively, before any read hits the provider,
+            # so a token in its renewal window is refreshed on the clock rather
+            # than only after a call returns 401. A terminal renewal failure has
+            # already marked the connection and escalated to the operator path;
+            # aborting here keeps the sync from hammering a rejected credential.
+            try:
+                await self._credentials.ensure_fresh(
+                    ConnectedAccount(connection=connection_id),
+                    renew=self._credential_renew,
+                    caller_did=self._agent_did,
+                )
+            except CredentialRenewalError as exc:
+                await self._mark_needs_attention(connection_id, exc.error_code)
                 return
             selected = self._selected_resources.get(connection_id)
             if selected is None and self._resource_store is not None:
@@ -571,6 +703,8 @@ class ConnectedDataService:
                 state=result,
                 documents_indexed=await self._documents_indexed(ingest, description),
             )
+            # A run that completed clears any prior needs-attention backoff.
+            self._health.clear(connection_id)
 
     async def _inspect_registration(self, registration: SourceRegistration) -> None:
         """Populate the safe descriptor before the operator sees a blank source row."""
@@ -597,6 +731,21 @@ class ConnectedDataService:
             # only stable id it has, being ingest-agnostic); reading it back by
             # the doc pool's canonical id found nothing, so the counters read 0.
             state = await self._persisted_state(connection_id)
+            # A durable terminal error_code (a revoked credential) survives a
+            # restart: re-establish the backoff and surface needs_attention so a
+            # fresh process does not resume hammering a dead credential.
+            if state is not None and is_terminal_sync_failure(state.error_code):
+                self._health.note_terminal_failure(connection_id)
+                self._statuses[connection_id] = SourceRuntimeStatus(
+                    connection_id=connection_id,
+                    source_id=source_id,
+                    status="needs_attention",
+                    detail=state.error_code or "",
+                    description=description,
+                    state=state,
+                    documents_indexed=documents_indexed,
+                )
+                return
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id,
                 source_id=source_id,
@@ -747,6 +896,23 @@ class ConnectedDataService:
         self._statuses[connection_id] = SourceRuntimeStatus(
             connection_id=connection_id, status="degraded", detail=detail
         )
+
+    async def _mark_needs_attention(self, connection_id: str, reason: str) -> None:
+        """Back a source off, surface needs_attention, and notify once."""
+        first = self._health.note_terminal_failure(connection_id)
+        self._statuses[connection_id] = SourceRuntimeStatus(
+            connection_id=connection_id, status="needs_attention", detail=reason or ""
+        )
+        if first:
+            await self._notify_operator(connection_id, reason)
+
+    async def _notify_operator(self, connection_id: str, reason: str) -> None:
+        """Tell the operator a connection needs a human — never the agent's chat."""
+        _logger.warning(
+            "connected-data connection needs attention: %s (%s)", connection_id, reason
+        )
+        if self._operator_notifier is not None:
+            await self._operator_notifier(connection_id, reason)
 
     async def _inspect(self, registration: SourceRegistration) -> Any:
         """Inspect a source, turning a provider failure into a typed refusal.

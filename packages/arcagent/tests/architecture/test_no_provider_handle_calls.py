@@ -32,7 +32,19 @@ _PROVIDER_METHODS = frozenset({"invoke", "invoke_stream", "embed", "embed_stream
 # text. Those receivers are named here, so the scan stays a guard rather than a
 # nuisance and so adding one is a visible decision rather than a quiet one. A
 # name earns a place here only when what it holds is provably not a provider.
-_NON_PROVIDER_RECEIVERS = frozenset({"attachment", "_attachment", "_delegate", "_invoker"})
+_NON_PROVIDER_RECEIVERS = frozenset(
+    {
+        "attachment",
+        "_attachment",
+        "_delegate",
+        "_invoker",
+        # SPEC-082: the MCP door's dispatch bridge routes an inbound tools/call
+        # through ``AgentCapabilityProvider.invoke`` — a capability/tool dispatch
+        # (COMP-003), provably not an ArcLLM provider. Named distinctly so the
+        # guard stays a guard, not a nuisance.
+        "capability_provider",
+    }
+)
 
 # One provider-handle call site remains, pinned rather than hidden.
 # ``modules/browser/_browser_use/adapter.py`` is a shim that implements the
