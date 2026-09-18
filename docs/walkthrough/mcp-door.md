@@ -264,3 +264,19 @@ arc mcp serve --http --host 127.0.0.1 --port 8080   # HTTP for local testing
 The arcui SPA dashboard shows each agent's door on/off status on the **connectors**
 panel, alongside the agent's enrolled external callers. A red indicator means the door
 is disabled or `expose` is empty; green means it is live and the allowlist is populated.
+
+### Fleet default exposure policy by tier
+
+`scripts/deploy-vm.sh` turns the door on for every agent it deploys, choosing the
+exposure from each agent's tier — the same stringency dial the door itself enforces:
+
+| Tier | Enabled | Exposure | Enrollment | Notes |
+|---|---|---|---|---|
+| **personal** | yes | `expose = ["*"]` — all tools, open | none (signature-verified only) | Any caller who can reach the port and sign a request gets full tool access, including `bash`. Appropriate only when the door's port is on a trusted/firewalled network. |
+| **enterprise** | yes (module on) | operator sets an **explicit** list (the allowlist refuses `"*"` above personal) | **required** — a non-empty `enrolled` roster, or the door denies every caller | Fail-closed until the operator sets `expose` + `enrolled`. |
+| **federal** | yes (module on) | operator sets an explicit **read-only** list | **required** + **mTLS** | Fail-closed until configured; keep `expose` to read-only verbs and front the app with a TLS proxy that populates the ASGI `tls` extension. |
+
+The step is idempotent: it never overwrites an agent config that already declares
+`[modules.mcp_server]`, so an operator's explicit exposure/enrollment choices survive
+every redeploy. To change an agent's exposure, edit its `arcagent.toml` under
+`~/arc/team/<agent>/` and restart `arc.service`.
