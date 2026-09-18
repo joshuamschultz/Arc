@@ -9,11 +9,18 @@ key BEFORE the caller reaches the door; the verified members' DIDs arrive here a
 the ``enrolled`` roster. This gate is the membership check standing between a
 verified identity and dispatch.
 
-Enrollment is the ADR-019 stringency dial, not a second trust model: it is
-mandatory at enterprise/federal and optional at personal (a self-signed personal
-caller is admitted without a roster). The check is fail-closed — a ``None`` or
-empty roster enrolls nobody, so a tier that requires enrollment refuses every
-caller until an operator enrolls one (NIST 800-53 AC-3, deny-by-default).
+Enrollment is the ADR-019 stringency dial, not a second trust model. Two rules,
+both fail-closed:
+
+- **Mandatory at enterprise/federal.** A ``None`` or empty roster there enrolls
+  nobody, so every caller is refused until an operator enrolls one.
+- **Configured-gate at personal.** Enrollment is *optional* at personal only while
+  the roster is empty — then a self-signed caller is admitted (open). The moment an
+  operator sets a non-empty ``enrolled`` roster, it is ENFORCED at personal too: a
+  verified caller not on the roster is refused. This is how a personal door is
+  protected without changing tier — list who may call and only they get in
+  (NIST 800-53 AC-3, deny-by-default). An empty roster is never a silent allow at a
+  tier that configured one.
 """
 
 from __future__ import annotations
@@ -39,15 +46,19 @@ def require_enrolled(
     tier: str,
     audit_sink: AuditSink,
 ) -> None:
-    """Refuse a verified-but-unenrolled caller at a tier that mandates enrollment.
+    """Refuse a verified-but-unenrolled caller when enrollment is in force.
 
-    A no-op at personal tier (enrollment optional) and for an enrolled DID at any
-    tier. Otherwise it emits one ``deny`` audit event through the door's single
-    emission point and raises :class:`InboundRejected` — fail-closed: a ``None`` or
-    empty roster enrolls nobody, so the caller is refused by default.
+    Enrollment is in force when the tier mandates it (enterprise/federal) OR the
+    operator has configured a non-empty roster (any tier, personal included). When
+    in force, only a DID on the roster is admitted; anyone else gets one ``deny``
+    audit event through the door's single emission point and an
+    :class:`InboundRejected` — fail-closed. A personal door with an empty roster is
+    the only open case (enrollment optional), and it is a no-op here.
     """
-    if tier not in _ENROLLMENT_REQUIRED_TIERS:
-        return
+    required = tier in _ENROLLMENT_REQUIRED_TIERS
+    configured = bool(enrolled)
+    if not required and not configured:
+        return  # personal + no roster = open (enrollment optional)
     if enrolled and caller_did in enrolled:
         return
     emit_door_event(
