@@ -1084,10 +1084,22 @@ export interface ConnectionsResponse {
   extensions_roots: string[]
 }
 
-/** What one agent can reach: the same rows, filtered to its grants. */
+/** One connected account on the per-agent panel, plus its sync health.
+ *  `needs_attention` (SPEC-082 COMP-008) is true when THIS agent's
+ *  connected-data sync backed the source off after a terminal credential
+ *  failure — a revoked/expired token no retry can clear, waiting on a human.
+ *  Absent (missing/false) reads as healthy, never as an error. */
+export interface AgentConnectorInstance extends ConnectorInstance {
+  needs_attention?: boolean
+}
+
+/** What one agent can reach: the same rows, filtered to its grants.
+ *  `mcp_door_enabled` (SPEC-082 COMP-008) is whether this agent's MCP server
+ *  door is open. Default OFF and fails closed to false when unreadable. */
 export interface AgentConnectorsResponse {
-  instances: ConnectorInstance[]
+  instances: AgentConnectorInstance[]
   extensions_roots: string[]
+  mcp_door_enabled?: boolean
 }
 
 export interface ConnectorInstallResponse {

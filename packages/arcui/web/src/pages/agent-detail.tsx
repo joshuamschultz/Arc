@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, Plus, FileText, Pencil, Mail } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Pencil, Mail, TriangleAlert } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -1357,9 +1357,11 @@ function PromptsTab({ agentId }: { agentId: string }) {
 function AgentReachCard({ agentId }: { agentId: string }) {
   const reach = useAgentConnectors(agentId)
   const held = reach.data?.instances ?? []
+  // Fail-safe: a missing/false flag reads as the door being shut (default OFF).
+  const doorOpen = reach.data?.mcp_door_enabled === true
 
   return (
-    <InfoCard title="Can reach">
+    <InfoCard title="Can reach" extra={<McpDoorBadge open={doorOpen} />}>
       {held.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           Nothing yet. Connected accounts are granted on the{' '}
@@ -1377,11 +1379,49 @@ function AgentReachCard({ agentId }: { agentId: string }) {
                 {c.extension_display_name}
               </span>
               <span className="text-xs text-muted-foreground">approval: {c.approval}</span>
+              {/* Fail-safe: only true raises the warning; missing reads as healthy. */}
+              {c.needs_attention === true && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+                  title="Sync backed off after a terminal credential failure — reconnect this account."
+                >
+                  <TriangleAlert className="size-3 shrink-0" />
+                  Needs attention
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
     </InfoCard>
+  )
+}
+
+/** Read-only MCP-door status pill for the connectors panel header.
+ *  Emerald when the door is open, graphite/muted when shut (SPEC-082 COMP-008). */
+function McpDoorBadge({ open }: { open: boolean }) {
+  return (
+    <span
+      className={
+        open
+          ? 'inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400'
+          : 'inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground'
+      }
+      title={
+        open
+          ? 'This agent exposes an MCP server door ([modules.mcp_server] enabled).'
+          : 'MCP server door is closed (default). Enable [modules.mcp_server] in the agent config to open it.'
+      }
+    >
+      <span
+        className={
+          open
+            ? 'size-1.5 rounded-full bg-emerald-500'
+            : 'size-1.5 rounded-full bg-muted-foreground/50'
+        }
+      />
+      MCP door: {open ? 'on' : 'off'}
+    </span>
   )
 }
 

@@ -66,6 +66,7 @@ from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
+from arcui.routes import mcp as mcp_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import stack as stack_routes
@@ -302,6 +303,11 @@ def create_app(
         *capability_imports_routes.routes,
         *trust_routes.routes,
         *workflows_routes.routes,
+        # SPEC-082: the always-on fleet MCP door. Mounted by prefix so the whole
+        # remainder (a DID that itself contains a "/") is the sub-path. Matched
+        # before the SPA catch-all appended below; the door authenticates via its
+        # own signed envelope, so it stays out of AuthMiddleware (non-/api/ path).
+        Mount("/mcp", app=mcp_routes.FleetMcpDoor()),
     ]
 
     # Mount static files if the directory exists.

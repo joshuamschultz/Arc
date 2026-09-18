@@ -192,3 +192,75 @@ client re-creation, typed failures, refusals returned not raised — lives in
 If you are enabling the door, start in `config.py` (the `expose` allowlist is the
 one knob you must get right). If you are reasoning about what an external caller can
 actually do, start in `door.py` — it is the whole inbound contract in one file.
+
+## Deploying the door on the fleet
+
+The door runs two ways: **locally** via the `arc mcp serve` CLI (for a single agent on
+your laptop or a client like Claude Desktop), or **always-on on a deployed fleet**
+mounted inside the arcui dashboard server at `POST /mcp/{agent_did}`.
+
+### No deploy changes needed
+
+The fleet door is **already part of arcui**, which runs under `arc.service` on every
+deployed node (DGX, Azure, or any systemd-user box). Restarting the service brings it
+up automatically — no new systemd unit or deploy-script changes. The only requirement
+is enabling the door in the target agent's configuration.
+
+Enable the door by adding `[modules.mcp_server]` to the agent's `arcagent.toml`:
+
+```toml
+[modules.mcp_server]
+enabled = true
+expose = ["read", "grep", "find", "bash"]  # allowlist the verbs this agent exposes
+```
+
+At **enterprise/federal** tier, also gate it by enrollment:
+
+```toml
+[modules.mcp_server]
+enabled = true
+expose = ["read", "grep", "find", "bash"]
+enrolled = ["did:arc:external_caller_1", "did:arc:external_caller_2"]  # external caller DIDs
+```
+
+At enterprise/federal, the fleet door additionally requires mTLS — a TLS-terminating
+proxy in front of arcui must populate the ASGI `tls` extension with the verified
+client certificate, or the door refuses the request with `403`.
+
+### Per-tier security posture
+
+Tier is a stringency dial, not a different trust model. Every tier still verifies the
+caller's identity, checks the allowlist, and audits the call. What changes:
+
+| Knob | Personal | Enterprise | Federal |
+|---|---|---|---|
+| Exposure allowlist | `*` permitted | explicit list, no `*`/empty | explicit list, no `*`/empty |
+| Enrollment | optional | required | required |
+| HTTP transport (fleet) | plaintext OK | mTLS | **mTLS required** |
+| Audit | logged | WORM (tamper-evident) | WORM (tamper-evident) |
+
+### Connecting an external client
+
+**On the fleet:** An external MCP client (another Arc agent, Claude Desktop with MCP
+support, or a custom harness) connects to the door via:
+
+```
+https://<fleet-host>/mcp/<agent_did>
+```
+
+The client must sign its request with its own DID's key, include its own DID in the
+envelope, and (at enterprise/federal) present a valid client certificate to the TLS
+proxy.
+
+**Locally:** For a single agent on your laptop, launch the door with:
+
+```bash
+arc mcp serve --stdio         # default; Claude Desktop talks over stdin/stdout
+arc mcp serve --http --host 127.0.0.1 --port 8080   # HTTP for local testing
+```
+
+### Observability
+
+The arcui SPA dashboard shows each agent's door on/off status on the **connectors**
+panel, alongside the agent's enrolled external callers. A red indicator means the door
+is disabled or `expose` is empty; green means it is live and the allowlist is populated.
