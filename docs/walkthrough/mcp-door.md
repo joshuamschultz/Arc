@@ -280,3 +280,115 @@ The step is idempotent: it never overwrites an agent config that already declare
 `[modules.mcp_server]`, so an operator's explicit exposure/enrollment choices survive
 every redeploy. To change an agent's exposure, edit its `arcagent.toml` under
 `~/arc/team/<agent>/` and restart `arc.service`.
+
+## Protecting the door: who is allowed to call it (enrollment)
+
+Every inbound call passes **two** checks. Understanding the split is the whole game:
+
+1. **Authentication — "are you who you say?"** The caller signs the request with a
+   private key; the door verifies the signature and that the key matches the DID the
+   caller claims. This is always on. But it only proves the caller *holds a key* —
+   and anyone can generate a key. Authentication alone is not protection.
+2. **Authorization — "are you allowed?"** The door checks the caller's DID against an
+   **`enrolled` roster** — the list of DIDs you decided may call. This is the gate
+   that turns an open door into a private one.
+
+**The rule:** an empty roster at **personal** tier means open (any signed caller).
+The moment you put one or more DIDs in `enrolled`, the door enforces it at every
+tier — only those DIDs get in, everyone else is denied and audited. Enterprise and
+federal always require a roster (empty = nobody).
+
+### The TOML, by what you want
+
+The door config lives in each agent's `~/arc/team/<agent>/arcagent.toml`. `enabled`
+turns the module on; everything else is under `[modules.mcp_server.config]`.
+
+**Open — any signed caller, all tools** (personal only; what an un-enrolled fleet has):
+
+```toml
+[modules.mcp_server]
+enabled = true
+
+[modules.mcp_server.config]
+expose  = ["*"]      # every tool the agent has, including bash
+enrolled = []        # empty → open at personal
+```
+
+**Protected — all tools, but only callers you named** (recommended):
+
+```toml
+[modules.mcp_server]
+enabled = true
+
+[modules.mcp_server.config]
+expose   = ["*"]                                  # full functionality...
+enrolled = ["did:arc:local:client/ab12cd34"]      # ...for this caller only
+```
+
+**Protected and least-privilege — only some tools, only some callers:**
+
+```toml
+[modules.mcp_server]
+enabled = true
+
+[modules.mcp_server.config]
+expose   = ["read", "grep", "find", "ls"]         # read-only surface, no bash
+enrolled = ["did:arc:local:client/ab12cd34",
+            "did:arc:local:client/ef56gh78"]      # two allowed callers
+```
+
+`expose` and `enrolled` are independent dials: `expose` limits *what* can be called,
+`enrolled` limits *who* can call. Use both. After editing a config, restart the
+service (`systemctl --user restart arc.service`) so the door reloads it.
+
+### Enrolling a caller (three steps)
+
+1. **Make a client key.** The caller needs an Ed25519 keypair; its DID is derived
+   from the public key. `arc` can mint one, or the operator generates it and hands
+   the private key to the caller (keep it `0600`, never commit it):
+
+   ```python
+   from arctrust import generate_keypair, identity
+   kp  = generate_keypair()
+   did = identity.did_from_public_key(kp.public_key, org="local", agent_type="client")
+   print(did)                          # -> did:arc:local:client/ab12cd34  (enroll THIS)
+   # save kp.private_key / kp.public_key (hex) somewhere the caller controls
+   ```
+
+2. **Enroll the DID.** Add that DID string to `enrolled` in each agent the caller may
+   reach (the block above), and restart. On the fleet, `scripts/deploy-vm.sh` does
+   this for every agent when you pass `ARC_MCP_ENROLL="did:arc:..."`.
+
+3. **The caller signs each request.** The client sends a normal MCP JSON-RPC message
+   with a signed envelope in `params._meta`. Minimal client:
+
+   ```python
+   import base64, httpx
+   from datetime import UTC, datetime
+   from arcteam.crypto import new_nonce
+   from arcagent.modules.mcp_server.identity import sign_inbound
+
+   verb, args = "read", {"path": "/etc/hostname"}
+   content = {"method": "tools/call", "params": {"name": verb, "arguments": args}}
+   req = sign_inbound(content, nonce=new_nonce(), ts=datetime.now(UTC).isoformat(),
+                      caller_did=did, private_key=kp.private_key, public_key=kp.public_key)
+   message = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+              "params": {"name": verb, "arguments": args, "_meta": {
+                  "arc/callerDid": did,
+                  "arc/publicKey": base64.b64encode(kp.public_key).decode(),
+                  "arc/signature": base64.b64encode(req.signature).decode(),
+                  "arc/nonce": req.nonce, "arc/ts": req.ts}}}
+   r = httpx.post(f"https://<fleet-host>:8420/mcp/{agent_did}", json=message)
+   print(r.json())     # {"result": {"content": [...], "isError": false}}
+   ```
+
+   `server/discover` and `tools/list` don't need the signed envelope; `tools/call`
+   does. An unsigned, mis-signed, replayed, or **un-enrolled** call is refused with a
+   JSON-RPC `-32001` error and audited.
+
+### Still close the network
+
+Enrollment decides *who*; it does not encrypt the wire or hide the port. Keep the
+door off the open internet: bind it behind a VPN / Tailscale, or a localhost bind
+plus an SSH tunnel, or (enterprise/federal) mTLS via a TLS-terminating proxy. Roster
++ private network is the belt and suspenders.
