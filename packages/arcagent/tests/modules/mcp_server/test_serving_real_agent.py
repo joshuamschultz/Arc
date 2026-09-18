@@ -100,6 +100,40 @@ async def test_started_agent_serves_its_real_tool_catalog(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_started_agent_config_table_may_carry_its_own_enabled(tmp_path: Path) -> None:
+    """Regression (fleet deploy): the rendered ``[modules.mcp_server.config]`` table
+    carries the full McpServerConfig defaults — ``enabled`` among them — because the
+    scaffold/overlay writes every field. Building the door from such an agent must not
+    pass ``enabled`` twice (``TypeError``); the module toggle stays authoritative.
+    """
+    config = _agent_config(
+        tmp_path,
+        modules={
+            "mcp_server": ModuleEntry(
+                enabled=True,
+                config={
+                    "enabled": True,
+                    "server_name": "arc",
+                    "page_size": 100,
+                    "expose": ["*"],
+                    "enrolled": [],
+                },
+            )
+        },
+    )
+    agent = ArcAgent(config=config)
+    await agent.startup()
+    try:
+        built = _build_from_started(agent)  # must not raise TypeError
+        response = await built.router.handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        )
+    finally:
+        await agent.shutdown()
+    assert response["result"]["tools"], "door built from a full config table served no tools"
+
+
+@pytest.mark.asyncio
 async def test_started_agent_refuses_a_disabled_door(tmp_path: Path) -> None:
     """With no ``[modules.mcp_server]`` entry the real serving factory refuses to build."""
     config = _agent_config(tmp_path, modules={})
