@@ -140,7 +140,12 @@ class _StartedAgentView:
         entry = self._agent._config.modules.get("mcp_server")
         if entry is None:
             return McpServerConfig(enabled=False)
-        return McpServerConfig(enabled=entry.enabled, **entry.config)
+        # The module toggle (`[modules.mcp_server] enabled`) is authoritative for
+        # whether the door serves; it overrides any `enabled` the rendered
+        # `[modules.mcp_server.config]` table also carries (the scaffold/overlay
+        # writes the full McpServerConfig defaults, `enabled` among them, so
+        # passing both as keywords would collide — TypeError).
+        return McpServerConfig(**{**entry.config, "enabled": entry.enabled})
 
 
 def build_door_from_started_agent(agent: Any) -> BuiltDoor:
