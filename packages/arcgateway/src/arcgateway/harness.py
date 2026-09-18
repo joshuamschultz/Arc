@@ -5,9 +5,10 @@ The native agent stops being the hard-coded fleet case and becomes an ordinary
 Protocol as every foreign member. Nothing about arcagent changes on disk or in
 behavior (§11) — this is a thin wrapper.
 
-This lives in **arcgateway**, which legally imports both arcagent and arcllm, so
-it may map ``arcllm.Delta -> MemberOutput`` at its own edge (§2.4). The Protocol
-and the ``MemberOutput`` envelope stay in arcteam, which imports neither. Native
+This lives in **arcgateway**, which reaches the agent only through the public
+``arcagent`` facade (never past it into arcrun/arcllm), and maps the agent's
+``RunResult -> MemberOutput`` at its own edge (§2.4). The Protocol and the
+``MemberOutput`` envelope stay in arcteam, which imports neither. Native
 is trusted and may run in-process precisely because ``harness == "arcagent"`` —
 decided by the fleet's pinned trust rule (``arcteam.harness.trust``), never a flag.
 """
@@ -17,7 +18,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
-import arcrun
 from arcteam.harness.protocol import (
     InboundEnvelope,
     MemberOutput,
@@ -33,8 +33,8 @@ class ArcAgentHarness:
     """Wrap a started :class:`arcagent.ArcAgent` as a fleet :class:`HarnessAdapter`.
 
     ``dispatch`` mirrors what the subprocess worker already does —
-    ``collect(agent.run(...))`` — and emits the result as ``MemberOutput`` rather
-    than ``arcllm.Delta``, keeping the arcteam-owned envelope at this edge.
+    ``agent.run_collected(...)`` — and emits the result as ``MemberOutput``,
+    keeping the arcteam-owned envelope at this edge.
     """
 
     def __init__(self, agent: Any) -> None:
@@ -70,8 +70,10 @@ class ArcAgentHarness:
     # ---- Run / dispatch (native may run IN-PROCESS — trusted by identity) --
     async def dispatch(self, event: InboundEnvelope) -> AsyncIterator[MemberOutput]:
         """Drive one native turn and emit its result as ``MemberOutput``."""
-        session = await self._agent.session(event.session_key or event.member_did)
-        result = await arcrun.collect(self._agent.run(event.message.body, session=session))
+        result = await self._agent.run_collected(
+            event.message.body,
+            session_key=event.session_key or event.member_did,
+        )
         yield MemberOutput(kind="text", text=result.content or "", is_final=False)
         yield MemberOutput(kind="done", text="", is_final=True)
 

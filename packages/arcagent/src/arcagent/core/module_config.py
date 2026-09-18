@@ -52,6 +52,7 @@ BUILTIN_MODULE_DEFAULTS: dict[str, bool] = {
     "web": False,
     "voice": False,
     "browser": False,
+    "mcp_server": False,
 }
 
 

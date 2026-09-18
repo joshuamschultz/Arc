@@ -57,6 +57,7 @@ from arcui.routes.agent_detail.config_files import (
     read_json_object,
 )
 from arcui.schemas import (
+    AgentConnectorInstance,
     AgentConnectorsResponse,
     ConnectionsResponse,
     ConnectorApproveResponse,
@@ -197,6 +198,62 @@ def _row(
         approval=connection.approval,
         agents=list(connection.agents),
     )
+
+
+def _agent_row(
+    instance: str,
+    connection: Connection,
+    labels: Mapping[str, str] | None,
+    knowledge: Mapping[str, tuple[str, str]] | None,
+    *,
+    needs_attention: bool,
+) -> AgentConnectorInstance:
+    """A per-agent listing row: the shared row plus this agent's sync health."""
+    base = _row(instance, connection, labels, knowledge)
+    return AgentConnectorInstance(**base.model_dump(), needs_attention=needs_attention)
+
+
+def _embedded_agent(request: Request, agent_id: str) -> Any:
+    """The live agent object arcui already holds, or ``None`` if not embedded.
+
+    Resolved by DID off the roster, exactly as the connected-data routes do —
+    no ``team/`` filesystem reach and no arcagent internal import.
+    """
+    cache = getattr(request.app.state, "embedded_agent_cache", None)
+    did = _agent_did(request, agent_id)
+    return cache.get(did) if cache is not None and did is not None else None
+
+
+async def _needs_attention_ids(request: Request, agent_id: str) -> set[str]:
+    """Connection ids this agent's connected-data sync has backed off (COMP-008).
+
+    Read from the agent's connected-data capability service. A deployment
+    without that optional module, or an agent that is not embedded, has no
+    backed-off sources — every connection reads healthy, never as an error.
+    """
+    registry = getattr(_embedded_agent(request, agent_id), "_capability_registry", None)
+    if registry is None:
+        return set()
+    entry = await registry.get_capability("connected_data")
+    service = getattr(getattr(entry, "instance", None), "service", None)
+    if service is None:
+        return set()
+    return {
+        str(getattr(status, "connection_id", "") or "")
+        for status in await service.list_sources()
+        if str(getattr(status, "status", "")) == "needs_attention"
+    }
+
+
+def _mcp_door_enabled(request: Request, agent_id: str) -> bool:
+    """True when this agent enables ``[modules.mcp_server]`` (SPEC-082 COMP-008).
+
+    Default OFF and fail-closed: an agent that is not embedded, a config that
+    cannot be read, or an absent module entry all render the door as closed.
+    """
+    config = getattr(_embedded_agent(request, agent_id), "_config", None)
+    modules = getattr(config, "modules", None) or {}
+    return bool(getattr(modules.get("mcp_server"), "enabled", False))
 
 
 def _labels(connections: Connections) -> dict[str, str]:
@@ -434,7 +491,8 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
     exactly what the connector module will attach when that agent next starts —
     so an operator looking at an agent sees what it has, not what exists.
     """
-    agent_dir = _agent_root(request, request.path_params["id"])
+    agent_id = request.path_params["id"]
+    agent_dir = _agent_root(request, agent_id)
     if agent_dir is None:
         return _error("Agent not found", 404)
 
@@ -446,12 +504,15 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
     except ExtensionError as exc:
         return _refused(exc)
 
+    attention = await _needs_attention_ids(request, agent_id)
     return JSONResponse(
         AgentConnectorsResponse(
             instances=[
-                _row(name, cfg, labels, knowledge) for name, cfg in sorted(granted.items())
+                _agent_row(name, cfg, labels, knowledge, needs_attention=name in attention)
+                for name, cfg in sorted(granted.items())
             ],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
+            mcp_door_enabled=_mcp_door_enabled(request, agent_id),
         ).model_dump(mode="json")
     )
 

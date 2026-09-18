@@ -21,6 +21,7 @@ import shlex
 import sys
 import tarfile
 import tomllib
+import types
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -46,6 +47,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.identity import resolve_agent_did
 from arcui.routes.connectors import routes as connector_routes
 
 #: Distinctive enough that finding it anywhere in a response is proof of a leak.
@@ -523,7 +525,12 @@ def test_agent_connectors_is_empty_before_anything_is_granted(world: Path) -> No
     client, agent_id, _dir = _agent(world)
     resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
     assert resp.status_code == 200
-    assert resp.json() == {"instances": [], "extensions_roots": []}
+    # The door is DEFAULT OFF and fails closed with no embedded agent to read.
+    assert resp.json() == {
+        "instances": [],
+        "extensions_roots": [],
+        "mcp_door_enabled": False,
+    }
 
 
 def test_agent_connectors_is_404_for_an_unknown_agent(world: Path) -> None:
@@ -1807,3 +1814,115 @@ def test_completing_oauth_is_operator_only_and_needs_a_code(
         ).status_code
         == 400
     )
+
+
+# --- COMP-008 / T-1107: connection health + MCP door status on the panel ------
+#
+# The per-agent connector panel must show, per connection, whether that agent's
+# connected-data sync has hit a terminal credential failure (``needs_attention``,
+# COMP-008), and whether the agent's MCP door (``[modules.mcp_server]``) is open.
+# Both facts are read off the embedded agent object arcui already holds — the
+# connected-data service for health, the agent config for the door — never by
+# reaching into ``team/`` or importing an arcagent internal. A missing record is
+# healthy / door-off, never a 500.
+
+
+class _FakeConnectedDataService:
+    """Stand-in for the agent's connected-data capability service.
+
+    The route only calls ``list_sources`` and reads ``connection_id`` / ``status``
+    off each row, so a list of duck-typed statuses is a faithful fake.
+    """
+
+    def __init__(self, statuses: tuple[Any, ...]) -> None:
+        self._statuses = statuses
+
+    async def list_sources(self) -> tuple[Any, ...]:
+        return self._statuses
+
+
+class _FakeCapabilityRegistry:
+    """Resolve the connected-data capability exactly as the real registry does."""
+
+    def __init__(self, capabilities: dict[str, Any]) -> None:
+        self._capabilities = capabilities
+
+    async def get_capability(self, name: str) -> Any:
+        return self._capabilities.get(name)
+
+
+def _embed_fake_agent(
+    client: TestClient,
+    agent_id: str,
+    *,
+    door_enabled: bool,
+    attention_ids: tuple[str, ...] = (),
+) -> str:
+    """Put a fake embedded agent in the cache keyed by the roster-resolved DID.
+
+    ``attention_ids`` are the connection ids the agent's sync reports as
+    ``needs_attention``; ``door_enabled`` controls whether the agent config
+    carries an enabled ``[modules.mcp_server]`` entry.
+    """
+    did = resolve_agent_did(client.app.state.roster_provider(), agent_id)
+    assert did is not None
+    statuses = tuple(
+        types.SimpleNamespace(connection_id=cid, status="needs_attention")
+        for cid in attention_ids
+    )
+    service = _FakeConnectedDataService(statuses)
+    entry = types.SimpleNamespace(instance=types.SimpleNamespace(service=service))
+    registry = _FakeCapabilityRegistry({"connected_data": entry})
+    modules = (
+        {"mcp_server": types.SimpleNamespace(enabled=True)} if door_enabled else {}
+    )
+    agent = types.SimpleNamespace(
+        _config=types.SimpleNamespace(modules=modules),
+        _capability_registry=registry,
+    )
+    client.app.state.embedded_agent_cache = {did: agent}
+    return did
+
+
+def test_agent_connectors_reports_the_mcp_door_is_open(world: Path) -> None:
+    """The panel shows the door open when the agent enables [modules.mcp_server]."""
+    client, agent_id, _dir = _agent(world)
+    _embed_fake_agent(client, agent_id, door_enabled=True)
+
+    body = client.get(
+        f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")
+    ).json()
+    assert body["mcp_door_enabled"] is True
+
+
+def test_agent_connectors_flags_a_connection_needing_attention(world: Path) -> None:
+    """A connection whose sync hit a terminal failure is flagged on its row."""
+    client, agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+    _embed_fake_agent(
+        client, agent_id, door_enabled=False, attention_ids=(_INSTANCE,)
+    )
+
+    body = client.get(
+        f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")
+    ).json()
+    row = next(r for r in body["instances"] if r["instance"] == _INSTANCE)
+    assert row["needs_attention"] is True
+    assert body["mcp_door_enabled"] is False
+
+
+def test_agent_connectors_renders_healthy_and_door_off_without_an_embedded_agent(
+    world: Path,
+) -> None:
+    """No embedded agent (or no health record) is healthy + door-off, not a 500."""
+    client, agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client).status_code == 200
+
+    resp = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer"))
+    assert resp.status_code == 200
+    body = resp.json()
+    row = next(r for r in body["instances"] if r["instance"] == _INSTANCE)
+    assert row["needs_attention"] is False
+    assert body["mcp_door_enabled"] is False

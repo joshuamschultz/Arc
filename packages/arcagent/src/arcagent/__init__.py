@@ -151,6 +151,28 @@ def set_workflow_runner(runner: Any) -> None:
     _runtime.set_runner(runner)
 
 
+def build_mcp_door(agent: Any) -> Any:
+    """Assemble a serving MCP door from a started agent (SPEC-082 T-1112).
+
+    The ``mcp_server`` module is imported lazily so ``import arcagent`` never pulls
+    the optional, default-off door in, and the module stays folder-removable.
+    Returns a ``BuiltDoor`` (``.router`` + ``.http_app``); raises ``ValueError``
+    when ``[modules.mcp_server]`` is disabled.
+    """
+    from arcagent.modules.mcp_server.serving import build_door_from_started_agent
+
+    return build_door_from_started_agent(agent)
+
+
+async def serve_mcp_stdio(
+    router: Any, *, reader: Any, writer: Any, max_line_bytes: int = 8 * 1024 * 1024
+) -> None:
+    """Serve an MCP door's router over newline-delimited stdio (SPEC-082 T-1111)."""
+    from arcagent.modules.mcp_server.stdio_transport import serve_stdio
+
+    await serve_stdio(router, reader=reader, writer=writer, max_line_bytes=max_line_bytes)
+
+
 def builtin_capabilities_path() -> Path:
     """Return the packaged built-in capability directory."""
     return Path(__file__).parent / "builtins" / "capabilities"
@@ -231,6 +253,7 @@ __all__ = [
     "ToolVetoedError",
     "append_module_scan_roots",
     "audit_tier_relaxations",
+    "build_mcp_door",
     "build_prompt_resolver",
     "builtin_capabilities_path",
     "catalog",
@@ -262,6 +285,7 @@ __all__ = [
     "resolve_roots",
     "resolve_workspace_import_policy",
     "revoke_capability",
+    "serve_mcp_stdio",
     "set_workflow_runner",
     "sidecar_path",
     "sign_capability",

@@ -61,12 +61,32 @@ class _CliConfig(BaseModel):
     resilience: CliResilience = Field(default_factory=CliResilience)
 
 
-class _McpConfig(BaseModel):
+class _McpStdioConfig(BaseModel):
+    """A locally spawned MCP server: the transport launches a binary."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
-    transport: Literal["stdio"]
+    transport: Literal["stdio"] = "stdio"
     argv: list[str] = Field(min_length=1)
     client_name: str = "arc"
     install_instruction: str = ""
+    resilience: McpResilience = Field(default_factory=McpResilience)
+    tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
+
+
+class _McpHttpConfig(BaseModel):
+    """A hosted MCP server reached over HTTP: no binary, a pinned endpoint.
+
+    ``credential_field`` names which supplied secret carries the bearer token;
+    an empty value means the endpoint needs none. The credential travels as an
+    ``Authorization: Bearer`` header, not through environment placement, so the
+    stdio ``[secrets.placement]`` requirement does not apply here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    transport: Literal["http"]
+    url: str = Field(min_length=1)
+    credential_field: str = ""
+    client_name: str = "arc"
     resilience: McpResilience = Field(default_factory=McpResilience)
     tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
 
@@ -156,7 +176,34 @@ def build_attachment(
         )
         return _with_source_adapter(manifest, bundle, cli_attachment)
     if kind == "mcp":
-        from arcagent.extension.mcp_attachment import McpAttachment, StdioTransport
+        from arcagent.extension.mcp_attachment import (
+            HttpTransport,
+            McpAttachment,
+            StdioTransport,
+        )
+
+        mcp_raw = manifest.config.get("mcp", {})
+        if mcp_raw.get("transport") == "http":
+            import httpx
+
+            http_config = _McpHttpConfig.model_validate(mcp_raw)
+            token = (
+                secrets.get(http_config.credential_field)
+                if http_config.credential_field
+                else None
+            )
+            mcp_attachment = McpAttachment(
+                HttpTransport(
+                    url=http_config.url,
+                    client=httpx.AsyncClient(),
+                    token=token,
+                    credential_field=http_config.credential_field,
+                ),
+                tools=http_config.tools,
+                resilience=http_config.resilience,
+                client_name=http_config.client_name,
+            )
+            return _with_source_adapter(manifest, bundle, mcp_attachment)
 
         unplaced = unplaced_secrets(manifest)
         if unplaced:
@@ -168,25 +215,25 @@ def build_attachment(
                 attachment=kind,
                 unplaced=unplaced,
             )
-        mcp_config = _McpConfig.model_validate(manifest.config.get("mcp", {}))
+        stdio_config = _McpStdioConfig.model_validate(mcp_raw)
         launcher = ProcessLauncher(policy=sandbox_policy_for(manifest.extension.tier_floor))
         transport = StdioTransport(
             launcher=launcher,
             definition=ProcessDefinition(
                 key=manifest.extension.name,
-                argv=mcp_config.argv,
+                argv=stdio_config.argv,
                 env={
                     name: secret.reveal()
                     for name, secret in placement_environment(manifest, secrets).items()
                 },
             ),
-            install_instruction=mcp_config.install_instruction,
+            install_instruction=stdio_config.install_instruction,
         )
         mcp_attachment = McpAttachment(
             transport,
-            tools=mcp_config.tools,
-            resilience=mcp_config.resilience,
-            client_name=mcp_config.client_name,
+            tools=stdio_config.tools,
+            resilience=stdio_config.resilience,
+            client_name=stdio_config.client_name,
         )
         return _with_source_adapter(manifest, bundle, mcp_attachment)
     raise _refuse(f"unknown attachment kind {kind!r}", attachment=kind)

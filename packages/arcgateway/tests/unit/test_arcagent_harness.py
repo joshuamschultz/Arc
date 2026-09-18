@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from arcteam.harness.protocol import HarnessAdapter, InboundEnvelope, MemberOutput
 from arcteam.types import Message
 from arctrust.identity import AgentIdentity
@@ -48,28 +47,24 @@ async def test_arcagent_harness_declares_the_full_native_capability_surface() ->
     assert {"chat", "tools", "skills", "memory", "workflow"} <= caps
 
 
-async def test_arcagent_harness_dispatch_maps_run_to_member_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    """dispatch drives collect(agent.run(...)) and emits MemberOutput, not Delta."""
+async def test_arcagent_harness_dispatch_maps_run_to_member_output() -> None:
+    """dispatch routes through the public arcagent facade (run_collected) — never
+    past it into arcrun — and emits MemberOutput, keying the session correctly."""
     identity = AgentIdentity.generate(org="acme", agent_type="executor")
 
     class _Result:
         content = "native reply"
 
     class _RunnableAgent(_FakeAgent):
-        async def session(self, key: str) -> str:
-            return key
+        def __init__(self, ident: AgentIdentity) -> None:
+            super().__init__(ident)
+            self.seen: dict[str, object] = {}
 
-        def run(self, text: str, *, session: str):
-            return text  # value collect() is asked to reduce (patched below)
+        async def run_collected(self, input_text: str, *, session_key: str) -> _Result:
+            self.seen = {"input_text": input_text, "session_key": session_key}
+            return _Result()
 
     agent = _RunnableAgent(identity)
-
-    async def _fake_collect(_stream: object) -> _Result:
-        return _Result()
-
-    import arcgateway.harness as harness_mod
-
-    monkeypatch.setattr(harness_mod.arcrun, "collect", _fake_collect)
 
     member = ArcAgentHarness(agent)
     envelope = InboundEnvelope(
@@ -81,3 +76,5 @@ async def test_arcagent_harness_dispatch_maps_run_to_member_output(monkeypatch: 
     assert all(isinstance(o, MemberOutput) for o in outs)
     assert outs[0].kind == "text" and outs[0].text == "native reply"
     assert outs[-1].kind == "done" and outs[-1].is_final
+    # Routed through the facade with the right session key, not agent.session()+arcrun.
+    assert agent.seen == {"input_text": "ping", "session_key": "s1"}

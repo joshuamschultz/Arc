@@ -14,6 +14,7 @@ from arcagent.connected_data import (
     FetchSourceObject,
     IngestPort,
     LeaseLostError,
+    MappingDeniedError,
     MappingPendingError,
     MappingPlan,
     ObjectNotIngestibleError,
@@ -118,7 +119,13 @@ class ConnectedDataCoordinator:
             # True when this run stopped at a ceiling rather than at the end of
             # the account. Everything downstream that assumes it saw the WHOLE
             # account must be skipped, or a partial listing reads as deletions.
-            budget_reached = False
+            #
+            # Seeded from the DURABLE flag on resume: a run that continues a prior
+            # partial crawl (a non-null cursor) is itself partial — its snapshot
+            # covers only the resumed tail — so it must not tombstone either. A
+            # fresh crawl (cursor None) starts False so a full pass can reconcile;
+            # this also resets a stale durable True once a full crawl completes.
+            budget_reached = current.budget_reached if current.cursor is not None else False
             while True:
                 self._check_cancel(cancel_event)
                 self._check_deadline(started, chosen)
@@ -182,6 +189,7 @@ class ConnectedDataCoordinator:
                 SyncStatus.COMPLETE,
                 owner_id=owner_id,
                 fencing_token=lease.fencing_token,
+                budget_reached=budget_reached,
             )
             await self._emit(
                 "completed",
@@ -348,11 +356,22 @@ class ConnectedDataCoordinator:
             mappings.append((source_object, content, mapping))
         semaphore = asyncio.Semaphore(limits.max_concurrency)
         outcomes = {"ok": 0, "failed": 0}
+        # An account-wide denial short-circuits every sibling still waiting on the
+        # semaphore. Cancelling the TaskGroup is not enough: with no suspension
+        # point between acquiring the semaphore and a synchronous ingest, an
+        # already-scheduled sibling would run to completion before the cancellation
+        # is delivered — letting objects ingest past a denied mapping.
+        mapping_denied = False
 
         async def apply(
             source_object: SourceObject, content: SourceContent | None, mapping: MappingPlan
         ) -> None:
+            nonlocal mapping_denied
             async with semaphore:
+                if mapping_denied:
+                    # A sibling already hit the shared, account-wide denial; the
+                    # whole run is aborting, so do not attempt this object's ingest.
+                    return
                 try:
                     await self._retry_call(
                         lambda: self._ingest.ingest(source, source_object, content, mapping),
@@ -365,6 +384,15 @@ class ConnectedDataCoordinator:
                     # can read must not cost an operator every other document
                     # beside it.
                     await self._emit_skip(source, source_object, refusal.reason)
+                except MappingDeniedError:
+                    # A denied mapping is an account-wide authorization verdict, not
+                    # one bad object: every object shares the mapping. Charging it to
+                    # one object let healthy siblings ingest and the run COMPLETE,
+                    # advancing the cursor over data the operator never authorized —
+                    # a silent authorization bypass. Flag the run and re-raise to
+                    # abort fast on the first denied object, keeping mapping_denied.
+                    mapping_denied = True
+                    raise
                 except (LeaseLostError, MappingPendingError, _CancellationError):
                     raise
                 except SyncError as exc:
@@ -463,6 +491,7 @@ class ConnectedDataCoordinator:
         owner_id: str,
         fencing_token: int,
         error_code: str | None = None,
+        budget_reached: bool | None = None,
     ) -> None:
         if not await self._state.set_status(
             agent_did,
@@ -471,6 +500,7 @@ class ConnectedDataCoordinator:
             owner_id=owner_id,
             fencing_token=fencing_token,
             error_code=error_code,
+            budget_reached=budget_reached,
         ):
             raise LeaseLostError()
 

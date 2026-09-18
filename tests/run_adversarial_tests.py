@@ -78,6 +78,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_integrity_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_skillname_jail_spec081.py",
     ),
+    # SPEC-082 MCP door + connectors: an outside operator/agent drives Arc's own
+    # tools through the same signed-authorized-audited envelope. Every hostile
+    # inbound — forged/duplicated DID, replayed nonce, stale timestamp, unsigned
+    # or tampered signature, a verb downgraded past the exposure allowlist, and a
+    # signed-but-unenrolled caller at federal — must fail closed AND be audited.
+    # A compromised Composio broker cannot smuggle a tool past the manifest
+    # allowlist. Covers ASI02/ASI03/ASI04/ASI07 and LLM03/LLM06 on the new door.
+    "MCP door abuse and connector-broker smuggling (SPEC-082)": (
+        "packages/arcagent/tests/security/test_mcp_door_abuse_spec082.py",
+        "packages/arcagent/tests/security/test_composio_broker_abuse_spec082.py",
+    ),
 }
 
 
@@ -107,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         environment["HOME"] = isolated_home
         environment["ARC_CONFIG_DIR"] = str(Path(isolated_home) / ".arc")
         environment["ARC_TEAM_ROOT"] = str(Path(isolated_home) / "arc")
-        return subprocess.run(  # noqa: S603
+        return subprocess.run(
             command,
             cwd=ROOT,
             env=environment,

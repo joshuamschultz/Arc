@@ -85,6 +85,10 @@ class SyncState(BaseModel):
     #: The last *successful* full-sync time, stamped by the store only on
     #: COMPLETE. ``None`` until then — this is what the card's "Last sync" reads.
     last_synced_at: datetime | None = None
+    #: True when the last run stopped at a page/byte/time ceiling rather than at
+    #: the end of the account. Durable (mirrors ``arcstore.SourceSyncState``) so a
+    #: resume knows the prior run was partial and suppresses full-crawl tombstoning.
+    budget_reached: bool = False
 
 
 class SyncLease(BaseModel):
@@ -212,6 +216,7 @@ class SyncStatePort(Protocol):
         owner_id: str,
         fencing_token: int,
         error_code: str | None = None,
+        budget_reached: bool | None = None,
     ) -> bool: ...
 
     async def release_lease(

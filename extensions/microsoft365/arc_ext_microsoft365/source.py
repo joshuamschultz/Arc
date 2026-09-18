@@ -84,8 +84,17 @@ class OutlookSourceAdapter:
             },
         )
         payload = _json(result.content)
-        messages = payload.get("value", [])
-        objects = tuple(_object(value) for value in messages if isinstance(value, dict))
+        # Graph returns mail newest-first, so mapping each message's timestamp
+        # straight to a revision yields a DECREASING revision across the page and
+        # ArcMemory silently stops re-indexing. Emit live messages in
+        # ascending-revision order so the page's revisions never decrease;
+        # deletions (a delta page carries removals alongside changes) sort after
+        # the live run, which keeps that run monotonic without dropping them.
+        messages = sorted(
+            (value for value in payload.get("value", []) if isinstance(value, dict)),
+            key=lambda value: (_is_removed(value), _outlook_revision(value)),
+        )
+        objects = tuple(_object(value) for value in messages)
         next_skip = _next_skip(payload.get("@odata.nextLink"))
         if next_skip is None:
             return SyncSourcePage(objects=objects, next_checkpoint=_outlook_checkpoint(0, True))
@@ -275,7 +284,11 @@ class OneDriveSourceAdapter:
             raise SourceError(SourceFailureCode.TRANSIENT, "OneDrive attachment is unavailable")
         result = await attachment.invoke("get-onedrive-file", {"file_id": request.object_id})
         item = _json(result.content)
-        version = str(item.get("eTag") or item.get("lastModifiedDateTime") or "1")
+        # Strip the eTag quotes so this matches the version sync handed out
+        # (_onedrive_object stores the eTag with quotes stripped) and the _graph
+        # fetch path above, which also strips. Without this the two never agree
+        # and every attachment-path fetch raises VERSION_CHANGED.
+        version = str(item.get("eTag") or item.get("lastModifiedDateTime") or "1").strip('"')
         if version != request.version:
             raise SourceError(
                 SourceFailureCode.VERSION_CHANGED, "OneDrive file changed during fetch"
@@ -360,11 +373,16 @@ def build_source_adapters(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_removed(value: dict[str, Any]) -> bool:
+    """Whether a Graph message payload is a deletion marker rather than a message."""
+    return "@removed" in value or "deleted" in value
+
+
 def _object(value: dict[str, Any]) -> SourceObject:
     identifier = str(value.get("id") or "")
     if not identifier:
         raise SourceError(SourceFailureCode.TRANSIENT, "Outlook returned a message without an id")
-    deleted = "@removed" in value or "deleted" in value
+    deleted = _is_removed(value)
     version = _outlook_version(value)
     return SourceObject(
         object_id=identifier,

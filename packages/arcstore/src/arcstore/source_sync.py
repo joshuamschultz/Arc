@@ -39,6 +39,11 @@ class SourceSyncState(BaseModel):
     #: reaches COMPLETE. It reads "Never" on the card until then — a failed or
     #: still-running pass has no successful-sync time to show.
     last_synced_at: datetime | None = None
+    #: True when the last run stopped at a page/byte/time ceiling rather than at
+    #: the end of the account. Durable so a crash cannot lose the partial-run
+    #: fact: a resuming coordinator that read a completed-looking state would
+    #: reconcile a partial listing and tombstone every object it never reached.
+    budget_reached: bool = False
 
 
 class SourceSyncLease(BaseModel):
@@ -161,12 +166,15 @@ class InMemorySourceSyncStore:
         owner_id: str,
         fencing_token: int,
         error_code: str | None = None,
+        budget_reached: bool | None = None,
     ) -> bool:
         async with self._lock:
             if not self._lease_is_current(agent_did, source_id, owner_id, fencing_token):
                 return False
             key = (agent_did, source_id)
             update: dict[str, Any] = {"status": status, "error_code": error_code}
+            if budget_reached is not None:
+                update["budget_reached"] = budget_reached
             if status == SourceSyncStatus.COMPLETE:
                 update["last_synced_at"] = self._clock()
             self._states[key] = self._states[key].model_copy(update=update)
@@ -222,6 +230,7 @@ class InMemorySourceSyncStore:
                     "bytes_processed": 0,
                     "error_code": None,
                     "last_synced_at": None,
+                    "budget_reached": False,
                 }
             )
             self._pages = {page for page in self._pages if page[:2] != key}
@@ -245,6 +254,7 @@ class InMemorySourceSyncStore:
                     "bytes_processed": 0,
                     "error_code": None,
                     "last_synced_at": None,
+                    "budget_reached": False,
                     "generation": state.generation + 1,
                 }
             )
