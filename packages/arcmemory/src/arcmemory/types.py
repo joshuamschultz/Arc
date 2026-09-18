@@ -51,6 +51,23 @@ def utc_today() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
+def parse_personal_score(raw: object) -> int | None:
+    """Coerce a stored frontmatter value back to a promotion score.
+
+    Absent/``None`` -> ``None`` (the fail-closed sentinel). A bool is rejected
+    (it is an ``int`` subclass but never a score); a genuine int or a digit
+    string round-trips; anything else -> ``None`` so a corrupt card fails closed
+    rather than promoting on garbage.
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
+        return int(raw)
+    return None
+
+
 class Confidence(StrEnum):
     """Whether a memory may be acted on directly or must be verified first.
 
@@ -147,6 +164,9 @@ class Entity(BaseModel):
     classification: str = "unclassified"
     cross_session_visibility: bool = False
     confidence: float = 0.5
+    #: Promotion privacy score (1-10); ``None`` = unscored, the fail-closed
+    #: sentinel treated as >=8 downstream (SPEC-083 COMP-001).
+    personal_score: int | None = None
     facts: list[Fact] = Field(default_factory=list)
     links_to: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -252,6 +272,9 @@ class Procedure(BaseModel):
     #: Times the card was written or evolved — how settled the playbook is.
     revisions: int = 0
     classification: str = "unclassified"
+    #: Promotion privacy score (1-10); ``None`` = unscored, the fail-closed
+    #: sentinel treated as >=8 downstream (SPEC-083 COMP-001).
+    personal_score: int | None = None
 
     @property
     def step_texts(self) -> list[str]:
@@ -315,6 +338,9 @@ class Insight(BaseModel):
     salience: float = 0.0
     status: Confidence = Confidence.GUESSED
     hits: int = 0
+    #: Promotion privacy score (1-10); ``None`` = unscored, the fail-closed
+    #: sentinel treated as >=8 downstream (SPEC-083 COMP-001).
+    personal_score: int | None = None
 
 
 class Situation(BaseModel):
@@ -483,5 +509,6 @@ __all__ = [
     "SourceMapping",
     "SourceRecord",
     "TimeWindow",
+    "parse_personal_score",
     "utc_today",
 ]
