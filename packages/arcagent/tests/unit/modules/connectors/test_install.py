@@ -38,7 +38,7 @@ from arcagent.extension.attachment import (
 )
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.mcp_attachment import McpAttachment
+from arcagent.extension.mcp_attachment import SdkMcpClient
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
 from arcagent.extension.source import SourceAdapter
 from arcagent.extension.state import ConnectionStateStore
@@ -146,7 +146,7 @@ def test_mcp_bundle_builds_the_existing_attachment_with_declared_tool_policy(
 
     attachment = build_attachment(manifest, tmp_path, {})
 
-    assert isinstance(attachment, McpAttachment)
+    assert isinstance(attachment, SdkMcpClient)
     assert attachment._client_name == "arc-test"
     assert attachment._resilience.timeout_seconds == 12.0
     assert attachment._resilience.max_attempts == 2

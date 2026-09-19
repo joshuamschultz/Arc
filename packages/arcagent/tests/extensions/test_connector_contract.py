@@ -34,9 +34,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.extension.authoring import assert_connector_contract
 
 from arcagent.core.tier import Tier
+from arcagent.extension.authoring import assert_connector_contract
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.source import (
     FetchSourceObject,

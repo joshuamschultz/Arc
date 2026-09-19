@@ -65,14 +65,16 @@ every other feature keep working — the core has zero knowledge of it.
 
 ## The transports
 
-The door speaks `server/discover`, a paginated `tools/list`, and `tools/call` on the
-stateless 2026-07-28 MCP revision, with wire constants that mirror Arc's own MCP
-client exactly, so the two sides are symmetric (`server.py`, `http_transport.py`).
+The door speaks the real MCP protocol — `server/initialize` handshake, `tools/list`,
+and `tools/call` — via the official `mcp` SDK. Any standard MCP client (Claude
+Desktop, another Arc agent, or a custom harness) can connect using the Legacy
+handshake (`mcp_attachment.py::SdkMcpClient` mirrors the wire exactly on the client
+side; the door serves it on the server side via `sdk_server.py`).
 
 | Transport | Shape | State in the tree |
 |---|---|---|
-| **streamable-HTTP** | one POST per message, JSON reply, 8 MiB body cap; **mTLS at enterprise and federal** | **Shipped** — `http_transport.py::HttpDoor`, an ASGI responder with the full `tools/call` pipeline |
-| **stdio** | one JSON message per line over stdin/stdout, for a client that launches the agent as a subprocess (Claude Desktop style) | **Shipped** — `stdio_transport.py::serve_stdio`, driving the same `DoorRouter` |
+| **streamable-HTTP** | one POST per message, JSON reply, 8 MiB body cap; **mTLS at enterprise and federal** | **Shipped** — `http_transport.py::HttpDoor`, an ASGI responder with guards + the SDK manager |
+| **stdio** | one JSON message per line over stdin/stdout, for a client that launches the agent as a subprocess (Claude Desktop style) | **Shipped** — `stdio_transport.py::serve_stdio`, driving the same SDK server |
 
 > **How it runs.** arcagent is headless and never binds a port. `serving.build_door_from_agent`
 > assembles the full door (listing + the verify → enroll → allowlist → dispatch → audit
@@ -84,19 +86,22 @@ client exactly, so the two sides are symmetric (`server.py`, `http_transport.py`
 > needed) is the one remaining option, not a blocker.
 
 The HTTP door (`http_transport.py::HttpDoor`) is a plain ASGI callable — no server
-framework, no vendor SDK — so it runs under any ASGI server. Two hard guards sit in
-front of every request:
+framework — so it runs under any ASGI server. The door owns three transport guards,
+all enforced **before** the SDK sees the request:
 
 - **mTLS at enterprise and federal.** A request that arrives without a client
   certificate in the ASGI `tls` extension (populated by a TLS-terminating proxy in
   front of the app) is refused with `403` before anything is served (REQ-418).
+- **Method.** Only `POST` is accepted; anything else is refused `405`.
 - **Body cap.** A body over 8 MiB is refused with `413` before it is parsed — an
-  unbounded read is a memory-exhaustion primitive (LLM10).
+  unbounded read is a memory-exhaustion primitive (LLM10). The cap is also handed to
+  the SDK manager for defense in depth.
 
-`tools/call` is served on the HTTP door **only** when the door was given its full
+Once the transport guards pass, the request is delegated **unchanged** to a fresh
+`StreamableHTTPSessionManager` (one per request, stateless, JSON responses) driving
+the SDK server. `tools/call` is served **only** when the door was given its full
 trust collaborators (a capability provider, the allowlist, a replay cache, and an
-audit sink); otherwise the HTTP surface is a read-only `server/discover` +
-`tools/list` listing.
+audit sink); otherwise the HTTP surface is read-only (`tools/list` and server metadata).
 
 ## Enrolling an external caller
 
@@ -104,15 +109,15 @@ A caller presenting a valid, signed identity has proven **possession of a key**,
 **admission to your fleet** (ASI04). A foreign harness is untrusted code; "it signed
 correctly" grants it nothing on its own.
 
-Admission is an **operator-signed `EnrollmentGrant`**, verified against the trust
-store's operator key before the caller reaches the door; the verified members' DIDs
-arrive at the door as the enrolled roster
-(`enrollment.py::require_enrolled`). The gate is a **stringency dial**, not a second
-trust model:
+Admission is checked against an **`enrolled` roster** — the list of DIDs you decide
+may call (`enrollment.py::require_enrolled`). The gate is a **stringency dial**, not
+a second trust model. Enrollment is enforced as follows:
 
-- **Personal** — enrollment is optional. A self-signed personal caller that passes
-  inbound verification is admitted without a roster.
-- **Enterprise / federal** — enrollment is **mandatory**. A verified-but-unenrolled
+- **Personal — enrollment is optional by default.** An empty roster means the door is
+  open to any caller that passes inbound verification (signature + DID check). The
+  moment you populate the roster with one or more DIDs, enforcement kicks in at
+  personal tier too — only those DIDs are admitted.
+- **Enterprise / federal — enrollment is mandatory.** A verified-but-unenrolled
   caller is refused, and the check is **fail-closed**: a `None` or empty roster
   enrolls nobody, so a tier that requires enrollment refuses every caller until an
   operator enrolls one (NIST 800-53 AC-3, deny-by-default). The refusal emits one
@@ -120,8 +125,10 @@ trust model:
 
 ## Every inbound call rides the native envelope
 
-This is the whole security argument for the door. An inbound `tools/call` runs one
-ordered, fail-closed pipeline (`door.py::authorize_and_dispatch`):
+This is the whole security argument for the door. The SDK handles the MCP wire
+protocol (initialize handshake, JSON-RPC message parsing); the door then runs every
+inbound `tools/call` through one ordered, fail-closed pipeline
+(`door.py::authorize_and_dispatch`):
 
 1. **Verify the signed envelope** (`identity.py::verify_inbound`) — `validate_did`,
    `did_matches_pubkey`, an Ed25519 signature check over the `canonical_json` of the
@@ -151,12 +158,12 @@ lethal-trifecta gate the envelope applies, and
 
 Tier is stringency metadata, not a gate (ADR-019): every tier still identifies,
 verifies, authorizes, and audits every inbound call. What changes is how strict each
-knob is.
+knob is. The following table shows **enforced** behavior in the code:
 
 | Knob | Personal | Enterprise | Federal |
 |---|---|---|---|
 | Exposure allowlist | `*` permitted | explicit list, no `*`/empty | explicit list, no `*`/empty |
-| Enrollment | optional | required (operator-signed) | required (operator-signed) |
+| Enrollment | optional (unless roster is set) | required (fail-closed if empty) | required (fail-closed if empty) |
 | HTTP transport | plaintext localhost OK | mTLS | **mTLS required** (cert or `403`) |
 | Audit sink | `NullSink` | `WormSink` (tamper-evident) | `WormSink` (tamper-evident) |
 | Missing WORM path/signer | n/a | fails closed | fails closed |
@@ -164,6 +171,13 @@ knob is.
 At enterprise/federal the audit sink selection itself fails closed: a missing WORM
 path or signer raises rather than silently degrading to a sink that drops the record
 (`audit.py::select_sink`).
+
+> **Note on federal read-only posture:** The docs recommend federal tiers limit
+> `expose` to read-only verbs as a defense-in-depth posture. This is not currently
+> enforced in code — the allowlist checks that `expose` is explicit (no wildcard,
+> no empty) but does not restrict it to read-only at federal. The tier exposure
+> policy enforces what's in the table above; federal read-only is an operator
+> responsibility, verified at deploy time in `scripts/deploy-vm.sh`.
 
 ## The connector side
 

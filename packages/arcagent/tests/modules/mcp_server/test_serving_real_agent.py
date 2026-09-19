@@ -4,7 +4,7 @@ The factory tests in ``test_serving_factory.py`` prove the wiring against a
 hand-built fake agent. The review found the *real* serving path
 (``build_door_from_started_agent`` over a genuinely started :class:`ArcAgent`) had
 only ever been exercised through mocks, and that the federal enrollment roster —
-just wired ``config.enrolled → DoorRouter → authorize_and_dispatch`` — had no
+just wired ``config.enrolled → SDK server → authorize_and_dispatch`` — had no
 end-to-end proof that it is consulted rather than defaulting to ``None``.
 
 This file closes both gaps with committed, non-trivial assertions:
@@ -32,6 +32,7 @@ from arcrun import Tool
 from arcteam.crypto import new_nonce
 from arctrust import AuditEvent, generate_keypair
 from arctrust import identity as arc_identity
+from mcp.shared.memory import create_connected_server_and_client_session
 
 import arcagent
 from arcagent.core.agent import ArcAgent
@@ -45,7 +46,7 @@ from arcagent.core.config import (
     TelemetryConfig,
 )
 from arcagent.modules.mcp_server.config import McpServerConfig
-from arcagent.modules.mcp_server.identity import sign_inbound
+from arcagent.modules.mcp_server.identity import InboundRequest, sign_inbound
 from arcagent.modules.mcp_server.serving import build_door_from_agent
 from arcagent.modules.mcp_server.serving import (
     build_door_from_started_agent as _build_from_started,
@@ -85,18 +86,17 @@ async def test_started_agent_serves_its_real_tool_catalog(tmp_path: Path) -> Non
     await agent.startup()
     try:
         built = arcagent.build_mcp_door(agent)
-        response = await built.router.handle(
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        )
+        async with create_connected_server_and_client_session(built.server) as session:
+            listed = await session.list_tools()
     finally:
         await agent.shutdown()
 
-    tools = response["result"]["tools"]
+    tools = listed.tools
     # The agent ships real builtins — the catalog must be non-empty, not a stub.
     assert tools, "the started agent served an empty tool catalog"
     for tool in tools:
-        assert tool["name"], "a served tool descriptor has no name"
-        assert "inputSchema" in tool, f"{tool['name']} served without an inputSchema"
+        assert tool.name, "a served tool descriptor has no name"
+        assert tool.inputSchema is not None, f"{tool.name} served without an inputSchema"
 
 
 @pytest.mark.asyncio
@@ -125,12 +125,11 @@ async def test_started_agent_config_table_may_carry_its_own_enabled(tmp_path: Pa
     await agent.startup()
     try:
         built = _build_from_started(agent)  # must not raise TypeError
-        response = await built.router.handle(
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        )
+        async with create_connected_server_and_client_session(built.server) as session:
+            listed = await session.list_tools()
     finally:
         await agent.shutdown()
-    assert response["result"]["tools"], "door built from a full config table served no tools"
+    assert listed.tools, "door built from a full config table served no tools"
 
 
 @pytest.mark.asyncio
@@ -191,15 +190,15 @@ class _FakeFederalAgent:
         self.audit_sink = _RecordingSink()
 
 
-def _signed_call_message(did: str, keypair: Any, args: dict[str, Any] | None = None) -> dict[str, Any]:
-    """A JSON-RPC ``tools/call`` carrying a real signed envelope in ``params._meta``.
+def _signed_request(did: str, keypair: Any, args: dict[str, Any] | None = None) -> InboundRequest:
+    """Sign the exact ``tools/call`` content the SDK door reconstructs from the wire.
 
-    The signed ``content`` mirrors exactly what the router reconstructs from the
-    message, so the signature verifies against the door's canonical bytes.
+    The signed ``content`` mirrors ``door._call_params`` so the signature verifies
+    against the door's canonical bytes.
     """
     arguments = args or {}
     content = {"method": "tools/call", "params": {"name": _TOOL, "arguments": arguments}}
-    request = sign_inbound(
+    return sign_inbound(
         content,
         nonce=new_nonce(),
         ts=_now(),
@@ -207,21 +206,16 @@ def _signed_call_message(did: str, keypair: Any, args: dict[str, Any] | None = N
         private_key=keypair.private_key,
         public_key=keypair.public_key,
     )
+
+
+def _arc_meta(request: InboundRequest) -> dict[str, Any]:
+    """The Arc identity envelope as SDK ``_meta`` keys (bytes fields base64-encoded)."""
     return {
-        "jsonrpc": "2.0",
-        "id": 9,
-        "method": "tools/call",
-        "params": {
-            "name": _TOOL,
-            "arguments": arguments,
-            "_meta": {
-                "arc/callerDid": did,
-                "arc/publicKey": base64.b64encode(keypair.public_key).decode(),
-                "arc/signature": base64.b64encode(request.signature).decode(),
-                "arc/nonce": request.nonce,
-                "arc/ts": request.ts,
-            },
-        },
+        "arc/callerDid": request.caller_did,
+        "arc/publicKey": base64.b64encode(request.public_key).decode(),
+        "arc/signature": base64.b64encode(request.signature).decode(),
+        "arc/nonce": request.nonce,
+        "arc/ts": request.ts,
     }
 
 
@@ -233,20 +227,18 @@ async def test_federal_roster_admits_the_enrolled_caller() -> None:
         enrolled_kp.public_key, org="acme", agent_type="exec"
     )
     built = build_door_from_agent(_FakeFederalAgent(enrolled_did=enrolled_did))
+    request = _signed_request(enrolled_did, enrolled_kp, {"path": "/x"})
 
-    response = await built.router.handle(
-        _signed_call_message(enrolled_did, enrolled_kp, {"path": "/x"})
-    )
+    async with create_connected_server_and_client_session(built.server) as session:
+        result = await session.call_tool(_TOOL, {"path": "/x"}, meta=_arc_meta(request))
 
-    assert "error" not in response, f"enrolled caller was refused: {response.get('error')}"
-    result = response["result"]
-    assert result["isError"] is False
-    assert result["content"][0]["text"] == "ran read_file({'path': '/x'})"
+    assert not result.isError, f"enrolled caller was refused: {result.content}"
+    assert result.content[0].text == "ran read_file({'path': '/x'})"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
 async def test_federal_roster_refuses_an_unenrolled_valid_caller() -> None:
-    """A signed tools/call from a valid but UNENROLLED DID is refused ``-32001``.
+    """A signed tools/call from a valid but UNENROLLED DID is refused (isError).
 
     This is the roster proof: same door, same real signature, only the DID differs
     from the enrolled one — so an admit here would mean ``enrolled`` defaulted to
@@ -262,8 +254,10 @@ async def test_federal_roster_refuses_an_unenrolled_valid_caller() -> None:
     other_did = arc_identity.did_from_public_key(
         other_kp.public_key, org="acme", agent_type="exec"
     )
-    response = await built.router.handle(_signed_call_message(other_did, other_kp))
+    request = _signed_request(other_did, other_kp)
 
-    assert "result" not in response
-    assert response["error"]["code"] == -32001
-    assert "not enrolled" in response["error"]["message"]
+    async with create_connected_server_and_client_session(built.server) as session:
+        result = await session.call_tool(_TOOL, {}, meta=_arc_meta(request))
+
+    assert result.isError
+    assert "not enrolled" in result.content[0].text  # type: ignore[union-attr]

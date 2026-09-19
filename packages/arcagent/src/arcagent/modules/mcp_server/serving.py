@@ -1,14 +1,14 @@
-"""SPEC-082 T-1112 / COMP-001,003,005 — assemble a serving door from an agent.
+"""SPEC-082 T-1112 / SPEC-084 T-1146 — assemble a serving door from an agent.
 
-arcagent stays headless — it never binds a port. A CLI surface serves the door,
-but first it must ASSEMBLE the door from a started agent.
+arcagent stays headless — it never binds a port. A CLI (or the arcui mount) serves
+the door, but first it must ASSEMBLE the door from a started agent.
 :func:`build_door_from_agent` is that factory: it reads only the agent's public
 surface (tool registry, DID, tier, MCP config, audit sink) and wires the door's
 collaborators — :class:`~arcagent.modules.mcp_server.server.McpServer`, the
 tier-checked :class:`~arcagent.modules.mcp_server.allowlist.ExposureAllowlist`, an
 :class:`~arcagent.capabilities.provider.AgentCapabilityProvider`, a
-:class:`~arcteam.crypto.ReplayCache`, and the agent's audit sink — into a
-:class:`~arcagent.modules.mcp_server.router.DoorRouter` and its
+:class:`~arcteam.crypto.ReplayCache`, and the agent's audit sink — into the door's
+``mcp`` SDK :class:`~mcp.server.lowlevel.Server` (which stdio serving drives) and its
 :class:`~arcagent.modules.mcp_server.http_transport.HttpDoor` ASGI app.
 
 A door is a default-off, security-sensitive surface, so the factory REFUSES
@@ -24,12 +24,13 @@ from typing import Any, Protocol, cast
 import arcrun
 from arcteam.crypto import ReplayCache
 from arctrust import AuditSink
+from mcp.server.lowlevel import Server
 
 from arcagent.capabilities.provider import AgentCapabilityProvider
 from arcagent.modules.mcp_server.allowlist import ExposureAllowlist
 from arcagent.modules.mcp_server.config import McpServerConfig
 from arcagent.modules.mcp_server.http_transport import HttpDoor
-from arcagent.modules.mcp_server.router import DoorRouter
+from arcagent.modules.mcp_server.sdk_server import build_sdk_server
 from arcagent.modules.mcp_server.server import McpServer
 
 
@@ -61,9 +62,15 @@ class _Agent(Protocol):
 
 @dataclass(frozen=True)
 class BuiltDoor:
-    """The assembled door: a shared router and an ASGI app that both drive it."""
+    """The assembled door.
 
-    router: DoorRouter
+    ``server`` is the ``mcp`` SDK low-level server that the stdio transport (and an
+    in-memory client session) drives; ``http_app`` is the ASGI door the HTTP
+    transport serves. Both run the SAME verify → authorize → dispatch → audit
+    pipeline over the same collaborators.
+    """
+
+    server: Server[Any, Any]
     http_app: HttpDoor
 
 
@@ -94,6 +101,7 @@ def build_door_from_agent(agent: _Agent) -> BuiltDoor:
     audit_sink = agent.audit_sink
 
     common: dict[str, Any] = {
+        "server_name": config.server_name,
         "tier": tier,
         "provider": provider,
         "allowlist": allowlist,
@@ -101,9 +109,9 @@ def build_door_from_agent(agent: _Agent) -> BuiltDoor:
         "audit_sink": audit_sink,
         "enrolled": config.enrolled,
     }
-    router = DoorRouter(server, **common)
+    sdk_server = build_sdk_server(server, **common)
     http_app = HttpDoor(server, **common)
-    return BuiltDoor(router=router, http_app=http_app)
+    return BuiltDoor(server=sdk_server, http_app=http_app)
 
 
 class _StartedAgentView:

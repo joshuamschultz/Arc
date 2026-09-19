@@ -89,6 +89,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_mcp_door_abuse_spec082.py",
         "packages/arcagent/tests/security/test_composio_broker_abuse_spec082.py",
     ),
+    # SPEC-084 serves the door over the official ``mcp`` SDK wire. Every hostile
+    # frame the wire can carry — a malformed / non-MCP body, an unsupported
+    # protocol version, an unsigned ``tools/call``, a replayed envelope, and a
+    # ``_meta`` signed over different content than the call — must fail closed
+    # WITHOUT a crash and WITHOUT an un-audited pass-through, driven end to end by
+    # a real SDK client (and a raw POST for the transport-frame attacks). The
+    # SPEC-082 pipeline is unchanged; this proves it still holds at the real wire.
+    # Covers LLM05/LLM10 and ASI02/ASI03/ASI07 on the SDK-served door.
+    "MCP wire abuse over the real SDK transport (SPEC-084)": (
+        "packages/arcagent/tests/security/test_mcp_wire_abuse_spec084.py",
+    ),
 }
 
 

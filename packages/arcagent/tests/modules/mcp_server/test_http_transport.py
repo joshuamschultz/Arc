@@ -1,19 +1,20 @@
-"""SPEC-082 T-1087 (RED) — the streamable-HTTP door responder.
+"""SPEC-082 REQ-418 / SPEC-084 T-1146 — the streamable-HTTP door's TRANSPORT GUARDS.
 
-REQ-418 / COMP-001. The door's HTTP surface is a streamable-HTTP responder: one POST
-per message, answering JSON (or ``text/event-stream``), capped at 8 MiB, serving
-``server/discover`` / ``tools/list`` / ``tools/call``. mTLS is required at federal —
-a request that arrives without a client certificate is refused.
+``HttpDoor`` is the ASGI shell that fronts the ``mcp`` SDK transport; the MCP wire
+itself (``initialize`` / ``tools/list`` / ``tools/call``) is served by the SDK and is
+exercised end to end by a REAL SDK client in ``test_door_sdk_client.py``. This file
+covers only the shell's own guards, enforced BEFORE the SDK sees the request:
 
-This test drives ``arcagent.modules.mcp_server.http_transport.HttpDoor``, an ASGI app
-exercised through ``httpx.ASGITransport`` (no live socket, no vendor SDK — CON-7).
-The module does not exist yet. The RED is the import: ``No module named
-'arcagent.modules.mcp_server.http_transport'``. It goes GREEN when T-1088 adds it.
+- mTLS at enterprise/federal (a certless request is refused 403, REQ-418);
+- POST-only (405 for any other method);
+- the body cap (413 on a declared-over-cap content-length before the body is read,
+  and on a streamed body that overflows the cap — the latter enforced by the SDK
+  manager's own body-limit middleware);
+- the ASGI lifespan protocol.
 
-``ASGITransport`` builds a scope with no TLS extension, so a federal door — which
-must find a client certificate — sees none and refuses. That absence is exactly the
-condition REQ-418 tests; the personal door serves the same request to prove the
-refusal is the federal mTLS rule, not a broken responder.
+These are driven with hand-built ASGI scopes (and ``httpx.ASGITransport``) so each
+guard branch executes without a live socket. The happy-path serve and the malformed
+handshake are the SDK's concern, covered by the real-client suite.
 """
 
 from __future__ import annotations
@@ -54,26 +55,6 @@ def _server() -> McpServer:
     return McpServer(registry)  # type: ignore[arg-type]
 
 
-def _tools_list_message() -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-
-
-@pytest.mark.asyncio
-async def test_post_tools_list_returns_the_catalog_over_http() -> None:
-    """A POST of a ``tools/list`` request returns the tool catalog as JSON-RPC."""
-    door = HttpDoor(_server(), tier="personal")
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=door), base_url="http://door"
-    ) as client:
-        response = await client.post("/", json=_tools_list_message())
-
-    assert response.status_code == 200
-    result = response.json()["result"]
-    names = {tool["name"] for tool in result["tools"]}
-    assert names == {"read_file", "list_dir"}
-
-
 @pytest.mark.asyncio
 async def test_federal_refuses_a_request_without_a_client_certificate() -> None:
     """At federal tier, mTLS is required — a certless request is refused (REQ-418)."""
@@ -82,7 +63,9 @@ async def test_federal_refuses_a_request_without_a_client_certificate() -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=door), base_url="http://door"
     ) as client:
-        response = await client.post("/", json=_tools_list_message())
+        response = await client.post(
+            "/", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+        )
 
     assert response.status_code >= 400
     assert "result" not in response.json()
@@ -183,18 +166,6 @@ async def test_streamed_body_over_cap_is_413() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_json_body_is_400() -> None:
-    """A body that is not valid JSON is refused with 400 (INVALID_REQUEST)."""
-    door = HttpDoor(_server(), tier="personal")
-    events = [{"type": "http.request", "body": b"{ not json", "more_body": False}]
-
-    sent, _ = await _drive(door, {"type": "http", "method": "POST", "headers": []}, events)
-
-    assert _status(sent) == 400
-    assert _body(sent)["error"]["message"] == "malformed JSON"
-
-
-@pytest.mark.asyncio
 async def test_lifespan_scope_answers_startup_and_shutdown() -> None:
     """A hosting ASGI server's lifespan protocol is answered start-to-finish."""
     door = HttpDoor(_server(), tier="personal")
@@ -222,26 +193,3 @@ async def test_enterprise_without_client_certificate_is_403() -> None:
 
     assert _status(sent) == 403
     assert _body(sent)["error"]["message"] == "mTLS client certificate required"
-
-
-@pytest.mark.asyncio
-async def test_federal_with_client_certificate_is_served() -> None:
-    """Positive control: a federal door WITH a client cert in the TLS extension serves.
-
-    Proves the enterprise/federal 403 is the missing-certificate rule, not a broken
-    responder — the same request with a cert chain present is answered 200.
-    """
-    door = HttpDoor(_server(), tier="federal")
-    scope = {
-        "type": "http",
-        "method": "POST",
-        "headers": [],
-        "extensions": {"tls": {"client_cert_chain": ["-----BEGIN CERTIFICATE-----"]}},
-    }
-    events = [{"type": "http.request", "body": _TOOLS_LIST_BODY, "more_body": False}]
-
-    sent, _ = await _drive(door, scope, events)
-
-    assert _status(sent) == 200
-    names = {tool["name"] for tool in _body(sent)["result"]["tools"]}
-    assert names == {"read_file", "list_dir"}

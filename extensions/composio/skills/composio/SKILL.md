@@ -13,6 +13,22 @@ verb that answers it out of the four this connection grants. Success is: one cal
 a bounded result, and no attempt to perform an action — this connection reads the
 catalog, it does not act in the connected apps.
 
+## Setup
+
+Composio does not hand out one shared endpoint. Each operator mints their own MCP
+server, so connecting asks for two values:
+
+1. **MCP URL** — in the Composio dashboard, create an MCP server for the toolkit you
+   want and choose which tools it may expose, then copy the generated URL. It has the
+   shape `https://backend.composio.dev/v3/mcp/<server-id>?user_id=<you>`. Paste it
+   when prompted for `mcp_url`. Only a `backend.composio.dev` URL is accepted — any
+   other host is refused at connect time.
+2. **API key** — in Settings → API Keys, generate (or copy) a key and paste it when
+   prompted for `api_key`. It travels to Composio as an `x-api-key` header.
+
+The exact dashboard menus are Composio's to change; the shape of what you paste — a
+`backend.composio.dev/v3/mcp/...` URL and an API key — is the part that stays true.
+
 ## Resources
 
 Four read-only discovery verbs. Composio's action verbs are not granted here.

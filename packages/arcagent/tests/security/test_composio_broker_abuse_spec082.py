@@ -9,22 +9,26 @@ list is **never registered as a callable capability** — the door/bridge refuse
 expose it, so policy and audit never even see a dispatcher for it.
 
 It drives the SHIPPED path end to end: the real ``extensions/composio`` manifest,
-the real ``build_attachment`` over ``HttpTransport`` against a fake hosted broker,
-and the real :class:`~arcagent.extension.bridge.CapabilityBridge` registration gate
-(the production boundary that turns served specs into named capabilities). The
-positive control — an allowlisted verb *is* registered and reaches the broker —
-proves the deny is the allowlist doing its job, not a bridge that registers nothing.
+the real ``build_attachment`` over the ``mcp`` SDK against a fake hosted broker, and
+the real :class:`~arcagent.extension.bridge.CapabilityBridge` registration gate (the
+production boundary that turns served specs into named capabilities). The positive
+control — an allowlisted verb *is* registered and reaches the broker — proves the
+deny is the allowlist doing its job, not a bridge that registers nothing.
+
+SPEC-084 re-bases the wire on the SDK, so the broker is a real in-memory SDK server
+(:func:`build_named_mcp_server`) reached through the one production factory
+:meth:`SdkMcpClient.for_http` — the abuse under test (a broker serving a tool the
+manifest never allowlisted) is proven against the actual protocol, not a stub.
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -33,7 +37,18 @@ from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.manifest import load_manifest
+from arcagent.extension.mcp_attachment import SdkMcpClient
 from arcagent.modules.connectors.attachments import build_attachment
+
+# The SDK-server fixture lives beside the SDK-client tests; put it on the path the
+# same way the Microsoft e2e reaches its bundle, so this cross-suite import works
+# regardless of the rootdir pytest is invoked from.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit" / "extension"))
+
+from _fake_mcp_server import (
+    build_named_mcp_server,
+    connected_session_factory,
+)
 
 _EXTENSIONS_ROOT = Path(__file__).resolve().parents[4] / "extensions"
 _COMPOSIO = _EXTENSIONS_ROOT / "composio"
@@ -69,41 +84,33 @@ def _load_manifest() -> Any:
     return load_manifest(_MANIFEST.read_text(encoding="utf-8"), tier=Tier.PERSONAL)
 
 
-def _tool_spec(name: str) -> dict[str, Any]:
-    return {"name": name, "description": name, "inputSchema": {"type": "object", "properties": {}}}
+def _install_fake_broker(monkeypatch: pytest.MonkeyPatch, served: list[str]) -> None:
+    """Wire the http session factory to a real in-memory SDK broker serving ``served``.
 
+    ``build_attachment`` builds the client through :meth:`SdkMcpClient.for_http`;
+    replacing that one factory drives the real SDK handshake against the fixture
+    while the manifest, the allowlist, and the bridge stay exactly as they ship.
+    """
+    server = build_named_mcp_server(served)
 
-def _broker(served: list[dict[str, Any]]) -> Any:
-    """A fake hosted MCP broker: answers server/discover, tools/list, tools/call."""
+    def _for_http(
+        *,
+        url: str,
+        headers: Any = None,
+        tools: Any = None,
+        resilience: Any = None,
+        client_name: str = "arc",
+        requirements: Any = None,
+    ) -> SdkMcpClient:
+        return SdkMcpClient(
+            connected_session_factory(server),
+            tools=tools,
+            resilience=resilience,
+            client_name=client_name,
+            requirements=requirements,
+        )
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        message = json.loads(request.content)
-        method = message["method"]
-        if method == "tools/list":
-            body: dict[str, Any] = {"result": {"resultType": "complete", "tools": served}}
-        elif method == "tools/call":
-            name = message["params"]["name"]
-            body = {
-                "result": {
-                    "resultType": "complete",
-                    "content": [{"type": "text", "text": f"ran {name}"}],
-                    "isError": False,
-                }
-            }
-        else:
-            body = {"result": {"resultType": "complete", "supportedVersions": ["2026-07-28"]}}
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": message["id"], **body})
-
-    return handler
-
-
-def _install_fake_broker(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
-    original = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx,
-        "AsyncClient",
-        lambda *args, **kwargs: original(transport=httpx.MockTransport(handler)),
-    )
+    monkeypatch.setattr(SdkMcpClient, "for_http", staticmethod(_for_http))
 
 
 def _registry() -> ToolRegistry:
@@ -121,7 +128,7 @@ async def test_broker_served_rogue_tool_is_never_registered_or_invocable(
     allow = list(manifest.tools.allow)
     assert allow and "*" not in allow, "the Composio manifest must carry an explicit, non-* allowlist"
 
-    _install_fake_broker(monkeypatch, _broker([_tool_spec(name) for name in [*allow, _ROGUE]]))
+    _install_fake_broker(monkeypatch, [*allow, _ROGUE])
     attachment = build_attachment(manifest, _COMPOSIO, {})
 
     served = {spec.name for spec in await attachment.describe_tools()}

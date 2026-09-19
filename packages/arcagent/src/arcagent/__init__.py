@@ -156,21 +156,23 @@ def build_mcp_door(agent: Any) -> Any:
 
     The ``mcp_server`` module is imported lazily so ``import arcagent`` never pulls
     the optional, default-off door in, and the module stays folder-removable.
-    Returns a ``BuiltDoor`` (``.router`` + ``.http_app``); raises ``ValueError``
-    when ``[modules.mcp_server]`` is disabled.
+    Returns a ``BuiltDoor`` (``.server`` — the ``mcp`` SDK server stdio drives — and
+    ``.http_app``); raises ``ValueError`` when ``[modules.mcp_server]`` is disabled.
     """
     from arcagent.modules.mcp_server.serving import build_door_from_started_agent
 
     return build_door_from_started_agent(agent)
 
 
-async def serve_mcp_stdio(
-    router: Any, *, reader: Any, writer: Any, max_line_bytes: int = 8 * 1024 * 1024
-) -> None:
-    """Serve an MCP door's router over newline-delimited stdio (SPEC-082 T-1111)."""
+async def serve_mcp_stdio(server: Any) -> None:
+    """Serve an MCP door's SDK server over stdio (SPEC-082 T-1111 / SPEC-084 T-1146).
+
+    Drives the door's ``mcp`` SDK :class:`~mcp.server.lowlevel.Server` over the
+    process's stdin/stdout with the real MCP handshake, until EOF.
+    """
     from arcagent.modules.mcp_server.stdio_transport import serve_stdio
 
-    await serve_stdio(router, reader=reader, writer=writer, max_line_bytes=max_line_bytes)
+    await serve_stdio(server)
 
 
 def builtin_capabilities_path() -> Path:

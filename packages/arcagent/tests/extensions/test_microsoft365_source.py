@@ -28,11 +28,15 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
+
 from arcagent.extension.authoring import assert_connector_contract
-from arcagent.extension.mcp_attachment import McpAttachment, McpResilience
+from arcagent.extension.mcp_attachment import McpResilience, SdkMcpClient
 from arcagent.extension.source import FetchSourceObject, SyncSource
 
 _EXTENSIONS_ROOT = Path(__file__).resolve().parents[4] / "extensions"
@@ -75,38 +79,50 @@ _REPLIES: dict[str, Any] = {
 }
 
 
-class _FakeMs365Server:
-    """Stubs the ms-365-mcp-server transport with scripted tool replies."""
+class _FakeMs365Session:
+    """Stubs an ``mcp.ClientSession`` with scripted tool replies (SPEC-084 seam).
+
+    SPEC-084 re-bases the MCP client on the SDK, so the connector no longer speaks a
+    hand-rolled ``send``; it drives a :class:`mcp.ClientSession` the session factory
+    hands it. This fills that seam with a stand-in session that answers ``call_tool``
+    with the same scripted payloads the old transport double returned, so the source
+    adapters under test see identical replies. (A faithful real-SDK-server rewire of
+    this e2e is T-1149; this keeps the wire swap green without changing ``source.py``.)
+    """
 
     def __init__(self, replies: dict[str, Any]) -> None:
         self._replies = replies
 
-    def requirements(self) -> list[Any]:
-        return []
+    async def list_tools(self) -> ListToolsResult:
+        empty_schema = {"type": "object", "properties": {}}
+        return ListToolsResult(
+            tools=[
+                Tool(name=name, description=name, inputSchema=empty_schema)
+                for name in self._replies
+            ]
+        )
 
-    async def send(self, message: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-        if message["method"] == "tools/call":
-            name = message["params"]["name"]
-            payload = self._replies.get(name, {"value": []})
-            return {
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "result": {
-                    "resultType": "complete",
-                    "content": [{"type": "text", "text": json.dumps(payload)}],
-                    "isError": False,
-                },
-            }
-        return {"jsonrpc": "2.0", "id": message["id"], "result": {"resultType": "complete"}}
+    async def call_tool(self, name: str, args: dict[str, Any]) -> CallToolResult:
+        payload = self._replies.get(name, {"value": []})
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(payload))], isError=False
+        )
 
-    async def close(self) -> None:
-        return None
+
+def _session_factory(replies: dict[str, Any]) -> Any:
+    """A zero-argument factory yielding a fresh scripted session, per SdkMcpClient."""
+
+    @asynccontextmanager
+    async def factory() -> AsyncIterator[_FakeMs365Session]:
+        yield _FakeMs365Session(replies)
+
+    return factory
 
 
 def _adapters() -> dict[str, Any]:
-    """The Microsoft source adapters, wired to the fake broker exactly as the loader does."""
-    attachment = McpAttachment(
-        _FakeMs365Server(_REPLIES), resilience=McpResilience(backoff_seconds=0.0)
+    """The Microsoft source adapters, wired to the fake session exactly as the loader does."""
+    attachment = SdkMcpClient(
+        _session_factory(_REPLIES), resilience=McpResilience(backoff_seconds=0.0)
     )
     return ms.build_source_adapters({"attachment": attachment})
 

@@ -10,8 +10,8 @@ These tests assert the WIRING (which builder/serve got called, with what), never
 real I/O: no real agent is started and no port is bound. The command's collaborators
 are patched at the ``arccli.commands.mcp`` namespace, so the handler must reference
 them as module-level names (a testability requirement this contract fixes):
-``_load_arcagent``, ``build_door_from_agent``, ``serve_stdio``, ``_process_streams``,
-and third-party ``uvicorn``.
+``_load_arcagent``, ``build_door_from_agent``, ``serve_stdio``, and third-party
+``uvicorn``.
 
 RED: the command is not registered and ``arccli.commands.mcp`` does not exist. Each
 test asserts the command resolves in the registry FIRST (``cmd is not None``), which
@@ -23,8 +23,6 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from arccli.commands.registry import resolve_command_and_args
 
@@ -38,9 +36,9 @@ def _fake_load_arcagent() -> Any:
 
 
 def _fake_built_door() -> Any:
-    """A patched ``build_door_from_agent`` returning a door with .router and .http_app."""
+    """A patched ``build_door_from_agent`` returning a door with .server and .http_app."""
     built = MagicMock(name="BuiltDoor")
-    built.router = MagicMock(name="DoorRouter")
+    built.server = MagicMock(name="SdkServer")
     built.http_app = MagicMock(name="HttpDoorApp")
     return MagicMock(return_value=built)
 
@@ -66,7 +64,7 @@ def test_mcp_serve_is_registered_in_the_cli() -> None:
     assert cmd is not None, "arc mcp serve is not registered in COMMAND_REGISTRY"
 
 
-def test_stdio_mode_builds_the_door_and_serves_it_over_process_streams(tmp_path: Any) -> None:
+def test_stdio_mode_builds_the_door_and_serves_its_sdk_server(tmp_path: Any) -> None:
     """``arc mcp serve --stdio`` loads the agent, builds the door, and drives serve_stdio."""
     cmd, args = resolve_command_and_args(
         ["mcp", "serve", "--agent", str(tmp_path), "--stdio"]
@@ -76,13 +74,11 @@ def test_stdio_mode_builds_the_door_and_serves_it_over_process_streams(tmp_path:
     load = _fake_load_arcagent()
     build = _fake_built_door()
     serve_stdio = AsyncMock(name="serve_stdio")
-    process_streams = MagicMock(return_value=(MagicMock(name="reader"), MagicMock(name="writer")))
 
     with (
         patch("arccli.commands.mcp._load_arcagent", load),
         patch("arccli.commands.mcp.build_door_from_agent", build),
         patch("arccli.commands.mcp.serve_stdio", serve_stdio),
-        patch("arccli.commands.mcp._process_streams", process_streams),
     ):
         cmd.handler(args)
 
@@ -92,9 +88,9 @@ def test_stdio_mode_builds_the_door_and_serves_it_over_process_streams(tmp_path:
     served_agent = build.call_args.args[0]
     assert served_agent is load.return_value[0]
 
-    # serve_stdio was driven with the built door's router.
+    # serve_stdio was driven with the built door's SDK server.
     serve_stdio.assert_called_once()
-    assert serve_stdio.call_args.args[0] is build.return_value.router
+    assert serve_stdio.call_args.args[0] is build.return_value.server
 
 
 def test_http_mode_serves_the_asgi_app_on_the_requested_port(tmp_path: Any) -> None:

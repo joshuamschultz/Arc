@@ -28,13 +28,13 @@ These tests fail RED today because the mount does not exist: a POST to
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from arcstore.backends.memory import FakeBackend
-
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -45,6 +45,10 @@ from arcagent.core.config import (
     ModuleEntry,
     TelemetryConfig,
 )
+from arcstore.backends.memory import FakeBackend
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
 from arcui.auth import AuthConfig
 from arcui.server import create_app
 
@@ -143,6 +147,35 @@ async def _get(app: Any, path: str, **kwargs: Any) -> httpx.Response:
         return await client.get(path, **kwargs)
 
 
+@asynccontextmanager
+async def _sdk_session(app: Any, agent_did: str) -> AsyncIterator[ClientSession]:
+    """A REAL initialized ``ClientSession`` against ``/mcp/{did}`` through the full app.
+
+    Routes the SDK client's httpx traffic through ``ASGITransport`` (no socket) so the
+    genuine MCP handshake runs against the mounted door exactly as an external client
+    would reach it — the ``/mcp`` path is auth-exempt, so no token is presented.
+    """
+
+    def factory(
+        headers: dict[str, str] | None = None,
+        timeout: Any = None,
+        auth: Any = None,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://ui",
+            headers=headers,
+            timeout=timeout,
+        )
+
+    async with streamablehttp_client(
+        f"http://ui/mcp/{agent_did}", timeout=5.0, httpx_client_factory=factory
+    ) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session
+
+
 @pytest.mark.asyncio
 async def test_post_tools_list_to_mounted_door_returns_the_agents_catalog(
     tmp_path: Path,
@@ -153,14 +186,14 @@ async def test_post_tools_list_to_mounted_door_returns_the_agents_catalog(
         app = _app()
         app.state.embedded_agent_cache = _FakeAgentCache({agent.did: agent})
 
-        resp = await _post(app, f"/mcp/{agent.did}", json=_tools_list_message())
+        async with _sdk_session(app, agent.did) as session:
+            listed = await session.list_tools()
 
-        assert resp.status_code == 200, resp.text
-        tools = resp.json()["result"]["tools"]
+        tools = listed.tools
         assert tools, "the mounted door served an empty tool catalog"
         for tool in tools:
-            assert tool["name"], "a served tool descriptor has no name"
-            assert "inputSchema" in tool, f"{tool['name']} served without an inputSchema"
+            assert tool.name, "a served tool descriptor has no name"
+            assert tool.inputSchema is not None, f"{tool.name} served without an inputSchema"
     finally:
         await agent.shutdown()
 
@@ -211,11 +244,13 @@ async def test_mcp_path_is_not_behind_viewer_operator_auth(tmp_path: Path) -> No
         control = await _post(app, "/api/agents", json={})
         assert control.status_code == 401, "auth is not active — exemption test is moot"
 
-        # The door path, same app, no Authorization header:
-        resp = await _post(app, f"/mcp/{agent.did}", json=_tools_list_message())
+        # The door path, same app, no Authorization header: a real SDK handshake +
+        # listing SUCCEEDS, which is only possible if /mcp is exempt from auth (an
+        # auth-gated path would 401 the handshake before the door ever ran).
+        async with _sdk_session(app, agent.did) as session:
+            listed = await session.list_tools()
 
-        assert resp.status_code != 401, "the /mcp door was gated behind viewer/operator auth"
-        assert resp.status_code == 200, resp.text
+        assert listed.tools, "the auth-exempt /mcp door served no catalog"
     finally:
         await agent.shutdown()
 

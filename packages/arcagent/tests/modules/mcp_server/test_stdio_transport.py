@@ -1,156 +1,127 @@
-"""SPEC-082 T-1111 (RED) — the newline-delimited stdio transport.
+"""SPEC-082 T-1111 / SPEC-084 T-1146 — the stdio transport, served by the ``mcp`` SDK.
 
-Phase 5 gives the door a stdio transport — the one a local MCP client (e.g. Claude
-Desktop) launches: it reads newline-delimited JSON-RPC messages from a stream,
-routes each through ``DoorRouter.handle``, writes each response as one JSON line,
-and stops at EOF.
+``arc mcp serve --stdio`` serves the door's ``mcp`` SDK server over newline-delimited
+JSON-RPC on the process's stdin/stdout. ``serve_stdio(server, *, stdin, stdout)`` wires
+the SDK stdio transport to ``Server.run``; ``stdin``/``stdout`` default to the real
+process streams and are injected here so a real handshake can be driven over in-process
+OS pipes — no subprocess, no touching the process handles.
 
-``arcagent.modules.mcp_server.stdio_transport.serve_stdio(router, *, reader, writer)``
-is transport-only; it drives whatever router it is handed. These tests hand it an
-in-memory ``asyncio.StreamReader`` preloaded with two valid messages (then EOF) and
-a fake router, and assert two correct JSON-RPC response lines are written and the
-loop returns on EOF. A malformed input line must yield a JSON-RPC error line and the
-loop must continue — a single bad line never kills the session (LLM05).
-
-RED: the ``stdio_transport`` module does not exist yet. The import
-``from arcagent.modules.mcp_server.stdio_transport import serve_stdio`` fails with
-``No module named 'arcagent.modules.mcp_server.stdio_transport'``. It goes GREEN when
-T-1111 adds it.
+The tests drive the genuine wire: a real ``initialize`` → ``tools/list`` exchange over
+the pipes returns the allowlist-filtered catalog, and an immediately-closed stdin ends
+the serve loop cleanly at EOF.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
+import anyio
 import pytest
+from mcp.types import LATEST_PROTOCOL_VERSION
 
-from arcagent.modules.mcp_server.stdio_transport import serve_stdio  # RED: module absent today
+from arcagent.modules.mcp_server.allowlist import ExposureAllowlist
+from arcagent.modules.mcp_server.config import McpServerConfig
+from arcagent.modules.mcp_server.sdk_server import build_sdk_server
+from arcagent.modules.mcp_server.server import McpServer
+from arcagent.modules.mcp_server.stdio_transport import serve_stdio
 
-
-class _EchoRouter:
-    """A stand-in ``DoorRouter`` — records the messages it is handed and echoes them.
-
-    ``serve_stdio`` depends only on ``router.handle(message) -> dict``; the real
-    ``DoorRouter`` (T-1110) is exercised by its own contract test. Using a fake here
-    keeps this a transport test: it proves framing (one line per response), routing
-    (every parsed message reaches ``handle``), and EOF/malformed handling — not the
-    router's dispatch logic.
-    """
-
-    def __init__(self) -> None:
-        self.seen: list[dict[str, Any]] = []
-
-    async def handle(self, message: dict[str, Any]) -> dict[str, Any]:
-        self.seen.append(message)
-        return {"jsonrpc": "2.0", "id": message.get("id"), "result": {"echo": message.get("method")}}
+_TOOL = "echo"
 
 
-class _FakeWriter:
-    """A minimal duck-typed asyncio writer capturing everything written."""
-
-    def __init__(self) -> None:
-        self.chunks: list[bytes] = []
-        self.closed = False
-
-    def write(self, data: bytes) -> None:
-        self.chunks.append(data)
-
-    async def drain(self) -> None:
-        return None
-
-    def close(self) -> None:
-        self.closed = True
-
-    async def wait_closed(self) -> None:
-        return None
-
-    def is_closing(self) -> bool:
-        return self.closed
-
-    def lines(self) -> list[dict[str, Any]]:
-        """Every complete written line, parsed as JSON."""
-        text = b"".join(self.chunks).decode("utf-8")
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
+class _FakeTool:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = f"the {name} tool"
+        self.input_schema: dict[str, Any] = {"type": "object", "properties": {}}
 
 
-def _reader_with(*raw_lines: bytes) -> asyncio.StreamReader:
+class _FakeRegistry:
+    def __init__(self, tools: dict[str, _FakeTool]) -> None:
+        self.tools = tools
+
+
+def _door_server() -> Any:
+    """The door's SDK server over one exposed tool, listing-only (personal tier)."""
+    mcp_server = McpServer(_FakeRegistry({_TOOL: _FakeTool(_TOOL)}))  # type: ignore[arg-type]
+    allowlist = ExposureAllowlist.from_config(
+        McpServerConfig(enabled=True, expose=[_TOOL]), tier="personal"
+    )
+    return build_sdk_server(mcp_server, tier="personal", allowlist=allowlist)
+
+
+def _line(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload) + "\n").encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_real_handshake_over_stdio_lists_the_catalog() -> None:
+    """A real ``initialize`` → ``tools/list`` over stdio returns the exposed catalog."""
+    client_to_server_r, client_to_server_w = os.pipe()
+    server_to_client_r, server_to_client_w = os.pipe()
+
+    server_stdin = anyio.wrap_file(os.fdopen(client_to_server_r, "r", encoding="utf-8"))
+    server_stdout = anyio.wrap_file(os.fdopen(server_to_client_w, "w", encoding="utf-8"))
+
+    # Read the server's stdout lines through an asyncio StreamReader on the pipe.
+    loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
-    for line in raw_lines:
-        reader.feed_data(line)
-    reader.feed_eof()
-    return reader
+    read_file = os.fdopen(server_to_client_r, "rb", buffering=0)
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), read_file)
+
+    serve_task = asyncio.create_task(
+        serve_stdio(_door_server(), stdin=server_stdin, stdout=server_stdout)
+    )
+    try:
+        # A real client handshake: initialize, then the initialized notification.
+        os.write(
+            client_to_server_w,
+            _line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": LATEST_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "test", "version": "0"},
+                    },
+                }
+            ),
+        )
+        init_line = await asyncio.wait_for(reader.readline(), timeout=5)
+        assert json.loads(init_line)["id"] == 0, "no initialize result over stdio"
+
+        os.write(client_to_server_w, _line({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        os.write(
+            client_to_server_w,
+            _line({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}),
+        )
+        list_line = await asyncio.wait_for(reader.readline(), timeout=5)
+        result = json.loads(list_line)["result"]
+        assert {tool["name"] for tool in result["tools"]} == {_TOOL}
+    finally:
+        os.close(client_to_server_w)  # EOF → the serve loop returns
+        await asyncio.wait_for(serve_task, timeout=5)
+        read_file.close()
 
 
 @pytest.mark.asyncio
-async def test_two_messages_produce_two_response_lines_then_eof() -> None:
-    """Two JSON-RPC lines in → two JSON-RPC response lines out; the loop ends on EOF."""
-    reader = _reader_with(
-        b'{"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}\n',
-        b'{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}\n',
-    )
-    writer = _FakeWriter()
-    router = _EchoRouter()
+async def test_immediate_eof_ends_the_serve_loop() -> None:
+    """An immediately-closed stdin ends ``serve_stdio`` cleanly (no hang at EOF)."""
+    client_to_server_r, client_to_server_w = os.pipe()
+    server_to_client_r, server_to_client_w = os.pipe()
 
-    await serve_stdio(router, reader=reader, writer=writer)
+    server_stdin = anyio.wrap_file(os.fdopen(client_to_server_r, "r", encoding="utf-8"))
+    server_stdout = anyio.wrap_file(os.fdopen(server_to_client_w, "w", encoding="utf-8"))
 
-    responses = writer.lines()
-    assert len(responses) == 2
-    assert [r["id"] for r in responses] == [1, 2]
-    assert responses[0]["result"]["echo"] == "server/discover"
-    assert responses[1]["result"]["echo"] == "tools/list"
-    # Every parsed message reached the router — framing routed both lines.
-    assert [m["method"] for m in router.seen] == ["server/discover", "tools/list"]
-
-
-@pytest.mark.asyncio
-async def test_malformed_line_yields_error_response_and_loop_continues() -> None:
-    """A JSON parse error yields a JSON-RPC error line; the next valid line still routes."""
-    reader = _reader_with(
-        b'{"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}\n',
-        b"{ this is not valid json\n",
-        b'{"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}\n',
-    )
-    writer = _FakeWriter()
-    router = _EchoRouter()
-
-    await serve_stdio(router, reader=reader, writer=writer)
-
-    responses = writer.lines()
-    assert len(responses) == 3
-    # First and third are ok results; the middle is a JSON-RPC error.
-    assert "result" in responses[0]
-    assert "error" in responses[1]
-    assert "result" not in responses[1]
-    assert "result" in responses[2] and responses[2]["id"] == 3
-    # The malformed line never reached the router; both valid lines did.
-    assert [m["method"] for m in router.seen] == ["server/discover", "tools/list"]
-
-
-@pytest.mark.asyncio
-async def test_oversized_line_is_refused_and_loop_continues() -> None:
-    """A line over ``max_line_bytes`` is refused pre-parse; the next valid line routes.
-
-    ADVERSARIAL (LLM10): an unbounded request line is a memory-exhaustion
-    primitive. It must yield a JSON-RPC error line, never reach the router, and
-    never end the session — the following valid line must still be served.
-    """
-    oversized = b'{"jsonrpc": "2.0", "id": 1, "method": "' + b"A" * 500 + b'"}\n'
-    reader = _reader_with(
-        oversized,
-        b'{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}\n',
-    )
-    writer = _FakeWriter()
-    router = _EchoRouter()
-
-    await serve_stdio(router, reader=reader, writer=writer, max_line_bytes=128)
-
-    responses = writer.lines()
-    assert len(responses) == 2
-    # The oversized line is a JSON-RPC error, never parsed or routed.
-    assert "error" in responses[0]
-    assert "result" not in responses[0]
-    # The following valid line still routes — the loop kept serving.
-    assert "result" in responses[1] and responses[1]["id"] == 2
-    assert [m["method"] for m in router.seen] == ["tools/list"]
+    os.close(client_to_server_w)  # EOF before any message
+    try:
+        await asyncio.wait_for(
+            serve_stdio(_door_server(), stdin=server_stdin, stdout=server_stdout),
+            timeout=5,
+        )
+    finally:
+        os.close(server_to_client_r)

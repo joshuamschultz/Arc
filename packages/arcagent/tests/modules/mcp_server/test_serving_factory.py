@@ -1,16 +1,16 @@
-"""SPEC-082 T-1112 (RED) — the build-from-agent factory.
+"""SPEC-082 T-1112 / SPEC-084 T-1146 — the build-from-agent factory.
 
-arcagent stays headless (it never binds a port). A CLI surface serves the door, but
-first it must ASSEMBLE the door from a started agent. T-1112 adds
-``arcagent.modules.mcp_server.serving.build_door_from_agent(agent)`` — the factory
+arcagent stays headless (it never binds a port). A CLI (or the arcui mount) serves
+the door, but first it must ASSEMBLE the door from a started agent.
+``arcagent.modules.mcp_server.serving.build_door_from_agent(agent)`` is the factory
 that wires ``McpServer(registry)`` + ``ExposureAllowlist.from_config(config, tier)``
-+ ``AgentCapabilityProvider`` + ``ReplayCache`` + a tiered audit sink into a
-``DoorRouter`` (and its ``HttpDoor`` ASGI app), reading only the agent's public
-surface.
++ ``AgentCapabilityProvider`` + ``ReplayCache`` + a tiered audit sink into the door's
+``mcp`` SDK server (``BuiltDoor.server``) and its ``HttpDoor`` ASGI app, reading only
+the agent's public surface.
 
 Two behaviours are the contract:
 
-1. The built router answers ``tools/list`` with the agent's exposed tool.
+1. The built door serves the agent's exposed tool through a REAL SDK ``list_tools``.
 2. The factory REFUSES (raises ``ValueError``) when ``[modules.mcp_server]`` is
    disabled — a door must never serve when the operator did not enable it
    (default-off, security-sensitive surface).
@@ -19,11 +19,6 @@ The fake agent below exposes only what the factory reads. Test #1 succeeding pro
 that surface is complete, so test #2 flipping a single field (``enabled=False``)
 isolates the refusal — a raise there is the disabled-door contract, not a missing
 attribute.
-
-RED: the ``serving`` module does not exist yet. The import
-``from arcagent.modules.mcp_server.serving import build_door_from_agent`` fails with
-``No module named 'arcagent.modules.mcp_server.serving'``. It goes GREEN when T-1112
-adds it.
 """
 
 from __future__ import annotations
@@ -34,11 +29,10 @@ import pytest
 from arcrun import Tool
 from arctrust import AuditEvent
 from arctrust import identity as arc_identity
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from arcagent.modules.mcp_server.config import McpServerConfig
-from arcagent.modules.mcp_server.serving import (  # RED: module absent today
-    build_door_from_agent,
-)
+from arcagent.modules.mcp_server.serving import build_door_from_agent
 
 
 class _RecordingSink:
@@ -84,21 +78,15 @@ class _FakeAgent:
         self.audit_sink = _RecordingSink()
 
 
-def _router_of(built: Any) -> Any:
-    """The DoorRouter, whether the factory returns it directly or wraps it."""
-    return getattr(built, "router", built)
-
-
 @pytest.mark.asyncio
-async def test_built_router_lists_the_exposed_tool() -> None:
-    """The door the factory builds answers tools/list with the agent's exposed tool."""
+async def test_built_door_lists_the_exposed_tool() -> None:
+    """The door the factory builds serves the agent's exposed tool over a real SDK client."""
     built = build_door_from_agent(_FakeAgent(enabled=True))
 
-    response = await _router_of(built).handle(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-    )
+    async with create_connected_server_and_client_session(built.server) as session:
+        listed = await session.list_tools()
 
-    names = {tool["name"] for tool in response["result"]["tools"]}
+    names = {tool.name for tool in listed.tools}
     assert names == {"read_file"}
 
 

@@ -7,10 +7,14 @@
 # through an adapter we would have to keep in step with every upstream.
 #
 # The transport is HTTP, not stdio: there is no binary to install and nothing to
-# place on PATH. The endpoint is pinned here (a floating host is the same
-# supply-chain hole as a floating version), and the API key travels to the broker
-# as an `Authorization: Bearer` header named by `[config.mcp].credential_field`,
-# never onto a child process's environment or argv.
+# place on PATH. The endpoint is NOT a single pinned host: Composio mints a
+# per-user MCP server and hands the operator a `backend.composio.dev/v3/mcp/
+# {SERVER_ID}?user_id=...` URL, which the operator pastes at connect time (carried
+# under `[config.mcp].url_secret_field`). It cannot float freely, though — the
+# `[config.mcp].url_origin` guard rejects any pasted URL not on `backend.composio.dev`,
+# so a typo or a stolen host can never be substituted for the vendor's. The API key
+# travels to the broker as an `x-api-key` header (Composio's hosted MCP rejects
+# `Authorization: Bearer`), never onto a child process's environment or argv.
 #
 # Composio's catalog is enormous, which is exactly why `[tools].allow` is short and
 # explicit. An omitted allowlist is the same unbounded grant as "*" and is refused
@@ -37,11 +41,11 @@ tier_floor = "personal"
 mode = "non_indexable"
 reason = "Composio is an action broker over third-party APIs, not a data-bearing source Arc can enumerate, map, and incrementally index; its own catalog is discovery metadata, not operator content."
 
-# One credential: a Composio API key. It reaches the hosted MCP endpoint as a
-# bearer token (see [config.mcp].credential_field), and the [secrets.placement]
-# below records the destination every stored connector credential must declare —
-# the environment name a locally spawned Composio helper would read it from — so a
-# stored value never lacks a named home.
+# One credential: a Composio API key. It reaches the hosted MCP endpoint as an
+# `x-api-key` header (see [config.mcp].auth_header / auth_scheme), and the
+# [secrets.placement] below records the destination every stored connector
+# credential must declare — the environment name a locally spawned Composio helper
+# would read it from — so a stored value never lacks a named home.
 [[secrets]]
 name = "api_key"
 prompt = "Your Composio API key. In the Composio dashboard at app.composio.dev open Settings, then API Keys, click Generate (or copy an existing key), and paste it here. It looks like a long random string and grants access to the connected accounts on your Composio project."
@@ -50,6 +54,18 @@ sensitive = true
 
 [secrets.placement]
 variable = "COMPOSIO_API_KEY"
+
+# The operator-minted MCP endpoint. Composio does not expose one shared host; each
+# operator creates their own MCP server in Composio and is handed a per-user URL of
+# the shape `https://backend.composio.dev/v3/mcp/{SERVER_ID}?user_id=...`, which they
+# paste here. `https_url` normalises what they paste (a bare host is refused, a plain
+# `http://` refused); `[config.mcp].url_origin` then refuses any host but Composio's.
+# Not sensitive — the operator should be able to read it back to confirm it is right.
+[[secrets]]
+name = "mcp_url"
+prompt = "Your Composio MCP server URL. In the Composio dashboard create an MCP server for the toolkit you want (choosing the tools it may expose), then copy the generated URL — it looks like https://backend.composio.dev/v3/mcp/<server-id>?user_id=<you> — and paste it here."
+format = "https_url"
+sensitive = false
 
 [tools]
 # Read-only discovery verbs. Equality with [[tools.declared]] is enforced by the
@@ -85,15 +101,25 @@ classification = "read_only"
 [approval]
 default = "outbound"
 
-# The hosted MCP endpoint, pinned. `transport = "http"` selects the no-binary
-# branch of build_attachment; `credential_field` names which [[secrets]] carries
-# the bearer token to the broker. The per-tool classifications are defence in
-# depth behind the allowlist: they fix each verb's classification rather than
-# letting a poisoned upstream describe itself.
+# The hosted MCP endpoint. `transport = "http"` selects the no-binary branch of
+# build_attachment. The endpoint is operator-minted, not one pinned host, so `url`
+# here is only a placeholder shape: `url_secret_field` names the [[secrets]] the
+# operator pastes their real per-user URL into, and it overrides this at connect
+# time. `url_origin` is the trust-boundary guard — the effective URL, pinned or
+# pasted, must start with it, so no attacker host can be substituted. `auth_header`
+# / `auth_scheme` say the API key travels as a raw `x-api-key` header (empty scheme
+# ⇒ bare token), not `Authorization: Bearer`, which Composio's hosted MCP rejects.
+# `credential_field` names which [[secrets]] carries that key. The per-tool
+# classifications are defence in depth behind the allowlist: they fix each verb's
+# classification rather than letting a poisoned upstream describe itself.
 [config.mcp]
 transport = "http"
-url = "https://apollo.composio.dev/v3/mcp"
+url = "https://backend.composio.dev/v3/mcp/YOUR_SERVER_ID?user_id=YOUR_USER_ID"
+url_secret_field = "mcp_url"
+url_origin = "https://backend.composio.dev/"
 credential_field = "api_key"
+auth_header = "x-api-key"
+auth_scheme = ""
 client_name = "arc"
 
 [config.mcp.resilience]

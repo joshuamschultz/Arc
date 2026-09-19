@@ -99,7 +99,7 @@ tutorial = [
 # for anything that could NOT be floored.
 constraint-dependencies = [
     "click>=8.3.3",           # PYSEC-2026-2132 (via arccmd/uvicorn)
-    "mcp>=1.28.1",           # PYSEC-2026-3481/3482/3483 (via arc-agent)
+    "mcp==1.29.0",           # PYSEC-2026-3481/3482/3483 (via arc-agent); pinned for SPEC-084 (REQ-456)
     "setuptools>=83.0.0",    # PYSEC-2026-3447 (runtime transitive via torch)
     "torch>=2.13.0",         # PYSEC-2025-194 (default arcmemory[local] runtime)
     "pyjwt>=2.13.0",          # PYSEC-2026-120/175/176/177/178/179 (via mcp[crypto], msal)
@@ -234,6 +234,15 @@ ignore_missing_imports = true
 # untyped-decorator checks don't apply to this optional-dependency module.
 module = ["arcagent.modules.slack.bot"]
 disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+# The MCP door serves through the official `mcp` SDK low-level Server, whose
+# `@server.list_tools()` / `@server.call_tool()` decorator factories ship without
+# return annotations (they resolve to Any), so strict untyped-decorator/-call
+# checks don't apply to the thin adapter that registers those handlers.
+module = ["arcagent.modules.mcp_server.sdk_server"]
+disallow_untyped_decorators = false
+disallow_untyped_calls = false
 # slack_bolt has no stubs: connect_async is untyped when [slack] is installed
 # (needs a per-call ignore), but resolves to Any when it is not (ignore unused).
 # Don't warn on the ignore in the extra-absent env.

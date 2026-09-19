@@ -1,24 +1,19 @@
 """SPEC-082 /review backfill — ``arc mcp serve`` real wiring (no mocks).
 
 ``test_mcp_serve_command.py`` proves the handler routes to the right collaborators,
-but it patches every one of them: the real pipe wiring in ``_process_streams`` and
-the real agent load in ``_load_arcagent`` never ran. The lessons file is explicit —
-exercise the real pipe wiring, not a mock — so these two tests drive the genuine
-code paths:
-
-- ``_process_streams`` is driven with real OS pipes standing in for stdin/stdout;
-  a byte line pushed into the stdin pipe is read back through the returned
-  ``StreamReader``, proving the fds are wired, not stubbed.
-- ``_load_arcagent`` is called against a real scaffolded agent directory (the three
-  sibling TOML files ``arc agent create`` writes) and must return a started-able
-  ``ArcAgent`` plus its config and path.
+but it patches every one of them: the real agent load in ``_load_arcagent`` never
+ran. The lessons file is explicit — exercise the real path, not a mock — so these
+tests drive the genuine ``_load_arcagent`` against a real scaffolded agent directory
+(the three sibling TOML files ``arc agent create`` writes) and assert it returns a
+started-able ``ArcAgent`` plus its config and path. (The stdio wire itself is now the
+``mcp`` SDK's stdio server; ``arc mcp serve --stdio`` feeds it the process's
+stdin/stdout directly, so there is no longer any arccli-owned pipe wiring to test —
+the handshake is covered by the door's stdio-transport test.)
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -29,48 +24,6 @@ from arccli.commands.agent._common import (
     _DEFAULT_ARCRUN_CONFIG,
     render_agent_config,
 )
-
-
-def test_process_streams_wires_stdin_stdout_to_real_asyncio_streams(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Real OS pipes: a line written into the stdin pipe is read back via the reader.
-
-    ``_process_streams`` binds ``sys.stdin`` / ``sys.stdout`` through
-    ``loop.connect_read_pipe`` / ``connect_write_pipe``. Pytest's capture replaces
-    those with objects that have no usable fd, so the test substitutes real
-    ``os.pipe`` file objects — the same wiring the command uses at runtime.
-    """
-    stdin_read_fd, stdin_write_fd = os.pipe()
-    stdout_read_fd, stdout_write_fd = os.pipe()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    stdin_file = os.fdopen(stdin_read_fd, "r")
-    stdout_file = os.fdopen(stdout_write_fd, "w", buffering=1)
-    monkeypatch.setattr(sys, "stdin", stdin_file)
-    monkeypatch.setattr(sys, "stdout", stdout_file)
-
-    try:
-        reader, writer = mcp._process_streams()
-
-        assert isinstance(reader, asyncio.StreamReader)
-        assert isinstance(writer, asyncio.StreamWriter)
-
-        # A byte line fed into the underlying stdin pipe surfaces through the reader.
-        os.write(stdin_write_fd, b"jsonrpc-line\n")
-        line = loop.run_until_complete(asyncio.wait_for(reader.readline(), timeout=2))
-        assert line == b"jsonrpc-line\n"
-    finally:
-        writer.close()
-        loop.run_until_complete(asyncio.sleep(0))
-        loop.close()
-        asyncio.set_event_loop(None)
-        for fd in (stdin_write_fd, stdout_read_fd):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
 
 
 def test_load_arcagent_returns_a_started_able_agent(tmp_path: Path) -> None:

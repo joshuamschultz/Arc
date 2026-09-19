@@ -1,65 +1,69 @@
-"""SPEC-082 COMP-001 / REQ-418 — the streamable-HTTP door responder.
+"""SPEC-082 COMP-001 / REQ-418 — the streamable-HTTP door, served by the ``mcp`` SDK.
 
-The door's HTTP surface is a raw ASGI app: one POST per message, answering JSON,
-capped at 8 MiB, serving ``server/discover`` / ``tools/list`` / ``tools/call``. It
-is a plain ASGI callable — no server framework, no vendor SDK (CON-7) — so it runs
-under any ASGI server and is exercised in tests through ``httpx.ASGITransport`` or a
-hand-built scope.
+``HttpDoor`` is the ASGI shell that owns the transport GUARDS; the MCP wire itself is
+served by the official ``mcp`` SDK. It is a plain ASGI callable — no server framework
+— so it runs under any ASGI server and is exercised in tests through
+``httpx.ASGITransport`` or a hand-built scope.
 
-The JSON-RPC *message* logic (which method, allowlist filtering, verify →
-dispatch → audit) lives in :class:`~arcagent.modules.mcp_server.router.DoorRouter`,
-shared with the stdio transport. This module owns only the HTTP concerns:
+The shell owns three concerns, all enforced BEFORE the SDK ever sees the request:
 
-- **mTLS at enterprise and federal.** A request that arrives without a client
-  certificate in the ASGI ``tls`` extension is refused before anything is served
-  (REQ-418) — tier is stringency, and both hardened tiers require the client cert.
-- **Body cap.** A body over ``max_body_bytes`` is refused with 413 before it is
-  parsed — a large read is a memory-exhaustion primitive (LLM10).
-- **HTTP status mapping.** The router's JSON-RPC envelope maps to a status code
-  (access-denied → 403, other errors → 400, results → 200).
+- **mTLS at enterprise and federal.** A request without a client certificate in the
+  ASGI ``tls`` extension is refused 403 (REQ-418) — tier is stringency, and both
+  hardened tiers require the client cert.
+- **Method.** Only ``POST`` carries a message; anything else is refused 405.
+- **Body cap (declared).** A declared ``content-length`` over the cap is refused 413
+  before the body is read — a large read is a memory-exhaustion primitive (LLM10).
+  The cap is also handed to the SDK manager, whose own body-limit middleware refuses a
+  streamed body that overflows the cap mid-request (defense in depth).
+
+Once the guards pass, the request is delegated UNCHANGED to a per-request
+:class:`~mcp.server.streamable_http_manager.StreamableHTTPSessionManager` (stateless,
+JSON responses) driving the door's SDK :class:`~mcp.server.lowlevel.Server`. A fresh
+manager per request keeps this correct whether the door is long-lived (``arc mcp
+serve --http`` under uvicorn) or rebuilt per request (the arcui ``/mcp`` mount) — the
+SDK manager's ``run()`` context may only be entered once per instance, and stateless
+mode carries no state between requests, so a new instance per request is the simplest
+correct wiring.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Collection
-from typing import Any
+from collections.abc import Collection
 
 from arcteam.crypto import ReplayCache
 from arctrust import AuditSink
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.types import Receive, Scope, Send
 
 from arcagent.capabilities.provider import AgentCapabilityProvider
 from arcagent.modules.mcp_server.allowlist import ExposureAllowlist
-from arcagent.modules.mcp_server.router import (
-    ACCESS_DENIED,
-    INVALID_REQUEST,
-    DoorRouter,
-    _error,
-)
+from arcagent.modules.mcp_server.sdk_server import build_sdk_server
 from arcagent.modules.mcp_server.server import McpServer
-
-Scope = dict[str, Any]
-Receive = Callable[[], Awaitable[dict[str, Any]]]
-Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 _DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 
 #: Tiers whose door requires an mTLS client certificate on the HTTP transport.
 _MTLS_TIERS = frozenset({"enterprise", "federal"})
 
+#: JSON-RPC error codes for the shell's own transport-guard refusals.
+_INVALID_REQUEST = -32600
+_ACCESS_DENIED = -32001
+
 
 class HttpDoor:
-    """A streamable-HTTP ASGI responder that delegates message logic to a router.
+    """A streamable-HTTP ASGI shell whose guards front the ``mcp`` SDK transport.
 
-    ``tools/call`` is served only when ``provider``, ``allowlist``,
-    ``replay_cache``, and ``audit_sink`` are all supplied; otherwise the door is a
-    read-only listing surface.
+    ``tools/call`` is served only when ``provider``, ``allowlist``, ``replay_cache``,
+    and ``audit_sink`` are all supplied; otherwise the door is a read-only listing
+    surface.
     """
 
     def __init__(
         self,
         server: McpServer,
         *,
+        server_name: str = "arc",
         tier: str = "personal",
         max_body_bytes: int = _DEFAULT_MAX_BODY_BYTES,
         provider: AgentCapabilityProvider | None = None,
@@ -70,8 +74,9 @@ class HttpDoor:
     ) -> None:
         self._tier = tier
         self._max_body_bytes = max_body_bytes
-        self._router = DoorRouter(
+        self._sdk_server = build_sdk_server(
             server,
+            server_name=server_name,
             tier=tier,
             provider=provider,
             allowlist=allowlist,
@@ -88,61 +93,40 @@ class HttpDoor:
         if scope_type != "http":
             return
         if scope.get("method") != "POST":
-            await self._respond(send, 405, _error(None, INVALID_REQUEST, "only POST is accepted"))
+            await _refuse(send, 405, _INVALID_REQUEST, "only POST is accepted")
             return
         if self._tier in _MTLS_TIERS and not _has_client_certificate(scope):
-            await self._respond(
-                send, 403, _error(None, ACCESS_DENIED, "mTLS client certificate required")
-            )
+            await _refuse(send, 403, _ACCESS_DENIED, "mTLS client certificate required")
             return
-        too_large = _error(None, INVALID_REQUEST, "request body too large")
         if _content_length(scope) > self._max_body_bytes:
-            await self._respond(send, 413, too_large)
+            await _refuse(send, 413, _INVALID_REQUEST, "request body too large")
             return
 
-        body = await self._read_body(receive)
-        if body is None:
-            await self._respond(send, 413, too_large)
-            return
-        try:
-            message = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            await self._respond(send, 400, _error(None, INVALID_REQUEST, "malformed JSON"))
-            return
-
-        payload = await self._router.handle(message)
-        await self._respond(send, _status_for(payload), payload)
-
-    async def _read_body(self, receive: Receive) -> bytes | None:
-        """Accumulate the request body, returning ``None`` if it exceeds the cap."""
-        body = b""
-        more_body = True
-        while more_body:
-            event = await receive()
-            body += event.get("body", b"")
-            if len(body) > self._max_body_bytes:
-                return None
-            more_body = event.get("more_body", False)
-        return body
-
-    async def _respond(self, send: Send, status: int, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status,
-                "headers": [(b"content-type", b"application/json")],
-            }
+        # Guards passed: hand the raw request to a fresh SDK manager. Stateless +
+        # JSON responses means each request is self-contained, so a per-request
+        # instance is correct and sidesteps the "run() once per instance" rule.
+        manager = StreamableHTTPSessionManager(
+            app=self._sdk_server,
+            stateless=True,
+            json_response=True,
+            max_request_body_size=self._max_body_bytes,
         )
-        await send({"type": "http.response.body", "body": body})
+        async with manager.run():
+            await manager.handle_request(scope, receive, send)
 
 
-def _status_for(payload: dict[str, Any]) -> int:
-    """Map a router JSON-RPC envelope to its HTTP status code."""
-    error = payload.get("error")
-    if error is None:
-        return 200
-    return 403 if error.get("code") == ACCESS_DENIED else 400
+async def _refuse(send: Send, status: int, code: int, message: str) -> None:
+    """Emit a JSON-RPC error envelope for a transport-guard refusal."""
+    payload = {"jsonrpc": "2.0", "id": None, "error": {"code": code, "message": message}}
+    body = json.dumps(payload).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 def _has_client_certificate(scope: Scope) -> bool:
