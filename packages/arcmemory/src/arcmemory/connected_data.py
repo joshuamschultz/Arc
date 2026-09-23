@@ -20,7 +20,7 @@ from arcmemory.blob_ontology import BlobObject, walk_blob_source
 from arcmemory.chunk import RecursiveChunker
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.doc_index import DocHit, DocIndex
+from arcmemory.doc_index import DocHit, DocIndex, object_key
 from arcmemory.extract import ExtractionUnavailable, get_extractor
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
@@ -725,17 +725,18 @@ class ConnectedDataService:
         }
         stale = prior.path if prior is not None and prior.path != path.as_posix() else ""
         await asyncio.to_thread(_write_document, path, metadata, text, stale)
-        chunks = await self._document_chunks(source_object, text, path)
+        chunks = await self._document_chunks(source_id, source_object, text, path)
         await index.delete_object(source_id, self._agent_did, source_object.object_id)
         await index.index_source(source_id, self._agent_did, chunks)
 
     async def _document_chunks(
-        self, source_object: ConnectedObject, text: str, path: Path
+        self, source_id: str, source_object: ConnectedObject, text: str, path: Path
     ) -> list[SourceChunk]:
-        """Produce stable object-scoped chunks from an already-sanitized body.
+        """Produce stable, source-qualified chunks from an already-sanitized body.
 
-        The chunker runs in a worker thread; any audit event it raises is held
-        and emitted here, on the loop, so sinks only ever see one thread.
+        Ids are ``<source_id>:<object_id>#<n>`` (see ``object_key``). The
+        chunker runs in a worker thread; any audit event it raises is held and
+        emitted here, on the loop, so sinks only ever see one thread.
         """
         held = _HeldAudit()
         chunker = RecursiveChunker(
@@ -750,8 +751,9 @@ class ConnectedDataService:
             classification=source_object.classification,
         )
         held.release(self._audit)
+        stem = object_key(source_id, source_object.object_id)
         return [
-            chunk.model_copy(update={"chunk_id": f"{source_object.object_id}#{position}"})
+            chunk.model_copy(update={"chunk_id": f"{stem}#{position}"})
             for position, chunk in enumerate(chunks)
         ]
 
@@ -905,7 +907,7 @@ class ConnectedDataService:
             version=document.version,
             classification=str(metadata.get("classification", "")),
         )
-        chunks = await self._document_chunks(source_object, body, path)
+        chunks = await self._document_chunks(source_id, source_object, body, path)
         index = self._doc_index()
         await index.delete_object(source_id, self._agent_did, document.object_id)
         await index.index_source(source_id, self._agent_did, chunks)

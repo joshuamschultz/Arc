@@ -44,6 +44,17 @@ def doc_scope(agent_did: str, source_id: str) -> Scope:
     return Scope(agent_did=agent_did, session_id=f"doc:{source_id}")
 
 
+def object_key(source_id: str, object_id: str) -> str:
+    """The chunk-id stem of one source object: ``<source_id>:<object_id>``.
+
+    The SQLite ``chunks`` table (and ``vec0``) key rows by chunk id alone, so a
+    bare object id let two sources that share one (the same path in two
+    accounts) overwrite each other's rows. Pushed-record ingest already
+    qualifies its chunk ids the same way.
+    """
+    return f"{source_id}:{object_id}"
+
+
 class DocHit(BaseModel):
     """One document-search result: CHUNK text + a pointer, never file bytes."""
 
@@ -102,9 +113,15 @@ class DocIndex:
         return len(chunks)
 
     async def delete_object(self, source_id: str, agent_did: str, object_id: str) -> None:
-        """Delete exactly one object's chunks while retaining sibling objects."""
+        """Delete exactly one object's chunks while retaining sibling objects.
+
+        Chunks written before ids were source-qualified carry the bare object
+        id; they are removed with the object too, so a changed object never
+        leaves a stale copy behind in its source's pool.
+        """
         scope = doc_scope(agent_did, source_id)
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        await backend.delete_object(scope.key, object_key(source_id, object_id))
         await backend.delete_object(scope.key, object_id)
 
     async def delete_source(self, source_id: str, agent_did: str) -> None:
@@ -292,4 +309,4 @@ def _routing_windows(index_path: Path, base_id: str) -> list[SourceChunk] | None
     )
 
 
-__all__ = ["DocHit", "DocIndex", "Reranker", "doc_scope"]
+__all__ = ["DocHit", "DocIndex", "Reranker", "doc_scope", "object_key"]
