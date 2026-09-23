@@ -9,11 +9,10 @@ entirely — these tests pin the low-level primitive that guarantee rests on.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from arcmemory.index import source as source_mod
+from arcmemory.collection_index import CollectionIndexStore
 from arcmemory.index.source import MAX_CHUNK_BYTES, iter_source_chunks
 from arcmemory.types import Event
 
@@ -153,9 +152,7 @@ def test_oversized_collection_index_splits_into_bounded_windows(
     routing = "\n".join(f"- [entities/item_{i:05d}.md](entities/item_{i:05d}.md)" for i in range(2000))
     (mem / "index.md").write_text(f"# Inventory\n{routing}\n", encoding="utf-8")
     assert len((mem / "index.md").read_text("utf-8").encode("utf-8")) > MAX_CHUNK_BYTES
-    monkeypatch.setattr(
-        source_mod, "validate_collection_index", lambda *a, **k: SimpleNamespace(valid=True)
-    )
+    monkeypatch.setattr(CollectionIndexStore, "verify", lambda self: True)
 
     chunks = [c for c in iter_source_chunks(mem, workspace, []) if c.source_path == "memory/index.md"]
 

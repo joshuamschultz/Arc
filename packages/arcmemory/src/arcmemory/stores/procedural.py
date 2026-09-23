@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcmemory.collection_index import CollectionIndexStore, refresh_memory_document
+from arcmemory.collection_index import memory_collection, refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.semantic import extract_wiki_links
@@ -199,7 +199,7 @@ def merge_procedures(
             when_to_use = other.when_to_use
         removed = store.path_for(slug)
         removed.unlink(missing_ok=True)
-        CollectionIndexStore(removed.parent.parent).remove_document(removed)
+        memory_collection(removed.parent.parent).remove_document(removed)
 
     merged = Procedure(
         slug=target.slug,

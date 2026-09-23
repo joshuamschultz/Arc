@@ -19,7 +19,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Protocol
 
-from arcmemory.collection_index import CollectionIndexStore
+from arcmemory.collection_index import memory_collection
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.degrade import warn_once
@@ -174,7 +174,7 @@ class IndexRebuilder:
         # service refreshes it before this disposable SQLite cache is rebuilt.
         # A tampered file is replaced from the canonical document inventory;
         # retrieval never repairs it on its own.
-        CollectionIndexStore(self._mem_dir).sync()
+        memory_collection(self._mem_dir).sync()
         conn = self._db.connect()
         scope = self._scope.key
         # Snapshot existing vectors keyed by content hash BEFORE the wipe, so a
@@ -247,10 +247,14 @@ class IndexRebuilder:
         fresh = await self._embed([chunks[i].text for i in to_embed]) if to_embed else None
         fresh_by_idx = dict(zip(to_embed, fresh, strict=True)) if fresh is not None else {}
         for i, sc in enumerate(chunks):
+            fts_rowid = conn.execute(
+                "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
+                (sc.chunk_id, self._scope.key, sc.text),
+            ).lastrowid
             conn.execute(
                 "INSERT OR REPLACE INTO chunks "
-                "(chunk_id, scope, source_path, mtime, classification, content_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(chunk_id, scope, source_path, mtime, classification, content_hash, fts_rowid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     sc.chunk_id,
                     self._scope.key,
@@ -258,11 +262,8 @@ class IndexRebuilder:
                     None,
                     sc.classification,
                     hashes[i],
+                    fts_rowid,
                 ),
-            )
-            conn.execute(
-                "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-                (sc.chunk_id, self._scope.key, sc.text),
             )
             if not self._db.vec_available:
                 continue

@@ -127,6 +127,10 @@ class IndexBackend(Protocol):
         """The stored FTS text for one chunk, or ``None`` if it doesn't exist."""
         ...
 
+    async def scope_classifications(self, scope: str) -> set[str]:
+        """Distinct labels of ``scope``'s content chunks, collection indexes excluded."""
+        ...
+
 
 class SqliteIndexBackend:
     """The default ``IndexBackend`` — the existing per-agent ``MemoryDB`` SQLite."""
@@ -159,23 +163,37 @@ class SqliteIndexBackend:
         # ``None`` embedding preserves whatever ``embedded_hash`` was already
         # stored, and a real embedding stamps it to this write's content_hash.
         embedded_hash = content_hash if embedding is not None else None
+        # The text row is replaced through the rowid its chunk row remembers —
+        # a lookup by ``fts_chunks.chunk_id`` (UNINDEXED) reads the whole index.
+        prior = conn.execute(
+            "SELECT fts_rowid FROM chunks WHERE chunk_id=? AND scope=?", (chunk_id, scope)
+        ).fetchone()
+        if prior is not None and prior[0] is not None:
+            conn.execute("DELETE FROM fts_chunks WHERE rowid=?", (prior[0],))
+        fts_rowid = conn.execute(
+            "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
+            (chunk_id, scope, text),
+        ).lastrowid
         conn.execute(
             "INSERT INTO chunks "
-            "(chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "(chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash, "
+            "fts_rowid) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(chunk_id) DO UPDATE SET "
             "scope=excluded.scope, source_path=excluded.source_path, mtime=excluded.mtime, "
             "classification=excluded.classification, content_hash=excluded.content_hash, "
-            "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash)",
-            (chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash),
-        )
-        conn.execute(
-            "DELETE FROM fts_chunks WHERE chunk_id=? AND scope=?",
-            (chunk_id, scope),
-        )
-        conn.execute(
-            "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-            (chunk_id, scope, text),
+            "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash), "
+            "fts_rowid=excluded.fts_rowid",
+            (
+                chunk_id,
+                scope,
+                source_path,
+                mtime,
+                classification,
+                content_hash,
+                embedded_hash,
+                fts_rowid,
+            ),
         )
         if embedding is not None and self.vec_available:
             conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk_id,))
@@ -238,19 +256,35 @@ class SqliteIndexBackend:
 
     async def delete_object(self, scope: str, object_id: str) -> None:
         conn = self._db.connect()
-        pattern = object_id if object_id.startswith("index:") else object_id + "#%"
-        ids = [
-            row[0]
-            for row in conn.execute(
-                "SELECT chunk_id FROM chunks WHERE scope=? AND chunk_id LIKE ?",
-                (scope, pattern),
+        # A primary-key range, not ``LIKE``: LIKE cannot use the key index, so
+        # every object delete walked the scope's rows (and, on ``fts_chunks``,
+        # the whole text index). ``#`` + 1 is ``$``, so the range is exactly the
+        # ``<object_id>#…`` windows; a collection index also owns its bare id.
+        prefix = object_id + "#"
+        rows = [
+            (chunk_id, fts_rowid)
+            for chunk_id, fts_rowid, owner in conn.execute(
+                "SELECT chunk_id, fts_rowid, scope FROM chunks "
+                "WHERE chunk_id=? OR (chunk_id>=? AND chunk_id<?)",
+                (
+                    object_id if object_id.startswith("index:") else prefix,
+                    prefix,
+                    object_id + "$",
+                ),
             ).fetchall()
+            if owner == scope
         ]
-        if self.vec_available and ids:
-            placeholders = ",".join("?" for _ in ids)
+        if not rows:
+            return
+        ids = [row[0] for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        if self.vec_available:
             conn.execute(f"DELETE FROM vec0 WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
-        conn.execute("DELETE FROM fts_chunks WHERE scope=? AND chunk_id LIKE ?", (scope, pattern))
-        conn.execute("DELETE FROM chunks WHERE scope=? AND chunk_id LIKE ?", (scope, pattern))
+        text_rows = [row[1] for row in rows if row[1] is not None]
+        if text_rows:
+            marks = ",".join("?" for _ in text_rows)
+            conn.execute(f"DELETE FROM fts_chunks WHERE rowid IN ({marks})", text_rows)  # noqa: S608
+        conn.execute(f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
         conn.commit()
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
@@ -313,10 +347,22 @@ class SqliteIndexBackend:
     async def chunk_text(self, scope: str, chunk_id: str) -> str | None:
         conn = self._db.connect()
         row: sqlite3.Row | None = conn.execute(
-            "SELECT text FROM fts_chunks WHERE chunk_id=? AND scope=?",
+            "SELECT fts_chunks.text FROM chunks "
+            "JOIN fts_chunks ON fts_chunks.rowid = chunks.fts_rowid "
+            "WHERE chunks.chunk_id=? AND chunks.scope=?",
             (chunk_id, scope),
         ).fetchone()
         return row[0] if row is not None else None
+
+    async def scope_classifications(self, scope: str) -> set[str]:
+        """Distinct labels of a scope's content chunks (collection indexes excluded)."""
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT DISTINCT classification FROM chunks "
+            "WHERE scope=? AND substr(chunk_id, 1, 6) != 'index:'",
+            (scope,),
+        ).fetchall()
+        return {str(row[0] or "") for row in rows}
 
 
 # Module-level pool cache keyed by DSN, guarded by a lock: per-op backend
@@ -502,12 +548,18 @@ class PostgresIndexBackend:
 
     async def delete_object(self, scope: str, object_id: str) -> None:
         pool = await self._pool()
-        pattern = object_id if object_id.startswith("index:") else object_id + "#%"
+        # Same rows as the SQLite backend: the ``<object_id>#…`` windows, and for
+        # a collection index its bare id too. ``starts_with`` (not LIKE) cannot
+        # read ``%``/``_`` inside an object id as wildcards, and is independent of
+        # the database collation.
+        prefix = object_id + "#"
+        exact = object_id if object_id.startswith("index:") else prefix
         async with pool.acquire() as conn:
             await conn.execute(
-                "DELETE FROM chunks WHERE scope=$1 AND chunk_id LIKE $2",
+                "DELETE FROM chunks WHERE scope=$1 AND (chunk_id=$2 OR starts_with(chunk_id, $3))",
                 scope,
-                pattern,
+                exact,
+                prefix,
             )
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
@@ -584,6 +636,16 @@ class PostgresIndexBackend:
                 chunk_id,
             )
         return None if row is None else str(row["text"])
+
+    async def scope_classifications(self, scope: str) -> set[str]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT classification FROM chunks "
+                "WHERE scope=$1 AND substr(chunk_id, 1, 6) <> 'index:'",
+                scope,
+            )
+        return {str(row["classification"] or "") for row in rows}
 
 
 def _parse_fts_tokens(query: str) -> list[str]:

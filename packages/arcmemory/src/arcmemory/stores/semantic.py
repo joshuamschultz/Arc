@@ -20,7 +20,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcmemory.collection_index import CollectionIndexStore, refresh_memory_document
+from arcmemory.collection_index import memory_collection, refresh_memory_document
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
@@ -358,7 +358,7 @@ class SemanticStore:
         self._persist(dst)
         removed = self.path_for(other)
         removed.unlink(missing_ok=True)
-        CollectionIndexStore(removed.parent.parent).remove_document(removed)
+        memory_collection(removed.parent.parent).remove_document(removed)
         return True
 
     def remove(self, slug: str) -> bool:
@@ -367,7 +367,7 @@ class SemanticStore:
         if not path.exists():
             return False
         path.unlink()
-        CollectionIndexStore(path.parent.parent).remove_document(path)
+        memory_collection(path.parent.parent).remove_document(path)
         return True
 
     def add_link(self, src_slug: str, dst_slug: str) -> bool:

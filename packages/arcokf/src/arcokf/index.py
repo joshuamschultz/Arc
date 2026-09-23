@@ -155,14 +155,24 @@ def _parse_index(text: str) -> tuple[CollectionEntry, ...]:
     return tuple(ordered)
 
 
-def validate_collection_index(index: Path, root: Path | None = None) -> CollectionIndexValidation:
-    """Validate an index and, when supplied, every listed document digest."""
+def validate_collection_index(
+    index: Path,
+    root: Path | None = None,
+    *,
+    nested_collections: frozenset[str] = frozenset(),
+) -> CollectionIndexValidation:
+    """Validate an index and, when supplied, every listed document digest.
+
+    ``nested_collections`` names top-level subdirectories of ``root`` that own
+    their own collection index; they are outside this inventory (see
+    :func:`candidate_documents`).
+    """
     try:
         text = index.read_text(encoding="utf-8")
         entries = _parse_index(text)
         if root is not None:
             root = root.resolve()
-            expected = inventory_documents(root)
+            expected = inventory_documents(root, nested_collections=nested_collections)
             if entries != expected:
                 raise CollectionIndexError("collection index inventory is stale or tampered")
             for entry in entries:
@@ -180,23 +190,43 @@ def validate_collection_index(index: Path, root: Path | None = None) -> Collecti
         return CollectionIndexValidation(False, error=str(exc))
 
 
-def inventory_documents(root: Path) -> tuple[CollectionEntry, ...]:
+def inventory_documents(
+    root: Path, *, nested_collections: frozenset[str] = frozenset()
+) -> tuple[CollectionEntry, ...]:
     """Enumerate valid, authorized Markdown documents under ``root`` deterministically."""
     root = root.resolve()
     entries: list[CollectionEntry] = []
-    for path in sorted(root.rglob("*.md")):
-        resolved = path.resolve()
-        if root not in resolved.parents:
-            continue
-        relative = path.relative_to(root).as_posix()
-        if path.name in _RESERVED_NAMES or any(
-            part.lower() in _OPERATIONAL_DIRS for part in PurePosixPath(relative).parts
-        ):
-            continue
+    for path in candidate_documents(root, nested_collections=nested_collections):
         entry = document_entry(path, root)
         if entry is not None:
             entries.append(entry)
     return tuple(_sorted_entries(entries))
+
+
+def candidate_documents(
+    root: Path, *, nested_collections: frozenset[str] = frozenset()
+) -> list[Path]:
+    """Return the authorized Markdown paths under ``root`` without reading them.
+
+    A path is a candidate when it resolves inside ``root`` and is neither a
+    reserved name nor under an operational directory. A top-level directory
+    named in ``nested_collections`` owns its own index and is skipped whole, so
+    a parent walk never pays for (or copies the titles of) a nested collection.
+    """
+    root = root.resolve()
+    found: list[Path] = []
+    for path in sorted(root.rglob("*.md")):
+        if root not in path.resolve().parents:
+            continue
+        parts = PurePosixPath(path.relative_to(root).as_posix()).parts
+        if path.name in _RESERVED_NAMES or any(
+            part.lower() in _OPERATIONAL_DIRS for part in parts
+        ):
+            continue
+        if len(parts) > 1 and parts[0] in nested_collections:
+            continue
+        found.append(path)
+    return found
 
 
 def document_entry(path: Path, root: Path) -> CollectionEntry | None:
@@ -227,6 +257,7 @@ __all__ = [
     "CollectionEntry",
     "CollectionIndexError",
     "CollectionIndexValidation",
+    "candidate_documents",
     "document_entry",
     "inventory_documents",
     "render_collection_index",

@@ -15,9 +15,10 @@ from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 
-from arcokf import OKFValidationError, validate_collection_index
+from arcokf import OKFValidationError
 from pydantic import BaseModel
 
+from arcmemory.collection_index import memory_collection, routing_text
 from arcmemory.mdfile import parse_document
 from arcmemory.types import Event
 
@@ -76,20 +77,21 @@ def iter_source_chunks(
     # describes.  A reader may use it only after the owning collection service has
     # produced a canonical, digest-verified file; tampering therefore degrades to
     # ordinary document recall instead of becoming trusted instructions.
-    collection_index = mem_dir / "index.md"
-    if validate_collection_index(collection_index, mem_dir).valid:
-        index_text = collection_index.read_text(encoding="utf-8")
-        rel = collection_index.relative_to(workspace).as_posix()
+    collection_index = memory_collection(mem_dir)
+    if collection_index.verify():
+        index_path = collection_index.index_path
+        rel = index_path.relative_to(workspace).as_posix()
         # Keep the machine comments on disk for verification, but index the compact
         # human routing lines only. A large inventory's routing lines can STILL run
         # to megabytes, though (a fleet with thousands of memory files), so this too
         # goes through the size bound — one collection index must never become a
         # single chunk that overflows the Postgres tsvector limit.
-        routing_text = "\n".join(
-            line for line in index_text.splitlines() if line.startswith(("# ", "- ["))
-        )
-        yield from _bounded_chunks(
-            f"file:{rel}", rel, routing_text, "", collection_index.stat().st_mtime
+        yield from bounded_chunks(
+            f"file:{rel}",
+            rel,
+            routing_text(index_path.read_text(encoding="utf-8")),
+            "",
+            index_path.stat().st_mtime,
         )
     for subdir in _SOURCE_SUBDIRS:
         directory = mem_dir / subdir
@@ -115,9 +117,9 @@ def iter_source_chunks(
                 classification = str(fm.get("classification") or "")
             except OKFValidationError:
                 classification = ""
-            yield from _bounded_chunks(chunk_id, rel, text, classification, mtime)
+            yield from bounded_chunks(chunk_id, rel, text, classification, mtime)
     for event in events:
-        yield from _bounded_chunks(
+        yield from bounded_chunks(
             f"event:{event.event_id}",
             "episodic",
             event.text,
@@ -128,7 +130,7 @@ def iter_source_chunks(
         )
 
 
-def _bounded_chunks(
+def bounded_chunks(
     base_id: str, source_path: str, text: str, classification: str, mtime: float
 ) -> Iterator[SourceChunk]:
     """Yield ``text`` as one or more ``SourceChunk`` windows, each ≤ ``MAX_CHUNK_BYTES``.
@@ -205,4 +207,4 @@ def _iso_epoch(ts: str) -> float:
         return 0.0
 
 
-__all__ = ["MAX_CHUNK_BYTES", "SourceChunk", "iter_source_chunks"]
+__all__ = ["MAX_CHUNK_BYTES", "SourceChunk", "bounded_chunks", "iter_source_chunks"]
