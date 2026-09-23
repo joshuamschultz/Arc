@@ -161,20 +161,26 @@ class _MutableProvider:
         return None
 
 
+#: Ingest parses, writes and chunks in worker threads, so a sync takes real time
+#: to land; polling counts wall time rather than loop turns.
+_POLL_SECONDS = 0.01
+_POLLS = 1000
+
+
 async def _wait(service: ConnectedDataService, expected: str) -> None:
-    for _ in range(300):
+    for _ in range(_POLLS):
         statuses = await service.list_sources()
         if statuses and statuses[0].status == expected:
             return
-        await asyncio.sleep(0)
+        await asyncio.sleep(_POLL_SECONDS)
     raise AssertionError(f"source never reached {expected}: {await service.list_sources()}")
 
 
 async def _wait_cursor(state: InMemorySourceSyncStore, *, expected: str, source_id: str) -> None:
-    for _ in range(300):
+    for _ in range(_POLLS):
         if (await state.get_state(_DID, source_id)).cursor == expected:
             return
-        await asyncio.sleep(0)
+        await asyncio.sleep(_POLL_SECONDS)
     raise AssertionError(f"source never committed cursor {expected!r}")
 
 

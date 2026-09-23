@@ -20,7 +20,7 @@ from arcmemory.blob_ontology import BlobObject, walk_blob_source
 from arcmemory.chunk import RecursiveChunker
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.doc_index import DocHit, DocIndex
+from arcmemory.doc_index import DocHit, DocIndex, object_key
 from arcmemory.extract import ExtractionUnavailable, get_extractor
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
@@ -207,6 +207,34 @@ def source_instance_id(agent_did: str, source: ConnectedSource) -> str:
     """Return a collision-resistant, non-secret source-instance identifier."""
     raw = "\0".join((agent_did, source.connection_id, source.account_id, str(source.generation)))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _write_document(path: Path, metadata: dict[str, str], text: str, stale: str) -> None:
+    """Render and atomically write one extracted document; drop a moved predecessor."""
+    atomic_write_text(path, render_document(metadata, text))
+    if stale:
+        Path(stale).unlink(missing_ok=True)
+
+
+class _HeldAudit:
+    """Collect audit events raised in a worker thread for emission on the loop.
+
+    Sinks are written from the event-loop thread everywhere else; a sink is not
+    required to be thread-safe, so an offloaded step hands its events back.
+    """
+
+    def __init__(self) -> None:
+        self._events: list[AuditEvent] = []
+
+    def write(self, event: AuditEvent) -> None:
+        self._events.append(event)
+
+    def release(self, sink: AuditSink | None) -> None:
+        events, self._events = self._events, []
+        if sink is None:
+            return
+        for event in events:
+            emit(event, sink)
 
 
 class ConnectedDataService:
@@ -407,27 +435,13 @@ class ConnectedDataService:
                 raise ConnectedObjectOrderError(
                     "connected object update lacks a newer monotonic revision"
                 )
-        index = DocIndex(
-            self._db,
-            self._workspace,
-            self._config,
-            embedder=self._embedder,
-            audit_sink=self._audit,
-        )
+        index = self._doc_index()
         if source_object.deleted:
             # Delete all destination state, not merely routes in the newest mapping:
-            # an operator can legitimately remap a source between syncs.
+            # an operator can legitimately remap a source between syncs. The
+            # source's routing index catches up once, in ``finish_sync``.
             await index.delete_object(source_id, self._agent_did, source_object.object_id)
-            self._remove_file(prior)
-            root = (
-                Path(prior.path).parent
-                if prior is not None and prior.path
-                else self._document_path(source_id, source_object.object_id).parent
-            )
-            if prior is not None and prior.path:
-                await index.index_collection(source_id, self._agent_did, root, [])
-                if not any(path.name != "index.md" for path in root.glob("*.md")):
-                    await index.delete_collection_index(source_id, self._agent_did)
+            await asyncio.to_thread(self._remove_file, prior)
             EpisodicStore(self._db, self._workspace).delete(
                 Scope(agent_did=self._agent_did).key,
                 deterministic_event_id(source_id, source_object.object_id),
@@ -463,7 +477,11 @@ class ConnectedDataService:
             self._audit_object(source_id, source_object, "skipped", "unsupported_type")
             raise UnsupportedConnectedObjectError("connected object media type is unsupported")
         try:
-            extracted = extractor.extract(content.content, filename=source_object.locator)
+            # Parsing is CPU-bound third-party code over someone else's file; on
+            # the event loop one large PDF froze chat, NATS and health with it.
+            extracted = await asyncio.to_thread(
+                extractor.extract, content.content, filename=source_object.locator
+            )
         except ExtractionUnavailable as exc:
             self._audit_object(source_id, source_object, "skipped", "extractor_unavailable")
             raise ConnectedObjectError(str(exc)) from exc
@@ -492,7 +510,7 @@ class ConnectedDataService:
             )
         else:
             await index.delete_object(source_id, self._agent_did, source_object.object_id)
-            self._remove_file(prior)
+            await asyncio.to_thread(self._remove_file, prior)
         if MemoryHome.MEMORY in mapping.homes:
             ingest_batch(
                 self._db,
@@ -515,7 +533,7 @@ class ConnectedDataService:
                 raise ConnectedObjectError("profile destination was not preflighted")
             await self._stage_profile_fact(source_id, source_object, clean, profile_candidate)
         if MemoryHome.BLOB in mapping.homes:
-            await self._record_blob_object(source_id, source_object)
+            await asyncio.to_thread(self._write_blob_object, source_id, source_object)
         ProvenanceStore(self._db).remove(source_id, source_object.object_id)
         ProvenanceStore(self._db).record(
             digest,
@@ -575,20 +593,44 @@ class ConnectedDataService:
                 mapping,
             )
 
+    async def finish_sync(self, source: ConnectedSource) -> None:
+        """Bring source-wide derived state up to date, once per sync run.
+
+        The routing ``index.md`` and the blob folder ontology each describe the
+        whole source. Rebuilding either per object made one object cost the
+        size of the inventory; the sync coordinator calls this after its pages
+        instead. Only what already landed is reorganized — no new data enters
+        here, so no mapping is consulted — but a fenced (stale) worker is still
+        refused.
+        """
+        await self._require_current_generation(source)
+        source_id = self._source_id(source)
+        root = self._document_root(source_id)
+        if root.is_dir():
+            await self._doc_index().refresh_collection_index(source_id, self._agent_did, root)
+        if self._blob_inventory_root(source_id).is_dir():
+            await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
+
     async def purge_source(self, source: ConnectedSource) -> None:
         """Irreversibly remove every retrievable artifact of a disconnected source."""
         await self._clear_source(source, remove_mapping=True)
 
-    async def _clear_source(self, source: ConnectedSource, *, remove_mapping: bool) -> None:
-        source_id = self._source_id(source)
-        index = DocIndex(
+    def close(self) -> None:
+        """Release this service's SQLite connection; a later call reopens it."""
+        self._db.close()
+
+    def _doc_index(self) -> DocIndex:
+        return DocIndex(
             self._db,
             self._workspace,
             self._config,
             embedder=self._embedder,
             audit_sink=self._audit,
         )
-        await index.delete_source(source_id, self._agent_did)
+
+    async def _clear_source(self, source: ConnectedSource, *, remove_mapping: bool) -> None:
+        source_id = self._source_id(source)
+        await self._doc_index().delete_source(source_id, self._agent_did)
         for object_id in await self._object_state.list_object_ids(source_id):
             EpisodicStore(self._db, self._workspace).delete(
                 Scope(agent_did=self._agent_did).key,
@@ -670,54 +712,59 @@ class ConnectedDataService:
         path: Path,
         prior: ConnectedObjectState | None,
     ) -> None:
-        """Atomically persist one extracted document and replace only its chunks."""
-        encoded = render_document(
-            {
-                "type": "ConnectedDocument",
-                "source": source_id,
-                "external_id": source_object.object_id,
-                "version": source_object.version,
-                "classification": source_object.classification,
-                "content_hash": digest,
-            },
-            text,
-        )
-        atomic_write_text(path, encoded)
-        if prior is not None and prior.path and prior.path != path.as_posix():
-            Path(prior.path).unlink(missing_ok=True)
-        chunks = self._document_chunks(source_object, text, path)
-        await index.delete_object(source_id, self._agent_did, source_object.object_id)
-        await index.index_collection(source_id, self._agent_did, path.parent, chunks)
+        """Atomically persist one extracted document and replace only its chunks.
 
-    def _document_chunks(
-        self, source_object: ConnectedObject, text: str, path: Path
+        Only this object's own chunks are touched; the source's routing index
+        catches up once per run in ``finish_sync``. Rendering, the file write
+        and chunking run off the event loop (the index writes stay on it: the
+        MemoryDB connection is bound to the loop thread).
+        """
+        metadata = {
+            "type": "ConnectedDocument",
+            "source": source_id,
+            "external_id": source_object.object_id,
+            "version": source_object.version,
+            "classification": source_object.classification,
+            "content_hash": digest,
+        }
+        stale = prior.path if prior is not None and prior.path != path.as_posix() else ""
+        await asyncio.to_thread(_write_document, path, metadata, text, stale)
+        chunks = await self._document_chunks(source_id, source_object, text, path)
+        await index.delete_object(source_id, self._agent_did, source_object.object_id)
+        await index.index_source(source_id, self._agent_did, chunks)
+
+    async def _document_chunks(
+        self, source_id: str, source_object: ConnectedObject, text: str, path: Path
     ) -> list[SourceChunk]:
-        """Produce stable object-scoped chunks from an already-sanitized body."""
+        """Produce stable, source-qualified chunks from an already-sanitized body.
+
+        Ids are ``<source_id>:<object_id>#<n>`` (see ``object_key``). The
+        chunker runs in a worker thread; any audit event it raises is held and
+        emitted here, on the loop, so sinks only ever see one thread.
+        """
+        held = _HeldAudit()
         chunker = RecursiveChunker(
             chunk_tokens=self._config.doc_chunk_tokens,
             overlap=self._config.doc_chunk_overlap,
-            audit_sink=self._audit,
+            audit_sink=held if self._audit is not None else None,
         )
-        chunks = chunker.chunk(
+        chunks = await asyncio.to_thread(
+            chunker.chunk,
             text,
             source_path=path.relative_to(self._workspace).as_posix(),
             classification=source_object.classification,
         )
+        held.release(self._audit)
+        stem = object_key(source_id, source_object.object_id)
         return [
-            chunk.model_copy(update={"chunk_id": f"{source_object.object_id}#{position}"})
+            chunk.model_copy(update={"chunk_id": f"{stem}#{position}"})
             for position, chunk in enumerate(chunks)
         ]
 
-    async def _record_blob_object(self, source_id: str, source_object: ConnectedObject) -> None:
-        """Persist one object in the source inventory and reconcile folder facts."""
-        await asyncio.to_thread(self._write_blob_object, source_id, source_object)
-        await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
-
     async def _remove_blob_object(self, source_id: str, object_id: str) -> None:
-        """Remove a tombstoned object before reconciling source folder ontology."""
+        """Remove a tombstoned object; folder facts reconcile in ``finish_sync``."""
         path = self._blob_inventory_path(source_id, object_id)
         await asyncio.to_thread(path.unlink, missing_ok=True)
-        await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
 
     def _write_blob_object(self, source_id: str, source_object: ConnectedObject) -> None:
         blob = BlobObject(
@@ -758,8 +805,14 @@ class ConnectedDataService:
         return self._workspace / "memory" / "blob_inventory" / source_id
 
     async def list_documents(self, source: ConnectedSource) -> list[ConnectedDocument]:
-        """Return this source's indexed document inventory without exposing bodies."""
-        source_id = self._source_id(source)
+        """Return this source's indexed document inventory without exposing bodies.
+
+        Reads every document's front matter, so it runs off the event loop: the
+        operator card asks for this count after every sync run.
+        """
+        return await asyncio.to_thread(self._scan_documents, self._source_id(source))
+
+    def _scan_documents(self, source_id: str) -> list[ConnectedDocument]:
         root = self._document_root(source_id)
         if not root.is_dir():
             return []
@@ -808,15 +861,9 @@ class ConnectedDataService:
         """Remove one extracted document's index/file while preserving other destinations."""
         source_id = self._source_id(source)
         document = await self.get_document(source, object_id)
-        await DocIndex(
-            self._db,
-            self._workspace,
-            self._config,
-            embedder=self._embedder,
-            audit_sink=self._audit,
-        ).delete_object(source_id, self._agent_did, object_id)
+        await self._doc_index().delete_object(source_id, self._agent_did, object_id)
         if document is not None:
-            (self._workspace / document.path).unlink(missing_ok=True)
+            await asyncio.to_thread((self._workspace / document.path).unlink, missing_ok=True)
         state = await self._object_state.get_object_state(source_id, object_id)
         if state is not None:
             await self._object_state.put_object_state(
@@ -824,6 +871,7 @@ class ConnectedDataService:
                 object_id,
                 state.model_copy(update={"path": ""}),
             )
+        await self.finish_sync(source)
         return DocumentStatus.MISSING
 
     async def reindex_document(self, source: ConnectedSource, object_id: str) -> bool:
@@ -831,9 +879,30 @@ class ConnectedDataService:
         document = await self.get_document(source, object_id)
         if document is None:
             return False
+        reindexed = await self._reindex_one(self._source_id(source), document)
+        await self.finish_sync(source)
+        return reindexed
+
+    async def reindex_source(self, source: ConnectedSource) -> int:
+        """Reindex all canonical extracted documents for a source; return successes.
+
+        The inventory is listed once and the routing index refreshed once:
+        going through ``reindex_document`` per document re-listed every
+        document for each one.
+        """
+        source_id = self._source_id(source)
+        outcomes = [
+            await self._reindex_one(source_id, document)
+            for document in await self.list_documents(source)
+        ]
+        await self.finish_sync(source)
+        return sum(outcomes)
+
+    async def _reindex_one(self, source_id: str, document: ConnectedDocument) -> bool:
         path = self._workspace / document.path
         try:
-            metadata, body = parse_document(path.read_text(encoding="utf-8"))
+            text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            metadata, body = parse_document(text)
         except (OSError, UnicodeDecodeError, ValueError):
             return False
         source_object = ConnectedObject(
@@ -842,26 +911,11 @@ class ConnectedDataService:
             version=document.version,
             classification=str(metadata.get("classification", "")),
         )
-        chunks = self._document_chunks(source_object, body, path)
-        index = DocIndex(
-            self._db,
-            self._workspace,
-            self._config,
-            embedder=self._embedder,
-            audit_sink=self._audit,
-        )
-        source_id = self._source_id(source)
-        await index.delete_object(source_id, self._agent_did, object_id)
-        await index.index_collection(source_id, self._agent_did, path.parent, chunks)
+        chunks = await self._document_chunks(source_id, source_object, body, path)
+        index = self._doc_index()
+        await index.delete_object(source_id, self._agent_did, document.object_id)
+        await index.index_source(source_id, self._agent_did, chunks)
         return True
-
-    async def reindex_source(self, source: ConnectedSource) -> int:
-        """Reindex all canonical extracted documents for a source; return successes."""
-        documents = await self.list_documents(source)
-        outcomes = [
-            await self.reindex_document(source, document.object_id) for document in documents
-        ]
-        return sum(outcomes)
 
     def blob_folders(self, source: ConnectedSource) -> list[str]:
         """Return source-owned blob ontology entity ids for operator/agent orientation."""
@@ -904,14 +958,7 @@ class ConnectedDataService:
         """Search exactly one approved source's document pool."""
         from arctrust.classification import dominates, parse_classification
 
-        index = DocIndex(
-            self._db,
-            self._workspace,
-            self._config,
-            embedder=self._embedder,
-            audit_sink=self._audit,
-        )
-        hits = await index.document_search(
+        hits = await self._doc_index().document_search(
             query,
             self._agent_did,
             source_id=self._source_id(source),

@@ -24,6 +24,7 @@ from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import write as _write
+from arccli.service_watchdog import ServiceWatchdog, enable_fault_dumps
 
 # Valid layer values — enforced at parse time.
 _VALID_LAYERS = ("llm", "run", "agent", "team")
@@ -239,6 +240,7 @@ def _start(args: argparse.Namespace) -> None:
     # Configure logging FIRST — before anything else can emit a log record —
     # so audit events and adapter connect lines are observable (task #38).
     _configure_logging(verbose=getattr(args, "verbose", False))
+    enable_fault_dumps()
 
     # Load the deployment's .env (cwd + ${ARC_CONFIG_DIR:-~/.arc} + ~) BEFORE
     # building agents, so their provider keys resolve without a manual export.
@@ -382,6 +384,18 @@ def _start(args: argparse.Namespace) -> None:
         # same instances, so there is one durable consumer per agent.
         if _fleet_enabled(gateway_config):
             fleet = _register_fleet_startup(app, team_root)
+
+    # Last startup hook: READY=1 only once everything above is up, then the
+    # event-loop heartbeat systemd's watchdog restarts us on (a no-op outside
+    # systemd).
+    watchdog = ServiceWatchdog()
+
+    async def _announce_ready() -> None:
+        await watchdog.start()
+        if watchdog.task is not None:
+            app.state._extra_background_tasks.append(watchdog.task)
+
+    app.state._extra_startup_hooks.append(_announce_ready)
 
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     try:

@@ -20,6 +20,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_module_capability_trust.py",
         "packages/arcagent/tests/security/capabilities/test_capability_import_drift.py",
     ),
+    "connected-source routing index tampering (memory poisoning)": (
+        # A forged-but-canonical index.md is rebuilt from the documents, never
+        # trusted by the once-per-run incremental refresh; a non-canonical one
+        # is refused on read and by the operator view.
+        "packages/arcmemory/tests/security/test_connected_index_tampering.py",
+        "packages/arcmemory/tests/unit/test_collection_index_pipeline.py",
+    ),
     "prompt replacement and instruction-boundary attacks": (
         "packages/arcprompt/tests/unit/test_verifier.py",
         "packages/arcagent/tests/security/test_prompt_overlay_isolation.py",

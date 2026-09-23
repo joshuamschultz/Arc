@@ -69,6 +69,11 @@ class SyncLimits(BaseModel):
     page_size: int = Field(default=200, gt=0, le=2_000)
     retries: int = Field(default=2, ge=0)
     retry_backoff_seconds: float = Field(default=0.25, ge=0)
+    #: Share of wall time one source may spend working. After each unit of work
+    #: (a page fetch, an object fetch, an object ingest) the source rests long
+    #: enough to stay at this share, so a days-long first backfill never takes
+    #: the whole machine. Rest time does not count against ``max_seconds``.
+    max_duty_fraction: float = Field(default=0.25, gt=0, le=1)
 
 
 class SyncState(BaseModel):

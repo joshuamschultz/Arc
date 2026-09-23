@@ -6,6 +6,7 @@ import pytest
 from arcokf import (
     CollectionEntry,
     CollectionIndexError,
+    candidate_documents,
     inventory_documents,
     render_collection_index,
     validate_collection_index,
@@ -89,3 +90,42 @@ def test_inventory_excludes_classified_missing_and_invalid_documents(tmp_path: P
     rendered = render_collection_index(entries)
     assert "Secret Plan" not in rendered
     assert "missing-label.md" not in rendered
+
+
+def _write_doc(path: Path, title: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\ntype: Entity\nclassification: unclassified\ntitle: {title}\n---\n{title}\n",
+        encoding="utf-8",
+    )
+
+
+def test_nested_collection_is_not_part_of_the_parent_inventory(tmp_path: Path) -> None:
+    """A subtree that owns its own collection index is routed by that index alone.
+
+    Walking it from the parent re-read and re-hashed every nested document on
+    every parent verification, and copied the nested titles into the parent.
+    """
+    _write_doc(tmp_path / "entities" / "alpha.md", "Alpha")
+    _write_doc(tmp_path / "connected" / "source" / "beta.md", "Beta")
+    nested = frozenset({"connected"})
+
+    entries = inventory_documents(tmp_path, nested_collections=nested)
+
+    assert [entry.path for entry in entries] == ["entities/alpha.md"]
+    index = tmp_path / "index.md"
+    index.write_text(render_collection_index(entries), encoding="utf-8")
+    assert validate_collection_index(index, tmp_path, nested_collections=nested).valid
+    # Without the declaration the nested document is an omission, as before.
+    assert not validate_collection_index(index, tmp_path).valid
+
+
+def test_candidate_documents_lists_authorized_paths_without_reading(tmp_path: Path) -> None:
+    _write_doc(tmp_path / "alpha.md", "Alpha")
+    _write_doc(tmp_path / "audit" / "hidden.md", "Hidden")
+    _write_doc(tmp_path / "connected" / "beta.md", "Beta")
+    (tmp_path / "index.md").write_text("reserved", encoding="utf-8")
+
+    found = candidate_documents(tmp_path, nested_collections=frozenset({"connected"}))
+
+    assert [path.relative_to(tmp_path.resolve()).as_posix() for path in found] == ["alpha.md"]

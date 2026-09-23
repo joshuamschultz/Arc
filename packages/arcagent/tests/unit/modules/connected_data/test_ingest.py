@@ -159,7 +159,11 @@ async def test_sync_registration_purges_a_stale_pre_scoping_card(
         _source(), port_adapter, _plan(KnowledgeHome.DATASTORE)
     )
 
-    live = {s for s in store.slugs() if (e := store.read(s)) is not None and e.entity_type == "db_table"}
+    live = {
+        s
+        for s in store.slugs()
+        if (e := store.read(s)) is not None and e.entity_type == "db_table"
+    }
     assert "db-table-legacy_invoices" not in live  # collected on the sync registration
     assert any(s.endswith("-invoices") for s in live)  # new scoped card written
 

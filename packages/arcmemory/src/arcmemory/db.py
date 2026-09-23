@@ -159,7 +159,8 @@ class MemoryDB:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS chunks ("
             "chunk_id TEXT PRIMARY KEY, scope TEXT NOT NULL, source_path TEXT NOT NULL, "
-            "mtime REAL, classification TEXT DEFAULT 'unclassified', content_hash TEXT)"
+            "mtime REAL, classification TEXT DEFAULT 'unclassified', content_hash TEXT, "
+            "fts_rowid INTEGER)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope)")
         # H-REG-1: ``content_hash`` tracks freshness for the CHEAP lexical write
@@ -176,6 +177,7 @@ class MemoryDB:
             "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks "
             "USING fts5(chunk_id UNINDEXED, scope UNINDEXED, text)"
         )
+        self._link_fts_rowids(conn)
 
         # Semantic + cue graph: weighted edges carrying Hebbian/decay state.
         conn.execute(
@@ -240,8 +242,53 @@ class MemoryDB:
             "classification TEXT DEFAULT 'unclassified', "
             "PRIMARY KEY(item_id, source, external_id))"
         )
+        # Every connected object replaces its own provenance by (source, object):
+        # without this, each one scanned every provenance row of every source.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_item_provenances_source "
+            "ON item_provenances(source, external_id)"
+        )
 
         conn.commit()
+
+    @staticmethod
+    def _link_fts_rowids(conn: sqlite3.Connection) -> None:
+        """Give every chunk row the rowid of its ``fts_chunks`` text row.
+
+        ``fts_chunks.chunk_id`` is UNINDEXED, so any lookup by it reads the
+        whole text index. The rowid link makes per-chunk writes, deletes and
+        point reads a B-tree lookup. A database created before the column is
+        linked here once, in ONE transaction with the column itself, so a crash
+        part-way leaves the old schema and the next open simply retries. Text
+        rows no chunk row points at are orphans of earlier deletes and go too.
+        """
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)")}
+        if "fts_rowid" in columns:
+            return
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN")
+        try:
+            conn.execute("ALTER TABLE chunks ADD COLUMN fts_rowid INTEGER")
+            conn.execute(
+                "CREATE TEMP TABLE fts_link AS "
+                "SELECT MAX(rowid) AS fts_rowid, chunk_id, scope FROM fts_chunks "
+                "GROUP BY chunk_id, scope"
+            )
+            conn.execute("CREATE INDEX temp.fts_link_key ON fts_link(chunk_id, scope)")
+            conn.execute(
+                "UPDATE chunks SET fts_rowid = (SELECT fts_link.fts_rowid FROM fts_link "
+                "WHERE fts_link.chunk_id = chunks.chunk_id AND fts_link.scope = chunks.scope)"
+            )
+            conn.execute(
+                "DELETE FROM fts_chunks WHERE rowid NOT IN "
+                "(SELECT fts_rowid FROM chunks WHERE fts_rowid IS NOT NULL)"
+            )
+            conn.execute("DROP TABLE temp.fts_link")
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
 
     @staticmethod
     def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> set[str]:

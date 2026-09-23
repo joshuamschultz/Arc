@@ -223,7 +223,8 @@ async def test_connected_okf_index_uses_dominating_classification_in_federal_ret
         ),
     ]
 
-    await index.index_collection(source_id, _AGENT_DID, collection, chunks)
+    await index.index_source(source_id, _AGENT_DID, chunks)
+    await index.refresh_collection_index(source_id, _AGENT_DID, collection)
     service = ConnectedDataService(
         workspace,
         _AGENT_DID,

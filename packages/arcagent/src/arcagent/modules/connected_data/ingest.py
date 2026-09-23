@@ -217,6 +217,12 @@ class ArcMemoryIngestAdapter(IngestPort):
         )
         return self._service
 
+    async def aclose(self) -> None:
+        """Release the memory database connection this port opened, if any."""
+        service, self._service = self._service, None
+        if service is not None:
+            service.close()
+
     @staticmethod
     def _source_model(module: Any, source: SourceDescription) -> Any:
         return module.ConnectedSource(
@@ -433,6 +439,11 @@ class ArcMemoryIngestAdapter(IngestPort):
             # they ended the whole sync, so one file nothing can read made the
             # entire account permanently `failed`.
             raise ObjectNotIngestibleError(type(refusal).__name__, str(refusal)) from refusal
+
+    async def finish_sync(self, source: SourceDescription) -> None:
+        """Refresh source-wide derived state (routing index, folders) once per run."""
+        module = import_module("arcmemory.connected_data")
+        await self._connected_service().finish_sync(self._source_model(module, source))
 
     async def reset_source(self, source: SourceDescription) -> None:
         """Clear retrievable source artifacts without discarding approved routing."""

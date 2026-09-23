@@ -111,6 +111,7 @@ async def test_blob_route_builds_ontology_and_document_route_is_searchable(
         ),
         mapping,
     )
+    await service.finish_sync(source)
 
     assert await service.document_search("quarterly revenue", source)
     docs = await service.list_documents(source)
@@ -149,6 +150,7 @@ async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
             SourceContent(object_id=object_id, version="1", content=b"inventory"),
             mapping,
         )
+    await service.finish_sync(source)
     reports = next(slug for slug in service.blob_folders(source) if "reports" in slug)
     store = SemanticStore(workspace, WeightedGraph(service._db), _DID)
     entity = store.read(reports)
@@ -169,6 +171,7 @@ async def test_blob_inventory_reconciles_counts_and_tombstones_stale_folders(
         None,
         mapping,
     )
+    await service.finish_sync(source)
     assert all("archive" not in slug for slug in service.blob_folders(source))
 
 
