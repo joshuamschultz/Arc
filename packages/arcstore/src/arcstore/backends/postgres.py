@@ -509,55 +509,57 @@ class PostgresBackend(SourceSyncBackend):
         return [_mutable_row(row) for row in rows]
 
     async def mutable_task_facets(self) -> dict[str, Any]:
-        """Reuse exact global facets until a task transaction commits or UTC day rolls."""
+        """Cache facets from one revision-consistent PostgreSQL read snapshot."""
         async with self._task_facets_lock:
             async with self._require_pool().acquire() as connection:
-                revision = await connection.fetchval(
-                    "SELECT revision FROM task_board_revision WHERE singleton=true"
-                )
-            today = datetime.now(UTC).date().isoformat()
-            cached = self._task_facets_cache
-            if cached is not None and cached[0] == revision and cached[1] == today:
-                return dict(cached[2])
-            facets = await self._compute_task_facets()
+                async with connection.transaction(isolation="repeatable_read", readonly=True):
+                    version = await connection.fetchrow(
+                        "SELECT revision, to_char(now() AT TIME ZONE 'UTC', "
+                        "'YYYY-MM-DD') utc_day FROM task_board_revision WHERE singleton=true"
+                    )
+                    revision = int(version["revision"])
+                    today = str(version["utc_day"])
+                    cached = self._task_facets_cache
+                    if cached is not None and cached[0] == revision and cached[1] == today:
+                        return dict(cached[2])
+                    facets = await self._compute_task_facets(connection)
             self._task_facets_cache = (int(revision), today, facets)
             return dict(facets)
 
-    async def _compute_task_facets(self) -> dict[str, Any]:
-        """Aggregate global facets and lifecycle metrics in PostgreSQL."""
-        async with self._require_pool().acquire() as connection:
-            grouped = await connection.fetch(
-                "SELECT value->>'status' status, value->>'priority' priority, count(*) total "
-                "FROM mutable_records WHERE collection='tasks' "
-                "GROUP BY 1,2"
-            )
-            owner_rows = await connection.fetch(
-                "SELECT value->>'owner_did' owner, count(*) total "
-                "FROM mutable_records WHERE collection='tasks' "
-                "AND value->>'owner_did' IS NOT NULL "
-                "GROUP BY 1 ORDER BY total DESC, owner LIMIT 501"
-            )
-            tag_rows = await connection.fetch(
-                "SELECT tag, count(*) total FROM mutable_records m "
-                "CROSS JOIN LATERAL (SELECT DISTINCT jsonb_array_elements_text("
-                "COALESCE(m.value->'tags','[]'::jsonb)) tag) tags "
-                "WHERE m.collection='tasks' GROUP BY tag ORDER BY total DESC, tag LIMIT 501"
-            )
-            metrics = await connection.fetchrow(
-                "SELECT count(*) FILTER (WHERE EXISTS ("
-                "SELECT 1 FROM jsonb_array_elements_text("
-                "COALESCE(m.value->'blocked_by','[]'::jsonb)) dep_id "
-                "LEFT JOIN mutable_records d ON d.collection='tasks' AND d.key=dep_id "
-                "WHERE d.value->>'status' IS DISTINCT FROM 'done')) blocked, "
-                "count(*) FILTER (WHERE m.value->>'status'='done' AND "
-                "left(COALESCE(m.value->>'completed_at',m.value->>'updated_at',''),10) = "
-                "to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD')) done_today, "
-                "avg(CASE WHEN m.value->>'status'='done' THEN "
-                "COALESCE((m.value->>'duration_seconds')::double precision, "
-                "EXTRACT(EPOCH FROM ((m.value->>'completed_at')::timestamptz - "
-                "(m.value->>'started_at')::timestamptz))) END) avg_done_seconds "
-                "FROM mutable_records m WHERE m.collection='tasks'"
-            )
+    async def _compute_task_facets(self, connection: Any) -> dict[str, Any]:
+        """Aggregate all facet queries on the caller's pinned snapshot."""
+        grouped = await connection.fetch(
+            "SELECT value->>'status' status, value->>'priority' priority, count(*) total "
+            "FROM mutable_records WHERE collection='tasks' "
+            "GROUP BY 1,2"
+        )
+        owner_rows = await connection.fetch(
+            "SELECT value->>'owner_did' owner, count(*) total "
+            "FROM mutable_records WHERE collection='tasks' "
+            "AND value->>'owner_did' IS NOT NULL "
+            "GROUP BY 1 ORDER BY total DESC, owner LIMIT 501"
+        )
+        tag_rows = await connection.fetch(
+            "SELECT tag, count(*) total FROM mutable_records m "
+            "CROSS JOIN LATERAL (SELECT DISTINCT jsonb_array_elements_text("
+            "COALESCE(m.value->'tags','[]'::jsonb)) tag) tags "
+            "WHERE m.collection='tasks' GROUP BY tag ORDER BY total DESC, tag LIMIT 501"
+        )
+        metrics = await connection.fetchrow(
+            "SELECT count(*) FILTER (WHERE EXISTS ("
+            "SELECT 1 FROM jsonb_array_elements_text("
+            "COALESCE(m.value->'blocked_by','[]'::jsonb)) dep_id "
+            "LEFT JOIN mutable_records d ON d.collection='tasks' AND d.key=dep_id "
+            "WHERE d.value->>'status' IS DISTINCT FROM 'done')) blocked, "
+            "count(*) FILTER (WHERE m.value->>'status'='done' AND "
+            "left(COALESCE(m.value->>'completed_at',m.value->>'updated_at',''),10) = "
+            "to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD')) done_today, "
+            "avg(CASE WHEN m.value->>'status'='done' THEN "
+            "COALESCE((m.value->>'duration_seconds')::double precision, "
+            "EXTRACT(EPOCH FROM ((m.value->>'completed_at')::timestamptz - "
+            "(m.value->>'started_at')::timestamptz))) END) avg_done_seconds "
+            "FROM mutable_records m WHERE m.collection='tasks'"
+        )
         statuses: dict[str, int] = {}
         priorities: dict[str, int] = {}
         for row in grouped:

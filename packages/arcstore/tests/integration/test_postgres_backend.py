@@ -72,10 +72,10 @@ async def test_postgres_task_board_keyset_and_index(
         recomputes = 0
         compute = postgres_backend._compute_task_facets
 
-        async def count_compute():
+        async def count_compute(connection):
             nonlocal recomputes
             recomputes += 1
-            return await compute()
+            return await compute(connection)
 
         monkeypatch.setattr(postgres_backend, "_compute_task_facets", count_compute)
         await asyncio.gather(*(store.board_facets() for _ in range(8)))
@@ -147,6 +147,43 @@ async def test_postgres_task_board_tied_cursor_and_status_transition(
     finally:
         for task_id in ids:
             await store.delete(task_id, actor_did=_ACTOR)
+
+
+async def test_postgres_facet_revision_and_aggregates_share_snapshot(
+    postgres_backend: ArcStoreBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mutation between revision and aggregate reads cannot poison the cache."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    store = TaskStore(postgres_backend)
+    task_id = f"board-snapshot-{uuid4().hex}"
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = postgres_backend._compute_task_facets
+
+    async def pause_aggregate(*args: object) -> dict[str, object]:
+        started.set()
+        await release.wait()
+        return await original(*args)
+
+    try:
+        await store.create(
+            Task(id=task_id, title="Snapshot", creator_did=_ACTOR, priority="medium")
+        )
+        postgres_backend._task_facets_cache = None
+        monkeypatch.setattr(postgres_backend, "_compute_task_facets", pause_aggregate)
+        pending = asyncio.create_task(store.board_facets())
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await store.update(task_id, {"priority": "critical"}, actor_did=_ACTOR)
+        release.set()
+        first = await asyncio.wait_for(pending, timeout=5)
+        assert first.priorities.get("critical", 0) == 0
+        monkeypatch.setattr(postgres_backend, "_compute_task_facets", original)
+        current = await store.board_facets()
+        assert current.priorities.get("critical", 0) == 1
+    finally:
+        release.set()
+        await store.delete(task_id, actor_did=_ACTOR)
 
 
 async def test_postgres_schema_and_operational_round_trip(

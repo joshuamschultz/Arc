@@ -326,7 +326,13 @@ async def get_task_summary(request: Request) -> JSONResponse:
 def _encode_task_cursor(
     stamp: str,
     task_id: str,
-    filters: tuple[str | None, str | None, str | None, str] = (None, None, None, None, "all"),
+    filters: tuple[str | None, str | None, str | None, str | None, str] = (
+        None,
+        None,
+        None,
+        None,
+        "all",
+    ),
     since: str | None = None,
 ) -> str:
     payload = json.dumps([stamp, task_id, *filters, since], separators=(",", ":")).encode()
@@ -335,7 +341,13 @@ def _encode_task_cursor(
 
 def _decode_task_cursor(
     value: str,
-    filters: tuple[str | None, str | None, str | None, str] = (None, None, None, None, "all"),
+    filters: tuple[str | None, str | None, str | None, str | None, str] = (
+        None,
+        None,
+        None,
+        None,
+        "all",
+    ),
 ) -> tuple[tuple[str, str], str | None]:
     if len(value) > 2048:
         raise ValueError("cursor too long")

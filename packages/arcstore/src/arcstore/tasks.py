@@ -455,15 +455,17 @@ class TaskStore:
         since: str | None = None,
     ) -> Sequence[Task]:
         """Read one bounded page of unresolved or completed task history."""
-        query = TaskBoardPageQuery(
-            phase=phase,
-            before=before,
-            limit=limit,
-            status=status,
-            priority=priority,
-            owner_did=owner_did,
-            tag=tag,
-            since=since,
+        query = TaskBoardPageQuery.model_validate(
+            {
+                "phase": phase,
+                "before": before,
+                "limit": limit,
+                "status": status,
+                "priority": priority,
+                "owner_did": owner_did,
+                "tag": tag,
+                "since": since,
+            }
         )
         rows = await self._backend.mutable_task_page(
             phase=query.phase,
@@ -523,15 +525,16 @@ class TaskStore:
             details: dict[str, Any] = {}
             children: list[dict[str, Any]] = []
             for dep_id, dep in projection.dependencies.items():
+                preview_id = str(dep_id)[:200]
                 item = {
-                    "id": str(dep_id)[:200],
+                    "id": preview_id,
                     "title": dep.title[:160],
                     "status": dep.status,
                 }
                 size = len(json.dumps(item, ensure_ascii=True))
                 if remaining_entries == 0 or size > remaining_bytes:
                     break
-                details[item["id"]] = item
+                details[preview_id] = item
                 remaining_entries -= 1
                 remaining_bytes -= size
             for child in projection.children:
