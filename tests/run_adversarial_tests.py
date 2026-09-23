@@ -30,6 +30,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_audit_at_rest.py",
         "packages/arcrun/tests/security/test_event_tampering.py",
         "packages/arcui/tests/test_session_replay_media.py",
+        "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
     ),
     "forged, unauthorized and replayed control actions": (
         "packages/arcui/tests/test_workflow_routes.py",
@@ -71,6 +72,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",
         "packages/arcrun/tests/security/test_resource_exhaustion.py",
         "packages/arcrun/tests/security/test_spawn_depth_bomb.py",
+        "packages/arcgateway/tests/unit/test_workflow_runner_host.py",
+        "packages/arcui/tests/test_health.py",
     ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,

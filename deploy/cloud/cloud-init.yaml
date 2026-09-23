@@ -106,5 +106,5 @@ runcmd:
   # Report readiness in the console log so a failed boot is visible rather than
   # silent. This runs INSIDE the container: Arc publishes no host port (Caddy is
   # the only ingress), so there is nothing to curl on the host's :8420.
-  # The provisioner's own check is the public https://$ARC_DOMAIN/api/health.
-  - [sh, -c, "cd /opt/arc && for i in $(seq 1 60); do docker compose exec -T arc curl -fsS http://127.0.0.1:8420/api/health && break || sleep 5; done"]
+  # The provisioner's own check is the public https://$ARC_DOMAIN/api/ready.
+  - [sh, -c, "cd /opt/arc && for i in $(seq 1 60); do docker compose exec -T arc curl -fsS http://127.0.0.1:8420/api/ready && break || sleep 5; done"]

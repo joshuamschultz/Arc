@@ -33,10 +33,15 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import secrets
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 _logger = logging.getLogger("arcgateway.workflow_runner_host")
+_RESTART_DELAY_SECONDS = 0.25
+_RESTART_MAX_SECONDS = 30.0
+_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 @runtime_checkable
@@ -61,6 +66,10 @@ class RunnerAlreadyActiveError(RuntimeError):
     """Raised when a second RunnerHost tries to start in this process (REQ-231)."""
 
 
+class WorkflowEngineUnavailableError(RuntimeError):
+    """The optional workflow engine is absent from this installation."""
+
+
 class RunnerHost:
     """Owns exactly one running WorkflowRunner task for this process.
 
@@ -70,14 +79,28 @@ class RunnerHost:
 
     _active: RunnerHost | None = None
 
-    def __init__(self, runner: WorkflowRunnerProtocol) -> None:
+    def __init__(
+        self,
+        runner: WorkflowRunnerProtocol | None,
+        factory: Callable[[], Awaitable[WorkflowRunnerProtocol]],
+    ) -> None:
         self._runner = runner
+        self._factory = factory
         self._task: asyncio.Task[None] | None = None
+        self._ready = runner is not None
+        self._poisoned = False
+        self._stopping = False
 
     @classmethod
     def active(cls) -> RunnerHost | None:
         """The process's currently-running RunnerHost, or ``None``."""
-        return cls._active
+        host = cls._active
+        return host if host is not None and host._ready else None
+
+    @property
+    def available(self) -> bool:
+        """Whether this host currently drives a live runner."""
+        return self._ready and self._task is not None and not self._task.done()
 
     @property
     def runner(self) -> WorkflowRunnerProtocol:
@@ -88,11 +111,15 @@ class RunnerHost:
         run plane, and tier the engine already enforces, instead of building a
         second set that could disagree.
         """
+        if self._runner is None:
+            raise RuntimeError("workflow runner is unavailable")
         return self._runner
 
     @classmethod
-    async def start(cls, runner: WorkflowRunnerProtocol) -> RunnerHost:
-        """Start ``runner.run_forever()`` as a background task; register the singleton.
+    async def start(
+        cls, factory: Callable[[], Awaitable[WorkflowRunnerProtocol]]
+    ) -> RunnerHost:
+        """Build and supervise one runner with the process singleton.
 
         Raises:
             RunnerAlreadyActiveError: a RunnerHost is already active in this
@@ -106,46 +133,115 @@ class RunnerHost:
                 "to start a second instance — two runners must never advance "
                 "the same frontier (REQ-231)"
             )
-        host = cls(runner)
-        host._task = asyncio.create_task(host._run(), name="arcgateway:workflow-runner")
+        host = cls(None, factory)
         cls._active = host
+        try:
+            try:
+                runner = await factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _logger.warning("workflow runner startup failed (%s)", type(exc).__name__)
+                runner = None
+            host._runner = runner
+            host._ready = runner is not None
+            host._task = asyncio.create_task(host._run(), name="arcgateway:workflow-runner")
+        except BaseException:
+            if cls._active is host:
+                cls._active = None
+            raise
         return host
 
     async def _run(self) -> None:
-        cancelled = False
+        delay = _RESTART_DELAY_SECONDS
         try:
-            await self._runner.run_forever()
-        except asyncio.CancelledError:
-            cancelled = True
-            raise
-        except Exception:  # reason: a runner crash must not crash the gateway process
-            _logger.exception("workflow runner task terminated unexpectedly")
-        finally:
-            # A fatal return used to strand `_active` with a done task, so the
-            # gateway could never restart its runner without process restart.
-            if RunnerHost._active is self:
-                RunnerHost._active = None
-            if not cancelled:
+            while True:
+                runner = self._runner
+                if runner is None:
+                    delay = await self._rebuild(delay)
+                    continue
+                started_at = asyncio.get_running_loop().time()
                 try:
-                    await self._runner.aclose()
-                except Exception:  # reason: a crashed runner must still release its lease
-                    _logger.exception("error closing fatal workflow runner")
+                    await runner.run_forever()
+                    _logger.error("workflow runner returned unexpectedly")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    _logger.error("workflow runner failed (%s)", type(exc).__name__)
+                finally:
+                    self._ready = False
+                    if not await self._close_runner(runner):
+                        self._poisoned = True
+                if self._poisoned:
+                    _logger.critical("workflow runner cleanup failed; refusing replacement")
+                    return
+                self._runner = None
+                uptime = asyncio.get_running_loop().time() - started_at
+                delay = (
+                    _RESTART_DELAY_SECONDS
+                    if uptime >= 60.0
+                    else min(delay * 2, _RESTART_MAX_SECONDS)
+                )
+                delay = await self._rebuild(delay)
+        finally:
+            self._ready = False
+            if RunnerHost._active is self and not self._poisoned:
+                RunnerHost._active = None
+
+    async def _rebuild(self, delay: float) -> float:
+        while True:
+            await asyncio.sleep(
+                min(delay * (0.9 + secrets.randbelow(201) / 1000), _RESTART_MAX_SECONDS)
+            )
+            try:
+                replacement = await self._factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _logger.error("workflow runner rebuild failed (%s)", type(exc).__name__)
+                delay = min(delay * 2, _RESTART_MAX_SECONDS)
+                continue
+            if self._stopping:
+                if not await self._close_runner(replacement):
+                    self._poisoned = True
+                raise asyncio.CancelledError
+            self._runner = replacement
+            self._ready = True
+            _publish_to_agent_tools(replacement)
+            return delay
+
+    @staticmethod
+    async def _close_runner(runner: WorkflowRunnerProtocol) -> bool:
+        try:
+            await asyncio.wait_for(runner.aclose(), timeout=_CLOSE_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            _logger.error("workflow runner close was cancelled")
+            return False
+        except Exception as exc:
+            _logger.error("workflow runner close failed (%s)", type(exc).__name__)
+            return False
+        return True
 
     async def stop(self) -> None:
         """Cancel the runner task, close the runner, and clear the singleton slot."""
+        self._stopping = True
         if self._task is not None:
             self._task.cancel()
             try:
-                await self._task
+                await asyncio.wait_for(self._task, timeout=_CLOSE_TIMEOUT_SECONDS + 1.0)
             except asyncio.CancelledError:
                 pass
+            except TimeoutError:
+                self._poisoned = True
+                _logger.critical("workflow runner shutdown timed out; singleton remains fenced")
             except Exception:  # reason: shutdown must complete regardless of task-body errors
                 _logger.exception("workflow runner task raised during shutdown")
-        try:
-            await self._runner.aclose()
-        except Exception:  # reason: fail-open — shutdown must still clear the singleton slot
-            _logger.exception("error closing workflow runner")
-        if RunnerHost._active is self:
+        if self._ready and self._runner is not None:
+            self._ready = False
+            if not await self._close_runner(self._runner):
+                self._poisoned = True
+        self._ready = False
+        if RunnerHost._active is self and not self._poisoned:
             RunnerHost._active = None
 
 
@@ -175,7 +271,7 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
     try:
         module = importlib.import_module("arcteam.workflow.runner")
     except ImportError as exc:
-        raise RuntimeError(
+        raise WorkflowEngineUnavailableError(
             "arcteam.workflow.runner.build_workflow_runner is not available — "
             "SPEC-061's arcteam engine (COMP-008/COMP-011) has not landed in "
             "this checkout. RunnerHost cannot start (see "
@@ -183,7 +279,7 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
         ) from exc
     build_workflow_runner = getattr(module, "build_workflow_runner", None)
     if build_workflow_runner is None:
-        raise RuntimeError(
+        raise WorkflowEngineUnavailableError(
             "arc gateway: arcteam.workflow.runner has no build_workflow_runner() "
             "— reconcile arcgateway.workflow_runner_host against the landed "
             "arcteam API."
@@ -193,14 +289,18 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
 
     backend = open_backend()
     await backend.start()
-    owners, narrator = await _team_bindings(key_path)
-    runner = build_workflow_runner(
-        tier=tier,
-        task_store_backend=backend,
-        runner_key_path=key_path,
-        registry=owners,
-        narrator=narrator,
-    )
+    try:
+        owners, narrator = await _team_bindings(key_path)
+        runner = build_workflow_runner(
+            tier=tier,
+            task_store_backend=backend,
+            runner_key_path=key_path,
+            registry=owners,
+            narrator=narrator,
+        )
+    except Exception:
+        await backend.stop()
+        raise
     return cast(WorkflowRunnerProtocol, runner)
 
 
@@ -212,29 +312,27 @@ async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
     so the channel half of the design is silently absent. Both are the same
     dead-wiring failure as never starting at all, one layer in.
 
-    Degrades to ``(None, None)`` with a warning rather than refusing to start —
-    a runner that resolves owners from a stale connection would be worse than
-    one that says plainly it cannot.
+    Raises if the configured authority or bus is unavailable. Starting an
+    ownerless runner would make the workflow surface look healthy while every
+    node remains unable to advance.
     """
-    try:
-        from arcteam.composition import make_backend
-        from arcteam.workflow.identity import RunnerIdentity
-        from arcteam.workflow.stores import build_team_bindings
+    from arcteam.composition import make_backend
+    from arcteam.workflow.identity import RunnerIdentity
+    from arcteam.workflow.stores import build_team_bindings
 
-        identity = RunnerIdentity.load(key_path)
-        team_backend = await make_backend(_nats_url())
+    identity = RunnerIdentity.load(key_path)
+    team_backend = await make_backend(_nats_url())
+    try:
         owners, narrator = await build_team_bindings(
             backend=team_backend,
             operator_signer=_operator_signer(key_path),
             identity=identity,
         )
     except Exception:
-        _logger.warning(
-            "workflow runner: team bindings unavailable — node owners cannot be "
-            "resolved and runs will not be narrated",
-            exc_info=True,
-        )
-        return None, None
+        close = getattr(team_backend, "close", None)
+        if close is not None:
+            await close()
+        raise
     return owners, narrator
 
 
@@ -269,40 +367,25 @@ async def start_runner_host(
     Called from :func:`arcgateway.bootstrap.build_for_embedded` — the agent
     side of the fleet service (COMP-009). Never called from arcui.
 
-    Fail-open (logged): when the arcteam workflow engine cannot be
-    constructed (not yet landed in this checkout, or a genuine construction
-    error), returns ``None`` so the rest of the gateway still boots — a
-    deployment missing SPEC-061's arcteam half is a degraded-but-running
-    gateway, not a crashed one. Returns the started :class:`RunnerHost`
-    otherwise, or the already-active one if this process already has one
-    (REQ-231 — never starts a second).
+    Construction failures leave one degraded host that retries with bounded
+    backoff. The rest of the gateway can boot, while the runner remains
+    unavailable until its required bindings are restored.
     """
-    if RunnerHost.active() is not None:
+    if RunnerHost._active is not None:
         _logger.warning("start_runner_host: a runner is already active in this process")
-        return RunnerHost.active()
+        return RunnerHost._active
 
     factory = runner_factory or _default_runner_factory
-    try:
-        runner = await factory(tier=tier, key_path=_resolve_runner_key_path())
-    except RuntimeError:
-        _logger.warning(
-            "start_runner_host: arcteam workflow engine unavailable; "
-            "workflows will not progress until it is installed",
-            exc_info=True,
-        )
-        return None
-    except Exception as exc:
-        from arcstore.config import ArcStoreConfigurationError
 
-        if not isinstance(exc, ArcStoreConfigurationError):
-            raise
-        _logger.warning(
-            "start_runner_host: ArcStore configuration unavailable; workflows disabled",
-            exc_info=True,
+    async def _build() -> WorkflowRunnerProtocol:
+        return cast(
+            WorkflowRunnerProtocol,
+            await factory(tier=tier, key_path=_resolve_runner_key_path()),
         )
-        return None
-    host = await RunnerHost.start(runner)
-    _publish_to_agent_tools(runner)
+
+    host = await RunnerHost.start(_build)
+    if host.available:
+        _publish_to_agent_tools(host.runner)
     return host
 
 

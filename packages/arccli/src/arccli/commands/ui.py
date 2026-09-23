@@ -12,13 +12,10 @@ arc ui tail       — Connect to a running dashboard and stream events to stdout
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import FrameType
 from typing import Any, Protocol
 
 from arctrust.paths import ui_token_file
@@ -325,8 +322,6 @@ def _start(args: argparse.Namespace) -> None:
             "token and paste it into the dashboard's auth field."
         )
 
-    import asyncio
-
     import uvicorn
 
     if is_loopback and not no_browser:
@@ -348,19 +343,38 @@ def _start(args: argparse.Namespace) -> None:
 
         app.state._extra_startup_hooks.append(_open_browser_on_ready)
 
-    # When a team_root is set, auto-start the messaging infra (NATS JetStream +
-    # agent registration) before serving, so the fleet works out of the box.
-    # The broker is spawned in its own bootstrap loop and reaped by PID after
-    # the (blocking) server returns — loop-independent, so uvicorn's own signal
-    # handling can never orphan it.
-    infra = None
     fleet = None
     if team_root is not None:
-        from arccli.commands._serve import bootstrap_infra
+        async def _register_agents() -> None:
+            import asyncio
 
-        infra = asyncio.run(bootstrap_infra(team_root))
-        if infra is not None:
-            _install_infra_reaper(infra)
+            from arcteam.config import TeamConfig
+
+            from arccli.commands._serve import discover_agent_dirs, register_folder_agents
+
+            agent_dirs = discover_agent_dirs(team_root)
+            if agent_dirs:
+                async def _register_until_ready() -> None:
+                    delay = 0.5
+                    while True:
+                        try:
+                            count = await register_folder_agents(TeamConfig().root, agent_dirs)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            _write(f"  Agent registration unavailable ({type(exc).__name__}).")
+                            await asyncio.sleep(delay)
+                            delay = min(delay * 2, 30.0)
+                        else:
+                            _write(
+                                f"  Registered {count}/{len(agent_dirs)} agent(s) with arcteam."
+                            )
+                            return
+
+                task = asyncio.create_task(_register_until_ready(), name="arccli:register-agents")
+                app.state._extra_background_tasks.append(task)
+
+        app.state._extra_startup_hooks.append(_register_agents)
 
         # MSG4: start every team agent up front so its messaging inbox loop runs
         # and the fleet RESPONDS to DMs/@mentions/channel posts — not just the
@@ -377,8 +391,6 @@ def _start(args: argparse.Namespace) -> None:
             from arcgateway.fleet import set_current_fleet
 
             set_current_fleet(None)
-        if infra is not None:
-            infra.terminate_sync()
 
 
 def _deployment_tier(gateway_config: Any | None) -> str:
@@ -450,26 +462,6 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
 
     app.state._extra_startup_hooks.append(_serve_fleet)
     return fleet
-
-
-def _install_infra_reaper(infra: Any) -> None:
-    """Reap the managed NATS broker on SIGTERM.
-
-    uvicorn's ``.run()`` returns cleanly on SIGINT (Ctrl-C) and normal exit — the
-    ``finally`` reaps the broker there. A raw SIGTERM does not trigger uvicorn's
-    clean shutdown on every platform, so install a process handler that
-    terminates the broker before re-raising the default action; the child broker
-    never outlives the dashboard.
-    """
-    import signal
-
-    def _on_sigterm(signum: int, _frame: FrameType | None) -> None:
-        infra.terminate_sync()
-        signal.signal(signum, signal.SIG_DFL)
-        os.kill(os.getpid(), signum)
-
-    with contextlib.suppress(ValueError):  # not main thread → uvicorn handles it
-        signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 # ---------------------------------------------------------------------------

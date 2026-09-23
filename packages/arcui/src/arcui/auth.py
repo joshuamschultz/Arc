@@ -41,6 +41,7 @@ _DEFAULT_MAX_BOOTSTRAP_MARKERS = int(os.environ.get("ARCUI_MAX_BOOTSTRAP_MARKERS
 _UNAUTHENTICATED_PATHS = frozenset(
     {
         "/api/health",
+        "/api/ready",
         "/api/auth/login",
         # Tells the login screen whether this deployment has any accounts yet,
         # so a fresh install can say "run arc user add" instead of failing.

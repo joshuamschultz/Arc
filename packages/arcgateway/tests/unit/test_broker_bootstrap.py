@@ -23,6 +23,7 @@ loudly instead of spawning a broker.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,11 @@ class _FakeChild:
     """Stand-in for ``ManagedNatsServer`` — records its own teardown."""
 
     terminate_calls: int = 0
+    alive: bool = True
+
+    @property
+    def running(self) -> bool:
+        return self.alive and not self.terminated
 
     def terminate_sync(self) -> None:
         self.terminate_calls += 1
@@ -233,6 +239,147 @@ class TestChildTornDownWithParent:
     """The SDD's named risk: a supervised child that outlives the gateway."""
 
     @pytest.mark.asyncio
+    async def test_cancel_during_child_start_reaps_spawned_process(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import arcteam.nats_server as nats_server
+
+        nats_server = importlib.reload(nats_server)
+
+        probe_entered = asyncio.Event()
+
+        async def _probe(*_args: Any, **_kwargs: Any) -> bool:
+            if not probe_entered.is_set():
+                probe_entered.set()
+                return False
+            await asyncio.Event().wait()
+            return False
+
+        class _Process:
+            returncode = None
+            terminated = False
+
+            def poll(self) -> None:
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def wait(self, *, timeout: float) -> int:
+                return 0
+
+        child = _Process()
+        monkeypatch.setattr(nats_server, "broker_listening", _probe)
+        monkeypatch.setattr(nats_server, "find_nats_server", lambda: "/fake/nats-server")
+        monkeypatch.setattr(nats_server.subprocess, "Popen", lambda *_a, **_kw: child)
+
+        task = asyncio.create_task(
+            nats_server.ensure_nats_server(
+                url="nats://127.0.0.1:4222", store_dir=tmp_path / "jetstream"
+            )
+        )
+        await asyncio.wait_for(probe_entered.wait(), timeout=1.0)
+        await asyncio.sleep(0.06)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert child.terminated
+
+    @pytest.mark.asyncio
+    async def test_readiness_requires_jetstream_account_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import nats
+
+        calls = 0
+
+        class _JetStream:
+            async def account_info(self) -> None:
+                nonlocal calls
+                calls += 1
+                raise RuntimeError("JetStream disabled")
+
+        class _Connection:
+            def jetstream(self) -> _JetStream:
+                return _JetStream()
+
+            async def close(self) -> None:
+                return None
+
+        async def _connect(*_args: Any, **_kwargs: Any) -> _Connection:
+            return _Connection()
+
+        monkeypatch.setattr(nats, "connect", _connect)
+        broker_bootstrap = importlib.import_module(_BROKER_MODULE)
+        handle = broker_bootstrap.BrokerHandle(url="nats://127.0.0.1:4222", available=True)
+        assert not await handle.check_ready()
+        assert not await handle.check_ready()
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_unavailable_at_start_retries_until_broker_can_start(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        recorder = _EnsureRecorder(raises=NatsServerUnavailableError("offline"))
+        _install_ensure(monkeypatch, recorder)
+        broker_bootstrap = importlib.import_module(_BROKER_MODULE)
+        monkeypatch.setattr(broker_bootstrap, "_MONITOR_INTERVAL_SECONDS", 0.01)
+        monkeypatch.setattr(broker_bootstrap, "_RESTART_DELAY_SECONDS", 0.01)
+
+        handle = await broker_bootstrap.start_broker(store_dir=tmp_path)
+        assert not handle.available
+        recorder.raises = None
+        try:
+            for _ in range(100):
+                if handle.available:
+                    break
+                await asyncio.sleep(0.01)
+            assert handle.available
+            assert handle.managed is recorder.children[0]
+        finally:
+            await handle.aclose()
+
+    @pytest.mark.asyncio
+    async def test_dead_owned_child_restarts_and_shutdown_stops_replacement(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The gateway continues to own and reap its replacement child."""
+        recorder = _EnsureRecorder(spawn=True)
+        _install_ensure(monkeypatch, recorder)
+        broker_bootstrap = importlib.import_module(_BROKER_MODULE)
+        monkeypatch.setattr(broker_bootstrap, "_MONITOR_INTERVAL_SECONDS", 0.01)
+        monkeypatch.setattr(broker_bootstrap, "_RESTART_DELAY_SECONDS", 0.01)
+
+        handle = await broker_bootstrap.start_broker(store_dir=tmp_path)
+        recorder.children[0].alive = False
+        for _ in range(100):
+            if len(recorder.children) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(recorder.children) == 2
+        assert recorder.children[0].terminated
+        assert recorder.calls[0]["store_dir"] == recorder.calls[1]["store_dir"]
+        assert handle.managed is recorder.children[1]
+        assert handle.available
+
+        await handle.aclose()
+        assert recorder.children[1].terminated
+
+    @pytest.mark.asyncio
+    async def test_reused_broker_has_no_child_watchdog(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        recorder = _EnsureRecorder(spawn=False)
+        _install_ensure(monkeypatch, recorder)
+        broker_bootstrap = importlib.import_module(_BROKER_MODULE)
+
+        handle = await broker_bootstrap.start_broker(store_dir=tmp_path)
+        assert handle.managed is None
+        assert handle._supervisor is None
+        await handle.aclose()
+        assert recorder.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_aclose_terminates_the_child_it_started(
         self, monkeypatch: pytest.MonkeyPatch, team_root: Path
     ) -> None:
@@ -324,7 +471,7 @@ class TestBrokerAbsentReportsUnavailable:
         assert handle is not None
         assert handle.available is False
         assert handle.reason
-        assert "nats-server not on PATH" in handle.reason
+        assert handle.reason == "NatsServerUnavailableError"
 
     @pytest.mark.asyncio
     async def test_unavailable_broker_is_logged_loudly(
@@ -344,7 +491,24 @@ class TestBrokerAbsentReportsUnavailable:
 
         loud = [r for r in caplog.records if r.levelno >= 40]
         assert loud, "broker unavailable was not logged at ERROR"
-        assert any("nats-server not on PATH" in r.getMessage() for r in loud)
+        assert any("NatsServerUnavailableError" in r.getMessage() for r in loud)
+
+    @pytest.mark.asyncio
+    async def test_unavailable_broker_never_logs_url_credentials(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        recorder = _EnsureRecorder(
+            raises=NatsServerUnavailableError("cannot connect to secret-pass@broker")
+        )
+        _install_ensure(monkeypatch, recorder)
+        broker_bootstrap = importlib.import_module(_BROKER_MODULE)
+        with caplog.at_level("ERROR"):
+            handle = await broker_bootstrap.start_broker(
+                url="nats://user:secret-pass@broker:4222"
+            )
+        assert "secret-pass" not in caplog.text
+        assert "secret-pass" not in str(handle.reason)
+        await handle.aclose()
 
     @pytest.mark.asyncio
     async def test_embedded_startup_survives_and_reports_unavailable(
@@ -365,7 +529,7 @@ class TestBrokerAbsentReportsUnavailable:
         assert bundle.session_router is not None
         assert bundle.broker.available is False
         assert bundle.broker.reason
-        assert "broker unreachable" in bundle.broker.reason
+        assert bundle.broker.reason == "NatsServerUnavailableError"
 
     @pytest.mark.asyncio
     async def test_unavailable_is_distinguishable_from_a_healthy_empty_broker(

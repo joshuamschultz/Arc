@@ -49,6 +49,13 @@ class _FakeRunner:
         self._stop.set()
 
 
+def _factory_for(runner: _FakeRunner) -> Any:
+    async def _build() -> _FakeRunner:
+        return runner
+
+    return _build
+
+
 # ---------------------------------------------------------------------------
 # RunnerHost lifecycle
 # ---------------------------------------------------------------------------
@@ -57,7 +64,7 @@ class _FakeRunner:
 async def test_start_runs_the_runner_and_registers_the_singleton() -> None:
     runner = _FakeRunner()
 
-    host = await RunnerHost.start(runner)
+    host = await RunnerHost.start(_factory_for(runner))
 
     assert RunnerHost.active() is host
     await asyncio.sleep(0.03)
@@ -70,14 +77,45 @@ async def test_start_runs_the_runner_and_registers_the_singleton() -> None:
 
 async def test_second_start_refuses_rather_than_racing_the_frontier() -> None:
     """REQ-231: two runners must never advance the same frontier."""
-    first = await RunnerHost.start(_FakeRunner())
+    first = await RunnerHost.start(_factory_for(_FakeRunner()))
 
     with pytest.raises(RunnerAlreadyActiveError):
-        await RunnerHost.start(_FakeRunner())
+        await RunnerHost.start(_factory_for(_FakeRunner()))
 
     # The first host is still the one and only active runner.
     assert RunnerHost.active() is first
     await first.stop()
+
+
+async def test_concurrent_starts_reserve_singleton_before_factory_await() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    runner = _FakeRunner()
+    builds = 0
+
+    async def _slow_factory() -> _FakeRunner:
+        nonlocal builds
+        builds += 1
+        entered.set()
+        await release.wait()
+        return runner
+
+    first = asyncio.create_task(RunnerHost.start(_slow_factory))
+    await entered.wait()
+    with pytest.raises(RunnerAlreadyActiveError):
+        await RunnerHost.start(_slow_factory)
+    release.set()
+    host = await first
+    assert builds == 1
+    await host.stop()
+    assert runner.closed
+
+
+async def test_immediate_stop_closes_constructed_runner() -> None:
+    runner = _FakeRunner()
+    host = await RunnerHost.start(_factory_for(runner))
+    await host.stop()
+    assert runner.closed
 
 
 async def test_stop_survives_a_runner_that_raises_on_close() -> None:
@@ -87,29 +125,94 @@ async def test_stop_survives_a_runner_that_raises_on_close() -> None:
         async def aclose(self) -> None:
             raise RuntimeError("boom")
 
-    host = await RunnerHost.start(_BrokenRunner())
+    host = await RunnerHost.start(_factory_for(_BrokenRunner()))
     await host.stop()
 
     assert RunnerHost.active() is None
 
 
-async def test_fatal_runner_exit_clears_the_active_slot_and_allows_restart() -> None:
-    """A completed-crashed task must not leave a dead host blocking a restart."""
-
+async def test_gateway_runner_rebuilds_after_fatal_exit_without_second_host() -> None:
     class _ExplodingRunner(_FakeRunner):
         async def run_forever(self) -> None:
             raise RuntimeError("runner crashed")
 
-    dead = await RunnerHost.start(_ExplodingRunner())
-    for _ in range(20):
-        if RunnerHost.active() is None:
-            break
-        await asyncio.sleep(0)
-    assert RunnerHost.active() is None
+    first = _ExplodingRunner()
+    replacement = _FakeRunner()
+    rebuilt = asyncio.Event()
+    calls = 0
 
-    replacement = await RunnerHost.start(_FakeRunner())
-    assert replacement is not dead
-    await replacement.stop()
+    async def _factory(*, tier: str, key_path: Path) -> _FakeRunner:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return first
+        rebuilt.set()
+        return replacement
+
+    host = await start_runner_host(tier="personal", runner_factory=_factory)
+    assert host is not None
+    try:
+        await asyncio.wait_for(rebuilt.wait(), timeout=2)
+        assert RunnerHost.active() is host
+        assert host.runner is replacement
+        assert first.closed
+    finally:
+        await host.stop()
+    assert calls == 2
+    assert replacement.closed
+
+
+async def test_failed_runner_cleanup_fences_replacement(monkeypatch: Any) -> None:
+    import arcgateway.workflow_runner_host as runner_module
+
+    class _PoisonedRunner(_FakeRunner):
+        async def run_forever(self) -> None:
+            raise RuntimeError("crashed")
+
+        async def aclose(self) -> None:
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(runner_module, "_CLOSE_TIMEOUT_SECONDS", 0.01)
+    builds = 0
+
+    async def _build() -> _FakeRunner:
+        nonlocal builds
+        builds += 1
+        return _PoisonedRunner()
+
+    host = await RunnerHost.start(_build)
+    await asyncio.sleep(0.05)
+    assert not host.available
+    assert builds == 1
+    with pytest.raises(RunnerAlreadyActiveError):
+        await RunnerHost.start(_build)
+    await host.stop()
+
+
+async def test_configured_backend_initial_failure_recovers_without_restart() -> None:
+    import arcteam
+
+    recovered = asyncio.Event()
+    runner = _FakeRunner()
+    calls = 0
+
+    async def _factory(*, tier: str, key_path: Path) -> _FakeRunner:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise arcteam.FleetBackendUnavailableError("configured backend unavailable")
+        recovered.set()
+        return runner
+
+    host = await start_runner_host(tier="personal", runner_factory=_factory)
+    assert host is not None
+    assert not host.available
+    try:
+        await asyncio.wait_for(recovered.wait(), timeout=2)
+        assert host.available
+        assert RunnerHost.active() is host
+    finally:
+        await host.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -130,21 +233,28 @@ async def test_start_runner_host_starts_a_real_runner(
     contract is still covered, by the test below that makes construction raise.
     """
     import arcstore.backends
+    import arcteam.composition
     from arcstore.backends import FakeBackend
+    from arcteam.storage import MemoryBackend
     from arctrust import OperatorKey
     from arctrust.paths import default_operator_key_path
 
     arc_dir = tmp_path / "arc"
     store_dir = tmp_path / "store"
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(arc_dir))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(store_dir))
     # ``_default_runner_factory`` imports the production opener locally, so
     # patch the module attribute that local import resolves.  Keep the
     # default runner factory itself intact: this test must still prove the
     # gateway builds arcteam's real engine after the PostgreSQL cutover.
     monkeypatch.setattr(arcstore.backends, "open_backend", lambda: FakeBackend())
+    async def _memory_backend(_url: str) -> MemoryBackend:
+        return MemoryBackend()
+
+    monkeypatch.setattr(arcteam.composition, "make_backend", _memory_backend)
     OperatorKey.load(
-        default_operator_key_path(arc_dir),
+        default_operator_key_path(),
         generate_if_absent=True,
     )
 
@@ -163,8 +273,25 @@ async def test_start_runner_host_still_fails_open_when_construction_raises() -> 
 
     host = await start_runner_host(tier="personal", runner_factory=_explodes)
 
-    assert host is None
+    assert host is not None
+    assert not host.available
     assert RunnerHost.active() is None
+    await host.stop()
+
+
+async def test_missing_optional_engine_has_typed_unavailable_result(monkeypatch: Any) -> None:
+    import arcgateway.workflow_runner_host as module
+
+    real_import = module.importlib.import_module
+
+    def _missing(name: str) -> Any:
+        if name == "arcteam.workflow.runner":
+            raise ImportError("optional engine absent")
+        return real_import(name)
+
+    monkeypatch.setattr(module.importlib, "import_module", _missing)
+    with pytest.raises(module.WorkflowEngineUnavailableError):
+        await module._default_runner_factory(tier="personal", key_path=Path("unused"))
 
 
 async def test_start_runner_host_uses_an_injected_factory() -> None:
@@ -297,11 +424,11 @@ async def test_a_runner_that_cannot_be_built_is_reported_not_swallowed() -> None
         logger.removeHandler(handler)
     records = handler.records
 
-    assert host is None, "an unbuildable runner must not yield a live host"
+    assert host is not None
+    assert not host.available
     assert records, "a gateway with no workflow runner must say so in the log"
-    assert any("engine absent" in r.getMessage() or r.exc_info for r in records), (
-        "the log line must carry the reason, not just note an absence"
-    )
+    assert any("RuntimeError" in r.getMessage() for r in records)
+    await host.stop()
 
 
 async def test_a_started_runner_reaches_the_agent_tool_surface() -> None:

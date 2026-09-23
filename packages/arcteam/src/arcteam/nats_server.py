@@ -16,10 +16,8 @@ Behaviour:
     actionable install hint. The caller prints the message, never a traceback.
 
 The child is a plain :class:`subprocess.Popen` (not an asyncio subprocess) so
-teardown is loop-independent: the caller typically starts the broker inside one
-``asyncio.run`` and then runs a blocking server (uvicorn) in another loop, and
-``terminate_sync`` must reap the child without depending on the bootstrap loop
-or on the asyncio child-watcher that owned it. The store dir is persistent so
+teardown is loop-independent and ``terminate_sync`` can reap it even during
+interpreter exit. The store dir is persistent so
 registrations survive a restart and are visible to separate one-shot ``arc
 team`` invocations while the broker is up.
 """
@@ -116,6 +114,11 @@ class ManagedNatsServer:
     store_dir: Path
     _atexit_armed: bool = field(default=False, repr=False)
 
+    @property
+    def running(self) -> bool:
+        """Whether the child owned by this handle is still alive."""
+        return self.process.poll() is None
+
     def arm_atexit_reaper(self) -> None:
         """Register a last-resort reaper at interpreter exit.
 
@@ -129,6 +132,9 @@ class ManagedNatsServer:
 
     def terminate_sync(self) -> None:
         """Terminate the managed broker and reap it (idempotent, loop-free)."""
+        if self._atexit_armed:
+            atexit.unregister(self.terminate_sync)
+            self._atexit_armed = False
         if self.process.poll() is not None:
             return
         self.process.terminate()
@@ -172,25 +178,25 @@ async def ensure_nats_server(
         stderr=subprocess.DEVNULL,
     )
 
-    deadline = asyncio.get_running_loop().time() + startup_timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if process.poll() is not None:
-            raise NatsServerUnavailableError(
-                f"nats-server exited with code {process.returncode} while starting "
-                f"on {url} — is the port already in use by a non-JetStream broker?"
-            )
-        if await broker_listening(host, port, timeout=0.2):
-            managed = ManagedNatsServer(process=process, url=url, store_dir=store_dir)
-            managed.arm_atexit_reaper()
-            return managed
-        await asyncio.sleep(0.05)
-
-    process.terminate()
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        process.wait(timeout=2.0)
-    raise NatsServerUnavailableError(
-        f"nats-server did not accept connections on {url} within {startup_timeout}s"
-    )
+    managed = ManagedNatsServer(process=process, url=url, store_dir=store_dir)
+    try:
+        deadline = asyncio.get_running_loop().time() + startup_timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if process.poll() is not None:
+                raise NatsServerUnavailableError(
+                    f"nats-server exited with code {process.returncode} while starting "
+                    f"on {url} — is the port already in use by a non-JetStream broker?"
+                )
+            if await broker_listening(host, port, timeout=0.2):
+                managed.arm_atexit_reaper()
+                return managed
+            await asyncio.sleep(0.05)
+        raise NatsServerUnavailableError(
+            f"nats-server did not accept connections on {url} within {startup_timeout}s"
+        )
+    except BaseException:
+        managed.terminate_sync()
+        raise
 
 
 __all__ = [

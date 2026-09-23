@@ -12,9 +12,13 @@ NOT include the auth fragment.
 from __future__ import annotations
 
 import argparse
+import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from arcstore.backends.memory import FakeBackend
+from starlette.testclient import TestClient
 
 from arccli.commands.ui import (
     BOOTSTRAP_HASH_KEY,
@@ -22,6 +26,73 @@ from arccli.commands.ui import (
     _print_browser_open_fallback,
     _start,
 )
+
+
+def test_cli_lifespan_retries_agent_registration_after_broker_outage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import arcui
+    from arcgateway import broker_bootstrap
+
+    from arccli.commands import _serve
+
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    agent_dir = team_root / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "arcagent.toml").write_text("", encoding="utf-8")
+    real_create_app = arcui.create_app
+    monkeypatch.setattr(
+        arcui,
+        "create_app",
+        lambda **kwargs: real_create_app(**kwargs, arcstore_backend=FakeBackend()),
+    )
+    calls = 0
+
+    async def _register(_root: Path, _dirs: list[Path]) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("broker offline")
+        return 1
+
+    class _Broker:
+        available = True
+
+        async def check_ready(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    async def _start_broker() -> _Broker:
+        return _Broker()
+
+    async def _no_messaging() -> tuple[None, None, None]:
+        return None, None, None
+
+    async def _no_fleet(*_args: object, **_kwargs: object) -> int:
+        return 0
+
+    monkeypatch.setattr(_serve, "register_folder_agents", _register)
+    monkeypatch.setattr(_serve, "serve_fleet_agents", _no_fleet)
+    monkeypatch.setattr(broker_bootstrap, "start_broker", _start_broker)
+    monkeypatch.setattr("arcui.messaging.build_messaging_service", _no_messaging)
+
+    class _SpyServer:
+        def __init__(self, config: object) -> None:
+            self.app = config.app
+
+        def run(self) -> None:
+            with TestClient(self.app):
+                for _ in range(20):
+                    if calls >= 2:
+                        break
+                    time.sleep(0.05)
+
+    with patch("uvicorn.Server", _SpyServer):
+        _start(_make_args(team_root=str(team_root), no_chat=True, no_browser=True))
+    assert calls >= 2
 
 # ---------------------------------------------------------------------------
 # C-2: browser-open fallback never echoes URL+token together

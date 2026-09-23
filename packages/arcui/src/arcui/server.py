@@ -80,7 +80,7 @@ from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
-from arcui.team_stream import TeamBusObserver, TeamStreamHub
+from arcui.team_stream import TeamStreamHub
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,43 @@ async def _health(request: Request) -> JSONResponse:
     HTML again. Comparing this against its own script name is how it finds out.
     """
     return JSONResponse({"status": "ok", "bundle": getattr(request.app.state, "bundle_name", "")})
+
+
+async def _ready(request: Request) -> JSONResponse:
+    """Report required capability readiness without exposing deployment details."""
+    state = request.app.state
+    store_ready = bool(getattr(state, "store_started", False))
+    backend = getattr(state, "arcstore_backend", None)
+    if store_ready and backend is not None:
+        try:
+            await asyncio.wait_for(backend.get_cursor("arcui-readiness"), timeout=1.0)
+        except Exception:  # reason: any failed safe store read means writes cannot be trusted
+            store_ready = False
+    components = {"store": "ready" if store_ready else "unavailable"}
+    fleet_ready = True
+    if getattr(state, "requires_fleet", False):
+        broker = getattr(state, "broker", None)
+        broker_ready = broker is not None and await broker.check_ready()
+        messaging_backend = getattr(state, "messaging_backend", None)
+        messaging_ready = getattr(state, "messaging_service", None) is not None and (
+            messaging_backend is None or bool(getattr(messaging_backend, "available", False))
+        )
+        fleet_ready = broker_ready and messaging_ready
+        components["fleet"] = "ready" if fleet_ready else "unavailable"
+    workflow_ready = True
+    if getattr(state, "requires_workflow", False):
+        host = getattr(state, "workflow_runner_host", None)
+        workflow_ready = bool(
+            host is not None
+            and host.available
+            and getattr(state, "workflow_control_plane", None) is not None
+        )
+        components["workflow"] = "ready" if workflow_ready else "unavailable"
+    ready = store_ready and fleet_ready and workflow_ready
+    return JSONResponse(
+        {"status": "ready" if ready else "degraded", "components": components},
+        status_code=200 if ready else 503,
+    )
 
 
 async def _agent_info(request: Request) -> JSONResponse:
@@ -266,6 +303,7 @@ def create_app(
         Route("/", _index),
         Route("/sw.js", _service_worker),
         Route("/api/health", _health),
+        Route("/api/ready", _ready),
         Route("/api/info", _agent_info),
         # SPEC-057 REQ-043: sign in as a person, so approvals name one.
         *[Route(path, handler, methods=methods) for path, handler, methods in _AUTH_ROUTES],
@@ -385,10 +423,33 @@ def create_app(
             await starlette_app.state.observe.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: arcstore Observe failed to start; reads will be empty")
+        store_retry_task: asyncio.Task[None] | None = None
         try:
-            await task_store_backend.start()
-        except Exception:  # reason: fail-open — dashboard still serves
-            logger.exception("lifespan: task_store backend failed to start; writes will fail")
+            await asyncio.wait_for(task_store_backend.start(), timeout=10.0)
+            starlette_app.state.store_started = True
+        except Exception as exc:
+            logger.warning("lifespan: store start failed (%s)", type(exc).__name__)
+
+            async def _retry_store_start() -> None:
+                delay = 0.5
+                while True:
+                    await asyncio.sleep(delay)
+                    try:
+                        await asyncio.wait_for(task_store_backend.start(), timeout=10.0)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as retry_exc:
+                        logger.warning(
+                            "lifespan: store retry failed (%s)", type(retry_exc).__name__
+                        )
+                        delay = min(delay * 2, 30.0)
+                        continue
+                    starlette_app.state.store_started = True
+                    return
+
+            store_retry_task = asyncio.create_task(
+                _retry_store_start(), name="arcui:store-recovery"
+            )
         inbox_data_dir = data_dir if data_dir is not None else resolve_data_dir()
         mail_outbox = (
             PostgresMailOutbox(task_store_backend)
@@ -419,6 +480,7 @@ def create_app(
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
         # tools) or the executor (introspection) read them from there.
         embedded_gateway = None
+        standalone_broker = None
         if gateway_config is not None and team_root is not None:
             from arcgateway.bootstrap import build_for_embedded
 
@@ -428,6 +490,7 @@ def create_app(
                 attachment_scanner_factory=attachment_scanner_factory,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
+            starlette_app.state.workflow_runner_host = embedded_gateway.workflow_runner_host
             starlette_app.state.executor = embedded_gateway.executor
             starlette_app.state.session_router = embedded_gateway.session_router
             if approval_operator_target is not None:
@@ -463,93 +526,45 @@ def create_app(
             # exist, the engine runs, and every screen answers 503 — the shape
             # this feature has produced repeatedly, one seam at a time.
             _attach_workflow_plane(starlette_app, embedded_gateway)
-        # COMP-004 / REQ-090: when the deployment has a team but no service was
-        # injected, construct the arcteam MessagingService over the same managed
-        # NATS the bootstrap started. Without this the handle team_chat reads is
-        # never set on a live deployment and channels silently read empty. Build
-        # failures (broker down / no operator key) leave it None so the routes
-        # surface an explicit service-unavailable error, never a fabricated [].
-        resolved_service = messaging_service
-        resolved_registry: Any | None = None
-        built_backend: Any | None = None
-        if resolved_service is None and team_root is not None:
-            from arcui.messaging import build_messaging_service
+        elif team_root is not None:
+            from arcgateway.broker_bootstrap import start_broker
 
-            try:
-                (
-                    resolved_service,
-                    resolved_registry,
-                    built_backend,
-                ) = await build_messaging_service()
-            except Exception:  # reason: fail-open — dashboard must still serve
-                logger.exception("lifespan: embedded messaging construction failed")
-                resolved_service, resolved_registry, built_backend = None, None, None
-        starlette_app.state.messaging_service = resolved_service
-        starlette_app.state.messaging_registry = resolved_registry
-        if (
-            resolved_service is not None
-            and resolved_registry is not None
-            and starlette_app.state.inbox_service is not None
-        ):
-            try:
-                from arcui.messaging import build_agent_mail_service
+            standalone_broker = await start_broker()
+            starlette_app.state.broker = standalone_broker
+        from arcui.messaging_lifecycle import MessagingLifecycle
 
-                starlette_app.state.agent_mail = build_agent_mail_service(
-                    transport=resolved_service,
-                    store=starlette_app.state.inbox_service,
-                    outbox=mail_outbox,
-                    registry=resolved_registry,
-                )
-            except ImportError:
-                starlette_app.state.agent_mail = None
-        else:
-            starlette_app.state.agent_mail = None
-        mail_worker_task: asyncio.Task[None] | None = None
-        if starlette_app.state.agent_mail is not None and resolved_service is not None:
-            from arcteam.mail import MailDeliveryWorker
-
-            worker = MailDeliveryWorker(
-                mail_outbox, resolved_service, worker_id="arcui-agent-mail"
-            )
-
-            async def _drain_mail() -> None:
-                while True:
-                    await worker.deliver_once()
-                    await asyncio.sleep(0.5)
-
-            mail_worker_task = asyncio.create_task(_drain_mail(), name="arcui-agent-mail")
-        # COMP-005: channel-management routes resolve agent refs to DIDs
-        # through this registry. None when no service is wired — the mutation
-        # routes then report the same explicit unavailable error as the reads.
-        starlette_app.state.messaging_registry = resolved_registry
-        # REQ-061: the ``/ws/team`` forwarder must be built HERE — the embedded
-        # MessagingService only exists inside the lifespan. An operator group
-        # post routes through it; the operator self-registers and auto-joins the
-        # channel, then the message is signed and sent. Only build when the
-        # deployment did not inject its own forwarder (tests) and a service is
-        # live; otherwise the route degrades to a ``forward_unavailable`` frame.
-        if team_post_forwarder is None and resolved_service is not None:
-            from arcui.messaging import build_team_post_forwarder
-
-            starlette_app.state.team_post_forwarder = build_team_post_forwarder(
-                service=resolved_service,
-                registry=resolved_registry,
-            )
-        # SPEC-031 F1: subscribe read-only to the arcteam bus and feed the
-        # team-flow stream. Fail-open — a bus problem must never block the
-        # dashboard; the stream just stays empty.
-        observer_task: asyncio.Task[None] | None = None
-        if resolved_service is not None:
-            observer = TeamBusObserver(resolved_service, starlette_app.state.team_stream)
-            observer_task = asyncio.create_task(
-                observer.run(interval=team_stream_interval),
-                name="arcui:team-bus-observer",
-            )
+        messaging_lifecycle = MessagingLifecycle(
+            starlette_app,
+            required=team_root is not None,
+            injected_service=messaging_service,
+            injected_forwarder=team_post_forwarder,
+            outbox=mail_outbox,
+            observer_interval=team_stream_interval,
+        )
+        await messaging_lifecycle.start()
         # Browser-open callback (registered by `arc ui start` on
         # loopback) hooks the same lifespan via app.router.lifespan
         # extension below.
         for hook in getattr(starlette_app.state, "_extra_startup_hooks", []):
             await hook()
+        workflow_refresh_task: asyncio.Task[None] | None = None
+        workflow_host = (
+            embedded_gateway.workflow_runner_host if embedded_gateway is not None else None
+        )
+        if workflow_host is not None:
+            async def _refresh_workflow_plane() -> None:
+                attached_runner = workflow_host.runner if workflow_host.available else None
+                while True:
+                    await asyncio.sleep(0.5)
+                    current_runner = workflow_host.runner if workflow_host.available else None
+                    if current_runner is attached_runner:
+                        continue
+                    _attach_workflow_plane(starlette_app, embedded_gateway)
+                    attached_runner = current_runner
+
+            workflow_refresh_task = asyncio.create_task(
+                _refresh_workflow_plane(), name="arcui:workflow-plane-refresh"
+            )
         if all(
             hasattr(task_store_backend, name)
             for name in ("claim_outbox", "ack_outbox", "nack_outbox")
@@ -564,31 +579,21 @@ def create_app(
         try:
             yield
         finally:
-            if mail_worker_task is not None:
-                mail_worker_task.cancel()
+            for task in starlette_app.state._extra_background_tasks:
+                task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    await mail_worker_task
+                    await task
+            if store_retry_task is not None:
+                store_retry_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await store_retry_task
+            if workflow_refresh_task is not None:
+                workflow_refresh_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await workflow_refresh_task
+            await messaging_lifecycle.aclose()
             if approval_dispatcher is not None:
                 await approval_dispatcher.stop()
-            if observer_task is not None:
-                observer_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await observer_task
-            # Close only a backend this lifespan opened — an injected service
-            # (tests) owns its own backend lifecycle.
-            if built_backend is not None:
-                close = getattr(built_backend, "close", None)
-                if close is not None:
-                    try:
-                        await close()
-                    except Exception as exc:  # reason: fail-open — continue shutdown
-                        # A NATS connection already tearing down raises
-                        # ConnectionClosedError from drain() on every normal
-                        # restart — expected, not traceback-worthy.
-                        if type(exc).__name__ == "ConnectionClosedError":
-                            logger.debug("lifespan: messaging backend already closed")
-                        else:
-                            logger.exception("lifespan: error closing embedded messaging backend")
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -620,6 +625,8 @@ def create_app(
                     await embedded_gateway.broker.aclose()
                 except Exception:  # reason: fail-open — continue shutdown
                     logger.exception("lifespan: error stopping the managed broker")
+            if standalone_broker is not None:
+                await standalone_broker.aclose()
 
     # Last, so it catches only what no real route claimed: the browser router's
     # own paths, which must load directly and not just via in-app navigation.
@@ -634,7 +641,13 @@ def create_app(
     app.state.index_html = cached_index_html
     app.state.sw_js = cached_sw_js
     app.state.bundle_name = _bundle_name
+    app.state.requires_fleet = team_root is not None
+    app.state.requires_workflow = team_root is not None and gateway_config is not None
+    app.state.workflow_runner_host = None
+    app.state.store_started = False
+    app.state.broker = None
     app.state._extra_startup_hooks = []
+    app.state._extra_background_tasks = []
     app.state.audit = UIAuditLogger()
     # Operator mutations (task/approval/cancellation/file writes) also append to a
     # durable, operator-signed WORM chain in the shared worm dir the Observe ingest
@@ -684,6 +697,7 @@ def create_app(
     # a supported state — the routes degrade to empty payloads so the
     # Team Chat tab never throws when the deployment lacks a team_root.
     app.state.messaging_service = messaging_service
+    app.state.messaging_backend = None
     # COMP-005: registry for channel-membership ref→DID resolution. Set by the
     # lifespan when it builds the embedded service; None until then (and for
     # read-only test apps that inject only a service).
@@ -770,8 +784,10 @@ def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
     the opposite case — a live runner and a dashboard that cannot see it.
     """
     host = getattr(embedded_gateway, "workflow_runner_host", None)
-    runner = getattr(host, "_runner", None) if host is not None else None
+    runner = host.runner if host is not None and host.available else None
     if runner is None:
+        app.state.workflow_control_plane = None
+        app.state.gate_control_plane = None
         logger.info("no workflow runner hosted here; workflow screens stay unavailable")
         return
     try:

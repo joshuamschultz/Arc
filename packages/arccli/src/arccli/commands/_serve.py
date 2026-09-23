@@ -3,8 +3,7 @@
 Brings the messaging infra up out of the box so an operator never hand-starts a
 broker:
 
-  1. Start a managed NATS JetStream server (or reuse one already listening).
-  2. Discover every agent directory under the team root and register it with
+  1. Discover every agent directory under the team root and register it with
      arcteam so it can message and shows a DID in the registry.
 
 Registration is best-effort — a broker or operator-custody problem degrades to
@@ -24,13 +23,6 @@ from typing import Any
 from arccli.commands._shared import write as _write
 
 _logger = logging.getLogger("arccli.serve")
-
-
-def nats_url() -> str:
-    """Resolve the broker URL through arcteam's single source of truth."""
-    from arcteam.config import default_nats_url
-
-    return default_nats_url()
 
 
 def discover_agent_dirs(team_root: Path) -> list[Path]:
@@ -98,51 +90,6 @@ async def register_folder_agents(root: Path, agent_dirs: list[Path]) -> int:
     finally:
         await _shutdown(backend)
     return present
-
-
-async def bootstrap_infra(team_root: Path) -> Any:
-    """Start (or reuse) NATS and auto-register the folder's agents.
-
-    Returns the :class:`~arcteam.nats_server.ManagedNatsServer` handle this call
-    started (the caller must reap it on shutdown), or ``None`` when a broker was
-    reused or none could be started. Prints one status line describing what came
-    up. Fail-open throughout — the dashboard still serves the folder-scanned
-    roster even if messaging infra is unavailable.
-
-    Delegates to :func:`arcgateway.broker_bootstrap.start_broker` rather than
-    calling ``ensure_nats_server`` directly: COMP-008 exists so every launch
-    path shares one broker lifecycle, and a second hand-rolled one here is the
-    reaping bug that only shows up on whichever path nobody fixed.
-    """
-    from arcgateway.broker_bootstrap import start_broker
-    from arcteam.config import TeamConfig
-
-    agent_dirs = discover_agent_dirs(team_root)
-
-    broker = await start_broker()
-    url = broker.url
-    if not broker.available:
-        _write(f"  Messaging: {broker.reason}")
-        _write(
-            "  Messaging: agents still appear in the roster (folder scan); "
-            "team status/send are unavailable until a broker is running."
-        )
-        return None
-
-    handle = broker.managed
-    if handle is None:
-        _write(f"  Messaging: reusing NATS broker already running at {url}")
-    else:
-        _write(f"  Messaging: started NATS JetStream at {url} (pid {handle.process.pid})")
-
-    if agent_dirs:
-        try:
-            count = await register_folder_agents(TeamConfig().root, agent_dirs)
-            _write(f"  Registered {count}/{len(agent_dirs)} agent(s) with arcteam.")
-        except Exception as exc:  # reason: fail-open — roster is folder-scanned
-            _write(f"  Warning: agent auto-registration degraded: {exc}")
-
-    return handle
 
 
 def _did_getter(agent: Any) -> Callable[[], str]:
@@ -294,10 +241,8 @@ async def serve_fleet_agents(
 
 
 __all__ = [
-    "bootstrap_infra",
     "discover_agent_dirs",
     "install_fleet_shared_knowledge",
-    "nats_url",
     "register_folder_agents",
     "serve_fleet_agents",
 ]
