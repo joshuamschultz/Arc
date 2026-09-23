@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import logging
 import math
 import time
@@ -20,7 +21,14 @@ from pydantic.dataclasses import dataclass as validated_dataclass
 from arcllm.exceptions import QueueFullError, QueueStateUnavailableError, QueueTimeoutError
 
 QueueState = Literal[
-    "queued", "running", "completed", "failed", "cancelled", "timed_out", "outcome_unknown"
+    "queued",
+    "running",
+    "cancel_requested",
+    "completed",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "outcome_unknown",
 ]
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "timed_out", "outcome_unknown"})
 _logger = logging.getLogger(__name__)
@@ -78,6 +86,40 @@ class CallJob:
     attempt_id: str | None = None
 
 
+@validated_dataclass(config=ConfigDict(strict=True), frozen=True, slots=True)
+class QueueReadScope:
+    """Tenant and optional owner filters already authorized by an outer caller."""
+
+    tenant_id: str = Field(min_length=1, max_length=256)
+    owner_id: str | None = Field(default=None, min_length=1, max_length=256)
+    state: QueueState | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QueueMetadataPage:
+    """Payload-free scoped page with opaque continuation."""
+
+    jobs: tuple[CallJob, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class QueueControlSnapshot:
+    """Versioned admission settings; live counts remain in snapshot()."""
+
+    revision: int
+    paused: bool
+    limits: QueueLimits
+
+
+@dataclass(frozen=True, slots=True)
+class QueueCancellation:
+    """A request is distinct from confirmed terminal cancellation."""
+
+    status: Literal["requested", "confirmed", "conflict", "unavailable"]
+    job: CallJob | None = None
+
+
 class CallQueueStore(Protocol):
     """Atomic, durable state seam; implementations must fence by version."""
 
@@ -100,6 +142,9 @@ class CallQueueStore(Protocol):
         self, control: dict[str, Any], expected_revision: int
     ) -> int | None: ...
     async def load_control(self) -> dict[str, Any] | None: ...
+    async def metadata_page(
+        self, scope: QueueReadScope, *, cursor: str | None, limit: int
+    ) -> QueueMetadataPage: ...
 
 
 class MemoryQueueStore:
@@ -109,6 +154,7 @@ class MemoryQueueStore:
         self._jobs: dict[str, CallJob] = {}
         self._control: dict[str, Any] | None = None
         self._history_limit = history_limit
+        self._page_cursors: dict[str, tuple[QueueReadScope, tuple[float, str]]] = {}
 
     async def create(self, job: CallJob) -> None:
         """Create one unique call."""
@@ -146,6 +192,7 @@ class MemoryQueueStore:
             or old.version != version
             or old.owner_id != owner_id
             or old.state in _TERMINAL
+            or (old.state == "cancel_requested" and state == "running")
         ):
             return None
         new = replace(
@@ -182,6 +229,48 @@ class MemoryQueueStore:
     async def load_control(self) -> dict[str, Any] | None:
         """Read ephemeral controls."""
         return dict(self._control) if self._control is not None else None
+
+    async def metadata_page(
+        self, scope: QueueReadScope, *, cursor: str | None, limit: int
+    ) -> QueueMetadataPage:
+        """Page only records visible within the supplied scope."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid queue page")
+        before = None
+        if cursor is not None:
+            saved = self._page_cursors.get(cursor)
+            if saved is None or saved[0] != scope:
+                raise ValueError("invalid queue cursor")
+            before = saved[1]
+        rows = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if job.tenant_id == scope.tenant_id
+                and (scope.owner_id is None or job.owner_id == scope.owner_id)
+                and (scope.state is None or job.state == scope.state)
+            ),
+            key=lambda job: (job.updated_at, hashlib.sha256(job.call_id.encode()).hexdigest()),
+            reverse=True,
+        )
+        if before is not None:
+            rows = [
+                job
+                for job in rows
+                if (job.updated_at, hashlib.sha256(job.call_id.encode()).hexdigest()) < before
+            ]
+        matched = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit and matched:
+            next_cursor = uuid.uuid4().hex
+            last = matched[-1]
+            self._page_cursors[next_cursor] = (
+                scope,
+                (last.updated_at, hashlib.sha256(last.call_id.encode()).hexdigest()),
+            )
+            if len(self._page_cursors) > 1000:
+                self._page_cursors.pop(next(iter(self._page_cursors)))
+        return QueueMetadataPage(tuple(matched), next_cursor)
 
 
 @dataclass(slots=True)
@@ -283,17 +372,27 @@ class CallQueueCoordinator:
         async with self._lifecycle_lock:
             if self._live:
                 raise RuntimeError("cannot initialize queue with live calls")
-            control = await self.store.load_control()
-            if control is not None:
-                if type(control.get("paused")) is not bool:
-                    raise ValueError("invalid queue pause control")
-                revision = control.get("revision")
-                if type(revision) is not int or revision < 1:
-                    raise ValueError("invalid queue control revision")
-                self.limits = QueueLimits(**control["limits"])
-                self._paused = control["paused"]
-                self._control_revision = revision
+            await self._refresh_control()
             self._initialized = True
+
+    async def _refresh_control(self) -> None:
+        control = await self.store.load_control()
+        if control is None:
+            return
+        if type(control.get("paused")) is not bool:
+            raise ValueError("invalid queue pause control")
+        revision = control.get("revision")
+        if type(revision) is not int or revision < 1:
+            raise ValueError("invalid queue control revision")
+        if revision < self._control_revision:
+            raise QueueStateUnavailableError("queue control revision regressed")
+        if revision == self._control_revision:
+            return
+        self.limits = QueueLimits(**control["limits"])
+        self._paused = control["paused"]
+        self._control_revision = revision
+        for pool in self._pools.values():
+            pool.grant_next(0 if self._paused else self.limits.max_concurrent)
 
     async def register(self, context: CallQueueContext) -> CallJob:
         """Accept one caller only after its record is durable."""
@@ -332,6 +431,14 @@ class CallQueueCoordinator:
         version = self._owned_versions.get(job.call_id)
         if version is None:
             raise RuntimeError("queue owner lost")
+        if state in _TERMINAL:
+            current = await self.store.get(job.call_id)
+            if (
+                current is not None
+                and current.state == "cancel_requested"
+                and current.owner_id == job.owner_id
+            ):
+                version = current.version
         changed = await self.store.compare_and_set(
             job.call_id,
             version,
@@ -384,6 +491,15 @@ class CallQueueCoordinator:
         except QueueTimeoutError:
             await self._finish_after_error(job, "timed_out")
             raise
+        except GeneratorExit:
+            current = await self.store.get(job.call_id)
+            state: QueueState = (
+                "cancelled"
+                if current is not None and current.state == "cancel_requested"
+                else "failed"
+            )
+            await self._finish_after_error(job, state)
+            raise
         except BaseException:
             await self._finish_after_error(job, "failed")
             raise
@@ -430,6 +546,7 @@ class CallQueueCoordinator:
     @asynccontextmanager
     async def attempt(self, provider_scope: str, job: CallJob) -> AsyncIterator[str]:
         """Admit one actual wire attempt in its provider capacity group."""
+        await self._refresh_control()
         pool = self._pools.setdefault(provider_scope, _ProviderPool())
         if pool.waiting >= self.limits.max_queued and (
             pool.active >= self.limits.max_concurrent or self._paused
@@ -439,10 +556,26 @@ class CallQueueCoordinator:
         pool.enqueue(waiter)
         pool.grant_next(0 if self._paused else self.limits.max_concurrent)
         try:
-            try:
-                await asyncio.wait_for(waiter.ready, self.limits.wait_timeout)
-            except TimeoutError:
-                raise QueueTimeoutError(self.limits.wait_timeout) from None
+            admission_deadline = time.monotonic() + self.limits.wait_timeout
+            while True:
+                await self._refresh_control()
+                if waiter.granted and self._paused:
+                    pool.active -= 1
+                    waiter.granted = False
+                    waiter = _Waiter(job.tenant_id, asyncio.get_running_loop().create_future())
+                    pool.enqueue(waiter)
+                if waiter.granted:
+                    await self._refresh_control()
+                    if not self._paused:
+                        break
+                    continue
+                remaining = admission_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise QueueTimeoutError(self.limits.wait_timeout)
+                try:
+                    await asyncio.wait_for(asyncio.shield(waiter.ready), min(0.1, remaining))
+                except TimeoutError:
+                    continue
             attempt_id = uuid.uuid4().hex
             await self._transition(
                 job, "running", provider_scope=provider_scope, attempt_id=attempt_id
@@ -464,6 +597,20 @@ class CallQueueCoordinator:
         """Return a bounded page of payload-free jobs."""
         return await self.store.list_jobs(tenant_id=tenant_id, offset=offset, limit=limit)
 
+    async def metadata_page(
+        self, scope: QueueReadScope, *, cursor: str | None = None, limit: int = 100
+    ) -> QueueMetadataPage:
+        """List metadata in a caller-authorized scope; this method grants no authority."""
+        if not self._initialized:
+            raise QueueStateUnavailableError("durable queue not initialized")
+        return await self.store.metadata_page(scope, cursor=cursor, limit=limit)
+
+    def control(self) -> QueueControlSnapshot:
+        """Return the locally effective versioned controller state."""
+        if not self._initialized:
+            raise QueueStateUnavailableError("durable queue not initialized")
+        return QueueControlSnapshot(self._control_revision, self._paused, self.limits)
+
     def snapshot(self) -> dict[str, Any]:
         """Return effective controller limits and live provider admission counts."""
         return {
@@ -471,47 +618,73 @@ class CallQueueCoordinator:
             "max_queued": self.limits.max_queued,
             "wait_timeout_s": self.limits.wait_timeout,
             "paused": self._paused,
+            "revision": self._control_revision,
             "active": sum(pool.active for pool in self._pools.values()),
             "waiting": sum(pool.waiting for pool in self._pools.values()),
         }
 
-    async def cancel(self, call_id: str, *, owner_id: str) -> bool:
-        """Fence and cancel a live call; outer surface authorizes owner scope."""
+    async def cancel(
+        self, call_id: str, *, owner_id: str, expected_version: int
+    ) -> QueueCancellation:
+        """Fence an owner-verified call; only terminal state confirms cancellation."""
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("invalid queue job version")
         job = await self.store.get(call_id)
-        if job is None or job.owner_id != owner_id or job.state in _TERMINAL:
-            return False
+        if job is None or job.owner_id != owner_id:
+            return QueueCancellation("unavailable")
+        if job.version != expected_version or job.state in _TERMINAL:
+            return QueueCancellation("conflict", job)
+        target: QueueState = "cancelled" if job.state == "queued" else "cancel_requested"
+        if job.state == "cancel_requested":
+            return QueueCancellation("requested", job)
+        changed = await self.store.compare_and_set(call_id, job.version, target, owner_id)
+        if changed is None:
+            return QueueCancellation("conflict", await self.store.get(call_id))
+        if call_id in self._owned_versions:
+            self._owned_versions[call_id] = changed.version
         task = self._provider_tasks.get(call_id)
-        if task is not None and not task.done():
+        if task is None and target == "cancelled":
+            task = self._live.get(call_id)
+        if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
-            return True
-        stream = self._streams.get(call_id)
-        close = getattr(stream, "aclose", None)
-        if close is None:
-            return False
-        await close()
-        changed = await self.store.compare_and_set(call_id, job.version, "cancelled", owner_id)
-        return changed is not None
+        elif target == "cancel_requested":
+            stream = self._streams.get(call_id)
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
+        current = await self.store.get(call_id)
+        if current is not None and current.state == "cancelled":
+            return QueueCancellation("confirmed", current)
+        return QueueCancellation("requested", current or changed)
 
-    async def pause(self) -> None:
+    async def pause(self, *, expected_revision: int) -> QueueControlSnapshot:
         """Stop new provider attempts and persist controller state."""
         async with self._control_lock:
-            await self._set_control(True, self.limits)
+            return await self._set_control(True, self.limits, expected_revision)
 
-    async def resume(self) -> None:
+    async def resume(self, *, expected_revision: int) -> QueueControlSnapshot:
         """Resume admission and persist controller state."""
         async with self._control_lock:
-            await self._set_control(False, self.limits)
+            return await self._set_control(False, self.limits, expected_revision)
 
-    async def tune(self, limits: QueueLimits) -> None:
+    async def configure(
+        self, limits: QueueLimits, *, expected_revision: int
+    ) -> QueueControlSnapshot:
         """Persist and apply new bounded limits."""
         async with self._control_lock:
-            await self._set_control(self._paused, limits)
+            return await self._set_control(self._paused, limits, expected_revision)
 
-    async def _set_control(self, paused: bool, limits: QueueLimits) -> None:
+    async def _set_control(
+        self, paused: bool, limits: QueueLimits, expected_revision: int
+    ) -> QueueControlSnapshot:
         if not self._initialized:
             raise QueueStateUnavailableError("durable queue not initialized")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("invalid queue control revision")
+        if expected_revision != self._control_revision:
+            raise QueueStateUnavailableError("stale queue controller revision")
         revision = await self.store.save_control(
-            {"paused": paused, "limits": asdict(limits)}, self._control_revision
+            {"paused": paused, "limits": asdict(limits)}, expected_revision
         )
         if revision is None:
             raise QueueStateUnavailableError("stale queue controller revision")
@@ -520,6 +693,7 @@ class CallQueueCoordinator:
         self.limits = limits
         for pool in self._pools.values():
             pool.grant_next(0 if self._paused else self.limits.max_concurrent)
+        return self.control()
 
     async def recover(self) -> int:
         """Truthfully close orphan states; never issue a provider request."""
@@ -536,7 +710,7 @@ class CallQueueCoordinator:
             if not page:
                 return count
             for job in page:
-                if job.state not in {"queued", "running"}:
+                if job.state not in {"queued", "running", "cancel_requested"}:
                     continue
                 state: QueueState = "failed" if job.state == "queued" else "outcome_unknown"
                 if await self.store.compare_and_set(job.call_id, job.version, state, job.owner_id):

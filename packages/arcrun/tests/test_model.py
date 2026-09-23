@@ -69,3 +69,10 @@ def test_queue_context_facade_restores_previous_task_scope() -> None:
             assert coordinator.current_context is second
         assert coordinator.current_context is first
     assert coordinator.current_context is None
+
+
+def test_queue_control_contracts_are_public_at_both_roots() -> None:
+    assert arcrun.QueueReadScope is arcllm.QueueReadScope
+    assert arcrun.QueueMetadataPage is arcllm.QueueMetadataPage
+    assert arcrun.QueueControlSnapshot is arcllm.QueueControlSnapshot
+    assert arcrun.QueueCancellation is arcllm.QueueCancellation
