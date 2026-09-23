@@ -16,7 +16,7 @@ from arcagent.extension.source import (
     SyncSource,
     SyncSourcePage,
 )
-from arcagent.extension.source_catalog import SourceCatalog
+from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
 from arcagent.modules.connected_data.ingest import ArcStoreObjectState
 from arcagent.modules.connected_data.service import ConnectedDataService
 
@@ -55,6 +55,69 @@ class FakeSource:
 class BrokenCloseSource(FakeSource):
     async def close_source(self) -> None:
         raise RuntimeError("close failed")
+
+
+class FaultingCatalog(SourceCatalog):
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self.failures = failures
+        self.calls = 0
+        self.failed = asyncio.Event()
+        self.retried = asyncio.Event()
+        self.recovered = asyncio.Event()
+
+    async def snapshot(self) -> tuple[SourceRegistration, ...]:
+        self.calls += 1
+        if self.calls > 1:
+            self.retried.set()
+        if self.calls <= self.failures:
+            self.failed.set()
+            raise OSError("catalog unavailable")
+        self.recovered.set()
+        return await super().snapshot()
+
+
+@pytest.mark.asyncio
+async def test_sync_monitor_recovers_after_catalog_snapshot_failure() -> None:
+    catalog = FaultingCatalog(failures=1)
+    await catalog.register("dropbox", FakeSource())
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=None,
+        ingest_factory=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+        interval_seconds=0.01,
+    )
+    await service.start()
+    try:
+        await asyncio.wait_for(catalog.failed.wait(), timeout=1)
+        assert service._tasks == {}
+        await asyncio.wait_for(catalog.recovered.wait(), timeout=1)
+        await _wait_for_status(service, "degraded")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_sync_monitor_catalog_failures_are_bounded_and_cancel_promptly() -> None:
+    catalog = FaultingCatalog(failures=100)
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=None,
+        ingest_factory=None,
+        limits=SyncLimits(),
+        global_concurrency=1,
+        interval_seconds=0.02,
+    )
+    await service.start()
+    await asyncio.wait_for(catalog.failed.wait(), timeout=1)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(catalog.retried.wait(), timeout=0.05)
+    assert catalog.calls == 1
+    await asyncio.wait_for(service.close(), timeout=0.1)
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,7 @@ from arcagent.modules.connected_data.health import (
 )
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
+_CATALOG_RETRY_MAX_SECONDS = 30.0
 
 IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
 
@@ -581,7 +582,14 @@ class ConnectedDataService:
 
     async def _monitor_loop(self) -> None:
         while not self._closed:
-            registrations = await self._catalog.snapshot()
+            try:
+                registrations = await self._catalog.snapshot()
+            except Exception as exc:
+                _logger.warning(
+                    "connected-data catalog unavailable; retrying (%s)", type(exc).__name__
+                )
+                await asyncio.sleep(min(max(self._interval, 0.1), _CATALOG_RETRY_MAX_SECONDS))
+                continue
             for registration in registrations:
                 if registration.connection_id in self._paused:
                     continue
@@ -771,9 +779,7 @@ class ConnectedDataService:
             return None
         return state
 
-    async def _documents_indexed(
-        self, ingest: IngestPort, description: SourceDescription
-    ) -> int:
+    async def _documents_indexed(self, ingest: IngestPort, description: SourceDescription) -> int:
         """Count this source's indexed documents through the optional ingest seam.
 
         The transfer counters answer "how many pages did we pull"; an operator
