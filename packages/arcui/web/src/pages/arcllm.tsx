@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Activity, Coins, Cpu, Gauge, TrendingDown } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { FilterPills } from '@/components/filter-pills'
 import { InsightStat } from '@/components/ai'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -124,6 +125,7 @@ function Overview() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Usage window
+          <FieldHelp helpKey="model_usage.window" route="arcllm" />
         </span>
         <FilterPills value={window} onChange={setWindow} options={WINDOWS} />
       </div>

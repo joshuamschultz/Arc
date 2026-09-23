@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiPost, ApiError } from '@/lib/api'
+import { FieldHelp } from '@/components/help'
 import type { Agent, Task, TaskPriority } from '@/lib/types'
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'critical']
@@ -91,12 +92,15 @@ export function CreateTaskSheet({
             </div>
           )}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Title</label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Investigate the outage" />
+            <label htmlFor="new-task-title" className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Title</label>
+            <FieldHelp helpKey="task.title" />
+            <Input id="new-task-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Investigate the outage" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description (optional)</label>
+            <label htmlFor="new-task-description" className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description (optional)</label>
+            <FieldHelp helpKey="task.description" />
             <textarea
+              id="new-task-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
@@ -106,6 +110,7 @@ export function CreateTaskSheet({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Priority</label>
+              <FieldHelp helpKey="task.priority" />
               <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -117,6 +122,7 @@ export function CreateTaskSheet({
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Owner (optional)</label>
+              <FieldHelp helpKey="task.owner" />
               <Select value={ownerDid || '__none__'} onValueChange={(v) => setOwnerDid(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -130,6 +136,7 @@ export function CreateTaskSheet({
               </Select>
             </div>
           </div>
+          <div className="flex items-center gap-1">
           <label className="flex items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
@@ -142,6 +149,8 @@ export function CreateTaskSheet({
               <span className="ml-1 text-xs text-muted-foreground">— completion lands in review for operator approval</span>
             </span>
           </label>
+          <FieldHelp helpKey="task.requires_review" />
+          </div>
           <Button className="w-full" disabled={busy || !title.trim()} onClick={submit}>
             {busy ? 'Creating…' : 'Create task'}
           </Button>

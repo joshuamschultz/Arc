@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Wrench, Sparkles } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { DataTable } from '@/components/data-table'
 import { StatCard } from '@/components/stat-card'
 import { QueryState, EmptyState } from '@/components/states'
@@ -163,6 +164,7 @@ export function ToolsSkillsPage() {
               </SelectContent>
             </Select>
           </label>
+          <FieldHelp helpKey="capabilities.agent_filter" route="tools-skills" />
 
           <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
             Type

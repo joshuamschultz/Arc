@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { FieldHelp } from '@/components/help'
 import {
   Sheet,
   SheetContent,
@@ -207,18 +208,21 @@ export function TaskDrawer({
             <StatusText value={task.status} />
             <SeverityBadge value={task.priority} />
             {operatorMode && atRest && (
-              <Select value={task.status} onValueChange={move}>
-                <SelectTrigger className="h-6 w-[120px] text-[11px]">
-                  <SelectValue placeholder="Move to…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {['backlog', 'todo', 'review', 'done', 'failed'].map((s) => (
-                    <SelectItem key={s} value={s}>
-                      Move to {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <>
+                <Select value={task.status} onValueChange={move}>
+                  <SelectTrigger className="h-6 w-[120px] text-[11px]">
+                    <SelectValue placeholder="Move to…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {['backlog', 'todo', 'review', 'done', 'failed'].map((s) => (
+                      <SelectItem key={s} value={s}>
+                        Move to {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldHelp helpKey="task.status" route="tasks" />
+              </>
             )}
             {!atRest && <span className="text-muted-foreground">edit-at-rest only — steer below</span>}
           </SheetDescription>
@@ -229,10 +233,12 @@ export function TaskDrawer({
             <section className="space-y-3">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Title</label>
+                <FieldHelp helpKey="task.title" route="tasks" />
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description</label>
+                <FieldHelp helpKey="task.description" route="tasks" />
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -243,6 +249,7 @@ export function TaskDrawer({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Priority</label>
+                  <FieldHelp helpKey="task.priority" route="tasks" />
                   <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -254,6 +261,7 @@ export function TaskDrawer({
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Owner</label>
+                  <FieldHelp helpKey="task.owner" route="tasks" />
                   <Select
                     value={ownerDid || '__none__'}
                     onValueChange={(v) => setOwnerDid(v === '__none__' ? '' : v)}
@@ -449,6 +457,7 @@ export function TaskDrawer({
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs text-muted-foreground">
                     Steer owner{ownerAgent ? ` — @${ownerAgent.name}` : ''} ({steerStatus})
+                    <FieldHelp helpKey="task.message_owner" route="tasks" />
                   </div>
                   <Button size="sm" variant="destructive" disabled={stopping} onClick={stop}>
                     {stopping ? 'Stopping…' : 'Stop task'}

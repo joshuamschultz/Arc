@@ -118,20 +118,29 @@ export const useRoster = () => useApiQuery<AgentsListResponse>(['roster'], '/api
 export const useMe = (enabled = true) =>
   useApiQuery<AuthMeResponse>(['auth', 'me'], '/api/auth/me', enabled)
 
-// Polls every 4s so live todo -> in_progress -> done transitions and newly
-// dispatched tasks surface on the board without a manual refresh. The board's
-// other driving query (roster) is near-static, so only tasks needs the poll.
-// `window` (H-004), when passed, scopes the count to tasks touched within it
-// (Home's "today" card) — omitted, callers keep seeing the whole backlog
-// (the Tasks board, "Needs you" review list).
-export const useTeamTasks = (window?: string) =>
+export interface TaskSummaryResponse {
+  counts: Record<string, number>
+  total: number
+}
+
+export const useTeamTaskSummary = (window: string) =>
+  useQuery<TaskSummaryResponse>({
+    queryKey: ['team', 'tasks', 'summary', window],
+    queryFn: ({ signal }) =>
+      apiGet<TaskSummaryResponse>(`/api/team/tasks/summary?window=${window}`, signal),
+    refetchInterval: 4000,
+  })
+
+/** One bounded board page. The head stays live while an operator browses another page. */
+export const useTeamTaskBoard = (cursor?: string | null, enabled = true) =>
   useQuery<TasksResponse>({
-    queryKey: ['team', 'tasks', window ?? 'all'],
+    queryKey: ['team', 'tasks', 'board', cursor ?? 'head'],
     queryFn: ({ signal }) =>
       apiGet<TasksResponse>(
-        `/api/team/tasks${window ? `?window=${window}` : ''}`,
+        `/api/team/tasks?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
         signal,
       ),
+    enabled,
     refetchInterval: 4000,
   })
 

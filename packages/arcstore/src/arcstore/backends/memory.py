@@ -402,6 +402,43 @@ class FakeBackend(SourceSyncBackend):
             ]
         return rows if where is None else [row for row in rows if _matches(row, where)]
 
+    async def mutable_task_page(
+        self, *, phase: str, before: tuple[str, str] | None, limit: int
+    ) -> list[dict[str, Any]]:
+        """Mirror the PostgreSQL task board ordering for the fake backend."""
+        async with self._lock:
+            rows = [
+                _decode(item)
+                for (collection, _), item in self._mutable.items()
+                if collection == "tasks"
+            ]
+        selected = [
+            row
+            for row in rows
+            if (row.get("status") in {"done", "failed"}) == (phase == "history")
+        ]
+        selected.sort(key=lambda row: (row.get("updated_at") or "", row["id"]), reverse=True)
+        if before is not None:
+            selected = [
+                row for row in selected if (row.get("updated_at") or "", row["id"]) < before
+            ]
+        return selected[:limit]
+
+    async def mutable_task_counts(self, *, since: str) -> dict[str, int]:
+        """Count task statuses touched within the requested window."""
+        async with self._lock:
+            rows = [
+                _decode(item)
+                for (collection, _), item in self._mutable.items()
+                if collection == "tasks"
+            ]
+        counts: dict[str, int] = {}
+        for row in rows:
+            if (row.get("updated_at") or "") >= since:
+                status = str(row.get("status") or "backlog")
+                counts[status] = counts.get(status, 0) + 1
+        return counts
+
     async def mutable_merge(
         self,
         collection: str,

@@ -13,6 +13,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { SignedSeal, ContextNote } from '@/components/hitl'
@@ -171,6 +172,9 @@ function GatedCard({ c }: { c: GatedCapability }) {
           {/* Any authed role may read the artifact — a viewer who cannot read
               it cannot review it. Only an operator may act on what they read. */}
           <div className="mt-3 overflow-hidden rounded-md border border-border">
+            <div className="flex justify-end px-2 py-1">
+              <FieldHelp helpKey="gated.capability" route="gated" />
+            </div>
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
@@ -310,6 +314,7 @@ export function GatedCapabilitiesPage() {
         actions={
           <>
             <IncludeLoadedToggle on={includeLoaded} onChange={setIncludeLoaded} />
+            <FieldHelp helpKey="gated.show_all" route="gated" />
             <OperatorModeToggle />
           </>
         }

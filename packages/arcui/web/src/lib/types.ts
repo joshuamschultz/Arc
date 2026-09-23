@@ -258,6 +258,7 @@ export interface SessionReplayResponse {
 
 export interface TasksResponse {
   tasks: Task[]
+  next_cursor?: string | null
 }
 
 export interface SchedulesResponse {

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InstructionBlock } from '@/components/instruction-block'
 import { ApiError } from '@/lib/api'
+import { FieldHelp } from '@/components/help'
 import {
   useAuthorizeConnector,
   useCompleteOauth,
@@ -69,12 +70,14 @@ export function ConnectorAuthorizePanel({
             </a>
             <Input
               id={`connector-oauth-code-${instance}`}
+              aria-label="Authorization code"
               autoComplete="off"
               spellCheck={false}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Paste the code here"
             />
+            <FieldHelp helpKey="connection.authorization_code" route="connections" />
             <Button
               size="sm"
               disabled={completeOauth.isPending || !code.trim()}
@@ -163,6 +166,7 @@ export function ConnectorAuthorizePanel({
             <div className="space-y-1.5">
               <Input
                 id={`connector-token-${instance}`}
+                aria-label="Access token"
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
@@ -170,6 +174,7 @@ export function ConnectorAuthorizePanel({
                 onChange={(e) => setToken(e.target.value)}
                 placeholder="••••••••"
               />
+              <FieldHelp helpKey="connection.access_token" route="connections" />
               <p className="text-[11px] text-muted-foreground">
                 Optional. Only some programs accept a token this way; leave it empty and Arc will
                 try the normal sign-in.

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { KeyRound, Trash2, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FieldHelp } from '@/components/help'
 import { Input } from '@/components/ui/input'
 import {
   Table,
@@ -93,6 +94,7 @@ function KeyRow({ entry, editable }: { entry: KeyEntry; editable: boolean }) {
               className="h-8 w-56"
               aria-label={`New value for ${entry.env_var}`}
             />
+            <FieldHelp helpKey="settings.provider_key" route="settings" />
             <Button size="sm" disabled={busy || draft.length === 0} onClick={save}>
               Save
             </Button>

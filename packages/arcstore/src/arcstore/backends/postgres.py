@@ -461,6 +461,38 @@ class PostgresBackend(SourceSyncBackend):
             rows = await connection.fetch(statement, *params)
         return [_mutable_row(row) for row in rows]
 
+    async def mutable_task_page(
+        self, *, phase: str, before: tuple[str, str] | None, limit: int
+    ) -> list[dict[str, Any]]:
+        """Read a bounded keyset page in the task board's active/history lane."""
+        statement = (
+            "SELECT value, updated_at FROM mutable_records "
+            "WHERE collection='tasks' AND value->>'status' IN ('done', 'failed') "
+            if phase == "history"
+            else "SELECT value, updated_at FROM mutable_records "
+            "WHERE collection='tasks' AND value->>'status' NOT IN ('done', 'failed') "
+        )
+        params: list[Any] = []
+        if before is not None:
+            params.extend((datetime.fromisoformat(before[0]), before[1]))
+            statement += "AND (updated_at, key) < ($1, $2) "
+        params.append(limit)
+        statement += f"ORDER BY updated_at DESC, key DESC LIMIT ${len(params)}"
+        async with self._require_pool().acquire() as connection:
+            rows = await connection.fetch(statement, *params)
+        return [_mutable_row(row) for row in rows]
+
+    async def mutable_task_counts(self, *, since: str) -> dict[str, int]:
+        """Aggregate recent task statuses in PostgreSQL without returning rows."""
+        async with self._require_pool().acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT value->>'status' AS status, count(*) AS total "
+                "FROM mutable_records WHERE collection='tasks' AND updated_at >= $1 "
+                "GROUP BY value->>'status'",
+                datetime.fromisoformat(since),
+            )
+        return {str(row["status"] or "backlog"): int(row["total"]) for row in rows}
+
     async def mutable_merge(
         self,
         collection: str,

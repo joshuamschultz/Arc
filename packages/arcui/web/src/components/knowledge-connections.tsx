@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
@@ -141,7 +142,7 @@ function SourceSelect({
   const sources = useConnectedSources(agentId)
   const items = sources.data?.items ?? []
   return (
-    <Select value={value} onValueChange={onChange}>
+    <div className="flex items-center gap-1"><Select value={value} onValueChange={onChange}>
       <SelectTrigger className="w-56">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
@@ -158,7 +159,7 @@ function SourceSelect({
             </SelectItem>
           ))}
       </SelectContent>
-    </Select>
+    </Select><FieldHelp helpKey="knowledge.source" route="knowledge" /></div>
   )
 }
 
@@ -644,6 +645,7 @@ function DocumentsSection({ agentId }: { agentId: string }) {
           placeholder="Filter documents…"
           className="max-w-sm"
         />
+        <FieldHelp helpKey="knowledge.resource_filter" route="knowledge" />
       </div>
       {!ready ? (
         <EmptyState
@@ -763,6 +765,7 @@ function ConnectionExplorerSection({ agentId }: { agentId: string }) {
             placeholder="Search chunks…"
             className="max-w-sm"
           />
+          <FieldHelp helpKey="knowledge.chunk_search" route="knowledge" />
           <div className="flex gap-1">
             {(['literal', 'vector'] as ChunkSearchMode[]).map((m) => (
               <Button
@@ -851,6 +854,7 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
           placeholder="table"
           className="w-40"
         />
+        <FieldHelp helpKey="knowledge.datastore.table" route="knowledge" />
         <Select value={op} onValueChange={(v) => setOp(v as DatastoreOp)}>
           <SelectTrigger className="w-40">
             <SelectValue />
@@ -861,15 +865,19 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
             <SelectItem value="list">list</SelectItem>
           </SelectContent>
         </Select>
+        <FieldHelp helpKey="knowledge.datastore.operation" route="knowledge" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {op === 'get_record' && (
-          <Input
-            value={pkValue}
-            onChange={(e) => setPkValue(e.target.value)}
-            placeholder="pk_value"
-            className="w-40"
-          />
+          <>
+            <Input
+              value={pkValue}
+              onChange={(e) => setPkValue(e.target.value)}
+              placeholder="pk_value"
+              className="w-40"
+            />
+            <FieldHelp helpKey="knowledge.datastore.primary_key" route="knowledge" />
+          </>
         )}
         {op === 'find' && (
           <>
@@ -879,21 +887,26 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
               placeholder="column"
               className="w-40"
             />
+            <FieldHelp helpKey="knowledge.datastore.column" route="knowledge" />
             <Input
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="value"
               className="w-40"
             />
+            <FieldHelp helpKey="knowledge.datastore.value" route="knowledge" />
           </>
         )}
         {op !== 'get_record' && (
-          <Input
-            value={limit}
-            onChange={(e) => setLimit(e.target.value)}
-            placeholder="limit"
-            className="w-28"
-          />
+          <>
+            <Input
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              placeholder="limit"
+              className="w-28"
+            />
+            <FieldHelp helpKey="knowledge.datastore.limit" route="knowledge" />
+          </>
         )}
       </div>
       {!source || !table ? (
@@ -1004,6 +1017,7 @@ function ProvenanceSection({ agentId }: { agentId: string }) {
         placeholder="Canonical item id…"
         className="max-w-md"
       />
+      <FieldHelp helpKey="knowledge.provenance.item_id" route="knowledge" />
       {!trimmed ? (
         <EmptyState
           icon={<Waypoints className="size-5" />}
@@ -1068,6 +1082,7 @@ function ProfileReviewSection({ agentId }: { agentId: string }) {
             <SelectItem value="undone">Undone</SelectItem>
           </SelectContent>
         </Select>
+        <FieldHelp helpKey="knowledge.mapping.status" route="knowledge" />
         <SourceSelect agentId={agentId} value={source} onChange={setSource} placeholder="All sources" />
       </div>
       <p className="text-xs text-muted-foreground">

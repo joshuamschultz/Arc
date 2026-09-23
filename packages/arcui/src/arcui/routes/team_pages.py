@@ -17,7 +17,11 @@ Endpoint surface (SDD §6):
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -197,29 +201,87 @@ _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 
 
 async def get_tasks(request: Request) -> JSONResponse:
-    """GET /api/team/tasks[?window=<w>] — arcstore task rows, stamped with owning agent_id.
+    """GET /api/team/tasks — bounded active-first pages with continuation."""
+    page_limit = request.query_params.get("limit", "100")
+    cursor = request.query_params.get("cursor")
+    if "window" in request.query_params:
+        return JSONResponse(
+            ErrorResponse(error="Use /api/team/tasks/summary for a time window.").model_dump(
+                mode="json"
+            ),
+            status_code=400,
+        )
+    try:
+        limit = int(page_limit)
+        if not 1 <= limit <= 200 or len(page_limit) > 3:
+            raise ValueError
+        phase, before = _decode_task_cursor(cursor) if cursor is not None else ("active", None)
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error):
+        return JSONResponse(
+            ErrorResponse(error="Invalid task page limit or cursor.").model_dump(mode="json"),
+            status_code=400,
+        )
+    page = await request.app.state.observe.task_board_page(phase=phase, before=before, limit=limit)
+    if not page and phase == "active":
+        phase = "history"
+        page = await request.app.state.observe.task_board_page(phase=phase, limit=limit)
+    rows = page[:limit]
+    next_cursor: str | None = None
+    if len(page) > limit:
+        last = rows[-1]
+        next_cursor = _encode_task_cursor(phase, last["updated_at"], last["id"])
+    elif phase == "active":
+        next_cursor = _encode_task_cursor("history", None, None)
+    did_to_agent = {entry.did: entry.agent_id for entry in _roster(request)}
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        row = dict(row)
+        row["agent_id"] = did_to_agent.get(row.get("owner_did"))
+        out.append(row)
+    return JSONResponse(
+        TasksResponse(tasks=out, next_cursor=next_cursor).model_dump(
+            mode="json", exclude_none=True
+        )
+    )
 
-    ``window``, when given, keeps only tasks touched (created or updated)
-    within it — Home's "today" card (H-004) wants that instead of the whole
-    backlog's all-time total. Omitted, the Tasks board keeps seeing every
-    task exactly as before.
-    """
-    window = request.query_params.get("window")
-    if window is not None and window not in _VALID_WINDOWS:
+
+async def get_task_summary(request: Request) -> JSONResponse:
+    """GET /api/team/tasks/summary — SQL-side counts for the Home work-state card."""
+    window = request.query_params.get("window", "24h")
+    if window not in _VALID_WINDOWS:
         return JSONResponse(
             ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
                 mode="json"
             ),
             status_code=400,
         )
-    did_to_agent = {entry.did: entry.agent_id for entry in _roster(request)}
-    rows = await request.app.state.observe.tasks(window=window)
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        row = dict(row)
-        row["agent_id"] = did_to_agent.get(row.get("owner_did"))
-        out.append(row)
-    return JSONResponse(TasksResponse(tasks=out).model_dump(mode="json"))
+    counts = await request.app.state.observe.task_counts(window)
+    return JSONResponse({"counts": counts, "total": sum(counts.values())})
+
+
+def _encode_task_cursor(phase: str, stamp: str | None, task_id: str | None) -> str:
+    payload = json.dumps([phase, stamp, task_id], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_task_cursor(value: str) -> tuple[str, tuple[str, str] | None]:
+    if len(value) > 512:
+        raise ValueError("cursor too long")
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    payload = json.loads(decoded)
+    if not isinstance(payload, list) or len(payload) != 3:
+        raise ValueError("invalid cursor")
+    phase, stamp, task_id = payload
+    if phase not in {"active", "history"}:
+        raise ValueError("invalid cursor phase")
+    if stamp is None and task_id is None and phase == "history":
+        return phase, None
+    if not isinstance(stamp, str) or not isinstance(task_id, str) or len(task_id) > 200:
+        raise ValueError("invalid cursor")
+    parsed = datetime.fromisoformat(stamp)
+    if parsed.tzinfo is None:
+        raise ValueError("cursor timestamp has no timezone")
+    return phase, (stamp, task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +414,7 @@ routes = [
     Route("/api/team/policy/bullets", get_policy_bullets, methods=["GET"]),
     Route("/api/team/policy/stats", get_policy_stats, methods=["GET"]),
     Route("/api/team/tasks", get_tasks, methods=["GET"]),
+    Route("/api/team/tasks/summary", get_task_summary, methods=["GET"]),
     Route("/api/team/tools-skills", get_tools_skills, methods=["GET"]),
     Route("/api/team/audit", get_audit, methods=["GET"]),
 ]

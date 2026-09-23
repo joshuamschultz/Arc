@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check, X, ShieldCheck, Database, Send, Bug, Info, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FieldHelp } from '@/components/help'
 import { apiPost, ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -283,6 +284,7 @@ export function ApprovalRequest({
       <div className="flex items-center gap-2.5 border-b border-border bg-signed/5 px-4 py-2.5">
         <SignedSeal />
         <span className="text-sm font-semibold text-foreground">Approval required</span>
+        <FieldHelp helpKey="approvals.request" route="approvals" />
         <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.08em] text-status-warning">
           {gateLabel}
         </span>

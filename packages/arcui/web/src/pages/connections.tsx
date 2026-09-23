@@ -12,6 +12,7 @@ import {
   BookOpen,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { StatusChip } from '@/components/ai'
 import { ContextNote } from '@/components/hitl'
@@ -244,6 +245,7 @@ function ConnectionCard({
         <Button variant="ghost" size="xs" onClick={() => setShowDoctor(!showDoctor)}>
           <Stethoscope /> {showDoctor ? 'Hide doctor' : 'Doctor'}
         </Button>
+        <FieldHelp helpKey="connection.check" route="connections" />
         {operatorMode && (
           <>
             <Button
@@ -490,9 +492,12 @@ function BundleCard({
       )}
       <div className="mt-3 pt-1">
         {operatorMode ? (
-          <Button size="sm" onClick={() => onConnect(bundle)}>
-            <Plug /> Connect
-          </Button>
+          <>
+            <Button size="sm" onClick={() => onConnect(bundle)}>
+              <Plug /> Connect
+            </Button>
+            <FieldHelp helpKey="connection.bundle" route="connections" />
+          </>
         ) : (
           <p className="text-xs italic text-muted-foreground/80">
             Enable operator mode to connect this.

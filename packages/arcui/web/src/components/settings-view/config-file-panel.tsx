@@ -87,6 +87,7 @@ export function ConfigFilePanel({
                 endpoint={endpoint}
                 queryKey={queryKey}
                 sectionKey={key}
+                file={file}
                 value={value}
                 editable={editable}
               />

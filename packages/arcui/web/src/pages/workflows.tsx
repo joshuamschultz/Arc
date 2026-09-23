@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Archive, GitBranch, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -72,6 +73,7 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Name
             </label>
+            <FieldHelp helpKey="workflow.search" route="workflows" />
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="onboarding" />
           </div>
           <Button className="w-full" disabled={createWorkflow.isPending || !name.trim()} onClick={submit}>
@@ -105,6 +107,7 @@ export function WorkflowsPage() {
             >
               <Archive className="size-3.5" /> {showArchived ? 'Hide archived' : 'Show archived'}
             </Button>
+            <FieldHelp helpKey="workflow.archived" route="workflows" />
             <OperatorModeToggle />
             {operatorMode && (
               <Button size="sm" onClick={() => setCreating(true)}>

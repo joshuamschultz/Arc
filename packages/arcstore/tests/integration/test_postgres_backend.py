@@ -19,8 +19,79 @@ from arcstore.backends.postgres_inbox import PostgresInboxRepository
 from arcstore.inbox import ParticipantRole
 from arcstore.inbox_projection import DurableInboxService
 from arcstore.inbox_projection import participant as inbox_participant
+from arcstore.tasks import Task, TaskStore
 
 _ACTOR = "did:arc:test:postgres"
+
+
+async def test_postgres_task_board_keyset_and_index(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """A large closed history pages at the database and can use the task index."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    store = TaskStore(postgres_backend)
+    prefix = f"board-{uuid4().hex}-"
+    ids = [f"{prefix}{index:04d}" for index in range(1001)]
+    try:
+        for task_id in ids[:1000]:
+            await store.create(Task(id=task_id, title="Closed", creator_did=_ACTOR, status="done"))
+        await store.create(Task(id=ids[-1], title="Active", creator_did=_ACTOR, status="todo"))
+        active = await store.list_board_page(phase="active", limit=50)
+        assert ids[-1] in {task.id for task in active}
+        first = await store.list_board_page(phase="history", limit=50)
+        second = await store.list_board_page(
+            phase="history", before=(first[49].updated_at, first[49].id), limit=50
+        )
+        first_ids = {task.id for task in first[:50]}
+        second_ids = {task.id for task in second[:50]}
+        assert len(first_ids) == len(second_ids) == 50
+        assert not first_ids & second_ids
+        async with postgres_backend._require_pool().acquire() as connection:
+            await connection.execute("ANALYZE mutable_records")
+            plan = await connection.fetch(
+                "EXPLAIN SELECT value FROM mutable_records "
+                "WHERE collection='tasks' AND value->>'status' IN ('done', 'failed') "
+                "ORDER BY updated_at DESC, key DESC LIMIT 50"
+            )
+        assert "mutable_tasks_history_idx" in "\n".join(str(row[0]) for row in plan)
+    finally:
+        for task_id in ids:
+            await store.delete(task_id, actor_did=_ACTOR)
+
+
+async def test_postgres_task_board_tied_cursor_and_status_transition(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """PostgreSQL uses the key tie-breaker and current status on each page."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    store = TaskStore(postgres_backend)
+    ids = [f"board-tie-{uuid4().hex}-{index}" for index in range(3)]
+    try:
+        for task_id in ids:
+            await store.create(Task(id=task_id, title="Active", creator_did=_ACTOR, status="todo"))
+        async with postgres_backend._require_pool().acquire() as connection:
+            await connection.execute(
+                "UPDATE mutable_records SET updated_at='2020-01-01T00:00:00Z' "
+                "WHERE collection='tasks' AND key=ANY($1::text[])",
+                ids,
+            )
+        first = await store.list_board_page(phase="active", limit=1)
+        matching = [task for task in first if task.id in ids]
+        assert [task.id for task in matching] == sorted(ids, reverse=True)[:2]
+        cursor = (matching[0].updated_at, matching[0].id)
+        second = await store.list_board_page(phase="active", before=cursor, limit=1)
+        assert second[0].id == sorted(ids, reverse=True)[1]
+        await store.set_status(second[0].id, "done", actor_did=_ACTOR)
+        after = await store.list_board_page(phase="active", before=cursor, limit=1)
+        assert after[0].id == sorted(ids, reverse=True)[2]
+        assert second[0].id in {task.id for task in await store.list_board_page(phase="history")}
+        assert (
+            await store.list_board_page(phase="active", before=("1900-01-01T00:00:00+00:00", ""))
+            == []
+        )
+    finally:
+        for task_id in ids:
+            await store.delete(task_id, actor_did=_ACTOR)
 
 
 async def test_postgres_schema_and_operational_round_trip(

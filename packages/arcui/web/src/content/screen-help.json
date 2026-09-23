@@ -1,0 +1,3471 @@
+{
+  "home": {
+    "title": "Home",
+    "summary": "See the fleet snapshot, recent activity, and items that may need operator attention.",
+    "steps": [
+      "Review Needs you for pending approvals and review tasks.",
+      "Open Fleet or Activity to inspect a count in context."
+    ],
+    "fields": [],
+    "troubleshooting": [
+      {
+        "symptom": "A count is zero or missing",
+        "action": "Open the related screen and check whether its data is available for the selected period."
+      }
+    ]
+  },
+  "agents": {
+    "title": "Fleet",
+    "summary": "Browse registered agents and their reported presence.",
+    "steps": [
+      "Select an agent to open identity, activity, and configuration details.",
+      "Use the agent detail tabs to find tasks, tools, knowledge, or messages."
+    ],
+    "fields": [],
+    "troubleshooting": [
+      {
+        "symptom": "No agents appear",
+        "action": "Register an agent with the documented Arc team workflow, then reload the screen."
+      }
+    ]
+  },
+  "agents/:id": {
+    "title": "Agent detail",
+    "summary": "Inspect one agent across its identity, configuration, activity, and capability tabs.",
+    "steps": [
+      "Choose a tab to focus the information you need.",
+      "Use controls on a tab only when you are authorized for that operation."
+    ],
+    "fields": [
+      {
+        "key": "agent.identity_md",
+        "label": "Identity instructions",
+        "description": "Review the agent identity document. Editing changes the document used to describe this agent; keep instructions accurate and authorized."
+      },
+      {
+        "key": "agent.identity_md.content",
+        "label": "Identity document",
+        "description": "Text content of identity.md. Review the complete text before saving."
+      },
+      {
+        "key": "agent.tab",
+        "label": "Detail tab",
+        "description": "Select the agent area to inspect; available tabs depend on this agent."
+      },
+      {
+        "key": "agent.tab.overview",
+        "label": "Overview tab",
+        "description": "Summary of this agent’s identity, current performance, recent sessions, tasks, and schedules."
+      },
+      {
+        "key": "agent.tab.identity",
+        "label": "Identity tab",
+        "description": "Inspect the agent DID, identity configuration, tool policy, and workspace identity details."
+      },
+      {
+        "key": "agent.tab.inbox",
+        "label": "Inbox tab",
+        "description": "Search and review this agent’s inbox threads; reply or hand off a thread when authorized."
+      },
+      {
+        "key": "agent.tab.sessions",
+        "label": "Sessions tab",
+        "description": "Review recorded sessions for this agent."
+      },
+      {
+        "key": "agent.tab.runs",
+        "label": "Runs tab",
+        "description": "Review recent runs and spawn lineage for this agent."
+      },
+      {
+        "key": "agent.tab.llm",
+        "label": "Model usage tab",
+        "description": "Inspect model activity recorded for this agent."
+      },
+      {
+        "key": "agent.tab.skills",
+        "label": "Skills tab",
+        "description": "Review skills available to this agent."
+      },
+      {
+        "key": "agent.tab.tools",
+        "label": "Tools tab",
+        "description": "Review tools registered and available to this agent."
+      },
+      {
+        "key": "agent.tab.prompts",
+        "label": "Prompts tab",
+        "description": "Inspect prompts associated with this agent."
+      },
+      {
+        "key": "agent.tab.knowledge",
+        "label": "Knowledge tab",
+        "description": "Inspect this agent’s memories, entities, events, and indexed knowledge."
+      },
+      {
+        "key": "agent.tab.tasks",
+        "label": "Tasks tab",
+        "description": "Review tasks owned by this agent; use the tag filter to narrow the list."
+      },
+      {
+        "key": "agent.tab.schedules",
+        "label": "Schedules tab",
+        "description": "Review scheduled tasks for this agent."
+      },
+      {
+        "key": "agent.tab.policy",
+        "label": "Policy tab",
+        "description": "Review policy bullets associated with this agent."
+      },
+      {
+        "key": "agent.tab.trust",
+        "label": "Trust tab",
+        "description": "Review approvals and capabilities awaiting trust decisions."
+      },
+      {
+        "key": "agent.tab.workspace",
+        "label": "Workspace tab",
+        "description": "Browse this agent’s workspace files."
+      },
+      {
+        "key": "agent.tab.files",
+        "label": "Files tab",
+        "description": "Browse files visible in this agent’s file view."
+      },
+      {
+        "key": "agent.tab.connect",
+        "label": "Connect tab",
+        "description": "Configure the supported messaging connection and agent voice controls shown here."
+      },
+      {
+        "key": "agent.inbox.search",
+        "label": "Search agent mail",
+        "description": "Filter this agent’s inbox threads by matching text."
+      },
+      {
+        "key": "agent.inbox.reply",
+        "label": "Reply to mail thread",
+        "description": "Write a reply to the selected thread as the signed operator."
+      },
+      {
+        "key": "agent.inbox.handoff_recipient",
+        "label": "Handoff recipient",
+        "description": "Choose the participant to receive the selected thread handoff."
+      },
+      {
+        "key": "agent.telegram.bot_token",
+        "label": "Telegram bot token",
+        "description": "Enter the bot token used for this agent’s Telegram connection. Treat it as a secret."
+      },
+      {
+        "key": "agent.telegram.chat_id",
+        "label": "Telegram chat ID",
+        "description": "Enter the Telegram chat identifier associated with this agent."
+      },
+      {
+        "key": "agent.voice.blend",
+        "label": "Voice blend",
+        "description": "Enter the voice preset blend using the displayed name:weight format.",
+        "example": "af_jessica:0.6,af_nicole:0.4"
+      },
+      {
+        "key": "agent.voice.speed",
+        "label": "Voice speed",
+        "description": "Enter the playback speed multiplier.",
+        "example": "1.12"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Agent detail is unavailable",
+        "action": "Return to Fleet and confirm the agent is registered and its status is current."
+      },
+      {
+        "symptom": "A save is refused",
+        "action": "Check the displayed reason and operator authorization; review Audit for the recorded action."
+      }
+    ]
+  },
+  "messages": {
+    "title": "Chat",
+    "summary": "Send direct messages to agents and follow team channels.",
+    "steps": [
+      "Select an agent or channel.",
+      "Wait for the composer to show it is ready, then send your message.",
+      "Use Activity to confirm whether a message produced a run."
+    ],
+    "fields": [
+      {
+        "key": "messages.target",
+        "label": "Conversation",
+        "description": "Choose the agent or channel whose messages you want to view."
+      },
+      {
+        "key": "messages.message",
+        "label": "Message",
+        "description": "Text to send to the selected conversation. Avoid placing credentials or sensitive secrets in chat.",
+        "example": "Please summarize the latest deployment status."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Composer says Connecting",
+        "action": "Wait for the connection to recover, then retry."
+      },
+      {
+        "symptom": "No run appears after sending",
+        "action": "Check whether messaging delivered the request and review Activity."
+      }
+    ]
+  },
+  "tasks": {
+    "title": "Tasks",
+    "summary": "Track work across the fleet and inspect each task’s owner, status, and review state.",
+    "steps": [
+      "Use owner or tag filters to narrow the board.",
+      "Open a task to inspect details or available actions.",
+      "Use Operator controls and New task to create work."
+    ],
+    "fields": [
+      {
+        "key": "tasks.owner_filter",
+        "label": "Owner filter",
+        "description": "Show tasks for one owner or all owners."
+      },
+      {
+        "key": "tasks.tag_filter",
+        "label": "Tag filter",
+        "description": "Show tasks matching a tag or all tags."
+      },
+      {
+        "key": "task.title",
+        "label": "Title",
+        "description": "Short, actionable description of the work.",
+        "example": "Investigate the outage"
+      },
+      {
+        "key": "task.description",
+        "label": "Description",
+        "description": "Optional context and completion details."
+      },
+      {
+        "key": "task.priority",
+        "label": "Priority",
+        "description": "Set the task’s relative urgency."
+      },
+      {
+        "key": "task.owner",
+        "label": "Owner",
+        "description": "Choose an agent to place the task in its to-do; leave unassigned for the fleet backlog."
+      },
+      {
+        "key": "task.requires_review",
+        "label": "Require review",
+        "description": "When enabled, completion enters review for operator approval."
+      },
+      {
+        "key": "task.status",
+        "label": "Status",
+        "description": "Move the task to one of the available workflow states."
+      },
+      {
+        "key": "task.message_owner",
+        "label": "Message owner",
+        "description": "Send a message about this task to its owner."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "A task change is refused",
+        "action": "Confirm operator authorization and inspect the displayed error."
+      },
+      {
+        "symptom": "No tasks appear",
+        "action": "Clear owner and tag filters, then check whether tasks have been created."
+      }
+    ]
+  },
+  "approvals": {
+    "title": "Approvals",
+    "summary": "Review actions that are waiting for human sign-off.",
+    "steps": [
+      "Read the displayed requester, requested tool, arguments, and gate reason.",
+      "Choose Approve or Deny only after reviewing the request; this screen does not collect a separate decision reason."
+    ],
+    "fields": [
+      {
+        "key": "approvals.request",
+        "label": "Approval request",
+        "description": "Review the displayed requester, tool, arguments, policy gate, and reason before choosing Approve or Deny."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No requests appear",
+        "action": "There are no pending requests currently listed; this does not change policy permissions."
+      },
+      {
+        "symptom": "Decision is refused",
+        "action": "Read the reason and inspect Audit; do not bypass policy."
+      }
+    ]
+  },
+  "gated": {
+    "title": "Pending capabilities",
+    "summary": "Inspect tools and skills held back by signing or policy checks.",
+    "steps": [
+      "Review the capability, signer, and current state.",
+      "For a locked approval, use Review source and wait for the displayed source to match.",
+      "Approve or disapprove only after verifying the artifact."
+    ],
+    "fields": [
+      {
+        "key": "gated.show_all",
+        "label": "Show all capabilities",
+        "description": "Include capabilities that already load, for operator signing review."
+      },
+      {
+        "key": "gated.capability",
+        "label": "Capability",
+        "description": "Select an item to inspect its signature and source review state."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Approval is locked",
+        "action": "Complete Review source and verify it matches the capability before approval."
+      },
+      {
+        "symptom": "Capability remains unavailable",
+        "action": "Review its signature and policy status; never disable verification."
+      }
+    ]
+  },
+  "policy": {
+    "title": "Rules",
+    "summary": "Review fleet ACE policy bullets and their scores and lifecycle state.",
+    "steps": [
+      "Search or sort to locate a rule.",
+      "Open the rule and inspect related events in Audit if its effect is unexpected."
+    ],
+    "fields": [
+      {
+        "key": "policy.search",
+        "label": "Search rules",
+        "description": "Filter policy bullets by matching text."
+      },
+      {
+        "key": "policy.sort",
+        "label": "Sort rules",
+        "description": "Order bullets by score, use count, or creation time."
+      },
+      {
+        "key": "policy.include_retired",
+        "label": "Include retired",
+        "description": "Toggle whether retired bullets appear in the list."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Expected rule is missing",
+        "action": "Check search text and whether retired rules are included."
+      }
+    ]
+  },
+  "security": {
+    "title": "Audit",
+    "summary": "Inspect the ordered audit record of control actions and policy decisions.",
+    "steps": [
+      "Select an event to see its actor, target, reason, time, and integrity data.",
+      "Preserve event time and non-sensitive details when escalating a missing record."
+    ],
+    "fields": [
+      {
+        "key": "audit.event",
+        "label": "Audit event",
+        "description": "Select an event row to inspect its recorded details."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Expected event is absent",
+        "action": "Record the time and action, then contact the system operator; do not alter audit data."
+      },
+      {
+        "symptom": "Ledger reports an error",
+        "action": "Preserve the displayed error and escalate to the system operator."
+      }
+    ]
+  },
+  "arcrun": {
+    "title": "Activity",
+    "summary": "Inspect recorded agent runs and their action traces.",
+    "steps": [
+      "Search for a run, then select it to inspect its steps.",
+      "Compare a run with the related chat or task when investigating a missing response."
+    ],
+    "fields": [
+      {
+        "key": "activity.search",
+        "label": "Search runs",
+        "description": "Filter recorded runs using identifying text shown in the list."
+      },
+      {
+        "key": "activity.run",
+        "label": "Run",
+        "description": "Select a run to inspect its events and tool steps."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No matching run appears",
+        "action": "Clear the search and check the relevant time range or request delivery."
+      }
+    ]
+  },
+  "workflows": {
+    "title": "Workflows",
+    "summary": "Browse workflow drafts and configured workflows.",
+    "steps": [
+      "Open a workflow to inspect its graph, trigger, and response target.",
+      "Use Show archived to include archived entries.",
+      "Create a draft, then configure and review it before use."
+    ],
+    "fields": [
+      {
+        "key": "workflow.search",
+        "label": "Workflow name",
+        "description": "Name the new draft so operators can identify it.",
+        "example": "onboarding"
+      },
+      {
+        "key": "workflow.archived",
+        "label": "Archived workflows",
+        "description": "Toggle visibility of archived workflows."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Workflow is absent",
+        "action": "Check archived visibility and whether the workflow exists in this environment."
+      }
+    ]
+  },
+  "workflows/:id": {
+    "title": "Workflow detail",
+    "summary": "Review and edit a workflow graph, trigger, and response target.",
+    "steps": [
+      "Inspect nodes and connections before saving changes.",
+      "Choose a trigger and response target that match the intended workflow.",
+      "Review the workflow status after saving."
+    ],
+    "fields": [
+      {
+        "key": "workflow.name",
+        "label": "Workflow name",
+        "description": "Human-readable name shown in the workflow list."
+      },
+      {
+        "key": "workflow.node.id",
+        "label": "Node ID",
+        "description": "Stable identifier used to refer to this node within the workflow."
+      },
+      {
+        "key": "workflow.node.type",
+        "label": "Node type",
+        "description": "Choose the node behavior from the available types."
+      },
+      {
+        "key": "workflow.node.prompt",
+        "label": "Prompt",
+        "description": "Instructions provided to this workflow node."
+      },
+      {
+        "key": "workflow.node.input",
+        "label": "Input mapping",
+        "description": "JSON input mapping; values can reference workflow inputs or previous node output."
+      },
+      {
+        "key": "workflow.node.script",
+        "label": "Script reference",
+        "description": "Configured script value for node types that support it."
+      },
+      {
+        "key": "workflow.node.gate",
+        "label": "Gate",
+        "description": "Gate identifier used for a gated step."
+      },
+      {
+        "key": "workflow.node.condition",
+        "label": "Condition",
+        "description": "Expression controlling a conditional edge; reference node outputs as shown in the editor.",
+        "example": "$nodes.verify.output.risk == 'low'"
+      },
+      {
+        "key": "workflow.node.output_schema",
+        "label": "Output schema",
+        "description": "Expected output schema for this node."
+      },
+      {
+        "key": "workflow.node.artifacts",
+        "label": "Artifacts",
+        "description": "Artifact references associated with the node."
+      },
+      {
+        "key": "workflow.node.loop_back_to",
+        "label": "Loop back to",
+        "description": "Target node for a loop-back edge."
+      },
+      {
+        "key": "workflow.trigger.type",
+        "label": "Starts",
+        "description": "Choose manual, scheduled cron, or interval triggering."
+      },
+      {
+        "key": "workflow.trigger.cron",
+        "label": "Cron expression",
+        "description": "Five-part minute, hour, day, month, weekday schedule.",
+        "example": "0 9 * * MON"
+      },
+      {
+        "key": "workflow.trigger.interval",
+        "label": "Every (seconds)",
+        "description": "Interval between scheduled starts, in seconds.",
+        "example": "3600"
+      },
+      {
+        "key": "workflow.trigger.not_before",
+        "label": "Not before",
+        "description": "Earliest local time the scheduled workflow may run.",
+        "example": "08:00"
+      },
+      {
+        "key": "workflow.trigger.not_after",
+        "label": "Not after",
+        "description": "Latest local time the scheduled workflow may run.",
+        "example": "18:00"
+      },
+      {
+        "key": "workflow.trigger.timezone",
+        "label": "Timezone",
+        "description": "Timezone used for schedule windows.",
+        "example": "America/Chicago"
+      },
+      {
+        "key": "workflow.response_target",
+        "label": "Response target",
+        "description": "Channel that receives the workflow response; None leaves it unset."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Schedule does not run",
+        "action": "Check trigger values and displayed workflow status, then compare with Activity."
+      },
+      {
+        "symptom": "Save is refused",
+        "action": "Review the displayed validation or version conflict and reload current workflow state."
+      }
+    ]
+  },
+  "knowledge": {
+    "title": "Knowledge",
+    "summary": "Inspect one agent’s memories, entities, insights, and connected-source indexing.",
+    "steps": [
+      "Select an agent, then choose the relevant knowledge tab.",
+      "In Connections, choose a source and review its status and available resources.",
+      "Select the desired scope, save it, and submit any required mapping approval before syncing."
+    ],
+    "fields": [
+      {
+        "key": "knowledge.agent",
+        "label": "Agent",
+        "description": "Choose whose knowledge store to inspect."
+      },
+      {
+        "key": "knowledge.source",
+        "label": "Source",
+        "description": "Choose a connected source for status, resources, and sync operations."
+      },
+      {
+        "key": "knowledge.resource_filter",
+        "label": "Filter documents",
+        "description": "Narrow the displayed indexed documents."
+      },
+      {
+        "key": "knowledge.chunk_search",
+        "label": "Search chunks",
+        "description": "Find indexed text within the selected connection."
+      },
+      {
+        "key": "knowledge.datastore.table",
+        "label": "Table",
+        "description": "Name a datastore table for the displayed lookup."
+      },
+      {
+        "key": "knowledge.datastore.operation",
+        "label": "Operation",
+        "description": "Choose get record, find, or list for the lookup."
+      },
+      {
+        "key": "knowledge.datastore.primary_key",
+        "label": "Primary key value",
+        "description": "Record key for a get-record lookup."
+      },
+      {
+        "key": "knowledge.datastore.column",
+        "label": "Column",
+        "description": "Column used to filter a find lookup."
+      },
+      {
+        "key": "knowledge.datastore.value",
+        "label": "Value",
+        "description": "Value matched against the selected column."
+      },
+      {
+        "key": "knowledge.datastore.limit",
+        "label": "Limit",
+        "description": "Maximum number of results to request."
+      },
+      {
+        "key": "knowledge.provenance.item_id",
+        "label": "Canonical item ID",
+        "description": "Find provenance for one canonical knowledge item."
+      },
+      {
+        "key": "knowledge.mapping.status",
+        "label": "Mapping status",
+        "description": "Filter mapping profiles by review state."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No connected sources appear",
+        "action": "Confirm the account is connected and granted to this agent; source discovery may also be unavailable."
+      },
+      {
+        "symptom": "Sync action is unavailable",
+        "action": "Check whether Knowledge sync is installed and whether the source is paused or degraded."
+      }
+    ]
+  },
+  "shared-knowledge": {
+    "title": "Shared knowledge",
+    "summary": "Search knowledge that agents have promoted for fleet sharing.",
+    "steps": [
+      "Search for a known phrase.",
+      "Open the result owner’s Knowledge screen to investigate its source."
+    ],
+    "fields": [
+      {
+        "key": "shared_knowledge.search",
+        "label": "Search shared knowledge",
+        "description": "Search the shared knowledge currently visible to the fleet.",
+        "example": "deployment checklist"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No matches appear",
+        "action": "Try a distinctive phrase and inspect the owning agent’s Knowledge view."
+      }
+    ]
+  },
+  "arcllm": {
+    "title": "Model usage",
+    "summary": "Review recorded model request, token, latency, and cost summaries.",
+    "steps": [
+      "Choose the displayed time period and compare metrics by provider or agent.",
+      "Use Activity to investigate an individual run."
+    ],
+    "fields": [
+      {
+        "key": "model_usage.window",
+        "label": "Time window",
+        "description": "Select the period summarized by the charts."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No usage appears",
+        "action": "Check the time window and compare with Activity; telemetry may be unavailable."
+      }
+    ]
+  },
+  "tools-skills": {
+    "title": "Tools & Skills",
+    "summary": "Review capability inventory and availability by agent.",
+    "steps": [
+      "Filter the inventory by agent, type, or source.",
+      "For an import, select the target agent and upload a signed capability ZIP.",
+      "Review staged files before promotion or signing."
+    ],
+    "fields": [
+      {
+        "key": "capabilities.agent_filter",
+        "label": "Agent filter",
+        "description": "Limit the inventory to capabilities associated with one agent."
+      },
+      {
+        "key": "capability_import.agent",
+        "label": "Import for agent",
+        "description": "Choose the agent that will receive the staged capability."
+      },
+      {
+        "key": "capability_import.archive",
+        "label": "Capability ZIP",
+        "description": "Select a signed ZIP archive to stage for review."
+      },
+      {
+        "key": "capability_import.file",
+        "label": "Staged file",
+        "description": "Choose a staged file to inspect or edit before promotion."
+      },
+      {
+        "key": "capability_import.content",
+        "label": "File content",
+        "description": "Review or edit the selected staged file; changes are part of the staged import."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Import cannot be promoted",
+        "action": "Review staged files and the signature or policy status in Pending capabilities."
+      },
+      {
+        "symptom": "Installed capability needs changes",
+        "action": "Use the staged import review journey for a replacement."
+      }
+    ]
+  },
+  "connections": {
+    "title": "Connections",
+    "summary": "Manage connected accounts, which agents can use them, and available connection checks.",
+    "steps": [
+      "Choose an available bundle and complete its connection flow.",
+      "Grant access only to agents that need the connection.",
+      "For indexable sources, open configure and sync to choose resources and approve mappings."
+    ],
+    "fields": [
+      {
+        "key": "connection.bundle",
+        "label": "Connector bundle",
+        "description": "Choose the installed connector to configure."
+      },
+      {
+        "key": "connection.agent_grant",
+        "label": "Agent access",
+        "description": "Grant or remove this account’s access for an agent."
+      },
+      {
+        "key": "connection.authorization_code",
+        "label": "Authorization code",
+        "description": "Enter the code returned by the provider authorization step."
+      },
+      {
+        "key": "connection.access_token",
+        "label": "Access token",
+        "description": "Enter the provider token required by this connector; it is masked in the UI."
+      },
+      {
+        "key": "connection.account_name",
+        "label": "Account name",
+        "description": "Label the connected account so operators can distinguish it.",
+        "example": "work"
+      },
+      {
+        "key": "connection.secret",
+        "label": "Connector credential",
+        "description": "Enter the credential required by this connector. It is not displayed after saving."
+      },
+      {
+        "key": "connection.endpoint",
+        "label": "Service endpoint",
+        "description": "Enter the endpoint URL when the connector requests one.",
+        "example": "https://service.example"
+      },
+      {
+        "key": "connection.check",
+        "label": "Connection check",
+        "description": "Use Doctor for diagnostics or Probe to check live reachability."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No bundles appear",
+        "action": "Install a connector bundle in the configured extension path."
+      },
+      {
+        "symptom": "Connection check fails",
+        "action": "Review the displayed diagnostic and provider access; use re-auth when available."
+      },
+      {
+        "symptom": "Knowledge has no resources",
+        "action": "Confirm the connector supports indexing and the account is granted to this agent."
+      }
+    ]
+  },
+  "settings": {
+    "title": "Settings",
+    "summary": "View or edit system-wide and agent-specific configuration.",
+    "steps": [
+      "Choose System or an agent scope.",
+      "Open the relevant configuration tab and review each value before editing.",
+      "Provider key controls report presence without showing saved credentials."
+    ],
+    "fields": [
+      {
+        "key": "settings.scope",
+        "label": "Configuration scope",
+        "description": "Choose fleet-wide System settings or one agent; agent values layer over system defaults."
+      },
+      {
+        "key": "settings.config_value",
+        "label": "Configuration value",
+        "description": "Field names and accepted types are defined by the selected configuration schema. Review the field description and validation before changing it."
+      },
+      {
+        "key": "settings.provider_key",
+        "label": "Provider key",
+        "description": "Enter a provider credential only in its designated masked key control; saved values are never shown back."
+      },
+      {
+        "key": "settings.arcrun.max_turns",
+        "label": "Maximum turns",
+        "description": "Hard ceiling on agentic loop turns. A higher ceiling can increase run time and model usage.",
+        "example": 120
+      },
+      {
+        "key": "settings.arcrun.tool_timeout",
+        "label": "Tool timeout",
+        "description": "Maximum time a tool call may run before timing out. Use a value suited to the tool; longer limits can hold resources longer.",
+        "example": 30
+      },
+      {
+        "key": "settings.section.arcllm",
+        "label": "Models & providers",
+        "description": "Configuration for model defaults, providers, and model-call modules. A change can affect which models agents call and how calls are routed."
+      },
+      {
+        "key": "settings.section.arcrun",
+        "label": "Work loop",
+        "description": "Configuration for run limits, timeouts, retries, and strategy availability. Changes can affect run duration and resource use."
+      },
+      {
+        "key": "settings.section.arcagent",
+        "label": "Agent behavior",
+        "description": "Configuration for agent tools, skills, memory, and modules. Review the module-specific schema before changing values."
+      },
+      {
+        "key": "settings.section.gateway",
+        "label": "Chat surfaces",
+        "description": "Configuration for chat channels and who may use them. Review access effects before saving."
+      },
+      {
+        "key": "settings.unknown_extension_field",
+        "label": "Extension-defined setting",
+        "description": "ArcUI has no description for this extension-defined key. Consult the installed extension’s own configuration documentation before changing it."
+      },
+      {
+        "key": "settings.arcagent.agent.name",
+        "label": "Agent name",
+        "description": "Identifier shown for this agent in roster and logs."
+      },
+      {
+        "key": "settings.arcagent.agent.org",
+        "label": "Organization",
+        "description": "Organization label associated with this agent."
+      },
+      {
+        "key": "settings.arcagent.agent.type",
+        "label": "Agent type",
+        "description": "Role/type label used by agent configuration and roster consumers."
+      },
+      {
+        "key": "settings.arcagent.agent.workspace",
+        "label": "Workspace path",
+        "description": "Directory used as this agent’s workspace; changing it changes where workspace state and files are resolved."
+      },
+      {
+        "key": "settings.arcllm.llm.model",
+        "label": "Default model",
+        "description": "Provider/model identifier used for this agent’s model calls unless a route selects another allowed model."
+      },
+      {
+        "key": "settings.arcllm.llm.max_tokens",
+        "label": "Generation token limit",
+        "description": "Optional per-agent generation token limit; when unset, the shared model configuration supplies the limit."
+      },
+      {
+        "key": "settings.arcllm.llm.temperature",
+        "label": "Model temperature",
+        "description": "Sampling temperature sent with model requests; provider/model support may constrain its effect."
+      },
+      {
+        "key": "settings.arcllm.budget.max_tokens",
+        "label": "Run token ceiling",
+        "description": "Optional per-run token ceiling. Unset means this budget dimension is uncapped; stricter deployment tiers may enforce a floor."
+      },
+      {
+        "key": "settings.arcllm.budget.max_cost_usd",
+        "label": "Run cost ceiling",
+        "description": "Optional per-run model cost ceiling in US dollars. Unset means this budget dimension is uncapped; stricter deployment tiers may enforce a floor."
+      },
+      {
+        "key": "settings.arcllm.budget.max_requests",
+        "label": "Run request ceiling",
+        "description": "Optional per-run model request ceiling. Unset means this budget dimension is uncapped; stricter deployment tiers may enforce a floor."
+      },
+      {
+        "key": "settings.arcagent.ui.display_name",
+        "label": "Display name",
+        "description": "Friendly name shown in ArcUI fleet surfaces; this is presentation metadata, not the agent identity."
+      },
+      {
+        "key": "settings.arcagent.ui.role_label",
+        "label": "Role label",
+        "description": "Short role text shown alongside the agent in ArcUI."
+      },
+      {
+        "key": "settings.arcagent.ui.color",
+        "label": "Display color",
+        "description": "Color hint used by ArcUI for this agent; it does not change agent behavior."
+      },
+      {
+        "key": "settings.arcagent.ui.hidden",
+        "label": "Hide from fleet view",
+        "description": "When enabled, ArcUI omits this agent from the fleet roster display."
+      },
+      {
+        "key": "settings.arcagent.identity.did",
+        "label": "Agent DID",
+        "description": "Decentralized identifier bound to this agent; change only as part of the identity provisioning procedure."
+      },
+      {
+        "key": "settings.arcagent.identity.key_dir",
+        "label": "Agent key directory",
+        "description": "Location used to resolve this agent’s identity keys. Keep private key material under the approved key-custody workflow."
+      },
+      {
+        "key": "settings.arcagent.identity.vault_path",
+        "label": "Identity vault reference",
+        "description": "Vault reference used when resolving this agent’s identity credential."
+      },
+      {
+        "key": "settings.arcagent.vault.backend",
+        "label": "Vault backend",
+        "description": "Selects the configured vault integration used for credential resolution."
+      },
+      {
+        "key": "settings.arcagent.vault.cache_ttl_seconds",
+        "label": "Vault cache lifetime",
+        "description": "How long resolved vault values may remain cached, in seconds."
+      },
+      {
+        "key": "settings.arcagent.tools.policy.timeout_seconds",
+        "label": "Tool timeout",
+        "description": "Maximum wall-clock duration for an individual tool dispatch, in seconds; accepted range is 1–600."
+      },
+      {
+        "key": "settings.arcagent.tools.preamble",
+        "label": "Tool instructions",
+        "description": "Additional text provided with the configured tool set. Keep policy and secrets out of this user-editable text."
+      },
+      {
+        "key": "settings.arcagent.tools.operate_in_launch_dir",
+        "label": "Operate in launch directory",
+        "description": "When enabled, supported file/exec tools use the launch directory only when it is already within the workspace and allowed paths."
+      },
+      {
+        "key": "settings.arcagent.tools.human_gate.timeout_seconds",
+        "label": "Approval timeout",
+        "description": "How long a human approval request may wait before timing out, in seconds."
+      },
+      {
+        "key": "settings.arcagent.telemetry.enabled",
+        "label": "Telemetry enabled",
+        "description": "Enables or disables ArcAgent telemetry collection."
+      },
+      {
+        "key": "settings.arcagent.telemetry.service_name",
+        "label": "Telemetry service name",
+        "description": "Service label attached to exported telemetry."
+      },
+      {
+        "key": "settings.arcagent.telemetry.log_level",
+        "label": "Log level",
+        "description": "Minimum severity written by the configured logging pipeline."
+      },
+      {
+        "key": "settings.arcagent.telemetry.export_traces",
+        "label": "Export traces",
+        "description": "When enabled, sends traces to the configured telemetry exporter."
+      },
+      {
+        "key": "settings.arcagent.telemetry.exporter_endpoint",
+        "label": "Telemetry endpoint",
+        "description": "Endpoint used by the configured trace exporter."
+      },
+      {
+        "key": "settings.arcagent.telemetry.capture_tool_io",
+        "label": "Capture tool input and output",
+        "description": "Controls whether raw tool arguments/results are persisted for run inspection. Defaults vary by security tier; raw content may be sensitive."
+      },
+      {
+        "key": "settings.arcagent.context.max_tokens",
+        "label": "Context token target",
+        "description": "Token capacity used by context management when estimating the model context window."
+      },
+      {
+        "key": "settings.arcagent.context.prune_threshold",
+        "label": "Prune threshold",
+        "description": "Context-use fraction at which older context is pruned."
+      },
+      {
+        "key": "settings.arcagent.context.compact_threshold",
+        "label": "Compaction threshold",
+        "description": "Context-use fraction at which the session compaction summary is triggered."
+      },
+      {
+        "key": "settings.arcagent.context.emergency_threshold",
+        "label": "Emergency threshold",
+        "description": "Context-use fraction for emergency context reduction."
+      },
+      {
+        "key": "settings.arcagent.context.estimate_multiplier",
+        "label": "Token estimate multiplier",
+        "description": "Adjustment applied to estimated token use to account for estimation uncertainty."
+      },
+      {
+        "key": "settings.arcllm.eval.provider",
+        "label": "Evaluation provider",
+        "description": "Provider used for background evaluation calls; empty uses the agent’s configured provider."
+      },
+      {
+        "key": "settings.arcllm.eval.model",
+        "label": "Evaluation model",
+        "description": "Model used for background evaluation; empty uses the agent’s configured model."
+      },
+      {
+        "key": "settings.arcllm.eval.max_tokens",
+        "label": "Evaluation output limit",
+        "description": "Maximum generated tokens for one evaluation request."
+      },
+      {
+        "key": "settings.arcllm.eval.max_input_tokens",
+        "label": "Evaluation input limit",
+        "description": "Approximate input-token budget for one evaluation request; oversized input is split. Zero disables this limit."
+      },
+      {
+        "key": "settings.arcllm.eval.temperature",
+        "label": "Evaluation temperature",
+        "description": "Sampling temperature for evaluation and summarization calls."
+      },
+      {
+        "key": "settings.arcllm.eval.timeout_seconds",
+        "label": "Evaluation timeout",
+        "description": "Maximum duration for one evaluation request, in seconds."
+      },
+      {
+        "key": "settings.arcllm.eval.fallback_behavior",
+        "label": "Evaluation fallback",
+        "description": "Choose whether an unavailable evaluation step is skipped or causes an error."
+      },
+      {
+        "key": "settings.arcllm.eval.max_concurrent",
+        "label": "Evaluation concurrency",
+        "description": "Maximum simultaneous evaluation calls."
+      },
+      {
+        "key": "settings.arcllm.eval.background_queue_size",
+        "label": "Background queue size",
+        "description": "Maximum queued background jobs per module."
+      },
+      {
+        "key": "settings.arcllm.eval.background_task_timeout",
+        "label": "Background task timeout",
+        "description": "Maximum duration for a background task, in seconds."
+      },
+      {
+        "key": "settings.arcagent.session.retention_count",
+        "label": "Session retention count",
+        "description": "Number of recent sessions to retain."
+      },
+      {
+        "key": "settings.arcagent.session.retention_days",
+        "label": "Session retention days",
+        "description": "Age window used to retain sessions."
+      },
+      {
+        "key": "settings.arcagent.session.compaction_summary_max_chars",
+        "label": "Compaction summary length",
+        "description": "Maximum characters retained in a session compaction summary."
+      },
+      {
+        "key": "settings.arcagent.session.compaction_timeout_seconds",
+        "label": "Compaction timeout",
+        "description": "Maximum time allowed for the post-turn compaction model call; on timeout the compaction is skipped."
+      },
+      {
+        "key": "settings.arcagent.team.root",
+        "label": "Team root",
+        "description": "Directory containing this agent’s team/fleet coordination data."
+      },
+      {
+        "key": "settings.arcagent.spawn.enabled",
+        "label": "Enable child-agent spawning",
+        "description": "Registers the spawn_task tool so the model can request child runs."
+      },
+      {
+        "key": "settings.arcagent.spawn.max_depth",
+        "label": "Spawn depth limit",
+        "description": "Maximum nested child-run depth."
+      },
+      {
+        "key": "settings.arcagent.spawn.max_concurrent",
+        "label": "Concurrent child runs",
+        "description": "Maximum number of child runs allowed at once."
+      },
+      {
+        "key": "settings.arcagent.spawn.max_turns",
+        "label": "Child run turn limit",
+        "description": "Hard maximum turns for each spawned child run."
+      },
+      {
+        "key": "settings.arcagent.spawn.timeout_seconds",
+        "label": "Child run timeout",
+        "description": "Wall-clock limit for each child run, in seconds."
+      },
+      {
+        "key": "settings.arcagent.spawn.max_total_tokens",
+        "label": "Child token pool",
+        "description": "Optional shared token budget across child runs; unset leaves this pool uncapped."
+      },
+      {
+        "key": "settings.arcagent.security.tier",
+        "label": "Security tier",
+        "description": "Deployment tier that sets credential, executor, and policy stringency. Federal floors cannot be relaxed in configuration."
+      },
+      {
+        "key": "settings.arcagent.security.clearance",
+        "label": "Agent clearance",
+        "description": "Maximum data classification this agent may handle under classification-aware policy."
+      },
+      {
+        "key": "settings.arcagent.security.classification_enforced",
+        "label": "Enforce classification checks",
+        "description": "When enabled, policy refuses operations without sufficient classification context."
+      },
+      {
+        "key": "settings.arcagent.security.runaway_max_repeat",
+        "label": "Repeated-call circuit breaker",
+        "description": "Optional threshold for identical repeated tool calls before the run is stopped."
+      },
+      {
+        "key": "settings.arcagent.security.error_cascade_max",
+        "label": "Tool-error circuit breaker",
+        "description": "Optional threshold for consecutive tool failures before the run is stopped."
+      },
+      {
+        "key": "settings.arcagent.security.loop_max_parallel",
+        "label": "Parallel tool-call limit",
+        "description": "Maximum number of tool calls the loop may run concurrently; federal tier can impose a stricter floor."
+      },
+      {
+        "key": "settings.arcagent.security.policy_audit_log",
+        "label": "Policy audit chain path",
+        "description": "Path for the signed policy-decision audit chain; a relative path is resolved within the workspace."
+      },
+      {
+        "key": "settings.arcagent.security.operator_key_dir",
+        "label": "Operator key directory",
+        "description": "Directory used to resolve the operator signing authority. Keep outside the agent workspace and follow the managed key-custody process."
+      },
+      {
+        "key": "settings.arcagent.security.operator_vault_path",
+        "label": "Operator key vault reference",
+        "description": "Vault reference for resolving the operator signing key when vault custody is configured."
+      },
+      {
+        "key": "settings.arcagent.security.signing_algorithm",
+        "label": "Audit signing algorithm",
+        "description": "Signing algorithm for operator policy-chain records; federal tier requires its FIPS-approved setting."
+      },
+      {
+        "key": "settings.arcagent.security.custody",
+        "label": "Operator key custody",
+        "description": "Selects in-process key use or reference-based vault signing; enterprise/federal tier may require vault custody."
+      },
+      {
+        "key": "settings.arcagent.security.notary_keystore",
+        "label": "Notary keystore path",
+        "description": "Keystore location used by the vault-transit development/CI notary backend."
+      },
+      {
+        "key": "settings.arcagent.security.require_fips",
+        "label": "Require FIPS cryptography",
+        "description": "When enabled, startup requires a FIPS-validated backend and approved algorithm."
+      },
+      {
+        "key": "settings.arcagent.security.witness_medium_path",
+        "label": "Witness medium path",
+        "description": "Append-only location for witness checkpoint heads; federal deployment requires it to be separate from operator key custody."
+      },
+      {
+        "key": "settings.arcagent.security.witness_mode",
+        "label": "Witness mode",
+        "description": "Choose offline append-only witness storage or the configured transparency-log backend."
+      },
+      {
+        "key": "settings.arcagent.security.witness_log_url",
+        "label": "Transparency log endpoint",
+        "description": "Endpoint used when witness mode is transparency_log."
+      },
+      {
+        "key": "settings.arcagent.capabilities.allow_all_imports",
+        "label": "Allow all workspace-tool imports",
+        "description": "Relaxes import restrictions at enterprise tier; ignored at federal and not needed at personal tier."
+      },
+      {
+        "key": "settings.arcagent.capabilities.isolation_relax",
+        "label": "Execution isolation",
+        "description": "Controls the personal-tier execution isolation relaxation for signed and approved workspace-authored tools. Higher tiers reject weakening the container floor."
+      },
+      {
+        "key": "settings.arcrun.approval_opt_in",
+        "label": "Tools requiring approval",
+        "description": "Tool names that require human approval at personal/enterprise tier even when other policy would allow them."
+      },
+      {
+        "key": "settings.arcrun.sandbox.allowed_tools",
+        "label": "Sandbox tool allowlist",
+        "description": "Restricts the loop to these tool names; an empty/unset value permits registered tools."
+      },
+      {
+        "key": "settings.gateway.gateway.tier",
+        "label": "Gateway security tier",
+        "description": "Sets credential-resolution stringency for gateway platform credentials."
+      },
+      {
+        "key": "settings.gateway.gateway.agent_did",
+        "label": "Default gateway agent",
+        "description": "Agent DID that receives gateway messages unless a platform overrides it."
+      },
+      {
+        "key": "settings.gateway.gateway.runtime_dir",
+        "label": "Gateway runtime directory",
+        "description": "Directory used for gateway runtime state."
+      },
+      {
+        "key": "settings.gateway.security.require_pairing",
+        "label": "Require user pairing",
+        "description": "Requires a direct-message user to complete pairing before gateway routing."
+      },
+      {
+        "key": "settings.gateway.platforms.web.enabled",
+        "label": "Enable web chat",
+        "description": "Enables the in-process browser chat platform."
+      },
+      {
+        "key": "settings.gateway.platforms.web.agent_did",
+        "label": "Web chat agent",
+        "description": "Agent DID serving web chat; empty inherits the gateway default."
+      },
+      {
+        "key": "settings.gateway.platforms.web.max_connections",
+        "label": "Web connection limit",
+        "description": "Maximum simultaneous browser connections; valid range is 1–10000."
+      },
+      {
+        "key": "settings.gateway.platforms.web.idle_timeout_seconds",
+        "label": "Web idle timeout",
+        "description": "Seconds before an idle browser connection expires; valid range is 60–86400."
+      },
+      {
+        "key": "settings.gateway.platforms.web.max_frame_bytes",
+        "label": "Web frame limit",
+        "description": "Maximum browser message frame size in bytes; valid range is 1024–1048576."
+      },
+      {
+        "key": "settings.gateway.pairing.db_path",
+        "label": "Pairing database path",
+        "description": "Location of the gateway pairing database."
+      },
+      {
+        "key": "settings.arcllm.defaults.provider",
+        "label": "Default provider",
+        "description": "Provider selected when a model request does not specify another provider."
+      },
+      {
+        "key": "settings.arcllm.defaults.temperature",
+        "label": "Default temperature",
+        "description": "Sampling temperature used by the global model defaults."
+      },
+      {
+        "key": "settings.arcllm.defaults.max_tokens",
+        "label": "Default output token limit",
+        "description": "Maximum generated tokens supplied by the global model defaults."
+      },
+      {
+        "key": "settings.arcllm.vault.backend",
+        "label": "Vault backend",
+        "description": "Selects the vault integration used to resolve configured credentials."
+      },
+      {
+        "key": "settings.arcllm.vault.cache_ttl_seconds",
+        "label": "Vault cache lifetime",
+        "description": "How long resolved vault values may remain cached, in seconds."
+      },
+      {
+        "key": "settings.arcllm.vault.url",
+        "label": "Vault endpoint",
+        "description": "Endpoint for the configured vault service."
+      },
+      {
+        "key": "settings.arcllm.vault.region",
+        "label": "Vault region",
+        "description": "Region passed to the configured vault backend."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.entity_id",
+        "label": "Entity Id",
+        "description": "Stable identifier for this agent in team messaging."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.entity_name",
+        "label": "Entity Name",
+        "description": "Display name used in team messaging."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.nats_url",
+        "label": "Nats Url",
+        "description": "NATS connection URL for team messaging; treat credential-bearing URLs as secrets."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.auto_ack",
+        "label": "Auto Ack",
+        "description": "Acknowledge a message automatically after delivery processing."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.max_messages_per_poll",
+        "label": "Max Messages Per Poll",
+        "description": "Maximum messages inspected in one inbox poll."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.roster_ttl_seconds",
+        "label": "Roster Ttl Seconds",
+        "description": "How long the team roster may be reused before refresh, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.entity_role",
+        "label": "Entity Role",
+        "description": "Role label published for this messaging entity."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.channel_route",
+        "label": "Channel Route",
+        "description": "Allow the routing layer to direct channel messages to this agent."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_top_k",
+        "label": "Route Top K",
+        "description": "Maximum candidate agents considered by message routing."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_ambiguity_margin",
+        "label": "Route Ambiguity Margin",
+        "description": "Score margin required to choose a routed agent without ambiguity."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_timeout_seconds",
+        "label": "Route Timeout Seconds",
+        "description": "Maximum duration of one message-routing decision, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_failure_threshold",
+        "label": "Route Failure Threshold",
+        "description": "Consecutive routing failures before the route circuit breaker opens."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_base_wait_seconds",
+        "label": "Route Base Wait Seconds",
+        "description": "Base delay used before retrying a failed route."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_embed_backend",
+        "label": "Route Embed Backend",
+        "description": "Embedding backend used to match messages to agents."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_embed_model",
+        "label": "Route Embed Model",
+        "description": "Embedding model used by message routing."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.route_embed_base_url",
+        "label": "Route Embed Base Url",
+        "description": "Service endpoint for the configured routing embedder."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.sweep_enabled",
+        "label": "Sweep Enabled",
+        "description": "Enable periodic review of unanswered messages."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.sweep_after_seconds",
+        "label": "Sweep After Seconds",
+        "description": "Minimum age before an unanswered message is considered for follow-up."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.sweep_max_per_tick",
+        "label": "Sweep Max Per Tick",
+        "description": "Maximum unanswered messages checked in one sweep."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.channel_answer_cap",
+        "label": "Channel Answer Cap",
+        "description": "Maximum number of agents allowed to answer one channel message."
+      },
+      {
+        "key": "settings.arcagent.modules.messaging.config.channel_cooldown_seconds",
+        "label": "Channel Cooldown Seconds",
+        "description": "Minimum delay before another agent answer is allowed in the channel."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.tier",
+        "label": "Tier",
+        "description": "Security tier used to choose voice credential and processing rules."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.stt_provider",
+        "label": "Stt Provider",
+        "description": "Speech-to-text provider selected for incoming audio."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.tts_provider",
+        "label": "Tts Provider",
+        "description": "Text-to-speech provider selected for outgoing audio."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.air_gap",
+        "label": "Air Gap",
+        "description": "Require voice processing to remain on the configured local path."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.redact_pii",
+        "label": "Redact Pii",
+        "description": "Redact detected personal information from voice transcripts."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.elevenlabs_api_key_env",
+        "label": "Elevenlabs Api Key Env",
+        "description": "Environment-variable name from which the ElevenLabs adapter reads its credential; enter a variable name, never the credential."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.elevenlabs_base_url",
+        "label": "Elevenlabs Base Url",
+        "description": "Endpoint for the ElevenLabs speech service."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.elevenlabs_default_voice_id",
+        "label": "Elevenlabs Default Voice Id",
+        "description": "Voice preset identifier used by ElevenLabs when no voice is selected."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.openai_api_key_env",
+        "label": "Openai Api Key Env",
+        "description": "Environment-variable name from which the OpenAI voice adapter reads its credential; enter a variable name, never the credential."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.openai_whisper_model",
+        "label": "Openai Whisper Model",
+        "description": "OpenAI transcription model identifier."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.whisper_cpp_binary",
+        "label": "Whisper Cpp Binary",
+        "description": "Executable name or path for the local whisper.cpp program."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.whisper_cpp_model",
+        "label": "Whisper Cpp Model",
+        "description": "Model file identifier used by whisper.cpp."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.whisper_cpp_threads",
+        "label": "Whisper Cpp Threads",
+        "description": "CPU threads allocated to whisper.cpp transcription."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.piper_binary",
+        "label": "Piper Binary",
+        "description": "Executable name or path for the local Piper program."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.piper_model",
+        "label": "Piper Model",
+        "description": "Piper voice model identifier."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.piper_data_dir",
+        "label": "Piper Data Dir",
+        "description": "Directory containing Piper voice data; empty allows auto-detection."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.transcribe_timeout_s",
+        "label": "Transcribe Timeout S",
+        "description": "Maximum time for one transcription, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.voice.config.synthesize_timeout_s",
+        "label": "Synthesize Timeout S",
+        "description": "Maximum time for one speech synthesis request, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.enabled",
+        "label": "Enabled",
+        "description": "Enable workflow module support."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.workflows_dir",
+        "label": "Workflows Dir",
+        "description": "Directory containing workflow definitions."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.nats_url",
+        "label": "Nats Url",
+        "description": "NATS endpoint used for workflow event transport."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.max_workflows",
+        "label": "Max Workflows",
+        "description": "Maximum number of workflow definitions accepted."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.max_nodes",
+        "label": "Max Nodes",
+        "description": "Maximum nodes allowed in one workflow."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.max_inline_text_length",
+        "label": "Max Inline Text Length",
+        "description": "Maximum inline text length accepted in workflow content."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.max_repair_attempts",
+        "label": "Max Repair Attempts",
+        "description": "Maximum repair attempts made for invalid workflow definitions."
+      },
+      {
+        "key": "settings.arcagent.modules.workflows.config.max_file_bytes",
+        "label": "Max File Bytes",
+        "description": "Maximum workflow definition file size in bytes."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.enabled",
+        "label": "Enabled",
+        "description": "Enable policy learning and evaluation support."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.eval_interval_turns",
+        "label": "Eval Interval Turns",
+        "description": "Run policy evaluation after this many turns."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.daily_notes_every_turns",
+        "label": "Daily Notes Every Turns",
+        "description": "Write policy daily notes at this turn interval."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.max_bullets",
+        "label": "Max Bullets",
+        "description": "Maximum policy bullets retained."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.max_bullet_text_length",
+        "label": "Max Bullet Text Length",
+        "description": "Maximum length of one policy bullet in characters."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.flush_idle_seconds",
+        "label": "Flush Idle Seconds",
+        "description": "Idle delay before pending policy notes are flushed, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.policy.config.tier",
+        "label": "Tier",
+        "description": "Security tier used by policy behavior."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.interval_seconds",
+        "label": "Interval Seconds",
+        "description": "Delay between automatic connected-source sync checks, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.global_concurrency",
+        "label": "Global Concurrency",
+        "description": "Maximum connected-source sync operations running at once service-wide."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.brain",
+        "label": "Brain",
+        "description": "Select the memory backend/brain implementation."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.tier",
+        "label": "Tier",
+        "description": "Security tier used to determine memory access behavior."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.curated_knowledge_enabled",
+        "label": "Curated Knowledge Enabled",
+        "description": "Enable the curated-knowledge capability for this agent."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.top_k",
+        "label": "Top K",
+        "description": "Maximum memory matches returned for retrieval."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.budget",
+        "label": "Budget",
+        "description": "Token budget allocated to retrieved memory context."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.knowledge_budget",
+        "label": "Knowledge Budget",
+        "description": "Optional token budget for connected knowledge retrieval."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.proactive_enabled",
+        "label": "Proactive Enabled",
+        "description": "Enable proactive memory behaviors."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.proactive_decision_point",
+        "label": "Proactive Decision Point",
+        "description": "Ask the proactive decision step whether to act."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.decision_point_pre_tool",
+        "label": "Decision Point Pre Tool",
+        "description": "Run the proactive decision check before tool execution."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.working_set_enabled",
+        "label": "Working Set Enabled",
+        "description": "Enable the temporal working-set memory view."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.consolidate_hour",
+        "label": "Consolidate Hour",
+        "description": "Hour of day used for scheduled memory consolidation."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.consolidate_window_hours",
+        "label": "Consolidate Window Hours",
+        "description": "Hour window in which scheduled consolidation may run."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.consolidate_event_threshold",
+        "label": "Consolidate Event Threshold",
+        "description": "Legacy config key accepted for old files but not read by the current consolidation scheduler."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.consolidate_idle_seconds",
+        "label": "Consolidate Idle Seconds",
+        "description": "Legacy config key accepted for old files but not read by the current consolidation scheduler."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.consolidate_interval_seconds",
+        "label": "Consolidate Interval Seconds",
+        "description": "Legacy config key accepted for old files but not read by the current consolidation scheduler."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.embed_backend",
+        "label": "Embed Backend",
+        "description": "Embedding backend used by memory search."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.embed_model",
+        "label": "Embed Model",
+        "description": "Embedding model used by memory search."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.distill_provider",
+        "label": "Distill Provider",
+        "description": "Provider used for memory distillation; empty follows the configured model provider."
+      },
+      {
+        "key": "settings.arcagent.modules.memory.config.distill_model",
+        "label": "Distill Model",
+        "description": "Model used for memory distillation; empty follows the configured agent model."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.adapter",
+        "label": "Adapter",
+        "description": "Select the skills improvement adapter; none disables automatic improvement."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.tier",
+        "label": "Tier",
+        "description": "Security tier used for skills improvement policy."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.classify_outcomes",
+        "label": "Classify Outcomes",
+        "description": "Classify run outcomes for skill-improvement evidence."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.sweep_poll_seconds",
+        "label": "Sweep Poll Seconds",
+        "description": "Delay between checks for skills eligible for improvement, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.proactive.config.enabled",
+        "label": "Enabled",
+        "description": "Enable proactive agent behavior."
+      },
+      {
+        "key": "settings.arcagent.modules.proactive.config.leader",
+        "label": "Leader",
+        "description": "Select the coordination leader backend."
+      },
+      {
+        "key": "settings.arcagent.modules.proactive.config.identity",
+        "label": "Identity",
+        "description": "Identity value used by the selected leader backend."
+      },
+      {
+        "key": "settings.arcagent.modules.proactive.config.redis_url",
+        "label": "Redis Url",
+        "description": "Redis connection URL for the Redis leader backend; treat credential-bearing URLs as secrets."
+      },
+      {
+        "key": "settings.arcagent.modules.proactive.config.redis_key",
+        "label": "Redis Key",
+        "description": "Redis key used to coordinate leadership."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.search_provider",
+        "label": "Search Provider",
+        "description": "Search provider used for web search."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.extract_provider",
+        "label": "Extract Provider",
+        "description": "Provider used to retrieve page content."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.browser_cdp_url",
+        "label": "Browser Cdp Url",
+        "description": "Chrome DevTools Protocol endpoint when browser extraction is selected."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.tier",
+        "label": "Tier",
+        "description": "Security tier applied to web access policy."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.max_content_bytes",
+        "label": "Max Content Bytes",
+        "description": "Maximum response content accepted from a web source."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.pii_redaction_enabled",
+        "label": "Pii Redaction Enabled",
+        "description": "Redact detected personal information from web results."
+      },
+      {
+        "key": "settings.arcagent.modules.web.config.request_timeout_s",
+        "label": "Request Timeout S",
+        "description": "Maximum duration for one web request, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.runcontrol.config.enabled",
+        "label": "Enabled",
+        "description": "Enable the run-control module."
+      },
+      {
+        "key": "settings.arcagent.modules.runcontrol.config.data_dir",
+        "label": "Data Dir",
+        "description": "Directory used to persist run-control state."
+      },
+      {
+        "key": "settings.arcagent.modules.runcontrol.config.stale_ttl_seconds",
+        "label": "Stale Ttl Seconds",
+        "description": "Age after which a run-control lease is treated as stale, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.enabled",
+        "label": "Enabled",
+        "description": "Enable scheduled task support."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.min_interval_seconds",
+        "label": "Min Interval Seconds",
+        "description": "Minimum interval between scheduled executions, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.max_schedules",
+        "label": "Max Schedules",
+        "description": "Maximum number of schedules accepted."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.max_prompt_length",
+        "label": "Max Prompt Length",
+        "description": "Maximum length of a scheduled prompt."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.default_timeout_seconds",
+        "label": "Default Timeout Seconds",
+        "description": "Default timeout for a scheduled run, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.max_timeout_seconds",
+        "label": "Max Timeout Seconds",
+        "description": "Maximum permitted schedule timeout, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.circuit_breaker_threshold",
+        "label": "Circuit Breaker Threshold",
+        "description": "Consecutive schedule failures before its circuit breaker opens."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.check_interval_seconds",
+        "label": "Check Interval Seconds",
+        "description": "Delay between schedule checks, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.store_path",
+        "label": "Store Path",
+        "description": "Path used to store schedule definitions."
+      },
+      {
+        "key": "settings.arcagent.modules.scheduler.config.timezone",
+        "label": "Timezone",
+        "description": "Timezone used to interpret schedule times."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.enabled",
+        "label": "Enabled",
+        "description": "Enable task module support."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.dispatch",
+        "label": "Dispatch",
+        "description": "Allow the task module to dispatch work to agents."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.nats_url",
+        "label": "Nats Url",
+        "description": "NATS endpoint used for task events."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.default_max_attempts",
+        "label": "Default Max Attempts",
+        "description": "Default maximum attempts for a task."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.retry_backoff_seconds",
+        "label": "Retry Backoff Seconds",
+        "description": "Delay before retrying a failed task, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.task_timeout_seconds",
+        "label": "Task Timeout Seconds",
+        "description": "Maximum task duration; zero disables this module-level timeout."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.stuck_reclaim_seconds",
+        "label": "Stuck Reclaim Seconds",
+        "description": "Age after which a stuck task may be reclaimed, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.routing",
+        "label": "Routing",
+        "description": "Enable automatic task routing."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.notify",
+        "label": "Notify",
+        "description": "Send task status notifications."
+      },
+      {
+        "key": "settings.arcagent.modules.tasks.config.max_run_capability_legs",
+        "label": "Max Run Capability Legs",
+        "description": "Maximum capability legs allowed for one task run."
+      },
+      {
+        "key": "settings.arcagent.modules.workpad.config.every_n_runs",
+        "label": "Every N Runs",
+        "description": "Update workpad after this many runs."
+      },
+      {
+        "key": "settings.arcagent.modules.workpad.config.max_transcript_chars",
+        "label": "Max Transcript Chars",
+        "description": "Maximum transcript characters used to build a workpad update."
+      },
+      {
+        "key": "settings.arcagent.modules.workpad.config.max_context_chars",
+        "label": "Max Context Chars",
+        "description": "Maximum context characters included in a workpad update."
+      },
+      {
+        "key": "settings.arcagent.modules.workpad.config.flush_idle_seconds",
+        "label": "Flush Idle Seconds",
+        "description": "Idle delay before a pending workpad update is flushed, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.enabled",
+        "label": "Enabled",
+        "description": "Enable planning support."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.max_replans",
+        "label": "Max Replans",
+        "description": "Maximum times the plan may be revised during a run."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.max_tokens",
+        "label": "Max Tokens",
+        "description": "Optional token ceiling for planning; unset leaves this dimension uncapped."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.max_cost_usd",
+        "label": "Max Cost Usd",
+        "description": "Optional cost ceiling in US dollars for planning; unset leaves this dimension uncapped."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.concurrent",
+        "label": "Concurrent",
+        "description": "Allow planning steps to run concurrently."
+      },
+      {
+        "key": "settings.arcagent.modules.planning.config.max_parallel",
+        "label": "Max Parallel",
+        "description": "Maximum planning steps run concurrently when concurrency is enabled."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.coalesce_seconds",
+        "label": "Coalesce Seconds",
+        "description": "Combine progress updates arriving within this interval, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.min_gap_seconds",
+        "label": "Min Gap Seconds",
+        "description": "Minimum delay between progress messages, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.max_lines_per_run",
+        "label": "Max Lines Per Run",
+        "description": "Maximum progress lines emitted for one run."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.max_step_chars",
+        "label": "Max Step Chars",
+        "description": "Maximum characters in one progress step."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.heartbeat_after_seconds",
+        "label": "Heartbeat After Seconds",
+        "description": "Delay before the first run heartbeat, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.progress.config.heartbeat_every_seconds",
+        "label": "Heartbeat Every Seconds",
+        "description": "Interval between subsequent run heartbeats, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.pulse.config.enabled",
+        "label": "Enabled",
+        "description": "Enable periodic pulse checks."
+      },
+      {
+        "key": "settings.arcagent.modules.pulse.config.interval_seconds",
+        "label": "Interval Seconds",
+        "description": "Delay between pulse checks, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.pulse.config.pulse_file",
+        "label": "Pulse File",
+        "description": "File containing pulse instructions."
+      },
+      {
+        "key": "settings.arcagent.modules.pulse.config.state_file",
+        "label": "State File",
+        "description": "File used to persist pulse state."
+      },
+      {
+        "key": "settings.arcagent.modules.pulse.config.timeout_seconds",
+        "label": "Timeout Seconds",
+        "description": "Maximum duration of one pulse run, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.mcp_server.config.enabled",
+        "label": "Enabled",
+        "description": "Enable the agent MCP server module."
+      },
+      {
+        "key": "settings.arcagent.modules.mcp_server.config.server_name",
+        "label": "Server Name",
+        "description": "Name advertised by the MCP server."
+      },
+      {
+        "key": "settings.arcagent.modules.mcp_server.config.page_size",
+        "label": "Page Size",
+        "description": "Maximum resources returned per page; valid range is 1–1000."
+      },
+      {
+        "key": "settings.arcagent.modules.connectors.config.arc_dir",
+        "label": "Arc Dir",
+        "description": "Arc configuration root used to locate connection settings."
+      },
+      {
+        "key": "settings.arcagent.modules.connectors.config.extensions_root",
+        "label": "Extensions Root",
+        "description": "Directory containing this agent’s connector bundles."
+      },
+      {
+        "key": "settings.arcagent.modules.connectors.config.data_dir",
+        "label": "Data Dir",
+        "description": "Directory holding operational connector data."
+      },
+      {
+        "key": "settings.arcllm.llm.routes.*.model",
+        "label": "Routed model",
+        "description": "Model identifier allowed for this named route; the default model remains configured separately."
+      },
+      {
+        "key": "settings.arcagent.tools.mcp_servers.*.command",
+        "label": "MCP command",
+        "description": "Executable used to start this named MCP server. Review its provenance and operator authorization before changing it."
+      },
+      {
+        "key": "settings.arcagent.tools.mcp_servers.*.timeout_seconds",
+        "label": "MCP timeout",
+        "description": "Maximum wait for this named MCP server operation, in seconds."
+      },
+      {
+        "key": "settings.arcagent.tools.http.*.url",
+        "label": "HTTP tool URL",
+        "description": "Endpoint called by this named HTTP tool. Restrict destinations through the egress policy."
+      },
+      {
+        "key": "settings.arcagent.tools.http.*.method",
+        "label": "HTTP method",
+        "description": "HTTP method used by this named tool."
+      },
+      {
+        "key": "settings.arcagent.tools.http.*.timeout_seconds",
+        "label": "HTTP tool timeout",
+        "description": "Maximum duration for this named HTTP tool call, in seconds."
+      },
+      {
+        "key": "settings.arcagent.tools.process.*.command",
+        "label": "Process command",
+        "description": "Executable used by this named process tool. Review its provenance and authorization before changing it."
+      },
+      {
+        "key": "settings.arcagent.tools.process.*.timeout_seconds",
+        "label": "Process timeout",
+        "description": "Maximum duration for this named process tool, in seconds."
+      },
+      {
+        "key": "settings.arcagent.tools.policy.classifications.*",
+        "label": "Tool classification",
+        "description": "Classification assigned to this named tool for data-access policy."
+      },
+      {
+        "key": "settings.arcagent.tools.policy.egress_clearances.*",
+        "label": "Destination clearance",
+        "description": "Classification clearance assigned to this named external destination."
+      },
+      {
+        "key": "settings.arcagent.modules.*.enabled",
+        "label": "Module enabled",
+        "description": "Enable or disable this named ArcAgent module."
+      },
+      {
+        "key": "settings.arcagent.modules.*.priority",
+        "label": "Module priority",
+        "description": "Priority used to order this module’s event handlers; lower priority numbers run first."
+      },
+      {
+        "key": "settings.gateway.platforms.telegram.token_env",
+        "label": "Telegram token variable",
+        "description": "Environment-variable name from which Telegram credentials are read; never enter the token value."
+      },
+      {
+        "key": "settings.gateway.platforms.telegram.agent_did",
+        "label": "Telegram agent",
+        "description": "Agent DID receiving Telegram messages; empty inherits the gateway default."
+      },
+      {
+        "key": "settings.gateway.platforms.slack.bot_token_env",
+        "label": "Slack bot token variable",
+        "description": "Environment-variable name for the Slack bot credential; never enter the token value."
+      },
+      {
+        "key": "settings.gateway.platforms.slack.app_token_env",
+        "label": "Slack app token variable",
+        "description": "Environment-variable name for the Slack app credential; never enter the token value."
+      },
+      {
+        "key": "settings.gateway.platforms.slack.agent_did",
+        "label": "Slack agent",
+        "description": "Agent DID receiving Slack messages; empty inherits the gateway default."
+      },
+      {
+        "key": "settings.gateway.platforms.mattermost.server_url",
+        "label": "Mattermost URL",
+        "description": "Base URL for the Mattermost server."
+      },
+      {
+        "key": "settings.gateway.platforms.mattermost.bot_token_env",
+        "label": "Mattermost token variable",
+        "description": "Environment-variable name for the Mattermost credential; never enter the token value."
+      },
+      {
+        "key": "settings.gateway.platforms.mattermost.bot_user_id",
+        "label": "Mattermost bot user",
+        "description": "Bot user ID used to avoid processing the bot’s own posts."
+      },
+      {
+        "key": "settings.gateway.platforms.mattermost.agent_did",
+        "label": "Mattermost agent",
+        "description": "Agent DID receiving Mattermost messages; empty inherits the gateway default."
+      },
+      {
+        "key": "settings.gateway.platforms.voice.host",
+        "label": "Voice host",
+        "description": "Network host on which the voice platform listens."
+      },
+      {
+        "key": "settings.gateway.platforms.voice.port",
+        "label": "Voice port",
+        "description": "Network port on which the voice platform listens."
+      },
+      {
+        "key": "settings.gateway.platforms.voice.token_env",
+        "label": "Voice token variable",
+        "description": "Environment-variable name for voice platform authentication; never enter the token value."
+      },
+      {
+        "key": "settings.gateway.platforms.voice.operator_did",
+        "label": "Voice operator DID",
+        "description": "Operator DID used for voice platform operations."
+      },
+      {
+        "key": "settings.gateway.platforms.voice.chat_id",
+        "label": "Voice chat ID",
+        "description": "Conversation identifier used by the voice platform."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.enforcement",
+        "label": "Enforcement",
+        "description": "Select whether model routing reports route problems or enforces them."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.default_route",
+        "label": "Default Route",
+        "description": "Name of the fallback route selected when no other route applies."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.threshold",
+        "label": "Threshold",
+        "description": "Similarity threshold a matched routing phrase must reach."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.embedding_backend",
+        "label": "Embedding Backend",
+        "description": "Backend used to embed route phrases."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.embedding_model",
+        "label": "Embedding Model",
+        "description": "Model used to embed route phrases."
+      },
+      {
+        "key": "settings.arcllm.modules.routing.on_embedder_error",
+        "label": "On Embedder Error",
+        "description": "Choose whether routing errors raise or use the default route."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.enabled",
+        "label": "Enabled",
+        "description": "Enable model-call telemetry."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.log_level",
+        "label": "Log Level",
+        "description": "Minimum severity recorded by this module."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.store_raw_bodies",
+        "label": "Store Raw Bodies",
+        "description": "Store full request and response bodies in telemetry; these may contain sensitive content."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.classification",
+        "label": "Classification",
+        "description": "Default classification label assigned to telemetry records."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.enabled",
+        "label": "Encryption / Enabled",
+        "description": "Enable encryption for captured trace bodies."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.backend",
+        "label": "Encryption / Backend",
+        "description": "Encryption backend implementation reference."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.key_ref",
+        "label": "Encryption / Key Ref",
+        "description": "Vault reference to the trace encryption key."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.key_env",
+        "label": "Encryption / Key Env",
+        "description": "Environment-variable name for the trace wrapping key; enter the variable name only."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.cache_ttl_seconds",
+        "label": "Encryption / Cache Ttl Seconds",
+        "description": "How long a resolved encryption key may remain cached, in seconds."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.encryption.require_fips",
+        "label": "Encryption / Require Fips",
+        "description": "Require a FIPS-validated encryption provider."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.retention.max_age_days",
+        "label": "Retention / Max Age Days",
+        "description": "Delete rotated trace files older than this age; unset means no age limit."
+      },
+      {
+        "key": "settings.arcllm.modules.telemetry.retention.max_bytes",
+        "label": "Retention / Max Bytes",
+        "description": "Maximum retained size of rotated trace files; unset means no byte limit."
+      },
+      {
+        "key": "settings.arcllm.modules.audit.enabled",
+        "label": "Enabled",
+        "description": "Enable the model-call audit module."
+      },
+      {
+        "key": "settings.arcllm.modules.retry.enabled",
+        "label": "Enabled",
+        "description": "Enable provider retry behavior."
+      },
+      {
+        "key": "settings.arcllm.modules.retry.max_retries",
+        "label": "Max Retries",
+        "description": "Maximum additional attempts after a provider call fails."
+      },
+      {
+        "key": "settings.arcllm.modules.retry.backoff_base_seconds",
+        "label": "Backoff Base Seconds",
+        "description": "Base delay used to calculate provider retry backoff."
+      },
+      {
+        "key": "settings.arcllm.modules.fallback.enabled",
+        "label": "Enabled",
+        "description": "Enable provider fallback behavior."
+      },
+      {
+        "key": "settings.arcllm.modules.rate_limit.enabled",
+        "label": "Enabled",
+        "description": "Enable provider request rate limiting."
+      },
+      {
+        "key": "settings.arcllm.modules.rate_limit.requests_per_minute",
+        "label": "Requests Per Minute",
+        "description": "Maximum requests allowed per minute."
+      },
+      {
+        "key": "settings.arcllm.modules.rate_limit.burst_capacity",
+        "label": "Burst Capacity",
+        "description": "Maximum short burst of requests above the steady rate."
+      },
+      {
+        "key": "settings.arcllm.modules.circuit_breaker.enabled",
+        "label": "Enabled",
+        "description": "Enable the provider circuit breaker."
+      },
+      {
+        "key": "settings.arcllm.modules.circuit_breaker.failure_threshold",
+        "label": "Failure Threshold",
+        "description": "Consecutive provider failures before the circuit opens."
+      },
+      {
+        "key": "settings.arcllm.modules.circuit_breaker.cooldown_seconds",
+        "label": "Cooldown Seconds",
+        "description": "Time the circuit remains open before a probe is allowed, in seconds."
+      },
+      {
+        "key": "settings.arcllm.modules.circuit_breaker.half_open_max_calls",
+        "label": "Half Open Max Calls",
+        "description": "Maximum probe calls allowed while the circuit is half-open."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.enabled",
+        "label": "Enabled",
+        "description": "Enable provider endpoint load balancing."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.strategy",
+        "label": "Strategy",
+        "description": "Endpoint selection strategy used by the load balancer."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.sticky_key",
+        "label": "Sticky Key",
+        "description": "Request attribute used to keep related calls on one endpoint."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.failure_threshold",
+        "label": "Failure Threshold",
+        "description": "Endpoint failures before it is removed from active rotation."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.cooldown_seconds",
+        "label": "Cooldown Seconds",
+        "description": "Time before a failed endpoint can be tried again, in seconds."
+      },
+      {
+        "key": "settings.arcllm.modules.load_balance.half_open_max_calls",
+        "label": "Half Open Max Calls",
+        "description": "Maximum probe calls allowed when an endpoint is recovering."
+      },
+      {
+        "key": "settings.arcllm.modules.queue.enabled",
+        "label": "Enabled",
+        "description": "Enable the provider-call queue."
+      },
+      {
+        "key": "settings.arcllm.modules.queue.max_concurrent",
+        "label": "Max Concurrent",
+        "description": "Maximum provider calls running simultaneously."
+      },
+      {
+        "key": "settings.arcllm.modules.queue.call_timeout",
+        "label": "Call Timeout",
+        "description": "Maximum time for an active provider call, in seconds."
+      },
+      {
+        "key": "settings.arcllm.modules.queue.max_queued",
+        "label": "Max Queued",
+        "description": "Maximum provider calls waiting for a concurrency slot."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.enabled",
+        "label": "Enabled",
+        "description": "Enable OpenTelemetry export for model calls."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.exporter",
+        "label": "Exporter",
+        "description": "Select the trace exporter implementation."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.endpoint",
+        "label": "Endpoint",
+        "description": "Collector endpoint used by the exporter."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.protocol",
+        "label": "Protocol",
+        "description": "Transport protocol used to send telemetry."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.service_name",
+        "label": "Service Name",
+        "description": "Service name attached to exported telemetry."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.sample_rate",
+        "label": "Sample Rate",
+        "description": "Fraction of traces selected for export, from 0 to 1."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.insecure",
+        "label": "Insecure",
+        "description": "Allow an insecure connection to the telemetry collector."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.certificate_file",
+        "label": "Certificate File",
+        "description": "TLS certificate path used by the exporter."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.client_key_file",
+        "label": "Client Key File",
+        "description": "TLS client key path used by the exporter; do not put key contents here."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.client_cert_file",
+        "label": "Client Cert File",
+        "description": "TLS client certificate path used by the exporter."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.timeout_ms",
+        "label": "Timeout Ms",
+        "description": "Exporter request timeout in milliseconds."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.max_batch_size",
+        "label": "Max Batch Size",
+        "description": "Maximum telemetry records sent in one batch."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.max_queue_size",
+        "label": "Max Queue Size",
+        "description": "Maximum telemetry records buffered before export."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.schedule_delay_ms",
+        "label": "Schedule Delay Ms",
+        "description": "Delay between scheduled telemetry exports, in milliseconds."
+      },
+      {
+        "key": "settings.arcllm.modules.security.enabled",
+        "label": "Enabled",
+        "description": "Enable ArcLLM model-call security checks."
+      },
+      {
+        "key": "settings.arcllm.modules.security.pii_enabled",
+        "label": "Pii Enabled",
+        "description": "Enable detection of personally identifying content."
+      },
+      {
+        "key": "settings.arcllm.modules.security.pii_detector",
+        "label": "Pii Detector",
+        "description": "Select the PII detector implementation."
+      },
+      {
+        "key": "settings.arcllm.modules.security.pii_detector_class",
+        "label": "Pii Detector Class",
+        "description": "Optional fully qualified custom detector class."
+      },
+      {
+        "key": "settings.arcllm.modules.security.signing_enabled",
+        "label": "Signing Enabled",
+        "description": "Enable signing of model-call artifacts where supported."
+      },
+      {
+        "key": "settings.arcllm.modules.security.signing_algorithm",
+        "label": "Signing Algorithm",
+        "description": "Signing algorithm used when model-call signing is enabled."
+      },
+      {
+        "key": "settings.arcllm.modules.security.signing_key_env",
+        "label": "Signing Key Env",
+        "description": "Environment-variable name containing the signing seed; provide the name only, never the key."
+      },
+      {
+        "key": "settings.arcllm.modules.injection.enabled",
+        "label": "Enabled",
+        "description": "Enable prompt-injection scanning."
+      },
+      {
+        "key": "settings.arcllm.modules.injection.enforcement",
+        "label": "Enforcement",
+        "description": "Choose whether injection findings are observed or enforced."
+      },
+      {
+        "key": "settings.arcllm.modules.injection.tier",
+        "label": "Tier",
+        "description": "Select pattern or semantic injection analysis; semantic mode requires its optional dependency."
+      },
+      {
+        "key": "settings.arcllm.modules.injection.scan_user",
+        "label": "Scan User",
+        "description": "Scan user-provided input for injection patterns."
+      },
+      {
+        "key": "settings.arcllm.modules.injection.scan_tool_results",
+        "label": "Scan Tool Results",
+        "description": "Scan tool output for injection patterns."
+      },
+      {
+        "key": "settings.arcllm.modules.guardrails.enabled",
+        "label": "Enabled",
+        "description": "Enable model-output guardrails."
+      },
+      {
+        "key": "settings.arcllm.modules.guardrails.enforcement",
+        "label": "Enforcement",
+        "description": "Choose how guardrail findings affect the request."
+      },
+      {
+        "key": "settings.arcllm.modules.guardrails.max_length",
+        "label": "Max Length",
+        "description": "Maximum output length; zero means no length cap."
+      },
+      {
+        "key": "settings.arcagent.arcstore.enabled",
+        "label": "ArcStore enabled",
+        "description": "Enable ArcStore recording and services used by the agent."
+      },
+      {
+        "key": "settings.arcagent.arcstore.data_dir",
+        "label": "ArcStore data directory",
+        "description": "Directory used for Arc operational data; environment configuration may take precedence."
+      },
+      {
+        "key": "settings.arcagent.arcstore.database_credential_ref",
+        "label": "Database credential reference",
+        "description": "Vault reference for the database credential. Do not enter a database URL or password here."
+      },
+      {
+        "key": "settings.arcagent.arcstore.pool_min_size",
+        "label": "Database pool minimum",
+        "description": "Minimum number of database connections kept in the pool."
+      },
+      {
+        "key": "settings.arcagent.arcstore.pool_max_size",
+        "label": "Database pool maximum",
+        "description": "Maximum number of database connections; it must be at least the pool minimum."
+      },
+      {
+        "key": "settings.arcagent.arcstore.command_timeout",
+        "label": "Database command timeout",
+        "description": "Maximum database command duration, in seconds; valid range is greater than zero through 300."
+      },
+      {
+        "key": "settings.arcagent.arcstore.connect_timeout",
+        "label": "Database connect timeout",
+        "description": "Maximum time to establish a database connection, in seconds; valid range is greater than zero through 120."
+      },
+      {
+        "key": "settings.arcagent.arcstore.store_raw_bodies",
+        "label": "Store raw bodies",
+        "description": "Persist full operational bodies in ArcStore. These may contain sensitive content."
+      },
+      {
+        "key": "settings.arcagent.arcstore.rotation",
+        "label": "Data rotation interval",
+        "description": "Rotation interval used for stored operational data."
+      },
+      {
+        "key": "settings.arcagent.arcstore.retention",
+        "label": "Data retention",
+        "description": "Retention policy value passed to the storage backend."
+      },
+      {
+        "key": "settings.arcagent.arcstore.sample_rate",
+        "label": "Storage sample rate",
+        "description": "Fraction of eligible records stored, from 0 to 1."
+      },
+      {
+        "key": "settings.arcrun.allowed_strategies",
+        "label": "Allowed run strategies",
+        "description": "Operator ceiling on strategy names a run may use; unset permits registered strategies. This list affects explicit requests and does not select the default turn strategy."
+      },
+      {
+        "key": "settings.arcllm.llm.routes.*.phrases",
+        "label": "Route phrases",
+        "description": "Example phrases used by ArcLLM to select this named route."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.api_format",
+        "label": "Provider API format",
+        "description": "Wire format used to communicate with this provider."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.base_url",
+        "label": "Provider endpoint",
+        "description": "Base URL used for this provider; remote endpoints require HTTPS except local/private service destinations allowed by validation."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.api_key_env",
+        "label": "Provider key variable",
+        "description": "Environment-variable name from which the provider adapter reads its API key; do not enter the key."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.api_key_required",
+        "label": "Provider key required",
+        "description": "Whether this provider requires an API key."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.default_model",
+        "label": "Provider default model",
+        "description": "Model identifier selected when a request uses this provider without naming a model."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.default_temperature",
+        "label": "Provider default temperature",
+        "description": "Sampling temperature used by this provider when a request does not override it."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.vault_path",
+        "label": "Provider key vault reference",
+        "description": "Vault reference used to resolve the provider credential."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.enable_prompt_caching",
+        "label": "Prompt caching",
+        "description": "Enable provider-side prompt caching when supported by the adapter."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.cache_ttl",
+        "label": "Prompt cache lifetime",
+        "description": "Select the supported prompt-cache lifetime for this provider."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.context_window",
+        "label": "Model context window",
+        "description": "Declared context capacity for this provider model, in tokens."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.max_output_tokens",
+        "label": "Model output limit",
+        "description": "Declared maximum generated tokens for this provider model."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.supports_tools",
+        "label": "Model tool support",
+        "description": "Whether this provider model accepts tool calls."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.supports_vision",
+        "label": "Model vision support",
+        "description": "Whether this provider model accepts image input."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.supports_thinking",
+        "label": "Model thinking support",
+        "description": "Whether this model exposes the provider’s thinking/reasoning capability."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.supports_temperature",
+        "label": "Temperature support",
+        "description": "Whether the adapter may send a non-default temperature for this model."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.cost_input_per_1m",
+        "label": "Input price",
+        "description": "Configured input cost per one million tokens, used in cost reporting."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.cost_output_per_1m",
+        "label": "Output price",
+        "description": "Configured output cost per one million tokens, used in cost reporting."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.cost_cache_read_per_1m",
+        "label": "Cache-read price",
+        "description": "Configured cache-read cost per one million tokens, used in cost reporting."
+      },
+      {
+        "key": "settings.arcllm.providers.*.models.*.cost_cache_write_per_1m",
+        "label": "Cache-write price",
+        "description": "Configured cache-write cost per one million tokens, used in cost reporting."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.enforcement",
+        "label": "Enforcement",
+        "description": "Select whether model routing reports route problems or enforces them. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.default_route",
+        "label": "Default Route",
+        "description": "Name of the fallback route selected when no other route applies. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.threshold",
+        "label": "Threshold",
+        "description": "Similarity threshold a matched routing phrase must reach. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.embedding_backend",
+        "label": "Embedding Backend",
+        "description": "Backend used to embed route phrases. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.embedding_model",
+        "label": "Embedding Model",
+        "description": "Model used to embed route phrases. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.routing.on_embedder_error",
+        "label": "On Embedder Error",
+        "description": "Choose whether routing errors raise or use the default route. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.enabled",
+        "label": "Enabled",
+        "description": "Enable model-call telemetry. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.log_level",
+        "label": "Log Level",
+        "description": "Minimum severity recorded by this module. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.store_raw_bodies",
+        "label": "Store Raw Bodies",
+        "description": "Store full request and response bodies in telemetry; these may contain sensitive content. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.classification",
+        "label": "Classification",
+        "description": "Default classification label assigned to telemetry records. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.enabled",
+        "label": "Encryption / Enabled",
+        "description": "Enable encryption for captured trace bodies. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.backend",
+        "label": "Encryption / Backend",
+        "description": "Encryption backend implementation reference. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.key_ref",
+        "label": "Encryption / Key Ref",
+        "description": "Vault reference to the trace encryption key. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.key_env",
+        "label": "Encryption / Key Env",
+        "description": "Environment-variable name for the trace wrapping key; enter the variable name only. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.cache_ttl_seconds",
+        "label": "Encryption / Cache Ttl Seconds",
+        "description": "How long a resolved encryption key may remain cached, in seconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.encryption.require_fips",
+        "label": "Encryption / Require Fips",
+        "description": "Require a FIPS-validated encryption provider. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.retention.max_age_days",
+        "label": "Retention / Max Age Days",
+        "description": "Delete rotated trace files older than this age; unset means no age limit. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.telemetry.retention.max_bytes",
+        "label": "Retention / Max Bytes",
+        "description": "Maximum retained size of rotated trace files; unset means no byte limit. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.audit.enabled",
+        "label": "Enabled",
+        "description": "Enable the model-call audit module. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.retry.enabled",
+        "label": "Enabled",
+        "description": "Enable provider retry behavior. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.retry.max_retries",
+        "label": "Max Retries",
+        "description": "Maximum additional attempts after a provider call fails. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.retry.backoff_base_seconds",
+        "label": "Backoff Base Seconds",
+        "description": "Base delay used to calculate provider retry backoff. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.fallback.enabled",
+        "label": "Enabled",
+        "description": "Enable provider fallback behavior. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.rate_limit.enabled",
+        "label": "Enabled",
+        "description": "Enable provider request rate limiting. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.rate_limit.requests_per_minute",
+        "label": "Requests Per Minute",
+        "description": "Maximum requests allowed per minute. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.rate_limit.burst_capacity",
+        "label": "Burst Capacity",
+        "description": "Maximum short burst of requests above the steady rate. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.circuit_breaker.enabled",
+        "label": "Enabled",
+        "description": "Enable the provider circuit breaker. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.circuit_breaker.failure_threshold",
+        "label": "Failure Threshold",
+        "description": "Consecutive provider failures before the circuit opens. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.circuit_breaker.cooldown_seconds",
+        "label": "Cooldown Seconds",
+        "description": "Time the circuit remains open before a probe is allowed, in seconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.circuit_breaker.half_open_max_calls",
+        "label": "Half Open Max Calls",
+        "description": "Maximum probe calls allowed while the circuit is half-open. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.enabled",
+        "label": "Enabled",
+        "description": "Enable provider endpoint load balancing. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.strategy",
+        "label": "Strategy",
+        "description": "Endpoint selection strategy used by the load balancer. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.sticky_key",
+        "label": "Sticky Key",
+        "description": "Request attribute used to keep related calls on one endpoint. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.failure_threshold",
+        "label": "Failure Threshold",
+        "description": "Endpoint failures before it is removed from active rotation. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.cooldown_seconds",
+        "label": "Cooldown Seconds",
+        "description": "Time before a failed endpoint can be tried again, in seconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.load_balance.half_open_max_calls",
+        "label": "Half Open Max Calls",
+        "description": "Maximum probe calls allowed when an endpoint is recovering. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.queue.enabled",
+        "label": "Enabled",
+        "description": "Enable the provider-call queue. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.queue.max_concurrent",
+        "label": "Max Concurrent",
+        "description": "Maximum provider calls running simultaneously. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.queue.call_timeout",
+        "label": "Call Timeout",
+        "description": "Maximum time for an active provider call, in seconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.queue.max_queued",
+        "label": "Max Queued",
+        "description": "Maximum provider calls waiting for a concurrency slot. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.enabled",
+        "label": "Enabled",
+        "description": "Enable OpenTelemetry export for model calls. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.exporter",
+        "label": "Exporter",
+        "description": "Select the trace exporter implementation. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.endpoint",
+        "label": "Endpoint",
+        "description": "Collector endpoint used by the exporter. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.protocol",
+        "label": "Protocol",
+        "description": "Transport protocol used to send telemetry. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.service_name",
+        "label": "Service Name",
+        "description": "Service name attached to exported telemetry. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.sample_rate",
+        "label": "Sample Rate",
+        "description": "Fraction of traces selected for export, from 0 to 1. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.insecure",
+        "label": "Insecure",
+        "description": "Allow an insecure connection to the telemetry collector. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.certificate_file",
+        "label": "Certificate File",
+        "description": "TLS certificate path used by the exporter. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.client_key_file",
+        "label": "Client Key File",
+        "description": "TLS client key path used by the exporter; do not put key contents here. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.client_cert_file",
+        "label": "Client Cert File",
+        "description": "TLS client certificate path used by the exporter. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.timeout_ms",
+        "label": "Timeout Ms",
+        "description": "Exporter request timeout in milliseconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.max_batch_size",
+        "label": "Max Batch Size",
+        "description": "Maximum telemetry records sent in one batch. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.max_queue_size",
+        "label": "Max Queue Size",
+        "description": "Maximum telemetry records buffered before export. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.schedule_delay_ms",
+        "label": "Schedule Delay Ms",
+        "description": "Delay between scheduled telemetry exports, in milliseconds. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.enabled",
+        "label": "Enabled",
+        "description": "Enable ArcLLM model-call security checks. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.pii_enabled",
+        "label": "Pii Enabled",
+        "description": "Enable detection of personally identifying content. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.pii_detector",
+        "label": "Pii Detector",
+        "description": "Select the PII detector implementation. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.pii_detector_class",
+        "label": "Pii Detector Class",
+        "description": "Optional fully qualified custom detector class. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.signing_enabled",
+        "label": "Signing Enabled",
+        "description": "Enable signing of model-call artifacts where supported. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.signing_algorithm",
+        "label": "Signing Algorithm",
+        "description": "Signing algorithm used when model-call signing is enabled. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.security.signing_key_env",
+        "label": "Signing Key Env",
+        "description": "Environment-variable name containing the signing seed; provide the name only, never the key. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.injection.enabled",
+        "label": "Enabled",
+        "description": "Enable prompt-injection scanning. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.injection.enforcement",
+        "label": "Enforcement",
+        "description": "Choose whether injection findings are observed or enforced. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.injection.tier",
+        "label": "Tier",
+        "description": "Select pattern or semantic injection analysis; semantic mode requires its optional dependency. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.injection.scan_user",
+        "label": "Scan User",
+        "description": "Scan user-provided input for injection patterns. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.injection.scan_tool_results",
+        "label": "Scan Tool Results",
+        "description": "Scan tool output for injection patterns. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.guardrails.enabled",
+        "label": "Enabled",
+        "description": "Enable model-output guardrails. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.guardrails.enforcement",
+        "label": "Enforcement",
+        "description": "Choose how guardrail findings affect the request. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.guardrails.max_length",
+        "label": "Max Length",
+        "description": "Maximum output length; zero means no length cap. This value applies as an agent-specific override."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.url_mode",
+        "label": "Url Mode",
+        "description": "Choose whether URL patterns are treated as an allowlist or denylist."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.allow_js_execution",
+        "label": "Allow Js Execution",
+        "description": "Allow browser page JavaScript execution."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.allow_downloads",
+        "label": "Allow Downloads",
+        "description": "Allow browser downloads."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.download_path",
+        "label": "Download Path",
+        "description": "Directory where browser downloads are stored."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.redact_inputs",
+        "label": "Redact Inputs",
+        "description": "Redact sensitive input values from browser observations."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.max_page_text_length",
+        "label": "Max Page Text Length",
+        "description": "Maximum page text length included in browser results."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.max_screenshot_width",
+        "label": "Max Screenshot Width",
+        "description": "Maximum screenshot width in pixels."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.security.max_screenshot_height",
+        "label": "Max Screenshot Height",
+        "description": "Maximum screenshot height in pixels."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.cdp_url",
+        "label": "Cdp Url",
+        "description": "Chrome DevTools Protocol endpoint for the browser connection."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.chrome_path",
+        "label": "Chrome Path",
+        "description": "Path to the Chrome executable."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.headless",
+        "label": "Headless",
+        "description": "Run Chrome without a visible window."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.remote_debugging_port",
+        "label": "Remote Debugging Port",
+        "description": "Chrome remote-debugging port; zero selects an automatically assigned port."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.startup_timeout_seconds",
+        "label": "Startup Timeout Seconds",
+        "description": "Maximum time allowed for Chrome startup, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.connection.endpoint_kind",
+        "label": "Endpoint Kind",
+        "description": "Connect to a browser or a single page endpoint."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.project_id",
+        "label": "Project Id",
+        "description": "Browserbase project identifier."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.api_key_env",
+        "label": "Api Key Env",
+        "description": "Environment-variable name for the Browserbase credential; do not enter the credential itself."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.api_base",
+        "label": "Api Base",
+        "description": "Browserbase API endpoint."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.region",
+        "label": "Region",
+        "description": "Browserbase region selection."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.proxies",
+        "label": "Proxies",
+        "description": "Enable Browserbase proxy routing."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.keep_alive",
+        "label": "Keep Alive",
+        "description": "Keep the Browserbase session alive after a browser call."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browserbase.request_timeout_s",
+        "label": "Request Timeout S",
+        "description": "Maximum Browserbase request duration, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.llm_provider",
+        "label": "Llm Provider",
+        "description": "Provider used by the browser-use model."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.llm_model",
+        "label": "Llm Model",
+        "description": "Model used by browser-use; empty uses that provider’s configured default."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.max_steps",
+        "label": "Max Steps",
+        "description": "Maximum browser-use reasoning steps per request."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.max_actions_per_step",
+        "label": "Max Actions Per Step",
+        "description": "Maximum browser actions issued in one step."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.use_vision",
+        "label": "Use Vision",
+        "description": "Include visual input in browser-use decisions."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.browser_use.step_timeout_s",
+        "label": "Step Timeout S",
+        "description": "Maximum duration of one browser-use step, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.cookies.persist",
+        "label": "Persist",
+        "description": "Persist browser cookies between sessions."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.cookies.encryption_key_env",
+        "label": "Encryption Key Env",
+        "description": "Environment-variable name for the cookie encryption key; never enter the key itself."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.cookies.storage_path",
+        "label": "Storage Path",
+        "description": "Location used for persisted browser cookie data."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.provider",
+        "label": "Browser provider",
+        "description": "Select the browser session backend: local/remote CDP or Browserbase."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.tier",
+        "label": "Browser security tier",
+        "description": "Security tier used to apply browser access policy."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.min_traces",
+        "label": "Minimum traces",
+        "description": "Minimum trace count before the Skills improver considers a change."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.optimize_after_uses",
+        "label": "Optimize after uses",
+        "description": "Number of uses required before the Skills improver considers optimization."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.max_iterations",
+        "label": "Maximum improvement iterations",
+        "description": "Maximum optimization iterations in one Skills improver pass."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.max_tokens",
+        "label": "Improver token limit",
+        "description": "Maximum tokens the Skills improver may use for one improvement pass."
+      },
+      {
+        "key": "settings.gateway.platforms.*.enabled",
+        "label": "Platform enabled",
+        "description": "Enable or disable this named gateway platform."
+      },
+      {
+        "key": "settings.gateway.platforms.*.agent_did",
+        "label": "Platform agent",
+        "description": "Agent DID receiving this platform’s messages; empty uses the gateway default when supported."
+      },
+      {
+        "key": "settings.arcagent.security.validators.auto_run_agent_code",
+        "label": "Auto-run approved code",
+        "description": "Personal-tier setting for running agent-authored Python after AST validation; enterprise/federal require TOFU approval."
+      },
+      {
+        "key": "settings.arcagent.security.validators.approved.*.name",
+        "label": "Approved validator name",
+        "description": "Logical name of this TOFU-approved validator script."
+      },
+      {
+        "key": "settings.arcagent.security.validators.approved.*.hash",
+        "label": "Approved source digest",
+        "description": "SHA-256 digest pinned for the approved validator source."
+      },
+      {
+        "key": "settings.arcagent.security.validators.approved.*.approver",
+        "label": "Approval identity",
+        "description": "Identity that approved this validator source."
+      },
+      {
+        "key": "settings.arcagent.security.validators.approved.*.timestamp",
+        "label": "Approval time",
+        "description": "RFC3339 UTC time when this validator source was approved."
+      },
+      {
+        "key": "settings.arcagent.security.validators.trusted_keys.*",
+        "label": "Trusted signing key",
+        "description": "Ed25519 verification key pinned for capability signature verification."
+      },
+      {
+        "key": "settings.arcllm.providers.*.endpoints.*.base_url",
+        "label": "Pool endpoint",
+        "description": "Base URL for this provider pool endpoint; remote hosts require HTTPS except validated private/local destinations."
+      },
+      {
+        "key": "settings.arcllm.providers.*.endpoints.*.api_key_env",
+        "label": "Endpoint key variable",
+        "description": "Environment-variable name for the endpoint credential; never enter the credential value."
+      },
+      {
+        "key": "settings.arcllm.providers.*.endpoints.*.vault_path",
+        "label": "Endpoint key vault reference",
+        "description": "Vault reference used to resolve this endpoint credential."
+      },
+      {
+        "key": "settings.arcllm.providers.*.endpoints.*.weight",
+        "label": "Endpoint weight",
+        "description": "Relative traffic weight for this endpoint; zero disables its share."
+      },
+      {
+        "key": "settings.arcllm.modules.otel.headers.*",
+        "label": "Telemetry header",
+        "description": "Header value sent to the configured telemetry collector. Do not place reusable secrets in ordinary config."
+      },
+      {
+        "key": "settings.arcllm.llm.modules.otel.headers.*",
+        "label": "Telemetry header",
+        "description": "Header value sent to the configured telemetry collector for this agent. Do not place reusable secrets in ordinary config."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.max_pages",
+        "label": "Sync page limit",
+        "description": "Maximum pages processed by one connected-source sync."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.max_bytes",
+        "label": "Sync byte limit",
+        "description": "Maximum bytes processed by one connected-source sync."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.max_seconds",
+        "label": "Sync time limit",
+        "description": "Maximum duration of one connected-source sync, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.max_concurrency",
+        "label": "Sync concurrency limit",
+        "description": "Maximum concurrent work within one connected-source sync."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.page_size",
+        "label": "Sync page size",
+        "description": "Maximum items requested per source page; valid range is 1–2000."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.retries",
+        "label": "Sync retry limit",
+        "description": "Number of retry attempts for retryable sync failures."
+      },
+      {
+        "key": "settings.arcagent.modules.connected_data.config.limits.retry_backoff_seconds",
+        "label": "Sync retry delay",
+        "description": "Base delay between retry attempts, in seconds."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.accessibility_tree_depth",
+        "label": "Accessibility tree depth",
+        "description": "Maximum depth of the browser accessibility tree included in results."
+      },
+      {
+        "key": "settings.arcagent.modules.browser.config.chrome_memory_limit_mb",
+        "label": "Chrome memory limit",
+        "description": "Memory limit allocated to a Chrome browser process, in megabytes."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.trace_buffer_turns",
+        "label": "Trace buffer window",
+        "description": "Number of turns retained for skill-improvement trace analysis."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.trace_similarity_threshold",
+        "label": "Trace similarity threshold",
+        "description": "Minimum similarity for grouping traces as related; valid range is greater than 0 through 1."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.capture_args",
+        "label": "Capture tool arguments",
+        "description": "Include tool arguments in skill-improvement evidence; arguments may contain sensitive data."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.stagnation_limit",
+        "label": "Stagnation limit",
+        "description": "Maximum non-improving iterations before the improvement pass stops."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.min_delta",
+        "label": "Minimum improvement delta",
+        "description": "Minimum score improvement treated as meaningful."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.failure_score_threshold",
+        "label": "Failure score threshold",
+        "description": "Evaluation score at or above which a result counts as failure; valid range is 1–5."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.eval_scale",
+        "label": "Evaluation score scale",
+        "description": "Maximum score in the improvement evaluator scale; valid range is 2–10."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.min_golden_cases",
+        "label": "Minimum golden cases",
+        "description": "Minimum reference cases required before evaluating a candidate."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.max_token_ratio",
+        "label": "Maximum token ratio",
+        "description": "Maximum candidate-to-baseline token ratio; valid range is greater than 1 through 5."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.max_generations",
+        "label": "Maximum generations",
+        "description": "Maximum candidate generations in one improvement pass."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.anchor_distance_threshold",
+        "label": "Anchor distance threshold",
+        "description": "Maximum distance from the anchor skill before a candidate is rejected; valid range is greater than 0 through 1."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.oscillation_distance_threshold",
+        "label": "Oscillation distance threshold",
+        "description": "Distance threshold used to detect candidates oscillating between prior versions; valid range is greater than 0 through 1."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.cooloff_turns",
+        "label": "Improvement cooloff",
+        "description": "Turns to wait before another improvement attempt."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.max_edits",
+        "label": "Maximum edits",
+        "description": "Maximum edit operations allowed in one improvement step."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.edit_schedule",
+        "label": "Edit schedule",
+        "description": "How edit allowance changes over improvement steps."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.min_edits_floor",
+        "label": "Minimum edit floor",
+        "description": "Minimum edit allowance retained during a scheduled improvement pass."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.max_files_touched",
+        "label": "File change limit",
+        "description": "Maximum number of files a candidate may modify."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.max_lines_changed",
+        "label": "Line change limit",
+        "description": "Maximum changed lines allowed for a candidate."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.change_bound.max_ast_distance",
+        "label": "AST distance limit",
+        "description": "Maximum structural distance allowed between candidate and source syntax trees; valid range is 0–1."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.lifecycle.inactivity_window_days",
+        "label": "Inactivity window",
+        "description": "Days without use before the skill lifecycle marks a skill inactive."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.lifecycle.failure_floor",
+        "label": "Success-rate floor",
+        "description": "Minimum success-rate threshold used by the skill lifecycle; valid range is 0–1."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.lifecycle.improve_attempts_before_retire",
+        "label": "Attempts before retirement",
+        "description": "Improvement failures before the lifecycle retires a skill."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.lifecycle.min_uses_before_retire",
+        "label": "Uses before retirement",
+        "description": "Minimum uses required before lifecycle retirement decisions."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.autogen",
+        "label": "Generate evaluation cases",
+        "description": "Allow the improver to generate evaluation cases."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.min_cases",
+        "label": "Minimum evaluation cases",
+        "description": "Minimum cases in an improver evaluation suite."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.max_cases",
+        "label": "Maximum evaluation cases",
+        "description": "Maximum cases in an improver evaluation suite."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.generate_on_create",
+        "label": "Generate cases on create",
+        "description": "Generate suite cases when a skill is created."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.extend_after_mutation",
+        "label": "Extend suite after change",
+        "description": "Add evaluation coverage after a skill mutation."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.candidate_budget",
+        "label": "Candidate evaluation budget",
+        "description": "Maximum candidate evaluations used to build or extend a suite."
+      },
+      {
+        "key": "settings.arcagent.modules.skills.config.improver.suite.flake_runs",
+        "label": "Flake check runs",
+        "description": "Repeated runs used to detect flaky evaluation cases."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Configuration save fails",
+        "action": "Read the validation message and correct the value using the displayed schema guidance."
+      },
+      {
+        "symptom": "Provider is unavailable",
+        "action": "Check key presence and configuration without copying credentials into chat or logs."
+      }
+    ]
+  }
+}

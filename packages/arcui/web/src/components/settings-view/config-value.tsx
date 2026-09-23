@@ -1,4 +1,6 @@
 import type { Dict } from '@/lib/types'
+import { FieldHelp } from '@/components/help'
+import { configHelpKey } from '@/lib/help'
 
 // Read-only rendering of a config (sub-)value. Scalars read as a clean, zebra
 // key/value list; nested tables recurse into their own labeled block so deep
@@ -9,7 +11,7 @@ function isPlainObject(value: unknown): value is Dict {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function ReadValue({ value }: { value: unknown }) {
+export function ReadValue({ value, file, path = [] }: { value: unknown; file?: string; path?: string[] }) {
   if (value === null || value === undefined)
     return <span className="text-muted-foreground">—</span>
   if (typeof value === 'boolean')
@@ -33,11 +35,11 @@ export function ReadValue({ value }: { value: unknown }) {
       </span>
     )
   }
-  if (isPlainObject(value)) return <ConfigTree obj={value} />
+  if (isPlainObject(value)) return <ConfigTree obj={value} file={file} path={path} />
   return <span className="font-mono text-xs break-words text-foreground">{String(value)}</span>
 }
 
-export function ConfigTree({ obj }: { obj: Dict }) {
+export function ConfigTree({ obj, file, path = [] }: { obj: Dict; file?: string; path?: string[] }) {
   const entries = Object.entries(obj)
   if (entries.length === 0) return <span className="text-muted-foreground">empty</span>
 
@@ -56,9 +58,12 @@ export function ConfigTree({ obj }: { obj: Dict }) {
                 (i % 2 === 1 ? 'bg-muted/20' : '')
               }
             >
-              <span className="font-mono text-[11px] text-muted-foreground">{k}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {k}
+                {file && <FieldHelp helpKey={configHelpKey(file, [...path, k])} route="settings" />}
+              </span>
               <div className="min-w-0 text-left">
-                <ReadValue value={v} />
+                <ReadValue value={v} file={file} path={[...path, k]} />
               </div>
             </div>
           ))}
@@ -69,7 +74,7 @@ export function ConfigTree({ obj }: { obj: Dict }) {
           <div className="mb-2 inline-flex rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] font-semibold text-foreground">
             {k}
           </div>
-          <ConfigTree obj={v as Dict} />
+          <ConfigTree obj={v as Dict} file={file} path={[...path, k]} />
         </div>
       ))}
     </div>

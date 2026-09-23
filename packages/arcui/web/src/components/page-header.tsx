@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ScreenHelp } from '@/components/help'
 
 interface PageHeaderProps {
   title: ReactNode
@@ -20,9 +21,10 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
           </p>
         )}
       </div>
-      {actions && (
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
-      )}
+      <div className="flex shrink-0 items-center gap-2">
+        {actions}
+        <ScreenHelp />
+      </div>
     </div>
   )
 }

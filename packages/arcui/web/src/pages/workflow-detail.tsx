@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -515,6 +516,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
           <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Starts
           </label>
+          <FieldHelp helpKey="workflow.trigger.type" route="workflows/:id" />
           <Select value={type} onValueChange={setType}>
             <SelectTrigger>
               <SelectValue />
@@ -531,6 +533,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
             <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Cron expression
             </label>
+            <FieldHelp helpKey="workflow.trigger.cron" route="workflows/:id" />
             <Input
               value={expression}
               placeholder="0 9 * * MON"
@@ -547,6 +550,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
             <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Every (seconds)
             </label>
+            <FieldHelp helpKey="workflow.trigger.interval" route="workflows/:id" />
             <Input
               value={intervalS}
               inputMode="numeric"
@@ -561,18 +565,21 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Not before
               </label>
+              <FieldHelp helpKey="workflow.trigger.not_before" route="workflows/:id" />
               <Input value={start} placeholder="08:00" onChange={(e) => setStart(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Not after
               </label>
+              <FieldHelp helpKey="workflow.trigger.not_after" route="workflows/:id" />
               <Input value={end} placeholder="18:00" onChange={(e) => setEnd(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Timezone
               </label>
+              <FieldHelp helpKey="workflow.trigger.timezone" route="workflows/:id" />
               <Input
                 value={timezone}
                 placeholder="America/Chicago"
@@ -589,6 +596,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
         <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           Response target
         </label>
+        <FieldHelp helpKey="workflow.response_target" route="workflows/:id" />
         <Select
           value={channel || '__none__'}
           onValueChange={(v) => setChannel(v === '__none__' ? '' : v)}
@@ -999,6 +1007,7 @@ function WorkflowTitle({
             }}
             className="h-8 w-56 text-sm"
           />
+          <FieldHelp helpKey="workflow.name" route="workflows/:id" />
           <Button size="icon" variant="ghost" disabled={patch.isPending} onClick={save} title="Save name">
             <Check className="size-4" />
           </Button>

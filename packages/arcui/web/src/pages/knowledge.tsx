@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { BookOpen } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { QueryState, EmptyState } from '@/components/states'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
@@ -79,6 +80,7 @@ export function KnowledgePage() {
                   ))}
               </SelectContent>
             </Select>
+            <FieldHelp helpKey="knowledge.agent" route="knowledge" />
           </>
         }
       />

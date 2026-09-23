@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Ban, Check, Circle, ScrollText } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { DataTable } from '@/components/data-table'
 import { FilterPills } from '@/components/filter-pills'
 import { EventDrawer } from '@/components/event-drawer'
@@ -162,6 +163,7 @@ export function SecurityPage() {
         <LedgerSummary total={summary.total} verified={summary.verified} denials={summary.denials} />
 
         <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
+        <FieldHelp helpKey="audit.event" route="security" />
 
         <QueryState query={query} isEmpty={() => events.length === 0} empty={
           <EmptyState

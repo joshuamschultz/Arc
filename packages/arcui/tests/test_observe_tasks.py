@@ -105,12 +105,10 @@ async def test_tasks_filters_by_status(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tasks_window_keeps_only_recently_touched(
+async def test_task_counts_window_keeps_only_recently_touched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """H-004: ``window`` scopes Home's "today" card to tasks touched (created
-    or updated) within it — the backlog's all-time total, minus everything
-    that has not moved since.
+    """Home counts recently touched tasks without returning full task history.
 
     ``updated_at`` is the mutable-plane row's OWN write-time stamp, not
     whatever a caller's payload claims (both ``FakeBackend`` and the real
@@ -132,8 +130,8 @@ async def test_tasks_window_keeps_only_recently_touched(
     observe = Observe(data_dir=tmp_path, backend=backend)
     await observe.start()
     try:
-        windowed = await observe.tasks(window="1h")
-        assert [r["id"] for r in windowed] == ["fresh"]
+        counts = await observe.task_counts("1h")
+        assert counts == {"backlog": 1}
 
         unwindowed = await observe.tasks()
         assert {r["id"] for r in unwindowed} == {"fresh", "stale"}

@@ -279,6 +279,69 @@ class TestExternalRefTierGate:
             await be.stop()
 
 
+@pytest.mark.asyncio
+async def test_board_page_keeps_open_tasks_and_pages_history(tmp_path: Path) -> None:
+    """Large completed history is bounded without hiding old unresolved work."""
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(205):
+            await store.create(Task(id=f"closed-{index:03d}", title="Closed", status="done", creator_did=_CREATOR))
+        await store.create(Task(id="open-old", title="Still open", status="in_progress", creator_did=_CREATOR))
+        active = await store.list_board_page(phase="active", limit=100)
+        assert [task.id for task in active] == ["open-old"]
+        assert (await store.counts_since("2000-01-01T00:00:00+00:00")) == {
+            "done": 205,
+            "in_progress": 1,
+        }
+        seen: set[str] = set()
+        before: tuple[str, str] | None = None
+        sizes: list[int] = []
+        for _ in range(3):
+            history = await store.list_board_page(phase="history", before=before, limit=100)
+            visible = history[:100]
+            sizes.append(len(visible))
+            assert not (seen & {task.id for task in visible})
+            seen.update(task.id for task in visible)
+            if len(history) <= 100:
+                break
+            before = (visible[-1].updated_at, visible[-1].id)
+        assert sizes == [100, 100, 5]
+        assert len(seen) == 205
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_active_pages_ties_and_status_change(tmp_path: Path) -> None:
+    """Active rows page deterministically and a completed row leaves that lane."""
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(105):
+            await store.create(
+                Task(id=f"open-{index:03d}", title="Open", creator_did=_CREATOR, status="todo")
+            )
+        first = await store.list_board_page(phase="active", limit=100)
+        assert len(first) == 101
+        cursor = (first[99].updated_at, first[99].id)
+        second = await store.list_board_page(phase="active", before=cursor, limit=100)
+        assert len(second) == 5
+        assert not {task.id for task in first[:100]} & {task.id for task in second}
+        moved = second[0].id
+        await store.set_status(moved, "done", actor_did=_OPERATOR)
+        active_after = await store.list_board_page(phase="active", before=cursor, limit=100)
+        assert moved not in {task.id for task in active_after}
+        history = await store.list_board_page(phase="history", limit=100)
+        assert moved in {task.id for task in history}
+    finally:
+        await be.stop()
+
+
 class TestTaskStoreCRUD:
     """create/get/list/update roundtrip via the mutable plane (SDD §2, A3)."""
 

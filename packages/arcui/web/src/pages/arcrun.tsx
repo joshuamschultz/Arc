@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { RunRiver } from '@/components/run-river'
 import { RunCoverflow } from '@/components/run-coverflow'
 import { EmptyState, LoadingRows } from '@/components/states'
@@ -82,6 +83,7 @@ export function ArcRunPage() {
           </div>
         }
       />
+      <FieldHelp helpKey="activity.run" route="arcrun" />
       {mode === 'flip' ? (
         <RunCoverflow
           runs={filtered}
@@ -99,11 +101,13 @@ export function ArcRunPage() {
             <div className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm text-muted-foreground">
               <Search className="size-3.5" />
               <input
+                aria-label="Search runs"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search runs…"
                 className="w-full bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
               />
+              <FieldHelp helpKey="activity.search" route="arcrun" />
             </div>
           </div>
           <div className="flex-1 overflow-auto">

@@ -197,6 +197,12 @@ class MutableTaskBackend(Protocol):
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]: ...
 
+    async def mutable_task_page(
+        self, *, phase: str, before: tuple[str, str] | None, limit: int
+    ) -> list[dict[str, Any]]: ...
+
+    async def mutable_task_counts(self, *, since: str) -> dict[str, int]: ...
+
     async def mutable_merge(
         self,
         collection: str,
@@ -327,6 +333,21 @@ class TaskStore:
             where["owner_did"] = owner_did
         rows = await self._backend.mutable_query(self._COLLECTION, where=where)
         return [self._load(row) for row in rows]
+
+    async def list_board_page(
+        self, *, phase: str = "active", before: tuple[str, str] | None = None, limit: int = 100
+    ) -> Sequence[Task]:
+        """Read one bounded page of unresolved or completed task history."""
+        if not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        if phase not in {"active", "history"}:
+            raise ValueError("invalid task page phase")
+        rows = await self._backend.mutable_task_page(phase=phase, before=before, limit=limit + 1)
+        return [self._load(row) for row in rows]
+
+    async def counts_since(self, since: str) -> dict[str, int]:
+        """Count tasks by status within a recent activity window."""
+        return await self._backend.mutable_task_counts(since=since)
 
     async def update(
         self,

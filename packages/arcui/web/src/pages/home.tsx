@@ -24,7 +24,7 @@ import { AgentIdentity } from '@/components/AgentIdentity'
 import {
   useHomeNeeds,
   useRuns,
-  useTeamTasks,
+  useTeamTaskSummary,
   useRoster,
   useLlmStats,
   useTimeseries,
@@ -89,7 +89,7 @@ export function HomePage() {
   // unwindowed lists above (failedRuns / reviewTasks in "Needs you", and
   // "Recent activity") keep surfacing older items exactly as before.
   const runsWindowedQ = useRuns('24h')
-  const tasksWindowedQ = useTeamTasks('24h')
+  const tasksWindowedQ = useTeamTaskSummary('24h')
   const rosterQ = useRoster()
   const statsQ = useLlmStats('24h')
   const tsQ = useTimeseries('24h')
@@ -119,7 +119,6 @@ export function HomePage() {
     () => runsWindowedQ.data?.runs ?? [],
     [runsWindowedQ.data],
   )
-  const tasksWindowed = useMemo(() => tasksWindowedQ.data?.tasks ?? [], [tasksWindowedQ.data])
   const agents = useMemo<Agent[]>(
     () => (rosterQ.data?.agents ?? []).filter((a) => !a.hidden),
     [rosterQ.data],
@@ -186,13 +185,15 @@ export function HomePage() {
 
   // --- State (totals) — tasks by status, last 24h (H-004) -------------------
   const taskCounts = useMemo(() => {
-    const total = tasksWindowed.length
+    const counts = tasksWindowedQ.data?.counts ?? {}
+    const total = tasksWindowedQ.data?.total ?? 0
     const segs = TASK_SEGMENTS.map((seg) => ({
       ...seg,
-      count: tasksWindowed.filter((t) => seg.match((t.status ?? 'backlog') as TaskStatus)).length,
+      count: Object.entries(counts).reduce((sum, [status, count]) =>
+        sum + (seg.match(status as TaskStatus) ? count : 0), 0),
     }))
     return { total, segs }
-  }, [tasksWindowed])
+  }, [tasksWindowedQ.data])
 
   return (
     <div className="flex h-full flex-col">

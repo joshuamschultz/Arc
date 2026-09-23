@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { StatCard } from '@/components/stat-card'
 import { Input } from '@/components/ui/input'
 import {
@@ -52,11 +53,13 @@ export function PolicyPage() {
 
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-2 shadow-xs">
           <Input
+            aria-label="Search policy bullets"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search bullets…"
             className="max-w-xs"
           />
+          <FieldHelp helpKey="policy.search" route="policy" />
           <Select value={sort} onValueChange={(v) => setSort(v as BulletSort)}>
             <SelectTrigger className="w-36">
               <SelectValue />
@@ -67,6 +70,7 @@ export function PolicyPage() {
               <SelectItem value="created">Sort: newest</SelectItem>
             </SelectContent>
           </Select>
+          <FieldHelp helpKey="policy.sort" route="policy" />
           <label className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
             <input
               type="checkbox"
@@ -76,6 +80,7 @@ export function PolicyPage() {
             />
             Hide retired
           </label>
+          <FieldHelp helpKey="policy.include_retired" route="policy" />
         </div>
 
         <QueryState

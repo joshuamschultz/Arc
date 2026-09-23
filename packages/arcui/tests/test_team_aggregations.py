@@ -275,6 +275,49 @@ class TestFleetPolicy:
 
 
 class TestFleetTasks:
+    def test_board_pages_closed_history_and_keeps_open_tasks(
+        self, tmp_path, arcstore_backend: FakeBackend
+    ) -> None:
+        team = _build_team(tmp_path, [("alpha", "")])
+        tasks = [
+            Task(id=f"done-{index:03d}", title="Done", creator_did="did:arc:alpha", status="done")
+            for index in range(12)
+        ]
+        tasks.append(Task(id="open", title="Open", creator_did="did:arc:alpha", status="todo"))
+        asyncio.run(_seed_tasks(arcstore_backend, tasks))
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
+        client = TestClient(app)
+        first = client.get("/api/team/tasks?limit=5", headers=_viewer(auth)).json()
+        assert [task["id"] for task in first["tasks"]] == ["open"]
+        assert first["next_cursor"] is not None
+        cursor: str | None = None
+        seen: set[str] = set()
+        for expected_closed in (5, 5, 2):
+            path = "/api/team/tasks?limit=5"
+            path += f"&cursor={cursor or first['next_cursor']}"
+            response = client.get(path, headers=_viewer(auth))
+            assert response.status_code == 200
+            body = response.json()
+            assert all(task["status"] == "done" for task in body["tasks"])
+            closed = {task["id"] for task in body["tasks"] if task["status"] == "done"}
+            assert len(closed) == expected_closed
+            assert not seen & closed
+            seen |= closed
+            cursor = body.get("next_cursor")
+        assert cursor is None
+        assert len(seen) == 12
+        summary = client.get("/api/team/tasks/summary?window=24h", headers=_viewer(auth))
+        assert summary.status_code == 200
+        assert summary.json() == {"counts": {"done": 12, "todo": 1}, "total": 13}
+
+    def test_board_rejects_invalid_cursor(self, tmp_path) -> None:
+        app, auth, _ = _make_app(team_root=_build_team(tmp_path, [("alpha", "")]))
+        for cursor in ("invalid!", "__8", "W1wiaGlzdG9yeVwiLG51bGxd"):
+            response = TestClient(app).get(
+                f"/api/team/tasks?limit=5&cursor={cursor}", headers=_viewer(auth)
+            )
+            assert response.status_code == 400
+
     def test_aggregates_tasks_with_agent_id(self, tmp_path, arcstore_backend: FakeBackend):
         team = _build_team(tmp_path, [("alpha", ""), ("beta", "")])
         asyncio.run(
@@ -309,8 +352,7 @@ class TestFleetTasks:
     def test_tasks_window_scopes_to_recently_touched(
         self, tmp_path, arcstore_backend: FakeBackend, monkeypatch
     ) -> None:
-        """H-004: ``?window=1h`` on ``/api/team/tasks`` keeps only tasks touched
-        within it — Home's "today" card, not the whole board's all-time total.
+        """The Home summary counts tasks touched within its requested window.
         """
         import arcstore.backends.memory as memory_backend
 
@@ -334,9 +376,9 @@ class TestFleetTasks:
         app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
         client = TestClient(app)
 
-        resp = client.get("/api/team/tasks?window=1h", headers=_viewer(auth))
+        resp = client.get("/api/team/tasks/summary?window=1h", headers=_viewer(auth))
         assert resp.status_code == 200
-        assert {t["id"] for t in resp.json()["tasks"]} == {"fresh-t1"}
+        assert resp.json() == {"counts": {"backlog": 1}, "total": 1}
 
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
         assert {t["id"] for t in resp.json()["tasks"]} == {"stale-t1", "fresh-t1"}
@@ -344,7 +386,7 @@ class TestFleetTasks:
     def test_tasks_invalid_window_400(self, tmp_path) -> None:
         app, auth, _ = _make_app(team_root=_build_team(tmp_path, [("alpha", "")]))
         client = TestClient(app)
-        resp = client.get("/api/team/tasks?window=bogus", headers=_viewer(auth))
+        resp = client.get("/api/team/tasks/summary?window=bogus", headers=_viewer(auth))
         assert resp.status_code == 400
 
 

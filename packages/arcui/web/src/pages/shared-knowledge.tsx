@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Search, Share2 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
 import { AgentIdentity } from '@/components/AgentIdentity'
 import { Input } from '@/components/ui/input'
@@ -239,11 +240,13 @@ export function SharedKnowledgePage() {
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              aria-label="Search shared knowledge"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search shared knowledge…"
               className="pl-8"
             />
+            <FieldHelp helpKey="shared_knowledge.search" route="shared-knowledge" />
           </div>
         </div>
 

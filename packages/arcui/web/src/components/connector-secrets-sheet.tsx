@@ -21,6 +21,14 @@ import {
   type HostRequirement,
 } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { FieldHelp } from '@/components/help'
+
+function connectorHelpKey(name: string, sensitive: boolean): string | null {
+  const normalized = name.toLowerCase()
+  if (normalized.includes('url') || normalized.includes('endpoint')) return 'connection.endpoint'
+  if (normalized.includes('account') || normalized.includes('name')) return 'connection.account_name'
+  return sensitive ? 'connection.secret' : null
+}
 
 // A connector's connect form: one input per declared field, plus the question a
 // connection is useless without — who gets to use it. The bundle says which
@@ -211,6 +219,7 @@ export function ConnectorSecretsSheet({
               >
                 Instance name
               </label>
+              <FieldHelp helpKey="connection.account_name" route="connections" />
               <Input
                 id="connector-instance"
                 value={name}
@@ -233,6 +242,7 @@ export function ConnectorSecretsSheet({
               <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                 Who can use it
               </span>
+              <FieldHelp helpKey="connection.agent_grant" route="connections" />
               <div className="flex flex-wrap gap-1.5">
                 {agents.map((agent) => {
                   const key = grantName(agent)
@@ -281,6 +291,7 @@ export function ConnectorSecretsSheet({
               >
                 {s.name}
               </label>
+              <FieldHelp helpKey={connectorHelpKey(s.name, s.sensitive) ?? ''} route="connections" />
               <Input
                 id={`connector-secret-${s.name}`}
                 type={s.sensitive ? 'password' : 'text'}

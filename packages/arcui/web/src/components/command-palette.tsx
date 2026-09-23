@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { Search, CornerDownLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -29,32 +29,31 @@ interface FlatEntry {
 export function CommandPalette() {
   const open = useCommandPaletteStore((s) => s.open)
   const setOpen = useCommandPaletteStore((s) => s.setOpen)
-  const toggle = useCommandPaletteStore((s) => s.toggle)
   const groups = useCommandPalette()
 
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
+  const onOpenChange = useCallback((next: boolean) => {
+    if (next) {
+      setQuery('')
+      setActive(0)
+    }
+    setOpen(next)
+  }, [setOpen])
+
   // Cmd/Ctrl-K from anywhere opens (or closes) the palette.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault()
-        toggle()
+        onOpenChange(!open)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [toggle])
-
-  // Reset the search and selection every time the palette opens.
-  useEffect(() => {
-    if (open) {
-      setQuery('')
-      setActive(0)
-    }
-  }, [open])
+  }, [open, onOpenChange])
 
   // Flatten the visible, filtered rows into one list the arrow keys walk.
   const entries = useMemo<FlatEntry[]>(() => {
@@ -74,18 +73,15 @@ export function CommandPalette() {
     return out
   }, [groups, query])
 
-  // Keep the active index inside the current result set as filtering narrows it.
-  useEffect(() => {
-    setActive((a) => (a >= entries.length ? Math.max(0, entries.length - 1) : a))
-  }, [entries.length])
+  const currentActive = Math.min(active, Math.max(0, entries.length - 1))
 
   // Scroll the active row into view as selection moves.
   useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${currentActive}"]`)
     el?.scrollIntoView({ block: 'nearest' })
-  }, [active, entries.length])
+  }, [currentActive, entries.length])
 
-  const activeId = entries[active] ? `cmdk-opt-${active}` : undefined
+  const activeId = entries[currentActive] ? `cmdk-opt-${currentActive}` : undefined
 
   const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (!entries.length) return
@@ -103,12 +99,12 @@ export function CommandPalette() {
       setActive(entries.length - 1)
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      entries[active]?.item.run()
+      entries[currentActive]?.item.run()
     }
   }
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
@@ -154,7 +150,7 @@ export function CommandPalette() {
             ) : (
               entries.map((entry, i) => {
                 const Icon = entry.item.icon
-                const isActive = i === active
+                const isActive = i === currentActive
                 return (
                   <div key={entry.item.id}>
                     {entry.first && (

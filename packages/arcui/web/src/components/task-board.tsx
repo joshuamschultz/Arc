@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TaskCard } from '@/components/task-card'
 import { FilterPills } from '@/components/filter-pills'
 import { isBlocked } from '@/lib/tasks'
@@ -63,14 +63,24 @@ export function TaskBoard({
     return m
   }, [tasks])
 
-  // Captured once at mount: a stable "now" keeps the window filter pure across
-  // re-renders (calling Date.now() during render is an impurity the linter flags).
-  const [now] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const refresh = () => setNow(Date.now())
+    const timer = window.setInterval(refresh, 60_000)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const scoped = useMemo(() => {
     const days = SCOPES.find((s) => s.value === scope)?.days ?? null
     if (days == null) return tasks
     const cutoff = now - days * 86_400_000
-    return tasks.filter((t) => recency(t) >= cutoff)
+    return tasks.filter((t) =>
+      t.status === 'backlog' || t.status === 'todo' ||
+      t.status === 'in_progress' || t.status === 'review' || recency(t) >= cutoff,
+    )
   }, [tasks, scope, now])
 
   const byColumn = useMemo(() => {

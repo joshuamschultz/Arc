@@ -68,7 +68,18 @@ async function parseError(
 
 /** GET `path`, returning parsed JSON. Throws `ApiError` on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders(), signal })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      headers: authHeaders(),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError(408, 'Request timed out. Check the connection and try refreshing.')
+    }
+    throw error
+  }
   if (!res.ok) {
     const parsed = await parseError(res)
     throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
@@ -82,11 +93,20 @@ async function apiSend<T>(
   body?: unknown,
   headers?: Record<string, string>,
 ): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method,
+      headers: { ...authHeaders(), 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError(408, 'Request timed out. The action may have completed; refresh its status before trying again.')
+    }
+    throw error
+  }
   if (!res.ok) {
     const parsed = await parseError(res)
     throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)

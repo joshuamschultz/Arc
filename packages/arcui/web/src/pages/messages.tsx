@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/markdown'
 import { MentionComposer, type CommandOption, type MentionHandle } from '@/components/mention-composer'
+import { FieldHelp } from '@/components/help'
 import { EmptyState } from '@/components/states'
 import { StatusDot, StatusText } from '@/components/status-badge'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
@@ -350,6 +351,7 @@ function ChatPanel({
           disabled={status !== 'ready'}
           canSubmit={Boolean(text.trim()) || uploader.cleanIds.length > 0}
         />
+        <FieldHelp helpKey="messages.message" route="messages" />
         </div>
       </div>
     </div>
@@ -653,6 +655,7 @@ function ChannelPanel({
             placeholder={status === 'ready' ? `Message #${name}… (@ to mention, / for commands)` : 'Connecting…'}
             disabled={status !== 'ready' || sending}
           />
+          <FieldHelp helpKey="messages.message" route="messages" />
         </div>
       </div>
     </div>
@@ -738,6 +741,7 @@ export function MessagesPage() {
               A
             </span>
             <span className="text-sm font-bold tracking-tight text-foreground">Rooms</span>
+            <FieldHelp helpKey="messages.target" route="messages" />
           </div>
 
           {/* CHANNELS — on top, per the Slack layout. */}

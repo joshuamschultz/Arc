@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { FieldHelp } from "@/components/help";
 import { OperatorModeToggle } from "@/components/operator-mode-toggle";
 import { RestartStackButton } from "@/components/restart-stack-button";
 import { ContextNote } from "@/components/hitl";
@@ -84,6 +85,7 @@ export function SettingsPage() {
                   ))}
               </SelectContent>
             </Select>
+            <FieldHelp helpKey="settings.scope" route="settings" />
           </>
         }
       />

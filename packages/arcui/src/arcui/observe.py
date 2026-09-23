@@ -51,17 +51,6 @@ def _window_cutoff(window: str) -> str:
     return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
 
 
-def _task_touched_at(task: dict[str, Any]) -> str:
-    """A task's most recent activity stamp, for window filtering (H-004).
-
-    ``updated_at`` moves on every status change; ``created_at`` covers a task
-    that was created but never touched again. A task with neither (should not
-    happen — both are stamped on create) sorts before every real cutoff, so it
-    drops out of a windowed read rather than corrupting the comparison.
-    """
-    return task.get("updated_at") or task.get("created_at") or ""
-
-
 def _call_job(agent_label: str | None, extra: dict[str, Any]) -> str | None:
     """Name one LLM call's kind for the Calls table (H-029).
 
@@ -456,7 +445,6 @@ class Observe:
         *,
         owner_did: str | None = None,
         status: str | None = None,
-        window: str | None = None,
     ) -> list[dict[str, Any]]:
         """Task rows from the arcstore mutable plane (SPEC-056 Phase D, FR-6).
 
@@ -466,24 +454,28 @@ class Observe:
         backend is cast to the narrow ``MutableTaskBackend`` Protocol
         ``TaskStore`` actually needs; the configured backend implements both.
 
-        ``window`` (H-004), when given, keeps only tasks touched (created or
-        updated) within it — Home's "today" card wants the backlog moved
-        today, not the whole board's all-time total. Filtered in Python: the
-        mutable-records plane has no ``ts_gte`` pushdown (unlike the
-        append-only operational tables — see :meth:`_llm_rows_in_window`), and
-        a fleet's task count is small enough (low hundreds, not events-per-
-        second) that this never becomes the O(all-history) cost H-006 is
-        about. The Tasks board (``/tasks``) and per-agent tabs call this with
-        no window and keep seeing every task, same as before.
+        Used by the review queue and per-agent task tabs. The fleet board uses
+        :meth:`task_board_page` so it never polls all historical task rows.
         """
         await self._ensure()
         store = TaskStore(cast(MutableTaskBackend, self._backend))
         rows = await store.list(status=status, owner_did=owner_did)
-        items = [t.model_dump(mode="json") for t in rows]
-        if window is not None:
-            cutoff = _window_cutoff(window)
-            items = [t for t in items if _task_touched_at(t) >= cutoff]
-        return items
+        return [t.model_dump(mode="json") for t in rows]
+
+    async def task_board_page(
+        self, *, phase: str = "active", before: tuple[str, str] | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Fetch one bounded keyset page of active or completed tasks."""
+        await self._ensure()
+        store = TaskStore(cast(MutableTaskBackend, self._backend))
+        rows = await store.list_board_page(phase=phase, before=before, limit=limit)
+        return [task.model_dump(mode="json") for task in rows]
+
+    async def task_counts(self, window: str) -> dict[str, int]:
+        """Count recently touched tasks at the database, without task bodies."""
+        await self._ensure()
+        store = TaskStore(cast(MutableTaskBackend, self._backend))
+        return await store.counts_since(_window_cutoff(window))
 
     async def _llm_rows_in_window(
         self, window: str, *, agent: str | None = None

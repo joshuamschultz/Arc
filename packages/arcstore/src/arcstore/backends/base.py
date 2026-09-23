@@ -133,6 +133,12 @@ class ArcStoreBackend(Protocol):
         where: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    async def mutable_task_page(
+        self, *, phase: str, before: tuple[str, str] | None, limit: int
+    ) -> list[dict[str, Any]]: ...
+
+    async def mutable_task_counts(self, *, since: str) -> dict[str, int]: ...
+
     async def mutable_merge(
         self,
         collection: str,

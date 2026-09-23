@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { FilterPills } from '@/components/filter-pills'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
+import { FieldHelp } from '@/components/help'
+import { fieldHelp } from '@/lib/help'
 import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
 import { ApiError, apiGet, apiPost } from '@/lib/api'
@@ -657,6 +659,7 @@ function IdentityDocumentCard({ agentId }: { agentId: string }) {
       <p className="mb-3 text-xs text-muted-foreground">
         The agent's immutable goal charter. Read-only to the agent (ASI01 goal-hijack) — only an
         operator can edit it, and every save is audited.
+        <FieldHelp helpKey="agent.identity_md" route="agents/:id" />
       </p>
       {save.isError && (
         <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -673,12 +676,15 @@ function IdentityDocumentCard({ agentId }: { agentId: string }) {
       ) : file.isError ? (
         <p className="text-xs text-status-error">Could not load identity.md.</p>
       ) : editing ? (
-        <Textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          spellCheck={false}
-          className="min-h-[280px] font-mono text-xs"
-        />
+        <>
+          <FieldHelp helpKey="agent.identity_md.content" route="agents/:id" />
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+            className="min-h-[280px] font-mono text-xs"
+          />
+        </>
       ) : (
         <Markdown>{file.data?.content ?? ''}</Markdown>
       )}
@@ -1473,6 +1479,7 @@ function ConnectTab({ agentId }: { agentId: string }) {
             <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
               Bot token
             </label>
+            <FieldHelp helpKey="agent.telegram.bot_token" route="agents/:id" />
             <Input
               type="password"
               autoComplete="off"
@@ -1486,6 +1493,7 @@ function ConnectTab({ agentId }: { agentId: string }) {
             <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
               Your Telegram user ID
             </label>
+            <FieldHelp helpKey="agent.telegram.chat_id" route="agents/:id" />
             <Input
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
@@ -1549,8 +1557,11 @@ function VoicePanel({ agentId }: { agentId: string }) {
     }
   }
   useEffect(() => {
-    void loadStatus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let current = true
+    void apiGet<VoiceStatus>(`/api/agents/${agentId}/voice`)
+      .then((next) => { if (current) setStatus(next) })
+      .catch(() => { /* status is best-effort */ })
+    return () => { current = false }
   }, [agentId])
 
   const submit = async () => {
@@ -1609,6 +1620,7 @@ function VoicePanel({ agentId }: { agentId: string }) {
           <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
             Voice blend (Kokoro)
           </label>
+          <FieldHelp helpKey="agent.voice.blend" route="agents/:id" />
           <Input
             value={blend}
             onChange={(e) => setBlend(e.target.value)}
@@ -1620,6 +1632,7 @@ function VoicePanel({ agentId }: { agentId: string }) {
           <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
             Speed
           </label>
+          <FieldHelp helpKey="agent.voice.speed" route="agents/:id" />
           <Input
             value={speed}
             onChange={(e) => setSpeed(e.target.value)}
@@ -2071,6 +2084,7 @@ function InboxTab({ agentId }: { agentId: string }) {
             placeholder="Search this agent's mail…"
             aria-label="Search agent mail"
           />
+          <FieldHelp helpKey="agent.inbox.search" route="agents/:id" />
           {search && (
             <Button variant="ghost" size="sm" onClick={() => setSearch('')}>
               Clear
@@ -2244,6 +2258,7 @@ function InboxTab({ agentId }: { agentId: string }) {
                         placeholder="Reply as the signed operator…"
                         aria-label="Reply to mail thread"
                       />
+                      <FieldHelp helpKey="agent.inbox.reply" route="agents/:id" />
                       <div className="flex flex-wrap items-center gap-2">
                         <Button size="sm" disabled={!replyBody.trim() || pending === 'reply'} onClick={sendReply}>
                           Send reply
@@ -2262,6 +2277,7 @@ function InboxTab({ agentId }: { agentId: string }) {
                                 ))}
                               </SelectContent>
                             </Select>
+                            <FieldHelp helpKey="agent.inbox.handoff_recipient" route="agents/:id" />
                             <Button
                               variant="outline"
                               size="sm"
@@ -2377,14 +2393,17 @@ export function AgentDetailPage() {
       >
         <TabsList className="my-2 h-auto flex-wrap">
           {TABS.map((t) => (
-            <TabsTrigger key={t} value={t}>
+            <TabsTrigger key={t} value={t} title={fieldHelp(`agent.tab.${t}`, 'agents/:id')?.description}>
               {TAB_LABEL[t]}
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
 
-      <div className="flex-1 overflow-auto p-6">{TAB_RENDER[current](id)}</div>
+      <div className="flex-1 overflow-auto p-6">
+        <FieldHelp helpKey={`agent.tab.${current}`} route="agents/:id" />
+        {TAB_RENDER[current](id)}
+      </div>
     </div>
   )
 }

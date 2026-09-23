@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { FieldHelp } from '@/components/help'
 
 function ReviewEvidence({ review }: { review: CapabilityImportReview }) {
   const statusLabel = review.status.replaceAll('_', ' ')
@@ -149,6 +150,7 @@ export function CapabilityImportPanel() {
             {agents.map((agent) => <option key={agent.agent_id} value={agent.agent_id}>{agent.display_name || agent.name || agent.agent_id}</option>)}
           </select>
         </label>
+        <FieldHelp helpKey="capability_import.agent" route="tools-skills" />
 
         {importer.reviews.length > 0 && (
           <div className="space-y-2 rounded-md border border-border p-3">
@@ -190,6 +192,7 @@ export function CapabilityImportPanel() {
           <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting archive…' : 'Drop ZIP or browse'}</span>
           <span className="text-xs text-muted-foreground">A signed skill ZIP with a SKILL.md and any internal files or folders is accepted. Scripts run only when the model calls them — nothing executes during review or import.</span>
         </div>
+        <FieldHelp helpKey="capability_import.archive" route="tools-skills" />
 
         {importer.status === 'rejected' && (
           <div role="alert" className="flex items-start gap-2 rounded-md border border-status-error/30 bg-status-error/10 p-3 text-xs text-status-error">
@@ -214,6 +217,7 @@ export function CapabilityImportPanel() {
             )}
             <div className="space-y-3 rounded-md border border-border p-3">
               <p className="text-xs font-medium text-foreground">Reviewed files</p>
+              <FieldHelp helpKey="capability_import.file" route="tools-skills" />
               <div className="flex flex-wrap gap-2">
                 {importer.review.files
                   .filter((file) => file.path.startsWith('tools/') || file.path.startsWith('skills/'))
@@ -232,6 +236,7 @@ export function CapabilityImportPanel() {
               {selectedPath && (
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground" htmlFor="capability-import-editor">{selectedPath}</label>
+                  <FieldHelp helpKey="capability_import.content" route="tools-skills" />
                   <Textarea id="capability-import-editor" value={source} onChange={(event) => setSource(event.target.value)} rows={12} className="font-mono text-xs" />
                   {importer.status === 'review_ready' && (
                     <Button type="button" size="sm" onClick={() => void saveFile()} disabled={saving || !operatorMode}>{saving ? 'Saving review…' : 'Save reviewed edit'}</Button>

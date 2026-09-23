@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { FieldHelp } from '@/components/help'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -96,20 +97,23 @@ function ChipMultiSelect({
 function Field({
   label,
   hint,
+  helpKey,
   children,
 }: {
   label: string
   hint?: string
+  helpKey?: string
   children: React.ReactNode
 }) {
   return (
-    <label className="block space-y-1">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      {children}
-      {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
-    </label>
+    <div className="relative">
+      <label className="block space-y-1">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+        {children}
+        {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+      </label>
+      {helpKey && <span className="absolute right-0 top-0"><FieldHelp helpKey={helpKey} route="workflows/:id" /></span>}
+    </div>
   )
 }
 
@@ -174,11 +178,11 @@ export function WorkflowNodeForm({
 
   return (
     <div className="space-y-4">
-      <Field label="Node id">
+      <Field label="Node id" helpKey="workflow.node.id">
         <Input value={draft.id} onChange={(e) => set('id', e.target.value)} className="font-mono" />
       </Field>
 
-      <Field label="Kind" hint={KIND_HELP[draft.kind]}>
+      <Field label="Kind" hint={KIND_HELP[draft.kind]} helpKey="workflow.node.type">
         <Select value={draft.kind} onValueChange={(v) => set('kind', v as WorkflowNodeKind)}>
           <SelectTrigger>
             <SelectValue />
@@ -207,7 +211,7 @@ export function WorkflowNodeForm({
 
       {draft.kind === 'agent' && (
         <>
-          <Field label="Prompt file" hint="Path inside the bundle, e.g. prompts/collect.md">
+          <Field label="Prompt file" hint="Path inside the bundle, e.g. prompts/collect.md" helpKey="workflow.node.prompt">
             <Input value={draft.prompt} onChange={(e) => set('prompt', e.target.value)} />
           </Field>
           <Field
@@ -258,6 +262,7 @@ export function WorkflowNodeForm({
           <Field
             label="Arguments (JSON)"
             hint='Wire upstream values with "$nodes.<id>.output.<field>".'
+            helpKey="workflow.node.input"
           >
             <Textarea
               rows={4}
@@ -271,13 +276,13 @@ export function WorkflowNodeForm({
       )}
 
       {draft.kind === 'script' && (
-        <Field label="Script" hint="Path inside the bundle, e.g. scripts/publish.py">
+        <Field label="Script" hint="Path inside the bundle, e.g. scripts/publish.py" helpKey="workflow.node.script">
           <Input value={draft.script} onChange={(e) => set('script', e.target.value)} />
         </Field>
       )}
 
       {draft.kind === 'gate' && (
-        <Field label="Gate" hint="Label for the human decision, e.g. human:approve_publish.">
+        <Field label="Gate" hint="Label for the human decision, e.g. human:approve_publish." helpKey="workflow.node.gate">
           <Input value={draft.gate} onChange={(e) => set('gate', e.target.value)} />
         </Field>
       )}
@@ -406,7 +411,7 @@ export function WorkflowNodeForm({
         )}
       </div>
 
-      <Field label="Condition" hint="Skip this node unless the expression is true (optional).">
+      <Field label="Condition" hint="Skip this node unless the expression is true (optional)." helpKey="workflow.node.condition">
         <Input
           value={draft.when}
           placeholder="$nodes.qa.output.verdict == 'revise'"
@@ -420,13 +425,13 @@ export function WorkflowNodeForm({
           More
         </summary>
         <div className="mt-2 space-y-3">
-          <Field label="Output schema" hint="Bundle path to a JSON Schema the output must match.">
+          <Field label="Output schema" hint="Bundle path to a JSON Schema the output must match." helpKey="workflow.node.output_schema">
             <Input value={draft.outputSchema} onChange={(e) => set('outputSchema', e.target.value)} />
           </Field>
-          <Field label="Artifacts" hint="Comma separated files that must exist when the node finishes.">
+          <Field label="Artifacts" hint="Comma separated files that must exist when the node finishes." helpKey="workflow.node.artifacts">
             <Input value={draft.artifacts} onChange={(e) => set('artifacts', e.target.value)} />
           </Field>
-          <Field label="Loop back to" hint="Declared back-edge target. Needs a max iterations bound.">
+          <Field label="Loop back to" hint="Declared back-edge target. Needs a max iterations bound." helpKey="workflow.node.loop_back_to">
             <Input value={draft.loopBackTo} onChange={(e) => set('loopBackTo', e.target.value)} />
           </Field>
           <Field label="Max iterations">

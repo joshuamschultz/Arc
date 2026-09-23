@@ -1,16 +1,13 @@
 import { useEffect } from 'react'
 import { RouterProvider } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuthGate } from '@/components/auth-gate'
 import { router } from '@/app/router'
 import { watchForStaleBuild } from '@/lib/stale-build'
+import { createQueryClient } from '@/lib/query-client'
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 10_000, refetchOnWindowFocus: false, retry: 1 },
-  },
-})
+const queryClient = createQueryClient()
 
 export default function App() {
   // A tab left open across a deploy runs code the server has deleted, and fails in

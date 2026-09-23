@@ -336,6 +336,7 @@ class TasksResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tasks: list[dict[str, Any]]
+    next_cursor: str | None = None
 
 
 class HomeNeedsQueue(BaseModel):

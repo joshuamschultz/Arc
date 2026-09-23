@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Plus, Loader, CheckCircle2, Timer, XCircle } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { FieldHelp } from '@/components/help'
 import { FilterPills } from '@/components/filter-pills'
 import { InsightStat } from '@/components/ai'
-import { EmptyState, QueryState } from '@/components/states'
+import { EmptyState, ErrorState, LoadingRows } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
@@ -12,7 +13,7 @@ import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { TaskDrawer } from '@/components/task-drawer'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import { useRoster, useTeamTasks } from '@/lib/queries'
+import { useRoster, useTeamTaskBoard } from '@/lib/queries'
 import type { MentionHandle } from '@/components/mention-composer'
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types'
 
@@ -22,7 +23,11 @@ const STATUS_FILTERS: (TaskStatus | 'all')[] = [
 const PRIORITY_FILTERS: (TaskPriority | 'all')[] = ['all', 'low', 'medium', 'high', 'critical']
 
 export function TasksPage() {
-  const query = useTeamTasks()
+  const query = useTeamTaskBoard()
+  const [pageCursors, setPageCursors] = useState<string[]>([])
+  const cursor = pageCursors.at(-1) ?? null
+  const pageQuery = useTeamTaskBoard(cursor, cursor !== null)
+  const nextCursor = cursor ? pageQuery.data?.next_cursor : query.data?.next_cursor
   const roster = useRoster()
   const [operatorMode] = useOperatorMode()
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all')
@@ -32,7 +37,12 @@ export function TasksPage() {
   const [selected, setSelected] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
 
-  const tasks = useMemo(() => query.data?.tasks ?? [], [query.data])
+  const tasks = useMemo(() => {
+    const byId = new Map<string, Task>()
+    for (const task of query.data?.tasks ?? []) byId.set(task.id, task)
+    for (const task of pageQuery.data?.tasks ?? []) if (!byId.has(task.id)) byId.set(task.id, task)
+    return [...byId.values()]
+  }, [query.data, pageQuery.data])
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data])
 
   const statusById = useMemo(() => {
@@ -176,7 +186,7 @@ export function TasksPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span className="tabular-nums">{counts.tasks} tasks</span>
+          <span className="tabular-nums">{counts.tasks} tasks shown{nextCursor ? ' · more available' : ''}</span>
           <span className="text-border">·</span>
           <span className="tabular-nums">{counts.inbox} inbox</span>
           <span className="text-border">·</span>
@@ -213,8 +223,9 @@ export function TasksPage() {
               ))}
             </SelectContent>
           </Select>
+          <FieldHelp helpKey="tasks.owner_filter" route="tasks" />
           {tags.length > 0 && (
-            <Select value={tagFilter} onValueChange={setTagFilter}>
+            <><Select value={tagFilter} onValueChange={setTagFilter}>
               <SelectTrigger size="sm"><SelectValue placeholder="Tag" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All tags</SelectItem>
@@ -222,16 +233,13 @@ export function TasksPage() {
                   <SelectItem key={tag} value={tag}>{tag}</SelectItem>
                 ))}
               </SelectContent>
-            </Select>
+            </Select><FieldHelp helpKey="tasks.tag_filter" route="tasks" /></>
           )}
         </div>
 
-        <QueryState
-          query={query}
-          isEmpty={() => tasks.length === 0}
-          empty={<EmptyState title="No tasks across the fleet yet." />}
-        >
-          {() => (
+        {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> :
+          pageQuery.isError ? <ErrorState error={pageQuery.error} /> :
+          tasks.length === 0 ? <EmptyState title="No tasks across the fleet yet." /> : (
             <TaskBoard
               tasks={boardTasks}
               resolveOwner={resolveOwner}
@@ -239,7 +247,21 @@ export function TasksPage() {
               focusStatus={statusFilter}
             />
           )}
-        </QueryState>
+        {pageCursors.length > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setPageCursors((current) => current.slice(0, -1))}>
+            Previous page
+          </Button>
+        )}
+        {nextCursor && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pageQuery.isFetching}
+            onClick={() => setPageCursors((current) => [...current, nextCursor])}
+          >
+            Load more tasks
+          </Button>
+        )}
       </div>
 
       <TaskDrawer
