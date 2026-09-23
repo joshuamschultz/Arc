@@ -46,14 +46,22 @@ export function TaskBoard({
   onSelectTask,
   focusStatus = 'all',
   projections = {},
+  scope: controlledScope,
+  onScopeChange,
+  serverScoped = false,
 }: {
   tasks: Task[]
   resolveOwner: (ownerDid: string | null | undefined) => string | null
   onSelectTask: (task: Task) => void
   focusStatus?: TaskStatus | 'all'
   projections?: Record<string, TaskBoardProjection>
+  scope?: string
+  onScopeChange?: (value: string) => void
+  serverScoped?: boolean
 }) {
-  const [scope, setScope] = useState('all')
+  const [localScope, setLocalScope] = useState('all')
+  const scope = controlledScope ?? localScope
+  const setScope = onScopeChange ?? setLocalScope
 
   // Page projections come from the full store, even when the time window
   // hides a dependency or that dependency belongs to another page.
@@ -70,13 +78,13 @@ export function TaskBoard({
   }, [])
   const scoped = useMemo(() => {
     const days = SCOPES.find((s) => s.value === scope)?.days ?? null
-    if (days == null) return tasks
+    if (serverScoped || days == null) return tasks
     const cutoff = now - days * 86_400_000
     return tasks.filter((t) =>
       t.status === 'backlog' || t.status === 'todo' ||
       t.status === 'in_progress' || t.status === 'review' || recency(t) >= cutoff,
     )
-  }, [tasks, scope, now])
+  }, [tasks, scope, now, serverScoped])
 
   const byColumn = useMemo(() => {
     const grouped = new Map<TaskStatus, Task[]>(COLUMNS.map((c) => [c.id, []]))

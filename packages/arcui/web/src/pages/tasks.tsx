@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
 import { FilterPills } from '@/components/filter-pills'
 import { InsightStat } from '@/components/ai'
-import { EmptyState, ErrorState, LoadingRows } from '@/components/states'
+import { ErrorState, LoadingRows } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -32,6 +32,7 @@ export function TasksPage() {
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all')
   const [ownerFilter, setOwnerFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
+  const [timeScope, setTimeScope] = useState('all')
   const [ownerSearch, setOwnerSearch] = useState('')
   const [tagSearch, setTagSearch] = useState('')
   const filters = useMemo(() => ({
@@ -39,7 +40,8 @@ export function TasksPage() {
     priority: priorityFilter === 'all' ? undefined : priorityFilter,
     owner_did: ownerFilter === 'all' ? undefined : ownerFilter,
     tag: tagFilter === 'all' ? undefined : tagFilter,
-  }), [statusFilter, priorityFilter, ownerFilter, tagFilter])
+    time_scope: timeScope,
+  }), [statusFilter, priorityFilter, ownerFilter, tagFilter, timeScope])
   const query = useTeamTaskBoard(cursor, filters)
   const nextCursor = query.data?.next_cursor
   const [selected, setSelected] = useState<Task | null>(null)
@@ -190,14 +192,16 @@ export function TasksPage() {
             onKeyDown={(e) => { if (e.key === 'Enter') { setPageCursors([]); setTagFilter(tagSearch || 'all') } }} />}
         </div>
 
-        {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> :
-          tasks.length === 0 ? <EmptyState title={facets?.total ? 'No tasks match these filters.' : 'No tasks across the fleet yet.'} /> : (
+        {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> : (
             <TaskBoard
               tasks={boardTasks}
               resolveOwner={resolveOwner}
               onSelectTask={setSelected}
               focusStatus={statusFilter}
               projections={projections}
+              scope={timeScope}
+              onScopeChange={(value) => { setPageCursors([]); setTimeScope(value) }}
+              serverScoped
             />
           )}
         {pageCursors.length > 0 && (

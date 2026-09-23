@@ -21,7 +21,7 @@ import base64
 import binascii
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.identity import resolve_agent_identity
+from arcui.observe import TaskBoardUnavailableError
 from arcui.query_validators import safe_int
 from arcui.routes.agent_detail.capabilities import _live_agent, agent_skill_rows
 from arcui.routes.agent_detail.tools import (
@@ -44,7 +45,7 @@ from arcui.schemas import (
     AuditEventsResponse,
     ErrorResponse,
     PolicyBulletsResponse,
-    TasksResponse,
+    TaskBoardResponse,
     TeamPolicyStatsResponse,
     TeamToolsSkillsResponse,
 )
@@ -201,14 +202,15 @@ _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 
 
 async def get_tasks(request: Request) -> JSONResponse:
-    """GET /api/team/tasks — bounded active-first pages with continuation."""
+    """GET /api/team/tasks — bounded immutable-order pages with continuation."""
     page_limit = request.query_params.get("limit", "100")
     cursor = request.query_params.get("cursor")
     status = request.query_params.get("status") or None
     priority = request.query_params.get("priority") or None
     owner_did = request.query_params.get("owner_did") or None
     tag = request.query_params.get("tag") or None
-    filters = (status, priority, owner_did, tag)
+    time_scope = request.query_params.get("time_scope", "all")
+    filters = (status, priority, owner_did, tag, time_scope)
     if "window" in request.query_params:
         return JSONResponse(
             ErrorResponse(error="Use /api/team/tasks/summary for a time window.").model_dump(
@@ -233,41 +235,43 @@ async def get_tasks(request: Request) -> JSONResponse:
             raise ValueError
         if any(value is not None and len(value) > 200 for value in (owner_did, tag)):
             raise ValueError
-        phase, before = (
+        if time_scope not in {"1", "7", "30", "all"}:
+            raise ValueError
+        before, since = (
             _decode_task_cursor(cursor, filters)
             if cursor is not None
-            else ("history" if status in {"done", "failed"} else "active", None)
+            else (
+                None,
+                (datetime.now(UTC) - timedelta(days=int(time_scope))).isoformat()
+                if time_scope != "all"
+                else None,
+            )
         )
     except (ValueError, TypeError, UnicodeDecodeError, binascii.Error):
         return JSONResponse(
             ErrorResponse(error="Invalid task page limit or cursor.").model_dump(mode="json"),
             status_code=400,
         )
-    page = await request.app.state.observe.task_board_page(
-        phase=phase,
-        before=before,
-        limit=limit,
-        status=status,
-        priority=priority,
-        owner_did=owner_did,
-        tag=tag,
-    )
-    if not page and phase == "active" and status is None:
-        phase = "history"
+    try:
         page = await request.app.state.observe.task_board_page(
-            phase=phase,
+            phase="all",
+            before=before,
             limit=limit,
+            status=status,
             priority=priority,
             owner_did=owner_did,
             tag=tag,
+            since=since,
+        )
+    except TaskBoardUnavailableError:
+        return JSONResponse(
+            ErrorResponse(error="Task board backend unavailable.").model_dump(), status_code=503
         )
     rows = page[:limit]
     next_cursor: str | None = None
     if len(page) > limit:
         last = rows[-1]
-        next_cursor = _encode_task_cursor(phase, last["updated_at"], last["id"], filters)
-    elif phase == "active" and status is None:
-        next_cursor = _encode_task_cursor("history", None, None, filters)
+        next_cursor = _encode_task_cursor(last.created_at or "", last.id, filters, since)
     # The task store remains usable while fleet discovery/messaging is down.
     try:
         did_to_agent = {entry.did: entry.agent_id for entry in _roster(request)}
@@ -275,22 +279,33 @@ async def get_tasks(request: Request) -> JSONResponse:
         logger.warning("task owner roster unavailable", exc_info=True)
         did_to_agent = {}
     out: list[dict[str, Any]] = []
-    for row in rows:
-        row = dict(row)
+    for task in rows:
+        row = task.model_dump(mode="json")
         row["blocked_by_total"] = len(row.get("blocked_by") or [])
         row["blocked_by"] = [str(dep)[:200] for dep in (row.get("blocked_by") or [])[:10]]
         row["tags_total"] = len(row.get("tags") or [])
         row["tags"] = [str(tag)[:200] for tag in (row.get("tags") or [])[:100]]
         row["agent_id"] = did_to_agent.get(row.get("owner_did"))
         out.append(row)
-    facets = await request.app.state.observe.task_board_facets()
-    projections = await request.app.state.observe.task_board_projection(
-        [row["id"] for row in rows]
-    )
+    try:
+        facets = await request.app.state.observe.task_board_facets()
+        projections = await request.app.state.observe.task_board_projection(
+            [task.id for task in rows]
+        )
+    except TaskBoardUnavailableError:
+        return JSONResponse(
+            ErrorResponse(error="Task board backend unavailable.").model_dump(), status_code=503
+        )
     return JSONResponse(
-        TasksResponse(
-            tasks=out, next_cursor=next_cursor, facets=facets, projections=projections
-        ).model_dump(mode="json", exclude_none=True)
+        TaskBoardResponse.model_validate(
+            {
+                "tasks": out,
+                "next_cursor": next_cursor,
+                "facets": facets,
+                "projections": projections,
+            },
+            context={"allow_external_refs": True},
+        ).model_dump(mode="json")
     )
 
 
@@ -309,41 +324,39 @@ async def get_task_summary(request: Request) -> JSONResponse:
 
 
 def _encode_task_cursor(
-    phase: str,
-    stamp: str | None,
-    task_id: str | None,
-    filters: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None),
+    stamp: str,
+    task_id: str,
+    filters: tuple[str | None, str | None, str | None, str] = (None, None, None, None, "all"),
+    since: str | None = None,
 ) -> str:
-    payload = json.dumps([phase, stamp, task_id, *filters], separators=(",", ":")).encode()
+    payload = json.dumps([stamp, task_id, *filters, since], separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
 def _decode_task_cursor(
     value: str,
-    filters: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None),
-) -> tuple[str, tuple[str, str] | None]:
+    filters: tuple[str | None, str | None, str | None, str] = (None, None, None, None, "all"),
+) -> tuple[tuple[str, str], str | None]:
     if len(value) > 2048:
         raise ValueError("cursor too long")
     decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
     payload = json.loads(decoded)
-    if not isinstance(payload, list) or len(payload) != 7 or tuple(payload[3:]) != filters:
+    if not isinstance(payload, list) or len(payload) != 8 or tuple(payload[2:7]) != filters:
         raise ValueError("invalid cursor")
-    phase, stamp, task_id = payload[:3]
-    if phase not in {"active", "history"}:
-        raise ValueError("invalid cursor phase")
-    status = filters[0]
-    if status in {"done", "failed"} and phase != "history":
-        raise ValueError("invalid cursor phase")
-    if status in {"backlog", "todo", "in_progress", "review"} and phase != "active":
-        raise ValueError("invalid cursor phase")
-    if stamp is None and task_id is None and phase == "history":
-        return phase, None
+    stamp, task_id = payload[:2]
     if not isinstance(stamp, str) or not isinstance(task_id, str) or len(task_id) > 200:
         raise ValueError("invalid cursor")
-    parsed = datetime.fromisoformat(stamp)
-    if parsed.tzinfo is None:
-        raise ValueError("cursor timestamp has no timezone")
-    return phase, (stamp, task_id)
+    if stamp:
+        parsed = datetime.fromisoformat(stamp)
+        if parsed.tzinfo is None:
+            raise ValueError("cursor timestamp has no timezone")
+    since = payload[7]
+    if (filters[4] == "all") != (since is None):
+        raise ValueError("invalid cursor scope")
+    if since is not None:
+        if not isinstance(since, str) or datetime.fromisoformat(since).tzinfo is None:
+            raise ValueError("invalid cursor scope")
+    return (stamp, task_id), since
 
 
 # ---------------------------------------------------------------------------

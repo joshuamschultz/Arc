@@ -134,7 +134,7 @@ export const useTeamTaskSummary = (window: string) =>
 /** One bounded board page. The head stays live while an operator browses another page. */
 export const useTeamTaskBoard = (
   cursor?: string | null,
-  filters: { status?: string; priority?: string; owner_did?: string; tag?: string } = {},
+  filters: { status?: string; priority?: string; owner_did?: string; tag?: string; time_scope?: string } = {},
 ) =>
   useQuery<TasksResponse>({
     queryKey: ['team', 'tasks', 'board', cursor ?? 'head', filters],

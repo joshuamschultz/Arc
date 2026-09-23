@@ -27,3 +27,14 @@ it('updates the seven-day window after idle while keeping unresolved work visibl
   expect(screen.getByRole('button', { name: /Old active task/ })).toBeTruthy()
   expect(screen.queryByRole('button', { name: /Recently done/ })).toBeNull()
 })
+
+it('delegates fleet time scope to the server without filtering the returned page', () => {
+  const onScopeChange = vi.fn()
+  const tasks = [{ id: 'done', title: 'Server match', status: 'done',
+    priority: 'medium', updated_at: '2020-01-01T00:00:00Z' }] as Task[]
+  render(<TaskBoard tasks={tasks} resolveOwner={() => null} onSelectTask={() => {}}
+    scope="1" onScopeChange={onScopeChange} serverScoped />)
+  expect(screen.getByRole('button', { name: /Server match/ })).toBeTruthy()
+  act(() => { screen.getByRole('button', { name: '7 days' }).click() })
+  expect(onScopeChange).toHaveBeenCalledWith('7')
+})
