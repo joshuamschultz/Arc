@@ -11,6 +11,7 @@ tasks``) so Home can never disagree with them about what needs the operator.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -74,7 +75,7 @@ def _agent_question(
 ) -> Message:
     return Message(
         id="q1",
-        ts="2026-08-29T11:00:00+00:00",
+        ts=datetime.now(UTC).isoformat(),
         sender=agent_did,
         signer_did=agent_did,
         to=["channel://ops"],
@@ -88,9 +89,14 @@ def _agent_question(
 def _waiting_registry(agent_did: str) -> _FakeRegistry:
     return _FakeRegistry(
         [
-            Entity(did=agent_did, handle="olivia", id=agent_did, name="olivia", type=EntityType.AGENT),
             Entity(
-                did=_HUMAN_DID, handle="operator", id=_HUMAN_DID, name="operator",
+                did=agent_did, handle="olivia", id=agent_did, name="olivia", type=EntityType.AGENT
+            ),
+            Entity(
+                did=_HUMAN_DID,
+                handle="operator",
+                id=_HUMAN_DID,
+                name="operator",
                 type=EntityType.USER,
             ),
         ]

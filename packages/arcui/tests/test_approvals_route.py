@@ -35,6 +35,7 @@ _AGENT = "did:arc:test:exec/agent1"
 @pytest.fixture(autouse=True)
 def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path))
 
 
 def _call() -> ToolCall:
