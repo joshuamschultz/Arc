@@ -397,6 +397,8 @@ class ConnectedDataService:
         except Exception:
             _logger.exception("connected-data source purge failed: %s", connection_id)
             return SourceOperationResult(connection_id, "refused", "source_purge_failed")
+        finally:
+            await _release(ingest)
         self._statuses.pop(connection_id, None)
         self._mapping_statuses.pop(connection_id, None)
         self._selected_resources.pop(connection_id, None)
@@ -421,6 +423,8 @@ class ConnectedDataService:
         except Exception:
             _logger.exception("connected-data source reset failed: %s", connection_id)
             return SourceOperationResult(connection_id, "refused", "source_reset_failed")
+        finally:
+            await _release(ingest)
         if self._store is None or not await self._store.reset(self._agent_did, connection_id):
             return SourceOperationResult(connection_id, "refused", "sync_lease_active")
         self._paused.discard(connection_id)
@@ -753,6 +757,20 @@ class ConnectedDataService:
         )
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        try:
+            return await self._run_with_port(registration, raw_description, ingest)
+        finally:
+            # The port holds this run's memory-database connection; a run that
+            # ends, fails or is cancelled (stall, revoke, shutdown) gives it back.
+            await _release(ingest)
+
+    async def _run_with_port(
+        self,
+        registration: SourceRegistration,
+        raw_description: SourceDescription,
+        ingest: IngestPort,
+    ) -> bool:
+        connection_id = registration.connection_id
         description = await self._with_generation(raw_description, ingest)
         self._descriptions[connection_id] = description
         self._statuses[connection_id] = SourceRuntimeStatus(
@@ -797,9 +815,12 @@ class ConnectedDataService:
             if self._ingest_factory is not None:
                 candidate = self._ingest_factory(description)
                 ingest = await candidate if inspect.isawaitable(candidate) else candidate
-                description = await self._with_generation(description, ingest)
-                source_id = _canonical_source_id(ingest, description)
-                documents_indexed = await self._documents_indexed(ingest, description)
+                try:
+                    description = await self._with_generation(description, ingest)
+                    source_id = _canonical_source_id(ingest, description)
+                    documents_indexed = await self._documents_indexed(ingest, description)
+                finally:
+                    await _release(ingest)
             self._descriptions[connection_id] = description
             # Read back what this source actually did, rather than declaring it
             # unmapped. The sync state is durable and the runtime status was
@@ -1045,6 +1066,21 @@ class ConnectedDataService:
 def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:
     canonical = getattr(ingest, "canonical_source_id", None)
     return str(canonical(description)) if callable(canonical) else ""
+
+
+async def _release(ingest: IngestPort) -> None:
+    """Close a port's own resources (its memory-database connection) if it has any.
+
+    Optional like the other port hooks; a close failure is logged, never
+    raised over the outcome of the operation that used the port.
+    """
+    close = getattr(ingest, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:  # reason: releasing must not mask the operation's own result
+        _logger.warning("connected-data ingest port close failed", exc_info=True)
 
 
 class _SyncStalledError(RuntimeError):

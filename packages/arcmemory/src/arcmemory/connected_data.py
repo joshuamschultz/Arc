@@ -615,6 +615,10 @@ class ConnectedDataService:
         """Irreversibly remove every retrievable artifact of a disconnected source."""
         await self._clear_source(source, remove_mapping=True)
 
+    def close(self) -> None:
+        """Release this service's SQLite connection; a later call reopens it."""
+        self._db.close()
+
     def _doc_index(self) -> DocIndex:
         return DocIndex(
             self._db,

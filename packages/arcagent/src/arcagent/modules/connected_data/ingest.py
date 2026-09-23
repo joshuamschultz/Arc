@@ -217,6 +217,12 @@ class ArcMemoryIngestAdapter(IngestPort):
         )
         return self._service
 
+    async def aclose(self) -> None:
+        """Release the memory database connection this port opened, if any."""
+        service, self._service = self._service, None
+        if service is not None:
+            service.close()
+
     @staticmethod
     def _source_model(module: Any, source: SourceDescription) -> Any:
         return module.ConnectedSource(
