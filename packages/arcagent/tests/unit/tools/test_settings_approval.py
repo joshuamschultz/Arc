@@ -6,7 +6,7 @@ operator-approval subsystem (arcstore.approvals) and only becomes usable once
 the operator grants it -- callable at the arcagent layer without importing
 arcui/arccli.
 
-Contract under test (arcagent.core.settings_approval, module absent -> RED):
+Contract under test (arcagent.tools.settings_approval, module absent -> RED):
   - is_security_relevant(field) classifies a dotted config id.
   - request_settings_approval(...) creates a PENDING row binding the exact
     field+value change (arguments + call_hash).
@@ -25,7 +25,7 @@ from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_appro
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
-from arcagent.core.settings_approval import (
+from arcagent.tools.settings_approval import (
     is_security_relevant,
     request_settings_approval,
     verify_settings_grant,
