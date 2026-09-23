@@ -39,6 +39,10 @@ CallQueueCoordinator: TypeAlias = arcllm.CallQueueCoordinator
 CallQueueStore: TypeAlias = arcllm.CallQueueStore
 MemoryQueueStore = arcllm.MemoryQueueStore
 QueueLimits = arcllm.QueueLimits
+QueueCancellation = arcllm.QueueCancellation
+QueueControlSnapshot = arcllm.QueueControlSnapshot
+QueueMetadataPage = arcllm.QueueMetadataPage
+QueueReadScope = arcllm.QueueReadScope
 
 Model: TypeAlias = arcllm.LLMProvider
 """Provider-neutral model protocol accepted by ArcRun."""

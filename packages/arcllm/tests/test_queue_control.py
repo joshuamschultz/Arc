@@ -19,10 +19,206 @@ from arcllm.queue_control import (
     CallQueueCoordinator,
     MemoryQueueStore,
     QueueLimits,
+    QueueReadScope,
     QueueState,
     _ProviderPool,
     _Waiter,
 )
+
+
+@pytest.mark.asyncio
+async def test_versioned_controls_reject_stale_revision_and_survive_restart(
+    tmp_path: Path,
+) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    first = CallQueueCoordinator(store=journal)
+    second = CallQueueCoordinator(store=journal)
+    await first.initialize()
+    await second.initialize()
+    paused = await first.pause(expected_revision=0)
+    assert paused.revision == 1 and paused.paused
+    with pytest.raises(QueueStateUnavailableError, match="stale"):
+        await second.resume(expected_revision=0)
+    restored = CallQueueCoordinator(store=journal)
+    await restored.initialize()
+    assert restored.control().revision == 1 and restored.control().paused
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_waiter_is_confirmed_and_never_enters_provider() -> None:
+    coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=1))
+    await coordinator.pause(expected_revision=0)
+    entered = False
+
+    async def pending() -> None:
+        nonlocal entered
+        async with coordinator.call(CallQueueContext("tenant", "owner", "queued")) as job:
+            async with coordinator.attempt("provider", job):
+                entered = True
+
+    task = asyncio.create_task(pending())
+    while await coordinator.store.get("queued") is None:
+        await asyncio.sleep(0)
+    job = await coordinator.store.get("queued")
+    assert job is not None
+    result = await coordinator.cancel("queued", owner_id="owner", expected_version=job.version)
+    assert result.status == "confirmed"
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not entered
+    assert (await coordinator.store.get("queued")).state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_running_remote_cancel_is_requested_then_late_completion_is_known() -> None:
+    store = MemoryQueueStore()
+    first = CallQueueCoordinator(store=store)
+    remote = CallQueueCoordinator(store=store)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def running() -> None:
+        async with first.call(CallQueueContext("tenant", "owner", "running")) as job:
+            async with first.attempt("provider", job):
+                entered.set()
+                await release.wait()
+
+    task = asyncio.create_task(running())
+    await entered.wait()
+    job = await store.get("running")
+    assert job is not None
+    result = await remote.cancel("running", owner_id="owner", expected_version=job.version)
+    assert result.status == "requested"
+    assert (await store.get("running")).state == "cancel_requested"
+    release.set()
+    await task
+    assert (await store.get("running")).state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_after_remote_cancel_remains_failed() -> None:
+    store = MemoryQueueStore()
+    owner = CallQueueCoordinator(store=store)
+    remote = CallQueueCoordinator(store=store)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def running() -> None:
+        async with owner.call(CallQueueContext("tenant", "owner", "failing")) as job:
+            async with owner.attempt("provider", job):
+                entered.set()
+                await release.wait()
+                raise RuntimeError("provider failed")
+
+    task = asyncio.create_task(running())
+    await entered.wait()
+    job = await store.get("failing")
+    assert job is not None
+    assert (
+        await remote.cancel("failing", owner_id="owner", expected_version=job.version)
+    ).status == "requested"
+    release.set()
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await task
+    assert (await store.get("failing")).state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_stale_job_version_does_not_cancel_or_disclose_foreign_owner() -> None:
+    coordinator = CallQueueCoordinator()
+    job = await coordinator.register(CallQueueContext("tenant", "owner", "call"))
+    assert (
+        await coordinator.cancel("call", owner_id="intruder", expected_version=0)
+    ).status == "unavailable"
+    assert (
+        await coordinator.cancel("call", owner_id="owner", expected_version=1)
+    ).status == "conflict"
+    assert (await coordinator.store.get("call")).state == "queued"
+    assert (
+        await coordinator.cancel("call", owner_id="owner", expected_version=job.version)
+    ).status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_running_cancel_blocks_new_provider_attempt() -> None:
+    coordinator = CallQueueCoordinator()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def running() -> None:
+        async with coordinator.call(CallQueueContext("tenant", "owner", "call")) as job:
+            async with coordinator.attempt("first", job):
+                entered.set()
+                await release.wait()
+            with pytest.raises(RuntimeError, match="fenced"):
+                async with coordinator.attempt("second", job):
+                    pytest.fail("cancelled call entered another provider")
+
+    task = asyncio.create_task(running())
+    await entered.wait()
+    job = await coordinator.store.get("call")
+    assert job is not None
+    remote = CallQueueCoordinator(store=coordinator.store)
+    assert (
+        await remote.cancel("call", owner_id="owner", expected_version=job.version)
+    ).status == "requested"
+    release.set()
+    await task
+    assert (await coordinator.store.get("call")).state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sparse_scoped_metadata_page_has_bounded_scan(tmp_path: Path) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    for index in range(21):
+        tenant = "wanted" if index == 0 else "other"
+        await coordinator.register(CallQueueContext(tenant, "owner", f"call-{index}"))
+    cursor = None
+    seen = []
+    for _ in range(6):
+        page = await coordinator.metadata_page(QueueReadScope("wanted"), cursor=cursor, limit=2)
+        assert page.examined <= 5
+        seen.extend(page.jobs)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert [job.call_id for job in seen] == ["call-0"]
+
+
+@pytest.mark.asyncio
+async def test_metadata_cursor_survives_restart_and_rejects_another_scope(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    anchor = FakeAnchor()
+    first = CallQueueCoordinator(store=QueueJournal(path, RecordCipher(b"k" * 32), anchor))
+    await first.initialize()
+    for index in range(8):
+        await first.register(CallQueueContext("tenant", "owner", f"call-{index}"))
+    page = await first.metadata_page(QueueReadScope("tenant"), limit=2)
+    assert len(page.jobs) == 2 and page.next_cursor is not None
+    restored = CallQueueCoordinator(store=QueueJournal(path, RecordCipher(b"k" * 32), anchor))
+    await restored.initialize()
+    following = await restored.metadata_page(
+        QueueReadScope("tenant"), cursor=page.next_cursor, limit=2
+    )
+    assert len(following.jobs) == 2
+    assert not {job.call_id for job in page.jobs} & {job.call_id for job in following.jobs}
+    with pytest.raises(ValueError, match="scope"):
+        await restored.metadata_page(QueueReadScope("other"), cursor=page.next_cursor, limit=2)
+
+
+@pytest.mark.asyncio
+async def test_configure_returns_effective_revision_and_rejects_stale_write() -> None:
+    coordinator = CallQueueCoordinator()
+    limits = QueueLimits(max_concurrent=3, max_queued=2)
+    changed = await coordinator.configure(limits, expected_revision=0)
+    assert changed.revision == 1 and changed.limits == limits
+    with pytest.raises(QueueStateUnavailableError, match="stale"):
+        await coordinator.configure(QueueLimits(max_concurrent=1), expected_revision=0)
+    assert coordinator.control() == changed
+
+
 from arcllm.queue_journal import QueueJournal
 from arcllm.registry import load_model
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Usage
@@ -380,10 +576,17 @@ async def test_cancel_yielded_stream_closes_provider_and_releases_capacity(
         try:
             stream = model.invoke_stream([Message(role="user", content="hi")])
             assert (await asyncio.create_task(anext(stream))).text == "first"
-            assert await coordinator.cancel("stream-call", owner_id="owner")
+            assert (
+                await coordinator.cancel(
+                    "stream-call",
+                    owner_id="owner",
+                    expected_version=(await coordinator.store.get("stream-call")).version,
+                )
+            ).status == "requested"
             assert closed.is_set()
-            assert (await coordinator.jobs())[0].state == "cancelled"
+            assert (await coordinator.jobs())[0].state == "cancel_requested"
             await asyncio.create_task(stream.aclose())
+            assert (await coordinator.jobs())[0].state == "cancelled"
             assert coordinator._pools["anthropic"].active == 0
         finally:
             await model.close()
@@ -431,7 +634,13 @@ async def test_cancel_idle_stream_does_not_cancel_consumer_work(
         task = asyncio.create_task(consumer())
         try:
             await yielded.wait()
-            assert await coordinator.cancel("idle-stream", owner_id="owner")
+            assert (
+                await coordinator.cancel(
+                    "idle-stream",
+                    owner_id="owner",
+                    expected_version=(await coordinator.store.get("idle-stream")).version,
+                )
+            ).status == "requested"
             assert closed.is_set()
             assert not task.cancelled() and not task.done()
             continue_work.set()
@@ -475,7 +684,13 @@ async def test_cancel_cross_task_stream_targets_current_provider_wait(
             assert (await asyncio.create_task(anext(stream))).text == "first"
             advancing = asyncio.create_task(anext(stream))
             await waiting.wait()
-            assert await coordinator.cancel("cross-task", owner_id="owner")
+            assert (
+                await coordinator.cancel(
+                    "cross-task",
+                    owner_id="owner",
+                    expected_version=(await coordinator.store.get("cross-task")).version,
+                )
+            ).status == "requested"
             with pytest.raises(asyncio.CancelledError):
                 await advancing
             assert closed.is_set()
@@ -549,7 +764,7 @@ async def test_journal_controls_are_sealed_and_strict(tmp_path: Path) -> None:
     journal = QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor())
     coordinator = CallQueueCoordinator(store=journal)
     await coordinator.initialize()
-    await coordinator.pause()
+    await coordinator.pause(expected_revision=coordinator.control().revision)
     assert b"paused" not in path.read_bytes()
     restored = CallQueueCoordinator(store=journal)
     await restored.initialize()
@@ -644,7 +859,7 @@ async def test_older_database_replay_is_refused(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_granted_waiter_cancel_releases_reservation() -> None:
     coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=1))
-    await coordinator.pause()
+    await coordinator.pause(expected_revision=coordinator.control().revision)
 
     async def pending() -> None:
         async with coordinator.call(CallQueueContext("tenant", "owner")) as job:
@@ -659,7 +874,7 @@ async def test_granted_waiter_cancel_releases_reservation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert pool.active == 0
-    await coordinator.resume()
+    await coordinator.resume(expected_revision=coordinator.control().revision)
     async with coordinator.call(CallQueueContext("tenant", "owner")) as job:
         async with coordinator.attempt("provider", job):
             assert pool.active == 1
@@ -683,7 +898,7 @@ async def test_canceled_head_waiter_does_not_block_following_tenant() -> None:
 @pytest.mark.asyncio
 async def test_resume_fills_all_available_slots_and_recovery_refuses_live_calls() -> None:
     coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=2))
-    await coordinator.pause()
+    await coordinator.pause(expected_revision=coordinator.control().revision)
     entered = asyncio.Event()
     release = asyncio.Event()
     active = 0
@@ -700,7 +915,7 @@ async def test_resume_fills_all_available_slots_and_recovery_refuses_live_calls(
     one = asyncio.create_task(pending("a"))
     two = asyncio.create_task(pending("b"))
     await asyncio.sleep(0)
-    await coordinator.resume()
+    await coordinator.resume(expected_revision=coordinator.control().revision)
     await asyncio.wait_for(entered.wait(), 1)
     with pytest.raises(RuntimeError, match="live"):
         await coordinator.recover()
@@ -715,9 +930,9 @@ async def test_stale_controller_cannot_overwrite_durable_pause(tmp_path: Path) -
     second = CallQueueCoordinator(store=journal)
     await first.initialize()
     await second.initialize()
-    await first.pause()
+    await first.pause(expected_revision=first.control().revision)
     with pytest.raises(QueueStateUnavailableError, match="stale"):
-        await second.resume()
+        await second.resume(expected_revision=second.control().revision)
     assert second._control_revision == 0
     assert (await journal.load_control())["paused"] is True
 
