@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -129,6 +130,12 @@ class AuditSink(Protocol):
     """
 
     def write(self, event: AuditEvent) -> None: ...
+
+
+class DurableAuditSink(Protocol):
+    """Account authority sink whose append failure is never swallowed."""
+
+    def write_durable(self, event: AuditEvent) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +248,8 @@ class WormSink:
         self._segment_first_seq = 0
         self._active_count = 0
         self._pending_recovery: Path | None = None
+        self._append_lock = threading.RLock()
+        self._uncertain = False
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, self._FILE_MODE)
@@ -284,11 +293,56 @@ class WormSink:
     def write(self, event: AuditEvent) -> None:
         """Append one signed, chained record. Fail-open (AU-5)."""
         try:
-            self._append(event)
+            with self._append_lock:
+                self._append(event)
         except Exception:  # reason: fail-open — auditing must never break the call (AU-5)
             _logger.warning("WormSink.write failed — swallowing (AU-5)", exc_info=True)
 
+    def write_durable(self, event: AuditEvent) -> None:
+        """Append and sync a complete record; refuse uncertain outcomes.
+
+        This separate method is for account authority. A partial write or failed
+        sync poisons this instance: only reopening and verifying/recovering the
+        chain can establish its next sequence and tip.
+        """
+        with self._append_lock:
+            if self._uncertain:
+                raise RuntimeError("audit append outcome is uncertain")
+            line, event_hash = self._record_line(event)
+            offset = 0
+            try:
+                while offset < len(line):
+                    written = os.write(self._fd, line[offset:])
+                    if written <= 0:
+                        raise OSError("audit append made no progress")
+                    offset += written
+                os.fsync(self._fd)
+                self._chain_tip = event_hash
+                self._next_seq += 1
+                self._active_count += 1
+                self._maybe_rotate()
+                # A rotation creates/renames directory entries; sync them as
+                # well before telling an account mutation that audit succeeded.
+                dir_fd = os.open(self._path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except Exception:
+                self._uncertain = True
+                raise
+
     def _append(self, event: AuditEvent) -> None:
+        if self._uncertain:
+            raise RuntimeError("audit append outcome is uncertain")
+        line, event_hash = self._record_line(event)
+        os.write(self._fd, line)
+        self._chain_tip = event_hash
+        self._next_seq += 1
+        self._active_count += 1
+        self._maybe_rotate()
+
+    def _record_line(self, event: AuditEvent) -> tuple[bytes, str]:
         seq = self._next_seq
         prev_hash = self._chain_tip or self._genesis_tip
         event_dump = event.model_dump(mode="json")
@@ -307,11 +361,7 @@ class WormSink:
             "signature": signature,
         }
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
-        os.write(self._fd, line.encode("utf-8"))
-        self._chain_tip = event_hash
-        self._next_seq = seq + 1
-        self._active_count += 1
-        self._maybe_rotate()
+        return line.encode("utf-8"), event_hash
 
     def _maybe_rotate(self) -> None:
         if self._active_count < self._max_records and os.fstat(self._fd).st_size < self._max_bytes:

@@ -10,6 +10,7 @@ import datetime as dt
 import ipaddress
 import secrets
 import shutil
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -91,13 +92,17 @@ class DisposableVault:
         self._unseal_key: str | None = None
         self._root_token: str | None = None
         self.base_url = ""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            self._host_port = probe.getsockname()[1]
 
     def __enter__(self) -> DisposableVault:
         try:
             self._write_tls_key()
             _docker(
                 "run", "-d", "--name", self.name, "--user", "0",
-                "-p", "127.0.0.1::8200", "-v", f"{self.directory}:/vault/local:rw",
+                "-p", f"127.0.0.1:{self._host_port}:8200",
+                "-v", f"{self.directory}:/vault/local:rw",
                 IMAGE, "server", "-config=/vault/local/vault.hcl", timeout=120,
             )
             self._refresh_port()
@@ -203,6 +208,78 @@ path "anchor/config" { capabilities = ["read"] }''',
                 "ttl": ttl, "renewable": False,
             })
         return data["auth"]["client_token"]
+
+    def configure_account_namespace(self, tenant: str, deployment: str) -> None:
+        """Install disposable per-deployment mounts and narrow actual ACLs."""
+        assert self._root_token is not None
+        namespace = f"arc-{tenant}-{deployment}"
+        transit, anchor = f"{namespace}-transit", f"{namespace}-anchor"
+        with self.client(self._root_token) as root:
+            self._request(root, "POST", f"/v1/sys/mounts/{transit}", {"type": "transit"})
+            self._request(root, "POST", f"/v1/sys/mounts/{anchor}", {
+                "type": "kv", "options": {"version": "2"},
+            })
+            self._request(root, "POST", f"/v1/{anchor}/config", {"cas_required": True})
+            self._request(root, "POST", f"/v1/{transit}/keys/account-seal", {
+                "type": "aes256-gcm96", "exportable": False,
+                "allow_plaintext_backup": False,
+            })
+            self._request(root, "POST", f"/v1/{transit}/keys/audit-signing", {
+                "type": "ed25519", "exportable": False,
+                "allow_plaintext_backup": False,
+            })
+            policies = {
+                "issuer": f'''path "{transit}/keys/arc-user-*" {{ capabilities = ["create", "update", "read"] }}
+path "{transit}/sign/arc-user-*" {{ capabilities = ["update"] }}''',
+                "cipher": f'''path "{transit}/keys/account-seal" {{ capabilities = ["read"] }}
+path "{transit}/encrypt/account-seal" {{ capabilities = ["update"] }}
+path "{transit}/decrypt/account-seal" {{ capabilities = ["update"] }}''',
+                "anchor": f'''path "{anchor}/metadata/users" {{ capabilities = ["read"] }}
+path "{anchor}/data/users" {{ capabilities = ["create", "read", "update"] }}
+path "{anchor}/config" {{ capabilities = ["read"] }}''',
+                "audit-signer": f'''path "{transit}/keys/audit-signing" {{ capabilities = ["read"] }}
+path "{transit}/sign/audit-signing" {{ capabilities = ["update"] }}''',
+                "config-anchor": f'''path "{anchor}/metadata/config" {{ capabilities = ["read"] }}
+path "{anchor}/data/config" {{ capabilities = ["read"] }}
+path "{anchor}/config" {{ capabilities = ["read"] }}''',
+            }
+            for capability, policy in policies.items():
+                if capability != "config-anchor":
+                    policy += '''
+path "auth/token/lookup-self" { capabilities = ["read"] }
+path "auth/token/renew-self" { capabilities = ["update"] }
+path "auth/token/revoke-self" { capabilities = ["update"] }'''
+                self._request(root, "PUT", f"/v1/sys/policies/acl/{namespace}-{capability}", {
+                    "policy": policy,
+                })
+
+    def token_for_policy(self, policy_name: str, *, ttl: str = "30s") -> str:
+        """Fixture-only root operation; token stays in test memory and TLS client."""
+        assert self._root_token is not None
+        if not policy_name.startswith("arc-acme-dgx-"):
+            raise ValueError("unexpected fixture policy")
+        with self.client(self._root_token) as root:
+            data = self._request(root, "POST", "/v1/auth/token/create", {
+                "policies": [policy_name], "no_default_policy": True,
+                "ttl": ttl, "renewable": True,
+            })
+        return data["auth"]["client_token"]
+
+    def seed_config_anchor(self, mount: str, digest: str) -> None:
+        """Fixture-only enrollment under root custody; no root token escapes."""
+        from arctrust.vault_anchor import VaultKVAnchor
+
+        assert self._root_token is not None
+
+        class Once:
+            def consume(self, scope: str) -> bool:
+                return scope == f"{mount}/config"
+
+        with self.client(self._root_token) as root:
+            VaultKVAnchor(root, mount=mount, record="config",
+                          bootstrap_authority=Once()).compare_and_advance(
+                None, digest, "signed enrollment"
+            )
 
     def restart(self) -> None:
         assert self._unseal_key is not None

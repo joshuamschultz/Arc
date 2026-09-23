@@ -36,7 +36,8 @@ from typing import Concatenate, ParamSpec, Protocol, TypeVar, cast
 from nacl import pwhash
 from nacl.exceptions import InvalidkeyError
 
-from arctrust.audit import AuditEvent, AuditSink
+from arctrust.audit import AuditEvent, AuditSink, DurableAuditSink
+from arctrust.byte_cipher import ByteCipher
 from arctrust.identity import did_from_public_key, did_matches_pubkey, parse_did
 from arctrust.monotonic import AnchorHead, MonotonicAnchor
 from arctrust.paths import users_file
@@ -82,14 +83,6 @@ class UserKeyIssuer(Protocol):
     def create_user_key(self, key_ref: str) -> bytes: ...
 
     def public_key(self, key_ref: str) -> bytes: ...
-
-
-class UserSnapshotCipher(Protocol):
-    """Seals complete recovery intent outside the mutable local user file."""
-
-    def seal(self, payload: bytes) -> str: ...
-
-    def open(self, sealed: str) -> bytes: ...
 
 
 def default_users_path() -> Path:
@@ -168,15 +161,17 @@ class UserStore:
         *,
         issuer: UserKeyIssuer,
         anchor: MonotonicAnchor,
-        cipher: UserSnapshotCipher,
+        cipher: ByteCipher,
         audit_sink: AuditSink,
         actor_did: str,
+        strict_audit_sink: DurableAuditSink | None = None,
     ) -> None:
         self.path = path or default_users_path()
         self._issuer = issuer
         self._anchor = anchor
         self._cipher = cipher
         self._audit_sink = audit_sink
+        self._strict_audit_sink = strict_audit_sink
         self._actor_did = actor_did
         self._users: dict[str, User] = {}
         self._head: AnchorHead | None = None
@@ -278,10 +273,16 @@ class UserStore:
         head = self._anchor.compare_and_advance(self._head, digest, sealed)
         if self._anchor.latest() != head:
             raise UserStoreError("user authority advanced before local write")
-        self._write(sealed.encode("ascii"))
+        try:
+            self._write(sealed.encode("ascii"))
+        except OSError as exc:
+            raise UserStoreError("user authority write outcome is uncertain") from exc
         self._head = head
         self._users = candidate
-        self._audit("users.change", "allow", digest)
+        try:
+            self._audit("users.change", "allow", digest)
+        except Exception as exc:
+            raise UserStoreError("user authority committed; audit outcome is uncertain") from exc
 
     @contextmanager
     def _lock(self) -> Iterator[None]:
@@ -341,10 +342,14 @@ class UserStore:
             raise UserStoreError("stale user authority writer")
 
     def _audit(self, action: str, outcome: str, digest: str) -> None:
-        self._audit_sink.write(AuditEvent(
+        event = AuditEvent(
             actor_did=self._actor_did, action=action, target=self._anchor.scope,
             outcome=outcome, payload_hash=digest,
-        ))
+        )
+        if action == "users.change" and self._strict_audit_sink is not None:
+            self._strict_audit_sink.write_durable(event)
+        else:
+            self._audit_sink.write(event)
 
     def _assert_pinned(self) -> int:
         dir_fd, lock_fd = self._dir_fd, self._lock_fd
@@ -692,7 +697,6 @@ __all__ = [
     "VIEWER",
     "User",
     "UserKeyIssuer",
-    "UserSnapshotCipher",
     "UserStore",
     "UserStoreError",
     "default_users_path",
