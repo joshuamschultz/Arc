@@ -27,6 +27,19 @@ EnvironmentFile=%h/arc/config/arc.env
 # must reach it — %h/.local/bin is where scripts/deploy-node.sh puts the binary.
 ExecStartPre=%h/.arc/runtime/current/.venv/bin/arc install --team-root %h/arc/team
 ExecStart=%h/.arc/runtime/current/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/arc/config/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+# `arc ui start` sends READY=1 once the gateway, broker and fleet are up, then
+# WATCHDOG=1 every WatchdogSec/3 from a task ON its asyncio event loop. A loop
+# pinned for longer than WatchdogSec (the DGX incident: chat, NATS and /health
+# all timing out for days while the process looked alive) stops the beats, and
+# systemd sends SIGABRT: faulthandler writes every thread's Python stack to the
+# journal first, then the unit restarts. `kill -USR1 <pid>` dumps the same
+# stacks on demand without stopping anything. Restart=on-failure covers a
+# watchdog timeout as well as a crash (systemd.service(5)). Startup (the
+# ExecStartPre install plus the fleet warm-up) gets a generous start timeout.
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=600
+WatchdogSec=60
 Restart=on-failure
 RestartSec=5
 
