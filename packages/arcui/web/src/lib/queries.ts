@@ -132,15 +132,18 @@ export const useTeamTaskSummary = (window: string) =>
   })
 
 /** One bounded board page. The head stays live while an operator browses another page. */
-export const useTeamTaskBoard = (cursor?: string | null, enabled = true) =>
+export const useTeamTaskBoard = (
+  cursor?: string | null,
+  filters: { status?: string; priority?: string; owner_did?: string; tag?: string } = {},
+) =>
   useQuery<TasksResponse>({
-    queryKey: ['team', 'tasks', 'board', cursor ?? 'head'],
-    queryFn: ({ signal }) =>
-      apiGet<TasksResponse>(
-        `/api/team/tasks?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-        signal,
-      ),
-    enabled,
+    queryKey: ['team', 'tasks', 'board', cursor ?? 'head', filters],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({ limit: '100' })
+      if (cursor) params.set('cursor', cursor)
+      for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value)
+      return apiGet<TasksResponse>(`/api/team/tasks?${params}`, signal)
+    },
     refetchInterval: 4000,
   })
 

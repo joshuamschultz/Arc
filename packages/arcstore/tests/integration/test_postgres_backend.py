@@ -33,9 +33,22 @@ async def test_postgres_task_board_keyset_and_index(
     prefix = f"board-{uuid4().hex}-"
     ids = [f"{prefix}{index:04d}" for index in range(1001)]
     try:
-        for task_id in ids[:1000]:
-            await store.create(Task(id=task_id, title="Closed", creator_did=_ACTOR, status="done"))
-        await store.create(Task(id=ids[-1], title="Active", creator_did=_ACTOR, status="todo"))
+        for index, task_id in enumerate(ids[:1000]):
+            await store.create(
+                Task(
+                    id=task_id,
+                    title="Closed",
+                    creator_did=_ACTOR,
+                    status="done",
+                    owner_did="did:arc:rare" if index == 0 else None,
+                    tags=["rare"] if index == 0 else [],
+                )
+            )
+        await store.create(
+            Task(
+                id=ids[-1], title="Active", creator_did=_ACTOR, status="todo", blocked_by=[ids[0]]
+            )
+        )
         active = await store.list_board_page(phase="active", limit=50)
         assert ids[-1] in {task.id for task in active}
         first = await store.list_board_page(phase="history", limit=50)
@@ -46,6 +59,15 @@ async def test_postgres_task_board_keyset_and_index(
         second_ids = {task.id for task in second[:50]}
         assert len(first_ids) == len(second_ids) == 50
         assert not first_ids & second_ids
+        rare = await store.list_board_page(
+            phase="history", owner_did="did:arc:rare", tag="rare", limit=50
+        )
+        assert [task.id for task in rare] == [ids[0]]
+        projection = await store.board_projection([ids[-1]])
+        assert projection[ids[-1]].blocked is False
+        assert projection[ids[-1]].dependencies[ids[0]].status == "done"
+        facets = await store.board_facets()
+        assert facets.tags["rare"] >= 1
         async with postgres_backend._require_pool().acquire() as connection:
             await connection.execute("ANALYZE mutable_records")
             plan = await connection.fetch(
@@ -54,6 +76,13 @@ async def test_postgres_task_board_keyset_and_index(
                 "ORDER BY updated_at DESC, key DESC LIMIT 50"
             )
         assert "mutable_tasks_history_idx" in "\n".join(str(row[0]) for row in plan)
+        async with postgres_backend._require_pool().acquire() as connection:
+            filtered_plan = await connection.fetch(
+                "EXPLAIN SELECT value FROM mutable_records WHERE collection='tasks' "
+                "AND value->>'owner_did'='did:arc:rare' "
+                "ORDER BY updated_at DESC, key DESC LIMIT 50"
+            )
+        assert "mutable_tasks_owner_page_idx" in "\n".join(str(row[0]) for row in filtered_plan)
     finally:
         for task_id in ids:
             await store.delete(task_id, actor_did=_ACTOR)

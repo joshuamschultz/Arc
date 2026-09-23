@@ -463,13 +463,43 @@ class Observe:
         return [t.model_dump(mode="json") for t in rows]
 
     async def task_board_page(
-        self, *, phase: str = "active", before: tuple[str, str] | None = None, limit: int = 100
+        self,
+        *,
+        phase: str = "active",
+        before: tuple[str, str] | None = None,
+        limit: int = 100,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch one bounded keyset page of active or completed tasks."""
         await self._ensure()
         store = TaskStore(cast(MutableTaskBackend, self._backend))
-        rows = await store.list_board_page(phase=phase, before=before, limit=limit)
+        rows = await store.list_board_page(
+            phase=phase,
+            before=before,
+            limit=limit,
+            status=status,
+            priority=priority,
+            owner_did=owner_did,
+            tag=tag,
+        )
         return [task.model_dump(mode="json") for task in rows]
+
+    async def task_board_facets(self) -> dict[str, Any]:
+        """Global facets and metrics through the public TaskStore seam."""
+        await self._ensure()
+        facets = await TaskStore(cast(MutableTaskBackend, self._backend)).board_facets()
+        return facets.model_dump(mode="json")
+
+    async def task_board_projection(self, task_ids: list[str]) -> dict[str, Any]:
+        """Bounded page relationships through the public TaskStore seam."""
+        await self._ensure()
+        projections = await TaskStore(cast(MutableTaskBackend, self._backend)).board_projection(
+            task_ids
+        )
+        return {task_id: value.model_dump(mode="json") for task_id, value in projections.items()}
 
     async def task_counts(self, window: str) -> dict[str, int]:
         """Count recently touched tasks at the database, without task bodies."""

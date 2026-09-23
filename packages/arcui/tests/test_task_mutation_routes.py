@@ -107,6 +107,45 @@ def _mutations(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 
 class TestCreateTaskOperatorGate:
+    def test_mail_pending_is_not_reported_as_delivered(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        class PendingMail:
+            sender_did = "did:arc:operator"
+
+            async def send(self, request: object) -> object:
+                return SimpleNamespace(status="pending")
+
+        app, auth = _make_app(tmp_path)
+        app.state.agent_mail = PendingMail()
+        response = TestClient(app).post(
+            "/api/team/tasks",
+            headers=_operator(auth),
+            json={"title": "Assigned", "owner_did": "did:arc:alpha"},
+        )
+        assert response.status_code == 201
+        assert response.json()["owner_notification"] == "pending"
+
+    def test_mail_failure_reports_unknown_without_replaying_create(self, tmp_path: Path) -> None:
+        class FailingMail:
+            sender_did = "did:arc:operator"
+
+            async def send(self, request: object) -> object:
+                raise RuntimeError("transport unavailable")
+
+        app, auth = _make_app(tmp_path)
+        app.state.agent_mail = FailingMail()
+        client = TestClient(app)
+        response = client.post(
+            "/api/team/tasks",
+            headers=_operator(auth),
+            json={"title": "Assigned", "owner_did": "did:arc:alpha"},
+        )
+        assert response.status_code == 201
+        assert response.json()["owner_notification"] == "unknown"
+        rows = asyncio.run(app.state.task_store.list())
+        assert [row.id for row in rows] == [response.json()["id"]]
+
     def test_operator_creates_task_and_it_is_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

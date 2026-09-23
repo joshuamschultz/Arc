@@ -403,7 +403,15 @@ class FakeBackend(SourceSyncBackend):
         return rows if where is None else [row for row in rows if _matches(row, where)]
 
     async def mutable_task_page(
-        self, *, phase: str, before: tuple[str, str] | None, limit: int
+        self,
+        *,
+        phase: str,
+        before: tuple[str, str] | None,
+        limit: int,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
     ) -> list[dict[str, Any]]:
         """Mirror the PostgreSQL task board ordering for the fake backend."""
         async with self._lock:
@@ -416,6 +424,10 @@ class FakeBackend(SourceSyncBackend):
             row
             for row in rows
             if (row.get("status") in {"done", "failed"}) == (phase == "history")
+            and (status is None or row.get("status") == status)
+            and (priority is None or row.get("priority") == priority)
+            and (owner_did is None or row.get("owner_did") == owner_did)
+            and (tag is None or tag in row.get("tags", []))
         ]
         selected.sort(key=lambda row: (row.get("updated_at") or "", row["id"]), reverse=True)
         if before is not None:
@@ -423,6 +435,110 @@ class FakeBackend(SourceSyncBackend):
                 row for row in selected if (row.get("updated_at") or "", row["id"]) < before
             ]
         return selected[:limit]
+
+    async def mutable_task_facets(self) -> dict[str, Any]:
+        """Aggregate the same store-wide board values as PostgreSQL."""
+        async with self._lock:
+            rows = [
+                _decode(item)
+                for (collection, _), item in self._mutable.items()
+                if collection == "tasks"
+            ]
+        statuses: dict[str, int] = {}
+        priorities: dict[str, int] = {}
+        owners: dict[str, int] = {}
+        tags: dict[str, int] = {}
+        today = datetime.now(UTC).date().isoformat()
+        durations: list[float] = []
+        by_id = {str(row["id"]): row for row in rows}
+        blocked = done_today = 0
+        for row in rows:
+            status = str(row.get("status") or "backlog")
+            priority = str(row.get("priority") or "medium")
+            statuses[status] = statuses.get(status, 0) + 1
+            priorities[priority] = priorities.get(priority, 0) + 1
+            owner = row.get("owner_did")
+            if owner:
+                owners[str(owner)] = owners.get(str(owner), 0) + 1
+            for tag in set(row.get("tags") or []):
+                tags[str(tag)] = tags.get(str(tag), 0) + 1
+            if any(
+                by_id.get(dep, {}).get("status") != "done" for dep in row.get("blocked_by") or []
+            ):
+                blocked += 1
+            if status == "done":
+                if str(row.get("completed_at") or row.get("updated_at") or "")[:10] == today:
+                    done_today += 1
+                duration = row.get("duration_seconds")
+                if duration is None and row.get("started_at") and row.get("completed_at"):
+                    duration = (
+                        datetime.fromisoformat(row["completed_at"])
+                        - datetime.fromisoformat(row["started_at"])
+                    ).total_seconds()
+                if duration is not None:
+                    durations.append(float(duration))
+        owner_rows = sorted(owners.items(), key=lambda item: (-item[1], item[0]))
+        tag_rows = sorted(tags.items(), key=lambda item: (-item[1], item[0]))
+        return {
+            "statuses": statuses,
+            "priorities": priorities,
+            "owners": dict(owner_rows[:500]),
+            "tags": dict(tag_rows[:500]),
+            "owners_truncated": len(owner_rows) > 500,
+            "tags_truncated": len(tag_rows) > 500,
+            "total": len(rows),
+            "blocked": blocked,
+            "done_today": done_today,
+            "avg_done_seconds": sum(durations) / len(durations) if durations else None,
+        }
+
+    async def mutable_task_projection(self, task_ids: list[str]) -> dict[str, Any]:
+        """Resolve only the requested page's dependencies and capped children."""
+        async with self._lock:
+            rows = [
+                _decode(item)
+                for (collection, _), item in self._mutable.items()
+                if collection == "tasks"
+            ]
+        by_id = {str(row["id"]): row for row in rows}
+        projections: dict[str, Any] = {}
+        for task_id in task_ids:
+            row = by_id.get(task_id)
+            if row is None:
+                continue
+            deps = {
+                str(dep)[:200]: {
+                    "id": str(dep)[:200],
+                    "title": str(by_id[dep].get("title") or "")[:160],
+                    "status": by_id[dep].get("status"),
+                }
+                if dep in by_id
+                else {"id": str(dep)[:200], "status": None}
+                for dep in (row.get("blocked_by") or [])[:10]
+            }
+            children = [child for child in rows if child.get("parent_id") == task_id]
+            children.sort(
+                key=lambda child: (child.get("updated_at") or "", child["id"]), reverse=True
+            )
+            projections[task_id] = {
+                "dependencies": deps,
+                "dependency_total": len(row.get("blocked_by") or []),
+                "blocked": any(
+                    by_id.get(dep, {}).get("status") != "done"
+                    for dep in row.get("blocked_by") or []
+                ),
+                "children": [
+                    {
+                        "id": str(child["id"])[:200],
+                        "title": str(child.get("title") or "")[:160],
+                        "status": child.get("status"),
+                    }
+                    for child in children[:10]
+                ],
+                "child_total": len(children),
+                "child_done": sum(child.get("status") == "done" for child in children),
+            }
+        return projections
 
     async def mutable_task_counts(self, *, since: str) -> dict[str, int]:
         """Count task statuses touched within the requested window."""

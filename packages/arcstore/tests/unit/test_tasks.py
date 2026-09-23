@@ -288,8 +288,12 @@ async def test_board_page_keeps_open_tasks_and_pages_history(tmp_path: Path) -> 
     try:
         store = TaskStore(be)
         for index in range(205):
-            await store.create(Task(id=f"closed-{index:03d}", title="Closed", status="done", creator_did=_CREATOR))
-        await store.create(Task(id="open-old", title="Still open", status="in_progress", creator_did=_CREATOR))
+            await store.create(
+                Task(id=f"closed-{index:03d}", title="Closed", status="done", creator_did=_CREATOR)
+            )
+        await store.create(
+            Task(id="open-old", title="Still open", status="in_progress", creator_did=_CREATOR)
+        )
         active = await store.list_board_page(phase="active", limit=100)
         assert [task.id for task in active] == ["open-old"]
         assert (await store.counts_since("2000-01-01T00:00:00+00:00")) == {
@@ -338,6 +342,58 @@ async def test_board_active_pages_ties_and_status_change(tmp_path: Path) -> None
         assert moved not in {task.id for task in active_after}
         history = await store.list_board_page(phase="history", limit=100)
         assert moved in {task.id for task in history}
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_projection_caps_fanout_without_losing_exact_state(tmp_path: Path) -> None:
+    """Two hundred visible tasks cannot expand into an unbounded relation payload."""
+    import json
+
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(200):
+            await store.create(
+                Task(
+                    id=f"parent-{index:03d}",
+                    title="Parent",
+                    creator_did=_CREATOR,
+                    blocked_by=[f"missing-{index}-{dep}" for dep in range(30)],
+                )
+            )
+        for index in range(150):
+            await store.create(
+                Task(
+                    id=f"child-{index:03d}",
+                    title="Child",
+                    creator_did=_CREATOR,
+                    parent_id="parent-000",
+                    status="done" if index < 50 else "todo",
+                )
+            )
+        # A same-key record outside the tasks collection must never satisfy a dependency.
+        await be.mutable_write("unrelated", "missing-0-0", {"status": "done"}, actor_did=_CREATOR)
+        projection = await store.board_projection([f"parent-{index:03d}" for index in range(200)])
+        assert len(projection) == 200
+        assert projection["parent-000"].blocked is True
+        assert projection["parent-000"].dependency_total == 30
+        assert projection["parent-000"].child_total == 150
+        assert projection["parent-000"].child_done == 50
+        assert len(projection["parent-000"].children) <= 10
+        entries = sum(
+            len(value.dependencies) + len(value.children) for value in projection.values()
+        )
+        assert entries <= 400
+        encoded = json.dumps(
+            {key: value.model_dump(mode="json") for key, value in projection.items()}
+        )
+        assert len(encoded) < 140_000
+        with pytest.raises(ValueError):
+            await store.board_projection(["x"] * 201)
     finally:
         await be.stop()
 

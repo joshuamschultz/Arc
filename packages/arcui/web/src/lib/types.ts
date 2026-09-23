@@ -134,7 +134,9 @@ export interface Task {
   parent_id?: string | null
   run_id?: string | null
   blocked_by?: string[]
+  blocked_by_total?: number
   tags?: string[]
+  tags_total?: number
   metadata?: Dict
   output?: Dict | null
   resolution?: string | null
@@ -259,6 +261,32 @@ export interface SessionReplayResponse {
 export interface TasksResponse {
   tasks: Task[]
   next_cursor?: string | null
+  facets?: TaskBoardFacets | null
+  projections?: Record<string, TaskBoardProjection> | null
+}
+
+export interface TaskBoardFacets {
+  statuses: Record<string, number>
+  priorities: Record<string, number>
+  owners: Record<string, number>
+  tags: Record<string, number>
+  owners_truncated?: boolean
+  tags_truncated?: boolean
+  total: number
+  blocked: number
+  done_today: number
+  avg_done_seconds: number | null
+}
+
+export interface TaskBoardProjection {
+  blocked: boolean
+  dependencies: Record<string, { id: string; title?: string | null; status?: TaskStatus | null }>
+  dependency_total: number
+  dependency_details_truncated?: boolean
+  children: Pick<Task, 'id' | 'title' | 'status'>[]
+  child_total: number
+  child_done: number
+  child_details_truncated?: boolean
 }
 
 export interface SchedulesResponse {

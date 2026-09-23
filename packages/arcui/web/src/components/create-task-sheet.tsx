@@ -22,12 +22,14 @@ export function CreateTaskSheet({
   onOpenChange,
   roster,
   defaultOwnerDid = '',
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   roster: Agent[]
   /** Pre-select an owner (e.g. the agent whose Tasks tab opened this). */
   defaultOwnerDid?: string
+  onCreated?: (task: Task & { owner_notification?: string }) => void
 }) {
   const queryClient = useQueryClient()
   const [title, setTitle] = useState('')
@@ -51,7 +53,7 @@ export function CreateTaskSheet({
     setBusy(true)
     setError(null)
     try {
-      await apiPost<Task>('/api/team/tasks', {
+      const created = await apiPost<Task & { owner_notification?: string }>('/api/team/tasks', {
         title: title.trim(),
         description: description.trim() || undefined,
         priority,
@@ -61,10 +63,13 @@ export function CreateTaskSheet({
       await queryClient.invalidateQueries({
         predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
       })
+      onCreated?.(created)
       reset()
       onOpenChange(false)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to create task')
+      setError(e instanceof ApiError
+        ? e.message
+        : 'Could not confirm creation. Check the task board before trying again.')
     } finally {
       setBusy(false)
     }

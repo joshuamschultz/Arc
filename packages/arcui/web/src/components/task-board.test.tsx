@@ -17,6 +17,7 @@ it('updates the seven-day window after idle while keeping unresolved work visibl
     { id: 'done', title: 'Recently done', status: 'done', priority: 'medium', updated_at: '2026-09-17T12:00:00Z' },
   ] as Task[]
   render(<TaskBoard tasks={tasks} resolveOwner={() => null} onSelectTask={() => {}} />)
+  act(() => { screen.getByRole('button', { name: '7 days' }).click() })
   expect(screen.getByRole('button', { name: /Old active task/ })).toBeTruthy()
   expect(screen.getByRole('button', { name: /Recently done/ })).toBeTruthy()
   act(() => {

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { TaskCard } from '@/components/task-card'
 import { FilterPills } from '@/components/filter-pills'
-import { isBlocked } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { Task, TaskBoardProjection, TaskStatus } from '@/lib/types'
 
 // A calm per-column tone — a single status dot beside the label, never a fat
 // left-bar. Blue marks the active `in_progress` lane (design: blue = running).
@@ -16,8 +15,8 @@ const COLUMNS: { id: TaskStatus; label: string; dot: string }[] = [
   { id: 'failed', label: 'Failed', dot: 'bg-status-error' },
 ]
 
-// Time-scope pills. Default is 7 days so a long-lived `done` column stops
-// dominating the board; `all` disables the window entirely.
+// Time-scope pills operate on the current page. The default shows every
+// server-filtered match, including old history beyond the first page.
 const SCOPES: { value: string; label: string; days: number | null }[] = [
   { value: '1', label: '1 day', days: 1 },
   { value: '7', label: '7 days', days: 7 },
@@ -46,22 +45,18 @@ export function TaskBoard({
   resolveOwner,
   onSelectTask,
   focusStatus = 'all',
+  projections = {},
 }: {
   tasks: Task[]
   resolveOwner: (ownerDid: string | null | undefined) => string | null
   onSelectTask: (task: Task) => void
   focusStatus?: TaskStatus | 'all'
+  projections?: Record<string, TaskBoardProjection>
 }) {
-  const [scope, setScope] = useState('7')
+  const [scope, setScope] = useState('all')
 
-  // `statusById` covers the FULL task set (blocked-dependency lookups must see
-  // dependencies even when the time window hides them), while the columns only
-  // render tasks inside the window.
-  const statusById = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const t of tasks) if (t.id) m.set(t.id, t.status ?? 'backlog')
-    return m
-  }, [tasks])
+  // Page projections come from the full store, even when the time window
+  // hides a dependency or that dependency belongs to another page.
 
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -138,7 +133,7 @@ export function TaskBoard({
                     key={t.id}
                     task={t}
                     ownerLabel={resolveOwner(t.owner_did)}
-                    blocked={isBlocked(t, statusById)}
+                    blocked={projections[t.id]?.blocked ?? false}
                     onClick={() => onSelectTask(t)}
                   />
                 ))

@@ -337,6 +337,8 @@ class TasksResponse(BaseModel):
 
     tasks: list[dict[str, Any]]
     next_cursor: str | None = None
+    facets: dict[str, Any] | None = None
+    projections: dict[str, Any] | None = None
 
 
 class HomeNeedsQueue(BaseModel):
