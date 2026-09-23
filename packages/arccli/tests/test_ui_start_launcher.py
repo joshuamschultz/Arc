@@ -255,6 +255,24 @@ class TestStartLoopback:
         assert auth_method == "browser_bootstrap"
 
 
+def test_systemd_readiness_is_the_last_startup_hook() -> None:
+    """READY=1 (and the loop heartbeat) only after everything else started."""
+    captured = {}
+
+    class _SpyServer:
+        def __init__(self, config):
+            captured["app"] = config.app
+
+        def run(self):
+            pass
+
+    with patch("uvicorn.Server", _SpyServer):
+        _start(_make_args(host="0.0.0.0"))  # noqa: S104
+
+    hooks = captured["app"].state._extra_startup_hooks
+    assert hooks[-1].__name__ == "_announce_ready"
+
+
 class TestStartNonLoopback:
     """Non-loopback bind MUST NOT open the browser, MUST NOT mark bootstrap."""
 
