@@ -108,7 +108,7 @@ class TestLoadConfig:
         cfg = load_config(minimal_toml)
         assert cfg.agent.org == "default"
         assert cfg.agent.type == "executor"
-        assert cfg.llm.max_tokens == 4096
+        assert cfg.llm.max_tokens is None
         assert cfg.llm.temperature == 0.7
 
     def test_env_override(self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,7 +135,7 @@ class TestAgentConfig:
 class TestLLMConfig:
     def test_defaults(self) -> None:
         cfg = LLMConfig(model="test/model")
-        assert cfg.max_tokens == 4096
+        assert cfg.max_tokens is None
         assert cfg.temperature == 0.7
 
 

@@ -94,7 +94,11 @@ class _TelemetryAuditSink:
     def write(self, event: AuditEvent) -> None:
         self._audit_event(
             event.action,
-            {"tier": event.tier, "prompts": event.extra.get("prompts", [])},
+            {
+                "tier": event.tier,
+                "request_id": event.request_id,
+                "prompts": event.extra.get("prompts", []),
+            },
         )
 
 

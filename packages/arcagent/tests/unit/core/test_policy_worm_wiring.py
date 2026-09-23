@@ -17,6 +17,7 @@ from arctrust import verify_chain
 from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
+    IdentityConfig,
     LLMConfig,
     TelemetryConfig,
 )
@@ -28,6 +29,7 @@ def _config(tmp_path: Path) -> ArcAgentConfig:
         agent=AgentConfig(name="worm-agent", workspace=str(tmp_path / "ws")),
         llm=LLMConfig(model="test/model"),
         telemetry=TelemetryConfig(enabled=False),
+        identity=IdentityConfig(key_dir=str(tmp_path / "keys")),
     )
     # SPEC-053 — operator key (audit authority) lives outside the workspace.
     cfg.security.operator_key_dir = str(tmp_path / "operator")

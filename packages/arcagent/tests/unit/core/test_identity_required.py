@@ -9,7 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig, TelemetryConfig
+from arcagent.core.config import (
+    AgentConfig,
+    ArcAgentConfig,
+    IdentityConfig,
+    LLMConfig,
+    TelemetryConfig,
+)
 from arcagent.core.errors import IdentityError, IdentityRequired
 
 
@@ -42,6 +48,7 @@ class TestArcAgentRequiresDID:
             agent=AgentConfig(name="test-agent", workspace=str(tmp_path / "ws")),
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
+            identity=IdentityConfig(key_dir=str(tmp_path / "keys")),
             # identity left at default (empty did="" — auto-generate path)
         )
 

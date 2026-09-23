@@ -26,6 +26,7 @@ from arctrust.signer import (
 from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
+    IdentityConfig,
     LLMConfig,
     SecurityConfig,
     TelemetryConfig,
@@ -38,6 +39,7 @@ def _vault_transit_config(tmp_path: Path, *, algorithm: str, tier: str) -> ArcAg
         agent=AgentConfig(name="vt-agent", workspace=str(tmp_path / "ws")),
         llm=LLMConfig(model="test/model"),
         telemetry=TelemetryConfig(enabled=False),
+        identity=IdentityConfig(key_dir=str(tmp_path / "keys")),
     )
     cfg.security.tier = tier
     cfg.security.custody = "vault_transit"

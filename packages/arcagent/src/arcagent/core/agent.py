@@ -27,6 +27,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -156,7 +157,13 @@ class ArcAgent:
         *,
         config_path: Path | None = None,
         fleet: Any = None,
+        queue_coordinator: arcrun.CallQueueCoordinator | None = None,
+        queue_tenant_id: str | None = None,
     ) -> None:
+        if (queue_coordinator is None) != (queue_tenant_id is None):
+            raise ValueError("queue coordinator and trusted tenant must be supplied together")
+        if queue_tenant_id is not None and not queue_tenant_id:
+            raise ValueError("queue tenant must be nonempty")
         self._config = config
         self._config_path = config_path or Path("arcagent.toml")
 
@@ -213,6 +220,9 @@ class ArcAgent:
         self._prompt_resolver: Any = None
         self._model: Any = None
         self._trace_store: Any = None
+        self._queue_coordinator = queue_coordinator
+        self._queue_tenant_id = queue_tenant_id
+        self._queue_owner_epoch = uuid.uuid4().hex
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
         # exists only while it executes; a teammate message arriving mid-run is
         # injected into it (steer/follow_up) instead of starting a new one.
@@ -704,10 +714,49 @@ class ArcAgent:
                 witness=self._witness,
                 record_cipher=self._record_cipher,
                 task_supervisor=self._background_tasks,
+                queue_coordinator=self._queue_coordinator,
             )
             self._model = model
             self._trace_store = trace_store
         return self._model
+
+    def set_queue_coordinator(
+        self, coordinator: arcrun.CallQueueCoordinator, *, tenant_id: str
+    ) -> None:
+        """Attach the hosted shared queue before the cached model is built."""
+        if not tenant_id:
+            raise ValueError("queue tenant must be nonempty")
+        if self._model is not None:
+            raise RuntimeError("queue must be attached before model construction")
+        if self._queue_coordinator is not None and self._queue_coordinator is not coordinator:
+            raise RuntimeError("queue coordinator already attached")
+        self._queue_coordinator = coordinator
+        self._queue_tenant_id = tenant_id
+
+    def _queue_run_context(
+        self,
+        session_id: str | None,
+        run_id: str,
+        *,
+        origin: str = "chat",
+        parent_run_id: str | None = None,
+    ) -> AbstractContextManager[None]:
+        """Bind one real run's correlation to model calls on this task."""
+        coordinator = self._queue_coordinator
+        if coordinator is None:
+            return contextlib.nullcontext()
+        if self._identity is None or self._queue_tenant_id is None:
+            raise RuntimeError("hosted queue identity is unavailable")
+        context = arcrun.CallQueueContext(
+            tenant_id=self._queue_tenant_id,
+            owner_id=f"{self._queue_owner_epoch}:{run_id}",
+            agent_id=self._identity.did,
+            session_id=session_id,
+            run_id=run_id,
+            origin=origin,
+            parent_run_id=parent_run_id,
+        )
+        return arcrun.queue_run_context(coordinator, context)
 
     async def session(self, key: str) -> SessionManager:
         """Open-or-resume the session for ``key`` from the agent's pool.
@@ -991,14 +1040,31 @@ class ArcAgent:
         holds the handle and passes it on, and never invokes it (ADR-032).
         """
         self._ensure_started()
-        result = await arcrun.run_oneshot(
-            self._ensure_model(),
-            system=system,
-            user=user,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            actor_did=self._identity.did if self._identity is not None else None,
-        )
+        from arcstore.spool import current_request_id, request_context
+
+        from arcagent.core.session_internal.capability_ledger import current_session_id
+
+        parent_run_id = current_request_id()
+        parent_session_id = current_session_id() or None
+        if parent_session_id is None and self._queue_coordinator is not None:
+            current = self._queue_coordinator.current_context
+            parent_session_id = current.session_id if current is not None else None
+        run_id = str(uuid.uuid4())
+        with (
+            request_context(run_id),
+            self._queue_run_context(
+                parent_session_id, run_id, origin="evaluation", parent_run_id=parent_run_id
+            ),
+        ):
+            result = await arcrun.run_oneshot(
+                self._ensure_model(),
+                system=system,
+                user=user,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                actor_did=self._identity.did if self._identity is not None else None,
+                run_id=run_id,
+            )
         return (result.content or "").strip()
 
     def set_channel_deliver_fn(

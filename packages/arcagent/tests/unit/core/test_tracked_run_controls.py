@@ -131,6 +131,7 @@ class TestTrackedPathAppliesLoopControls:
             session,
             "tracked:1",
             "do it",  # type: ignore[arg-type]
+            "run-id",
         )
 
         assert agent._active_runs["tracked:1"] is replacement
