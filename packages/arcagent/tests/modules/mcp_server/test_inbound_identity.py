@@ -5,7 +5,7 @@ must verify an inbound *signed request envelope* — a caller DID, the caller's
 Ed25519 public key, a signature over the ``canonical_json`` of the request content
 plus a nonce and timestamp — and either return the verified caller DID or fail
 closed with an audited denial. It reuses arctrust/arcteam seams (``validate_did``,
-``did_matches_pubkey``, ``arctrust.verify``, ``arcteam.crypto.ReplayCache``); it
+``did_matches_pubkey``, ``arctrust.verify``, ``arctrust.ReplayCache``); it
 introduces no new crypto.
 
 This test drives ``arcagent.modules.mcp_server.identity`` (``verify_inbound`` +
@@ -28,8 +28,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from arcteam.crypto import ReplayCache, new_nonce
-from arctrust import AuditEvent, generate_keypair
+from arcteam.crypto import new_nonce
+from arctrust import AuditEvent, ReplayCache, generate_keypair
 from arctrust import identity as arc_identity
 
 from arcagent.modules.mcp_server.identity import (

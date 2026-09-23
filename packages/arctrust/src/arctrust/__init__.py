@@ -200,6 +200,7 @@ from arctrust.redaction import (
     luhn_valid,
     redact_text,
 )
+from arctrust.replay import ReplayCache
 from arctrust.secrets import SECRET_PATTERNS
 from arctrust.signer import (
     ECDSA_P256,
@@ -310,6 +311,7 @@ __all__ = [
     "RecordCipher",
     "RedactionConfigError",
     "RegexPiiDetector",
+    "ReplayCache",
     "ScenarioGrant",
     "Signer",
     "SignerConfig",

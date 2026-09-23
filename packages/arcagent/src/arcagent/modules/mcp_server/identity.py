@@ -7,7 +7,7 @@ DID or fails closed with an audited denial.
 
 No new crypto lives here — it composes arctrust/arcteam seams: ``validate_did``,
 ``did_matches_pubkey``, ``arctrust.verify`` over ``canonical_json``, and
-``arcteam.crypto.ReplayCache``. Every anomaly (malformed DID, missing signature,
+``arctrust.ReplayCache``. Every anomaly (malformed DID, missing signature,
 DID/key mismatch, bad signature, replay, stale timestamp) fails closed and emits a
 ``deny`` audit event through the single door emission point (:mod:`.audit`).
 """
@@ -17,8 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from arcteam.crypto import ReplayCache
-from arctrust import AuditSink, validate_did, verify
+from arctrust import AuditSink, ReplayCache, validate_did, verify
 from arctrust.canonical import canonical_json
 from arctrust.identity import did_matches_pubkey
 
