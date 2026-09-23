@@ -4,7 +4,11 @@ This inventory describes controls present in ArcUI today. The stable help IDs li
 
 ## Coverage and exceptions
 
-There are now 622 authored field IDs across 18 screens. The existing literal control attachments and dynamic agent-tab/section attachments remain. The Settings catalog has 528 entries: path-specific descriptions for declared scalar fields, dynamic pattern descriptions for operator-named entries, section/control help, and honest fallbacks. Settings resolves help against the full serialized file/path: exact authored keys win, then `*` patterns match exactly one dot-separated path segment, preferring patterns with fewer wildcards. Unknown extension modules and undeclared provider additions use the unavailable-description fallback; other fields without authored help use neutral configuration guidance. One old approval ID, `approvals.reason`, described a nonexistent input and has been removed. The approval card shows the reason for the requested action and offers Approve/Deny; it does not ask the operator to enter a decision reason.
+Verified against `screen-help.json`: it contains **622 field entries across 18 route entries**, of which **528 are Settings entries**. This is a catalog count, not a count of controls rendered in a particular deployment. Settings has path-specific descriptions for known schema values, patterns for named entries, section/control help, and fallbacks. `configHelpKey(file, path)` resolves the full serialized file/path: exact keys win, then `*` matches exactly one dot-separated segment, preferring fewer wildcards. Unknown extension modules and undeclared provider additions use the unavailable-description fallback; other unmatched fields use neutral configuration guidance. The approval card's help ID is `approvals.request`; it displays the gate reason and offers Approve/Deny without a decision-reason input.
+
+Outside Settings, help IDs such as `task.owner`, `connection.secret`, and `settings.scope` are contextual content identifiers; they are not serialized config paths. Settings entries such as `settings.arcrun.max_turns` are matched to serialized file/path values by the resolver. Do not infer config location from a help ID unless it is a Settings key.
+
+The route entries are Home, Fleet, Agent detail, Chat, Tasks, Approvals, Pending capabilities, Rules, Audit, Activity, Workflows list/detail, Knowledge, Shared knowledge, Model usage, Tools & Skills, Connections, and Settings. These are 18 help entries; workflow detail and agent detail variants share their route entry. Routes are wired in `packages/arcui/web/src/app/router.tsx`.
 
 | Surface | Actual control and help behavior |
 |---|---|
@@ -18,9 +22,9 @@ There are now 622 authored field IDs across 18 screens. The existing literal con
 | Workflows | Workflow fields depend on the selected workflow/node/trigger: name, node configuration, schedule, and response target. Only controls present for the chosen type show field help. |
 | Knowledge | Agent/source selectors, document/chunk search, datastore lookup controls, provenance lookup, mapping filter, and configure/sync actions. Resource checkboxes and mapping facts come from the selected source. |
 | Shared knowledge, Model usage | Search and time-window selector respectively. Results and chart values are read-only. |
-| Tools & Skills | Agent filter and signed capability import controls for target agent, archive, staged file, and staged content. |
+| Tools & Skills | Agent filter and capability import controls for target agent, ZIP archive, staged file, and staged content. The current committed flow accepts signed ZIP packages and stages them for review. Working-tree edits add single-file `SKILL.md` import and a signed revision editor; both remain unfinished. |
 | Connections | Bundle/account selection, grants, authorization code, connector-defined credential and endpoint controls, and Doctor/Probe actions. Schema-defined fields use connector descriptions where supplied; secrets never have sample values. |
-| Settings | Scope and provider-key controls; each configuration section has guided scalar fields plus Advanced JSON. `settings.<file>.<path>` entries describe known schema fields; `*` marks one operator-defined path segment. The four `settings.section.*` IDs attach to section headings. Provider key display reports presence without revealing saved values. |
+| Settings | Scope and provider-key controls; each configuration section has guided scalar fields plus Advanced JSON. `settings.<file>.<path>` is notation for serialized setting paths, not a literal catalog ID; authored entries use concrete file/path keys and `*` matches one operator-defined segment. `settings.section.arcllm`, `settings.section.arcrun`, `settings.section.arcagent`, and `settings.section.gateway` attach to section headings. Provider key display reports presence without revealing saved values. |
 
 ## Configuration guidance
 
@@ -53,6 +57,20 @@ Core declared scalar coverage includes agent identity/display metadata; LLM/eval
 
 Named exceptions that cannot receive a truthful per-field description from these core schemas: arbitrary `ModuleEntry.config` values for third-party modules; connector/provider adapter fields owned by separately installed extensions; arbitrary `ProviderSettings`/`ModelMetadata` additions not declared in the shipped schema; free-form dictionaries such as environment/header maps, backend-specific parameter objects, routing phrase lists and arbitrary route/provider-specific metadata; and values introduced by future schema versions. These use generic schema guidance or the explicit extension-description-unavailable fallback. Secret values must never appear as examples.
 
+## Incomplete controls: proposed help for later integration
+
+These are proposals for controls absent or unfinished in the committed UI. They are not part of the 622 existing entries and must not be represented as available recovery actions.
+
+| Proposed surface/control | Proposed field path or help ID | Proposed operator guidance and effect |
+|---|---|---|
+| Hosted model-call queue filters | `queue.filter.status`, `queue.filter.agent`, `queue.filter.provider`, `queue.filter.time_window` | Filter queue metadata only. Show safe identifiers, age, estimated position, and wait reason; payload inspection needs separate authorization. |
+| Queue admission controls | `queue.admission.paused`, `queue.admission.max_concurrency`, `queue.admission.priority`, `queue.admission.budget` | Candidate controls only. Their semantics, bounds, precedence, and API shape are not approved. The ArcLLM queue design calls for authorized, audited changes and fair bounded admission; these IDs do not settle how an operator control behaves. |
+| Queue cancellation | `queue.call.cancel` | Proposed action. The queue design requires the result to distinguish requested from confirmed; a dispatched provider call may still complete or incur cost. Inspect Activity before retrying uncertain calls. |
+| Anchored skill revision editor | `skill.revision.content`, `skill.revision.expected_sha256`, `skill.revision.rollback_to` | Editing creates a candidate tied to the displayed anchor digest. A stale digest must be reloaded and reviewed; save must sign, activate, and audit the revision. Rollback selects a prior signed revision and shows the resulting active digest. |
+| Safe report viewer | `report.preview.open` (action, not a data field) | Identify the selected report and state that preview is sandboxed and may omit active content. On failure, return to source and report the non-sensitive error; never offer raw HTML execution. |
+
+These proposed identifiers are for later UI integration; they are not existing Settings paths or attached help controls. Queue-control semantics are design proposals, not an approved API. At the time of this inventory review, dirty changes to `skill-drawer.tsx`, `file-tree.tsx`, the report route, and capability import UI remained incomplete. See the [execution ledger](business-reliability-execution.md) for implementation and deployment status.
+
 ## Route coverage
 
-All 18 current entries correspond to routes in `packages/arcui/web/src/app/router.tsx`: Home, Fleet, Agent detail, Chat, Tasks, Approvals, Pending capabilities, Rules, Audit, Activity, Workflows, Knowledge, Shared knowledge, Model usage, Tools & Skills, Connections, and Settings. Route variants use the same screen entry. The approvals card control uses `approvals.request`; no control references `approvals.reason`.
+All 18 current entries correspond to routes in `packages/arcui/web/src/app/router.tsx`: Home, Fleet, Agent detail, Chat, Tasks, Approvals, Pending capabilities, Rules, Audit, Activity, Workflows, Knowledge, Shared knowledge, Model usage, Tools & Skills, Connections, and Settings. Route variants use the same screen entry. The approvals card control uses `approvals.request` and has no decision-reason input.

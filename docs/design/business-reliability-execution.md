@@ -22,7 +22,7 @@ No production DGX fault injection, token disclosure, or server-only patches. Dep
 | Connections | Credential lifecycle, transient reconnect, truthful per-agent searchable state and usable failure recovery | Pending |
 | Workflows/pulses/schedules | Supervisors, durable claims, misfire policy and per-item failure isolation; real UI creation/execution | Host supervision committed `f4646536`; schedules/pulses/durable delivery still pending |
 | Slack/email | Durable inbound acceptance/outbound delivery, bounded retries, auth renewal and no dropped/replayed effects | Pending |
-| Tasks/groups | Customer can create/use after idle/restart; errors visible; correct role controls and scalable lists | Bounded task listing and refresh committed `b3983c14`; group creation and full restart journey still open |
+| Tasks/groups | Customer can create/use after idle/restart; errors visible; correct role controls and scalable lists | Bounded task listing and refresh committed `b3983c14`; review found page-local dependency/filter projections needing a follow-up. Group creation/restart journey still open |
 | Screen performance | Fresh after idle; bounded/paginated queries and measured load budgets; one sick dependency does not block pages | Task pagination/indexing and idle refresh committed `b3983c14`; production load/latency evidence pending |
 | Tools | Production transport contract, authorization, timeout, cancellation, teardown and optional-removal tests | Pending |
 | Skills import/edit | Review/sign/activate and revision edit/re-sign/reload/rollback through customer surfaces | Pending |
@@ -36,7 +36,18 @@ No production DGX fault injection, token disclosure, or server-only patches. Dep
 
 ## Active ownership and sequence
 
-Current wave: Sol actual hosted queue/run ownership, prompt/trace identity and queue API/CLI; Sol separate arc-cloud checkout/provisioning plus canonical account/bootstrap integration; Sol signed skill import/revision and safe HTML reports. Fleet, supervision, initial screen help/task performance, and queue foundation are committed. Source ownership is disjoint; cloud owns arctrust root exports, skill/UI worker owns arcagent root exports and the sanitizer dependency lock update. Handoffs and collision manifests are under `/tmp/arc-business-implementation/`.
+Current wave resumed through Herdr after delegated workers hit their usage limit. `arc-sol` (GPT-6-Sol) owns queue/run identity and streaming cancellation integration first; `arc-luna` (GPT-6-Luna) owns the screen guide, operating runbook and field-help inventory. Astra owns orchestration and review. The interrupted account/bootstrap, signed skill revision and HTML-report changes remain uncommitted and require resumed implementation and verification. The former temporary handoff directory is no longer available; this ledger is the durable status source.
+
+Other existing Herdr sessions are working on SPEC-085 configuration/health and knowledge/connections/workflows. Their changes must be coordinated before integration. They are not evidence that this program's acceptance items are complete. The two new workers preserve unrelated dirty changes and do not deploy or push.
+
+The user subsequently requested scoped commits and worktrees across the three primary efforts. Current assignments:
+
+- `arc-sol`: queue/run identity and stream lifecycle, disjoint owned files in the existing checkout; no worker commits while cross-package skill seams are unfinished.
+- `arc-sol-skills`: signed skill revisions/import and isolated HTML reports, disjoint capability/UI files; no worker commits until coordinated review.
+- `arc-luna`: the two operating guides and field-help inventory only.
+- `arc-sol-auth`: isolated branch `codex/reliability-account-authority` at `.claude/worktrees/reliability-account-authority`; account custody, HTTP/WS revocation and recovery. Nineteen source/test/deployment files were copied from the interrupted main-tree slice, preserving the originals; the worker may commit only its account/auth scope. Deployment files are not part of that commit. Main integration must compare the preserved originals before replacing them with the reviewed branch result.
+
+Fresh validated handoffs/collision manifests and the original account-file hashes are under `/private/tmp/arc-business-implementation/`. Existing knowledge work remains on `fix/connected-data-ingest-loop-block`. Do not reset, stash, stage all, or switch the shared main checkout; serialize explicit-path commits and coordinate integration with the other primary agents.
 
 Next waves: integrate help and performance fixes while implementing the durable queue seam; then durable inbox/channel delivery and scheduled execution; then prompt/trace and skill lifecycle correctness; then complete knowledge recovery and self-service provisioning. Integrate and run cross-package/security gates between waves. A wave ending does not end the full task.
 
@@ -61,3 +72,5 @@ Next waves: integrate help and performance fixes while implementing the durable 
 - 2026-09-23 `b3983c14`: committed contextual screen/field help, guided settings, bounded task pages/indexes and idle refresh. Final worker and independent reviewer frontend runs: 43 tests passed; lint/TypeScript/Vite build passed and static assets rebuilt. Prior unchanged backend evidence: 104 focused Python and 2 real PostgreSQL integration tests. Luna inventory corrected to actual exact-path/wildcard resolver; authored entries do not imply every optional field is visible in every installation. Safe HTML reports and signed skill revision/import are assigned to the next Sol wave.
 
 - 2026-09-23 `b966a12d`: committed fair bounded process-owned queue coordinator, encrypted CAS journal with independent Vault anchor/crash reconciliation, optional Vault signing/custody adapters, public adjacent-layer injection seams and abuse cases. Worker gates: ArcLLM 1492 passed/1 skipped; ArcTrust+ArcRun 1438 passed/11 skipped; adversarial 500 passed; strict types/lint clean. Independent review: 46 queue/Vault/facade tests plus 19 physical-absence/dependency-boundary tests passed. Queue metadata persistence alone is not resumable accepted work; actual hosted model composition, dynamic session/run trace identity, encrypted request/result owner, authorized API and CLI assigned to next integration wave. Vault adapters used HTTP mocks, not a real deployed Vault service.
+
+- Follow-up review: task pagination exposed pre-existing client assumptions that all task rows were loaded. Completed dependencies beyond the current page can appear blocked, and page-local filter options/counts can omit matches. UI worker assigned failing regressions and bounded server-side filter/dependency/subtask projections; this remains open, not concealed by the passing pagination tests.
