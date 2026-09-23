@@ -311,7 +311,7 @@ async def test_board_page_keeps_open_tasks_and_pages_history(tmp_path: Path) -> 
             seen.update(task.id for task in visible)
             if len(history) <= 100:
                 break
-            before = (visible[-1].updated_at, visible[-1].id)
+            before = (visible[-1].created_at, visible[-1].id)
         assert sizes == [100, 100, 5]
         assert len(seen) == 205
     finally:
@@ -332,7 +332,7 @@ async def test_board_active_pages_ties_and_status_change(tmp_path: Path) -> None
             )
         first = await store.list_board_page(phase="active", limit=100)
         assert len(first) == 101
-        cursor = (first[99].updated_at, first[99].id)
+        cursor = (first[99].created_at, first[99].id)
         second = await store.list_board_page(phase="active", before=cursor, limit=100)
         assert len(second) == 5
         assert not {task.id for task in first[:100]} & {task.id for task in second}
@@ -396,6 +396,113 @@ async def test_board_projection_caps_fanout_without_losing_exact_state(tmp_path:
             await store.board_projection(["x"] * 201)
     finally:
         await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_traversal_keeps_updated_and_reopened_tasks(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(5):
+            await store.create(
+                Task(
+                    id=f"walk-{index}",
+                    title="Walk",
+                    creator_did=_CREATOR,
+                    status="done" if index == 0 else "todo",
+                )
+            )
+        first = await store.list_board_page(phase="all", limit=2)
+        cursor = (first[1].created_at, first[1].id)
+        await store.set_status("walk-0", "todo", actor_did=_OPERATOR)
+        await store.update("walk-1", {"priority": "high"}, actor_did=_OPERATOR)
+        remaining = await store.list_board_page(phase="all", before=cursor, limit=10)
+        assert {task.id for task in first[:2]} | {task.id for task in remaining} == {
+            f"walk-{index}" for index in range(5)
+        }
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_creation_order_cannot_be_rewritten(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        task = await store.create(Task(id="stable", title="Stable", creator_did=_CREATOR))
+        with pytest.raises(ValueError):
+            await store.update(
+                "stable", {"created_at": "2020-01-01T00:00:00+00:00"}, actor_did=_OPERATOR
+            )
+        with pytest.raises(ValueError):
+            await be.mutable_write(
+                "tasks",
+                "stable",
+                task.model_copy(update={"created_at": "2020-01-01T00:00:00+00:00"}).model_dump(
+                    mode="json"
+                ),
+                actor_did=_OPERATOR,
+            )
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_projection_rejects_malformed_backend(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        await store.create(Task(id="parent", title="Parent", creator_did=_CREATOR))
+        original = be.mutable_task_projection
+        for bad in (
+            {},
+            {
+                "parent": {
+                    "blocked": "false",
+                    "dependencies": {},
+                    "dependency_total": 0,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 0,
+                }
+            },
+            {
+                "parent": {
+                    "blocked": False,
+                    "dependencies": {},
+                    "dependency_total": -1,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 0,
+                }
+            },
+            {
+                "parent": {
+                    "blocked": False,
+                    "dependencies": {},
+                    "dependency_total": 0,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 1,
+                }
+            },
+        ):
+            be.mutable_task_projection = lambda _ids, value=bad: _async_value(value)
+            with pytest.raises(ValueError):
+                await store.board_projection(["parent"])
+        be.mutable_task_projection = original
+    finally:
+        await be.stop()
+
+
+async def _async_value(value: Any) -> Any:
+    return value
 
 
 class TestTaskStoreCRUD:

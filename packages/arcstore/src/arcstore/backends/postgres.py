@@ -72,6 +72,8 @@ class PostgresBackend(SourceSyncBackend):
         )
         self._pool: Any | None = None
         self._shared: _SharedPool | None = None
+        self._task_facets_cache: tuple[int, str, dict[str, Any]] | None = None
+        self._task_facets_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._pool is not None:
@@ -471,15 +473,14 @@ class PostgresBackend(SourceSyncBackend):
         priority: str | None = None,
         owner_did: str | None = None,
         tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Read a bounded keyset page in the task board's active/history lane."""
-        statement = (
-            "SELECT value, updated_at FROM mutable_records "
-            "WHERE collection='tasks' AND value->>'status' IN ('done', 'failed') "
-            if phase == "history"
-            else "SELECT value, updated_at FROM mutable_records "
-            "WHERE collection='tasks' AND value->>'status' NOT IN ('done', 'failed') "
-        )
+        """Read a bounded page in immutable creation order."""
+        statement = "SELECT value, updated_at FROM mutable_records WHERE collection='tasks' "
+        if phase == "history":
+            statement += "AND value->>'status' IN ('done', 'failed') "
+        elif phase == "active":
+            statement += "AND value->>'status' NOT IN ('done', 'failed') "
         params: list[Any] = []
         for field, value in (("status", status), ("priority", priority), ("owner_did", owner_did)):
             if value is not None:
@@ -488,16 +489,41 @@ class PostgresBackend(SourceSyncBackend):
         if tag is not None:
             params.append(tag)
             statement += f"AND value->'tags' ? ${len(params)} "
+        if since is not None:
+            params.append(datetime.fromisoformat(since))
+            statement += (
+                f"AND (value->>'status' NOT IN ('done','failed') OR updated_at >= ${len(params)}) "
+            )
         if before is not None:
-            params.extend((datetime.fromisoformat(before[0]), before[1]))
-            statement += f"AND (updated_at, key) < (${len(params) - 1}, ${len(params)}) "
+            params.extend(before)
+            statement += (
+                f"AND (coalesce(value->>'created_at',''), key) < "
+                f"(${len(params) - 1}, ${len(params)}) "
+            )
         params.append(limit)
-        statement += f"ORDER BY updated_at DESC, key DESC LIMIT ${len(params)}"
+        statement += (
+            f"ORDER BY coalesce(value->>'created_at','') DESC, key DESC LIMIT ${len(params)}"
+        )
         async with self._require_pool().acquire() as connection:
             rows = await connection.fetch(statement, *params)
         return [_mutable_row(row) for row in rows]
 
     async def mutable_task_facets(self) -> dict[str, Any]:
+        """Reuse exact global facets until a task transaction commits or UTC day rolls."""
+        async with self._task_facets_lock:
+            async with self._require_pool().acquire() as connection:
+                revision = await connection.fetchval(
+                    "SELECT revision FROM task_board_revision WHERE singleton=true"
+                )
+            today = datetime.now(UTC).date().isoformat()
+            cached = self._task_facets_cache
+            if cached is not None and cached[0] == revision and cached[1] == today:
+                return dict(cached[2])
+            facets = await self._compute_task_facets()
+            self._task_facets_cache = (int(revision), today, facets)
+            return dict(facets)
+
+    async def _compute_task_facets(self) -> dict[str, Any]:
         """Aggregate global facets and lifecycle metrics in PostgreSQL."""
         async with self._require_pool().acquire() as connection:
             grouped = await connection.fetch(
@@ -613,7 +639,7 @@ class PostgresBackend(SourceSyncBackend):
         for row in deps:
             result[row["parent_id"]]["dependencies"][row["dep_id"]] = {
                 "id": row["dep_id"],
-                "title": row["title"],
+                "title": row["title"] or "",
                 "status": row["status"],
             }
         for row in children:

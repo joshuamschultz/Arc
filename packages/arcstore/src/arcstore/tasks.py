@@ -19,7 +19,16 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
 from arctrust.audit import AuditSink
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from arcstore.mutation_fence import RunnerFence
 
@@ -172,35 +181,86 @@ class Task(BaseModel):
 class TaskBoardFacets(BaseModel):
     """Exact global counters plus bounded owner and tag suggestions."""
 
-    statuses: dict[str, int]
-    priorities: dict[str, int]
-    owners: dict[str, int]
-    tags: dict[str, int]
-    owners_truncated: bool = False
-    tags_truncated: bool = False
-    total: int
-    blocked: int
-    done_today: int
+    model_config = ConfigDict(extra="forbid")
+    statuses: dict[str, StrictInt]
+    priorities: dict[str, StrictInt]
+    owners: dict[str, StrictInt]
+    tags: dict[str, StrictInt]
+    owners_truncated: StrictBool = False
+    tags_truncated: StrictBool = False
+    total: StrictInt = Field(ge=0)
+    blocked: StrictInt = Field(ge=0)
+    done_today: StrictInt = Field(ge=0)
     avg_done_seconds: float | None
+
+    @model_validator(mode="after")
+    def _valid_counts(self) -> TaskBoardFacets:
+        if any(
+            count < 0
+            for group in (self.statuses, self.priorities, self.owners, self.tags)
+            for count in group.values()
+        ):
+            raise ValueError("facet count is negative")
+        if (
+            sum(self.statuses.values()) != self.total
+            or sum(self.priorities.values()) != self.total
+            or self.blocked > self.total
+            or self.done_today > self.total
+        ):
+            raise ValueError("facet counts are inconsistent")
+        return self
+
+
+class TaskBoardPageQuery(BaseModel):
+    """Validated query crossing from the board facade to a task backend."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    phase: Literal["all", "active", "history"] = "all"
+    before: tuple[str, str] | None = None
+    limit: int = Field(default=100, ge=1, le=200)
+    status: TaskStatus | None = None
+    priority: Priority | None = None
+    owner_did: str | None = Field(default=None, min_length=1, max_length=200)
+    tag: str | None = Field(default=None, min_length=1, max_length=200)
+    since: str | None = None
+
+    @field_validator("since")
+    @classmethod
+    def _valid_since(cls, value: str | None) -> str | None:
+        if value is not None and datetime.fromisoformat(value).tzinfo is None:
+            raise ValueError("task scope timestamp must have a timezone")
+        return value
 
 
 class TaskBoardPreview(BaseModel):
-    id: str
-    title: str = ""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=160)
     status: TaskStatus | None = None
 
 
 class TaskBoardProjection(BaseModel):
     """Exact relationship state with bounded details for one visible task."""
 
-    blocked: bool
+    model_config = ConfigDict(extra="forbid")
+    blocked: StrictBool
     dependencies: dict[str, TaskBoardPreview]
-    dependency_total: int
-    dependency_details_truncated: bool = False
+    dependency_total: StrictInt = Field(ge=0)
+    dependency_details_truncated: StrictBool = False
     children: list[TaskBoardPreview]
-    child_total: int
-    child_done: int
-    child_details_truncated: bool = False
+    child_total: StrictInt = Field(ge=0)
+    child_done: StrictInt = Field(ge=0)
+    child_details_truncated: StrictBool = False
+
+    @model_validator(mode="after")
+    def _counts_agree(self) -> TaskBoardProjection:
+        if (
+            self.child_done > self.child_total
+            or len(self.children) > self.child_total
+            or len(self.dependencies) > self.dependency_total
+        ):
+            raise ValueError("projection counts are inconsistent")
+        return self
 
 
 class MutableTaskBackend(Protocol):
@@ -242,6 +302,7 @@ class MutableTaskBackend(Protocol):
         priority: str | None = None,
         owner_did: str | None = None,
         tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def mutable_task_facets(self) -> dict[str, Any]: ...
@@ -384,42 +445,35 @@ class TaskStore:
     async def list_board_page(
         self,
         *,
-        phase: str = "active",
+        phase: str = "all",
         before: tuple[str, str] | None = None,
         limit: int = 100,
         status: str | None = None,
         priority: str | None = None,
         owner_did: str | None = None,
         tag: str | None = None,
+        since: str | None = None,
     ) -> Sequence[Task]:
         """Read one bounded page of unresolved or completed task history."""
-        if not 1 <= limit <= 200:
-            raise ValueError("limit must be between 1 and 200")
-        if phase not in {"active", "history"}:
-            raise ValueError("invalid task page phase")
-        if status is not None and status not in {
-            "backlog",
-            "todo",
-            "in_progress",
-            "review",
-            "done",
-            "failed",
-        }:
-            raise ValueError("invalid task status")
-        if priority is not None and priority not in {"low", "medium", "high", "critical"}:
-            raise ValueError("invalid task priority")
-        if owner_did is not None and (not owner_did or len(owner_did) > 200):
-            raise ValueError("invalid task owner")
-        if tag is not None and (not tag or len(tag) > 200):
-            raise ValueError("invalid task tag")
-        rows = await self._backend.mutable_task_page(
+        query = TaskBoardPageQuery(
             phase=phase,
             before=before,
-            limit=limit + 1,
+            limit=limit,
             status=status,
             priority=priority,
             owner_did=owner_did,
             tag=tag,
+            since=since,
+        )
+        rows = await self._backend.mutable_task_page(
+            phase=query.phase,
+            before=query.before,
+            limit=query.limit + 1,
+            status=query.status,
+            priority=query.priority,
+            owner_did=query.owner_did,
+            tag=query.tag,
+            since=query.since,
         )
         return [self._load(row) for row in rows]
 
@@ -454,22 +508,25 @@ class TaskStore:
         if len(task_ids) > 200 or any(not task_id or len(task_id) > 200 for task_id in task_ids):
             raise ValueError("invalid board projection ids")
         raw = await self._backend.mutable_task_projection(list(task_ids))
+        if set(raw) != set(task_ids):
+            raise ValueError("backend omitted or added a task projection")
+        validated = {
+            task_id: TaskBoardProjection.model_validate(value) for task_id, value in raw.items()
+        }
         # A bounded page must also have bounded relation fan-out and bytes.
         # Counts and blocked state remain exact even when previews run out.
         remaining_entries = 400
         remaining_bytes = 80_000
         result: dict[str, Any] = {}
         for task_id in task_ids:
-            projection = raw.get(task_id)
-            if projection is None:
-                continue
+            projection = validated[task_id]
             details: dict[str, Any] = {}
             children: list[dict[str, Any]] = []
-            for dep_id, dep in projection["dependencies"].items():
+            for dep_id, dep in projection.dependencies.items():
                 item = {
                     "id": str(dep_id)[:200],
-                    "title": str(dep.get("title") or "")[:160],
-                    "status": dep.get("status"),
+                    "title": dep.title[:160],
+                    "status": dep.status,
                 }
                 size = len(json.dumps(item, ensure_ascii=True))
                 if remaining_entries == 0 or size > remaining_bytes:
@@ -477,11 +534,11 @@ class TaskStore:
                 details[item["id"]] = item
                 remaining_entries -= 1
                 remaining_bytes -= size
-            for child in projection["children"]:
+            for child in projection.children:
                 item = {
-                    "id": str(child["id"])[:200],
-                    "title": str(child.get("title") or "")[:160],
-                    "status": child.get("status"),
+                    "id": child.id[:200],
+                    "title": child.title[:160],
+                    "status": child.status,
                 }
                 size = len(json.dumps(item, ensure_ascii=True))
                 if remaining_entries == 0 or size > remaining_bytes:
@@ -490,14 +547,14 @@ class TaskStore:
                 remaining_entries -= 1
                 remaining_bytes -= size
             result[task_id] = {
-                "blocked": bool(projection["blocked"]),
+                "blocked": projection.blocked,
                 "dependencies": details,
-                "dependency_total": int(projection["dependency_total"]),
-                "dependency_details_truncated": len(details) < int(projection["dependency_total"]),
+                "dependency_total": projection.dependency_total,
+                "dependency_details_truncated": len(details) < projection.dependency_total,
                 "children": children,
-                "child_total": int(projection["child_total"]),
-                "child_done": int(projection["child_done"]),
-                "child_details_truncated": len(children) < int(projection["child_total"]),
+                "child_total": projection.child_total,
+                "child_done": projection.child_done,
+                "child_details_truncated": len(children) < projection.child_total,
             }
         return {
             task_id: TaskBoardProjection.model_validate(value) for task_id, value in result.items()
@@ -515,6 +572,8 @@ class TaskStore:
         actor_did: str,
         fence: RunnerFence | None = None,
     ) -> Task | None:
+        if "created_at" in patch:
+            raise ValueError("task creation time is immutable")
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
         # concurrent updates of disjoint fields clobber each other (last-writer
         # drops the loser's field). mutable_merge applies the patch inside one

@@ -367,6 +367,7 @@ class FakeBackend(SourceSyncBackend):
     ) -> None:
         async with self._lock:
             self._assert_fence_locked(fence)
+            _check_task_created_at(collection, self._mutable.get((collection, key)), value)
             self._mutable[(collection, key)] = (copy.deepcopy(value), _now())
         _emit("mutable.write", collection, key, actor_did, sink)
 
@@ -412,6 +413,7 @@ class FakeBackend(SourceSyncBackend):
         priority: str | None = None,
         owner_did: str | None = None,
         tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """Mirror the PostgreSQL task board ordering for the fake backend."""
         async with self._lock:
@@ -423,16 +425,23 @@ class FakeBackend(SourceSyncBackend):
         selected = [
             row
             for row in rows
-            if (row.get("status") in {"done", "failed"}) == (phase == "history")
+            if (
+                phase == "all" or (row.get("status") in {"done", "failed"}) == (phase == "history")
+            )
             and (status is None or row.get("status") == status)
             and (priority is None or row.get("priority") == priority)
             and (owner_did is None or row.get("owner_did") == owner_did)
             and (tag is None or tag in row.get("tags", []))
+            and (
+                since is None
+                or row.get("status") not in {"done", "failed"}
+                or (row.get("updated_at") or "") >= since
+            )
         ]
-        selected.sort(key=lambda row: (row.get("updated_at") or "", row["id"]), reverse=True)
+        selected.sort(key=lambda row: (row.get("created_at") or "", row["id"]), reverse=True)
         if before is not None:
             selected = [
-                row for row in selected if (row.get("updated_at") or "", row["id"]) < before
+                row for row in selected if (row.get("created_at") or "", row["id"]) < before
             ]
         return selected[:limit]
 
@@ -572,6 +581,7 @@ class FakeBackend(SourceSyncBackend):
                 merged = False
             else:
                 value, _ = item
+                _check_task_created_at(collection, item, {**value, **patch})
                 value.update(copy.deepcopy(patch))
                 self._mutable[(collection, key)] = (value, _now())
                 merged = True
@@ -909,6 +919,7 @@ class FakeBackend(SourceSyncBackend):
         ):
             return False
         value, _ = item
+        _check_task_created_at(collection, item, {**value, **patch})
         value.update(copy.deepcopy(patch))
         self._mutable[(collection, key)] = (value, _now())
         return True
@@ -919,6 +930,17 @@ def _decode(item: tuple[dict[str, Any], str]) -> dict[str, Any]:
     decoded = copy.deepcopy(value)
     decoded["updated_at"] = updated_at
     return decoded
+
+
+def _check_task_created_at(
+    collection: str, prior: tuple[dict[str, Any], str] | None, value: dict[str, Any]
+) -> None:
+    if (
+        collection == "tasks"
+        and prior is not None
+        and prior[0].get("created_at") != value.get("created_at")
+    ):
+        raise ValueError("task creation time is immutable")
 
 
 def _emit(
