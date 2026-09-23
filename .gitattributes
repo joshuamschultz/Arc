@@ -1,0 +1,2 @@
+# Generated JS bundles embed upstream CSS literals; preserve their bytes and content hashes.
+packages/arcui/src/arcui/static/assets/*.js whitespace=-blank-at-eol
