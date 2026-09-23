@@ -132,6 +132,11 @@ class NatsBackend:
         self._js = js
         self._nc = nc
 
+    @property
+    def available(self) -> bool:
+        """Report client connectivity; fake JetStream adapters are locally available."""
+        return self._nc is None or bool(self._nc.is_connected)
+
     @classmethod
     async def connect(
         cls, servers: str | list[str], *, connect_timeout: float = _CONNECT_TIMEOUT

@@ -40,6 +40,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "identity, key and cross-scope isolation": (
         "packages/arctrust/tests/test_trust_store_security.py",
         "packages/arcagent/tests/security/test_multi_agent_runtime_isolation.py",
+        "packages/arcagent/tests/unit/modules/messaging/test_delivery.py",
         "packages/arcmemory/tests/security/test_no_read_up_real_paths.py",
         # H-024 connected-data explorer: chunks/tables bound to one connection's
         # source-scope — no cross-connection leak, no cross-agent pool read, no

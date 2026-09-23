@@ -264,6 +264,23 @@ class TestTheSweepPass:
 
         assert len(attempts) == 1
 
+    async def test_explicitly_unaccepted_wake_retries_later(self) -> None:
+        from arcteam import RetryableDeliveryError
+
+        attempts: list[Any] = []
+        state = _state()
+
+        async def _defer_once(message: Any, _channel: str) -> None:
+            attempts.append(message)
+            if len(attempts) == 1:
+                raise RetryableDeliveryError(str(message.id))
+
+        assert await sweep.run_once(state, _defer_once) == 0
+        assert str(attempts[0].id) not in state.swept
+        assert await sweep.run_once(state, _defer_once) == 1
+        assert len(attempts) == 2
+        assert str(attempts[0].id) in state.swept
+
     async def test_one_pass_is_bounded(self) -> None:
         woken: list[Any] = []
         many = [_Msg(id=f"q{i}", ts=_old(10)) for i in range(10)]

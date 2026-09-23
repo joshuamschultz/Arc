@@ -7,6 +7,7 @@ consume path used by the inbox loop.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -361,3 +362,117 @@ class TestEnsureLiveBackend:
         await _runtime.ensure_live_backend()
         assert _runtime.state().svc is before
         assert _runtime.state().live_backend_ready is True
+
+    @pytest.mark.asyncio
+    async def test_configured_outage_is_unavailable_until_subscription(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import arcteam
+        from arcteam import composition
+
+        _runtime.configure(
+            config=make_config_dict(nats_url="nats://127.0.0.1:4222"),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+        with pytest.raises(arcteam.FleetBackendUnavailableError):
+            await st.svc.list_channels()
+        assert not st.live_backend_ready
+
+        attempts = 0
+
+        async def connect(_url: str) -> arcteam.StorageBackend:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise arcteam.FleetBackendUnavailableError("offline")
+            return arcteam.MemoryBackend()
+
+        monkeypatch.setattr(composition, "make_backend", connect)
+
+        async def receive(_message: Any) -> None:
+            return None
+
+        with pytest.raises(arcteam.FleetBackendUnavailableError):
+            await _runtime.ensure_live_backend(receive)
+        assert not st.live_backend_ready
+        with pytest.raises(arcteam.FleetBackendUnavailableError):
+            await st.svc.list_channels()
+
+        replacement_identity = _identity()
+        st.identity = replacement_identity
+        subscription = await _runtime.ensure_live_backend(receive)
+        assert st.live_backend_ready
+        assert st.svc._signer.did == replacement_identity.did
+        assert subscription.streams
+        await _runtime.close_live_backend()
+        assert not st.live_backend_ready
+        with pytest.raises(arcteam.FleetBackendUnavailableError):
+            await st.svc.list_channels()
+
+    @pytest.mark.asyncio
+    async def test_revoked_identity_cannot_rejoin_configured_fleet(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import arcteam
+        from arcteam import composition
+
+        _runtime.configure(
+            config=make_config_dict(nats_url="nats://127.0.0.1:4222"),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+        st.identity = None
+        connect = AsyncMock()
+        monkeypatch.setattr(composition, "make_backend", connect)
+        with pytest.raises(arcteam.FleetBackendUnavailableError, match="identity"):
+            await _runtime.ensure_live_backend(AsyncMock())
+        connect.assert_not_awaited()
+        assert not st.live_backend_ready
+
+    @pytest.mark.asyncio
+    async def test_identity_revoked_during_subscription_never_becomes_ready(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import arcteam
+        from arcteam import composition
+
+        _runtime.configure(
+            config=make_config_dict(nats_url="nats://127.0.0.1:4222"),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
+        st = _runtime.state()
+
+        async def connect(_url: str) -> arcteam.StorageBackend:
+            return arcteam.MemoryBackend()
+
+        monkeypatch.setattr(composition, "make_backend", connect)
+        original_subscribe = arcteam.MessagingService.subscribe
+        opened: list[Any] = []
+        delivered = AsyncMock()
+
+        async def revoke_during_subscribe(self: Any, entity_id: str, handler: Any) -> Any:
+            subscription = await original_subscribe(self, entity_id, handler)
+            pending = asyncio.create_task(handler(object()))
+            subscription.track(pending)
+            await asyncio.sleep(0)
+            delivered.assert_not_awaited()
+            opened.append(subscription)
+            st.identity = None
+            return subscription
+
+        monkeypatch.setattr(arcteam.MessagingService, "subscribe", revoke_during_subscribe)
+        with pytest.raises(arcteam.FleetBackendUnavailableError, match="identity changed"):
+            await _runtime.ensure_live_backend(delivered)
+        delivered.assert_not_awaited()
+        assert not st.live_backend_ready
+        assert st.live_subscription is None
+        assert opened and all(task.done() for task in opened[0].tasks)
+        with pytest.raises(arcteam.FleetBackendUnavailableError):
+            await st.svc.list_channels()

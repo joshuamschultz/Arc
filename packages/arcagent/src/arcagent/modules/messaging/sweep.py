@@ -18,7 +18,8 @@ so exactly one agent acts with no coordinator.
 
 Bounded on every axis that could run away: only a human's un-addressed message,
 only one older than the grace window, only one nothing has replied to, only if
-this agent is the responder, only a few per pass, and only ever once.
+this agent is the responder, and only a few per pass. Accepted or uncertain
+wakes are never replayed; an explicit pre-acceptance refusal may retry.
 """
 
 from __future__ import annotations
@@ -119,13 +120,13 @@ async def find_missed(st: Any) -> list[tuple[Any, str]]:
 async def run_once(st: Any, deliver: Any) -> int:
     """One pass. Returns how many messages were picked up.
 
-    Every message is marked swept **before** delivery is attempted, not after.
-    A delivery that raises must not leave the message eligible again on the next
-    pass: a backstop that retries a failing wake every five minutes is a
-    runaway, and the human can always ask again.
+    Mark before delivery so an uncertain accepted run is never replayed.
+    Only an explicit refusal before acceptance is eligible for another pass.
     """
     if not st.config.sweep_enabled:
         return 0
+    from arcteam import RetryableDeliveryError
+
     try:
         missed = await find_missed(st)
     except Exception:  # reason: a backstop must never take down the inbox loop
@@ -137,6 +138,10 @@ async def run_once(st: Any, deliver: Any) -> int:
         st.swept.add(str(message.id))
         try:
             await deliver(message, channel)
+        except RetryableDeliveryError:
+            st.swept.discard(str(message.id))
+            _logger.warning("deferred sweep wake not accepted on #%s; retrying later", channel)
+            continue
         except Exception:  # reason: one bad wake must not stop the rest of the pass
             _logger.warning("deferred sweep could not wake on #%s", channel, exc_info=True)
             continue

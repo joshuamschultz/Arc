@@ -38,6 +38,11 @@ class Consumer(Protocol):
 class StorageBackend(Protocol):
     """Swappable storage abstraction shared by the messenger, registry, and audit."""
 
+    @property
+    def available(self) -> bool:
+        """Whether this backend currently accepts shared operations."""
+        ...
+
     async def read(self, collection: str, key: str) -> dict[str, Any] | None:
         """Read a single JSON record."""
         ...
@@ -107,6 +112,73 @@ class StorageBackend(Protocol):
         ...
 
 
+class FleetBackendUnavailableError(RuntimeError):
+    """Configured shared fleet storage is unavailable; no local work was accepted."""
+
+
+class UnavailableBackend:
+    """Fail closed until a configured shared backend has joined the fleet."""
+
+    @property
+    def available(self) -> bool:
+        """A configured but disconnected fleet cannot accept work."""
+        return False
+
+    @staticmethod
+    def _unavailable() -> FleetBackendUnavailableError:
+        return FleetBackendUnavailableError("configured fleet backend is unavailable")
+
+    async def read(self, collection: str, key: str) -> dict[str, Any] | None:
+        raise self._unavailable()
+
+    async def write(self, collection: str, key: str, data: dict[str, Any]) -> None:
+        raise self._unavailable()
+
+    async def delete(self, collection: str, key: str) -> bool:
+        raise self._unavailable()
+
+    async def append(self, collection: str, key: str, entry: dict[str, Any]) -> int:
+        raise self._unavailable()
+
+    async def read_stream(
+        self,
+        collection: str,
+        key: str,
+        after_seq: int = 0,
+        byte_pos: int = 0,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        raise self._unavailable()
+
+    async def read_last(self, collection: str, key: str) -> dict[str, Any] | None:
+        raise self._unavailable()
+
+    async def query(
+        self,
+        collection: str,
+        filters: dict[str, Any] | None = None,
+        prefix: str | None = None,
+    ) -> list[dict[str, Any]]:
+        raise self._unavailable()
+
+    async def list_keys(self, collection: str, prefix: str | None = None) -> list[str]:
+        raise self._unavailable()
+
+    async def append_auto_seq(
+        self, collection: str, key: str, entry: dict[str, Any]
+    ) -> tuple[int, int]:
+        raise self._unavailable()
+
+    async def get_stream_end_byte_pos(self, collection: str, key: str) -> int:
+        raise self._unavailable()
+
+    async def exists(self, collection: str, key: str) -> bool:
+        raise self._unavailable()
+
+    async def open_consumer(self, collection: str, key: str, durable: str) -> Consumer:
+        raise self._unavailable()
+
+
 class MemoryDelivery:
     """A message pulled from ``MemoryBackend``; ``ack`` advances the durable floor."""
 
@@ -163,6 +235,11 @@ class MemoryConsumer:
 
 class MemoryBackend:
     """In-memory storage backend for unit tests. Dict-backed, no filesystem."""
+
+    @property
+    def available(self) -> bool:
+        """Intentional standalone memory accepts local work."""
+        return True
 
     def __init__(self) -> None:
         self._records: dict[str, dict[str, dict[str, Any]]] = {}

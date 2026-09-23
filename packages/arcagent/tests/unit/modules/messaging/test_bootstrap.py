@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from arcteam import FleetBackendUnavailableError
 from arcteam import composition as _bootstrap
 from arctrust import AgentIdentity
 
@@ -40,7 +41,7 @@ class TestMessageSigner:
 
 
 class TestMakeBackend:
-    """F9 — an unreachable NATS degrades to in-memory cleanly, not with a traceback."""
+    """Configured NATS failures remain visible; standalone mode uses memory."""
 
     @pytest.mark.asyncio
     async def test_empty_url_returns_memory_backend_no_warning(
@@ -55,41 +56,36 @@ class TestMakeBackend:
         assert caplog.records == []
 
     @pytest.mark.asyncio
-    async def test_connection_refused_degrades_to_memory_with_one_warning(
+    async def test_connection_refused_does_not_substitute_memory(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A refused NATS connect returns the in-memory backend, logs exactly one
-        warning, and never lets the connection error propagate (F9)."""
+        """A refused fleet connection cannot appear as a working local bus."""
         from arcteam.backends import nats as nats_backend
-        from arcteam.storage import MemoryBackend
 
         async def _refuse(_servers: str) -> object:
             raise ConnectionRefusedError(61, "Connection refused")
 
         monkeypatch.setattr(nats_backend.NatsBackend, "connect", staticmethod(_refuse))
 
-        with caplog.at_level(logging.WARNING, logger="arcagent.modules.messaging"):
-            backend = await _bootstrap.make_backend("nats://127.0.0.1:4222")
+        with caplog.at_level(logging.WARNING, logger="arcteam.composition"):
+            with pytest.raises(FleetBackendUnavailableError):
+                await _bootstrap.make_backend("nats://127.0.0.1:4222")
 
-        assert isinstance(backend, MemoryBackend)
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "in-memory" in warnings[0].getMessage()
+        assert "in-memory" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_timeout_degrades_to_memory(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A bounded-connect timeout is a connection failure → degrade, not crash."""
+    async def test_timeout_is_visible(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A bounded-connect timeout remains a connection failure."""
 
         from arcteam.backends import nats as nats_backend
-        from arcteam.storage import MemoryBackend
 
         async def _timeout(_servers: str) -> object:
             raise TimeoutError
 
         monkeypatch.setattr(nats_backend.NatsBackend, "connect", staticmethod(_timeout))
 
-        backend = await _bootstrap.make_backend("nats://127.0.0.1:4222")
-        assert isinstance(backend, MemoryBackend)
+        with pytest.raises(FleetBackendUnavailableError):
+            await _bootstrap.make_backend("nats://127.0.0.1:4222")
 
     @pytest.mark.asyncio
     async def test_unexpected_error_still_surfaces(self, monkeypatch: pytest.MonkeyPatch) -> None:

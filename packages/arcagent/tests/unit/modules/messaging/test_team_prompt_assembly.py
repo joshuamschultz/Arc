@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arctrust import AgentIdentity
@@ -28,7 +28,7 @@ from arcagent.core.config import ContextConfig
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal.context import ContextManager
 from arcagent.modules.messaging import _runtime as messaging_runtime
-from arcagent.modules.messaging.capabilities import inject_messaging_sections
+from arcagent.modules.messaging.capabilities import _build_roster, inject_messaging_sections
 from arcagent.modules.tasks.capabilities import inject_team_handoff_section
 
 
@@ -80,6 +80,53 @@ class TestArcteamGuidancePresent:
         # Tasks tools (handoff).
         assert "assign_task" in prompt
         assert "create_task" in prompt
+
+    async def test_configured_fleet_outage_is_visible_without_breaking_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        messaging_runtime.configure(
+            config=make_config_dict(nats_url="nats://127.0.0.1:4222"),
+            workspace=tmp_path,
+            identity=AgentIdentity.generate(org="local", agent_type="agent"),
+            operator_signer=make_operator_signer(),
+        )
+        bus = ModuleBus()
+        bus.subscribe("agent:assemble_prompt", inject_messaging_sections, priority=50)
+        prompt = await _assemble(bus, tmp_path)
+        assert "Team messaging is temporarily unavailable" in prompt
+
+    async def test_live_roster_transport_failure_degrades_then_recovers(
+        self, tmp_path: Path
+    ) -> None:
+        import arcteam
+
+        messaging_runtime.configure(
+            config=make_config_dict(nats_url="nats://127.0.0.1:4222"),
+            workspace=tmp_path,
+            identity=AgentIdentity.generate(org="local", agent_type="agent"),
+            operator_signer=make_operator_signer(),
+        )
+        st = messaging_runtime.state()
+        st.live_backend = arcteam.MemoryBackend()
+        st.live_subscription = object()
+        st.live_backend_ready = True
+        st.registry.list_entities = AsyncMock(side_effect=TimeoutError)
+        bus = ModuleBus()
+        bus.subscribe("agent:assemble_prompt", inject_messaging_sections, priority=50)
+
+        prompt = await _assemble(bus, tmp_path)
+        assert "Team messaging is temporarily unavailable" in prompt
+        assert not st.live_backend_ready
+
+        st.registry.list_entities = AsyncMock(return_value=[])
+        prompt = await _assemble(bus, tmp_path)
+        assert "Team messaging is temporarily unavailable" not in prompt
+        assert st.live_backend_ready
+
+        st.roster_cache = None
+        st.registry.list_entities = AsyncMock(side_effect=PermissionError("roster denied"))
+        with pytest.raises(PermissionError, match="roster denied"):
+            await _build_roster()
 
 
 class TestArcteamGuidanceGated:

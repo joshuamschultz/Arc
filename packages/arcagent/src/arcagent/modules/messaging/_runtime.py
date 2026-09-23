@@ -16,8 +16,9 @@ context-copy on task creation gives it this agent's state for its whole
 lifetime — no ``contextvars.copy_context()`` special-casing needed.
 
 ``configure`` is synchronous (called from the sync capability wiring), so it
-builds the dependency-free in-memory backend eagerly and defers any live NATS
-connection to :func:`ensure_live_backend`, awaited once at poll-loop start.
+builds a standalone in-memory backend only without a NATS URL. A configured
+fleet starts unavailable and joins through :func:`ensure_live_backend`,
+retried by the inbox loop.
 """
 
 from __future__ import annotations
@@ -61,8 +62,10 @@ class _State:
     # Deliver a policy-gated teammate message into the agent's current run
     # (REQ-040/041); bound from the agent:ready payload alongside agent_run_fn.
     deliver_fn: Any = None
-    # Whether the live NATS backend upgrade has run (idempotent guard).
-    live_backend_ready: bool = False
+    _live_backend_started: bool = False
+    _live_backend_failed: bool = False
+    live_backend: Any = None
+    live_subscription: Any = None
     # Latest unread counts per stream — updated by the poll loop and read
     # by the assemble_prompt hook for context injection.
     last_unread: dict[str, int] = field(default_factory=dict)
@@ -97,6 +100,25 @@ class _State:
     inbox_backend: Any = None
     inbox_init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    @property
+    def live_backend_ready(self) -> bool:
+        """Report active subscription and current backend availability."""
+        if not self._live_backend_started or self._live_backend_failed:
+            return False
+        if not self.config.nats_url:
+            return True
+        return (
+            self.live_subscription is not None
+            and self.live_backend is not None
+            and bool(self.live_backend.available)
+        )
+
+    @live_backend_ready.setter
+    def live_backend_ready(self, ready: bool) -> None:
+        self._live_backend_started = ready
+        if ready:
+            self._live_backend_failed = False
+
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
     "arcagent_messaging_state", default=None
@@ -118,8 +140,8 @@ def configure(
 
     Called once at agent startup. Imports arcteam lazily so the module
     can be imported without arcteam installed (it is an optional dep).
-    Builds the in-memory backend synchronously; a configured ``nats_url``
-    is connected lazily by :func:`ensure_live_backend`.
+    Builds standalone memory synchronously or a fail-closed unavailable backend;
+    a configured ``nats_url`` is connected lazily by :func:`ensure_live_backend`.
 
     ``operator_signer`` (arctrust ``Signer``) signs the messaging WORM audit
     chain (SPEC-037 F4). It MUST be the deployment operator authority — never the
@@ -134,12 +156,12 @@ def configure(
             "or an ephemeral key (fail-closed)"
         )
 
+    from arcteam import MemoryBackend, UnavailableBackend
     from arcteam import composition as arcteam_composition
     from arcteam.audit import AuditLogger
     from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-    from arcteam.storage import MemoryBackend
 
     # The scaffolded [modules.messaging] config omits entity_id/entity_name, but
     # the agent knows its own name and registration keys the inbox stream on the
@@ -155,7 +177,7 @@ def configure(
     ws = workspace.resolve()
     resolved_team_root = (team_root or (ws.parent / "team")).resolve()
 
-    backend = MemoryBackend()
+    backend = UnavailableBackend() if cfg.nats_url else MemoryBackend()
     audit = AuditLogger(backend, operator_signer)
     # AuditLogger.initialize() is async; callers that need it initialised
     # before the first poll must await it separately (the poll loop waits
@@ -186,46 +208,122 @@ def configure(
     )
 
 
-async def ensure_live_backend() -> None:
+async def ensure_live_backend(handler: Any = None) -> Any:
     """Upgrade to the live NATS JetStream backend when a url is configured.
 
-    Idempotent: runs at most once. Rebuilds the audit chain, registry, and
-    messenger over the shared, push-capable substrate so a served agent joins
-    the real bus (REQ-020). With no ``nats_url`` this is a no-op and the
-    in-memory backend built by :func:`configure` stays in place.
+    Connect, initialize audit, and subscribe before exposing shared services.
+
+    With no ``nats_url`` this is a no-op and the intentional in-memory backend
+    built by :func:`configure` stays in place. A failed configured connection
+    leaves the fail-closed unavailable services in place for a later retry.
     """
     st = state()
-    if st.live_backend_ready or not st.config.nats_url:
+    if not st.config.nats_url:
         st.live_backend_ready = True
-        return
+        return None
+    if st.live_subscription is not None:
+        return st.live_subscription
+    if handler is None:
+        raise ValueError("configured fleet subscription requires a message handler")
 
+    from arcteam import FleetBackendUnavailableError
     from arcteam import composition as arcteam_composition
     from arcteam.audit import AuditLogger
     from arcteam.digest import DigestStore
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-    from arcteam.storage import MemoryBackend
 
-    # make_backend degrades an unreachable NATS to an in-memory backend (with a
-    # single warning) rather than raising. When it did, keep the in-memory
-    # services built by configure() instead of rebuilding over a fresh backend.
+    identity = st.identity
+    if identity is None:
+        raise FleetBackendUnavailableError("fleet signing identity is unavailable")
+    signer = arcteam_composition.message_signer(identity)
+    if signer is None:
+        raise FleetBackendUnavailableError("fleet signing identity is unavailable")
+    entity_id = st.config.entity_id
+    public_key = identity.public_key
     backend = await arcteam_composition.make_backend(st.config.nats_url)
-    if isinstance(backend, MemoryBackend):
-        st.live_backend_ready = True
-        return
+    subscription = None
+    activated = asyncio.Event()
 
-    audit = AuditLogger(backend, st.operator_signer)
-    await audit.initialize()
-    st.registry = EntityRegistry(backend, audit)
-    st.svc = MessagingService(
-        backend,
-        st.registry,
-        audit,
-        signer=arcteam_composition.message_signer(st.identity),
-    )
+    async def deliver_after_activation(message: Any) -> None:
+        await activated.wait()
+        await handler(message)
+
+    try:
+        audit = AuditLogger(backend, st.operator_signer)
+        await audit.initialize()
+        registry = EntityRegistry(backend, audit)
+        svc = MessagingService(
+            backend,
+            registry,
+            audit,
+            signer=signer,
+        )
+        subscription = await svc.subscribe(entity_id, deliver_after_activation)
+        if (
+            st.identity is not identity
+            or not identity.can_sign
+            or identity.public_key != public_key
+            or st.config.entity_id != entity_id
+        ):
+            raise FleetBackendUnavailableError("fleet identity changed during subscription")
+    except BaseException:
+        if subscription is not None:
+            try:
+                await subscription.stop()
+            except Exception as exc:
+                _logger.warning("failed fleet subscription cleanup: %s", type(exc).__name__)
+        close = getattr(backend, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception as exc:
+                _logger.warning("failed fleet connection cleanup: %s", type(exc).__name__)
+        raise
+    st.registry = registry
+    st.svc = svc
     st.digests = DigestStore(backend)
+    st.mail_service = None
+    st.live_backend = backend
+    st.live_subscription = subscription
     st.live_backend_ready = True
-    _logger.info("Messaging upgraded to live NATS backend at %s", st.config.nats_url)
+    activated.set()
+    _logger.info("Messaging joined configured NATS fleet")
+    return subscription
+
+
+async def close_live_backend() -> None:
+    """Stop fleet subscriptions and return configured messaging to unavailable."""
+    st = state()
+    st.live_backend_ready = False
+    subscription, st.live_subscription = st.live_subscription, None
+    backend, st.live_backend = st.live_backend, None
+    if st.config.nats_url:
+        from arcteam import UnavailableBackend
+        from arcteam.audit import AuditLogger
+        from arcteam.digest import DigestStore
+        from arcteam.messenger import MessagingService
+        from arcteam.registry import EntityRegistry
+
+        unavailable = UnavailableBackend()
+        audit = AuditLogger(unavailable, st.operator_signer)
+        st.registry = EntityRegistry(unavailable, audit)
+        st.svc = MessagingService(
+            unavailable,
+            st.registry,
+            audit,
+            signer=None,
+        )
+        st.digests = DigestStore(unavailable)
+        st.mail_service = None
+    try:
+        if subscription is not None:
+            await subscription.stop()
+    finally:
+        if backend is not None:
+            close = getattr(backend, "close", None)
+            if close is not None:
+                await close()
 
 
 async def ensure_durable_inbox() -> Any | None:
@@ -311,6 +409,7 @@ def reset() -> None:
 __all__ = [
     "bind",
     "close_durable_inbox",
+    "close_live_backend",
     "configure",
     "ensure_durable_inbox",
     "ensure_live_backend",

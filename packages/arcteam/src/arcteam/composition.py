@@ -27,29 +27,55 @@ def message_signer(identity: AgentIdentity | None) -> MessageSigner | None:
         return None
 
 
+def is_fleet_transport_error(exc: Exception) -> bool:
+    """Classify a transient shared-bus failure without exposing provider errors upward."""
+    from arcteam.storage import FleetBackendUnavailableError
+
+    if isinstance(exc, (FleetBackendUnavailableError, ConnectionError, TimeoutError)):
+        return True
+    try:
+        from nats.errors import (
+            ConnectionClosedError,
+            ConnectionReconnectingError,
+            NoServersError,
+            StaleConnectionError,
+        )
+        from nats.errors import TimeoutError as NatsTimeoutError
+    except ImportError:
+        return False
+    return isinstance(
+        exc,
+        (
+            ConnectionClosedError,
+            ConnectionReconnectingError,
+            NoServersError,
+            StaleConnectionError,
+            NatsTimeoutError,
+        ),
+    )
+
+
 async def make_backend(nats_url: str) -> StorageBackend:
-    """Select NATS JetStream, degrading to a local memory bus when absent."""
-    from arcteam.storage import MemoryBackend
+    """Select shared NATS or intentional standalone memory, never a silent substitute."""
+    from arcteam.storage import FleetBackendUnavailableError, MemoryBackend
 
     if not nats_url:
         return MemoryBackend()
-    from arcteam.backends.nats import NatsBackend
-
-    errors: tuple[type[BaseException], ...] = (OSError, TimeoutError)
     try:
         from nats.errors import NoServersError
         from nats.errors import TimeoutError as NatsTimeoutError
 
-        errors = (*errors, NoServersError, NatsTimeoutError)
-    except ImportError:
-        pass
+        from arcteam.backends.nats import NatsBackend
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not exc.name.startswith("nats"):
+            raise
+        raise FleetBackendUnavailableError("configured NATS client is unavailable") from exc
+
     try:
         return await NatsBackend.connect(nats_url)
-    except errors as exc:
-        _logger.warning(
-            "NATS unavailable at configured endpoint; using the in-memory bus: %s", exc
-        )
-        return MemoryBackend()
+    except (OSError, TimeoutError, NoServersError, NatsTimeoutError) as exc:
+        _logger.warning("configured NATS unavailable: %s", type(exc).__name__)
+        raise FleetBackendUnavailableError("configured fleet backend is unavailable") from exc
 
 
 def derive_handle(entity_id: str, fallback: str) -> str:
@@ -83,4 +109,10 @@ def self_entity(
     )
 
 
-__all__ = ["derive_handle", "make_backend", "message_signer", "self_entity"]
+__all__ = [
+    "derive_handle",
+    "is_fleet_transport_error",
+    "make_backend",
+    "message_signer",
+    "self_entity",
+]

@@ -86,13 +86,29 @@ async def _build_roster() -> str:
     automatically without code changes.
     """
     st = _runtime.state()
+    if st.config.nats_url and (st.live_backend is None or not st.live_backend.available):
+        return ""
     now = time.monotonic()
     ttl = st.config.roster_ttl_seconds
 
-    if st.roster_cache is not None and (now - st.roster_cache_time) < ttl:
+    if (
+        st.roster_cache is not None
+        and (now - st.roster_cache_time) < ttl
+        and not st._live_backend_failed
+    ):
         return st.roster_cache
 
-    entities = await st.registry.list_entities()
+    try:
+        entities = await st.registry.list_entities()
+    except Exception as exc:
+        from arcteam import is_fleet_transport_error
+
+        if not st.config.nats_url or not is_fleet_transport_error(exc):
+            raise
+        st._live_backend_failed = True
+        _logger.warning("Team roster temporarily unavailable: %s", type(exc).__name__)
+        return ""
+    st._live_backend_failed = False
     if not entities:
         st.roster_cache = ""
         st.roster_cache_time = now
@@ -283,6 +299,10 @@ async def _wake_on(message: Any) -> None:
                 reply_target=reply_target,
                 reply_label=reply_label,
             )
+        else:
+            from arcteam import RetryableDeliveryError
+
+            raise RetryableDeliveryError(message.id)
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +373,9 @@ async def inject_messaging_sections(ctx: Any) -> None:
     )
 
     roster = await _build_roster()
+    if st.config.nats_url and not st.live_backend_ready:
+        lines.append("")
+        lines.append("Team messaging is temporarily unavailable; retry later.")
     if roster:
         lines.append("")
         lines.append(roster)
@@ -477,6 +500,7 @@ async def deliver_channel_reply(ctx: Any) -> None:
 async def messaging_shutdown(ctx: Any) -> None:
     """Log module stop. Background poll task is cancelled by the loader."""
     del ctx  # event payload unused
+    await _runtime.close_live_backend()
     await _runtime.close_durable_inbox()
     _logger.info("Messaging module stopped")
 
@@ -957,19 +981,36 @@ async def messaging_inbox_loop(_ctx: Any) -> None:
     # Give services one second to initialise before subscribing.
     await asyncio.sleep(1.0)
 
-    # Upgrade to the live NATS backend once, if a url is configured.
-    try:
-        await _runtime.ensure_live_backend()
-    except Exception:  # reason: fail-open — stay on in-memory backend
-        _logger.exception("Live backend upgrade failed; staying on in-memory backend")
+    retry_delay = 1.0
+    while True:
+        st = _runtime.state()
+        try:
+            if st.config.nats_url:
+                subscription = await _runtime.ensure_live_backend(_handle_incoming)
+            else:
+                subscription = await st.svc.subscribe(st.config.entity_id, _handle_incoming)
+                st.live_subscription = subscription
+                st.live_backend_ready = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # reason: broker or subscription may recover
+            st.live_backend_ready = False
+            _logger.warning("Fleet inbox unavailable; retrying: %s", type(exc).__name__)
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30.0)
+            continue
 
-    st = _runtime.state()
-    subscription = await st.svc.subscribe(st.config.entity_id, _handle_incoming)
-    try:
-        await subscription.wait()
-    except asyncio.CancelledError:
-        await subscription.stop()
-        raise
+        retry_delay = 1.0
+        try:
+            await subscription.wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # reason: a failed consume supervisor must rejoin
+            _logger.warning("Fleet inbox subscription failed: %s", type(exc).__name__)
+        finally:
+            await _runtime.close_live_backend()
+        _logger.warning("Fleet inbox subscription ended; reconnecting")
+        await asyncio.sleep(retry_delay)
 
 
 @background_task(
