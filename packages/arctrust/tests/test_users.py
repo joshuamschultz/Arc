@@ -376,3 +376,94 @@ def test_hardlinked_user_file_is_refused(store, authority, tmp_path):
     (tmp_path / "other-link").hardlink_to(store.path)
     with pytest.raises(UserStoreError, match="file type"):
         UserStore(store.path, **authority)
+
+
+def test_shared_store_keeps_both_successful_concurrent_field_edits(store, authority):
+    store.add("a@example.com", GOOD)
+    entered = threading.Event()
+    release = threading.Event()
+    errors: list[Exception] = []
+    original_save = store._save
+
+    def delayed_save(candidate):
+        if threading.current_thread().name == "display-writer":
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("writer release timed out")
+        original_save(candidate)
+
+    store._save = delayed_save
+
+    def change_name() -> None:
+        try:
+            store.set_display_name("a@example.com", "New name")
+        except Exception as exc:
+            errors.append(exc)
+
+    def change_pairing() -> None:
+        try:
+            store.set_pairing("a@example.com", "chat", "4242")
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=change_name, name="display-writer")
+    second = threading.Thread(target=change_pairing, name="pairing-writer")
+    first.start()
+    assert entered.wait(5)
+    second.start()
+    second.join(0.2)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert not errors
+    current = UserStore(store.path, **authority).get("a@example.com")
+    assert current.display_name == "New name"
+    assert current.pairings == {"chat": "4242"}
+
+
+def test_shared_store_keeps_pinned_descriptors_private_to_active_call(store, tmp_path):
+    store.add("a@example.com", GOOD)
+    entered = threading.Event()
+    release = threading.Event()
+    reader_done = threading.Event()
+    errors: list[Exception] = []
+    original_write = store._write
+
+    def delayed_write(payload: bytes) -> None:
+        if threading.current_thread().name == "writer":
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("writer release timed out")
+        original_write(payload)
+
+    store._write = delayed_write
+
+    def writer() -> None:
+        try:
+            store.set_disabled("a@example.com", True)
+        except Exception as exc:
+            errors.append(exc)
+
+    def reader() -> None:
+        try:
+            assert store.get("a@example.com").disabled
+            reader_done.set()
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=writer, name="writer")
+    second = threading.Thread(target=reader, name="reader")
+    first.start()
+    assert entered.wait(5)
+    pinned_dir, pinned_lock = store._dir_fd, store._lock_fd
+    (tmp_path / ".users.lock").unlink()
+    second.start()
+    assert not reader_done.wait(0.05)
+    assert (store._dir_fd, store._lock_fd) == (pinned_dir, pinned_lock)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], UserStoreError)
+    assert reader_done.is_set()

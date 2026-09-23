@@ -23,13 +23,15 @@ import json
 import os
 import re
 import stat
+import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from functools import wraps
 from pathlib import Path
-from typing import Protocol
+from typing import Concatenate, ParamSpec, Protocol, TypeVar, cast
 
 from nacl import pwhash
 from nacl.exceptions import InvalidkeyError
@@ -45,10 +47,29 @@ _HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,30}$")
 
 _FILE_MODE = 0o600
 _DIR_MODE = 0o700
+_LOCK_TIMEOUT_SECONDS = 5
 
 VIEWER = "viewer"
 OPERATOR = "operator"
 ROLES = (VIEWER, OPERATOR)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _synchronized(
+    method: Callable[Concatenate[UserStore, _P], _T],
+) -> Callable[Concatenate[UserStore, _P], _T]:
+    @wraps(method)
+    def wrapped(self: UserStore, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        if not self._mutex.acquire(timeout=_LOCK_TIMEOUT_SECONDS):
+            raise UserStoreError("user authority instance is busy")
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._mutex.release()
+
+    return cast("Callable[Concatenate[UserStore, _P], _T]", wrapped)
 
 
 class UserStoreError(RuntimeError):
@@ -159,12 +180,14 @@ class UserStore:
         self._actor_did = actor_did
         self._users: dict[str, User] = {}
         self._head: AnchorHead | None = None
+        self._mutex = threading.RLock()
         self._dir_fd: int | None = None
         self._lock_fd: int | None = None
         self._load()
 
     # --- persistence ----------------------------------------------------
 
+    @_synchronized
     def _load(self) -> None:
         with self._lock():
             self._load_locked()
@@ -238,6 +261,7 @@ class UserStore:
                 raise UserStoreError("unexplained user authority rollback")
         self._write(sealed)
 
+    @_synchronized
     def _save(self, candidate: dict[str, User]) -> None:
         with self._lock():
             self._save_locked(candidate)
@@ -288,7 +312,7 @@ class UserStore:
                     or lock_meta.st_nlink != 1
                 ):
                     raise UserStoreError("user authority lock is not private")
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
                 while True:
                     try:
                         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -329,13 +353,16 @@ class UserStore:
         directory = self.path.parent
         if directory.resolve() != directory.absolute():
             raise UserStoreError("user authority directory changed")
-        directory_meta = os.stat(directory, follow_symlinks=False)
+        try:
+            directory_meta = os.stat(directory, follow_symlinks=False)
+            lock_meta = os.stat(".users.lock", dir_fd=dir_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise UserStoreError("user authority lock or directory changed") from exc
         pinned_meta = os.fstat(dir_fd)
         if (directory_meta.st_dev, directory_meta.st_ino) != (
             pinned_meta.st_dev, pinned_meta.st_ino
         ):
             raise UserStoreError("user authority directory changed")
-        lock_meta = os.stat(".users.lock", dir_fd=dir_fd, follow_symlinks=False)
         pinned_lock = os.fstat(lock_fd)
         if ((lock_meta.st_dev, lock_meta.st_ino) != (pinned_lock.st_dev, pinned_lock.st_ino)
                 or pinned_lock.st_nlink != 1):
@@ -390,18 +417,22 @@ class UserStore:
 
     # --- queries --------------------------------------------------------
 
+    @_synchronized
     def list(self) -> list[User]:
         self._load()
         return sorted(self._users.values(), key=lambda u: u.email)
 
+    @_synchronized
     def get(self, email: str) -> User | None:
         self._load()
         return self._users.get(_normalize(email))
 
+    @_synchronized
     def is_empty(self) -> bool:
         self._load()
         return not self._users
 
+    @_synchronized
     def by_pairing(self, platform: str, external_id: str) -> User | None:
         """Find the person a surface identity belongs to.
 
@@ -416,6 +447,7 @@ class UserStore:
 
     # --- mutations ------------------------------------------------------
 
+    @_synchronized
     def add(
         self,
         email: str,
@@ -456,6 +488,7 @@ class UserStore:
         self._save({**self._users, email: user})
         return user
 
+    @_synchronized
     def set_handle(self, email: str, handle: str) -> User:
         self._check_write_head()
         user = self._require(email)
@@ -464,6 +497,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def set_display_name(self, email: str, display_name: str) -> User:
         self._check_write_head()
         user = self._require(email)
@@ -471,6 +505,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def update_profile(
         self, email: str, *, display_name: str | None = None,
         handle: str | None = None, pairings: dict[str, str | None] | None = None,
@@ -505,6 +540,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def by_handle(self, handle: str) -> User | None:
         self._load()
         wanted = handle.lstrip("@").strip().lower()
@@ -547,6 +583,7 @@ class UserStore:
             suffix += 1
         return candidate
 
+    @_synchronized
     def set_password(self, email: str, password: str) -> User:
         self._check_write_head()
         user = self._require(email)
@@ -554,6 +591,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def set_roles(self, email: str, roles: tuple[str, ...]) -> User:
         self._check_write_head()
         for role in roles:
@@ -564,6 +602,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def set_pairing(self, email: str, platform: str, external_id: str | None) -> User:
         """Attach or drop one external identity. ``None`` unpairs.
 
@@ -589,6 +628,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def set_disabled(self, email: str, disabled: bool) -> User:
         self._check_write_head()
         user = self._require(email)
@@ -596,6 +636,7 @@ class UserStore:
         self._save({**self._users, updated.email: updated})
         return updated
 
+    @_synchronized
     def remove(self, email: str) -> None:
         self._check_write_head()
         email = _normalize(email)
