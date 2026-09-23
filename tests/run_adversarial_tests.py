@@ -61,6 +61,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "voice channel abuse — pairing, tier gate, spoken injection (SPEC-077)": (
         "packages/arcgateway/tests/security/test_voice_abuse.py",
     ),
+    "browser media custody and MIME spoofing": (
+        "packages/arcgateway/tests/security/test_media_store_refusals.py",
+        "packages/arcui/tests/integration/test_attachment_session_identity.py",
+    ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",

@@ -69,6 +69,15 @@ class MediaPart(BaseModel):
 Part = Annotated[TextPart | MediaPart, Field(discriminator="kind")]
 
 
+def kind_for(mime: str) -> Literal["image", "file", "audio"]:
+    """Classify a MIME type for media storage and delivery."""
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("audio/"):
+        return "audio"
+    return "file"
+
+
 def flatten_text(parts: Sequence[Part]) -> str:
     """The words of a message, for the surfaces that only understand words.
 

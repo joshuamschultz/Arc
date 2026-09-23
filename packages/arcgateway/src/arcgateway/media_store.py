@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arcgateway.attachment_scanner import AttachmentScanner, CleanScanner, ScanStatus
 from arcgateway.audit import emit_event
+from arcgateway.parts import kind_for
 
 # POSIX NAME_MAX: a single path component may not exceed 255 bytes. Every
 # component we compose is restricted to _SAFE_CHARS, which is ASCII, so byte
@@ -245,7 +246,6 @@ class MediaStore:
         stream: AttachmentByteStream,
         declared_name: str,
         declared_mime: str | None,
-        kind: str,
         owner_did: str,
         agent_did: str,
         classification: str = "UNCLASSIFIED",
@@ -344,7 +344,7 @@ class MediaStore:
                 workspace_ref=ref,
                 declared_name=declared_name,
                 detected_mime=detected_mime,
-                kind=kind,
+                kind=kind_for(detected_mime),
                 size_bytes=size,
                 sha256=sha256,
                 classification=resource_class.name,

@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import arcrun
 import pytest
+from arcagent.parts import PartTranslator
 from arcgateway.adapters.web import WebPlatformAdapter
 from arcgateway.identity import derive_viewer_did
 from arcgateway.media_store import AttachmentClaimError, MediaStore
@@ -78,7 +80,7 @@ async def test_upload_claims_after_rotation_once_and_rejects_replay_or_other_use
         claims.append((user_did, session_key))
         return [
             MediaPart(
-                kind="file",
+                kind=stored.kind,
                 mime=stored.mime,
                 declared_name=stored.declared_name,
                 ref=stored.ref,
@@ -110,6 +112,10 @@ async def test_upload_claims_after_rotation_once_and_rejects_replay_or_other_use
     )
     assert len(events) == 1
     assert events[0].parts[0].ref == manifest["workspace_ref"]
+    assert events[0].parts[0].kind == "image"
+    translator = PartTranslator(workspace=tmp_path)
+    history = translator.to_history_content([events[0].parts[0].model_dump()])
+    assert isinstance(translator.to_model_content(history)[0], arcrun.ImageBlock)
     assert claims == [(owner_did, stable_session)]
 
     # The adapter's per-socket monotonic sequence guard prevents a replay from

@@ -36,7 +36,6 @@ from typing import Any
 
 from arcgateway.adapters._media import (
     describe_undeliverable,
-    kind_for,
     read_bounded,
 )
 from arcgateway.adapters._text import split_for_platform
@@ -48,7 +47,7 @@ from arcgateway.adapters.base import (
 )
 from arcgateway.adapters.base import as_parts as _as_parts
 from arcgateway.delivery import DeliveryTarget
-from arcgateway.parts import TextPart
+from arcgateway.parts import TextPart, kind_for
 
 _logger = logging.getLogger("arcgateway.adapters.mattermost.adapter")
 

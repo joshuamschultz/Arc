@@ -136,7 +136,6 @@ async def test_composed_attachment_store_rejects_infected_file(
             stream=_Bytes([b"\x89PNG\r\n\x1a\n" + b"payload"]),
             declared_name="payload.png",
             declared_mime="image/png",
-            kind="image",
             owner_did="did:arc:user:operator",
             agent_did="did:arc:agent:default",
             session_key="session-1",

@@ -67,7 +67,6 @@ async def store(store: MediaStore, stream: ChunkStream, **kwargs: str):
         stream=stream,
         declared_name="photo.png",
         declared_mime="image/png",
-        kind="image",
         owner_did=_OWNER,
         agent_did=_AGENT,
         session_key=_SESSION,
@@ -91,6 +90,28 @@ async def test_streams_chunks_to_quarantine_and_promotes_content_addressed_objec
     assert object_path.read_bytes() == _PNG
     assert not list((tmp_path / "attachments" / "quarantine").glob("*"))
     assert scanner.calls and scanner.calls[0][0].name.startswith(".att_")
+
+
+async def test_detected_mime_determines_kind(tmp_path: Path) -> None:
+    media = MediaStore(workspace=tmp_path, max_bytes=1024)
+    image = await media.store_stream(
+        stream=ChunkStream([_PNG]),
+        declared_name="photo.png",
+        declared_mime="image/png",
+        owner_did=_OWNER,
+        agent_did=_AGENT,
+        session_key=_SESSION,
+    )
+    document = await media.store_stream(
+        stream=ChunkStream([b"%PDF-1.4\n%%EOF"]),
+        declared_name="report.pdf",
+        declared_mime="application/pdf",
+        owner_did=_OWNER,
+        agent_did=_AGENT,
+        session_key=_SESSION,
+    )
+    assert image.kind == "image"
+    assert document.kind == "file"
 
 
 async def test_over_limit_cleans_partial_quarantine(tmp_path: Path) -> None:
@@ -133,7 +154,6 @@ async def test_declared_mime_mismatch_is_rejected(tmp_path: Path) -> None:
             stream=ChunkStream([_PNG]),
             declared_name="photo.png",
             declared_mime="application/pdf",
-            kind="image",
             owner_did=_OWNER,
             agent_did=_AGENT,
             session_key=_SESSION,

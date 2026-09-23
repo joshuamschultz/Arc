@@ -53,7 +53,6 @@ from typing import Any
 from arcgateway.adapters._backoff import exponential_backoff
 from arcgateway.adapters._media import (
     describe_undeliverable,
-    kind_for,
     read_artefact,
 )
 from arcgateway.adapters._text import split_for_platform
@@ -69,7 +68,7 @@ from arcgateway.adapters.base import as_parts as _as_parts
 from arcgateway.audit import emit_event
 from arcgateway.commands.base import CommandSpec
 from arcgateway.delivery import DeliveryTarget
-from arcgateway.parts import MediaPart, TextPart
+from arcgateway.parts import MediaPart, TextPart, kind_for
 
 _logger = logging.getLogger("arcgateway.adapters.telegram.adapter")
 

@@ -8,15 +8,39 @@ would be caught by nothing else, and a green suite would say so confidently.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
-from arcgateway.media_store import _MAX_COLLISIONS, MediaStore, MediaTooLargeError
+from arcgateway.media_store import (
+    _MAX_COLLISIONS,
+    AttachmentValidationError,
+    MediaStore,
+    MediaTooLargeError,
+)
 
 
 def _store(tmp_path: Path, *, max_bytes: int = 1024) -> MediaStore:
     return MediaStore(workspace=tmp_path / "workspace", max_bytes=max_bytes)
+
+
+@pytest.mark.asyncio
+async def test_spoofed_image_mime_cannot_reach_claimable_storage(tmp_path: Path) -> None:
+    async def payload() -> AsyncIterator[bytes]:
+        yield b"%PDF-1.4\n%%EOF"
+
+    store = _store(tmp_path)
+    with pytest.raises(AttachmentValidationError, match="declared MIME"):
+        await store.store_stream(
+            stream=payload(),
+            declared_name="fake.png",
+            declared_mime="image/png",
+            owner_did="did:arc:user:alice",
+            agent_did="did:arc:agent:olivia",
+            session_key="session-1",
+        )
+    assert not list((tmp_path / "workspace" / "attachments").rglob("*.json"))
 
 
 def test_a_composed_path_that_escapes_the_inbox_is_refused(

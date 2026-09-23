@@ -71,7 +71,6 @@ async def upload_attachment(request: Request) -> JSONResponse:
             stream=_FileStream(upload.file, store.max_bytes),
             declared_name=str(upload.filename),
             declared_mime=str(upload.content_type or "application/octet-stream"),
-            kind="file",
             owner_did=owner_did,
             agent_did=agent_did,
             session_key=session_key,

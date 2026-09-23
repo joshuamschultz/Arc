@@ -35,7 +35,6 @@ from urllib.parse import urlparse
 
 from arcgateway.adapters._media import (
     describe_undeliverable,
-    kind_for,
     read_artefact,
     read_bounded,
 )
@@ -50,7 +49,7 @@ from arcgateway.adapters.base import as_parts as _as_parts
 from arcgateway.audit import emit_event
 from arcgateway.commands.base import CommandSpec
 from arcgateway.delivery import DeliveryTarget
-from arcgateway.parts import MediaPart, TextPart
+from arcgateway.parts import MediaPart, TextPart, kind_for
 
 _logger = logging.getLogger("arcgateway.adapters.slack.adapter")
 

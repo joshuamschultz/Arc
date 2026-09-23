@@ -1,10 +1,9 @@
 """Media plumbing every platform adapter shares (SPEC-065 COMP-004).
 
 Beside ``_text.py``, and for the same reason: REQ-310 says an adapter does
-lifecycle, translation and delivery, so anything all of them need — classifying
-a MIME type, wording a degrade, reading bytes within a bound — is written once
-here rather than three times over there. Each of these started as per-adapter
-copies that were already byte-identical; a fourth platform inherits them.
+lifecycle, translation and delivery, so shared delivery wording and bounded
+reads live here. MIME classification belongs to the part contract because
+custody and every adapter need the same answer.
 
 ``base.py`` keeps the *contract* (the types and the Protocol). This module
 keeps the shared *behaviour*, so the contract stays readable on one screen.
@@ -15,26 +14,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from arcgateway.adapters.base import MediaKind, MediaTooLargeOnWireError
+from arcgateway.adapters.base import MediaTooLargeOnWireError
 from arcgateway.parts import MediaPart
 
 #: Read granularity for :func:`read_bounded`. Small enough that the overshoot
 #: past the ceiling is bounded by one chunk, large enough not to thrash.
 _CHUNK_BYTES = 64 * 1024
-
-
-def kind_for(mime: str) -> MediaKind:
-    """Classify an artefact by its declared media type.
-
-    Here rather than per adapter: a MIME class added for one platform and
-    forgotten on the next two is a classification that silently disagrees with
-    itself, and the agent dispatches on the answer.
-    """
-    if mime.startswith("image/"):
-        return "image"
-    if mime.startswith("audio/"):
-        return "audio"
-    return "file"
 
 
 def describe_undeliverable(part: MediaPart, platform: str) -> str:
@@ -98,7 +83,6 @@ async def read_bounded(response: Any, limit_bytes: int) -> bytes:
 
 __all__ = [
     "describe_undeliverable",
-    "kind_for",
     "read_artefact",
     "read_bounded",
 ]
