@@ -44,6 +44,9 @@ class ConnectedData:
             global_concurrency=state.config.global_concurrency,
             audit=_audit(state.telemetry),
             interval_seconds=state.config.interval_seconds,
+            restart_backoff_seconds=state.config.restart_backoff_seconds,
+            restart_backoff_max_seconds=state.config.restart_backoff_max_seconds,
+            stall_grace_seconds=state.config.stall_grace_seconds,
         )
         await state.service.start()
         self._service = state.service

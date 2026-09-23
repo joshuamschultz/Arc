@@ -1,11 +1,12 @@
 """H-026 VERIFY — the OKF collection-index pipeline, driven through real ingest.
 
 These tests do not hand-build index rows. They drive the canonical connected-source
-path (approve mapping -> ``ConnectedDataService.ingest`` / ``reindex_source``) and
-assert the four properties H-026 requires of the per-source ``index.md``:
+path (approve mapping -> ``ConnectedDataService.ingest`` + ``finish_sync`` /
+``reindex_source``) and assert the four properties H-026 requires of the per-source
+``index.md``:
 
-1. ingest writes a real, arcokf-VALID OKF ``index.md`` and indexes it as the
-   ``index:<source_id>`` routing chunk;
+1. a sync run writes a real, arcokf-VALID OKF ``index.md`` and indexes it as the
+   ``index:<source_id>`` routing chunk (once per run, never per object);
 2. every reindex refreshes it with no expiry/TTL gate that could skip the refresh;
 3. it is hosted under the agent WORKSPACE, never the remote origin;
 4. a reader fails CLOSED on a tampered index or a tampered listed document — the
@@ -97,6 +98,7 @@ async def test_ingest_writes_valid_okf_collection_index(tmp_path: Path) -> None:
     service, source, mapping = await _granted(tmp_path)
 
     await service.ingest(source, _obj("q3"), _content("q3", "quarterly revenue report"), mapping)
+    await service.finish_sync(source)
 
     index_path = tmp_path / "memory" / "connected" / mapping.source_id / "index.md"
     assert index_path.is_file(), "ingest must render a real index.md on disk"
@@ -120,11 +122,13 @@ async def test_every_reindex_refreshes_index_with_no_expiry_gate(tmp_path: Path)
     index_path = tmp_path / "memory" / "connected" / mapping.source_id / "index.md"
 
     await service.ingest(source, _obj("a"), _content("a", "alpha revenue notes"), mapping)
+    await service.finish_sync(source)
     first = validate_collection_index(index_path, index_path.parent)
     assert first.valid and len(first.entries) == 1
 
-    # A second ingest refreshes the SAME index to two documents — unconditionally.
+    # A second run refreshes the SAME index to two documents — unconditionally.
     await service.ingest(source, _obj("b"), _content("b", "beta revenue notes"), mapping)
+    await service.finish_sync(source)
     second = validate_collection_index(index_path, index_path.parent)
     assert second.valid and len(second.entries) == 2, "reindex must refresh, never skip"
 
@@ -143,6 +147,7 @@ async def test_index_is_hosted_under_workspace_never_remote(tmp_path: Path) -> N
     service, source, mapping = await _granted(tmp_path)
 
     await service.ingest(source, _obj("q3"), _content("q3", "revenue report body"), mapping)
+    await service.finish_sync(source)
 
     doc_root = (tmp_path / "memory" / "connected" / mapping.source_id).resolve()
     index_path = doc_root / "index.md"
@@ -168,6 +173,7 @@ def _operator(workspace: Path) -> MemoryOperator:
 async def test_reader_returns_verified_view_on_a_clean_index(tmp_path: Path) -> None:
     service, source, mapping = await _granted(tmp_path)
     await service.ingest(source, _obj("q3"), _content("q3", "clean revenue body"), mapping)
+    await service.finish_sync(source)
 
     view = _operator(tmp_path).read_collection_index(mapping.source_id)
 
@@ -182,6 +188,7 @@ async def test_reader_returns_verified_view_on_a_clean_index(tmp_path: Path) -> 
 async def test_reader_fails_closed_on_a_tampered_index(tmp_path: Path) -> None:
     service, source, mapping = await _granted(tmp_path)
     await service.ingest(source, _obj("q3"), _content("q3", "revenue body"), mapping)
+    await service.finish_sync(source)
     index_path = tmp_path / "memory" / "connected" / mapping.source_id / "index.md"
 
     # An operator hand-edits the reserved artifact (ASI06 memory poisoning).
@@ -204,6 +211,7 @@ async def test_reader_fails_closed_on_a_tampered_index(tmp_path: Path) -> None:
 async def test_reader_fails_closed_on_a_tampered_listed_document(tmp_path: Path) -> None:
     service, source, mapping = await _granted(tmp_path)
     await service.ingest(source, _obj("q3"), _content("q3", "original revenue body"), mapping)
+    await service.finish_sync(source)
     doc_root = tmp_path / "memory" / "connected" / mapping.source_id
 
     # Swap the bytes of a listed document so its committed digest no longer matches.
@@ -225,12 +233,13 @@ async def test_resync_restores_a_fail_closed_index(tmp_path: Path) -> None:
     """Fail-closed must be recoverable, not a dead end (the guidance's promise).
 
     Start verified -> a local out-of-band edit makes the reader fail closed ->
-    the real re-sync path (the same ``sync_collection_index`` ingest uses)
+    the real re-sync path (the same ``refresh_collection_index`` a sync run uses)
     rebuilds the index from the on-disk documents -> the reader verifies again
     and renders the body.
     """
     service, source, mapping = await _granted(tmp_path)
     await service.ingest(source, _obj("q3"), _content("q3", "quarterly revenue body"), mapping)
+    await service.finish_sync(source)
     operator = _operator(tmp_path)
 
     # Verified to begin with.

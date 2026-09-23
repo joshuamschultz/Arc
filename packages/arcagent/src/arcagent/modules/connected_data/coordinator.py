@@ -78,6 +78,18 @@ class ConnectedDataCoordinator:
     ) -> None:
         self._source, self._ingest, self._state = source, ingest, state
         self._audit, self._clock, self._sleep = audit, clock, sleep
+        self._stopped_at_ceiling = False
+
+    @property
+    def stopped_at_ceiling(self) -> bool:
+        """True when the last run ended at a page/byte/time ceiling with more to fetch.
+
+        Distinct from the durable ``budget_reached`` flag, which also stays set
+        for the run that finishes a resumed crawl (its snapshot is partial). A
+        scheduler reads this to continue a backfill promptly instead of waiting
+        a whole interval.
+        """
+        return self._stopped_at_ceiling
 
     async def run(
         self,
@@ -90,6 +102,7 @@ class ConnectedDataCoordinator:
     ) -> SyncState:
         chosen = limits or SyncLimits()
         source_id = source.connection_id
+        self._stopped_at_ceiling = False
         lease = await self._state.acquire_lease(
             agent_did, source_id, owner_id, ttl_seconds=chosen.max_seconds
         )
@@ -138,7 +151,7 @@ class ConnectedDataCoordinator:
                 ):
                     raise LeaseLostError()
                 if pages >= chosen.max_pages:
-                    budget_reached = True
+                    budget_reached = self._stopped_at_ceiling = True
                     break
                 page = await self._fetch_with_retry(source, cursor, chosen, started, cancel_event)
                 snapshot_ids.update(
@@ -169,7 +182,7 @@ class ConnectedDataCoordinator:
                 # advances by at least one page per run and picks up exactly
                 # where it stopped, however large the account.
                 if processed >= chosen.max_bytes:
-                    budget_reached = True
+                    budget_reached = self._stopped_at_ceiling = True
                     break
             # Reconciling a PARTIAL listing would mark every document this run
             # never reached as deleted. A run that stopped at a ceiling has not
@@ -183,6 +196,7 @@ class ConnectedDataCoordinator:
                     started,
                     cancel_event,
                 )
+            await self._finish_run(source, chosen, started, cancel_event)
             await self._set_status(
                 agent_did,
                 source_id,
@@ -221,6 +235,7 @@ class ConnectedDataCoordinator:
                 raise
             await self._emit("awaiting_mapping", source, {})
         except SyncError as exc:
+            await self._finish_after_failure(source)
             try:
                 await self._set_status(
                     agent_did,
@@ -237,6 +252,7 @@ class ConnectedDataCoordinator:
             await self._emit("failed", source, {"error_code": exc.code})
             raise
         except Exception:
+            await self._finish_after_failure(source)
             try:
                 await self._set_status(
                     agent_did,
@@ -422,6 +438,39 @@ class ConnectedDataCoordinator:
         if outcomes["failed"] and not outcomes["ok"]:
             raise SyncError("every object on the page failed to ingest")
         return page_bytes
+
+    async def _finish_run(
+        self,
+        source: SourceDescription,
+        limits: SyncLimits,
+        started: float,
+        cancel_event: asyncio.Event | None,
+    ) -> None:
+        """Let the port refresh source-wide derived state once, after the pages.
+
+        A routing index or folder ontology describes the whole source, so the
+        port rebuilds it here rather than per object. A port with no such state
+        does not implement the hook.
+        """
+        finish = getattr(self._ingest, "finish_sync", None)
+        if finish is None:
+            return
+        await self._retry_call(lambda: finish(source), limits, started, cancel_event)
+
+    async def _finish_after_failure(self, source: SourceDescription) -> None:
+        """Best effort: pages committed before a failure still reach the index.
+
+        A source that fails on the same page every run would otherwise leave
+        every earlier page out of its routing index indefinitely. A failure
+        here is audited and never masks the run's own error.
+        """
+        finish = getattr(self._ingest, "finish_sync", None)
+        if finish is None:
+            return
+        try:
+            await finish(source)
+        except Exception as exc:  # reason: the run's own failure is the one reported
+            await self._emit("finish_failed", source, {"error": type(exc).__name__})
 
     async def _register_live_datastore(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import uuid
@@ -20,6 +21,7 @@ from arcagent.connected_data import (
     SyncLimits,
     SyncState,
     SyncStatePort,
+    SyncStatus,
 )
 from arcagent.extension.credentials import (
     ConnectedAccount,
@@ -42,6 +44,7 @@ from arcagent.modules.connected_data.health import (
     ConnectionHealthTracker,
     is_terminal_sync_failure,
 )
+from arcagent.modules.connected_data.supervision import SyncSchedule
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 _CATALOG_RETRY_MAX_SECONDS = 30.0
@@ -231,6 +234,9 @@ class ConnectedDataService:
         credentials: CredentialLifecycle | None = None,
         credential_renew: RenewFn | None = None,
         operator_notifier: OperatorNotifier | None = None,
+        restart_backoff_seconds: float = 30.0,
+        restart_backoff_max_seconds: float = 1800.0,
+        stall_grace_seconds: float = 120.0,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -262,6 +268,12 @@ class ConnectedDataService:
         self._credential_renew = credential_renew or _unsupported_renew
         self._operator_notifier = operator_notifier
         self._health = ConnectionHealthTracker()
+        self._timing = SyncSchedule(
+            interval_seconds=interval_seconds,
+            backoff_seconds=restart_backoff_seconds,
+            backoff_max_seconds=restart_backoff_max_seconds,
+        )
+        self._stall_grace = stall_grace_seconds
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -343,6 +355,7 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "not_found")
         # An explicit operator sync clears any needs-attention backoff.
         self._health.clear(connection_id)
+        self._timing.run_now(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -359,6 +372,7 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.discard(connection_id)
         self._health.clear(connection_id)
+        self._timing.run_now(connection_id)
         self._wake.set()
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -388,6 +402,7 @@ class ConnectedDataService:
         self._selected_resources.pop(connection_id, None)
         self._descriptions.pop(connection_id, None)
         self._health.clear(connection_id)
+        self._timing.forget(connection_id)
         await self._catalog.unregister(connection_id)
         return SourceOperationResult(connection_id, "revoked")
 
@@ -410,6 +425,7 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "refused", "sync_lease_active")
         self._paused.discard(connection_id)
         self._health.clear(connection_id)
+        self._timing.run_now(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -581,6 +597,11 @@ class ConnectedDataService:
         )
 
     async def _monitor_loop(self) -> None:
+        """Start every source that is due; outlive any one bad tick.
+
+        Sleeps until the next source is due or something wakes it (an operator
+        action, a run ending). Every source runs in its own supervised task.
+        """
         while not self._closed:
             try:
                 registrations = await self._catalog.snapshot()
@@ -590,129 +611,177 @@ class ConnectedDataService:
                 )
                 await asyncio.sleep(min(max(self._interval, 0.1), _CATALOG_RETRY_MAX_SECONDS))
                 continue
-            for registration in registrations:
-                if registration.connection_id in self._paused:
-                    continue
-                # A source that needs a human is backed off: re-running it every
-                # tick just hammers a dead credential and floods the audit log.
-                if self._health.is_backed_off(registration.connection_id):
-                    continue
-                self._statuses.setdefault(
-                    registration.connection_id,
-                    SourceRuntimeStatus(
-                        connection_id=registration.connection_id, status="inspecting"
-                    ),
-                )
-                self._schedule(registration)
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self._interval)
+                self._schedule_due(registrations)
+            except Exception as exc:  # reason: the monitor must outlive one bad tick
+                _logger.exception("connected-data monitor tick failed")
+                await self._emit("connected_data.sync.monitor_failed", {"error": _name(exc)})
+            try:
+                await asyncio.wait_for(
+                    self._wake.wait(), timeout=self._timing.seconds_until_next()
+                )
             except TimeoutError:
                 pass
             self._wake.clear()
 
+    def _schedule_due(self, registrations: tuple[SourceRegistration, ...]) -> None:
+        for registration in registrations:
+            connection_id = registration.connection_id
+            if connection_id in self._paused or not self._timing.is_due(connection_id):
+                continue
+            # A source that needs a human is backed off: re-running it every
+            # tick just hammers a dead credential and floods the audit log.
+            if self._health.is_backed_off(connection_id):
+                continue
+            self._statuses.setdefault(
+                connection_id,
+                SourceRuntimeStatus(connection_id=connection_id, status="inspecting"),
+            )
+            self._schedule(registration)
+
     def _schedule(self, registration: SourceRegistration) -> None:
-        current = self._tasks.get(registration.connection_id)
+        connection_id = registration.connection_id
+        current = self._tasks.get(connection_id)
         if current is not None and not current.done():
             return
-        task = asyncio.create_task(
-            self._run_one(registration), name=f"sync:{registration.connection_id}"
-        )
-        self._tasks[registration.connection_id] = task
-        task.add_done_callback(lambda _: self._tasks.pop(registration.connection_id, None))
+        self._timing.started(connection_id)
+        task = asyncio.create_task(self._run_one(registration), name=f"sync:{connection_id}")
+        self._tasks[connection_id] = task
+        task.add_done_callback(lambda done: self._run_ended(connection_id, done))
+
+    def _run_ended(self, connection_id: str, task: asyncio.Task[None]) -> None:
+        """Forget a finished run and let the monitor look at what is due next."""
+        if self._tasks.get(connection_id) is task:
+            self._tasks.pop(connection_id, None)
+        self._wake.set()
 
     async def _run_one(self, registration: SourceRegistration) -> None:
+        """One supervised run: its crash or stall is this source's alone."""
         connection_id = registration.connection_id
         try:
             async with self._catalog.lease(connection_id) as leased:
-                if leased is None:
-                    return
-                await self._run_leased(leased)
+                more_work = False if leased is None else await self._run_leased(leased)
         except asyncio.CancelledError:
             raise
+        except _SyncStalledError:
+            await self._run_failed(connection_id, "stalled", "sync_stalled")
         except SyncError as exc:
             # A terminal failure (a revoked credential) needs a human, not a
             # retry: surface it as needs_attention, notify once, and back the
-            # source off the timer. Anything else is an ordinary failure a later
-            # tick may clear.
+            # source off the timer. Anything else is retried after a backoff.
             if is_terminal_sync_failure(exc.code):
                 await self._mark_needs_attention(connection_id, exc.code or "auth_required")
+                self._timing.completed(connection_id, more_work=False)
             else:
-                _logger.warning("connected-data source failed: %s", connection_id, exc_info=True)
-                self._statuses[connection_id] = SourceRuntimeStatus(
-                    connection_id=connection_id, status="failed", detail=exc.code or ""
-                )
-        except Exception as exc:
-            _logger.warning("connected-data source failed: %s", connection_id, exc_info=True)
-            self._statuses[connection_id] = SourceRuntimeStatus(
-                connection_id=connection_id,
-                status="failed",
-                detail=type(exc).__name__,
-            )
+                await self._run_failed(connection_id, "crashed", exc.code or "", exc)
+        except Exception as exc:  # reason: one source's crash must not reach the service
+            await self._run_failed(connection_id, "crashed", _name(exc), exc)
+        else:
+            self._timing.completed(connection_id, more_work=more_work)
 
-    async def _run_leased(self, registration: SourceRegistration) -> None:
-        connection_id = registration.connection_id
+    async def _run_failed(
+        self, connection_id: str, event: str, detail: str, exc: Exception | None = None
+    ) -> None:
+        """Mark, audit and back off one failed run; the next try comes on the timer."""
+        _logger.warning("connected-data source %s: %s", event, connection_id, exc_info=exc)
+        self._statuses[connection_id] = SourceRuntimeStatus(
+            connection_id=connection_id, status="failed", detail=detail
+        )
+        delay = self._timing.failed(connection_id)
+        await self._emit(
+            f"connected_data.sync.{event}",
+            {
+                "source": _safe_id(connection_id),
+                "error": detail if exc is None else _name(exc),
+                "failures": self._timing.failures(connection_id),
+                "retry_in_seconds": round(delay, 3),
+            },
+        )
+
+    def _stall_seconds(self) -> float:
+        """How long one run may take before it is treated as hung.
+
+        The coordinator bounds its own work by ``max_seconds``; a run that
+        outlives that plus a grace is stuck on something that never returns.
+        """
+        return self._limits.max_seconds + self._stall_grace
+
+    async def _run_leased(self, registration: SourceRegistration) -> bool:
+        """Run one source with a slot and a stall bound; True if it has more to do."""
         async with self._semaphore:
-            if self._store is None:
-                self._set_degraded(connection_id, "arcstore_unavailable")
-                return
-            if self._ingest_factory is None:
-                self._set_degraded(connection_id, "ingest_port_unavailable")
-                return
-            # Renew the credential proactively, before any read hits the provider,
-            # so a token in its renewal window is refreshed on the clock rather
-            # than only after a call returns 401. A terminal renewal failure has
-            # already marked the connection and escalated to the operator path;
-            # aborting here keeps the sync from hammering a rejected credential.
             try:
-                await self._credentials.ensure_fresh(
-                    ConnectedAccount(connection=connection_id),
-                    renew=self._credential_renew,
-                    caller_did=self._agent_did,
-                )
-            except CredentialRenewalError as exc:
-                await self._mark_needs_attention(connection_id, exc.error_code)
-                return
-            selected = self._selected_resources.get(connection_id)
-            if selected is None and self._resource_store is not None:
-                selected = await self._resource_store.get(connection_id)
-            if selected:
-                await registration.adapter.select_source_resources(
-                    SelectSourceResources(connection_id=connection_id, resource_ids=selected)
-                )
-            raw_description = await registration.adapter.inspect_source(
-                InspectSource(connection_id=connection_id)
+                async with asyncio.timeout(self._stall_seconds()) as guard:
+                    return await self._sync_leased(registration)
+            except TimeoutError as exc:
+                if guard.expired():
+                    raise _SyncStalledError(registration.connection_id) from exc
+                raise
+
+    async def _sync_leased(self, registration: SourceRegistration) -> bool:
+        connection_id = registration.connection_id
+        if self._store is None:
+            self._set_degraded(connection_id, "arcstore_unavailable")
+            return False
+        if self._ingest_factory is None:
+            self._set_degraded(connection_id, "ingest_port_unavailable")
+            return False
+        # Renew the credential proactively, before any read hits the provider,
+        # so a token in its renewal window is refreshed on the clock rather
+        # than only after a call returns 401. A terminal renewal failure has
+        # already marked the connection and escalated to the operator path;
+        # aborting here keeps the sync from hammering a rejected credential.
+        try:
+            await self._credentials.ensure_fresh(
+                ConnectedAccount(connection=connection_id),
+                renew=self._credential_renew,
+                caller_did=self._agent_did,
             )
-            candidate = self._ingest_factory(raw_description)
-            ingest = await candidate if inspect.isawaitable(candidate) else candidate
-            description = await self._with_generation(raw_description, ingest)
-            self._descriptions[connection_id] = description
-            self._statuses[connection_id] = SourceRuntimeStatus(
-                connection_id=connection_id,
-                source_id=_canonical_source_id(ingest, description),
-                status="syncing",
-                description=description,
+        except CredentialRenewalError as exc:
+            await self._mark_needs_attention(connection_id, exc.error_code)
+            return False
+        selected = self._selected_resources.get(connection_id)
+        if selected is None and self._resource_store is not None:
+            selected = await self._resource_store.get(connection_id)
+        if selected:
+            await registration.adapter.select_source_resources(
+                SelectSourceResources(connection_id=connection_id, resource_ids=selected)
             )
-            result = await ConnectedDataCoordinator(
-                registration.adapter,
-                ingest,
-                self._store,
-                audit=self._audit,
-            ).run(
-                description,
-                agent_did=self._agent_did,
-                owner_id=f"{self._agent_did}:{uuid.uuid4().hex}",
-                limits=self._limits,
-            )
-            self._statuses[connection_id] = SourceRuntimeStatus(
-                connection_id=connection_id,
-                source_id=_canonical_source_id(ingest, description),
-                status=result.status.value,
-                description=description,
-                state=result,
-                documents_indexed=await self._documents_indexed(ingest, description),
-            )
-            # A run that completed clears any prior needs-attention backoff.
-            self._health.clear(connection_id)
+        raw_description = await registration.adapter.inspect_source(
+            InspectSource(connection_id=connection_id)
+        )
+        candidate = self._ingest_factory(raw_description)
+        ingest = await candidate if inspect.isawaitable(candidate) else candidate
+        description = await self._with_generation(raw_description, ingest)
+        self._descriptions[connection_id] = description
+        self._statuses[connection_id] = SourceRuntimeStatus(
+            connection_id=connection_id,
+            source_id=_canonical_source_id(ingest, description),
+            status="syncing",
+            description=description,
+        )
+        coordinator = ConnectedDataCoordinator(
+            registration.adapter,
+            ingest,
+            self._store,
+            audit=self._audit,
+        )
+        result = await coordinator.run(
+            description,
+            agent_did=self._agent_did,
+            owner_id=f"{self._agent_did}:{uuid.uuid4().hex}",
+            limits=self._limits,
+        )
+        self._statuses[connection_id] = SourceRuntimeStatus(
+            connection_id=connection_id,
+            source_id=_canonical_source_id(ingest, description),
+            status=result.status.value,
+            description=description,
+            state=result,
+            documents_indexed=await self._documents_indexed(ingest, description),
+        )
+        # A run that completed clears any prior needs-attention backoff.
+        self._health.clear(connection_id)
+        return result.status is SyncStatus.COMPLETE and coordinator.stopped_at_ceiling
 
     async def _inspect_registration(self, registration: SourceRegistration) -> None:
         """Populate the safe descriptor before the operator sees a blank source row."""
@@ -912,6 +981,17 @@ class ConnectedDataService:
         if first:
             await self._notify_operator(connection_id, reason)
 
+    async def _emit(self, action: str, payload: dict[str, Any]) -> None:
+        """Audit through the module's callback; an audit failure never stops a sync."""
+        if self._audit is None:
+            return
+        try:
+            result = self._audit(action, payload)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # reason: AU-5 — an audit sink failure is logged, not raised
+            _logger.warning("connected-data audit emit failed: %s", action, exc_info=True)
+
     async def _notify_operator(self, connection_id: str, reason: str) -> None:
         """Tell the operator a connection needs a human — never the agent's chat."""
         _logger.warning(
@@ -963,6 +1043,19 @@ class ConnectedDataService:
 def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:
     canonical = getattr(ingest, "canonical_source_id", None)
     return str(canonical(description)) if callable(canonical) else ""
+
+
+class _SyncStalledError(RuntimeError):
+    """A run outlived its time bound plus grace: it is stuck, not slow."""
+
+
+def _name(exc: BaseException) -> str:
+    return type(exc).__name__
+
+
+def _safe_id(value: str) -> str:
+    """A non-reversible audit id; connection names can carry account detail."""
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
 __all__ = [

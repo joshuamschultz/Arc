@@ -434,6 +434,11 @@ class ArcMemoryIngestAdapter(IngestPort):
             # entire account permanently `failed`.
             raise ObjectNotIngestibleError(type(refusal).__name__, str(refusal)) from refusal
 
+    async def finish_sync(self, source: SourceDescription) -> None:
+        """Refresh source-wide derived state (routing index, folders) once per run."""
+        module = import_module("arcmemory.connected_data")
+        await self._connected_service().finish_sync(self._source_model(module, source))
+
     async def reset_source(self, source: SourceDescription) -> None:
         """Clear retrievable source artifacts without discarding approved routing."""
         module = import_module("arcmemory.connected_data")
