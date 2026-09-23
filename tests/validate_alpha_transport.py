@@ -97,7 +97,7 @@ def main() -> int:
     selected = tuple(item for item in CHECKS if not args.check or item.name in args.check)
     results: list[dict[str, object]] = []
     for check in selected:
-        completed = subprocess.run(  # noqa: S603 — commands are immutable release-matrix entries
+        completed = subprocess.run(
             (sys.executable, *check.command),
             cwd=ROOT,
             check=False,

@@ -148,6 +148,14 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 # IS the interface (a deploy gate reads it), so print is correct here, and the
 # one URL they open is a fixed localhost dashboard address.
 "deploy/**/*.py" = ["T201", "S310"]
+# Skill eval files are pytest tests that live beside their skill payload, outside
+# any tests/ directory, so the tests-wide assert allowance does not reach them.
+"blueprints/**/evals/test_*.py" = ["S101"]
+# Test-suite runners and transport validators are CLIs: their stdout/stderr IS
+# the interface a gate or an operator reads, so print is correct (same reason as
+# deploy/**).
+"tests/run_*.py" = ["T201"]
+"tests/validate_*.py" = ["T201"]
 # SBOM report generator: emits a wide-table markdown doc with unicode symbols
 # (arrows, ×) and a status print — line-length/ambiguous-unicode/print lints
 # do not apply to generated report content.

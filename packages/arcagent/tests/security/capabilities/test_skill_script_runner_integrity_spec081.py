@@ -53,13 +53,12 @@ from arcagent.capabilities import artifact_signing
 # NOTE: ``ScriptIntegrityError`` is EXPECTED to be missing in the RED wave — the
 # fix is not built yet. The ImportError at collection is the correct feature-absent
 # signal; the names below define the interface the GREEN coder must implement.
-from arcagent.capabilities.skill_script_runner import (  # noqa: E402
+from arcagent.capabilities.skill_script_runner import (
     ScriptIntegrityError,
     SkillScriptError,
     SkillScriptResult,
     SkillScriptRunner,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Test doubles — recording audit sink + boundary-faithful arcrun seam.
@@ -81,9 +80,7 @@ def _make_fake_run_shell(captured: dict[str, Any]) -> Any:
         captured["calls"] = captured.get("calls", 0) + 1
         captured["command"] = command
         captured.update(kwargs)
-        return json.dumps(
-            {"stdout": "ran\n", "stderr": "", "exit_code": 0, "duration_ms": 1.0}
-        )
+        return json.dumps({"stdout": "ran\n", "stderr": "", "exit_code": 0, "duration_ms": 1.0})
 
     return fake_run_shell
 

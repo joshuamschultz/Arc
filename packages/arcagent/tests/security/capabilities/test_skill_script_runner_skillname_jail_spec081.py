@@ -58,7 +58,6 @@ from arcagent.capabilities.skill_script_runner import (
     SkillScriptRunner,
 )
 
-
 # --------------------------------------------------------------------------- #
 # Test doubles — recording audit sink + boundary-faithful arcrun seam (matches
 # the style of the sibling integrity/runner suites so the mock story is identical).
@@ -80,9 +79,7 @@ def _make_fake_run_shell(captured: dict[str, Any]) -> Any:
         captured["calls"] = captured.get("calls", 0) + 1
         captured["command"] = command
         captured.update(kwargs)
-        return json.dumps(
-            {"stdout": "ran\n", "stderr": "", "exit_code": 0, "duration_ms": 1.0}
-        )
+        return json.dumps({"stdout": "ran\n", "stderr": "", "exit_code": 0, "duration_ms": 1.0})
 
     return fake_run_shell
 
@@ -135,7 +132,9 @@ def _sign_script(skill_folder: Path, script_relpath: str = "run.py") -> frozense
 
 def _assert_refused_before_backend(captured: dict[str, Any], sink: _SpySink | None) -> None:
     """The refusal happened BEFORE any backend selection or execution."""
-    assert captured.get("calls", 0) == 0, "run_shell must never be called on a jail/integrity refusal"
+    assert captured.get("calls", 0) == 0, (
+        "run_shell must never be called on a jail/integrity refusal"
+    )
     assert "resolve" not in captured, "no backend may be selected on a jail/integrity refusal"
     if sink is not None:
         allow = [
