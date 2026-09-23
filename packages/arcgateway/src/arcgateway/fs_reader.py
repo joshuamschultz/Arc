@@ -27,9 +27,12 @@ future spec without API churn (D-002).
 from __future__ import annotations
 
 import base64
+import errno
 import logging
 import mimetypes
-from collections.abc import Iterator
+import os
+import stat
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -78,6 +81,10 @@ class FileTooLargeError(ValueError):
     """Raised when a target file exceeds :data:`MAX_READ_BYTES`."""
 
 
+class ReadAuthorizationError(PermissionError):
+    """An opened file was refused before any bytes were read."""
+
+
 @dataclass(frozen=True)
 class FileEntry:
     """One entry in a tree listing."""
@@ -122,6 +129,7 @@ def read_file(
     agent_root: Path | None,
     rel_path: str,
     caller_did: str,
+    authorize_opened: Callable[[os.stat_result, os.stat_result], bool] | None = None,
 ) -> FileContent:
     """Read a single file under the agent root.
 
@@ -135,6 +143,8 @@ def read_file(
             slash. Traversal attempts (``..``, absolute, symlink escape) raise
             :class:`PathTraversalError`.
         caller_did: DID of the caller; recorded in the audit event.
+        authorize_opened: Optional decision over pinned root/file metadata,
+            called before file bytes are read.
 
     Returns:
         :class:`FileContent` with the file's content + metadata.
@@ -144,53 +154,64 @@ def read_file(
         PathTraversalError: Path escapes the agent root.
         FileNotFoundError: Target does not exist or is not a regular file.
         FileTooLargeError: Target exceeds :data:`MAX_READ_BYTES`.
+        ReadAuthorizationError: Opened root or file was not authorized.
     """
     root = _resolve_root(scope, agent_root)
-    target = _validate_path(root, rel_path)
-
+    audit_target = f"{scope}:{agent_id}:{rel_path}"
+    audit_extra = {"scope": scope, "agent_id": agent_id, "path": rel_path}
+    try:
+        target = _validate_path(root, rel_path)
+        content_bytes, file_stat = _read_regular_nofollow(root, rel_path, authorize_opened)
+    except (PathTraversalError, FileTooLargeError, FileNotFoundError, ReadAuthorizationError):
+        emit_event(
+            action="gateway.fs.read",
+            target=audit_target,
+            outcome="deny",
+            actor_did=caller_did,
+            extra=audit_extra,
+        )
+        raise
+    except Exception:
+        emit_event(
+            action="gateway.fs.read",
+            target=audit_target,
+            outcome="error",
+            actor_did=caller_did,
+            extra=audit_extra,
+        )
+        raise
     emit_event(
         action="gateway.fs.read",
-        target=f"{scope}:{agent_id}:{rel_path}",
+        target=audit_target,
         outcome="allow",
-        extra={
-            "scope": scope,
-            "agent_id": agent_id,
-            "path": rel_path,
-            "caller_did": caller_did,
-        },
+        actor_did=caller_did,
+        extra=audit_extra,
     )
-
-    if not target.exists() or not target.is_file():
-        raise FileNotFoundError(rel_path)
-
-    stat = target.stat()
-    if stat.st_size > MAX_READ_BYTES:
-        raise FileTooLargeError(f"{rel_path}: {stat.st_size} > {MAX_READ_BYTES}")
 
     suffix = target.suffix.lower()
     if suffix in _TEXT_SUFFIXES:
         return FileContent(
             path=rel_path,
-            size=stat.st_size,
-            mtime=stat.st_mtime,
-            content=target.read_text(encoding="utf-8", errors="replace"),
+            size=file_stat.st_size,
+            mtime=file_stat.st_mtime,
+            content=content_bytes.decode("utf-8", errors="replace"),
             content_type="text",
             mime=_mime_of(target),
         )
     if suffix in _JSON_SUFFIXES:
         return FileContent(
             path=rel_path,
-            size=stat.st_size,
-            mtime=stat.st_mtime,
-            content=target.read_text(encoding="utf-8"),
+            size=file_stat.st_size,
+            mtime=file_stat.st_mtime,
+            content=content_bytes.decode("utf-8"),
             content_type="json",
             mime=_mime_of(target),
         )
     return FileContent(
         path=rel_path,
-        size=stat.st_size,
-        mtime=stat.st_mtime,
-        content=base64.b64encode(target.read_bytes()).decode("ascii"),
+        size=file_stat.st_size,
+        mtime=file_stat.st_mtime,
+        content=base64.b64encode(content_bytes).decode("ascii"),
         content_type="binary",
         mime=_mime_of(target),
     )
@@ -269,7 +290,7 @@ def _resolve_root(scope: Scope, agent_root: Path | None) -> Path:
     if scope == "agent":
         if agent_root is None:
             raise ValueError("scope='agent' requires agent_root")
-        return agent_root.resolve()
+        return Path(agent_root).absolute()
     if scope in ("team", "shared"):
         raise NotImplementedError(
             f"scope={scope!r} is not implemented (forward-compat placeholder)"
@@ -287,6 +308,59 @@ def _validate_path(root: Path, rel: str) -> Path:
     except ValueError as exc:
         raise PathTraversalError(f"path escapes root: {rel}") from exc
     return candidate
+
+
+def _read_regular_nofollow(
+    root: Path,
+    rel: str,
+    authorize_opened: Callable[[os.stat_result, os.stat_result], bool] | None = None,
+) -> tuple[bytes, os.stat_result]:
+    """Read from one descriptor after opening every path component without symlinks."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise RuntimeError("secure file reads are unavailable on this platform")
+    parts = Path(rel).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise PathTraversalError("unsafe relative path")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    descriptors: list[int] = []
+    try:
+        absolute = root.absolute()
+        descriptors.append(os.open(absolute.anchor, flags | os.O_DIRECTORY))
+        for part in absolute.parts[1:]:
+            descriptors.append(os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptors[-1]))
+        root_stat = os.fstat(descriptors[-1])
+        for part in parts[:-1]:
+            descriptors.append(os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptors[-1]))
+        descriptor = os.open(parts[-1], flags | os.O_NONBLOCK, dir_fd=descriptors[-1])
+        descriptors.append(descriptor)
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise FileNotFoundError(rel)
+        if authorize_opened is not None and authorize_opened(root_stat, file_stat) is not True:
+            raise ReadAuthorizationError("opened file access denied")
+        if file_stat.st_size > MAX_READ_BYTES:
+            raise FileTooLargeError(f"{rel}: {file_stat.st_size} > {MAX_READ_BYTES}")
+        chunks: list[bytes] = []
+        remaining = MAX_READ_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        if len(content) > MAX_READ_BYTES:
+            raise FileTooLargeError(f"{rel}: content exceeds {MAX_READ_BYTES}")
+        return content, file_stat
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise PathTraversalError("symlinked file paths are unavailable") from exc
+        if exc.errno == errno.ENOENT:
+            raise FileNotFoundError(rel) from exc
+        raise
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def _walk(base: Path, max_depth: int, depth: int = 0) -> Iterator[Path]:

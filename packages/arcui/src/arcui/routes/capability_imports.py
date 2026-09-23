@@ -72,11 +72,11 @@ def _json_error(exc: Exception) -> JSONResponse:
     return _error(message, 422)
 
 
-def _operator_signer() -> Signer:
+def _operator_signer(request: Request) -> Signer:
     """Resolve the deployment operator signer through the existing trust seam."""
-    from arcui.routes.trust import _operator_signer as resolve
+    from arcui.routes.trust import operator_signer_for_request
 
-    return resolve()
+    return operator_signer_for_request(request)
 
 
 def _operator_did(signer: Signer) -> str:
@@ -94,9 +94,9 @@ def _review_payload(
     raise RuntimeError("capability import review is unavailable")
 
 
-async def _write_upload(upload: UploadFile) -> Path:
+async def _write_upload(upload: UploadFile, *, suffix: str = ".zip") -> Path:
     """Copy a multipart body to a temporary file without blocking the loop."""
-    descriptor, raw_path = tempfile.mkstemp(prefix="arc-capability-import-", suffix=".zip")
+    descriptor, raw_path = tempfile.mkstemp(prefix="arc-capability-import-", suffix=suffix)
     path = Path(raw_path)
     target = None
     try:
@@ -149,13 +149,14 @@ async def upload_import(request: Request) -> JSONResponse:
     if not isinstance(upload, UploadFile):
         return _error("multipart field 'file' is required", 400)
     filename = str(upload.filename or "")
-    if not filename.lower().endswith(".zip"):
-        return _error("capability imports must be ZIP archives", 422)
+    is_skill = filename.lower() == "skill.md"
+    if not (filename.lower().endswith(".zip") or is_skill):
+        return _error("choose a ZIP archive or SKILL.md", 422)
 
     target = f"capability_import:{agent_id}"
     temporary: Path | None = None
     try:
-        temporary = await _write_upload(upload)
+        temporary = await _write_upload(upload, suffix=".md" if is_skill else ".zip")
         limits = arcagent.CapabilityImportLimits()
         capabilities_root = workspace / "capabilities"
         service = arcagent.CapabilityImportService(capabilities_root)
@@ -312,7 +313,7 @@ async def promote_import(request: Request) -> JSONResponse:
     if staging is None:
         return _error("capability_import_not_found", 404)
     try:
-        signer = await asyncio.to_thread(_operator_signer)
+        signer = await asyncio.to_thread(_operator_signer, request)
     except (OSError, RuntimeError, ValueError) as exc:
         emit_mutation_audit(
             request,
@@ -377,7 +378,7 @@ async def revoke_import(request: Request) -> JSONResponse:
     if staging is None:
         return _error("capability_import_not_found", 404)
     try:
-        signer = await asyncio.to_thread(_operator_signer)
+        signer = await asyncio.to_thread(_operator_signer, request)
     except (OSError, RuntimeError, ValueError) as exc:
         emit_mutation_audit(
             request,

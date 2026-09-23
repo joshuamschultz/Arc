@@ -87,6 +87,27 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   return (await res.json()) as T
 }
 
+/** Authenticated bounded GET for server-sanitized text documents. */
+export async function apiGetText(path: string, signal?: AbortSignal): Promise<string> {
+  let res: Response
+  try {
+    res = await fetch(path, {
+      headers: authHeaders(),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError(408, 'Request timed out. Check the connection and try refreshing.')
+    }
+    throw error
+  }
+  if (!res.ok) {
+    const parsed = await parseError(res)
+    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
+  }
+  return res.text()
+}
+
 async function apiSend<T>(
   method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,

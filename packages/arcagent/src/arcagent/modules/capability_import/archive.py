@@ -20,6 +20,8 @@ from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from typing import IO
 
+import yaml
+
 from arcagent.modules.capability_import.errors import (
     CapabilityImportLayoutError,
     CapabilityImportLimitError,
@@ -135,8 +137,28 @@ def _preflight(source: Path, limits: CapabilityImportLimits) -> tuple[list[_Cand
         raise CapabilityImportSourceError("source must be a regular ZIP file or directory")
     if source.stat().st_size > limits.max_compressed_bytes:
         raise CapabilityImportLimitError("compressed source exceeds configured limit")
+    if source.suffix.lower() == ".md":
+        size = source.stat().st_size
+        _check_file_size(size, limits)
+        if size > 1024 * 1024:
+            raise CapabilityImportLimitError("plain SKILL.md exceeds 1 MiB")
+        try:
+            text = source.read_text(encoding="utf-8")
+            if not text.startswith("---\n") or "\n---\n" not in text:
+                raise ValueError("missing frontmatter")
+            header = text.split("\n---\n", 1)[0][4:]
+            if len(header.encode("utf-8")) > 16 * 1024:
+                raise ValueError("frontmatter exceeds 16 KiB")
+            metadata = yaml.safe_load(header)
+            name = metadata.get("name") if isinstance(metadata, dict) else None
+        except (OSError, UnicodeError, yaml.YAMLError, ValueError) as exc:
+            raise CapabilityImportLayoutError("SKILL.md has invalid frontmatter") from exc
+        if not isinstance(name, str) or not _safe_name(name):
+            raise CapabilityImportLayoutError("SKILL.md needs a safe frontmatter name")
+        path = PurePosixPath("skills", name, "SKILL.md")
+        return [_Candidate(path, size, size, source)], _file_digest(source), size
     if not zipfile.is_zipfile(source):
-        raise CapabilityImportSourceError("source must be a ZIP file or directory")
+        raise CapabilityImportSourceError("source must be a ZIP, SKILL.md, or directory")
     return _preflight_zip(source, limits)
 
 
@@ -145,6 +167,8 @@ def _preflight_zip(
 ) -> tuple[list[_Candidate], str, int]:
     try:
         with zipfile.ZipFile(source) as archive:
+            if len(archive.infolist()) > limits.max_files:
+                raise CapabilityImportLimitError("archive exceeds configured entry count")
             candidates: list[_Candidate] = []
             seen: set[str] = set()
             compressed = 0
@@ -174,22 +198,35 @@ def _preflight_directory(source: Path, limits: CapabilityImportLimits) -> list[_
     candidates: list[_Candidate] = []
     seen: set[str] = set()
     total = 0
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source).as_posix()
-        status = path.lstat()
-        if stat.S_ISDIR(status.st_mode):
-            _safe_path(relative, seen, limits=limits, directory=True)
-            continue
-        if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
-            raise CapabilityImportSourceError(
-                f"source tree contains a non-regular or linked file: {relative}"
-            )
-        normalized = _safe_path(relative, seen, limits=limits)
-        _check_file_size(status.st_size, limits)
-        total += status.st_size
-        if total > limits.max_expanded_bytes:
-            raise CapabilityImportLimitError("source tree exceeds configured expanded limit")
-        candidates.append(_Candidate(normalized, status.st_size, status.st_size, path))
+    entries = 0
+    pending = [source]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as children:
+            for child in children:
+                entries += 1
+                if entries > limits.max_files:
+                    raise CapabilityImportLimitError("source exceeds configured entry count")
+                path = Path(child.path)
+                relative = path.relative_to(source).as_posix()
+                status = child.stat(follow_symlinks=False)
+                if stat.S_ISDIR(status.st_mode):
+                    _safe_path(relative, seen, limits=limits, directory=True)
+                    pending.append(path)
+                    continue
+                if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
+                    raise CapabilityImportSourceError(
+                        f"source tree contains a non-regular or linked file: {relative}"
+                    )
+                normalized = _safe_path(relative, seen, limits=limits)
+                _check_file_size(status.st_size, limits)
+                total += status.st_size
+                if total > limits.max_expanded_bytes:
+                    raise CapabilityImportLimitError(
+                        "source tree exceeds configured expanded limit"
+                    )
+                candidates.append(_Candidate(normalized, status.st_size, status.st_size, path))
+    candidates.sort(key=lambda candidate: candidate.path.as_posix())
     return _finalize_candidates(candidates, limits)
 
 
@@ -353,7 +390,11 @@ def _reject_opaque_content(source: Path, candidates: Iterable[_Candidate]) -> No
     rejected before anything is staged. Raises a typed layout error naming the
     offending path so review surfaces can report it.
     """
-    archive_context = zipfile.ZipFile(source) if source.is_file() else nullcontext(None)
+    archive_context = (
+        nullcontext(None)
+        if source.is_dir() or source.suffix.lower() == ".md"
+        else zipfile.ZipFile(source)
+    )
     with archive_context as archive:
         for candidate in candidates:
             if archive is None:
@@ -392,7 +433,11 @@ def _copy_candidates(
 ) -> list[CapabilityImportFile]:
     files: list[CapabilityImportFile] = []
     copied = 0
-    archive_context = zipfile.ZipFile(source) if source.is_file() else nullcontext(None)
+    archive_context = (
+        nullcontext(None)
+        if source.is_dir() or source.suffix.lower() == ".md"
+        else zipfile.ZipFile(source)
+    )
     with archive_context as archive:
         for candidate in candidates:
             target = destination.joinpath(*candidate.path.parts)

@@ -70,6 +70,7 @@ from arcui.routes.agent_detail.prompts import (
     put_prompt,
     put_rubric,
 )
+from arcui.routes.agent_detail.report_preview import get_report_preview
 from arcui.routes.agent_detail.schedules_write import patch_schedule
 from arcui.routes.agent_detail.sessions import (
     get_channels,
@@ -86,7 +87,7 @@ from arcui.routes.agent_detail.skill_versions import (
     post_skill_promote_golden,
     post_skill_rollback,
 )
-from arcui.routes.agent_detail.skills import get_skill_detail, get_skills
+from arcui.routes.agent_detail.skills import get_skill_detail, get_skills, put_skill_revision
 from arcui.routes.agent_detail.telemetry import get_audit, get_stats, get_traces
 from arcui.routes.agent_detail.tools import get_tool_detail, get_tools
 
@@ -96,10 +97,12 @@ routes = [
     Route("/api/agents/{id}/config/{file}", patch_config_file, methods=["PATCH"]),
     Route("/api/agents/{id}/files/tree", get_files_tree, methods=["GET"]),
     Route("/api/agents/{id}/files/read", get_file_read, methods=["GET"]),
+    Route("/api/agents/{id}/files/report", get_report_preview, methods=["GET"]),
     Route("/api/agents/{id}/files/read", put_file_write, methods=["PUT"]),
     Route("/api/agents/{id}/files/read", delete_file, methods=["DELETE"]),
     Route("/api/agents/{id}/skills", get_skills, methods=["GET"]),
     Route("/api/agents/{id}/skills/{skill_name}/detail", get_skill_detail, methods=["GET"]),
+    Route("/api/agents/{id}/skills/{skill_name}/revision", put_skill_revision, methods=["PUT"]),
     Route("/api/agents/{id}/skills/{skill_name}/evals", get_skill_evals, methods=["GET"]),
     Route("/api/agents/{id}/skills/{skill_name}/versions", get_skill_versions, methods=["GET"]),
     Route(

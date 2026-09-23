@@ -110,6 +110,7 @@ def validate_skill_folder(
     scan_root: str,
     *,
     known_tools: set[str] | None = None,
+    verified_content: str | None = None,
 ) -> SkillValidationResult:
     """Parse ``folder/SKILL.md`` and validate. Returns entry + diagnostics.
 
@@ -123,7 +124,9 @@ def validate_skill_folder(
         result.errors.append(SkillValidationError(code="missing_skill_md", detail=str(skill_md)))
         return result
 
-    text = skill_md.read_text(encoding="utf-8")
+    text = (
+        verified_content if verified_content is not None else skill_md.read_text(encoding="utf-8")
+    )
     try:
         fm, body = _parse_skill_md(text)
     except ValueError as exc:
@@ -191,6 +194,8 @@ def _parse_skill_md(text: str) -> tuple[dict[str, Any], str]:
     match = _FRONTMATTER_RE.match(text)
     if match is None:
         raise ValueError("has no leading --- frontmatter block")
+    if len(match.group(1).encode("utf-8")) > 16 * 1024:
+        raise ValueError("frontmatter exceeds 16 KiB")
     try:
         fm = yaml.safe_load(match.group(1)) or {}
     except yaml.YAMLError as exc:

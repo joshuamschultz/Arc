@@ -51,6 +51,15 @@ ok()   { echo "  ✓ $*"; }
 warn() { echo "  ! $*" >&2; }
 fail() { echo "  ✗ $*" >&2; exit 1; }
 
+if [ "${ARC_HOSTED_SETUP:-0}" = "1" ]; then
+  mkdir -p "$ARC_CONFIG_DIR" "$TEAM_ROOT"
+  exec "$ARC_BIN" ui start \
+    --host 0.0.0.0 \
+    --port "$UI_PORT" \
+    --team-root "$TEAM_ROOT" \
+    --no-browser
+fi
+
 # --- 1. preflight: degrade loudly, never silently -------------------------
 # A missing embedder makes semantic recall and consolidation dedup a no-op
 # that looks exactly like "working" from the outside. Say so at startup.
@@ -189,6 +198,4 @@ exec "$ARC_BIN" ui start \
   --port "$UI_PORT" \
   --team-root "$TEAM_ROOT" \
   --gateway-config "$ARC_CONFIG_DIR/gateway.toml" \
-  --no-browser \
-  --viewer-token "$VIEWER_TOKEN" \
-  --operator-token "$OPERATOR_TOKEN"
+  --no-browser

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+
 import pytest
+from arctrust import AnchorHead, NullSink, UserStore
+from nacl.signing import SigningKey
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
@@ -11,13 +15,63 @@ from arcui.server import create_app
 GOOD = "correct-horse-battery"
 
 
-@pytest.fixture
-def users(tmp_path, monkeypatch):
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    from arctrust.paths import users_file
-    from arctrust.users import OPERATOR, UserStore
+class FakeIssuer:
+    def __init__(self) -> None:
+        self.keys: dict[str, SigningKey] = {}
 
-    store = UserStore(users_file(tmp_path))
+    def create_user_key(self, ref: str) -> bytes:
+        self.keys[ref] = SigningKey.generate()
+        return self.public_key(ref)
+
+    def public_key(self, ref: str) -> bytes:
+        return bytes(self.keys[ref].verify_key)
+
+
+class FakeAnchor:
+    scope = "test/accounts"
+
+    def __init__(self) -> None:
+        self.head: AnchorHead | None = None
+
+    def latest(self) -> AnchorHead | None:
+        return self.head
+
+    def compare_and_advance(self, expected: AnchorHead | None, digest: str, intent: str) -> AnchorHead:
+        if expected != self.head:
+            raise RuntimeError("stale")
+        self.head = AnchorHead(scope=self.scope, version=1 if expected is None else expected.version + 1,
+                               digest=digest, previous_digest=None if expected is None else expected.digest,
+                               intent=intent)
+        return self.head
+
+
+class FakeCipher:
+    def seal(self, payload: bytes) -> str:
+        return base64.b64encode(payload).decode()
+
+    def open(self, sealed: str) -> bytes:
+        return base64.b64decode(sealed)
+
+
+@pytest.fixture
+def authority(tmp_path):
+    path = tmp_path / "state" / "users.json"
+    path.parent.mkdir(mode=0o700)
+    opts = dict(issuer=FakeIssuer(), anchor=FakeAnchor(), cipher=FakeCipher(),
+                audit_sink=NullSink(), actor_did="did:arc:test:user/audit")
+
+    def factory() -> UserStore:
+        return UserStore(path, **opts)
+
+    return factory
+
+
+@pytest.fixture
+def users(tmp_path, monkeypatch, authority):
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    from arctrust.users import OPERATOR
+
+    store = authority()
     store.add("boss@example.com", GOOD, roles=(OPERATOR,))
     store.add("watcher@example.com", GOOD)
     return store
@@ -29,8 +83,8 @@ def auth():
 
 
 @pytest.fixture
-def client(auth, users):
-    return TestClient(create_app(auth_config=auth))
+def client(auth, users, authority):
+    return TestClient(create_app(auth_config=auth, user_store_factory=authority))
 
 
 def test_login_returns_a_session_that_names_the_person(client):
@@ -118,9 +172,9 @@ def test_the_login_screen_can_ask_whether_accounts_exist(client):
     assert client.get("/api/auth/mode").json() == {"login_available": True}
 
 
-def test_a_fresh_install_reports_no_accounts(auth, tmp_path, monkeypatch):
+def test_a_fresh_install_reports_no_accounts(auth, tmp_path, monkeypatch, authority):
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty"))
-    fresh = TestClient(create_app(auth_config=auth))
+    fresh = TestClient(create_app(auth_config=auth, user_store_factory=authority))
     assert fresh.get("/api/auth/mode").json() == {"login_available": False}
 
 
@@ -197,6 +251,36 @@ def test_a_surface_id_already_taken_is_refused(client):
     )
     assert resp.status_code == 400
     assert "watcher@example.com" in resp.json()["error"]
+
+
+def test_operator_downgrade_updates_existing_session(client, authority):
+    token = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()["token"]
+    authority().set_roles("boss@example.com", ("viewer",))
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["role"] == "viewer"
+
+
+def test_disabled_user_session_is_revoked(client, authority):
+    token = client.post(
+        "/api/auth/login", json={"email": "watcher@example.com", "password": GOOD}
+    ).json()["token"]
+    authority().set_disabled("watcher@example.com", True)
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_authority_outage_fails_closed_for_existing_session(client, authority, monkeypatch):
+    token = client.post(
+        "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
+    ).json()["token"]
+    anchor = authority().__dict__["_anchor"]
+    monkeypatch.setattr(anchor, "latest", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 503
+    assert "offline" not in response.text
 
 
 def test_a_static_token_has_no_profile_to_edit(client):

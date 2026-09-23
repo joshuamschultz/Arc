@@ -76,6 +76,7 @@ class SkillEntry:
     location: Path
     scan_root: str
     model_hint: str | None = None
+    read_current: Callable[[], str | None] | None = None
 
 
 @dataclass(frozen=True)

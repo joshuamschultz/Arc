@@ -159,8 +159,8 @@ export function useCapabilityImport(agentId: string | null) {
         setState({ status: 'rejected', review: null, error: 'Choose an agent first.' })
         return
       }
-      if (!file.name.toLowerCase().endsWith('.zip')) {
-        setState({ status: 'rejected', review: null, error: 'Choose a ZIP archive.' })
+      if (!file.name.toLowerCase().endsWith('.zip') && file.name !== 'SKILL.md') {
+        setState({ status: 'rejected', review: null, error: 'Choose a ZIP archive or SKILL.md.' })
         return
       }
       abortRef.current?.abort()

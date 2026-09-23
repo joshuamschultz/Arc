@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from arcagent.modules.capability_import.archive import intake
+from arcagent.modules.capability_import.errors import CapabilityImportLimitError
 from arcagent.modules.capability_import.models import CapabilityImportLimits
 
 
@@ -21,6 +22,27 @@ def _zip(path: Path, entries: dict[str, bytes]) -> Path:
 
 def _skill() -> bytes:
     return b"---\nname: imported\ndescription: imported skill\n---\n## Steps\nUse it.\n"
+
+
+def test_zip_refuses_excessive_empty_directories(tmp_path: Path) -> None:
+    source = tmp_path / "many-dirs.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("skills/imported/SKILL.md", _skill())
+        for number in range(513):
+            archive.writestr(f"skills/imported/references/{number}/", b"")
+    with pytest.raises(CapabilityImportLimitError):
+        intake(source, tmp_path / "agent" / "capabilities")
+
+
+def test_directory_refuses_excessive_empty_directories(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    folder = source / "skills" / "imported"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_bytes(_skill())
+    for number in range(513):
+        (folder / "references" / str(number)).mkdir(parents=True)
+    with pytest.raises(CapabilityImportLimitError):
+        intake(source, tmp_path / "agent" / "capabilities")
 
 
 def test_intake_extracts_only_supported_layout_to_content_addressed_roots(tmp_path: Path) -> None:

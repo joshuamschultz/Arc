@@ -16,15 +16,19 @@ import argparse
 import getpass
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 from arccli.formatting import print_table
 
 
-def _store(args: argparse.Namespace):  # type: ignore[no-untyped-def]  # reason: UserStore is a lazy import
-    from arctrust.users import UserStore, default_users_path
+def _store(args: argparse.Namespace):  # type: ignore[no-untyped-def]  # reason: optional injected authority
+    from arctrust.users import default_users_path
 
+    factory = getattr(args, "user_store_factory", None)
+    if factory is None:
+        _fail("account authority is unavailable; configure a Vault-backed user store")
     path = getattr(args, "file", None)
-    return UserStore(Path(path).expanduser() if path else default_users_path())
+    return factory(Path(path).expanduser() if path else default_users_path())
 
 
 def _read_password(args: argparse.Namespace, *, confirm: bool = True) -> str:
@@ -62,7 +66,7 @@ def _format_pairs(pairings: dict[str, str]) -> str:
     return ", ".join(f"{k}:{v}" for k, v in sorted(pairings.items())) or "—"
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     sys.stderr.write(f"Error: {message}\n")
     raise SystemExit(1)
 

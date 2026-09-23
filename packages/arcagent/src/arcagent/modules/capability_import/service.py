@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ from arctrust import (
     AuditSink,
     Signer,
     approve,
+    disapprove,
     emit,
     load_validators,
     persist_validators,
@@ -347,10 +349,11 @@ class CapabilityImportService:
                 moved.append(final_sidecar)
             pin_key(config_path, public_key=signer.public_key)
             for path in final_targets:
+                relative = path.relative_to(self._root).as_posix()
                 approve(
                     config_path,
-                    name=pin_name_for_path(path),
-                    source=path.read_text(encoding="utf-8"),
+                    name=approval_name(path, relative),
+                    source=approval_source(path.read_bytes()),
                     approver=operator_did,
                     timestamp=datetime.now(UTC).isoformat(),
                 )
@@ -425,6 +428,11 @@ class CapabilityImportService:
                     operator_did=operator_did,
                     audit_sink=None,
                 )
+                if path.is_relative_to(self._root / "skills") and path.name != "SKILL.md":
+                    disapprove(
+                        config_path,
+                        name=approval_name(path, path.relative_to(self._root).as_posix()),
+                    )
                 path.unlink(missing_ok=True)
                 _remove_empty_parents(path, self._root)
             self._ledger.set(manifest.import_id, CapabilityImportStatus.REVOKED)
@@ -546,7 +554,8 @@ class CapabilityImportService:
                 raise ValueError("capability import source changed during promotion")
             target.write_bytes(content)
             target.chmod(0o600)
-            content.decode("utf-8")
+            if item.path.startswith("tools/") or item.path.endswith("/SKILL.md"):
+                content.decode("utf-8")
             write_signature_with_signer(
                 target,
                 content,
@@ -591,13 +600,26 @@ def _reserved_builtin_skill_names() -> frozenset[str]:
     root = Path(_builtins_pkg.__file__).parent / "skills"
     if not root.is_dir():
         return frozenset()
-    return frozenset(
-        folder.name for folder in root.iterdir() if (folder / "SKILL.md").is_file()
-    )
+    return frozenset(folder.name for folder in root.iterdir() if (folder / "SKILL.md").is_file())
 
 
 def _is_capability(path: str) -> bool:
     return path.startswith("tools/") or path.startswith("skills/")
+
+
+def approval_name(path: Path, relative: str) -> str:
+    """Return a unique approval key for an imported skill resource."""
+    if relative.startswith("skills/") and not relative.endswith("/SKILL.md"):
+        return "skill-resource/" + relative.removeprefix("skills/")
+    return pin_name_for_path(path)
+
+
+def approval_source(content: bytes) -> str:
+    """Encode binary resource bytes for the text-based validator pin store."""
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return "binary-base64:" + base64.b64encode(content).decode("ascii")
 
 
 def _is_safe_review_path(path: str) -> bool:

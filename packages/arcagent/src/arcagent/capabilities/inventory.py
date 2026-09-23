@@ -31,6 +31,7 @@ from arcagent.capabilities.capability_loader import (
     MODULE_ROOT_PREFIX,
     CapabilityLoader,
     ScanRoot,
+    SkillArtifactResolver,
     module_capability_root,
     pin_name_for_path,
 )
@@ -157,6 +158,7 @@ async def collect_capability_inventory(
     trusted_public_keys: tuple[bytes, ...] = (),
     import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
     modules: Sequence[str] = (),
+    skill_artifact_resolver: SkillArtifactResolver | None = None,
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
 
@@ -179,6 +181,7 @@ async def collect_capability_inventory(
         # discovered @background_task must never actually start (its body
         # may depend on a live agent's module _runtime being configured).
         spawn_background_tasks=False,
+        skill_artifact_resolver=skill_artifact_resolver,
     )
     delta = await loader.scan_and_register()
     return [
@@ -367,6 +370,7 @@ async def collect_agent_capability_inventory(
     *,
     live_agent: Any = None,
     global_root: Path | None = None,
+    skill_artifact_resolver: SkillArtifactResolver | None = None,
 ) -> AgentCapabilityInventory:
     """Enumerate one agent's capabilities at its real trust posture.
 
@@ -395,6 +399,7 @@ async def collect_agent_capability_inventory(
         trusted_public_keys=posture.trusted_public_keys,
         import_policy=posture.import_policy,
         modules=active_modules(config),
+        skill_artifact_resolver=skill_artifact_resolver,
     )
     if live_agent is None:
         return AgentCapabilityInventory(items=items, runtime=False, runtime_tools=[])

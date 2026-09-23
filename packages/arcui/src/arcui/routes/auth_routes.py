@@ -6,14 +6,13 @@ holding it, so an approval recorded against it answers "what happened" but never
 These routes let a person sign in as themselves, and the session they get back
 carries their DID into every mutation they make.
 
-The static viewer/operator tokens stay. They are the break-glass path for
-automation, for first boot before any account exists, and for the case where the
-user store cannot be read — a dashboard that can lock its owner out of their own
-machine is worse than one with a fallback.
+Account authority is injected by the deployment. If custody or integrity is
+unavailable, these routes fail closed while unrelated UI capabilities may run.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -23,10 +22,11 @@ from starlette.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
-def _store() -> Any:
-    from arctrust.users import UserStore
-
-    return UserStore()
+def _store(request: Request) -> Any:
+    factory = getattr(request.app.state, "user_store_factory", None)
+    if factory is None:
+        raise RuntimeError("account authority is unavailable")
+    return factory()
 
 
 def _auth(request: Request) -> Any:
@@ -58,15 +58,14 @@ async def login(request: Request) -> JSONResponse:
         )
 
     try:
-        store = _store()
+        user = await asyncio.to_thread(lambda: _store(request).verify(email, password))
     except Exception as exc:  # reason: an unreadable store must not 500 the login page
-        logger.error("auth.store_unreadable: %s", exc)
+        logger.error("auth.store_unreadable class=%s", type(exc).__name__)
         return JSONResponse(
-            {"error": "The account store cannot be read. Use your operator token."},
+            {"error": "Account authority is unavailable. Try again shortly."},
             status_code=503,
         )
 
-    user = store.verify(email, password)
     if user is None:
         sessions.record_failure(email)
         logger.warning("auth.failed email=%s", email)
@@ -125,7 +124,7 @@ async def me(request: Request) -> JSONResponse:
     # The settings the person can actually change. Read from the store rather
     # than the session so an edit shows up without signing out and back in.
     try:
-        user = _store().get(session.email)
+        user = await asyncio.to_thread(lambda: _store(request).get(session.email))
     except Exception:  # reason: an unreadable store must not break /me
         user = None
     if user is not None:
@@ -156,7 +155,7 @@ async def update_me(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Expected a JSON body"}, status_code=400)
 
     try:
-        store = _store()
+        store = await asyncio.to_thread(lambda: _store(request))
         changed: list[str] = []
         if "display_name" in body:
             store.set_display_name(session.email, str(body["display_name"]))
@@ -193,9 +192,9 @@ async def mode(request: Request) -> JSONResponse:
     whether any account exists, never which.
     """
     try:
-        has_users = not _store().is_empty()
-    except Exception:  # reason: an unreadable store still has to render a page
-        has_users = False
+        has_users = not await asyncio.to_thread(lambda: _store(request).is_empty())
+    except Exception:  # reason: absent authority is distinct from an empty store
+        return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
     return JSONResponse({"login_available": has_users})
 
 

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 
 import pytest
 
+import arcgateway.fs_reader as fs_reader_module
 from arcgateway.fs_reader import (
     MAX_READ_BYTES,
     FileContent,
     FileEntry,
     FileTooLargeError,
     PathTraversalError,
+    ReadAuthorizationError,
     list_tree,
     read_file,
 )
@@ -119,6 +122,39 @@ class TestPathTraversal:
                 rel_path="escape",
                 caller_did="did:test:user",
             )
+
+    def test_symlink_swap_between_validation_and_open_is_blocked(
+        self, agent_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = agent_root / "workspace" / "swap.md"
+        target.write_text("safe", encoding="utf-8")
+        outside = tmp_path / "outside.md"
+        outside.write_text("secret", encoding="utf-8")
+        original_open = os.open
+        swapped = False
+
+        def swap_before_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+            nonlocal swapped
+            if path == "swap.md" and not swapped:
+                swapped = True
+                target.unlink()
+                target.symlink_to(outside)
+            return original_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", swap_before_open)
+        outcomes: list[str] = []
+        monkeypatch.setattr(
+            fs_reader_module, "emit_event", lambda **event: outcomes.append(event["outcome"])
+        )
+        with pytest.raises(PathTraversalError):
+            read_file(
+                scope="agent",
+                agent_id="alice",
+                agent_root=agent_root,
+                rel_path="workspace/swap.md",
+                caller_did="did:test:user",
+            )
+        assert outcomes == ["deny"]
 
     def test_traversal_via_subdir(self, agent_root: Path) -> None:
         with pytest.raises(PathTraversalError):
@@ -370,3 +406,57 @@ class TestReadOnlyByStructure:
         }
         leaks = forbidden & set(public)
         assert not leaks, f"fs_reader exposes write helpers: {leaks}"
+
+
+def test_read_file_refuses_fifo_without_blocking(
+    agent_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.mkfifo(agent_root / "report.html")
+    real_open = fs_reader_module.os.open
+
+    def guarded_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes], flags: int, **kwargs: int
+    ) -> int:
+        if path == "report.html":
+            assert flags & os.O_NONBLOCK
+        return real_open(path, flags, **kwargs)
+
+    monkeypatch.setattr(fs_reader_module.os, "open", guarded_open)
+    with pytest.raises(FileNotFoundError):
+        read_file(
+            scope="agent",
+            agent_id="alice",
+            agent_root=agent_root,
+            rel_path="report.html",
+            caller_did="did:test:user",
+        )
+
+
+def test_opened_file_authorization_precedes_byte_read(
+    agent_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_read = fs_reader_module.os.read
+    opened: list[tuple[int, int]] = []
+    read_calls = 0
+
+    def guard_read(fd: int, size: int) -> bytes:
+        nonlocal read_calls
+        read_calls += 1
+        return real_read(fd, size)
+
+    def deny_opened(root_status: os.stat_result, file_status: os.stat_result) -> bool:
+        opened.append((root_status.st_ino, file_status.st_ino))
+        return False
+
+    monkeypatch.setattr(fs_reader_module.os, "read", guard_read)
+    with pytest.raises(ReadAuthorizationError):
+        read_file(
+            scope="agent",
+            agent_id="alice",
+            agent_root=agent_root,
+            rel_path="arcagent.toml",
+            caller_did="did:test:user",
+            authorize_opened=deny_opened,
+        )
+    assert opened
+    assert read_calls == 0

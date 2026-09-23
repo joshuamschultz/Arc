@@ -83,6 +83,7 @@ from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
+    from arcagent.capabilities.capability_loader import SkillArtifactResolver
     from arcagent.core.tool_policy import PolicyPipeline
 
 
@@ -159,6 +160,7 @@ class ArcAgent:
         fleet: Any = None,
         queue_coordinator: arcrun.CallQueueCoordinator | None = None,
         queue_tenant_id: str | None = None,
+        skill_artifact_resolver: SkillArtifactResolver | None = None,
     ) -> None:
         if (queue_coordinator is None) != (queue_tenant_id is None):
             raise ValueError("queue coordinator and trusted tenant must be supplied together")
@@ -223,6 +225,7 @@ class ArcAgent:
         self._queue_coordinator = queue_coordinator
         self._queue_tenant_id = queue_tenant_id
         self._queue_owner_epoch = uuid.uuid4().hex
+        self._skill_artifact_resolver = skill_artifact_resolver
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
         # exists only while it executes; a teammate message arriving mid-run is
         # injected into it (steer/follow_up) instead of starting a new one.

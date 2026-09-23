@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, File, Folder, FolderOpen, Pencil, Trash2 } from 'lucide-react'
-import { apiGet, apiPut, apiDelete, ApiError } from '@/lib/api'
+import { apiGet, apiGetText, apiPut, apiDelete, ApiError } from '@/lib/api'
 import type {
   FileDeleteResponse,
   FileReadResponse,
@@ -210,6 +210,12 @@ function FileViewer({
   const [saveResult, setSaveResult] = useState<FileWriteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [report, setReport] = useState<{ key: string; html: string } | null>(null)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const reportRequest = useRef<AbortController | null>(null)
+  const reportKey = `${agentId}:${root}:${path}`
+
+  useEffect(() => () => reportRequest.current?.abort(), [reportKey])
 
   if (q.isLoading) return <LoadingRows rows={8} />
   if (q.isError) return <ErrorState error={q.error} />
@@ -218,8 +224,29 @@ function FileViewer({
   const isMarkdown = path.endsWith('.md') || path.endsWith('.mdx')
   // Editing base64 in a textarea would save the base64, not the file.
   const isBinary = q.data.content_type === 'binary'
+  const isReport = /\.html?$/i.test(path) && !isBinary
+
+  const viewReport = async () => {
+    reportRequest.current?.abort()
+    const controller = new AbortController()
+    reportRequest.current = controller
+    setReportError(null)
+    try {
+      const html = await apiGetText(
+        `/api/agents/${encodeURIComponent(agentId)}/files/report?root=${root}&path=${encodeURIComponent(path)}`,
+        controller.signal,
+      )
+      if (!controller.signal.aborted) setReport({ key: reportKey, html })
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setReportError(error instanceof Error ? error.message : 'Report preview failed')
+      }
+    }
+  }
 
   const startEdit = () => {
+    reportRequest.current?.abort()
+    setReport(null)
     setDraft(q.data!.content)
     setSaveError(null)
     setSaveResult(null)
@@ -227,6 +254,7 @@ function FileViewer({
   }
 
   const save = async () => {
+    reportRequest.current?.abort()
     setSaving(true)
     setSaveError(null)
     try {
@@ -235,6 +263,7 @@ function FileViewer({
         { content: draft },
       )
       setSaveResult(res)
+      setReport(null)
       setEditing(false)
       await queryClient.invalidateQueries({ queryKey })
     } catch (e) {
@@ -285,6 +314,11 @@ function FileViewer({
         <span className="truncate font-mono">{path}</span>
         <div className="flex shrink-0 items-center gap-2">
           <span>{fmtBytes(q.data.size)}</span>
+          {isReport && (
+            <Button variant="outline" size="sm" onClick={() => void viewReport()}>
+              View report
+            </Button>
+          )}
           {operatorMode && !editing && !isBinary && (
             <Button variant="ghost" size="sm" onClick={startEdit}>
               <Pencil className="size-3.5" /> Edit
@@ -333,8 +367,15 @@ function FileViewer({
           {saveResult.message}
         </div>
       )}
+      {reportError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{reportError}</p>}
       <div className="flex-1 overflow-auto p-4">
-        {editing ? (
+        {report?.key === reportKey && isReport && !editing ? (
+          <div className="flex h-full flex-col gap-2">
+            <p className="text-xs text-muted-foreground">Static report preview. Scripts, links, external images, and interactive charts are unavailable.</p>
+            <Button variant="ghost" size="sm" className="self-start" onClick={() => { reportRequest.current?.abort(); setReport(null) }}>Return to source</Button>
+            <iframe title={`Report preview: ${path}`} sandbox="" referrerPolicy="no-referrer" srcDoc={report.html} className="min-h-0 flex-1 rounded border border-border bg-white" />
+          </div>
+        ) : editing ? (
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -377,6 +418,7 @@ export function FileTree({
       <div className="overflow-hidden">
         {selected ? (
           <FileViewer
+            key={`${agentId}:${root}:${selected}`}
             agentId={agentId}
             root={root}
             path={selected}

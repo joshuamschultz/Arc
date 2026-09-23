@@ -226,6 +226,8 @@ from arctrust.users import (
     OPERATOR,
     VIEWER,
     User,
+    UserKeyIssuer,
+    UserSnapshotCipher,
     UserStore,
     UserStoreError,
     default_users_path,
@@ -253,6 +255,7 @@ from arctrust.witness import (
 if TYPE_CHECKING:
     from arctrust.transit_http import VaultTransitHTTP
     from arctrust.vault_anchor import VaultKVAnchor
+    from arctrust.vault_cipher import VaultCipher
 
 
 def __getattr__(name: str) -> Any:
@@ -265,6 +268,10 @@ def __getattr__(name: str) -> Any:
         from arctrust.transit_http import VaultTransitHTTP
 
         return VaultTransitHTTP
+    if name == "VaultCipher":
+        from arctrust.vault_cipher import VaultCipher
+
+        return VaultCipher
     raise AttributeError(name)
 
 
@@ -320,10 +327,13 @@ __all__ = [
     "TransparencyLogWitness",
     "TrustStoreError",
     "User",
+    "UserKeyIssuer",
+    "UserSnapshotCipher",
     "UserStore",
     "UserStoreError",
     "ValidatorEntry",
     "ValidatorsConfig",
+    "VaultCipher",
     "VaultKVAnchor",
     "VaultSigner",
     "VaultTransit",

@@ -768,8 +768,9 @@ export interface SkillDetail {
   status: string
   status_detail: string
   content: string // SKILL.md body
+  sha256: string // revision the operator opened
   editable: boolean // true when the file lives in an editable workspace root
-  // Save target for the existing `PUT /files/read` route (null when read-only).
+  // Original path retained for provenance; edits use the signed revision route.
   write_root: 'workspace' | 'agent' | null
   write_path: string | null // relative to write_root
 }

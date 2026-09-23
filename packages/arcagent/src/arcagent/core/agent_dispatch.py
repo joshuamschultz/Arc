@@ -195,7 +195,13 @@ def _agent_skills(agent: ArcAgent) -> list[_Skill]:
     if registry is None:
         return []
     return [
-        _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
+        _Skill(
+            name=e.name,
+            description=e.description,
+            location=e.location,
+            scan_root=e.scan_root,
+            read_current=e.read_current,
+        )
         for e in registry.skill_entries()
     ]
 
