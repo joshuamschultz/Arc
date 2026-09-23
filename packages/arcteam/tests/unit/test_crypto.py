@@ -5,11 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from arctrust import AgentIdentity, generate_keypair
+from arctrust import AgentIdentity, ReplayCache, generate_keypair
 
 from arcteam.crypto import (
     MessageSigner,
-    ReplayCache,
     new_nonce,
     sign_message,
     verify_message,

@@ -7,7 +7,7 @@ surface (tool registry, DID, tier, MCP config, audit sink) and wires the door's
 collaborators — :class:`~arcagent.modules.mcp_server.server.McpServer`, the
 tier-checked :class:`~arcagent.modules.mcp_server.allowlist.ExposureAllowlist`, an
 :class:`~arcagent.capabilities.provider.AgentCapabilityProvider`, a
-:class:`~arcteam.crypto.ReplayCache`, and the agent's audit sink — into the door's
+:class:`~arctrust.ReplayCache`, and the agent's audit sink — into the door's
 ``mcp`` SDK :class:`~mcp.server.lowlevel.Server` (which stdio serving drives) and its
 :class:`~arcagent.modules.mcp_server.http_transport.HttpDoor` ASGI app.
 
@@ -22,8 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 import arcrun
-from arcteam.crypto import ReplayCache
-from arctrust import AuditSink
+from arctrust import AuditSink, ReplayCache
 from mcp.server.lowlevel import Server
 
 from arcagent.capabilities.provider import AgentCapabilityProvider

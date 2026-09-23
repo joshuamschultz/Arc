@@ -8,11 +8,12 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, NoReturn  # used for DLQ entry dicts
 
+from arctrust import ReplayCache
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import ValidationError
 
 from arcteam.audit import AuditLogger
-from arcteam.crypto import MessageSigner, ReplayCache, new_nonce, sign_message, verify_message
+from arcteam.crypto import MessageSigner, new_nonce, sign_message, verify_message
 from arcteam.mentions import apply_mentions
 from arcteam.registry import EntityRegistry, UnknownHandle, resolve_ref
 from arcteam.storage import Consumer, Delivery, StorageBackend
