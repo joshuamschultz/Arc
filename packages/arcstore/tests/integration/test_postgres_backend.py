@@ -26,6 +26,7 @@ _ACTOR = "did:arc:test:postgres"
 
 async def test_postgres_task_board_keyset_and_index(
     postgres_backend: ArcStoreBackend,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A large closed history pages at the database and can use the task index."""
     assert isinstance(postgres_backend, PostgresBackend)
@@ -33,27 +34,78 @@ async def test_postgres_task_board_keyset_and_index(
     prefix = f"board-{uuid4().hex}-"
     ids = [f"{prefix}{index:04d}" for index in range(1001)]
     try:
-        for task_id in ids[:1000]:
-            await store.create(Task(id=task_id, title="Closed", creator_did=_ACTOR, status="done"))
-        await store.create(Task(id=ids[-1], title="Active", creator_did=_ACTOR, status="todo"))
+        for index, task_id in enumerate(ids[:1000]):
+            await store.create(
+                Task(
+                    id=task_id,
+                    title="Closed",
+                    creator_did=_ACTOR,
+                    status="done",
+                    owner_did="did:arc:rare" if index == 0 else None,
+                    tags=["rare"] if index == 0 else [],
+                )
+            )
+        await store.create(
+            Task(
+                id=ids[-1], title="Active", creator_did=_ACTOR, status="todo", blocked_by=[ids[0]]
+            )
+        )
         active = await store.list_board_page(phase="active", limit=50)
         assert ids[-1] in {task.id for task in active}
         first = await store.list_board_page(phase="history", limit=50)
         second = await store.list_board_page(
-            phase="history", before=(first[49].updated_at, first[49].id), limit=50
+            phase="history", before=(first[49].created_at, first[49].id), limit=50
         )
         first_ids = {task.id for task in first[:50]}
         second_ids = {task.id for task in second[:50]}
         assert len(first_ids) == len(second_ids) == 50
         assert not first_ids & second_ids
+        rare = await store.list_board_page(
+            phase="history", owner_did="did:arc:rare", tag="rare", limit=50
+        )
+        assert [task.id for task in rare] == [ids[0]]
+        projection = await store.board_projection([ids[-1]])
+        assert projection[ids[-1]].blocked is False
+        assert projection[ids[-1]].dependencies[ids[0]].status == "done"
+        facets = await store.board_facets()
+        assert facets.tags["rare"] >= 1
+        recomputes = 0
+        compute = postgres_backend._compute_task_facets
+
+        async def count_compute(connection):
+            nonlocal recomputes
+            recomputes += 1
+            return await compute(connection)
+
+        monkeypatch.setattr(postgres_backend, "_compute_task_facets", count_compute)
+        await asyncio.gather(*(store.board_facets() for _ in range(8)))
+        assert recomputes == 0  # eight simultaneous polling clients reuse exact facets
+        await store.update(ids[-1], {"priority": "critical"}, actor_did=_ACTOR)
+        assert (await store.board_facets()).priorities["critical"] >= 1
+        assert recomputes == 1  # trigger invalidates after the committed mutation
         async with postgres_backend._require_pool().acquire() as connection:
             await connection.execute("ANALYZE mutable_records")
             plan = await connection.fetch(
                 "EXPLAIN SELECT value FROM mutable_records "
-                "WHERE collection='tasks' AND value->>'status' IN ('done', 'failed') "
-                "ORDER BY updated_at DESC, key DESC LIMIT 50"
+                "WHERE collection='tasks' "
+                "ORDER BY coalesce(value->>'created_at','') DESC, key DESC LIMIT 50"
             )
-        assert "mutable_tasks_history_idx" in "\n".join(str(row[0]) for row in plan)
+        assert "mutable_tasks_created_page_idx" in "\n".join(str(row[0]) for row in plan)
+        async with postgres_backend._require_pool().acquire() as connection:
+            measured = await connection.fetchval(
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+                "SELECT value FROM mutable_records WHERE collection='tasks' "
+                "ORDER BY coalesce(value->>'created_at','') DESC, key DESC LIMIT 50"
+            )
+        measured = json.loads(measured) if isinstance(measured, str) else measured
+        assert measured[0]["Plan"]["Actual Rows"] == 50
+        async with postgres_backend._require_pool().acquire() as connection:
+            filtered_plan = await connection.fetch(
+                "EXPLAIN SELECT value FROM mutable_records WHERE collection='tasks' "
+                "AND value->>'owner_did'='did:arc:rare' "
+                "ORDER BY coalesce(value->>'created_at','') DESC, key DESC LIMIT 50"
+            )
+        assert "mutable_tasks_owner_created_idx" in "\n".join(str(row[0]) for row in filtered_plan)
     finally:
         for task_id in ids:
             await store.delete(task_id, actor_did=_ACTOR)
@@ -68,17 +120,20 @@ async def test_postgres_task_board_tied_cursor_and_status_transition(
     ids = [f"board-tie-{uuid4().hex}-{index}" for index in range(3)]
     try:
         for task_id in ids:
-            await store.create(Task(id=task_id, title="Active", creator_did=_ACTOR, status="todo"))
-        async with postgres_backend._require_pool().acquire() as connection:
-            await connection.execute(
-                "UPDATE mutable_records SET updated_at='2020-01-01T00:00:00Z' "
-                "WHERE collection='tasks' AND key=ANY($1::text[])",
-                ids,
+            task = Task(
+                id=task_id,
+                title="Active",
+                creator_did=_ACTOR,
+                status="todo",
+                created_at="2020-01-01T00:00:00+00:00",
+            )
+            await postgres_backend.mutable_write(
+                "tasks", task_id, task.model_dump(mode="json"), actor_did=_ACTOR
             )
         first = await store.list_board_page(phase="active", limit=1)
         matching = [task for task in first if task.id in ids]
         assert [task.id for task in matching] == sorted(ids, reverse=True)[:2]
-        cursor = (matching[0].updated_at, matching[0].id)
+        cursor = (matching[0].created_at, matching[0].id)
         second = await store.list_board_page(phase="active", before=cursor, limit=1)
         assert second[0].id == sorted(ids, reverse=True)[1]
         await store.set_status(second[0].id, "done", actor_did=_ACTOR)
@@ -92,6 +147,43 @@ async def test_postgres_task_board_tied_cursor_and_status_transition(
     finally:
         for task_id in ids:
             await store.delete(task_id, actor_did=_ACTOR)
+
+
+async def test_postgres_facet_revision_and_aggregates_share_snapshot(
+    postgres_backend: ArcStoreBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mutation between revision and aggregate reads cannot poison the cache."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    store = TaskStore(postgres_backend)
+    task_id = f"board-snapshot-{uuid4().hex}"
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = postgres_backend._compute_task_facets
+
+    async def pause_aggregate(*args: object) -> dict[str, object]:
+        started.set()
+        await release.wait()
+        return await original(*args)
+
+    try:
+        await store.create(
+            Task(id=task_id, title="Snapshot", creator_did=_ACTOR, priority="medium")
+        )
+        postgres_backend._task_facets_cache = None
+        monkeypatch.setattr(postgres_backend, "_compute_task_facets", pause_aggregate)
+        pending = asyncio.create_task(store.board_facets())
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await store.update(task_id, {"priority": "critical"}, actor_did=_ACTOR)
+        release.set()
+        first = await asyncio.wait_for(pending, timeout=5)
+        assert first.priorities.get("critical", 0) == 0
+        monkeypatch.setattr(postgres_backend, "_compute_task_facets", original)
+        current = await store.board_facets()
+        assert current.priorities.get("critical", 0) == 1
+    finally:
+        release.set()
+        await store.delete(task_id, actor_did=_ACTOR)
 
 
 async def test_postgres_schema_and_operational_round_trip(

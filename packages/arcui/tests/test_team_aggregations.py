@@ -275,6 +275,112 @@ class TestFleetPolicy:
 
 
 class TestFleetTasks:
+    def test_create_and_list_work_without_fleet_messaging(
+        self, tmp_path, arcstore_backend: FakeBackend
+    ) -> None:
+        from arcui.routes.tasks import routes as mutation_routes
+
+        app, auth, _ = _make_app(backend=arcstore_backend)
+        app.router.routes.extend(mutation_routes)
+        app.state.task_store = TaskStore(arcstore_backend)
+        app.state.agent_mail = None
+        app.state.roster_provider = lambda: (_ for _ in ()).throw(RuntimeError("fleet down"))
+        client = TestClient(app)
+        operator = {"Authorization": f"Bearer {auth.operator_token}"}
+        unowned = client.post("/api/team/tasks", headers=operator, json={"title": "Backlog"})
+        assert unowned.status_code == 201
+        assert unowned.json()["owner_notification"] == "not_applicable"
+        owned = client.post(
+            "/api/team/tasks",
+            headers=operator,
+            json={"title": "Assigned", "owner_did": "did:arc:alpha"},
+        )
+        assert owned.status_code == 201
+        assert owned.json()["owner_notification"] == "unavailable"
+        listed = client.get("/api/team/tasks", headers=_viewer(auth))
+        assert listed.status_code == 200
+        assert {task["id"] for task in listed.json()["tasks"]} == {
+            unowned.json()["id"],
+            owned.json()["id"],
+        }
+        assert listed.json()["facets"]["total"] == 2
+
+    def test_large_history_filters_and_off_page_relationships(
+        self, tmp_path, arcstore_backend: FakeBackend
+    ) -> None:
+        """Global facets and page projections include rows beyond a thousand-item history."""
+        team = _build_team(tmp_path, [("alpha", "")])
+        tasks = [
+            Task(
+                id="old-dependency",
+                title="Dependency",
+                creator_did="did:arc:alpha",
+                status="done",
+                owner_did="did:arc:old",
+                tags=["rare"],
+            )
+        ]
+        tasks.extend(
+            Task(
+                id=f"closed-{index:04d}",
+                title="Closed",
+                creator_did="did:arc:alpha",
+                status="done",
+            )
+            for index in range(1100)
+        )
+        tasks.extend(
+            [
+                Task(
+                    id="parent",
+                    title="Parent",
+                    creator_did="did:arc:alpha",
+                    status="todo",
+                    blocked_by=["old-dependency"],
+                ),
+                Task(
+                    id="child",
+                    title="Child",
+                    creator_did="did:arc:alpha",
+                    status="todo",
+                    parent_id="parent",
+                ),
+            ]
+        )
+        asyncio.run(_seed_tasks(arcstore_backend, tasks))
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
+        client = TestClient(app)
+        head = client.get("/api/team/tasks?limit=2", headers=_viewer(auth)).json()
+        assert head["facets"]["total"] == 1103
+        assert head["facets"]["owners"]["did:arc:old"] == 1
+        assert head["facets"]["tags"]["rare"] == 1
+        assert head["facets"]["blocked"] == 0
+        assert head["projections"]["parent"]["blocked"] is False
+        assert head["projections"]["parent"]["dependencies"]["old-dependency"]["status"] == "done"
+        assert head["projections"]["parent"]["child_total"] == 1
+        rare = client.get(
+            "/api/team/tasks?owner_did=did%3Aarc%3Aold&tag=rare",
+            headers=_viewer(auth),
+        ).json()
+        assert [task["id"] for task in rare["tasks"]] == ["old-dependency"]
+        assert rare.get("next_cursor") is None
+        filtered = client.get("/api/team/tasks?status=done&limit=1", headers=_viewer(auth)).json()
+        assert filtered["tasks"][0]["status"] == "done"
+        assert (
+            client.get(
+                "/api/team/tasks?status=todo&cursor=" + filtered["next_cursor"],
+                headers=_viewer(auth),
+            ).status_code
+            == 400
+        )
+        for bad in ("done' OR true --", "backlog; DROP TABLE mutable_records"):
+            assert (
+                client.get(
+                    "/api/team/tasks", params={"status": bad}, headers=_viewer(auth)
+                ).status_code
+                == 400
+            )
+
     def test_board_pages_closed_history_and_keeps_open_tasks(
         self, tmp_path, arcstore_backend: FakeBackend
     ) -> None:
@@ -288,13 +394,19 @@ class TestFleetTasks:
         app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
         client = TestClient(app)
         first = client.get("/api/team/tasks?limit=5", headers=_viewer(auth)).json()
-        assert [task["id"] for task in first["tasks"]] == ["open"]
+        assert [task["id"] for task in first["tasks"]] == [
+            "open",
+            "done-011",
+            "done-010",
+            "done-009",
+            "done-008",
+        ]
         assert first["next_cursor"] is not None
-        cursor: str | None = None
-        seen: set[str] = set()
-        for expected_closed in (5, 5, 2):
+        cursor: str | None = first["next_cursor"]
+        seen: set[str] = {task["id"] for task in first["tasks"] if task["status"] == "done"}
+        for expected_closed in (5, 3):
             path = "/api/team/tasks?limit=5"
-            path += f"&cursor={cursor or first['next_cursor']}"
+            path += f"&cursor={cursor}"
             response = client.get(path, headers=_viewer(auth))
             assert response.status_code == 200
             body = response.json()
@@ -317,6 +429,93 @@ class TestFleetTasks:
                 f"/api/team/tasks?limit=5&cursor={cursor}", headers=_viewer(auth)
             )
             assert response.status_code == 400
+
+    def test_time_scope_filters_before_paging_and_binds_cursor(
+        self, tmp_path, arcstore_backend: FakeBackend
+    ) -> None:
+        team = _build_team(tmp_path, [("alpha", "")])
+        asyncio.run(
+            _seed_tasks(
+                arcstore_backend,
+                [
+                    Task(
+                        id=f"scoped-{index}",
+                        title="Done",
+                        creator_did="did:arc:alpha",
+                        status="done",
+                    )
+                    for index in range(6)
+                ],
+            )
+        )
+        for index in (3, 4, 5):
+            key = ("tasks", f"scoped-{index}")
+            value, _ = arcstore_backend._mutable[key]
+            arcstore_backend._mutable[key] = (value, "2020-01-01T00:00:00+00:00")
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
+        client = TestClient(app)
+        first = client.get("/api/team/tasks?limit=2&time_scope=1", headers=_viewer(auth))
+        assert first.status_code == 200
+        body = first.json()
+        assert [row["id"] for row in body["tasks"]] == ["scoped-2", "scoped-1"]
+        cursor = body["next_cursor"]
+        second = client.get(
+            "/api/team/tasks",
+            params={"limit": 2, "time_scope": "1", "cursor": cursor},
+            headers=_viewer(auth),
+        )
+        assert [row["id"] for row in second.json()["tasks"]] == ["scoped-0"]
+        assert (
+            client.get(
+                "/api/team/tasks",
+                params={"time_scope": "7", "cursor": cursor},
+                headers=_viewer(auth),
+            ).status_code
+            == 400
+        )
+
+    def test_continuation_survives_update_and_history_reopen(
+        self, tmp_path, arcstore_backend: FakeBackend
+    ) -> None:
+        team = _build_team(tmp_path, [("alpha", "")])
+        asyncio.run(
+            _seed_tasks(
+                arcstore_backend,
+                [
+                    Task(
+                        id=f"walk-{index}",
+                        title="Walk",
+                        creator_did="did:arc:alpha",
+                        status="done",
+                    )
+                    for index in range(5)
+                ],
+            )
+        )
+        app, auth, _ = _make_app(team_root=team, backend=arcstore_backend)
+        client = TestClient(app)
+        first = client.get("/api/team/tasks?limit=2", headers=_viewer(auth)).json()
+        store = TaskStore(arcstore_backend)
+        asyncio.run(store.set_status("walk-1", "todo", actor_did="did:arc:operator"))
+        asyncio.run(store.update("walk-0", {"priority": "high"}, actor_did="did:arc:operator"))
+        seen = {row["id"] for row in first["tasks"]}
+        cursor = first["next_cursor"]
+        while cursor:
+            page = client.get(
+                "/api/team/tasks", params={"limit": 2, "cursor": cursor}, headers=_viewer(auth)
+            ).json()
+            seen.update(row["id"] for row in page["tasks"])
+            cursor = page["next_cursor"]
+        assert seen == {f"walk-{index}" for index in range(5)}
+
+    def test_missing_board_backend_reports_unavailable(self, tmp_path, arcstore_backend):
+        arcstore_backend.mutable_task_facets = None
+        app, auth, _ = _make_app(
+            team_root=_build_team(tmp_path, [("alpha", "")]), backend=arcstore_backend
+        )
+        response = TestClient(app).get("/api/team/tasks", headers=_viewer(auth))
+        assert response.status_code == 503
+        assert response.json() == {"error": "Task board backend unavailable."}
 
     def test_aggregates_tasks_with_agent_id(self, tmp_path, arcstore_backend: FakeBackend):
         team = _build_team(tmp_path, [("alpha", ""), ("beta", "")])
@@ -352,8 +551,7 @@ class TestFleetTasks:
     def test_tasks_window_scopes_to_recently_touched(
         self, tmp_path, arcstore_backend: FakeBackend, monkeypatch
     ) -> None:
-        """The Home summary counts tasks touched within its requested window.
-        """
+        """The Home summary counts tasks touched within its requested window."""
         import arcstore.backends.memory as memory_backend
 
         team = _build_team(tmp_path, [("alpha", "")])
@@ -559,7 +757,8 @@ class TestEdgeCases:
         client = TestClient(app)
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
         assert resp.status_code == 200
-        assert resp.json() == {"tasks": []}
+        assert resp.json()["tasks"] == []
+        assert resp.json()["facets"]["total"] == 0
 
     def test_tasks_object_root_returns_empty(self, tmp_path):
         team = _build_team(tmp_path, [("alpha", "")])
@@ -569,7 +768,8 @@ class TestEdgeCases:
         app, auth, _ = _make_app(team_root=team)
         client = TestClient(app)
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
-        assert resp.json() == {"tasks": []}
+        assert resp.json()["tasks"] == []
+        assert resp.json()["facets"]["total"] == 0
 
     def test_no_skills_dir_for_one_agent(self, tmp_path):
         team = _build_team(tmp_path, [("alpha", "")])

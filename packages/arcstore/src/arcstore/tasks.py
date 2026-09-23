@@ -11,6 +11,7 @@ contract.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Sequence
@@ -18,7 +19,16 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
 from arctrust.audit import AuditSink
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from arcstore.mutation_fence import RunnerFence
 
@@ -168,6 +178,91 @@ class Task(BaseModel):
         return value
 
 
+class TaskBoardFacets(BaseModel):
+    """Exact global counters plus bounded owner and tag suggestions."""
+
+    model_config = ConfigDict(extra="forbid")
+    statuses: dict[str, StrictInt]
+    priorities: dict[str, StrictInt]
+    owners: dict[str, StrictInt]
+    tags: dict[str, StrictInt]
+    owners_truncated: StrictBool = False
+    tags_truncated: StrictBool = False
+    total: StrictInt = Field(ge=0)
+    blocked: StrictInt = Field(ge=0)
+    done_today: StrictInt = Field(ge=0)
+    avg_done_seconds: float | None
+
+    @model_validator(mode="after")
+    def _valid_counts(self) -> TaskBoardFacets:
+        if any(
+            count < 0
+            for group in (self.statuses, self.priorities, self.owners, self.tags)
+            for count in group.values()
+        ):
+            raise ValueError("facet count is negative")
+        if (
+            sum(self.statuses.values()) != self.total
+            or sum(self.priorities.values()) != self.total
+            or self.blocked > self.total
+            or self.done_today > self.total
+        ):
+            raise ValueError("facet counts are inconsistent")
+        return self
+
+
+class TaskBoardPageQuery(BaseModel):
+    """Validated query crossing from the board facade to a task backend."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    phase: Literal["all", "active", "history"] = "all"
+    before: tuple[str, str] | None = None
+    limit: int = Field(default=100, ge=1, le=200)
+    status: TaskStatus | None = None
+    priority: Priority | None = None
+    owner_did: str | None = Field(default=None, min_length=1, max_length=200)
+    tag: str | None = Field(default=None, min_length=1, max_length=200)
+    since: str | None = None
+
+    @field_validator("since")
+    @classmethod
+    def _valid_since(cls, value: str | None) -> str | None:
+        if value is not None and datetime.fromisoformat(value).tzinfo is None:
+            raise ValueError("task scope timestamp must have a timezone")
+        return value
+
+
+class TaskBoardPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=160)
+    status: TaskStatus | None = None
+
+
+class TaskBoardProjection(BaseModel):
+    """Exact relationship state with bounded details for one visible task."""
+
+    model_config = ConfigDict(extra="forbid")
+    blocked: StrictBool
+    dependencies: dict[str, TaskBoardPreview]
+    dependency_total: StrictInt = Field(ge=0)
+    dependency_details_truncated: StrictBool = False
+    children: list[TaskBoardPreview]
+    child_total: StrictInt = Field(ge=0)
+    child_done: StrictInt = Field(ge=0)
+    child_details_truncated: StrictBool = False
+
+    @model_validator(mode="after")
+    def _counts_agree(self) -> TaskBoardProjection:
+        if (
+            self.child_done > self.child_total
+            or len(self.children) > self.child_total
+            or len(self.dependencies) > self.dependency_total
+        ):
+            raise ValueError("projection counts are inconsistent")
+        return self
+
+
 class MutableTaskBackend(Protocol):
     """The mutable-plane primitives ``TaskStore`` needs (SPEC-056 0a)."""
 
@@ -198,8 +293,21 @@ class MutableTaskBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     async def mutable_task_page(
-        self, *, phase: str, before: tuple[str, str] | None, limit: int
+        self,
+        *,
+        phase: str,
+        before: tuple[str, str] | None,
+        limit: int,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    async def mutable_task_facets(self) -> dict[str, Any]: ...
+
+    async def mutable_task_projection(self, task_ids: list[str]) -> dict[str, Any]: ...
 
     async def mutable_task_counts(self, *, since: str) -> dict[str, int]: ...
 
@@ -335,15 +443,125 @@ class TaskStore:
         return [self._load(row) for row in rows]
 
     async def list_board_page(
-        self, *, phase: str = "active", before: tuple[str, str] | None = None, limit: int = 100
+        self,
+        *,
+        phase: str = "all",
+        before: tuple[str, str] | None = None,
+        limit: int = 100,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
     ) -> Sequence[Task]:
         """Read one bounded page of unresolved or completed task history."""
-        if not 1 <= limit <= 200:
-            raise ValueError("limit must be between 1 and 200")
-        if phase not in {"active", "history"}:
-            raise ValueError("invalid task page phase")
-        rows = await self._backend.mutable_task_page(phase=phase, before=before, limit=limit + 1)
+        query = TaskBoardPageQuery.model_validate(
+            {
+                "phase": phase,
+                "before": before,
+                "limit": limit,
+                "status": status,
+                "priority": priority,
+                "owner_did": owner_did,
+                "tag": tag,
+                "since": since,
+            }
+        )
+        rows = await self._backend.mutable_task_page(
+            phase=query.phase,
+            before=query.before,
+            limit=query.limit + 1,
+            status=query.status,
+            priority=query.priority,
+            owner_did=query.owner_did,
+            tag=query.tag,
+            since=query.since,
+        )
         return [self._load(row) for row in rows]
+
+    async def board_facets(self) -> TaskBoardFacets:
+        """Store-wide board facets and metrics, without returning task bodies."""
+        facets = TaskBoardFacets.model_validate(await self._backend.mutable_task_facets())
+
+        def bounded_options(options: dict[str, int]) -> tuple[dict[str, int], bool]:
+            shown: dict[str, int] = {}
+            bytes_left = 20_000
+            for key, count in options.items():
+                size = len(json.dumps(key, ensure_ascii=True)) + 16
+                if len(key) > 200 or size > bytes_left:
+                    continue
+                shown[key] = count
+                bytes_left -= size
+            return shown, len(shown) < len(options)
+
+        owners, owners_cut = bounded_options(facets.owners)
+        tags, tags_cut = bounded_options(facets.tags)
+        return facets.model_copy(
+            update={
+                "owners": owners,
+                "tags": tags,
+                "owners_truncated": facets.owners_truncated or owners_cut,
+                "tags_truncated": facets.tags_truncated or tags_cut,
+            }
+        )
+
+    async def board_projection(self, task_ids: Sequence[str]) -> dict[str, TaskBoardProjection]:
+        """Resolve dependencies and child progress for at most one board page."""
+        if len(task_ids) > 200 or any(not task_id or len(task_id) > 200 for task_id in task_ids):
+            raise ValueError("invalid board projection ids")
+        raw = await self._backend.mutable_task_projection(list(task_ids))
+        if set(raw) != set(task_ids):
+            raise ValueError("backend omitted or added a task projection")
+        validated = {
+            task_id: TaskBoardProjection.model_validate(value) for task_id, value in raw.items()
+        }
+        # A bounded page must also have bounded relation fan-out and bytes.
+        # Counts and blocked state remain exact even when previews run out.
+        remaining_entries = 400
+        remaining_bytes = 80_000
+        result: dict[str, Any] = {}
+        for task_id in task_ids:
+            projection = validated[task_id]
+            details: dict[str, Any] = {}
+            children: list[dict[str, Any]] = []
+            for dep_id, dep in projection.dependencies.items():
+                preview_id = str(dep_id)[:200]
+                item = {
+                    "id": preview_id,
+                    "title": dep.title[:160],
+                    "status": dep.status,
+                }
+                size = len(json.dumps(item, ensure_ascii=True))
+                if remaining_entries == 0 or size > remaining_bytes:
+                    break
+                details[preview_id] = item
+                remaining_entries -= 1
+                remaining_bytes -= size
+            for child in projection.children:
+                item = {
+                    "id": child.id[:200],
+                    "title": child.title[:160],
+                    "status": child.status,
+                }
+                size = len(json.dumps(item, ensure_ascii=True))
+                if remaining_entries == 0 or size > remaining_bytes:
+                    break
+                children.append(item)
+                remaining_entries -= 1
+                remaining_bytes -= size
+            result[task_id] = {
+                "blocked": projection.blocked,
+                "dependencies": details,
+                "dependency_total": projection.dependency_total,
+                "dependency_details_truncated": len(details) < projection.dependency_total,
+                "children": children,
+                "child_total": projection.child_total,
+                "child_done": projection.child_done,
+                "child_details_truncated": len(children) < projection.child_total,
+            }
+        return {
+            task_id: TaskBoardProjection.model_validate(value) for task_id, value in result.items()
+        }
 
     async def counts_since(self, since: str) -> dict[str, int]:
         """Count tasks by status within a recent activity window."""
@@ -357,6 +575,8 @@ class TaskStore:
         actor_did: str,
         fence: RunnerFence | None = None,
     ) -> Task | None:
+        if "created_at" in patch:
+            raise ValueError("task creation time is immutable")
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
         # concurrent updates of disjoint fields clobber each other (last-writer
         # drops the loser's field). mutable_merge applies the patch inside one

@@ -20,7 +20,7 @@ import { useTaskActivity } from '@/lib/queries'
 import { apiDelete, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
 import { fmtSeconds, subtaskProgress } from '@/lib/tasks'
-import type { Agent, Task, TaskPriority } from '@/lib/types'
+import type { Agent, Task, TaskBoardProjection, TaskPriority } from '@/lib/types'
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'critical']
 
@@ -53,6 +53,7 @@ export function TaskDrawer({
   roster,
   mentionHandles,
   allTasks = [],
+  projection,
 }: {
   task: Task | null
   open: boolean
@@ -61,6 +62,7 @@ export function TaskDrawer({
   roster: Agent[]
   mentionHandles: MentionHandle[]
   allTasks?: Task[]
+  projection?: TaskBoardProjection
 }) {
   const queryClient = useQueryClient()
   const activity = useTaskActivity(task?.id ?? null)
@@ -193,8 +195,11 @@ export function TaskDrawer({
     setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
   }
 
-  const subtasks = subtaskProgress(task.id, allTasks)
-  const deps = (task.blocked_by ?? []).map((id) => allTasks.find((t) => t.id === id) ?? { id })
+  const subtasks = projection
+    ? { children: projection.children, done: projection.child_done, total: projection.child_total }
+    : subtaskProgress(task.id, allTasks)
+  const deps = (task.blocked_by ?? []).map((id) =>
+    projection?.dependencies[id] ?? allTasks.find((t) => t.id === id) ?? { id })
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -332,6 +337,9 @@ export function TaskDrawer({
                   </li>
                 ))}
               </ul>
+              {(subtasks.total > subtasks.children.length || projection?.child_details_truncated) && (
+                <p className="text-xs text-muted-foreground">Showing {subtasks.children.length} of {subtasks.total} subtasks.</p>
+              )}
             </section>
           )}
 
@@ -342,10 +350,14 @@ export function TaskDrawer({
                 {deps.map((d) => (
                   <li key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
                     <span className="truncate text-foreground">{('title' in d && d.title) || d.id}</span>
-                    <StatusText value={'status' in d ? d.status : undefined} />
+                    <StatusText value={'status' in d ? d.status ?? undefined : undefined} />
                   </li>
                 ))}
               </ul>
+              {((projection?.dependency_total ?? task.blocked_by_total ?? deps.length) > deps.length ||
+                projection?.dependency_details_truncated) && (
+                <p className="text-xs text-muted-foreground">Dependency details are limited on this page; {projection?.dependency_total ?? task.blocked_by_total} total.</p>
+              )}
             </section>
           )}
 

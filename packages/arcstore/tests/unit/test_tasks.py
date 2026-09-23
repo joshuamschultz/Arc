@@ -288,8 +288,12 @@ async def test_board_page_keeps_open_tasks_and_pages_history(tmp_path: Path) -> 
     try:
         store = TaskStore(be)
         for index in range(205):
-            await store.create(Task(id=f"closed-{index:03d}", title="Closed", status="done", creator_did=_CREATOR))
-        await store.create(Task(id="open-old", title="Still open", status="in_progress", creator_did=_CREATOR))
+            await store.create(
+                Task(id=f"closed-{index:03d}", title="Closed", status="done", creator_did=_CREATOR)
+            )
+        await store.create(
+            Task(id="open-old", title="Still open", status="in_progress", creator_did=_CREATOR)
+        )
         active = await store.list_board_page(phase="active", limit=100)
         assert [task.id for task in active] == ["open-old"]
         assert (await store.counts_since("2000-01-01T00:00:00+00:00")) == {
@@ -307,7 +311,7 @@ async def test_board_page_keeps_open_tasks_and_pages_history(tmp_path: Path) -> 
             seen.update(task.id for task in visible)
             if len(history) <= 100:
                 break
-            before = (visible[-1].updated_at, visible[-1].id)
+            before = (visible[-1].created_at, visible[-1].id)
         assert sizes == [100, 100, 5]
         assert len(seen) == 205
     finally:
@@ -328,7 +332,7 @@ async def test_board_active_pages_ties_and_status_change(tmp_path: Path) -> None
             )
         first = await store.list_board_page(phase="active", limit=100)
         assert len(first) == 101
-        cursor = (first[99].updated_at, first[99].id)
+        cursor = (first[99].created_at, first[99].id)
         second = await store.list_board_page(phase="active", before=cursor, limit=100)
         assert len(second) == 5
         assert not {task.id for task in first[:100]} & {task.id for task in second}
@@ -340,6 +344,165 @@ async def test_board_active_pages_ties_and_status_change(tmp_path: Path) -> None
         assert moved in {task.id for task in history}
     finally:
         await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_projection_caps_fanout_without_losing_exact_state(tmp_path: Path) -> None:
+    """Two hundred visible tasks cannot expand into an unbounded relation payload."""
+    import json
+
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(200):
+            await store.create(
+                Task(
+                    id=f"parent-{index:03d}",
+                    title="Parent",
+                    creator_did=_CREATOR,
+                    blocked_by=[f"missing-{index}-{dep}" for dep in range(30)],
+                )
+            )
+        for index in range(150):
+            await store.create(
+                Task(
+                    id=f"child-{index:03d}",
+                    title="Child",
+                    creator_did=_CREATOR,
+                    parent_id="parent-000",
+                    status="done" if index < 50 else "todo",
+                )
+            )
+        # A same-key record outside the tasks collection must never satisfy a dependency.
+        await be.mutable_write("unrelated", "missing-0-0", {"status": "done"}, actor_did=_CREATOR)
+        projection = await store.board_projection([f"parent-{index:03d}" for index in range(200)])
+        assert len(projection) == 200
+        assert projection["parent-000"].blocked is True
+        assert projection["parent-000"].dependency_total == 30
+        assert projection["parent-000"].child_total == 150
+        assert projection["parent-000"].child_done == 50
+        assert len(projection["parent-000"].children) <= 10
+        entries = sum(
+            len(value.dependencies) + len(value.children) for value in projection.values()
+        )
+        assert entries <= 400
+        encoded = json.dumps(
+            {key: value.model_dump(mode="json") for key, value in projection.items()}
+        )
+        assert len(encoded) < 140_000
+        with pytest.raises(ValueError):
+            await store.board_projection(["x"] * 201)
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_traversal_keeps_updated_and_reopened_tasks(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        for index in range(5):
+            await store.create(
+                Task(
+                    id=f"walk-{index}",
+                    title="Walk",
+                    creator_did=_CREATOR,
+                    status="done" if index == 0 else "todo",
+                )
+            )
+        first = await store.list_board_page(phase="all", limit=2)
+        cursor = (first[1].created_at, first[1].id)
+        await store.set_status("walk-0", "todo", actor_did=_OPERATOR)
+        await store.update("walk-1", {"priority": "high"}, actor_did=_OPERATOR)
+        remaining = await store.list_board_page(phase="all", before=cursor, limit=10)
+        assert {task.id for task in first[:2]} | {task.id for task in remaining} == {
+            f"walk-{index}" for index in range(5)
+        }
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_creation_order_cannot_be_rewritten(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        task = await store.create(Task(id="stable", title="Stable", creator_did=_CREATOR))
+        with pytest.raises(ValueError):
+            await store.update(
+                "stable", {"created_at": "2020-01-01T00:00:00+00:00"}, actor_did=_OPERATOR
+            )
+        with pytest.raises(ValueError):
+            await be.mutable_write(
+                "tasks",
+                "stable",
+                task.model_copy(update={"created_at": "2020-01-01T00:00:00+00:00"}).model_dump(
+                    mode="json"
+                ),
+                actor_did=_OPERATOR,
+            )
+    finally:
+        await be.stop()
+
+
+@pytest.mark.asyncio
+async def test_board_projection_rejects_malformed_backend(tmp_path: Path) -> None:
+    from arcstore.tasks import Task, TaskStore
+
+    be = await _backend(tmp_path)
+    try:
+        store = TaskStore(be)
+        await store.create(Task(id="parent", title="Parent", creator_did=_CREATOR))
+        original = be.mutable_task_projection
+        for bad in (
+            {},
+            {
+                "parent": {
+                    "blocked": "false",
+                    "dependencies": {},
+                    "dependency_total": 0,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 0,
+                }
+            },
+            {
+                "parent": {
+                    "blocked": False,
+                    "dependencies": {},
+                    "dependency_total": -1,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 0,
+                }
+            },
+            {
+                "parent": {
+                    "blocked": False,
+                    "dependencies": {},
+                    "dependency_total": 0,
+                    "children": [],
+                    "child_total": 0,
+                    "child_done": 1,
+                }
+            },
+        ):
+            be.mutable_task_projection = lambda _ids, value=bad: _async_value(value)
+            with pytest.raises(ValueError):
+                await store.board_projection(["parent"])
+        be.mutable_task_projection = original
+    finally:
+        await be.stop()
+
+
+async def _async_value(value: Any) -> Any:
+    return value
 
 
 class TestTaskStoreCRUD:

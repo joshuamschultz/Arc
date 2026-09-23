@@ -72,6 +72,8 @@ class PostgresBackend(SourceSyncBackend):
         )
         self._pool: Any | None = None
         self._shared: _SharedPool | None = None
+        self._task_facets_cache: tuple[int, str, dict[str, Any]] | None = None
+        self._task_facets_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._pool is not None:
@@ -462,25 +464,197 @@ class PostgresBackend(SourceSyncBackend):
         return [_mutable_row(row) for row in rows]
 
     async def mutable_task_page(
-        self, *, phase: str, before: tuple[str, str] | None, limit: int
+        self,
+        *,
+        phase: str,
+        before: tuple[str, str] | None,
+        limit: int,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Read a bounded keyset page in the task board's active/history lane."""
-        statement = (
-            "SELECT value, updated_at FROM mutable_records "
-            "WHERE collection='tasks' AND value->>'status' IN ('done', 'failed') "
-            if phase == "history"
-            else "SELECT value, updated_at FROM mutable_records "
-            "WHERE collection='tasks' AND value->>'status' NOT IN ('done', 'failed') "
-        )
+        """Read a bounded page in immutable creation order."""
+        statement = "SELECT value, updated_at FROM mutable_records WHERE collection='tasks' "
+        if phase == "history":
+            statement += "AND value->>'status' IN ('done', 'failed') "
+        elif phase == "active":
+            statement += "AND value->>'status' NOT IN ('done', 'failed') "
         params: list[Any] = []
+        for field, value in (("status", status), ("priority", priority), ("owner_did", owner_did)):
+            if value is not None:
+                params.append(value)
+                statement += f"AND value->>'{field}' = ${len(params)} "
+        if tag is not None:
+            params.append(tag)
+            statement += f"AND value->'tags' ? ${len(params)} "
+        if since is not None:
+            params.append(datetime.fromisoformat(since))
+            statement += (
+                f"AND (value->>'status' NOT IN ('done','failed') OR updated_at >= ${len(params)}) "
+            )
         if before is not None:
-            params.extend((datetime.fromisoformat(before[0]), before[1]))
-            statement += "AND (updated_at, key) < ($1, $2) "
+            params.extend(before)
+            statement += (
+                f"AND (coalesce(value->>'created_at',''), key) < "
+                f"(${len(params) - 1}, ${len(params)}) "
+            )
         params.append(limit)
-        statement += f"ORDER BY updated_at DESC, key DESC LIMIT ${len(params)}"
+        statement += (
+            f"ORDER BY coalesce(value->>'created_at','') DESC, key DESC LIMIT ${len(params)}"
+        )
         async with self._require_pool().acquire() as connection:
             rows = await connection.fetch(statement, *params)
         return [_mutable_row(row) for row in rows]
+
+    async def mutable_task_facets(self) -> dict[str, Any]:
+        """Cache facets from one revision-consistent PostgreSQL read snapshot."""
+        async with self._task_facets_lock:
+            async with self._require_pool().acquire() as connection:
+                async with connection.transaction(isolation="repeatable_read", readonly=True):
+                    version = await connection.fetchrow(
+                        "SELECT revision, to_char(now() AT TIME ZONE 'UTC', "
+                        "'YYYY-MM-DD') utc_day FROM task_board_revision WHERE singleton=true"
+                    )
+                    revision = int(version["revision"])
+                    today = str(version["utc_day"])
+                    cached = self._task_facets_cache
+                    if cached is not None and cached[0] == revision and cached[1] == today:
+                        return dict(cached[2])
+                    facets = await self._compute_task_facets(connection)
+            self._task_facets_cache = (int(revision), today, facets)
+            return dict(facets)
+
+    async def _compute_task_facets(self, connection: Any) -> dict[str, Any]:
+        """Aggregate all facet queries on the caller's pinned snapshot."""
+        grouped = await connection.fetch(
+            "SELECT value->>'status' status, value->>'priority' priority, count(*) total "
+            "FROM mutable_records WHERE collection='tasks' "
+            "GROUP BY 1,2"
+        )
+        owner_rows = await connection.fetch(
+            "SELECT value->>'owner_did' owner, count(*) total "
+            "FROM mutable_records WHERE collection='tasks' "
+            "AND value->>'owner_did' IS NOT NULL "
+            "GROUP BY 1 ORDER BY total DESC, owner LIMIT 501"
+        )
+        tag_rows = await connection.fetch(
+            "SELECT tag, count(*) total FROM mutable_records m "
+            "CROSS JOIN LATERAL (SELECT DISTINCT jsonb_array_elements_text("
+            "COALESCE(m.value->'tags','[]'::jsonb)) tag) tags "
+            "WHERE m.collection='tasks' GROUP BY tag ORDER BY total DESC, tag LIMIT 501"
+        )
+        metrics = await connection.fetchrow(
+            "SELECT count(*) FILTER (WHERE EXISTS ("
+            "SELECT 1 FROM jsonb_array_elements_text("
+            "COALESCE(m.value->'blocked_by','[]'::jsonb)) dep_id "
+            "LEFT JOIN mutable_records d ON d.collection='tasks' AND d.key=dep_id "
+            "WHERE d.value->>'status' IS DISTINCT FROM 'done')) blocked, "
+            "count(*) FILTER (WHERE m.value->>'status'='done' AND "
+            "left(COALESCE(m.value->>'completed_at',m.value->>'updated_at',''),10) = "
+            "to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD')) done_today, "
+            "avg(CASE WHEN m.value->>'status'='done' THEN "
+            "COALESCE((m.value->>'duration_seconds')::double precision, "
+            "EXTRACT(EPOCH FROM ((m.value->>'completed_at')::timestamptz - "
+            "(m.value->>'started_at')::timestamptz))) END) avg_done_seconds "
+            "FROM mutable_records m WHERE m.collection='tasks'"
+        )
+        statuses: dict[str, int] = {}
+        priorities: dict[str, int] = {}
+        for row in grouped:
+            amount = int(row["total"])
+            status = str(row["status"] or "backlog")
+            priority = str(row["priority"] or "medium")
+            statuses[status] = statuses.get(status, 0) + amount
+            priorities[priority] = priorities.get(priority, 0) + amount
+        return {
+            "statuses": statuses,
+            "priorities": priorities,
+            "owners": {str(row["owner"]): int(row["total"]) for row in owner_rows[:500]},
+            "tags": {str(row["tag"]): int(row["total"]) for row in tag_rows[:500]},
+            "owners_truncated": len(owner_rows) > 500,
+            "tags_truncated": len(tag_rows) > 500,
+            "total": sum(statuses.values()),
+            "blocked": int(metrics["blocked"]),
+            "done_today": int(metrics["done_today"]),
+            "avg_done_seconds": float(metrics["avg_done_seconds"])
+            if metrics["avg_done_seconds"] is not None
+            else None,
+        }
+
+    async def mutable_task_projection(self, task_ids: list[str]) -> dict[str, Any]:
+        """Resolve a page with indexed dependency joins and capped child previews."""
+        if not task_ids:
+            return {}
+        async with self._require_pool().acquire() as connection:
+            parents = await connection.fetch(
+                "SELECT key, jsonb_array_length(COALESCE(value->'blocked_by','[]'::jsonb)) "
+                "dependency_total FROM mutable_records "
+                "WHERE collection='tasks' AND key=ANY($1::text[])",
+                task_ids,
+            )
+            deps = await connection.fetch(
+                "SELECT p.key parent_id, left(x.dep_id,200) dep_id, "
+                "left(d.value->>'title',160) title, "
+                "d.value->>'status' status FROM mutable_records p "
+                "CROSS JOIN LATERAL (SELECT dep_id FROM "
+                "jsonb_array_elements_text(COALESCE(p.value->'blocked_by','[]'::jsonb)) "
+                "WITH ORDINALITY AS dep(dep_id, ord) WHERE ord<=10) x "
+                "LEFT JOIN mutable_records d ON d.collection='tasks' AND d.key=x.dep_id "
+                "WHERE p.collection='tasks' AND p.key=ANY($1::text[])",
+                task_ids,
+            )
+            children = await connection.fetch(
+                "SELECT key, parent_id, title, status, ordinal, total, done FROM ("
+                "SELECT left(key,200) key, value->>'parent_id' parent_id, "
+                "left(value->>'title',160) title, "
+                "value->>'status' status, row_number() OVER (PARTITION BY value->>'parent_id' "
+                "ORDER BY updated_at DESC, key DESC) ordinal, "
+                "count(*) OVER (PARTITION BY value->>'parent_id') total, "
+                "count(*) FILTER (WHERE value->>'status'='done') OVER "
+                "(PARTITION BY value->>'parent_id') done "
+                "FROM mutable_records WHERE collection='tasks' "
+                "AND value->>'parent_id'=ANY($1::text[])"
+                ") ranked WHERE ordinal<=10",
+                task_ids,
+            )
+            blocked_rows = await connection.fetch(
+                "SELECT p.key, EXISTS (SELECT 1 FROM "
+                "jsonb_array_elements_text(COALESCE(p.value->'blocked_by','[]'::jsonb)) dep_id "
+                "LEFT JOIN mutable_records d ON d.collection='tasks' AND d.key=dep_id "
+                "WHERE d.value->>'status' IS DISTINCT FROM 'done') blocked "
+                "FROM mutable_records p WHERE p.collection='tasks' AND p.key=ANY($1::text[])",
+                task_ids,
+            )
+        result: dict[str, dict[str, Any]] = {
+            str(row["key"]): {
+                "dependencies": {},
+                "children": [],
+                "dependency_total": int(row["dependency_total"]),
+                "child_total": 0,
+                "child_done": 0,
+                "blocked": False,
+            }
+            for row in parents
+        }
+        for row in deps:
+            result[row["parent_id"]]["dependencies"][row["dep_id"]] = {
+                "id": row["dep_id"],
+                "title": row["title"] or "",
+                "status": row["status"],
+            }
+        for row in children:
+            projection = result[row["parent_id"]]
+            projection["child_total"] = int(row["total"])
+            projection["child_done"] = int(row["done"])
+            if row["ordinal"] <= 10:
+                projection["children"].append(
+                    {"id": row["key"], "title": row["title"], "status": row["status"]}
+                )
+        for row in blocked_rows:
+            result[row["key"]]["blocked"] = row["blocked"]
+        return result
 
     async def mutable_task_counts(self, *, since: str) -> dict[str, int]:
         """Aggregate recent task statuses in PostgreSQL without returning rows."""

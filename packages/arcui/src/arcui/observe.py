@@ -21,9 +21,16 @@ from typing import Any, cast
 
 from arcstore import query as store_query
 from arcstore.backends import ArcStoreBackend, open_backend
+from arcstore.backends.base import TaskBoardBackend
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.ingest import StoreIngest
-from arcstore.tasks import MutableTaskBackend, TaskStore
+from arcstore.tasks import (
+    MutableTaskBackend,
+    Task,
+    TaskBoardFacets,
+    TaskBoardProjection,
+    TaskStore,
+)
 from pydantic import SecretStr
 
 from arcui.observe_stats import (
@@ -43,6 +50,10 @@ _WINDOW_SECONDS = {
     "7d": 604_800,
     "30d": 2_592_000,
 }
+
+
+class TaskBoardUnavailableError(RuntimeError):
+    """Configured backend lacks the optional indexed task-board capability."""
 
 
 def _window_cutoff(window: str) -> str:
@@ -463,19 +474,60 @@ class Observe:
         return [t.model_dump(mode="json") for t in rows]
 
     async def task_board_page(
-        self, *, phase: str = "active", before: tuple[str, str] | None = None, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        """Fetch one bounded keyset page of active or completed tasks."""
+        self,
+        *,
+        phase: str = "all",
+        before: tuple[str, str] | None = None,
+        limit: int = 100,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
+    ) -> list[Task]:
+        """Fetch canonical tasks in immutable creation order."""
         await self._ensure()
-        store = TaskStore(cast(MutableTaskBackend, self._backend))
-        rows = await store.list_board_page(phase=phase, before=before, limit=limit)
-        return [task.model_dump(mode="json") for task in rows]
+        store = self._board_store()
+        rows = await store.list_board_page(
+            phase=phase,
+            before=before,
+            limit=limit,
+            status=status,
+            priority=priority,
+            owner_did=owner_did,
+            tag=tag,
+            since=since,
+        )
+        return list(rows)
+
+    async def task_board_facets(self) -> TaskBoardFacets:
+        """Global facets and metrics through the public TaskStore seam."""
+        await self._ensure()
+        return await self._board_store().board_facets()
+
+    async def task_board_projection(self, task_ids: list[str]) -> dict[str, TaskBoardProjection]:
+        """Bounded page relationships through the public TaskStore seam."""
+        await self._ensure()
+        return await self._board_store().board_projection(task_ids)
 
     async def task_counts(self, window: str) -> dict[str, int]:
         """Count recently touched tasks at the database, without task bodies."""
         await self._ensure()
         store = TaskStore(cast(MutableTaskBackend, self._backend))
         return await store.counts_since(_window_cutoff(window))
+
+    def _board_store(self) -> TaskStore:
+        if not isinstance(self._backend, TaskBoardBackend) or not all(
+            callable(getattr(self._backend, name, None))
+            for name in (
+                "mutable_task_page",
+                "mutable_task_facets",
+                "mutable_task_projection",
+                "mutable_task_counts",
+            )
+        ):
+            raise TaskBoardUnavailableError("task board backend capability is unavailable")
+        return TaskStore(self._backend)
 
     async def _llm_rows_in_window(
         self, window: str, *, agent: str | None = None

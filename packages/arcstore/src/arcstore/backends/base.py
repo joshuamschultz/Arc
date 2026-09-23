@@ -60,6 +60,30 @@ def table_for_kind(kind: str) -> str:
 
 
 @runtime_checkable
+class TaskBoardBackend(Protocol):
+    """Optional indexed task-board capability; absence is reported as unavailable."""
+
+    async def mutable_task_page(
+        self,
+        *,
+        phase: str,
+        before: tuple[str, str] | None,
+        limit: int,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def mutable_task_facets(self) -> dict[str, Any]: ...
+
+    async def mutable_task_projection(self, task_ids: list[str]) -> dict[str, Any]: ...
+
+    async def mutable_task_counts(self, *, since: str) -> dict[str, int]: ...
+
+
+@runtime_checkable
 class ArcStoreBackend(Protocol):
     """One driver-neutral contract for ArcStore's PostgreSQL data plane."""
 
@@ -134,8 +158,21 @@ class ArcStoreBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     async def mutable_task_page(
-        self, *, phase: str, before: tuple[str, str] | None, limit: int
+        self,
+        *,
+        phase: str,
+        before: tuple[str, str] | None,
+        limit: int,
+        status: str | None = None,
+        priority: str | None = None,
+        owner_did: str | None = None,
+        tag: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    async def mutable_task_facets(self) -> dict[str, Any]: ...
+
+    async def mutable_task_projection(self, task_ids: list[str]) -> dict[str, Any]: ...
 
     async def mutable_task_counts(self, *, since: str) -> dict[str, int]: ...
 

@@ -13,10 +13,13 @@ edited here — see SDD §6.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from typing import Any
 
 from arcstore.tasks import Task
+from arcteam.mail import MailSendRequest
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -28,6 +31,7 @@ from arcui.schemas import ErrorResponse
 # arcui holds no agent identity; operator-originated writes are attributed to
 # this fixed DID (mirrors `_CALLER_DID` in agent_detail/_common.py).
 _CREATOR = "did:arc:ui:operator"
+_logger = logging.getLogger(__name__)
 
 _CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_review")
 # Fields a PATCH may write. A raw patch is never trusted wholesale (SEC-F4):
@@ -127,10 +131,40 @@ async def create_task(request: Request) -> JSONResponse:
     store = request.app.state.task_store
     created = await store.create(task)
 
+    notification_status = "not_applicable"
+    if created.owner_did is not None:
+        mail = getattr(request.app.state, "agent_mail", None)
+        notification_status = "unavailable"
+        if mail is not None:
+            try:
+                result = await asyncio.wait_for(
+                    mail.send(
+                        MailSendRequest(
+                            sender="user://operator",
+                            sender_did=mail.sender_did,
+                            to=(created.owner_did,),
+                            subject="New task assigned",
+                            body=f"Task {created.id}: {created.title}",
+                            idempotency_key=f"task-created:{created.id}",
+                            classification=created.classification,
+                        )
+                    ),
+                    timeout=3.0,
+                )
+                notification_status = result.status
+            except Exception as exc:
+                # The task is durable. A timed-out mail send may have persisted
+                # an outbox entry; the response must not invite a second create.
+                _logger.warning("task owner notification outcome unknown: %s", type(exc).__name__)
+                notification_status = "unknown"
+
     emit_mutation_audit(
         request, target=f"task:{created.id}", operation="task.create", outcome="applied"
     )
-    return JSONResponse(created.model_dump(mode="json"), status_code=201)
+    return JSONResponse(
+        {**created.model_dump(mode="json"), "owner_notification": notification_status},
+        status_code=201,
+    )
 
 
 async def patch_task(request: Request) -> JSONResponse:

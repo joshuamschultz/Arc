@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from arcstore.tasks import Task, TaskBoardFacets, TaskBoardProjection
 from pydantic import BaseModel, ConfigDict
 
 # ---------------------------------------------------------------------------
@@ -331,12 +332,28 @@ class SessionReplayResponse(BaseModel):
 
 
 class TasksResponse(BaseModel):
-    """Body of ``GET /api/agents/{id}/tasks`` and ``/team/tasks``."""
+    """Body of ``GET /api/agents/{id}/tasks``."""
 
     model_config = ConfigDict(extra="forbid")
 
     tasks: list[dict[str, Any]]
+
+
+class TaskBoardItem(Task):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    blocked_by_total: int
+    tags_total: int
+    agent_id: str | None = None
+
+
+class TaskBoardResponse(BaseModel):
+    """Validated fleet-board wire contract, separate from agent task lists."""
+
+    model_config = ConfigDict(extra="forbid")
+    tasks: list[TaskBoardItem]
     next_cursor: str | None = None
+    facets: TaskBoardFacets
+    projections: dict[str, TaskBoardProjection]
 
 
 class HomeNeedsQueue(BaseModel):

@@ -18,7 +18,7 @@ export function TaskCard({
   onClick: () => void
 }) {
   const timestamp = task.updated_at ?? task.created_at ?? null
-  const blockedCount = task.blocked_by?.length ?? 0
+  const blockedCount = task.blocked_by_total ?? task.blocked_by?.length ?? 0
   return (
     <button
       type="button"

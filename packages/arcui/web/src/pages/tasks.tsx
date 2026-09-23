@@ -4,12 +4,13 @@ import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
 import { FilterPills } from '@/components/filter-pills'
 import { InsightStat } from '@/components/ai'
-import { EmptyState, ErrorState, LoadingRows } from '@/components/states'
+import { ErrorState, LoadingRows } from '@/components/states'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { TaskBoard } from '@/components/task-board'
-import { fmtSeconds, isBlocked } from '@/lib/tasks'
+import { fmtSeconds } from '@/lib/tasks'
 import { TaskDrawer } from '@/components/task-drawer'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
@@ -23,33 +24,34 @@ const STATUS_FILTERS: (TaskStatus | 'all')[] = [
 const PRIORITY_FILTERS: (TaskPriority | 'all')[] = ['all', 'low', 'medium', 'high', 'critical']
 
 export function TasksPage() {
-  const query = useTeamTaskBoard()
   const [pageCursors, setPageCursors] = useState<string[]>([])
   const cursor = pageCursors.at(-1) ?? null
-  const pageQuery = useTeamTaskBoard(cursor, cursor !== null)
-  const nextCursor = cursor ? pageQuery.data?.next_cursor : query.data?.next_cursor
   const roster = useRoster()
   const [operatorMode] = useOperatorMode()
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all')
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all')
   const [ownerFilter, setOwnerFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
+  const [timeScope, setTimeScope] = useState('all')
+  const [ownerSearch, setOwnerSearch] = useState('')
+  const [tagSearch, setTagSearch] = useState('')
+  const filters = useMemo(() => ({
+    status: statusFilter === 'all' ? undefined : statusFilter,
+    priority: priorityFilter === 'all' ? undefined : priorityFilter,
+    owner_did: ownerFilter === 'all' ? undefined : ownerFilter,
+    tag: tagFilter === 'all' ? undefined : tagFilter,
+    time_scope: timeScope,
+  }), [statusFilter, priorityFilter, ownerFilter, tagFilter, timeScope])
+  const query = useTeamTaskBoard(cursor, filters)
+  const nextCursor = query.data?.next_cursor
   const [selected, setSelected] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
+  const [creationNotice, setCreationNotice] = useState<string | null>(null)
 
-  const tasks = useMemo(() => {
-    const byId = new Map<string, Task>()
-    for (const task of query.data?.tasks ?? []) byId.set(task.id, task)
-    for (const task of pageQuery.data?.tasks ?? []) if (!byId.has(task.id)) byId.set(task.id, task)
-    return [...byId.values()]
-  }, [query.data, pageQuery.data])
+  const tasks = useMemo(() => query.data?.tasks ?? [], [query.data])
+  const facets = query.data?.facets
+  const projections = query.data?.projections ?? {}
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data])
-
-  const statusById = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const t of tasks) if (t.id) m.set(t.id, t.status ?? 'backlog')
-    return m
-  }, [tasks])
 
   const resolveOwner = useMemo(() => {
     const byDid = new Map(agents.filter((a) => a.did).map((a) => [a.did as string, a]))
@@ -62,76 +64,22 @@ export function TasksPage() {
 
   const owners = useMemo(() => {
     const seen = new Map<string, string>()
-    for (const t of tasks) {
-      if (t.owner_did) seen.set(t.owner_did, resolveOwner(t.owner_did) ?? t.owner_did)
-    }
+    for (const did of Object.keys(facets?.owners ?? {})) seen.set(did, resolveOwner(did) ?? did)
     return [...seen.entries()]
-  }, [tasks, resolveOwner])
+  }, [facets?.owners, resolveOwner])
 
   const tags = useMemo(() => {
-    const seen = new Set<string>()
-    for (const t of tasks) for (const tag of t.tags ?? []) seen.add(tag)
-    return [...seen].sort()
-  }, [tasks])
+    return Object.keys(facets?.tags ?? {}).sort()
+  }, [facets?.tags])
 
-  const statusCounts = useMemo(() => {
-    const c: Record<string, number> = { all: tasks.length }
-    for (const t of tasks) c[t.status ?? 'backlog'] = (c[t.status ?? 'backlog'] ?? 0) + 1
-    return c
-  }, [tasks])
+  const statusCounts: Record<string, number> = { all: facets?.total ?? 0, ...facets?.statuses }
+  const priorityCounts: Record<string, number> = { all: facets?.total ?? 0, ...facets?.priorities }
+  const counts = { inbox: statusCounts.todo ?? 0, blocked: facets?.blocked ?? 0,
+    backlog: statusCounts.backlog ?? 0 }
 
-  const priorityCounts = useMemo(() => {
-    const c: Record<string, number> = { all: tasks.length }
-    for (const t of tasks) c[t.priority ?? 'medium'] = (c[t.priority ?? 'medium'] ?? 0) + 1
-    return c
-  }, [tasks])
-
-  const metrics = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    let inProgress = 0
-    let doneToday = 0
-    let failed = 0
-    let blocked = 0
-    const doneDurations: number[] = [] // seconds, from the real lifecycle fields
-    for (const t of tasks) {
-      if (t.status === 'in_progress') inProgress++
-      if (t.status === 'failed') failed++
-      if (isBlocked(t, statusById)) blocked++
-      if (t.status === 'done') {
-        const completed = t.completed_at ?? t.updated_at
-        if (completed?.slice(0, 10) === today) doneToday++
-        if (t.duration_seconds != null) doneDurations.push(t.duration_seconds)
-        else if (t.started_at && t.completed_at) {
-          doneDurations.push((Date.parse(t.completed_at) - Date.parse(t.started_at)) / 1000)
-        }
-      }
-    }
-    const avgDone = doneDurations.length
-      ? doneDurations.reduce((a, b) => a + b, 0) / doneDurations.length
-      : null
-    return { inProgress, doneToday, failed, blocked, avgDone }
-  }, [tasks, statusById])
-
-  const counts = useMemo(
-    () => ({
-      tasks: tasks.length,
-      inbox: statusCounts.todo ?? 0,
-      blocked: metrics.blocked,
-      backlog: statusCounts.backlog ?? 0,
-    }),
-    [tasks.length, statusCounts, metrics.blocked],
-  )
-
-  // The board is NOT status-filtered — each column self-populates by its own
-  // status, so a task never disappears from the board. Status is applied by
-  // focusing a single column instead (see `statusFilter` -> TaskBoard below),
-  // which keeps the pill counts (over all tasks) and the columns in agreement.
-  const boardTasks = tasks.filter(
-    (t) =>
-      (priorityFilter === 'all' || t.priority === priorityFilter) &&
-      (ownerFilter === 'all' || t.owner_did === ownerFilter) &&
-      (tagFilter === 'all' || (t.tags ?? []).includes(tagFilter)),
-  )
+  // The server applies all filters before paging. The board focuses the
+  // selected status column while the pills retain store-wide facet counts.
+  const boardTasks = tasks
 
   const mentionHandles = useMemo<MentionHandle[]>(
     () =>
@@ -162,31 +110,32 @@ export function TasksPage() {
         }
       />
       <div className="flex-1 space-y-4 overflow-hidden p-6">
+        {creationNotice && <div role="status" className="rounded-md border border-border p-2 text-xs">{creationNotice}</div>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InsightStat
             label="In progress"
-            value={metrics.inProgress}
+            value={statusCounts.in_progress ?? 0}
             icon={<Loader className="size-3.5" />}
           />
           <InsightStat
             label="Done today"
-            value={metrics.doneToday}
+            value={facets?.done_today ?? 0}
             icon={<CheckCircle2 className="size-3.5" />}
           />
           <InsightStat
             label="Avg time to done"
-            value={metrics.avgDone != null ? fmtSeconds(metrics.avgDone) : '—'}
+            value={facets?.avg_done_seconds != null ? fmtSeconds(facets.avg_done_seconds) : '—'}
             icon={<Timer className="size-3.5" />}
           />
           <InsightStat
             label="Failed"
-            value={metrics.failed}
+            value={statusCounts.failed ?? 0}
             icon={<XCircle className="size-3.5" />}
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span className="tabular-nums">{counts.tasks} tasks shown{nextCursor ? ' · more available' : ''}</span>
+          <span className="tabular-nums">{tasks.length} shown · {facets?.total ?? 0} total{nextCursor ? ' · more available' : ''}</span>
           <span className="text-border">·</span>
           <span className="tabular-nums">{counts.inbox} inbox</span>
           <span className="text-border">·</span>
@@ -198,7 +147,7 @@ export function TasksPage() {
         <div className="flex flex-wrap items-center gap-2">
           <FilterPills
             value={statusFilter}
-            onChange={(v) => setStatusFilter(v as TaskStatus | 'all')}
+            onChange={(v) => { setPageCursors([]); setStatusFilter(v as TaskStatus | 'all') }}
             options={STATUS_FILTERS.map((s) => ({
               value: s,
               label: s === 'all' ? 'All' : s.replace(/_/g, ' '),
@@ -207,14 +156,14 @@ export function TasksPage() {
           />
           <FilterPills
             value={priorityFilter}
-            onChange={(v) => setPriorityFilter(v as TaskPriority | 'all')}
+            onChange={(v) => { setPageCursors([]); setPriorityFilter(v as TaskPriority | 'all') }}
             options={PRIORITY_FILTERS.map((p) => ({
               value: p,
               label: p === 'all' ? 'All priority' : p,
               count: priorityCounts[p] ?? 0,
             }))}
           />
-          <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+          <Select value={ownerFilter} onValueChange={(v) => { setPageCursors([]); setOwnerFilter(v) }}>
             <SelectTrigger size="sm"><SelectValue placeholder="Owner" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All owners</SelectItem>
@@ -224,8 +173,11 @@ export function TasksPage() {
             </SelectContent>
           </Select>
           <FieldHelp helpKey="tasks.owner_filter" route="tasks" />
+          {facets?.owners_truncated && <Input aria-label="Owner DID filter" placeholder="Filter by owner DID"
+            value={ownerSearch} onChange={(e) => setOwnerSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { setPageCursors([]); setOwnerFilter(ownerSearch || 'all') } }} />}
           {tags.length > 0 && (
-            <><Select value={tagFilter} onValueChange={setTagFilter}>
+            <><Select value={tagFilter} onValueChange={(v) => { setPageCursors([]); setTagFilter(v) }}>
               <SelectTrigger size="sm"><SelectValue placeholder="Tag" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All tags</SelectItem>
@@ -235,16 +187,21 @@ export function TasksPage() {
               </SelectContent>
             </Select><FieldHelp helpKey="tasks.tag_filter" route="tasks" /></>
           )}
+          {facets?.tags_truncated && <Input aria-label="Tag filter" placeholder="Filter by tag"
+            value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { setPageCursors([]); setTagFilter(tagSearch || 'all') } }} />}
         </div>
 
-        {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> :
-          pageQuery.isError ? <ErrorState error={pageQuery.error} /> :
-          tasks.length === 0 ? <EmptyState title="No tasks across the fleet yet." /> : (
+        {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> : (
             <TaskBoard
               tasks={boardTasks}
               resolveOwner={resolveOwner}
               onSelectTask={setSelected}
               focusStatus={statusFilter}
+              projections={projections}
+              scope={timeScope}
+              onScopeChange={(value) => { setPageCursors([]); setTimeScope(value) }}
+              serverScoped
             />
           )}
         {pageCursors.length > 0 && (
@@ -256,7 +213,7 @@ export function TasksPage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={pageQuery.isFetching}
+            disabled={query.isFetching}
             onClick={() => setPageCursors((current) => [...current, nextCursor])}
           >
             Load more tasks
@@ -272,8 +229,14 @@ export function TasksPage() {
         roster={agents}
         mentionHandles={mentionHandles}
         allTasks={tasks}
+        projection={selected ? projections[selected.id] : undefined}
       />
-      <CreateTaskSheet open={creating} onOpenChange={setCreating} roster={agents} />
+      <CreateTaskSheet open={creating} onOpenChange={setCreating} roster={agents}
+        onCreated={(task) => setCreationNotice(task.owner_notification === 'not_applicable'
+          ? 'Task created in the fleet backlog.'
+          : task.owner_notification === 'sent'
+            ? 'Task created and owner notified.'
+            : `Task created; owner notification ${task.owner_notification ?? 'unknown'}. Check the task before trying again.`)} />
     </div>
   )
 }
