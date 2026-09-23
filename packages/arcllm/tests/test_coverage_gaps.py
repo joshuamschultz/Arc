@@ -418,10 +418,10 @@ class TestQueueStats:
 
         messages = [Message(role="user", content="hi")]
 
-        # Saturate the semaphore so the next call hits backpressure
-        # With max_queued=0, any call when waiters >= 0 is rejected immediately
-        with pytest.raises(QueueFullError):
-            await qm.invoke(messages)
+        # A zero-length waiting room rejects calls only while capacity is occupied.
+        async with qm._semaphore:
+            with pytest.raises(QueueFullError):
+                await qm.invoke(messages)
 
         assert qm._total_rejected == 1
 

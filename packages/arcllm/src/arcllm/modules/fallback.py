@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.modules.base import BaseModule
+from arcllm.modules.base import BaseModule, owned_stream
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, ResponseFormat, Tool
 
 logger = logging.getLogger(__name__)
@@ -99,11 +99,14 @@ class FallbackModule(BaseModule):
             for index, provider in enumerate(providers):
                 try:
                     seen = False
-                    async for delta in provider.invoke_stream(
-                        messages, tools, response_format=response_format, **kwargs
-                    ):
-                        seen = True
-                        yield delta
+                    async with owned_stream(
+                        provider.invoke_stream(
+                            messages, tools, response_format=response_format, **kwargs
+                        )
+                    ) as stream:
+                        async for delta in stream:
+                            seen = True
+                            yield delta
                     return
                 except Exception:
                     if seen or index == len(providers) - 1:

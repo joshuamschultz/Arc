@@ -40,7 +40,7 @@ from typing import Any, Protocol
 from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMConfigError, ArcLLMEmbeddingUnavailableError
-from arcllm.modules.base import resolve_enforcement, validate_config_keys
+from arcllm.modules.base import owned_stream, resolve_enforcement, validate_config_keys
 from arcllm.types import (
     Delta,
     LLMProvider,
@@ -807,10 +807,13 @@ class RoutingModule(LLMProvider):
                 raise ArcLLMConfigError(
                     f"Selected route {self._single!r} is not permitted by policy"
                 )
-            async for delta in self.adapter_for(self._single).invoke_stream(
-                messages, tools, response_format=response_format, **kwargs
-            ):
-                yield delta
+            async with owned_stream(
+                self.adapter_for(self._single).invoke_stream(
+                    messages, tools, response_format=response_format, **kwargs
+                )
+            ) as stream:
+                async for delta in stream:
+                    yield delta
             return
         with self._tracer.start_as_current_span("arcllm.routing") as span:
             decision = (
@@ -828,12 +831,15 @@ class RoutingModule(LLMProvider):
             self._annotate(span, decision, route)
 
             seen: list[str] = []
-            async for delta in self.adapter_for(decision.route).invoke_stream(
-                messages, tools, response_format=response_format, **kwargs
-            ):
-                if delta.tool_call is not None and delta.tool_call.id:
-                    seen.append(delta.tool_call.id)
-                yield delta
+            async with owned_stream(
+                self.adapter_for(decision.route).invoke_stream(
+                    messages, tools, response_format=response_format, **kwargs
+                )
+            ) as stream:
+                async for delta in stream:
+                    if delta.tool_call is not None and delta.tool_call.id:
+                        seen.append(delta.tool_call.id)
+                    yield delta
             if seen:
                 self._remember_tool_calls(seen, decision.route, session_id)
 

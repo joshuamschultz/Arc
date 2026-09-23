@@ -29,7 +29,7 @@ from arcllm._trace_crypto import decode_wrapping_key, seal
 from arcllm.config import TraceEncryptionConfig
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
-from arcllm.modules.base import BaseModule, resolve_enforcement, validate_config_keys
+from arcllm.modules.base import BaseModule, owned_stream, resolve_enforcement, validate_config_keys
 from arcllm.modules.telemetry_budget import (
     BudgetAccumulator,
     get_or_create_accumulator,
@@ -929,23 +929,26 @@ class TelemetryModule(BaseModule):
             }
             accumulator = StreamAccumulator(model=self._inner.model_name)
             t_pre = time.monotonic()
-            try:
-                async for delta in self._inner.invoke_stream(messages, tools, **inner_kwargs):
-                    accumulator.add(delta)
-                    yield delta
-            except Exception as exc:
-                # A raising stream still records an operational line (FR-4 / C3),
-                # same as invoke().
-                error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
-                self._record_spool(
-                    outcome="error",
-                    model=self._inner.model_name,
-                    cost=None,
-                    latency_ms=round((time.monotonic() - t0) * 1000, 1),
-                    request_body=error_prepared.request_body,
-                    error=f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_LEN],
-                )
-                raise
+            async with owned_stream(
+                self._inner.invoke_stream(messages, tools, **inner_kwargs)
+            ) as stream:
+                try:
+                    async for delta in stream:
+                        accumulator.add(delta)
+                        yield delta
+                except Exception as exc:
+                    # A raising stream still records an operational line (FR-4 / C3),
+                    # same as invoke().
+                    error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
+                    self._record_spool(
+                        outcome="error",
+                        model=self._inner.model_name,
+                        cost=None,
+                        latency_ms=round((time.monotonic() - t0) * 1000, 1),
+                        request_body=error_prepared.request_body,
+                        error=f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_LEN],
+                    )
+                    raise
             t_llm = time.monotonic()
             response = accumulator.build()
             cost = self._calculate_cost(response.usage, response)

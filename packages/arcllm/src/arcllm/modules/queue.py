@@ -15,13 +15,15 @@ Stack position: Otel → **Queue** → Telemetry → Audit → …
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMConfigError, QueueFullError, QueueTimeoutError
-from arcllm.modules.base import BaseModule, validate_config_keys
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool
+from arcllm.modules.base import BaseModule, owned_stream, validate_config_keys
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class QueueModule(BaseModule):
 
     Config keys:
         max_concurrent: Semaphore capacity (default: 2).
-        call_timeout:   Send-time timeout in seconds (default: 60.0).
+        call_timeout:   Send-time timeout in seconds (default: 180.0).
         max_queued:     Max waiters before rejection (default: 10).
     """
 
@@ -77,10 +79,62 @@ class QueueModule(BaseModule):
         **kwargs: Any,
     ) -> LLMResponse:
         """Gate the inner invoke() through the concurrency semaphore."""
+        async with self._admit():
+            budget = asyncio.timeout(self._call_timeout)
+            try:
+                async with budget:
+                    result = await self._inner.invoke(messages, tools, **kwargs)
+            except TimeoutError:
+                if not budget.expired():
+                    raise
+                self._record_timeout()
+                raise QueueTimeoutError(self._call_timeout) from None
+            self._total_completed += 1
+            return result
+
+    async def invoke_stream(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Delta]:
+        """Hold one queue slot until the provider stream ends or is closed."""
+        async with self._admit():
+            deadline = time.monotonic() + self._call_timeout
+            async with owned_stream(
+                self._inner.invoke_stream(messages, tools, **kwargs)
+            ) as stream:
+                while True:
+                    try:
+                        delta = await self._next_delta(stream, deadline)
+                    except StopAsyncIteration:
+                        break
+                    yield delta
+            self._total_completed += 1
+
+    async def _next_delta(self, stream: AsyncIterator[Delta], deadline: float) -> Delta:
+        """Bound only the provider await, leaving consumer work uncancelled."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._record_timeout()
+            raise QueueTimeoutError(self._call_timeout)
+        budget = asyncio.timeout(remaining)
+        try:
+            async with budget:
+                return await anext(stream)
+        except TimeoutError:
+            if not budget.expired():
+                raise
+            self._record_timeout()
+            raise QueueTimeoutError(self._call_timeout) from None
+
+    @asynccontextmanager
+    async def _admit(self) -> AsyncIterator[None]:
+        """Share admission, accounting and cleanup across both call shapes."""
         depth_at_entry = self._waiters
 
         # Backpressure: reject immediately if too many callers are waiting
-        if self._waiters >= self._max_queued:
+        if self._semaphore.locked() and self._waiters >= self._max_queued:
             self._total_rejected += 1
             self._set_rejected_span_attribute()
             logger.warning(
@@ -106,23 +160,9 @@ class QueueModule(BaseModule):
                 self._set_span_attributes(wait_ms, depth_at_entry)
 
                 try:
-                    result = await asyncio.wait_for(
-                        self._inner.invoke(messages, tools, **kwargs),
-                        timeout=self._call_timeout,
-                    )
-                    self._total_completed += 1
-                    return result
-                except TimeoutError:
-                    self._total_timeouts += 1
-                    logger.error(
-                        "Queue send-time timeout after %.1fs",
-                        self._call_timeout,
-                    )
-                    raise QueueTimeoutError(self._call_timeout) from None
+                    yield
                 finally:
                     self._active -= 1
-        except (QueueTimeoutError, QueueFullError):
-            raise
         except BaseException:
             if not entered_semaphore:
                 # Decrement waiter count if CancelledError hit before
@@ -130,6 +170,10 @@ class QueueModule(BaseModule):
                 # decremented). Prevents counter drift under cancellation.
                 self._waiters -= 1
             raise
+
+    def _record_timeout(self) -> None:
+        self._total_timeouts += 1
+        logger.error("Queue send-time timeout after %.1fs", self._call_timeout)
 
     def _set_span_attributes(self, wait_ms: int, depth_at_entry: int) -> None:
         """Set arc.queue.* attributes on the active Otel span."""

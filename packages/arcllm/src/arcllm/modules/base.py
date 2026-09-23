@@ -1,6 +1,7 @@
 """BaseModule — transparent wrapper foundation for all modules."""
 
 import contextlib
+import logging
 from collections.abc import AsyncIterator, Generator
 from typing import Any
 
@@ -9,6 +10,35 @@ from opentelemetry.trace import StatusCode
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Tool
+
+logger = logging.getLogger(__name__)
+
+
+async def close_stream(stream: AsyncIterator[Delta], prior_error: BaseException | None) -> None:
+    """Close a delegated stream without replacing its original failure."""
+    close = getattr(stream, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception as exc:
+        if prior_error is None:
+            raise
+        logger.warning(
+            "provider stream cleanup failed after an earlier error: %s", type(exc).__name__
+        )
+
+
+@contextlib.asynccontextmanager
+async def owned_stream(stream: AsyncIterator[Delta]) -> AsyncIterator[AsyncIterator[Delta]]:
+    """Own and close a delegated stream after any consuming outcome."""
+    try:
+        yield stream
+    except BaseException as exc:
+        await close_stream(stream, exc)
+        raise
+    else:
+        await close_stream(stream, None)
 
 
 def validate_config_keys(
@@ -114,8 +144,9 @@ class BaseModule(LLMProvider):
         **kwargs: Any,
     ) -> AsyncIterator[Delta]:
         """Preserve the inner provider's true stream through transparent modules."""
-        async for delta in self._inner.invoke_stream(messages, tools, **kwargs):
-            yield delta
+        async with owned_stream(self._inner.invoke_stream(messages, tools, **kwargs)) as stream:
+            async for delta in stream:
+                yield delta
 
     def validate_config(self) -> bool:
         return self._inner.validate_config()
