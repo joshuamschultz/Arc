@@ -45,6 +45,37 @@ async def test_versioned_controls_reject_stale_revision_and_survive_restart(
 
 
 @pytest.mark.asyncio
+async def test_peer_pause_prevents_provider_admission_until_peer_resume(tmp_path: Path) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    owner = CallQueueCoordinator(store=journal)
+    controller = CallQueueCoordinator(store=journal)
+    await owner.initialize()
+    await controller.initialize()
+    registered = asyncio.Event()
+    proceed = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def pending() -> None:
+        async with owner.call(CallQueueContext("tenant", "owner", "peer-pause")) as job:
+            registered.set()
+            await proceed.wait()
+            async with owner.attempt("provider", job):
+                entered.set()
+
+    task = asyncio.create_task(pending())
+    await registered.wait()
+    await controller.pause(expected_revision=0)
+    proceed.set()
+    await asyncio.sleep(0.2)
+    assert not entered.is_set()
+    queued = await journal.get("peer-pause")
+    assert queued is not None and queued.state == "queued"
+    await controller.resume(expected_revision=1)
+    await asyncio.wait_for(task, 2)
+    assert entered.is_set()
+
+
+@pytest.mark.asyncio
 async def test_cancel_queued_waiter_is_confirmed_and_never_enters_provider() -> None:
     coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=1))
     await coordinator.pause(expected_revision=0)
@@ -168,7 +199,7 @@ async def test_running_cancel_blocks_new_provider_attempt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sparse_scoped_metadata_page_has_bounded_scan(tmp_path: Path) -> None:
+async def test_sparse_scoped_metadata_page_only_returns_authorized_jobs(tmp_path: Path) -> None:
     journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
     coordinator = CallQueueCoordinator(store=journal)
     await coordinator.initialize()
@@ -179,12 +210,35 @@ async def test_sparse_scoped_metadata_page_has_bounded_scan(tmp_path: Path) -> N
     seen = []
     for _ in range(6):
         page = await coordinator.metadata_page(QueueReadScope("wanted"), cursor=cursor, limit=2)
-        assert page.examined <= 5
+        assert len(page.jobs) <= 2
         seen.extend(page.jobs)
         cursor = page.next_cursor
         if cursor is None:
             break
     assert [job.call_id for job in seen] == ["call-0"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("durable", [False, True])
+async def test_metadata_page_does_not_reveal_foreign_activity(
+    tmp_path: Path, durable: bool
+) -> None:
+    store = (
+        QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+        if durable
+        else MemoryQueueStore()
+    )
+    coordinator = CallQueueCoordinator(store=store)
+    if durable:
+        await coordinator.initialize()
+    await coordinator.register(CallQueueContext("tenant", "owner", "visible"))
+    baseline = await coordinator.metadata_page(QueueReadScope("tenant"), limit=2)
+    assert [job.call_id for job in baseline.jobs] == ["visible"]
+    assert baseline.next_cursor is None
+    for index in range(4):
+        await coordinator.register(CallQueueContext("foreign", "owner", f"foreign-{index}"))
+    after = await coordinator.metadata_page(QueueReadScope("tenant"), limit=2)
+    assert after == baseline
 
 
 @pytest.mark.asyncio
@@ -317,6 +371,23 @@ async def test_recovery_never_replays_or_accepts_stale_owner(tmp_path: Path) -> 
     row = await journal.get(job.call_id)
     assert row is not None and row.state == "outcome_unknown"
     assert await journal.compare_and_set(job.call_id, started.version, "completed", "run") is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_marks_orphaned_cancel_request_unknown(tmp_path: Path) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    owner = CallQueueCoordinator(store=journal)
+    await owner.initialize()
+    job = await owner.register(CallQueueContext("tenant", "run", "orphan-cancel"))
+    running = await journal.compare_and_set(job.call_id, job.version, "running", "run")
+    assert running is not None
+    cancelled = await journal.compare_and_set(
+        job.call_id, running.version, "cancel_requested", "run"
+    )
+    assert cancelled is not None
+    assert await CallQueueCoordinator(store=journal).recover() == 1
+    final = await journal.get(job.call_id)
+    assert final is not None and final.state == "outcome_unknown"
 
 
 @pytest.mark.asyncio

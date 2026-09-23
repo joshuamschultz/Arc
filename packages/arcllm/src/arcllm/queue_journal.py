@@ -420,53 +420,50 @@ class QueueJournal:
             if type(stamp) is not float or not isinstance(key, str) or len(key) != 64:
                 raise ValueError("invalid queue cursor")
             before = (stamp, key)
-        budget = max(5, limit)
         with self._connect() as db:
             db.execute("BEGIN")
             self._verify_anchor(db)
             if before is None:
                 rows = db.execute(
-                    "SELECT id, version, updated, sealed FROM jobs "
-                    "ORDER BY updated DESC, id DESC LIMIT ?",
-                    (budget + 1,),
+                    "SELECT id, version, updated, sealed FROM jobs ORDER BY updated DESC, id DESC",
                 ).fetchall()
             else:
                 rows = db.execute(
                     "SELECT id, version, updated, sealed FROM jobs "
-                    "WHERE (updated, id) < (?, ?) ORDER BY updated DESC, id DESC LIMIT ?",
-                    (*before, budget + 1),
+                    "WHERE (updated, id) < (?, ?) ORDER BY updated DESC, id DESC",
+                    before,
                 ).fetchall()
-        examined: list[tuple[str, int, float, str]] = []
         matched: list[CallJob] = []
-        for row in rows[:budget]:
-            examined.append(row)
+        more_visible = False
+        for row in rows:
             job = self._bound_job(row)
             if (
                 job.tenant_id == scope.tenant_id
                 and (scope.owner_id is None or job.owner_id == scope.owner_id)
                 and (scope.state is None or job.state == scope.state)
             ):
-                matched.append(job)
                 if len(matched) == limit:
+                    more_visible = True
                     break
+                matched.append(job)
         next_cursor = None
-        if len(rows) > len(examined) and examined:
-            last = examined[-1]
+        if more_visible:
+            last = matched[-1]
             next_cursor = self._encode(
                 {
                     "tenant_id": scope.tenant_id,
                     "owner_id": scope.owner_id,
                     "state": scope.state,
-                    "updated": last[2],
-                    "key": last[0],
+                    "updated": last.updated_at,
+                    "key": _key(last.call_id),
                 }
             )
-        return QueueMetadataPage(tuple(matched), next_cursor, len(examined))
+        return QueueMetadataPage(tuple(matched), next_cursor)
 
     async def metadata_page(
         self, scope: QueueReadScope, *, cursor: str | None, limit: int
     ) -> QueueMetadataPage:
-        """Return one bounded, tenant-filtered metadata scan."""
+        """Return a bounded page and scope-visible continuation only."""
         if not 1 <= limit <= 100:
             raise ValueError("invalid queue page")
         return await self._read_retry(self._metadata_page, scope, cursor, limit)

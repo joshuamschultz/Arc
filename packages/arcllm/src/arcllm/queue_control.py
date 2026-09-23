@@ -97,11 +97,10 @@ class QueueReadScope:
 
 @dataclass(frozen=True, slots=True)
 class QueueMetadataPage:
-    """Payload-free page with a bounded scan and opaque continuation."""
+    """Payload-free scoped page with opaque continuation."""
 
     jobs: tuple[CallJob, ...]
     next_cursor: str | None
-    examined: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +233,7 @@ class MemoryQueueStore:
     async def metadata_page(
         self, scope: QueueReadScope, *, cursor: str | None, limit: int
     ) -> QueueMetadataPage:
-        """Scan at most five or one page worth of in-memory metadata."""
+        """Page only records visible within the supplied scope."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("invalid queue page")
         before = None
@@ -244,7 +243,13 @@ class MemoryQueueStore:
                 raise ValueError("invalid queue cursor")
             before = saved[1]
         rows = sorted(
-            self._jobs.values(),
+            (
+                job
+                for job in self._jobs.values()
+                if job.tenant_id == scope.tenant_id
+                and (scope.owner_id is None or job.owner_id == scope.owner_id)
+                and (scope.state is None or job.state == scope.state)
+            ),
             key=lambda job: (job.updated_at, hashlib.sha256(job.call_id.encode()).hexdigest()),
             reverse=True,
         )
@@ -254,29 +259,18 @@ class MemoryQueueStore:
                 for job in rows
                 if (job.updated_at, hashlib.sha256(job.call_id.encode()).hexdigest()) < before
             ]
-        scanned: list[CallJob] = []
-        matched: list[CallJob] = []
-        for job in rows[: max(5, limit)]:
-            scanned.append(job)
-            if (
-                job.tenant_id == scope.tenant_id
-                and (scope.owner_id is None or job.owner_id == scope.owner_id)
-                and (scope.state is None or job.state == scope.state)
-            ):
-                matched.append(job)
-                if len(matched) == limit:
-                    break
+        matched = rows[:limit]
         next_cursor = None
-        if len(rows) > len(scanned) and scanned:
+        if len(rows) > limit and matched:
             next_cursor = uuid.uuid4().hex
-            last = scanned[-1]
+            last = matched[-1]
             self._page_cursors[next_cursor] = (
                 scope,
                 (last.updated_at, hashlib.sha256(last.call_id.encode()).hexdigest()),
             )
             if len(self._page_cursors) > 1000:
                 self._page_cursors.pop(next(iter(self._page_cursors)))
-        return QueueMetadataPage(tuple(matched), next_cursor, len(scanned))
+        return QueueMetadataPage(tuple(matched), next_cursor)
 
 
 @dataclass(slots=True)
@@ -378,17 +372,27 @@ class CallQueueCoordinator:
         async with self._lifecycle_lock:
             if self._live:
                 raise RuntimeError("cannot initialize queue with live calls")
-            control = await self.store.load_control()
-            if control is not None:
-                if type(control.get("paused")) is not bool:
-                    raise ValueError("invalid queue pause control")
-                revision = control.get("revision")
-                if type(revision) is not int or revision < 1:
-                    raise ValueError("invalid queue control revision")
-                self.limits = QueueLimits(**control["limits"])
-                self._paused = control["paused"]
-                self._control_revision = revision
+            await self._refresh_control()
             self._initialized = True
+
+    async def _refresh_control(self) -> None:
+        control = await self.store.load_control()
+        if control is None:
+            return
+        if type(control.get("paused")) is not bool:
+            raise ValueError("invalid queue pause control")
+        revision = control.get("revision")
+        if type(revision) is not int or revision < 1:
+            raise ValueError("invalid queue control revision")
+        if revision < self._control_revision:
+            raise QueueStateUnavailableError("queue control revision regressed")
+        if revision == self._control_revision:
+            return
+        self.limits = QueueLimits(**control["limits"])
+        self._paused = control["paused"]
+        self._control_revision = revision
+        for pool in self._pools.values():
+            pool.grant_next(0 if self._paused else self.limits.max_concurrent)
 
     async def register(self, context: CallQueueContext) -> CallJob:
         """Accept one caller only after its record is durable."""
@@ -542,6 +546,7 @@ class CallQueueCoordinator:
     @asynccontextmanager
     async def attempt(self, provider_scope: str, job: CallJob) -> AsyncIterator[str]:
         """Admit one actual wire attempt in its provider capacity group."""
+        await self._refresh_control()
         pool = self._pools.setdefault(provider_scope, _ProviderPool())
         if pool.waiting >= self.limits.max_queued and (
             pool.active >= self.limits.max_concurrent or self._paused
@@ -551,10 +556,26 @@ class CallQueueCoordinator:
         pool.enqueue(waiter)
         pool.grant_next(0 if self._paused else self.limits.max_concurrent)
         try:
-            try:
-                await asyncio.wait_for(waiter.ready, self.limits.wait_timeout)
-            except TimeoutError:
-                raise QueueTimeoutError(self.limits.wait_timeout) from None
+            admission_deadline = time.monotonic() + self.limits.wait_timeout
+            while True:
+                await self._refresh_control()
+                if waiter.granted and self._paused:
+                    pool.active -= 1
+                    waiter.granted = False
+                    waiter = _Waiter(job.tenant_id, asyncio.get_running_loop().create_future())
+                    pool.enqueue(waiter)
+                if waiter.granted:
+                    await self._refresh_control()
+                    if not self._paused:
+                        break
+                    continue
+                remaining = admission_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise QueueTimeoutError(self.limits.wait_timeout)
+                try:
+                    await asyncio.wait_for(asyncio.shield(waiter.ready), min(0.1, remaining))
+                except TimeoutError:
+                    continue
             attempt_id = uuid.uuid4().hex
             await self._transition(
                 job, "running", provider_scope=provider_scope, attempt_id=attempt_id
@@ -689,7 +710,7 @@ class CallQueueCoordinator:
             if not page:
                 return count
             for job in page:
-                if job.state not in {"queued", "running"}:
+                if job.state not in {"queued", "running", "cancel_requested"}:
                     continue
                 state: QueueState = "failed" if job.state == "queued" else "outcome_unknown"
                 if await self.store.compare_and_set(job.call_id, job.version, state, job.owner_id):
