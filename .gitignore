@@ -119,11 +119,12 @@ CLAUDE.md
 AGENTS.md
 ALPHA-HOTFIXES.md
 
-# Personal deploy scripts — target the operator's own machines (DGX / Azure VM).
-scripts/deploy-node.sh
+# Private operator wrappers — name the operator's own machines (DGX / Azure VM).
+# scripts/deploy-node.sh and scripts/deploy_node_overlays.py are the portable
+# node installer and ARE tracked: tests/architecture/test_deployment_layout.py
+# reads them, so a clean checkout must have them.
 scripts/deploy-vm.sh
 scripts/deploy-azure.sh
-scripts/deploy_node_overlays.py
 scripts/migrate_unhide_capabilities.py
 
 # Stray coverage artifacts (incl. macOS ".coverage 2" duplicates)
