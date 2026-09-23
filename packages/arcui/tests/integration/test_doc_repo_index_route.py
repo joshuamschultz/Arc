@@ -84,6 +84,9 @@ async def _seed_index(workspace: Path) -> str:
         ),
         mapping,
     )
+    # The routing index describes the whole source and is written once per
+    # sync run, as the coordinator does after its pages.
+    await service.finish_sync(source)
     return mapping.source_id
 
 
