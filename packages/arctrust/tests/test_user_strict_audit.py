@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from packages.arctrust.tests.test_users import GOOD, FakeAnchor, FakeAudit, FakeCipher, FakeIssuer
 
 from arctrust.users import UserStore, UserStoreError
-from packages.arctrust.tests.test_users import FakeAnchor, FakeAudit, FakeCipher, FakeIssuer, GOOD
 
 
 class StrictAudit:

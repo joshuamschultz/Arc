@@ -136,8 +136,10 @@ class _LeaseClient(httpx.Client):
 
     def _renew(self) -> None:
         try:
-            response = super().request("POST", "/v1/auth/token/renew-self", json={"increment": "30s"},
-                                       timeout=5, follow_redirects=False)
+            response = super().request(
+                "POST", "/v1/auth/token/renew-self", json={"increment": "30s"},
+                timeout=5, follow_redirects=False,
+            )
             response.raise_for_status()
             auth = response.json()["auth"]
             ttl = auth["lease_duration"]

@@ -54,7 +54,8 @@ class AccountAuthority:
         for capability, lease in leases.items():
             grant = lease._grant
             if (grant.capability != capability or grant.deployment_id != config.deployment_id
-                    or grant.tenant_id != config.tenant_id or grant.config_digest != config.digest):
+                    or grant.tenant_id != config.tenant_id
+                    or grant.config_digest != config.digest):
                 raise AccountAuthorityError("account capability scope mismatch")
         self._config = config
         self._leases = leases

@@ -8,6 +8,7 @@ import time
 
 import pytest
 from nacl.signing import SigningKey
+from packages.arctrust.tests.integration.vault_fixture import DisposableVault, docker_available
 
 from arctrust.audit import WormSink, verify_chain
 from arctrust.authority import open_account_authority
@@ -22,7 +23,6 @@ from arctrust.vault_lease import (
     open_vault_lease,
     sign_capability_grant,
 )
-from packages.arctrust.tests.integration.vault_fixture import DisposableVault, docker_available
 
 pytestmark = pytest.mark.requires_docker
 

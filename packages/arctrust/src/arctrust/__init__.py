@@ -109,13 +109,13 @@ from arctrust.audit import (
     worm_policy_sink,
 )
 from arctrust.audit_cipher import RecordCipher, derive_record_key
-from arctrust.byte_cipher import ByteCipher
 from arctrust.authority_config import (
     AuthorityConfigError,
     DeploymentAuthorityConfig,
     load_authority_config,
     sign_authority_config,
 )
+from arctrust.byte_cipher import ByteCipher
 from arctrust.canonical import canonical_json
 from arctrust.classification import (
     Classification,
@@ -264,7 +264,12 @@ if TYPE_CHECKING:
     from arctrust.transit_http import VaultTransitHTTP
     from arctrust.vault_anchor import VaultKVAnchor
     from arctrust.vault_cipher import VaultCipher
-    from arctrust.vault_lease import Capability, CapabilityGrant, VaultCredentialProvider, VaultLease
+    from arctrust.vault_lease import (
+        Capability,
+        CapabilityGrant,
+        VaultCredentialProvider,
+        VaultLease,
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -294,22 +299,6 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "AccountActorVerifier",
-    "AccountAuthority",
-    "AuthorityConfigError",
-    "Capability",
-    "CapabilityGrant",
-    "DeploymentAuthorityConfig",
-    "DurableAuditSink",
-    "VaultCredentialProvider",
-    "VaultLease",
-    "VaultLeaseError",
-    "load_authority_config",
-    "open_account_authority",
-    "open_vault_lease",
-    "sign_authority_config",
-    "sign_capability_grant",
-    "ByteCipher",
     "ALL_CATEGORIES",
     "DEFAULT_OFF_ENTITIES",
     "ECDSA_P256",
@@ -319,6 +308,8 @@ __all__ = [
     "SECRETS_CATEGORY",
     "SECRET_PATTERNS",
     "VIEWER",
+    "AccountActorVerifier",
+    "AccountAuthority",
     "AgentIdentity",
     "AnchorHead",
     "AnchorUnavailableError",
@@ -327,13 +318,19 @@ __all__ = [
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
+    "AuthorityConfigError",
     "BootstrapAuthority",
+    "ByteCipher",
+    "Capability",
+    "CapabilityGrant",
     "CapabilitySource",
     "ChildIdentity",
     "Classification",
     "ClassificationLayer",
     "ClearanceContext",
     "Decision",
+    "DeploymentAuthorityConfig",
+    "DurableAuditSink",
     "EnrollmentGrant",
     "EntityToggle",
     "FileNotaryTransit",
@@ -367,7 +364,10 @@ __all__ = [
     "ValidatorEntry",
     "ValidatorsConfig",
     "VaultCipher",
+    "VaultCredentialProvider",
     "VaultKVAnchor",
+    "VaultLease",
+    "VaultLeaseError",
     "VaultSigner",
     "VaultTransit",
     "VaultTransitHTTP",
@@ -417,12 +417,15 @@ __all__ = [
     "iban_mod97_valid",
     "identity_dir",
     "invalidate_cache",
+    "load_authority_config",
     "load_issuer_pubkey",
     "load_operator_pubkey",
     "load_validators",
     "luhn_valid",
     "module_root",
     "nats_dir",
+    "open_account_authority",
+    "open_vault_lease",
     "operator_dir",
     "parse_classification",
     "parse_did",
@@ -437,6 +440,8 @@ __all__ = [
     "sign",
     "sign_artifact",
     "sign_artifact_with_signer",
+    "sign_authority_config",
+    "sign_capability_grant",
     "sign_enrollment_grant",
     "sign_scenario_grant",
     "skills_dir",
