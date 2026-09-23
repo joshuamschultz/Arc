@@ -14,6 +14,7 @@ Stack position: Otel → **Queue** → Telemetry → Audit → …
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -67,12 +68,18 @@ class QueueModule(BaseModule):
         self._call_timeout: float = config.get("call_timeout", 180.0)
         self._max_queued: int = config.get("max_queued", 10)
 
+        if type(self._max_concurrent) is not int:
+            raise ArcLLMConfigError("max_concurrent must be an integer")
         if self._max_concurrent < 1:
             raise ArcLLMConfigError("max_concurrent must be >= 1")
-        if self._call_timeout <= 0:
-            raise ArcLLMConfigError("call_timeout must be > 0")
+        if type(self._max_queued) is not int:
+            raise ArcLLMConfigError("max_queued must be an integer")
         if self._max_queued < 0:
             raise ArcLLMConfigError("max_queued must be >= 0")
+        if type(self._call_timeout) not in (int, float) or not math.isfinite(self._call_timeout):
+            raise ArcLLMConfigError("call_timeout must be a finite positive number")
+        if self._call_timeout <= 0:
+            raise ArcLLMConfigError("call_timeout must be > 0")
 
         self._semaphore = asyncio.BoundedSemaphore(self._max_concurrent)
         self._coordinator = coordinator
@@ -96,14 +103,14 @@ class QueueModule(BaseModule):
     ) -> LLMResponse:
         """Gate the inner invoke() through the concurrency semaphore."""
         if self._coordinator is not None:
-            context = kwargs.pop("queue_context", None) or self._default_context
-            if not isinstance(context, CallQueueContext):
-                raise ValueError("a trusted queue context is required")
+            context = self._resolve_context(kwargs.pop("queue_context", None))
             async with self._coordinator.call(
                 context, execution_timeout=self._call_timeout
             ) as job:
                 with self._coordinator.provider_task(job):
-                    return await self._inner.invoke(messages, tools, _queue_job=job, **kwargs)
+                    return await self._inner.invoke(
+                        messages, tools, _queue_job=job, _queue_context=context, **kwargs
+                    )
         async with self._admit():
             budget = asyncio.timeout(self._call_timeout)
             try:
@@ -125,13 +132,13 @@ class QueueModule(BaseModule):
     ) -> AsyncIterator[Delta]:
         """Hold one queue slot until the provider stream ends or is closed."""
         if self._coordinator is not None:
-            context = kwargs.pop("queue_context", None) or self._default_context
-            if not isinstance(context, CallQueueContext):
-                raise ValueError("a trusted queue context is required")
+            context = self._resolve_context(kwargs.pop("queue_context", None))
             async with self._coordinator.call(
                 context, execution_timeout=self._call_timeout
             ) as job:
-                delegated = self._inner.invoke_stream(messages, tools, _queue_job=job, **kwargs)
+                delegated = self._inner.invoke_stream(
+                    messages, tools, _queue_job=job, _queue_context=context, **kwargs
+                )
                 self._coordinator.bind_stream(job.call_id, delegated)
                 async with owned_stream(delegated) as stream:
                     while True:
@@ -154,6 +161,19 @@ class QueueModule(BaseModule):
                         break
                     yield delta
             self._total_completed += 1
+
+    def _resolve_context(self, requested: object) -> CallQueueContext:
+        """Keep a bound run's identity authoritative over call arguments."""
+        coordinator = self._coordinator
+        if coordinator is None:
+            raise RuntimeError("shared queue coordinator is unavailable")
+        bound = coordinator.current_context
+        if bound is not None and requested is not None and requested != bound:
+            raise ValueError("queue context conflicts with the bound run")
+        context = bound or requested or self._default_context
+        if not isinstance(context, CallQueueContext):
+            raise ValueError("a trusted queue context is required")
+        return context
 
     async def _next_delta(self, stream: AsyncIterator[Delta], deadline: float) -> Delta:
         """Bound only the provider await, leaving consumer work uncancelled."""
@@ -228,6 +248,8 @@ class QueueModule(BaseModule):
 
     def queue_stats(self) -> dict[str, Any]:
         """Return current queue state for REST API and UI display."""
+        if self._coordinator is not None:
+            return {**self._coordinator.snapshot(), "call_timeout_s": self._call_timeout}
         avg_wait_ms = (
             round(self._wait_sum_ms / self._wait_count, 1) if self._wait_count > 0 else 0.0
         )

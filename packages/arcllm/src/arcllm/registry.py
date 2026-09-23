@@ -651,6 +651,23 @@ def load_model(
     )
     resolver = _vault_resolver_cache
     queue_config = _resolve_module_config("queue", queue)
+    if queue_coordinator is not None and queue_config is None and not _queue_wire_only:
+        raise ArcLLMConfigError(
+            "an injected queue coordinator requires the queue module to be enabled"
+        )
+    if queue_coordinator is not None and isinstance(queue, dict):
+        for key in ("max_concurrent", "max_queued"):
+            if key in queue and queue[key] != getattr(queue_coordinator.limits, key):
+                raise ArcLLMConfigError(
+                    "shared queue capacity is controlled by its coordinator; "
+                    f"remove conflicting module {key} setting"
+                )
+    if queue_coordinator is not None and queue_config is not None:
+        queue_config = {
+            **queue_config,
+            "max_concurrent": queue_coordinator.limits.max_concurrent,
+            "max_queued": queue_coordinator.limits.max_queued,
+        }
     provider_scopes = queue_config.get("provider_scopes") if queue_config else None
     if provider_scopes is not None:
         if not isinstance(provider_scopes, dict) or any(

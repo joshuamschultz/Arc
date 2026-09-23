@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import math
 import time
@@ -13,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, Protocol
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass as validated_dataclass
 
 from arcllm.exceptions import QueueFullError, QueueStateUnavailableError, QueueTimeoutError
@@ -49,12 +50,14 @@ class CallQueueContext:
     identity and scope before presenting jobs or invoking controls.
     """
 
-    tenant_id: str
-    owner_id: str
-    call_id: str | None = None
-    agent_id: str | None = None
-    session_id: str | None = None
-    run_id: str | None = None
+    tenant_id: str = Field(min_length=1, max_length=256)
+    owner_id: str = Field(min_length=1, max_length=256)
+    call_id: str | None = Field(default=None, min_length=1, max_length=256)
+    agent_id: str | None = Field(default=None, min_length=1, max_length=256)
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+    run_id: str | None = Field(default=None, min_length=1, max_length=256)
+    origin: str = Field(default="chat", min_length=1, max_length=64)
+    parent_run_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 @validated_dataclass(config=ConfigDict(strict=True, allow_inf_nan=False), frozen=True, slots=True)
@@ -257,6 +260,23 @@ class CallQueueCoordinator:
         self._control_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._initialized = isinstance(self.store, MemoryQueueStore)
+        self._current_context: contextvars.ContextVar[CallQueueContext | None] = (
+            contextvars.ContextVar(f"arc_queue_context_{id(self)}", default=None)
+        )
+
+    @contextmanager
+    def bind_context(self, context: CallQueueContext) -> Iterator[None]:
+        """Bind verified outer-run correlation on this task and its children."""
+        token = self._current_context.set(context)
+        try:
+            yield
+        finally:
+            self._current_context.reset(token)
+
+    @property
+    def current_context(self) -> CallQueueContext | None:
+        """Return the current task's queue correlation, if any."""
+        return self._current_context.get()
 
     async def initialize(self) -> None:
         """Load durable controller settings before accepting calls."""
@@ -443,6 +463,17 @@ class CallQueueCoordinator:
     ) -> list[CallJob]:
         """Return a bounded page of payload-free jobs."""
         return await self.store.list_jobs(tenant_id=tenant_id, offset=offset, limit=limit)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return effective controller limits and live provider admission counts."""
+        return {
+            "max_concurrent": self.limits.max_concurrent,
+            "max_queued": self.limits.max_queued,
+            "wait_timeout_s": self.limits.wait_timeout,
+            "paused": self._paused,
+            "active": sum(pool.active for pool in self._pools.values()),
+            "waiting": sum(pool.waiting for pool in self._pools.values()),
+        }
 
     async def cancel(self, call_id: str, *, owner_id: str) -> bool:
         """Fence and cancel a live call; outer surface authorizes owner scope."""

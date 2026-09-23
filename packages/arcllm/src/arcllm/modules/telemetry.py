@@ -39,6 +39,7 @@ from arcllm.modules.telemetry_budget import (
     clear_budgets as clear_budgets,
 )
 from arcllm.modules.telemetry_cost import DEFAULT_MAX_TOKENS, calculate_cost, estimate_cost
+from arcllm.queue_control import CallJob, CallQueueContext
 from arcllm.trace_store import EncryptedEnvelope, TraceRecord
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, StreamAccumulator, Tool, Usage
 
@@ -79,6 +80,7 @@ _INTERNAL_KWARG_KEYS = {
     "_retry_group_id",
     "_queue_wait_ms",
     "_queue_job",
+    "_queue_context",
     "lineage",
     "classification",
     # The router's explicit pin. It steers which provider serves the call and
@@ -775,7 +777,38 @@ class TelemetryModule(BaseModule):
     ) -> TraceRecord:
         """Build a TraceRecord from invoke() data and pre-built bodies."""
         lineage = kwargs.get("lineage", self._lineage_default)
-        if lineage is not None:
+        job = kwargs.get("_queue_job")
+        if isinstance(job, CallJob):
+            reserved = {
+                "tenant_id",
+                "agent_id",
+                "session_id",
+                "run_id",
+                "request_id",
+                "call_id",
+                "origin",
+                "parent_run_id",
+            }
+            metadata = {
+                key: value for key, value in (lineage or {}).items() if key not in reserved
+            }
+            context = kwargs.get("_queue_context")
+            origin = context.origin if isinstance(context, CallQueueContext) else "chat"
+            parent_run_id = (
+                context.parent_run_id if isinstance(context, CallQueueContext) else None
+            )
+            lineage = {
+                **self._cap_body(metadata, _MAX_LINEAGE_BYTES // 2),
+                "tenant_id": job.tenant_id,
+                "agent_id": job.agent_id,
+                "session_id": job.session_id,
+                "run_id": job.run_id,
+                "request_id": job.run_id,
+                "call_id": job.call_id,
+                "origin": origin,
+                "parent_run_id": parent_run_id,
+            }
+        elif lineage is not None:
             lineage = self._cap_body(lineage, _MAX_LINEAGE_BYTES)
 
         classification = resolve_classification(

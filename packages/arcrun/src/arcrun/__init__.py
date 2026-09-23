@@ -80,6 +80,7 @@ from arcrun.model import (
     model_config_path,
     model_identity,
     model_provider_keys,
+    queue_run_context,
     validate_model_modules,
 )
 from arcrun.parallel_dispatch import dispatch_ready
@@ -188,6 +189,7 @@ __all__ = [
     "model_provider_keys",
     "platform_supports_vm",
     "provider_tools",
+    "queue_run_context",
     "resolve_execution_backend",
     "run",
     "run_async",

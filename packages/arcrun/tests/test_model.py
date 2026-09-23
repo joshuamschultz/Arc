@@ -57,3 +57,15 @@ def test_model_facade_creates_anchored_encrypted_store(tmp_path: Path) -> None:
         tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), _Anchor()
     )
     assert isinstance(store, arcllm.QueueJournal)
+
+
+def test_queue_context_facade_restores_previous_task_scope() -> None:
+    coordinator = arcrun.CallQueueCoordinator()
+    first = arcrun.CallQueueContext("tenant", "owner", run_id="first")
+    second = arcrun.CallQueueContext("tenant", "owner", run_id="second")
+    with arcrun.queue_run_context(coordinator, first):
+        assert coordinator.current_context is first
+        with arcrun.queue_run_context(coordinator, second):
+            assert coordinator.current_context is second
+        assert coordinator.current_context is first
+    assert coordinator.current_context is None

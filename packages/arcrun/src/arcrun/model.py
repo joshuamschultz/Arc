@@ -193,6 +193,13 @@ def model_identity(
     return arcllm.agent_identity(agent_did, agent_label)
 
 
+def queue_run_context(
+    coordinator: CallQueueCoordinator, context: CallQueueContext
+) -> AbstractContextManager[None]:
+    """Bind one trusted run's queue correlation through the adjacent facade."""
+    return cast(AbstractContextManager[None], coordinator.bind_context(context))
+
+
 __all__ = [
     "ContentBlock",
     "Delta",
@@ -223,6 +230,7 @@ __all__ = [
     "model_config_path",
     "model_identity",
     "model_provider_keys",
+    "queue_run_context",
     "validate_model_modules",
 ]
 

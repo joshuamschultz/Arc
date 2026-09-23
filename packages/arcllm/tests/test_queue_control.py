@@ -5,12 +5,14 @@ import os
 import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 from arctrust import AnchorHead, AnchorUnavailableError, RecordCipher
 
-from arcllm.exceptions import QueueFullError, QueueStateUnavailableError
+from arcllm.exceptions import ArcLLMConfigError, QueueFullError, QueueStateUnavailableError
+from arcllm.modules.queue import QueueModule
 from arcllm.queue_control import (
     CallJob,
     CallQueueContext,
@@ -23,7 +25,7 @@ from arcllm.queue_control import (
 )
 from arcllm.queue_journal import QueueJournal
 from arcllm.registry import load_model
-from arcllm.types import Delta, LLMResponse, Message, Usage
+from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Usage
 
 
 class FakeAnchor:
@@ -180,6 +182,99 @@ async def test_configured_models_share_wire_capacity_and_keep_call_identity(
         finally:
             await first.close()
             await second.close()
+
+
+@pytest.mark.asyncio
+async def test_cached_model_uses_each_tasks_run_context_without_cross_talk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arcllm.adapters.anthropic import AnthropicAdapter
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=2))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def wire(*_args: object, **_kwargs: object) -> LLMResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            entered.set()
+        await release.wait()
+        return LLMResponse(
+            content="ok",
+            model="test",
+            stop_reason="end_turn",
+            usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    with patch.object(AnthropicAdapter, "invoke", wire):
+        model = load_model(
+            "anthropic",
+            queue_coordinator=coordinator,
+            telemetry=False,
+            security=False,
+            retry=False,
+        )
+
+        async def turn(tenant: str, run: str) -> None:
+            context = CallQueueContext(tenant, f"owner-{run}", run_id=run, session_id=run)
+            with coordinator.bind_context(context):
+                await model.invoke([Message(role="user", content=run)])
+
+        try:
+            first = asyncio.create_task(turn("a", "run-a"))
+            second = asyncio.create_task(turn("b", "run-b"))
+            await asyncio.wait_for(entered.wait(), 1)
+            release.set()
+            await asyncio.gather(first, second)
+            jobs = await coordinator.jobs()
+            assert {(job.tenant_id, job.run_id, job.session_id) for job in jobs} == {
+                ("a", "run-a", "run-a"),
+                ("b", "run-b", "run-b"),
+            }
+            assert len({job.call_id for job in jobs}) == 2
+        finally:
+            release.set()
+            await model.close()
+
+
+def test_injected_shared_owner_cannot_be_disabled_by_module_config() -> None:
+    from arcllm.exceptions import ArcLLMConfigError
+
+    with pytest.raises(ArcLLMConfigError, match="requires the queue module"):
+        load_model("anthropic", queue=False, queue_coordinator=CallQueueCoordinator())
+
+
+def test_bound_run_context_rejects_call_site_identity_override() -> None:
+    coordinator = CallQueueCoordinator()
+    module = QueueModule({}, cast(LLMProvider, object()), coordinator=coordinator)
+    bound = CallQueueContext("tenant", "owner", run_id="real")
+    spoofed = CallQueueContext("tenant", "owner", run_id="spoofed")
+    with coordinator.bind_context(bound):
+        with pytest.raises(ValueError, match="conflicts with the bound run"):
+            module._resolve_context(spoofed)
+        assert module._resolve_context(None) == bound
+
+
+def test_module_capacity_conflict_with_shared_owner_is_rejected() -> None:
+    from arcllm.exceptions import ArcLLMConfigError
+
+    with pytest.raises(ArcLLMConfigError, match="controlled by its coordinator"):
+        load_model(
+            "anthropic",
+            queue={"max_concurrent": 3},
+            queue_coordinator=CallQueueCoordinator(limits=QueueLimits(max_concurrent=1)),
+        )
+
+
+def test_shared_owner_limits_override_module_defaults() -> None:
+    coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=3, max_queued=4))
+    model = load_model("anthropic", queue_coordinator=coordinator)
+    assert isinstance(model, QueueModule)
+    assert model._max_concurrent == 3
+    assert model._max_queued == 4
 
 
 @pytest.mark.asyncio
@@ -672,3 +767,20 @@ async def test_concurrent_journal_writers_and_readers_keep_anchor_coherent(tmp_p
     await asyncio.gather(*(writer(index) for index in range(15)), reader(), reader())
     assert len(await coordinator.jobs()) == 15
     assert anchor.head is not None and anchor.head.version == 16
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"max_concurrent": True}, "max_concurrent"),
+        ({"max_concurrent": 1.5}, "max_concurrent"),
+        ({"max_queued": False}, "max_queued"),
+        ({"max_queued": 0.5}, "max_queued"),
+        ({"call_timeout": float("nan")}, "call_timeout"),
+        ({"call_timeout": float("inf")}, "call_timeout"),
+        ({"call_timeout": True}, "call_timeout"),
+    ],
+)
+def test_standalone_queue_rejects_malformed_limits(config: dict[str, object], field: str) -> None:
+    with pytest.raises(ArcLLMConfigError, match=field):
+        QueueModule(config, cast(LLMProvider, object()))
