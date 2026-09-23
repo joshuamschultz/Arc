@@ -19,6 +19,8 @@ def load_eval_model(
     trace_store: Any | None = None,
     on_event: Callable[[Any], None] | None = None,
     arcllm_modules: dict[str, dict[str, Any]] | None = None,
+    queue_coordinator: arcrun.CallQueueCoordinator | None = None,
+    queue_context: arcrun.CallQueueContext | None = None,
 ) -> arcrun.Model:
     """Load LLM model via ArcLLM for eval/background use.
 
@@ -62,4 +64,6 @@ def load_eval_model(
         trace_store=trace_store,
         on_event=on_event,
         modules=module_overrides,
+        queue_coordinator=queue_coordinator,
+        queue_context=queue_context,
     )

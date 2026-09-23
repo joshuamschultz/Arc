@@ -6,6 +6,7 @@ from typing import Any
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.base import BaseModule, owned_stream
+from arcllm.queue_control import CallQueueCoordinator
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, ResponseFormat, Tool
 
 logger = logging.getLogger(__name__)
@@ -13,12 +14,22 @@ logger = logging.getLogger(__name__)
 _MAX_FALLBACK_CHAIN_LENGTH = 10
 
 
-def _load_fallback_model(provider: str) -> LLMProvider:
+def _load_fallback_model(
+    provider: str, coordinator: CallQueueCoordinator | None = None
+) -> LLMProvider:
     """Load a fallback provider without recursive fallback wrapping."""
     from arcllm.registry import load_model as _load_model
 
     # Disable fallback on the fallback to prevent recursive chains
-    return _load_model(provider, fallback=False)
+    if coordinator is None:
+        return _load_model(provider, fallback=False)
+    return _load_model(
+        provider,
+        fallback=False,
+        queue=False,
+        queue_coordinator=coordinator,
+        _queue_wire_only=True,
+    )
 
 
 class FallbackModule(BaseModule):
@@ -33,9 +44,16 @@ class FallbackModule(BaseModule):
         chain: List of provider names to try on failure (default: []).
     """
 
-    def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        inner: LLMProvider,
+        *,
+        coordinator: CallQueueCoordinator | None = None,
+    ) -> None:
         super().__init__(config, inner)
         self._chain: list[str] = config.get("chain", [])
+        self._coordinator = coordinator
         if len(self._chain) > _MAX_FALLBACK_CHAIN_LENGTH:
             raise ArcLLMConfigError(
                 f"Fallback chain too long ({len(self._chain)} providers, "
@@ -63,7 +81,7 @@ class FallbackModule(BaseModule):
                     attrs = {"arcllm.fallback.provider": provider_name}
                     with self._span("arcllm.fallback.attempt", attributes=attrs):
                         try:
-                            fallback = _load_fallback_model(provider_name)
+                            fallback = self._load_fallback(provider_name)
                             result = await fallback.invoke(messages, tools, **kwargs)
                             logger.info("Fallback to '%s' succeeded.", provider_name)
                             return result
@@ -95,7 +113,7 @@ class FallbackModule(BaseModule):
         providers: list[LLMProvider] = [self._inner]
         try:
             for provider_name in self._chain:
-                providers.append(_load_fallback_model(provider_name))
+                providers.append(self._load_fallback(provider_name))
             for index, provider in enumerate(providers):
                 try:
                     seen = False
@@ -115,3 +133,8 @@ class FallbackModule(BaseModule):
         finally:
             for provider in providers[1:]:
                 await provider.close()
+
+    def _load_fallback(self, provider_name: str) -> LLMProvider:
+        if self._coordinator is None:
+            return _load_fallback_model(provider_name)
+        return _load_fallback_model(provider_name, self._coordinator)

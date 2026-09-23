@@ -46,6 +46,10 @@ class ArcLLMConfigError(ArcLLMError):
     """Raised on configuration validation failure."""
 
 
+class QueueStateUnavailableError(ArcLLMError):
+    """Durable queue state or its independent monotonic anchor is unavailable."""
+
+
 class ArcLLMEmbeddingUnavailableError(ArcLLMError):
     """Raised when no embedder is available for an ``embed()`` call.
 

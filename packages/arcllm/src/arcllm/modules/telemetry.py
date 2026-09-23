@@ -78,6 +78,7 @@ _INTERNAL_KWARG_KEYS = {
     "_retry_attempt",
     "_retry_group_id",
     "_queue_wait_ms",
+    "_queue_job",
     "lineage",
     "classification",
     # The router's explicit pin. It steers which provider serves the call and
@@ -925,7 +926,9 @@ class TelemetryModule(BaseModule):
             t0 = time.monotonic()
             budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
             inner_kwargs = {
-                k: v for k, v in kwargs.items() if not k.startswith("_") and k != "lineage"
+                k: v
+                for k, v in kwargs.items()
+                if (not k.startswith("_") or k == "_queue_job") and k != "lineage"
             }
             accumulator = StreamAccumulator(model=self._inner.model_name)
             t_pre = time.monotonic()
@@ -1008,7 +1011,9 @@ class TelemetryModule(BaseModule):
         # the terminal adapter. Only "lineage" is arcllm-internal with no
         # downstream consumer.
         inner_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k != "lineage"
+            k: v
+            for k, v in kwargs.items()
+            if (not k.startswith("_") or k == "_queue_job") and k != "lineage"
         }
 
         t_pre = time.monotonic()

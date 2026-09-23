@@ -23,11 +23,18 @@ from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMConfigError, QueueFullError, QueueTimeoutError
 from arcllm.modules.base import BaseModule, owned_stream, validate_config_keys
+from arcllm.queue_control import CallJob, CallQueueContext, CallQueueCoordinator
 from arcllm.types import Delta, LLMProvider, LLMResponse, Message, Tool
 
 logger = logging.getLogger(__name__)
 
-_VALID_KEYS: set[str] = {"enabled", "max_concurrent", "call_timeout", "max_queued"}
+_VALID_KEYS: set[str] = {
+    "enabled",
+    "max_concurrent",
+    "call_timeout",
+    "max_queued",
+    "provider_scopes",
+}
 
 
 class QueueModule(BaseModule):
@@ -42,7 +49,14 @@ class QueueModule(BaseModule):
         max_queued:     Max waiters before rejection (default: 10).
     """
 
-    def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        inner: LLMProvider,
+        *,
+        coordinator: CallQueueCoordinator | None = None,
+        default_context: CallQueueContext | None = None,
+    ) -> None:
         validate_config_keys(config, _VALID_KEYS, "queue")
         super().__init__(config, inner)
 
@@ -61,6 +75,8 @@ class QueueModule(BaseModule):
             raise ArcLLMConfigError("max_queued must be >= 0")
 
         self._semaphore = asyncio.BoundedSemaphore(self._max_concurrent)
+        self._coordinator = coordinator
+        self._default_context = default_context
         self._waiters: int = 0
 
         # Observable counters for queue monitoring
@@ -79,6 +95,15 @@ class QueueModule(BaseModule):
         **kwargs: Any,
     ) -> LLMResponse:
         """Gate the inner invoke() through the concurrency semaphore."""
+        if self._coordinator is not None:
+            context = kwargs.pop("queue_context", None) or self._default_context
+            if not isinstance(context, CallQueueContext):
+                raise ValueError("a trusted queue context is required")
+            async with self._coordinator.call(
+                context, execution_timeout=self._call_timeout
+            ) as job:
+                with self._coordinator.provider_task(job):
+                    return await self._inner.invoke(messages, tools, _queue_job=job, **kwargs)
         async with self._admit():
             budget = asyncio.timeout(self._call_timeout)
             try:
@@ -99,6 +124,24 @@ class QueueModule(BaseModule):
         **kwargs: Any,
     ) -> AsyncIterator[Delta]:
         """Hold one queue slot until the provider stream ends or is closed."""
+        if self._coordinator is not None:
+            context = kwargs.pop("queue_context", None) or self._default_context
+            if not isinstance(context, CallQueueContext):
+                raise ValueError("a trusted queue context is required")
+            async with self._coordinator.call(
+                context, execution_timeout=self._call_timeout
+            ) as job:
+                delegated = self._inner.invoke_stream(messages, tools, _queue_job=job, **kwargs)
+                self._coordinator.bind_stream(job.call_id, delegated)
+                async with owned_stream(delegated) as stream:
+                    while True:
+                        try:
+                            with self._coordinator.provider_task(job):
+                                delta = await anext(stream)
+                        except StopAsyncIteration:
+                            break
+                        yield delta
+            return
         async with self._admit():
             deadline = time.monotonic() + self._call_timeout
             async with owned_stream(
@@ -206,3 +249,55 @@ class QueueModule(BaseModule):
         span = trace.get_current_span()
         if span.is_recording():
             span.set_attribute("arc.queue.rejected", True)
+
+
+class ProviderQueueModule(BaseModule):
+    """Admit only the selected wire adapter, never the router or fallback stack."""
+
+    def __init__(
+        self, inner: LLMProvider, coordinator: CallQueueCoordinator, provider_scope: str
+    ) -> None:
+        super().__init__({}, inner)
+        self._coordinator = coordinator
+        self._provider_scope = provider_scope
+
+    async def invoke(
+        self, messages: list[Message], tools: list[Tool] | None = None, **kwargs: Any
+    ) -> LLMResponse:
+        """Hold provider capacity for exactly one wire request."""
+        job = kwargs.pop("_queue_job", None)
+        if not isinstance(job, CallJob):
+            raise RuntimeError("provider attempt has no queue owner")
+        async with self._coordinator.attempt(self._provider_scope, job):
+            budget = asyncio.timeout(self._coordinator.remaining_execution(job))
+            try:
+                async with budget:
+                    return await self._inner.invoke(messages, tools, **kwargs)
+            except TimeoutError:
+                if not budget.expired():
+                    raise
+                raise QueueTimeoutError(self._coordinator.execution_timeout(job)) from None
+
+    async def invoke_stream(
+        self, messages: list[Message], tools: list[Tool] | None = None, **kwargs: Any
+    ) -> AsyncIterator[Delta]:
+        """Retain capacity until the actual provider iterator closes."""
+        job = kwargs.pop("_queue_job", None)
+        if not isinstance(job, CallJob):
+            raise RuntimeError("provider attempt has no queue owner")
+        async with self._coordinator.attempt(self._provider_scope, job):
+            async with owned_stream(
+                self._inner.invoke_stream(messages, tools, **kwargs)
+            ) as stream:
+                while True:
+                    budget = asyncio.timeout(self._coordinator.remaining_execution(job))
+                    try:
+                        async with budget:
+                            delta = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError:
+                        if not budget.expired():
+                            raise
+                        raise QueueTimeoutError(self._coordinator.execution_timeout(job)) from None
+                    yield delta

@@ -12,9 +12,10 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 import arcllm
+from arctrust import MonotonicAnchor, RecordCipher
 
 ContentBlock = arcllm.ContentBlock
 Delta = arcllm.Delta
@@ -32,6 +33,12 @@ ToolResultBlock = arcllm.ToolResultBlock
 ToolUseBlock = arcllm.ToolUseBlock
 TraceStore: TypeAlias = arcllm.TraceStore
 Usage = arcllm.Usage
+CallJob = arcllm.CallJob
+CallQueueContext: TypeAlias = arcllm.CallQueueContext
+CallQueueCoordinator: TypeAlias = arcllm.CallQueueCoordinator
+CallQueueStore: TypeAlias = arcllm.CallQueueStore
+MemoryQueueStore = arcllm.MemoryQueueStore
+QueueLimits = arcllm.QueueLimits
 
 Model: TypeAlias = arcllm.LLMProvider
 """Provider-neutral model protocol accepted by ArcRun."""
@@ -102,6 +109,8 @@ def load_model(
     agent_label: str | None = None,
     agent_did: str | None = None,
     lineage: dict[str, Any] | None = None,
+    queue_coordinator: CallQueueCoordinator | None = None,
+    queue_context: CallQueueContext | None = None,
     modules: dict[str, Any] | None = None,
 ) -> Model:
     """Load a long-lived provider-neutral model through ArcLLM.
@@ -119,7 +128,22 @@ def load_model(
         agent_label=agent_label,
         agent_did=agent_did,
         lineage=lineage,
+        queue_coordinator=queue_coordinator,
+        queue_context=queue_context,
         **module_settings,
+    )
+
+
+def create_queue_journal(
+    path: Path,
+    cipher: RecordCipher,
+    anchor: MonotonicAnchor,
+    *,
+    history_limit: int = 1000,
+) -> CallQueueStore:
+    """Open the optional encrypted queue store through the ArcRun facade."""
+    return cast(
+        CallQueueStore, arcllm.QueueJournal(path, cipher, anchor, history_limit=history_limit)
     )
 
 

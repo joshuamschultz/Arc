@@ -299,6 +299,8 @@ def ensure_model(
     witness: WitnessAnchor | None = None,
     record_cipher: RecordCipher | None = None,
     task_supervisor: BackgroundTaskSupervisor | None = None,
+    queue_coordinator: arcrun.CallQueueCoordinator | None = None,
+    queue_context: arcrun.CallQueueContext | None = None,
 ) -> tuple[Any, Any]:
     """Load the eval model, wiring trace store + on_event bridge.
 
@@ -341,6 +343,8 @@ def ensure_model(
         agent_did=actor_did or None,
         on_event=on_event,
         arcllm_modules=_arcllm_modules(config),
+        queue_coordinator=queue_coordinator,
+        queue_context=queue_context,
     )
     return model, trace_store
 

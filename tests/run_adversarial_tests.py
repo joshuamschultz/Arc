@@ -67,6 +67,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcgateway/tests/security/test_media_store_refusals.py",
         "packages/arcui/tests/integration/test_attachment_session_identity.py",
     ),
+    "LLM queue rollback, stale owner and resource exhaustion": (
+        "packages/arcllm/tests/test_queue_control.py",
+        "packages/arctrust/tests/test_vault_anchor.py",
+    ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",

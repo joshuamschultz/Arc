@@ -33,6 +33,9 @@ dependencies = [
     "tomlkit>=0.13,<1",
 ]
 
+[project.optional-dependencies]
+vault = ["httpx>=0.27,<1"]
+
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
 Repository = "https://github.com/joshuamschultz/Arc"

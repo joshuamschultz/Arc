@@ -35,6 +35,8 @@ def test_load_model_validates_modules_and_delegates() -> None:
         agent_label=None,
         agent_did=None,
         lineage=None,
+        queue_coordinator=None,
+        queue_context=None,
         retry=True,
     )
 

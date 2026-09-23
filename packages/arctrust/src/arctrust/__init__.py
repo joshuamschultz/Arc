@@ -88,6 +88,8 @@ Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
 
 __version__ = "0.11.0"
 
+from typing import TYPE_CHECKING, Any
+
 from arctrust.artifact import (
     ArtifactSignature,
     content_sha256,
@@ -127,6 +129,12 @@ from arctrust.identity import (
     validate_did,
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
+from arctrust.monotonic import (
+    AnchorHead,
+    AnchorUnavailableError,
+    BootstrapAuthority,
+    MonotonicAnchor,
+)
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
 from arctrust.paths import (
     activate_runtime,
@@ -242,6 +250,24 @@ from arctrust.witness import (
     verify_local_head_witnessed,
 )
 
+if TYPE_CHECKING:
+    from arctrust.transit_http import VaultTransitHTTP
+    from arctrust.vault_anchor import VaultKVAnchor
+
+
+def __getattr__(name: str) -> Any:
+    """Load optional Vault leaves only when their public name is requested."""
+    if name == "VaultKVAnchor":
+        from arctrust.vault_anchor import VaultKVAnchor
+
+        return VaultKVAnchor
+    if name == "VaultTransitHTTP":
+        from arctrust.transit_http import VaultTransitHTTP
+
+        return VaultTransitHTTP
+    raise AttributeError(name)
+
+
 __all__ = [
     "ALL_CATEGORIES",
     "DEFAULT_OFF_ENTITIES",
@@ -253,11 +279,14 @@ __all__ = [
     "SECRET_PATTERNS",
     "VIEWER",
     "AgentIdentity",
+    "AnchorHead",
+    "AnchorUnavailableError",
     "AppendOnlyMediumWitness",
     "ArcTrustFipsError",
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
+    "BootstrapAuthority",
     "CapabilitySource",
     "ChildIdentity",
     "Classification",
@@ -269,6 +298,7 @@ __all__ = [
     "FileNotaryTransit",
     "InProcessSigner",
     "KeyPair",
+    "MonotonicAnchor",
     "NullSink",
     "OperatorKey",
     "OperatorKeyIntegrityError",
@@ -294,8 +324,10 @@ __all__ = [
     "UserStoreError",
     "ValidatorEntry",
     "ValidatorsConfig",
+    "VaultKVAnchor",
     "VaultSigner",
     "VaultTransit",
+    "VaultTransitHTTP",
     "WitnessAnchor",
     "WitnessDivergenceError",
     "WormSink",

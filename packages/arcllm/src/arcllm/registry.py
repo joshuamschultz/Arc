@@ -2,6 +2,7 @@
 
 import importlib
 import logging
+import re
 import threading
 from collections.abc import Callable, Sequence
 from typing import Any, cast
@@ -17,9 +18,11 @@ from arcllm.config import (
 )
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.routing import Route, RoutingModule, parse_routes
+from arcllm.queue_control import CallQueueContext, CallQueueCoordinator
 from arcllm.types import LLMProvider
 
 logger = logging.getLogger(__name__)
+_QUEUE_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 
 # Module-level caches: loaded once per provider, reused across calls.
 # Lock protects cache-miss writes for thread safety (PEP 703 ready).
@@ -228,6 +231,8 @@ def _build_route_adapter(
     lb_config: dict[str, Any] | None,
     vault_cfg: Any,
     vault_resolver: Any,
+    queue_coordinator: CallQueueCoordinator | None = None,
+    provider_scopes: dict[str, str] | None = None,
 ) -> LLMProvider:
     """Build one route's innermost provider: a load-balanced pool, or an adapter.
 
@@ -255,14 +260,30 @@ def _build_route_adapter(
             for ep in config.endpoints
             if ep.weight > 0
         ]
-        return LoadBalancerModule(lb_config, pool, route.provider)
+        result: LLMProvider = LoadBalancerModule(lb_config, pool, route.provider)
+        return _wire_queue(result, route.provider, queue_coordinator, provider_scopes)
 
     if lb_config is not None:
         logger.info(
             "load_balance enabled but no endpoints configured for '%s'; using single provider",
             route.provider,
         )
-    return _build_adapter(route.provider, resolved_model, vault_cfg, vault_resolver)
+    result = _build_adapter(route.provider, resolved_model, vault_cfg, vault_resolver)
+    return _wire_queue(result, route.provider, queue_coordinator, provider_scopes)
+
+
+def _wire_queue(
+    result: LLMProvider,
+    provider: str,
+    coordinator: CallQueueCoordinator | None,
+    scopes: dict[str, str] | None,
+) -> LLMProvider:
+    """Gate the selected provider or pool once at its actual dispatch leaf."""
+    if coordinator is None:
+        return result
+    from arcllm.modules.queue import ProviderQueueModule
+
+    return ProviderQueueModule(result, coordinator, (scopes or {}).get(provider, provider))
 
 
 def _route_pricing(routes: Sequence[Route]) -> dict[str, dict[str, float]]:
@@ -493,6 +514,9 @@ def load_model(
     agent_label: str | None = None,
     agent_did: str | None = None,
     lineage: dict[str, Any] | None = None,
+    queue_coordinator: CallQueueCoordinator | None = None,
+    queue_context: CallQueueContext | None = None,
+    _queue_wire_only: bool = False,
     routing: bool | dict[str, Any] | None = None,
     retry: bool | dict[str, Any] | None = None,
     fallback: bool | dict[str, Any] | None = None,
@@ -626,10 +650,28 @@ def load_model(
         default_model=model_name,
     )
     resolver = _vault_resolver_cache
+    queue_config = _resolve_module_config("queue", queue)
+    provider_scopes = queue_config.get("provider_scopes") if queue_config else None
+    if provider_scopes is not None:
+        if not isinstance(provider_scopes, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(scope, str)
+            or not _QUEUE_SCOPE_RE.fullmatch(key)
+            or not _QUEUE_SCOPE_RE.fullmatch(scope)
+            for key, scope in provider_scopes.items()
+        ):
+            raise ArcLLMConfigError(
+                "queue provider_scopes must contain safe provider and scope names"
+            )
+    active_coordinator = (
+        queue_coordinator if queue_config is not None or _queue_wire_only else None
+    )
     result: LLMProvider = RoutingModule(
         routing_config,
         routes,
-        lambda route: _build_route_adapter(route, lb_config, vault_cfg, resolver),
+        lambda route: _build_route_adapter(
+            route, lb_config, vault_cfg, resolver, active_coordinator, provider_scopes
+        ),
     )
 
     # Apply module wrapping, innermost first. The STACKING ORDER below is
@@ -638,7 +680,11 @@ def load_model(
     # signal (ADR-422); guardrails sits just inside audit so it validates the
     # response the audit trail also records (ADR-430). Do not reorder.
     result = _wrap_generic(result, "rate_limit", rate_limit)
-    result = _wrap_generic(result, "fallback", fallback)
+    fallback_config = _resolve_module_config("fallback", fallback)
+    if fallback_config is not None:
+        from arcllm.modules.fallback import FallbackModule
+
+        result = FallbackModule(fallback_config, result, coordinator=active_coordinator)
     result = _wrap_generic(result, "retry", retry)
 
     cb_config = _resolve_module_config("circuit_breaker", circuit_breaker)
@@ -671,7 +717,12 @@ def load_model(
             vault_cfg=vault_cfg,
         )
 
-    result = _wrap_generic(result, "queue", queue)
+    if queue_config is not None:
+        from arcllm.modules.queue import QueueModule
+
+        result = QueueModule(
+            queue_config, result, coordinator=active_coordinator, default_context=queue_context
+        )
     result = _wrap_generic(result, "otel", otel)
 
     return result
