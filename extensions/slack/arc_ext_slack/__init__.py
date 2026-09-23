@@ -287,7 +287,16 @@ class SlackAttachment:
             raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from exc
         objects: list[SourceObject] = []
         for cid in channels:
-            latest = await self._latest_ts(cid)
+            try:
+                latest = await self._latest_ts(cid)
+            except SourceError as exc:
+                # A channel that is gone or not joined is that one channel's
+                # problem. Listed anyway, its fetch is refused NOT_FOUND and the
+                # coordinator skips just it (audited); refused here, it ended
+                # the whole workspace's sync. Account-wide refusals still raise.
+                if exc.code is not SourceFailureCode.NOT_FOUND:
+                    raise
+                latest = "0"
             objects.append(
                 SourceObject(
                     object_id=f"channel:{cid}",
@@ -303,7 +312,12 @@ class SlackAttachment:
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         """Render a conversation's recent history to text under the byte ceiling."""
         cid = request.object_id.removeprefix("channel:")
-        messages = await self._history(cid, _HISTORY_LIMIT)
+        # Typed refusals, as for the listing: a missing channel is NOT_FOUND (one
+        # skipped object); a revoked token or a rate limit ends the run.
+        payload = await self._source_call(
+            "conversations.history", {"channel": cid, "limit": _HISTORY_LIMIT}
+        )
+        messages = [m for m in payload.get("messages", []) if isinstance(m, dict)]
         text = await self._render(cid, messages)
         body = text.encode("utf-8")
         if len(body) > request.max_bytes:
