@@ -33,6 +33,7 @@ same chat_id and the adapter fans the agent's reply out to both.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -45,6 +46,8 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from arcui.ws_helpers import (
     CLOSE_AUTH_INVALID,
     authenticate_ws,
+    monitor_ws_authority,
+    revalidate_ws,
 )
 
 if TYPE_CHECKING:
@@ -139,7 +142,8 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
         return
 
     viewer_token: str = msg.get("token", "")
-    user_did = derive_viewer_did(viewer_token)
+    session = auth_config.identify(viewer_token)
+    user_did = session.did if session is not None else derive_viewer_did(viewer_token)
     # chat_id == session_key: one conversation per (agent, user), same
     # whether reached via web/slack/telegram. Same identifier the
     # arcagent SessionManager writes under (workspace/sessions/<sid>.jsonl)
@@ -176,6 +180,7 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     # connection live and start showing inbound frames immediately.
     await ws.send_json({"type": "ready", "chat_id": chat_id})
 
+    authority_task = asyncio.create_task(monitor_ws_authority(ws, viewer_token, auth_config))
     try:
         async for raw in ws.iter_text():
             try:
@@ -193,6 +198,9 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
             if not isinstance(frame, dict) or frame.get("type") != "message":
                 # Silently ignore non-message frames (e.g. pings) for now.
                 continue
+
+            if await revalidate_ws(ws, viewer_token, auth_config) is None:
+                return
 
             try:
                 attachment_ids = frame.get("attachment_ids", [])
@@ -214,6 +222,8 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        authority_task.cancel()
+        await asyncio.gather(authority_task, return_exceptions=True)
         web_adapter.unregister_socket(ws)
 
 

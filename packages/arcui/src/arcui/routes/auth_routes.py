@@ -6,14 +6,13 @@ holding it, so an approval recorded against it answers "what happened" but never
 These routes let a person sign in as themselves, and the session they get back
 carries their DID into every mutation they make.
 
-The static viewer/operator tokens stay. They are the break-glass path for
-automation, for first boot before any account exists, and for the case where the
-user store cannot be read — a dashboard that can lock its owner out of their own
-machine is worse than one with a fallback.
+Account authority is injected by the deployment. If custody or integrity is
+unavailable, these routes fail closed while unrelated UI capabilities may run.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -23,10 +22,11 @@ from starlette.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
-def _store() -> Any:
-    from arctrust.users import UserStore
-
-    return UserStore()
+def _store(request: Request) -> Any:
+    factory = getattr(request.app.state, "user_store_factory", None)
+    if factory is None:
+        raise RuntimeError("account authority is unavailable")
+    return factory()
 
 
 def _auth(request: Request) -> Any:
@@ -39,6 +39,8 @@ async def login(request: Request) -> JSONResponse:
         body = await request.json()
     except Exception:  # reason: a malformed body is a bad request, not a 500
         return JSONResponse({"error": "Expected a JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Expected a JSON object"}, status_code=400)
 
     email = str(body.get("email", "")).strip()
     password = str(body.get("password", ""))
@@ -58,15 +60,14 @@ async def login(request: Request) -> JSONResponse:
         )
 
     try:
-        store = _store()
+        user = await asyncio.to_thread(lambda: _store(request).verify(email, password))
     except Exception as exc:  # reason: an unreadable store must not 500 the login page
-        logger.error("auth.store_unreadable: %s", exc)
+        logger.error("auth.store_unreadable class=%s", type(exc).__name__)
         return JSONResponse(
-            {"error": "The account store cannot be read. Use your operator token."},
+            {"error": "Account authority is unavailable. Try again shortly."},
             status_code=503,
         )
 
-    user = store.verify(email, password)
     if user is None:
         sessions.record_failure(email)
         logger.warning("auth.failed email=%s", email)
@@ -125,7 +126,7 @@ async def me(request: Request) -> JSONResponse:
     # The settings the person can actually change. Read from the store rather
     # than the session so an edit shows up without signing out and back in.
     try:
-        user = _store().get(session.email)
+        user = await asyncio.to_thread(lambda: _store(request).get(session.email))
     except Exception:  # reason: an unreadable store must not break /me
         user = None
     if user is not None:
@@ -154,35 +155,47 @@ async def update_me(request: Request) -> JSONResponse:
         body = await request.json()
     except Exception:  # reason: a malformed body is a bad request, not a 500
         return JSONResponse({"error": "Expected a JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("pairings", {}), dict):
+        return JSONResponse({"error": "Expected a JSON object"}, status_code=400)
 
     try:
-        store = _store()
-        changed: list[str] = []
-        if "display_name" in body:
-            store.set_display_name(session.email, str(body["display_name"]))
-            changed.append("display_name")
-        if "handle" in body:
-            store.set_handle(session.email, str(body["handle"]))
-            changed.append("handle")
-        # {"pairings": {"telegram": "4242", "slack": ""}} — empty value unpairs.
-        # No platform is named here: which surfaces exist is the gateway's
-        # business, and this route is only the seam that records the link.
-        for platform, external_id in dict(body.get("pairings") or {}).items():
-            store.set_pairing(session.email, str(platform), str(external_id).strip() or None)
-            changed.append(f"pairings.{platform}")
+        changed, user = await asyncio.to_thread(_update_profile, request, session.email, body)
     except ValueError as exc:
         # Carries the real reason: a taken handle names who holds it.
         return JSONResponse({"error": str(exc)}, status_code=400)
     except Exception as exc:
-        logger.error("auth.update_me failed: %s", exc)
+        logger.error("auth.update_me failed class=%s", type(exc).__name__)
         return JSONResponse({"error": "Could not save your settings"}, status_code=503)
 
     if not changed:
         return JSONResponse({"error": "Nothing to change"}, status_code=400)
 
-    user = store.get(session.email)
     logger.info("auth.settings_changed email=%s fields=%s", session.email, ",".join(changed))
     return JSONResponse({"ok": True, "changed": changed, "user": user.redacted()})
+
+
+def _update_profile(request: Request, email: str, body: dict[str, Any]) -> tuple[list[str], Any]:
+    store = _store(request)
+    changed: list[str] = []
+    if "display_name" in body:
+        changed.append("display_name")
+    if "handle" in body:
+        changed.append("handle")
+    pairings = {
+        str(platform): str(external_id).strip() or None
+        for platform, external_id in body.get("pairings", {}).items()
+    }
+    for platform in pairings:
+        changed.append(f"pairings.{platform}")
+    if not changed:
+        return changed, None
+    user = store.update_profile(
+        email,
+        display_name=str(body["display_name"]) if "display_name" in body else None,
+        handle=str(body["handle"]) if "handle" in body else None,
+        pairings=pairings,
+    )
+    return changed, user
 
 
 async def mode(request: Request) -> JSONResponse:
@@ -193,9 +206,9 @@ async def mode(request: Request) -> JSONResponse:
     whether any account exists, never which.
     """
     try:
-        has_users = not _store().is_empty()
-    except Exception:  # reason: an unreadable store still has to render a page
-        has_users = False
+        has_users = not await asyncio.to_thread(lambda: _store(request).is_empty())
+    except Exception:  # reason: absent authority is distinct from an empty store
+        return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
     return JSONResponse({"login_available": has_users})
 
 

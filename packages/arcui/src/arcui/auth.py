@@ -11,6 +11,7 @@ Security model (federal-first, zero-trust):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -266,6 +267,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if role is None:
             logger.warning("auth.invalid_token path=%s", path)
             return JSONResponse({"error": "Invalid token"}, status_code=401)
+
+        session = self._auth.identify(token)
+        if session is not None:
+            factory = getattr(request.app.state, "user_store_factory", None)
+            if factory is None:
+                return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
+            try:
+                user = await asyncio.to_thread(lambda: factory().get(session.email))
+            except Exception:
+                logger.error("auth.authority_unavailable path=%s", path)
+                return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
+            if user is None or user.disabled or user.did != session.did:
+                self._auth.sessions.revoke(token)
+                return JSONResponse({"error": "Session is no longer authorized"}, status_code=401)
+            role = "operator" if user.is_operator else "viewer"
+            self._auth.sessions.set_role(token, role)
 
         request.state.role = role
         # SPEC-019 T5.3: emit session_start at-most-once per (token, addr).

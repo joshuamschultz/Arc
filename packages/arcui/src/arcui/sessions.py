@@ -83,6 +83,16 @@ class SessionRegistry:
         with self._lock:
             self._sessions.pop(token, None)
 
+    def set_role(self, token: str, role: str) -> None:
+        """Apply current anchored account authority to a live session."""
+        with self._lock:
+            session = self._sessions.get(token)
+            if session is not None:
+                self._sessions[token] = Session(
+                    token=session.token, email=session.email, did=session.did,
+                    role=role, expires_at=session.expires_at,
+                )
+
     def revoke_user(self, email: str) -> int:
         """Sign a user out everywhere. Used when their password changes."""
         with self._lock:

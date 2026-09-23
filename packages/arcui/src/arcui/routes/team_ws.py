@@ -26,19 +26,27 @@ from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from arcui.messaging import TeamPostRefusedError
-from arcui.ws_helpers import CLOSE_AUTH_INVALID, authenticate_ws, run_ws_tasks
+from arcui.ws_helpers import (
+    CLOSE_AUTH_INVALID,
+    authenticate_ws,
+    monitor_ws_authority,
+    revalidate_ws,
+    run_ws_tasks,
+)
 
 logger = logging.getLogger(__name__)
 
 
-async def _drain_to_browser(ws: WebSocket, hub: Any) -> None:
+async def _drain_to_browser(ws: WebSocket, hub: Any, token: str) -> None:
     """Forward each queued team frame to the browser until the socket dies."""
     while True:
         frame = await hub.next_frame(ws)
+        if await revalidate_ws(ws, token, ws.app.state.auth_config) is None:
+            return
         await ws.send_json(frame)
 
 
-async def _receive_from_browser(ws: WebSocket, sender: str, forwarder: Any) -> None:
+async def _receive_from_browser(ws: WebSocket, sender: str, forwarder: Any, token: str) -> None:
     """Forward human group posts to arcteam; never route or sign here."""
     async for raw in ws.iter_text():
         try:
@@ -48,6 +56,8 @@ async def _receive_from_browser(ws: WebSocket, sender: str, forwarder: Any) -> N
             continue
         if not isinstance(frame, dict) or frame.get("type") != "post":
             continue  # non-post frames (pings, etc.) are ignored
+        if await revalidate_ws(ws, token, ws.app.state.auth_config) is None:
+            return
 
         channel = frame.get("channel")
         text = frame.get("text", "")
@@ -113,15 +123,18 @@ async def team_ws_endpoint(ws: WebSocket) -> None:
 
     # The human's identity is derived from the viewer token, never client-
     # supplied — the forwarder (arcteam) signs as this entity.
-    sender = derive_viewer_did(msg.get("token", ""))
+    token = msg.get("token", "")
+    session = ws.app.state.auth_config.identify(token)
+    sender = session.did if session is not None else derive_viewer_did(token)
     forwarder = getattr(ws.app.state, "team_post_forwarder", None)
 
     await ws.send_json({"type": "ready"})
 
     try:
         done, _pending = await run_ws_tasks(
-            _drain_to_browser(ws, hub),
-            _receive_from_browser(ws, sender, forwarder),
+            _drain_to_browser(ws, hub, token),
+            _receive_from_browser(ws, sender, forwarder, token),
+            monitor_ws_authority(ws, token, ws.app.state.auth_config),
         )
         for task in done:
             exc = task.exception()

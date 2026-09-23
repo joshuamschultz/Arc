@@ -16,9 +16,11 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import arctrust
 from arcgateway import team_roster
 from arcgateway.approval_notifications import (
     ApprovalNotificationFanout,
@@ -221,6 +223,11 @@ async def _service_worker(request: Request) -> Response:
 def create_app(
     *,
     auth_config: AuthConfig | None = None,
+    operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
+    user_store_factory: Callable[[], arctrust.UserStore] | None = None,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    queue_coordinator: Any | None = None,
+    hosted: bool = False,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -661,6 +668,11 @@ def create_app(
     # `ui.session_start` exactly once per (token, remote_addr).
     app.state.session_tracker = SessionTracker()
     app.state.auth_config = auth
+    app.state.operator_signer_factory = operator_signer_factory
+    app.state.user_store_factory = user_store_factory
+    app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
+    app.state.queue_coordinator = queue_coordinator
+    app.state.hosted = hosted
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
     app.state.observe = Observe(
