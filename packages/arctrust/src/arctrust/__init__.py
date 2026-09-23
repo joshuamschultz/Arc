@@ -100,6 +100,7 @@ from arctrust.artifact import (
 from arctrust.audit import (
     AuditEvent,
     AuditSink,
+    DurableAuditSink,
     NullSink,
     WormSink,
     emit,
@@ -108,6 +109,13 @@ from arctrust.audit import (
     worm_policy_sink,
 )
 from arctrust.audit_cipher import RecordCipher, derive_record_key
+from arctrust.authority_config import (
+    AuthorityConfigError,
+    DeploymentAuthorityConfig,
+    load_authority_config,
+    sign_authority_config,
+)
+from arctrust.byte_cipher import ByteCipher
 from arctrust.canonical import canonical_json
 from arctrust.classification import (
     Classification,
@@ -227,6 +235,7 @@ from arctrust.users import (
     OPERATOR,
     VIEWER,
     User,
+    UserKeyIssuer,
     UserStore,
     UserStoreError,
     default_users_path,
@@ -252,8 +261,16 @@ from arctrust.witness import (
 )
 
 if TYPE_CHECKING:
+    from arctrust.authority import AccountActorVerifier, AccountAuthority
     from arctrust.transit_http import VaultTransitHTTP
     from arctrust.vault_anchor import VaultKVAnchor
+    from arctrust.vault_cipher import VaultCipher
+    from arctrust.vault_lease import (
+        Capability,
+        CapabilityGrant,
+        VaultCredentialProvider,
+        VaultLease,
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -266,6 +283,19 @@ def __getattr__(name: str) -> Any:
         from arctrust.transit_http import VaultTransitHTTP
 
         return VaultTransitHTTP
+    if name == "VaultCipher":
+        from arctrust.vault_cipher import VaultCipher
+
+        return VaultCipher
+    if name in {"AccountAuthority", "AccountActorVerifier", "open_account_authority"}:
+        from arctrust import authority
+
+        return getattr(authority, name)
+    if name in {"Capability", "CapabilityGrant", "VaultCredentialProvider", "VaultLease",
+                "VaultLeaseError", "open_vault_lease", "sign_capability_grant"}:
+        from arctrust import vault_lease
+
+        return getattr(vault_lease, name)
     raise AttributeError(name)
 
 
@@ -279,6 +309,8 @@ __all__ = [
     "SECRETS_CATEGORY",
     "SECRET_PATTERNS",
     "VIEWER",
+    "AccountActorVerifier",
+    "AccountAuthority",
     "AgentIdentity",
     "AnchorHead",
     "AnchorUnavailableError",
@@ -287,13 +319,19 @@ __all__ = [
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
+    "AuthorityConfigError",
     "BootstrapAuthority",
+    "ByteCipher",
+    "Capability",
+    "CapabilityGrant",
     "CapabilitySource",
     "ChildIdentity",
     "Classification",
     "ClassificationLayer",
     "ClearanceContext",
     "Decision",
+    "DeploymentAuthorityConfig",
+    "DurableAuditSink",
     "EnrollmentGrant",
     "EntityToggle",
     "FileNotaryTransit",
@@ -322,11 +360,16 @@ __all__ = [
     "TransparencyLogWitness",
     "TrustStoreError",
     "User",
+    "UserKeyIssuer",
     "UserStore",
     "UserStoreError",
     "ValidatorEntry",
     "ValidatorsConfig",
+    "VaultCipher",
+    "VaultCredentialProvider",
     "VaultKVAnchor",
+    "VaultLease",
+    "VaultLeaseError",
     "VaultSigner",
     "VaultTransit",
     "VaultTransitHTTP",
@@ -376,12 +419,15 @@ __all__ = [
     "iban_mod97_valid",
     "identity_dir",
     "invalidate_cache",
+    "load_authority_config",
     "load_issuer_pubkey",
     "load_operator_pubkey",
     "load_validators",
     "luhn_valid",
     "module_root",
     "nats_dir",
+    "open_account_authority",
+    "open_vault_lease",
     "operator_dir",
     "parse_classification",
     "parse_did",
@@ -396,6 +442,8 @@ __all__ = [
     "sign",
     "sign_artifact",
     "sign_artifact_with_signer",
+    "sign_authority_config",
+    "sign_capability_grant",
     "sign_enrollment_grant",
     "sign_scenario_grant",
     "skills_dir",

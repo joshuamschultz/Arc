@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -249,8 +250,12 @@ def _start(args: argparse.Namespace) -> None:
 
     port: int = getattr(args, "port", 8420)
     host: str = getattr(args, "host", "127.0.0.1")
-    viewer_token: str | None = getattr(args, "viewer_token", None)
-    operator_token: str | None = getattr(args, "operator_token", None)
+    viewer_token: str | None = getattr(args, "viewer_token", None) or os.environ.get(
+        "VIEWER_TOKEN"
+    )
+    operator_token: str | None = getattr(args, "operator_token", None) or os.environ.get(
+        "OPERATOR_TOKEN"
+    )
     max_agents: int = getattr(args, "max_agents", 100)
     show_tokens: bool = getattr(args, "show_tokens", False)
     no_browser: bool = getattr(args, "no_browser", False)

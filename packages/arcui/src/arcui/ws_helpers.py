@@ -17,6 +17,7 @@ MAX_WS_MESSAGE_SIZE = 1_048_576  # 1 MB — DoS prevention
 CLOSE_NORMAL = 1000
 CLOSE_AUTH_TIMEOUT = 4001
 CLOSE_AUTH_INVALID = 4003
+CLOSE_AUTH_UNAVAILABLE = 4013
 CLOSE_CAPACITY_FULL = 4029
 
 
@@ -40,20 +41,69 @@ async def authenticate_ws(
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=AUTH_TIMEOUT_SECONDS)
         msg = json.loads(raw)
+        if not isinstance(msg, dict):
+            raise ValueError("auth message must be an object")
         token = msg.get("token", "")
-    except (TimeoutError, json.JSONDecodeError, KeyError):
+        if not isinstance(token, str) or not token:
+            raise ValueError("auth token must be a string")
+    except (TimeoutError, json.JSONDecodeError, KeyError, ValueError):
         await ws.send_json({"error": "Auth timeout or invalid message"})
         await ws.close(code=CLOSE_AUTH_TIMEOUT)
         return None, {}
 
-    role = auth_config.validate_token(token)
+    role = await revalidate_ws(ws, token, auth_config)
 
     if role is None:
-        await ws.send_json({"error": "Invalid token"})
-        await ws.close(code=CLOSE_AUTH_INVALID)
         return None, {}
 
     return role, msg
+
+
+async def revalidate_ws(ws: Any, token: str, auth_config: Any) -> str | None:
+    """Recheck current account authority before WebSocket use."""
+    role = auth_config.validate_token(token)
+    if role is None:
+        await ws.send_json({"error": "Invalid token"})
+        await ws.close(code=CLOSE_AUTH_INVALID)
+        return None
+    if not isinstance(role, str):
+        await ws.send_json({"error": "Invalid role"})
+        await ws.close(code=CLOSE_AUTH_INVALID)
+        return None
+    session = auth_config.identify(token)
+    if session is None:
+        if getattr(ws.app.state, "hosted", False):
+            await ws.send_json({"error": "A person must sign in"})
+            await ws.close(code=CLOSE_AUTH_INVALID)
+            return None
+        return role
+    factory = getattr(ws.app.state, "user_store_factory", None)
+    if factory is None:
+        await ws.send_json({"error": "Account authority is unavailable"})
+        await ws.close(code=CLOSE_AUTH_UNAVAILABLE)
+        return None
+    try:
+        user = await asyncio.to_thread(lambda: factory().get(session.email))
+    except Exception:
+        await ws.send_json({"error": "Account authority is unavailable"})
+        await ws.close(code=CLOSE_AUTH_UNAVAILABLE)
+        return None
+    if user is None or user.disabled or user.did != session.did:
+        auth_config.sessions.revoke(token)
+        await ws.send_json({"error": "Session is no longer authorized"})
+        await ws.close(code=CLOSE_AUTH_INVALID)
+        return None
+    current_role = "operator" if user.is_operator else "viewer"
+    auth_config.sessions.set_role(token, current_role)
+    return current_role
+
+
+async def monitor_ws_authority(ws: Any, token: str, auth_config: Any) -> None:
+    """Bound stale subscription access to one five-second account lease."""
+    while True:
+        await asyncio.sleep(5)
+        if await revalidate_ws(ws, token, auth_config) is None:
+            return
 
 
 async def run_ws_tasks(*coros: Any) -> tuple[set[Any], set[Any]]:
