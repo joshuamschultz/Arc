@@ -356,7 +356,9 @@ async def test_one_ingest_failure_does_not_stop_siblings() -> None:
 
 @pytest.mark.asyncio
 async def test_parent_cancellation_awaits_all_ingest_tasks() -> None:
+    started: list[str] = []
     finished: list[str] = []
+    running = asyncio.Event()
 
     class Ingest(FakeIngest):
         async def ingest(
@@ -366,6 +368,8 @@ async def test_parent_cancellation_awaits_all_ingest_tasks() -> None:
             content: SourceContent | None,
             mapping: MappingPlan,
         ) -> None:
+            started.append(source_object.object_id)
+            running.set()
             try:
                 await asyncio.sleep(10)
             except asyncio.CancelledError:
@@ -381,11 +385,15 @@ async def test_parent_cancellation_awaits_all_ingest_tasks() -> None:
             owner_id="worker",
         )
     )
-    await asyncio.sleep(0)
+    await asyncio.wait_for(running.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert sorted(finished) == ["a", "b"]
+    # A source's units run one at a time; every ingest that had started was
+    # cancelled and awaited before the run returned, and none starts after.
+    assert started and sorted(finished) == sorted(started)
+    await asyncio.sleep(0.01)
+    assert sorted(finished) == sorted(started)
 
 
 @pytest.mark.asyncio
@@ -702,7 +710,9 @@ async def test_an_object_the_source_cannot_find_is_skipped_not_fatal() -> None:
 @pytest.mark.asyncio
 async def test_an_object_of_unreadable_content_is_skipped_not_fatal() -> None:
     """A content type nothing can parse is one skipped object, not a dead sync."""
-    source = _RefusingFetchSource([page("weird", cursor="")], SourceFailureCode.UNSUPPORTED_CONTENT)
+    source = _RefusingFetchSource(
+        [page("weird", cursor="")], SourceFailureCode.UNSUPPORTED_CONTENT
+    )
     ingest = FakeIngest()
 
     result = await ConnectedDataCoordinator(source, ingest, InMemorySourceSyncStore()).run(

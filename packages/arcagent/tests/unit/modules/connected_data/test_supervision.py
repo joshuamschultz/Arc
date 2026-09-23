@@ -211,7 +211,7 @@ async def test_a_hung_source_is_cut_off_audited_and_retried() -> None:
     service, _ = await _service(
         {"stuck": hanging, "fine": healthy},
         events,
-        limits=SyncLimits(retries=0, max_seconds=0.05),
+        limits=SyncLimits(retries=0, max_seconds=0.05, max_duty_fraction=1.0),
         stall_grace_seconds=0.05,
     )
     try:

@@ -6,7 +6,8 @@ import asyncio
 import hashlib
 import inspect
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from arcagent.connected_data import (
@@ -34,6 +35,7 @@ from arcagent.connected_data import (
     SyncStatus,
     TransientSyncError,
 )
+from arcagent.modules.connected_data.pacing import DutyCycleLimiter
 
 # Failures that are about ONE object, not the account. The source is healthy — it
 # knows a size, a deletion, a content type or a version this side only guessed at —
@@ -108,7 +110,22 @@ class ConnectedDataCoordinator:
         )
         if lease is None:
             return await self._state.get_state(agent_did, source_id)
-        started = self._clock()
+        run = _Run(
+            agent_did=agent_did,
+            source_id=source_id,
+            owner_id=owner_id,
+            fencing_token=lease.fencing_token,
+            ttl=chosen.max_seconds,
+            started=self._clock(),
+            renewed_at=self._clock(),
+            pacer=DutyCycleLimiter(
+                chosen.max_duty_fraction,
+                clock=self._clock,
+                sleep=self._sleep,
+                # One rest never outlasts a third of the lease it must keep.
+                max_rest=chosen.max_seconds / 3,
+            ),
+        )
         current = await self._state.get_state(agent_did, source_id)
         await self._emit("started", source, {"owner": _safe_id(owner_id)})
         lease_lost = False
@@ -123,10 +140,10 @@ class ConnectedDataCoordinator:
             mapping = await self._retry_call(
                 lambda: self._ingest.require_approved_mapping(source),
                 chosen,
-                started,
+                run,
                 cancel_event,
             )
-            await self._register_live_datastore(source, mapping, chosen, started, cancel_event)
+            await self._register_live_datastore(source, mapping, chosen, run, cancel_event)
             cursor, pages, processed = current.cursor, 0, 0
             snapshot_ids: set[str] = set()
             # True when this run stopped at a ceiling rather than at the end of
@@ -141,26 +158,26 @@ class ConnectedDataCoordinator:
             budget_reached = current.budget_reached if current.cursor is not None else False
             while True:
                 self._check_cancel(cancel_event)
-                self._check_deadline(started, chosen)
-                if not await self._state.renew_lease(
-                    agent_did,
-                    source_id,
-                    owner_id=owner_id,
-                    fencing_token=lease.fencing_token,
-                    ttl_seconds=chosen.max_seconds,
-                ):
-                    raise LeaseLostError()
+                # The time budget, like the page and byte budgets, ends a run at
+                # a page boundary with its cursor committed: it bounds one run's
+                # work and is not a verdict on the account. Before the first
+                # page it is still a failure, so a run always advances.
+                if pages and self._elapsed(run) >= chosen.max_seconds:
+                    budget_reached = self._stopped_at_ceiling = True
+                    break
+                self._check_deadline(run, chosen)
+                await self._renew_lease(run)
                 if pages >= chosen.max_pages:
                     budget_reached = self._stopped_at_ceiling = True
                     break
-                page = await self._fetch_with_retry(source, cursor, chosen, started, cancel_event)
+                page = await self._fetch_with_retry(source, cursor, chosen, run, cancel_event)
                 snapshot_ids.update(
                     item.object_id
                     for item in page.objects
                     if not item.deleted and not _is_container(item)
                 )
                 page_bytes = await self._ingest_page(
-                    source, page, mapping, chosen, started, cancel_event
+                    source, page, mapping, chosen, run, cancel_event
                 )
                 page_id = _page_id(source_id, cursor, page)
                 if not await self._state.commit_page(
@@ -189,14 +206,17 @@ class ConnectedDataCoordinator:
             # seen the account, so it reconciles nothing.
             if not source.supports_incremental and not budget_reached:
                 await self._retry_call(
-                    lambda: self._ingest.complete_snapshot(
-                        source, frozenset(snapshot_ids), mapping
+                    lambda: self._paced(
+                        run,
+                        lambda: self._ingest.complete_snapshot(
+                            source, frozenset(snapshot_ids), mapping
+                        ),
                     ),
                     chosen,
-                    started,
+                    run,
                     cancel_event,
                 )
-            await self._finish_run(source, chosen, started, cancel_event)
+            await self._finish_run(source, chosen, run, cancel_event)
             await self._set_status(
                 agent_did,
                 source_id,
@@ -235,7 +255,7 @@ class ConnectedDataCoordinator:
                 raise
             await self._emit("awaiting_mapping", source, {})
         except SyncError as exc:
-            await self._finish_after_failure(source)
+            await self._finish_after_failure(source, run)
             try:
                 await self._set_status(
                     agent_did,
@@ -252,7 +272,7 @@ class ConnectedDataCoordinator:
             await self._emit("failed", source, {"error_code": exc.code})
             raise
         except Exception:
-            await self._finish_after_failure(source)
+            await self._finish_after_failure(source, run)
             try:
                 await self._set_status(
                     agent_did,
@@ -280,29 +300,31 @@ class ConnectedDataCoordinator:
         source: SourceDescription,
         cursor: str | None,
         limits: SyncLimits,
-        started: float,
+        run: _Run,
         cancel_event: asyncio.Event | None,
     ) -> SyncSourcePage:
+        request = SyncSource(
+            connection_id=source.connection_id,
+            checkpoint=cursor,
+            root_locator=source.root_locator,
+            page_size=limits.page_size,
+        )
         for attempt in range(limits.retries + 1):
             try:
-                return await self._source.sync_source(
-                    SyncSource(
-                        connection_id=source.connection_id,
-                        checkpoint=cursor,
-                        root_locator=source.root_locator,
-                        page_size=limits.page_size,
-                    )
+                page: SyncSourcePage = await self._paced(
+                    run, lambda: self._source.sync_source(request)
                 )
+                return page
             except (TransientSyncError, SourceError) as exc:
                 if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
                     raise SyncError(str(exc), code=str(exc.code)) from exc
                 if attempt >= limits.retries:
                     raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
                 self._check_cancel(cancel_event)
-                self._check_deadline(started, limits)
+                self._check_deadline(run, limits)
                 await self._sleep_capped(
                     max(exc.retry_after or 0.0, limits.retry_backoff_seconds * (attempt + 1)),
-                    started,
+                    run,
                     limits,
                 )
         raise SyncError("source retry loop exhausted")
@@ -313,14 +335,14 @@ class ConnectedDataCoordinator:
         page: SyncSourcePage,
         mapping: MappingPlan,
         limits: SyncLimits,
-        started: float,
+        run: _Run,
         cancel_event: asyncio.Event | None,
     ) -> int:
         mappings: list[tuple[SourceObject, SourceContent | None, MappingPlan]] = []
         page_bytes = 0
         for source_object in page.objects:
             self._check_cancel(cancel_event)
-            self._check_deadline(started, limits)
+            self._check_deadline(run, limits)
             # A folder is the shape of the tree, not a document. Passed on with no
             # content the ingest port refused it, and one folder in a listing
             # failed the whole sync — which is every real document account.
@@ -349,9 +371,11 @@ class ConnectedDataCoordinator:
                 )
                 try:
                     content = await self._retry_call(
-                        lambda request=request: self._source.fetch_source(request),
+                        lambda request=request: self._paced(
+                            run, lambda: self._source.fetch_source(request)
+                        ),
                         limits,
-                        started,
+                        run,
                         cancel_event,
                     )
                 except SyncError as exc:
@@ -383,16 +407,22 @@ class ConnectedDataCoordinator:
             source_object: SourceObject, content: SourceContent | None, mapping: MappingPlan
         ) -> None:
             nonlocal mapping_denied
-            async with semaphore:
+
+            async def ingest_unless_denied() -> bool:
+                # Checked at the last moment, after waiting for this source's
+                # turn: a sibling may have hit the shared, account-wide denial
+                # meanwhile, and then this object must not be ingested.
                 if mapping_denied:
-                    # A sibling already hit the shared, account-wide denial; the
-                    # whole run is aborting, so do not attempt this object's ingest.
-                    return
+                    return False
+                await self._ingest.ingest(source, source_object, content, mapping)
+                return True
+
+            async with semaphore:
                 try:
-                    await self._retry_call(
-                        lambda: self._ingest.ingest(source, source_object, content, mapping),
+                    ingested = await self._retry_call(
+                        lambda: self._paced(run, ingest_unless_denied),
                         limits,
-                        started,
+                        run,
                         cancel_event,
                     )
                 except ObjectNotIngestibleError as refusal:
@@ -423,7 +453,7 @@ class ConnectedDataCoordinator:
                     outcomes["failed"] += 1
                     await self._emit_object_failed(source, source_object, "ingest_error")
                 else:
-                    outcomes["ok"] += 1
+                    outcomes["ok"] += 1 if ingested else 0
 
         try:
             async with asyncio.TaskGroup() as group:
@@ -443,7 +473,7 @@ class ConnectedDataCoordinator:
         self,
         source: SourceDescription,
         limits: SyncLimits,
-        started: float,
+        run: _Run,
         cancel_event: asyncio.Event | None,
     ) -> None:
         """Let the port refresh source-wide derived state once, after the pages.
@@ -455,9 +485,11 @@ class ConnectedDataCoordinator:
         finish = getattr(self._ingest, "finish_sync", None)
         if finish is None:
             return
-        await self._retry_call(lambda: finish(source), limits, started, cancel_event)
+        await self._retry_call(
+            lambda: self._paced(run, lambda: finish(source)), limits, run, cancel_event
+        )
 
-    async def _finish_after_failure(self, source: SourceDescription) -> None:
+    async def _finish_after_failure(self, source: SourceDescription, run: _Run) -> None:
         """Best effort: pages committed before a failure still reach the index.
 
         A source that fails on the same page every run would otherwise leave
@@ -468,16 +500,43 @@ class ConnectedDataCoordinator:
         if finish is None:
             return
         try:
-            await finish(source)
+            await self._paced(run, lambda: finish(source))
         except Exception as exc:  # reason: the run's own failure is the one reported
             await self._emit("finish_failed", source, {"error": type(exc).__name__})
+
+    async def _paced(self, run: _Run, operation: Callable[[], Awaitable[Any]]) -> Any:
+        """Run one unit of this source's work inside its duty cycle."""
+        async with run.pacer.unit():
+            await self._keep_lease(run)
+            return await operation()
+
+    async def _keep_lease(self, run: _Run) -> None:
+        """Renew within a long, paced page before a third of the lease is gone."""
+        if self._clock() - run.renewed_at >= run.ttl / 3:
+            await self._renew_lease(run)
+
+    async def _renew_lease(self, run: _Run) -> None:
+        if not await self._state.renew_lease(
+            run.agent_did,
+            run.source_id,
+            owner_id=run.owner_id,
+            fencing_token=run.fencing_token,
+            ttl_seconds=run.ttl,
+        ):
+            raise LeaseLostError()
+        run.renewed_at = self._clock()
+
+    def _elapsed(self, run: _Run) -> float:
+        """Time this run has spent working: pacing rest does not count."""
+        now: float = self._clock()
+        return now - run.started - run.pacer.rested
 
     async def _register_live_datastore(
         self,
         source: SourceDescription,
         mapping: MappingPlan,
         limits: SyncLimits,
-        started: float,
+        run: _Run,
         cancel_event: asyncio.Event | None,
     ) -> None:
         """Register a selected live datastore only after its exact mapping is approved.
@@ -491,14 +550,14 @@ class ConnectedDataCoordinator:
         if register is None:
             return
         await self._retry_call(
-            lambda: register(source, self._source, mapping), limits, started, cancel_event
+            lambda: register(source, self._source, mapping), limits, run, cancel_event
         )
 
     async def _retry_call(
         self,
         operation: Any,
         limits: SyncLimits,
-        started: float,
+        run: _Run,
         cancel_event: asyncio.Event | None,
     ) -> Any:
         for attempt in range(limits.retries + 1):
@@ -510,10 +569,10 @@ class ConnectedDataCoordinator:
                 if attempt >= limits.retries:
                     raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
                 self._check_cancel(cancel_event)
-                self._check_deadline(started, limits)
+                self._check_deadline(run, limits)
                 await self._sleep_capped(
                     max(exc.retry_after or 0.0, limits.retry_backoff_seconds * (attempt + 1)),
-                    started,
+                    run,
                     limits,
                 )
         raise SyncError("retry loop exhausted")
@@ -553,8 +612,8 @@ class ConnectedDataCoordinator:
         ):
             raise LeaseLostError()
 
-    async def _sleep_capped(self, delay: float, started: float, limits: SyncLimits) -> None:
-        remaining = limits.max_seconds - (self._clock() - started)
+    async def _sleep_capped(self, delay: float, run: _Run, limits: SyncLimits) -> None:
+        remaining = limits.max_seconds - self._elapsed(run)
         if remaining <= 0:
             raise SyncError("time limit exceeded")
         await self._sleep(min(delay, remaining))
@@ -602,9 +661,23 @@ class ConnectedDataCoordinator:
         if cancel_event is not None and cancel_event.is_set():
             raise _CancellationError()
 
-    def _check_deadline(self, started: float, limits: SyncLimits) -> None:
-        if self._clock() - started >= limits.max_seconds:
+    def _check_deadline(self, run: _Run, limits: SyncLimits) -> None:
+        if self._elapsed(run) >= limits.max_seconds:
             raise SyncError("time limit exceeded")
+
+
+@dataclass
+class _Run:
+    """One run's lease identity, working-time origin and duty-cycle limiter."""
+
+    agent_did: str
+    source_id: str
+    owner_id: str
+    fencing_token: int
+    ttl: float
+    started: float
+    renewed_at: float
+    pacer: DutyCycleLimiter
 
 
 class _CancellationError(Exception):

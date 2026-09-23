@@ -701,10 +701,12 @@ class ConnectedDataService:
     def _stall_seconds(self) -> float:
         """How long one run may take before it is treated as hung.
 
-        The coordinator bounds its own work by ``max_seconds``; a run that
-        outlives that plus a grace is stuck on something that never returns.
+        The coordinator bounds its own working time by ``max_seconds`` and rests
+        for the remainder of its duty cycle, so a healthy run takes at most
+        ``max_seconds / max_duty_fraction`` of wall time. A run that outlives
+        that plus a grace is stuck on something that never returns.
         """
-        return self._limits.max_seconds + self._stall_grace
+        return self._limits.max_seconds / self._limits.max_duty_fraction + self._stall_grace
 
     async def _run_leased(self, registration: SourceRegistration) -> bool:
         """Run one source with a slot and a stall bound; True if it has more to do."""
