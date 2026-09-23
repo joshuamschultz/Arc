@@ -15,10 +15,10 @@ from typing import Any
 import pytest
 from arcgateway.team_roster import RosterEntry
 from arcmemory.adapters.personal_knowledge import PersonalKnowledgeAdapter
+from arcteam.shared_knowledge import FleetSharedKnowledgeService
 from arctrust import AgentIdentity
 from starlette.testclient import TestClient
 
-from arcteam.shared_knowledge import FleetSharedKnowledgeService
 from arcui.auth import AuthConfig
 from arcui.server import create_app
 

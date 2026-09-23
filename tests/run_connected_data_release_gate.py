@@ -29,9 +29,7 @@ def main() -> int:
             )
             return 2
         tests.append("packages/arcstore/tests/integration/test_source_sync_postgres.py")
-    return subprocess.run(  # noqa: S603 - executable and test paths are repository constants
-        [sys.executable, "-m", "pytest", "-q", *tests], check=False
-    ).returncode
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", *tests], check=False).returncode
 
 
 if __name__ == "__main__":

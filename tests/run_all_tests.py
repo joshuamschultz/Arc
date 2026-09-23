@@ -44,7 +44,7 @@ def main() -> int:
     failed: list[Path] = []
     for suite in TEST_SUITES:
         command = [sys.executable, "-m", "pytest", str(suite), *pytest_args]
-        completed = subprocess.run(command, cwd=ROOT, check=False)  # noqa: S603
+        completed = subprocess.run(command, cwd=ROOT, check=False)
         if completed.returncode != 0:
             failed.append(suite)
 

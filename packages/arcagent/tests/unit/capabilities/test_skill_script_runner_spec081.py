@@ -34,6 +34,9 @@ from typing import Any
 
 import arcrun
 import pytest
+
+# arcrun's fail-closed error for a federal tier with no VM support.
+from arcrun.builtins.execute import IsolationUnavailableError
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing
@@ -41,17 +44,13 @@ from arcagent.capabilities import artifact_signing
 # NOTE: This import is EXPECTED to fail (ModuleNotFoundError) in the RED wave —
 # the module does not exist yet. That is the correct "feature absent" signal.
 # The names below define the interface the GREEN coder must implement.
-from arcagent.capabilities.skill_script_runner import (  # noqa: E402
+from arcagent.capabilities.skill_script_runner import (
     ScriptPathError,
     SkillScriptError,
     SkillScriptResult,
     SkillScriptRunner,
     UnsupportedScriptError,
 )
-
-# arcrun's fail-closed error for a federal tier with no VM support.
-from arcrun.builtins.execute import IsolationUnavailableError  # noqa: E402
-
 
 # --------------------------------------------------------------------------- #
 # Test doubles — a recording audit sink and a boundary-faithful arcrun mock.
@@ -64,7 +63,7 @@ class _SpySink:
     def __init__(self) -> None:
         self.events: list[Any] = []
 
-    def write(self, event: Any) -> None:  # noqa: D401 - sink protocol
+    def write(self, event: Any) -> None:
         self.events.append(event)
 
 
@@ -167,14 +166,18 @@ def _backend_selected_events(sink: _SpySink) -> list[Any]:
 
 
 def _docker_available() -> bool:
-    if shutil.which("docker") is None:
+    docker = shutil.which("docker")
+    if docker is None:
         return False
     try:
-        return subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10,
-        ).returncode == 0
+        return (
+            subprocess.run(
+                [docker, "info"],
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        )
     except Exception:
         return False
 
@@ -437,9 +440,7 @@ class TestFederalFailClosed:
 
         # Never reached execution and never selected a weaker backend.
         assert captured.get("calls", 0) == 0
-        selected_backend = captured.get("resolve", {}).get(
-            "platform_supports_vm", None
-        )
+        selected_backend = captured.get("resolve", {}).get("platform_supports_vm", None)
         assert selected_backend is False
 
 
