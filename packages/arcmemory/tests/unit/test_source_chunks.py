@@ -149,12 +149,16 @@ def test_oversized_collection_index_splits_into_bounded_windows(
     The validator is stubbed valid so the test exercises only the size path."""
     mem = workspace / "memory"
     mem.mkdir(parents=True)
-    routing = "\n".join(f"- [entities/item_{i:05d}.md](entities/item_{i:05d}.md)" for i in range(2000))
+    routing = "\n".join(
+        f"- [entities/item_{i:05d}.md](entities/item_{i:05d}.md)" for i in range(2000)
+    )
     (mem / "index.md").write_text(f"# Inventory\n{routing}\n", encoding="utf-8")
     assert len((mem / "index.md").read_text("utf-8").encode("utf-8")) > MAX_CHUNK_BYTES
     monkeypatch.setattr(CollectionIndexStore, "verify", lambda self: True)
 
-    chunks = [c for c in iter_source_chunks(mem, workspace, []) if c.source_path == "memory/index.md"]
+    chunks = [
+        c for c in iter_source_chunks(mem, workspace, []) if c.source_path == "memory/index.md"
+    ]
 
     assert len(chunks) >= 2
     assert chunks[0].chunk_id == "file:memory/index.md"

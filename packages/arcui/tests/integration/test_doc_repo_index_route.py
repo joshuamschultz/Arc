@@ -138,9 +138,7 @@ def app_fresh(tmp_path: Path) -> Iterator[Any]:
     agent_dir = _make_agent_dir(team_root, "fresh")
     auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN})
     app = create_app(team_root=team_root, auth_config=auth)
-    app.state.roster_provider = lambda: [
-        _roster_entry("fresh", "did:arc:agent:fresh", agent_dir)
-    ]
+    app.state.roster_provider = lambda: [_roster_entry("fresh", "did:arc:agent:fresh", agent_dir)]
     yield app
 
 
