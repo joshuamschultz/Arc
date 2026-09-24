@@ -28,7 +28,8 @@ from arcui.schemas import ErrorResponse
 
 
 async def _agent_capability_rows(
-    agent_root: Path, live_agent: Any, kind: str
+    agent_root: Path, live_agent: Any, kind: str,
+    skill_artifact_resolver: Any = None,
 ) -> list[dict[str, Any]]:
     """Capability-kind (``"skill"`` or ``"tool"``) inventory rows for one agent.
 
@@ -42,7 +43,8 @@ async def _agent_capability_rows(
         return []
     try:
         inventory = await arcagent.collect_agent_capability_inventory(
-            config_path, live_agent=live_agent
+            config_path, live_agent=live_agent,
+            skill_artifact_resolver=skill_artifact_resolver,
         )
     except Exception:  # reason: fleet resilience — see docstring
         logger.warning(
@@ -90,7 +92,9 @@ def _append_runtime_only_tools(rows: list[dict[str, Any]], runtime_tools: list[A
         )
 
 
-async def agent_skill_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
+async def agent_skill_rows(
+    agent_root: Path, live_agent: Any = None, skill_artifact_resolver: Any = None
+) -> list[dict[str, Any]]:
     """Skill-kind inventory rows for one agent, via the arcagent seam.
 
     The single skill-discovery path for both the per-agent Skills tab and the
@@ -98,7 +102,9 @@ async def agent_skill_rows(agent_root: Path, live_agent: Any = None) -> list[dic
     the loader's ``source_root`` + verbatim ``status``. Returns ``[]`` when the
     agent has no config on disk.
     """
-    return await _agent_capability_rows(agent_root, live_agent, "skill")
+    return await _agent_capability_rows(
+        agent_root, live_agent, "skill", skill_artifact_resolver
+    )
 
 
 async def agent_tool_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
@@ -126,6 +132,16 @@ def _live_agent(request: Request, agent_id: str) -> Any:
     return cache.get(did)
 
 
+def _skill_resolver(request: Request, agent_id: str, agent_root: Path) -> Any:
+    factory = getattr(request.app.state, "skill_revision_anchor_factory", None)
+    did = _agent_did(request, agent_id)
+    if factory is None or did is None:
+        return None
+    return arcagent.AnchoredSkillRevisionResolver(
+        agent_did=did, config_path=agent_root / "arcagent.toml", anchor_factory=factory
+    )
+
+
 async def get_capabilities(request: Request) -> JSONResponse:
     agent_id = request.path_params["id"]
     agent_root = _agent_root(request, agent_id)
@@ -143,7 +159,8 @@ async def get_capabilities(request: Request) -> JSONResponse:
 
     try:
         inventory = await arcagent.collect_agent_capability_inventory(
-            config_path, live_agent=_live_agent(request, agent_id)
+            config_path, live_agent=_live_agent(request, agent_id),
+            skill_artifact_resolver=_skill_resolver(request, agent_id, agent_root),
         )
     except Exception as exc:  # reason: surface failure explicitly, never fail-open empty
         logger.exception("capability inventory failed for %s", agent_id)

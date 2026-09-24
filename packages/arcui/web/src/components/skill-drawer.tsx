@@ -21,13 +21,12 @@ import {
 } from '@/lib/queries'
 import { apiPut, ApiError } from '@/lib/api'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import type { FileWriteResponse, SkillVersionItem } from '@/lib/types'
+import type { SkillVersionItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /** SKILL.md detail drawer (U5). View mode renders the markdown body;
  *  operator mode adds Edit/Save for workspace/agent-authored skills, saving
- *  through the same `PUT /files/read` route `FileViewer` uses — builtins and
- *  global-root skills stay read-only (no write target from the backend). */
+ *  through the signed revision endpoint; builtins and global-root skills stay read-only. */
 export function SkillDrawer({
   agentId,
   skillName,
@@ -46,7 +45,7 @@ export function SkillDrawer({
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [saveResult, setSaveResult] = useState<FileWriteResponse | null>(null)
+  const [saveResult, setSaveResult] = useState<string | null>(null)
 
   // A newly selected skill always opens in view mode with a clean save state
   // (state adjusted during render, keyed on the selected skill).
@@ -68,16 +67,15 @@ export function SkillDrawer({
   }
 
   const save = async () => {
-    const { write_root, write_path } = detail.data ?? {}
-    if (!write_root || !write_path) return
+    if (!detail.data?.editable) return
     setSaving(true)
     setSaveError(null)
     try {
-      const res = await apiPut<FileWriteResponse>(
-        `/api/agents/${agentId}/files/read?root=${write_root}&path=${encodeURIComponent(write_path)}`,
-        { content: draft },
+      const res = await apiPut<{ status: string; sha256: string }>(
+        `/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillName)}/revision`,
+        { content: draft, expected_sha256: detail.data.sha256 },
       )
-      setSaveResult(res)
+      setSaveResult(`Signed revision ${res.sha256.slice(0, 12)} is active.`)
       setEditing(false)
       await queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'skill', skillName] })
     } catch (e) {
@@ -139,14 +137,9 @@ export function SkillDrawer({
                 {saveError}
               </div>
             )}
-            {saveResult?.signature_stale && (
-              <div className="border-b border-status-warning/30 bg-status-warning/10 px-5 py-2 text-xs text-status-warning">
-                {saveResult.message}
-              </div>
-            )}
-            {saveResult && !saveResult.signature_stale && (
+            {saveResult && (
               <div className="border-b border-status-online/30 bg-status-online/10 px-5 py-2 text-xs text-status-online">
-                {saveResult.message}
+                {saveResult}
               </div>
             )}
 

@@ -38,9 +38,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Protocol
 
 from arctrust import CapabilitySource, TofuDecision, TofuLayer
 
@@ -245,6 +246,24 @@ def _module_copy_relative(artifact: Path) -> PurePosixPath | None:
 ScanRoot = tuple[str, Path]
 
 
+class SkillArtifactResolver(Protocol):
+    """Optional revision authority for skill bundles outside the core loader."""
+
+    def resolve(self, folder: Path, scan_root: str) -> Path | None: ...
+
+    def read_current(self, folder: Path, path: Path) -> str | None: ...
+
+
+class DirectSkillArtifactResolver:
+    """Default skill artifact source when no revision authority is attached."""
+
+    def resolve(self, folder: Path, scan_root: str) -> Path | None:
+        return None
+
+    def read_current(self, folder: Path, path: Path) -> str | None:
+        return None
+
+
 class CapabilityLoader:
     """Scan four roots, register decorated capabilities into the registry.
 
@@ -270,6 +289,7 @@ class CapabilityLoader:
         isolation_relax: str | None = None,
         isolated_runner: IsolatedRunner | None = None,
         ignored_python_paths: frozenset[Path] = frozenset(),
+        skill_artifact_resolver: SkillArtifactResolver | None = None,
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
         self._registry = registry
@@ -312,6 +332,7 @@ class CapabilityLoader:
         # inspectable/installable on hosts that cannot execute that tier.
         self._isolated_runner = isolated_runner
         self._ignored_python_paths = frozenset(path.resolve() for path in ignored_python_paths)
+        self._skill_artifact_resolver = skill_artifact_resolver or DirectSkillArtifactResolver()
 
     def set_module_roots(self, agent_dir: Path, module_names: Sequence[str]) -> None:
         """Replace the ``module:*`` scan roots, leaving every other root in place.
@@ -374,6 +395,7 @@ class CapabilityLoader:
             isolation_relax=self._isolation_relax,
             isolated_runner=self._isolated_runner,
             ignored_python_paths=self._ignored_python_paths,
+            skill_artifact_resolver=self._skill_artifact_resolver,
         )
         prior_tools = dict(self._known_tools)
         prior_skills = dict(self._known_skills)
@@ -534,9 +556,7 @@ class CapabilityLoader:
     def _isolated_runner_for_tool(self) -> IsolatedRunner:
         runner = self._isolated_runner
         if runner is None:
-            runner = ArcRunIsolatedRunner(
-                tier=self._isolation_tier, relax=self._isolation_relax
-            )
+            runner = ArcRunIsolatedRunner(tier=self._isolation_tier, relax=self._isolation_relax)
             self._isolated_runner = runner
         return runner
 
@@ -744,6 +764,28 @@ class CapabilityLoader:
             )
         )
 
+    def _read_direct_skill(self, path: Path, name: str, root_name: str) -> str | None:
+        """Recheck direct-source trust before each prompt injection."""
+        try:
+            content = path.read_bytes()
+            if root_trust(root_name) is RootTrust.TRUSTED:
+                return content.decode("utf-8")
+            signed = self._verify_against_any_key(path, content)
+            if self._signature_floor(root_name) and not signed:
+                return None
+            source = content.decode("utf-8")
+            if (
+                self._tofu is not None
+                and self._tofu.evaluate(
+                    CapabilitySource(name=pin_name_for_path(path), source=source, signed=signed)
+                )
+                is not TofuDecision.ALLOW
+            ):
+                return None
+            return source
+        except Exception:
+            return None
+
     async def _register_skill_folder(
         self,
         folder: Path,
@@ -752,7 +794,40 @@ class CapabilityLoader:
         seen_skills: set[str],
     ) -> None:
         skill_md = folder / "SKILL.md"
-        validation = validate_skill_folder(folder, root_name)
+        try:
+            revision = self._skill_artifact_resolver.resolve(folder, root_name)
+        except Exception as exc:
+            detail = f"revision authority unavailable: {_short_error(exc)}"
+            delta.errors.append((str(skill_md), detail))
+            delta.outcomes.append(
+                CapabilityOutcome(
+                    kind="skill",
+                    name=folder.name,
+                    version="",
+                    description="",
+                    scan_root=root_name,
+                    source_path=str(skill_md),
+                    status="unavailable",
+                    status_detail=detail,
+                )
+            )
+            await self._emit_registration_failed(skill_md, "skill", detail)
+            return
+        active_folder = revision.parent if revision is not None else folder
+        skill_md = revision or skill_md
+        verified_content = (
+            self._skill_artifact_resolver.read_current(folder, skill_md)
+            if revision is not None
+            else self._read_direct_skill(skill_md, folder.name, root_name)
+        )
+        if verified_content is None:
+            detail = "skill changed or trust validation failed before registration"
+            delta.errors.append((str(skill_md), detail))
+            await self._emit_registration_failed(skill_md, "skill", detail)
+            return
+        validation = validate_skill_folder(
+            active_folder, root_name, verified_content=verified_content
+        )
         if not validation.ok or validation.entry is None:
             detail = "; ".join(f"{e.code}: {e.detail}" for e in validation.errors)
             delta.errors.append((str(skill_md), detail))
@@ -802,10 +877,21 @@ class CapabilityLoader:
                     skill_md, entry.name, "builtin_name_collision", detail
                 )
                 return
-        # SKILL.md is injected into the agent prompt (LLM01/ASI06), so any skill
-        # folder outside the wheel passes the same Sign/TOFU gate as a .py —
-        # agent-writable (UNTRUSTED) and bundle-delivered (VERIFIED) alike.
-        if root_trust(root_name) is not RootTrust.TRUSTED:
+        if revision is not None:
+
+            def read_anchored_skill() -> str | None:
+                return self._skill_artifact_resolver.read_current(folder, skill_md)
+
+            entry = replace(entry, read_current=read_anchored_skill)
+        else:
+
+            def read_direct_skill() -> str | None:
+                return self._read_direct_skill(skill_md, entry.name, root_name)
+
+            entry = replace(entry, read_current=read_direct_skill)
+        # Direct skill files pass Sign/TOFU. An anchored revision has already
+        # verified the signed whole-bundle manifest and external active head.
+        if root_trust(root_name) is not RootTrust.TRUSTED and revision is None:
             gate = await self._passes_trust_gate(
                 skill_md,
                 pin_name_for_path(skill_md),

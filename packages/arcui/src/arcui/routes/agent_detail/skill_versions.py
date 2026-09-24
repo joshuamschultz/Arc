@@ -7,36 +7,36 @@ facade/status conventions:
   inventory seam (``agent_skill_rows`` — no globbing in arcui, REQ-096) and
   classifies provenance through arcskill's ``load_suite`` (the AST walk lives
   in arcskill, never in an arcui route).
-* The version timeline / candidate body / diff read the arcstore mirror via
-  ``app.state.observe`` — metadata-only list payloads, 200-empty vs
-  503-unreadable, tombstone rows for pruned bodies (``body_hash`` is None).
+* The version timeline / body / diff read only the current agent's externally
+  anchored, signed revision chain.
 * The diff is computed server-side (``difflib.unified_diff``) and memoized per
   ``(hash_a, hash_b)`` content-hash pair.
 
-Rollback is the one mutation: operator-gated, confirm-gated, and audited with
-ONE ``ui.mutation`` event (from→to candidate ids) through the shared COMP-010
-helper. It calls ``CandidateStore.rollback`` directly against the agent
-workspace — the same direct-workspace mutation shape as ``files_write.py``
-(arcui runs no improver); the flip is non-destructive (manifest
-``active_candidate_id`` only) and atomic. A retired skill rejects rollback
-with 409 — revive is a distinct, separately-gated operation.
+Rollback signs a new forward activation from a verified prior body, reloads
+the live agent, and checks the provider's current bytes before reporting success.
 """
 
 from __future__ import annotations
 
+import asyncio
 import difflib
+import hashlib
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.evalgate import load_suite
+from arctrust.policy import OperatorApprovalAuthority
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arcui.audit import emit_mutation_audit
 from arcui.routes.agent_detail._common import _agent_root, logger
 from arcui.routes.agent_detail.capabilities import _live_agent, agent_skill_rows
+from arcui.routes.agent_detail.skills import _revision_resolver
+from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import (
     ErrorResponse,
     SkillEvalCase,
@@ -49,8 +49,7 @@ from arcui.schemas import (
 )
 
 _ROLLBACK_WARNING = (
-    "Rolled back to a prior candidate. Its stored scores are historical — "
-    "measured when the candidate was produced, not re-validated by this flip."
+    "Created a new signed activation from a prior revision. History remains intact."
 )
 
 
@@ -64,13 +63,18 @@ def _store_unreadable(exc: Exception) -> JSONResponse:
     return _error(str(exc), 503)
 
 
-async def _skill_dir(request: Request, agent_root: Path, skill_name: str) -> Path | None:
+async def _skill_dir(
+    request: Request, agent_root: Path, skill_name: str
+) -> Path | JSONResponse | None:
     """Resolve a skill's bundle dir via the inventory seam (last root wins)."""
     agent_id = request.path_params["id"]
-    rows = await agent_skill_rows(agent_root, _live_agent(request, agent_id))
+    resolver = _revision_resolver(request, agent_id, agent_root)
+    rows = await agent_skill_rows(agent_root, _live_agent(request, agent_id), resolver)
     matches = [r for r in rows if r.get("name") == skill_name and r.get("source_path")]
     if not matches:
         return None
+    if matches[-1].get("status") == "unavailable":
+        return _error("Active skill revision is unavailable", 503)
     return Path(matches[-1]["source_path"]).parent
 
 
@@ -87,6 +91,30 @@ def _version_item(row: dict[str, Any]) -> dict[str, Any]:
         "tombstone": body_hash is None,
         "ts": row.get("ts"),
     }
+
+
+async def _anchored_versions(
+    request: Request, agent_root: Path, skill_name: str
+) -> tuple[Any, Path, list[tuple[str, int, str, bool]]] | JSONResponse:
+    agent_id = request.path_params["id"]
+    resolver = _revision_resolver(request, agent_id, agent_root)
+    if resolver is None:
+        return _error("External skill revision authority is unavailable", 503)
+    rows = await agent_skill_rows(agent_root, _live_agent(request, agent_id), resolver)
+    matches = [row for row in rows if row.get("name") == skill_name]
+    if not matches:
+        return _error("Skill not found", 404)
+    source_root = str(matches[-1].get("source_root") or "")
+    if source_root not in {"agent-skills", "workspace-skills"}:
+        return _error("Skill source has no anchored revisions", 403)
+    capabilities_root = (
+        "workspace/capabilities" if source_root == "workspace-skills" else "capabilities"
+    )
+    folder = agent_root / capabilities_root / "skills" / skill_name
+    try:
+        return resolver, folder, await asyncio.to_thread(resolver.revision_history, folder)
+    except (OSError, RuntimeError, ValueError):
+        return _error("Skill revision history is unavailable", 503)
 
 
 @lru_cache(maxsize=256)
@@ -115,6 +143,8 @@ async def get_skill_evals(request: Request) -> JSONResponse:
     if agent_root is None:
         return _error("Agent not found", 404)
     skill_dir = await _skill_dir(request, agent_root, skill_name)
+    if isinstance(skill_dir, JSONResponse):
+        return skill_dir
     if skill_dir is None:
         return _error(f"skill {skill_name!r} not found", 404)
     try:
@@ -154,6 +184,8 @@ async def post_skill_promote_golden(request: Request) -> JSONResponse:
     if agent_root is None:
         return _error("Agent not found", 404)
     skill_dir = await _skill_dir(request, agent_root, skill_name)
+    if isinstance(skill_dir, JSONResponse):
+        return skill_dir
     if skill_dir is None:
         return _error(f"skill {skill_name!r} not found", 404)
     try:
@@ -166,7 +198,60 @@ async def post_skill_promote_golden(request: Request) -> JSONResponse:
     target = f"skill://{agent_id}/{skill_name}"
     try:
         case = CuratedGoldenCase.model_validate(body)
-        emitted = emit_golden_case(skill_dir, case)
+        case.validate_pinned()
+    except (CurationError, ValueError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="skill.golden.curated",
+            outcome="denied",
+            detail=type(exc).__name__,
+        )
+        return _error(str(exc), 400)
+    anchored = await _anchored_versions(request, agent_root, skill_name)
+    if isinstance(anchored, JSONResponse):
+        return anchored
+    resolver, folder, history = anchored
+    live_agent = _live_agent(request, agent_id)
+    if not history or live_agent is None:
+        return _error("Active skill runtime is unavailable", 503)
+    try:
+        signer = await asyncio.to_thread(operator_signer_for_request, request)
+        operator_did = OperatorApprovalAuthority(signer).did
+
+        def stage_and_activate() -> str:
+            current = resolver.read_bundle(folder)
+            with TemporaryDirectory() as temp:
+                stage = Path(temp)
+                for relative, data in current.items():
+                    if relative in {"manifest.json", "manifest.json.arcsig"}:
+                        continue
+                    target_path = stage / relative
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_bytes(data)
+                emitted = emit_golden_case(stage, case)
+                updates = {
+                    path.relative_to(stage).as_posix(): path.read_bytes()
+                    for path in (stage / "evals").rglob("*")
+                    if path.is_file()
+                    and not path.name.endswith(".arcsig")
+                    and current.get(path.relative_to(stage).as_posix()) != path.read_bytes()
+                }
+                resolver.revise(
+                    folder,
+                    current["SKILL.md"],
+                    expected_sha256=hashlib.sha256(current["SKILL.md"]).hexdigest(),
+                    signer=signer,
+                    operator_did=operator_did,
+                    resource_updates=updates,
+                )
+                return emitted.nodeid
+
+        nodeid = await asyncio.to_thread(stage_and_activate)
+        await live_agent.reload_or_raise()
+        active = resolver.resolve(folder, "agent-skills")
+        if nodeid not in {item.id for item in load_suite(active.parent)}:
+            raise RuntimeError("curated case did not reach the active skill")
     except (CurationError, ValueError) as exc:
         emit_mutation_audit(
             request,
@@ -176,34 +261,59 @@ async def post_skill_promote_golden(request: Request) -> JSONResponse:
             detail=str(exc),
         )
         return _error(str(exc), 400)
+    except (OSError, RuntimeError) as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="skill.golden.curated",
+            outcome="error",
+            detail=type(exc).__name__,
+        )
+        return _error("Signed golden activation is unavailable", 503)
     emit_mutation_audit(
         request,
         target=target,
         operation="skill.golden.curated",
         outcome="emitted",
-        detail=f"nodeid={emitted.nodeid} gate_type={emitted.case.gate_type}",
+        detail=f"nodeid={nodeid} gate_type={case.gate_type}",
     )
     payload = SkillPromoteGoldenResponse(
         status="emitted",
         skill_name=skill_name,
-        nodeid=emitted.nodeid,
-        gate_type=emitted.case.gate_type,
+        nodeid=nodeid,
+        gate_type=case.gate_type,
     )
     return JSONResponse(payload.model_dump(mode="json"))
 
 
 async def get_skill_versions(request: Request) -> JSONResponse:
-    """GET .../skills/{skill_name}/versions — metadata-only lineage timeline."""
+    """GET .../skills/{skill_name}/versions — verified activation lineage."""
     agent_id = request.path_params["id"]
     skill_name = request.path_params["skill_name"]
-    if _agent_root(request, agent_id) is None:
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
         return _error("Agent not found", 404)
-    limit = int(request.query_params.get("limit", "100"))
     try:
-        rows = await request.app.state.observe.skill_versions(skill_name, limit=limit)
-    except Exception as exc:  # reason: 503-unreadable vs 200-empty (REQ-097 pattern)
-        return _store_unreadable(exc)
-    payload = SkillVersionsResponse(items=[_version_item(r) for r in rows])
+        limit = max(1, min(int(request.query_params.get("limit", "100")), 512))
+    except ValueError:
+        return _error("Invalid version limit", 400)
+    result = await _anchored_versions(request, agent_root, skill_name)
+    if isinstance(result, JSONResponse):
+        return result
+    _, _, history = result
+    rows: list[dict[str, Any]] = [
+        {
+            "candidate_id": digest,
+            "generation": version,
+            "parent_id": history[index + 1][0] if index + 1 < len(history) else None,
+            "scores": {},
+            "active": active,
+            "body_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "ts": None,
+        }
+        for index, (digest, version, body, active) in enumerate(history[:limit])
+    ]
+    payload = SkillVersionsResponse(items=[_version_item(row) for row in rows])
     return JSONResponse(payload.model_dump(mode="json"))
 
 
@@ -212,12 +322,14 @@ async def get_skill_version_body(request: Request) -> JSONResponse:
     agent_id = request.path_params["id"]
     skill_name = request.path_params["skill_name"]
     candidate_id = request.path_params["candidate_id"]
-    if _agent_root(request, agent_id) is None:
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
         return _error("Agent not found", 404)
-    try:
-        body = await request.app.state.observe.skill_candidate_body(skill_name, candidate_id)
-    except Exception as exc:  # reason: 503-unreadable vs 200-empty (REQ-097 pattern)
-        return _store_unreadable(exc)
+    result = await _anchored_versions(request, agent_root, skill_name)
+    if isinstance(result, JSONResponse):
+        return result
+    _, _, history = result
+    body = next((text for digest, _, text, _ in history if digest == candidate_id), None)
     if body is None:
         return _error(f"candidate {candidate_id!r} has no stored body (pending or pruned)", 404)
     payload = SkillVersionBodyResponse(candidate_id=candidate_id, body=body)
@@ -228,27 +340,27 @@ async def get_skill_version_diff(request: Request) -> JSONResponse:
     """GET .../versions/diff?a=&b= — server-side unified diff, memoized."""
     agent_id = request.path_params["id"]
     skill_name = request.path_params["skill_name"]
-    if _agent_root(request, agent_id) is None:
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
         return _error("Agent not found", 404)
     a = request.query_params.get("a")
     b = request.query_params.get("b")
     if not a or not b:
         return _error("both 'a' and 'b' candidate ids are required", 400)
-    observe = request.app.state.observe
-    try:
-        rows = await observe.skill_versions(skill_name)
-        hash_for = {r["candidate_id"]: r.get("body_hash") for r in rows}
-        sides: dict[str, str] = {}
-        for cid in (a, b):
-            if cid not in hash_for:
-                return _error(f"candidate {cid!r} not found for skill {skill_name!r}", 404)
-            body = await observe.skill_candidate_body(skill_name, cid)
-            if hash_for[cid] is None or body is None:
-                return _error(f"candidate {cid!r} has no stored body (pending or pruned)", 404)
-            sides[cid] = body
-    except Exception as exc:  # reason: 503-unreadable vs 200-empty (REQ-097 pattern)
-        return _store_unreadable(exc)
-    diff = _unified_diff(hash_for[a], hash_for[b], sides[a], sides[b])
+    result = await _anchored_versions(request, agent_root, skill_name)
+    if isinstance(result, JSONResponse):
+        return result
+    _, _, history = result
+    bodies = {digest: body for digest, _, body, _ in history}
+    if a not in bodies or b not in bodies:
+        return _error("Skill revision not found", 404)
+    body_a, body_b = bodies[a], bodies[b]
+    diff = _unified_diff(
+        hashlib.sha256(body_a.encode("utf-8")).hexdigest(),
+        hashlib.sha256(body_b.encode("utf-8")).hexdigest(),
+        body_a,
+        body_b,
+    )
     payload = SkillVersionDiffResponse(a=a, b=b, diff=diff)
     return JSONResponse(payload.model_dump(mode="json"))
 
@@ -259,7 +371,7 @@ async def get_skill_version_diff(request: Request) -> JSONResponse:
 
 
 async def post_skill_rollback(request: Request) -> JSONResponse:
-    """POST .../skills/{skill_name}/rollback — confirm-gated, audited flip."""
+    """POST .../skills/{skill_name}/rollback — new signed activation."""
     agent_id = request.path_params["id"]
     skill_name = request.path_params["skill_name"]
     if getattr(request.state, "role", None) != "operator":
@@ -278,28 +390,59 @@ async def post_skill_rollback(request: Request) -> JSONResponse:
     if body.get("confirm") is not True:
         return _error("rollback requires explicit confirmation: set 'confirm': true", 400)
 
-    store = CandidateStore(agent_root / "workspace")
     target = f"skill://{agent_id}/{skill_name}"
+    result = await _anchored_versions(request, agent_root, skill_name)
+    if isinstance(result, JSONResponse):
+        emit_mutation_audit(request, target=target, operation="skill.rollback", outcome="denied")
+        return result
+    resolver, folder, history = result
+    live_agent = _live_agent(request, agent_id)
+    if not history or live_agent is None:
+        emit_mutation_audit(request, target=target, operation="skill.rollback", outcome="denied")
+        return _error("Active skill runtime is unavailable", 503)
+    selected = next((text for digest, _, text, _ in history if digest == candidate_id), None)
+    if selected is None:
+        emit_mutation_audit(request, target=target, operation="skill.rollback", outcome="denied")
+        return _error("Skill revision not found", 404)
+    store = CandidateStore(agent_root / "workspace")
     try:
         if store.lifecycle_state(skill_name) == "retired":
             return _error(
                 f"skill {skill_name!r} is retired; revive it first — rollback does not revive",
                 409,
             )
-        from_id = store.load_manifest(skill_name).get("active_candidate_id")
-        store.rollback(skill_name, candidate_id)
+        from_id = history[0][0]
+        signer = await asyncio.to_thread(operator_signer_for_request, request)
+        await asyncio.to_thread(
+            resolver.activate_prior,
+            folder,
+            candidate_id,
+            expected_sha256=hashlib.sha256(history[0][2].encode("utf-8")).hexdigest(),
+            signer=signer,
+            operator_did=OperatorApprovalAuthority(signer).did,
+        )
+        await live_agent.reload_or_raise()
+        loaded = next((entry for entry in live_agent.skills if entry.name == skill_name), None)
+        if loaded is None or loaded.read_current is None or loaded.read_current() != selected:
+            raise RuntimeError("activated skill did not reach the runtime")
     except ValueError as exc:
-        # CandidateStore raises ValueError for both an unknown candidate and a
-        # path-unsafe name/id — map "not found" to 404, the rest to 400.
-        message = str(exc)
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="skill.rollback",
+            outcome="denied",
+            detail=type(exc).__name__,
+        )
+        return _error("Skill activation was refused", 409)
+    except (OSError, RuntimeError) as exc:
         emit_mutation_audit(
             request,
             target=target,
             operation="skill.rollback",
             outcome="error",
-            detail=message,
+            detail=type(exc).__name__,
         )
-        return _error(message, 404 if "not found" in message else 400)
+        return _error("Skill activation is unavailable", 503)
 
     emit_mutation_audit(
         request,

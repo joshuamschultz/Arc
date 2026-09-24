@@ -156,6 +156,17 @@ def _operator_signer() -> Signer:
     return key.into_signer(security.signing_algorithm)
 
 
+def operator_signer_for_request(request: Request) -> Signer:
+    """Resolve the deployment's operator signing capability for this request."""
+    factory = getattr(request.app.state, "operator_signer_factory", None)
+    if factory is not None:
+        signer: Signer = factory()
+        return signer
+    if getattr(request.app.state, "hosted", False):
+        raise RuntimeError("operator signing authority is unavailable")
+    return _operator_signer()
+
+
 def _notary_default(operator_key_dir: str) -> Path:
     """The vault_transit keystore that sits beside the operator key.
 
@@ -325,7 +336,7 @@ async def approve(request: Request) -> JSONResponse:
     agent_root, label = resolved
 
     try:
-        signer = _operator_signer()
+        signer = operator_signer_for_request(request)
     except (OSError, RuntimeError, ValueError) as exc:
         # ``SignerError`` (a RuntimeError) covers an unresolvable transit; OSError
         # a missing/unreadable key file. Both are "no authority here" — refuse

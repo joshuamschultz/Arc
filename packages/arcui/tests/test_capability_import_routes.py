@@ -124,6 +124,32 @@ def test_upload_returns_review_evidence_without_activating_capabilities(tmp_path
     assert "source" not in listed.json()["imports"][0]
 
 
+def test_plain_skill_markdown_uses_the_review_pipeline(tmp_path: Path) -> None:
+    client, workspace, _ = _client(tmp_path)
+    response = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("SKILL.md", _SKILL, "text/markdown")},
+    )
+    assert response.status_code == 201, response.text
+    review = response.json()
+    assert review["status"] == "review_ready"
+    assert review["skills"] == ["imported"]
+    assert review["files"][0]["path"] == "skills/imported/SKILL.md"
+    assert not (workspace / "capabilities" / "skills" / "imported").exists()
+
+
+def test_plain_skill_markdown_accepts_uppercase_extension(tmp_path: Path) -> None:
+    client, _, _ = _client(tmp_path)
+    response = client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("SKILL.MD", _SKILL, "text/markdown")},
+    )
+    assert response.status_code == 201
+    assert response.json()["skills"] == ["imported"]
+
+
 def test_browser_upload_accepts_a_normal_zipped_folder(tmp_path: Path) -> None:
     client, _, _ = _client(tmp_path)
 

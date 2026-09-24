@@ -570,6 +570,7 @@ class SkillDetailResponse(BaseModel):
     status: str
     status_detail: str
     content: str
+    sha256: str
     editable: bool
     write_root: str | None
     write_path: str | None

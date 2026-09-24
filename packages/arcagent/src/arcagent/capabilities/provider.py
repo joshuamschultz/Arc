@@ -47,6 +47,7 @@ class _Skill:
     description: str
     location: Path
     scan_root: str
+    read_current: Callable[[], str | None] | None = None
 
 
 class AgentCapabilityProvider:
@@ -125,12 +126,36 @@ class AgentCapabilityProvider:
         """Read a skill's full body on demand. None for unknown/gated names."""
         skill = self._skills.get(name)
         if skill is None:
+            self._emit_skill_load(name, "denied", "unavailable")
             return None
         try:
-            return skill.location.read_text(encoding="utf-8")
-        except OSError:
-            _logger.exception("Failed to read skill body for %s at %s", name, skill.location)
+            content = (
+                skill.read_current()
+                if skill.read_current is not None
+                else skill.location.read_text(encoding="utf-8")
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _logger.warning("Skill load refused for %s: %s", name, type(exc).__name__)
+            self._emit_skill_load(name, "denied", type(exc).__name__)
             return None
+        self._emit_skill_load(
+            name,
+            "allowed" if content is not None else "denied",
+            "" if content is not None else "unavailable",
+        )
+        return content
+
+    def _emit_skill_load(self, name: str, outcome: str, reason: str) -> None:
+        if self._audit is not None:
+            self._audit(
+                "skill.load",
+                {
+                    "skill": name,
+                    "outcome": outcome,
+                    "reason": reason,
+                    "actor_did": self._caller_did,
+                },
+            )
 
     async def invoke(
         self, name: str, args: dict[str, Any], *, caller_did: str

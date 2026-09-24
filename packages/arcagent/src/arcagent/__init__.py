@@ -13,7 +13,7 @@ from arcagent.capabilities.artifact_signing import (
     verify_file,
     write_signature,
 )
-from arcagent.capabilities.capability_loader import CapabilityLoader
+from arcagent.capabilities.capability_loader import CapabilityLoader, SkillArtifactResolver
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.capability_signing import revoke as revoke_capability
 from arcagent.capabilities.capability_signing import sign as sign_capability
@@ -185,9 +185,24 @@ def modules_path() -> Path:
     return Path(__file__).parent / "modules"
 
 
+def __getattr__(name: str) -> Any:
+    """Load optional ArcAgent exports only when requested."""
+    if name in {
+        "AnchoredSkillRevisionResolver",
+        "ReviewedSkillBundle",
+        "SkillRuntime",
+        "reviewed_bundle_digest",
+    }:
+        from arcagent.modules.capability_import import revisions
+
+        return getattr(revisions, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "NOT_INSTALLED",
     "SECURITY_CONFIG_KNOBS",
+    "AnchoredSkillRevisionResolver",
     "ArcAgent",
     "ArcAgentConfig",
     "ArcAgentError",
@@ -237,12 +252,15 @@ __all__ = [
     "PersonalKnowledgePort",
     "ProbeResult",
     "PromotionSource",
+    "ReviewedSkillBundle",
     "RootTokenBudget",
     "ScheduleEntry",
     "ScheduleMetadata",
     "ScheduleStore",
     "SecurityConfig",
     "SharedKnowledgePort",
+    "SkillArtifactResolver",
+    "SkillRuntime",
     "SourceRefusedError",
     "SourceUnreachableError",
     "Tier",
@@ -286,6 +304,7 @@ __all__ = [
     "resolve_deployment",
     "resolve_roots",
     "resolve_workspace_import_policy",
+    "reviewed_bundle_digest",
     "revoke_capability",
     "serve_mcp_stdio",
     "set_workflow_runner",

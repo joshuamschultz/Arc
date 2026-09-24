@@ -19,7 +19,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from arcstore import query as store_query
 from arcstore.backends import ArcStoreBackend, open_backend
 from arcstore.backends.base import TaskBoardBackend
 from arcstore.config import ArcStoreConfig, resolve_data_dir
@@ -663,15 +662,3 @@ class Observe:
         """Per-identity LLM cost/count — parent vs each child (FR-4 / UC-3)."""
         rows = await self._llm_rows_in_window(window)
         return compute_llm_by_identity(rows, window=window)
-
-    # -- SPEC-054 skill version surfaces (REQ-120) --------------------------
-
-    async def skill_versions(self, skill_name: str, *, limit: int = 100) -> list[dict[str, Any]]:
-        """Metadata-only version timeline for one skill, ordered by generation."""
-        await self._ensure()
-        return await store_query.skill_versions(self._backend, skill_name, limit=limit)
-
-    async def skill_candidate_body(self, skill_name: str, candidate_id: str) -> str | None:
-        """Full candidate text, or ``None`` when the body is pending/pruned."""
-        await self._ensure()
-        return await store_query.skill_candidate_body(self._backend, skill_name, candidate_id)

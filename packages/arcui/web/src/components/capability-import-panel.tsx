@@ -134,7 +134,7 @@ export function CapabilityImportPanel() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><Archive className="size-4" /> Import agent capabilities</CardTitle>
-        <CardDescription>Drag a signed skill ZIP — a SKILL.md plus any files and folders — here to stage it for one agent.</CardDescription>
+        <CardDescription>Stage a skill ZIP or a single SKILL.md for one agent. An operator reviews and signs it before activation.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <label className="flex max-w-sm flex-col gap-1 text-xs font-medium text-muted-foreground" htmlFor="capability-import-agent">
@@ -174,7 +174,7 @@ export function CapabilityImportPanel() {
         <div
           role="button"
           tabIndex={0}
-          aria-label="Upload a capability ZIP archive"
+          aria-label="Upload a capability ZIP archive or SKILL.md"
           onClick={() => inputRef.current?.click()}
           onKeyDown={onKeyDown}
           onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
@@ -187,10 +187,10 @@ export function CapabilityImportPanel() {
             importer.status === 'uploading' && 'pointer-events-none opacity-60',
           )}
         >
-          <input ref={inputRef} type="file" accept=".zip,application/zip" className="sr-only" onChange={(event) => { choose(event.target.files ?? []); event.currentTarget.value = '' }} />
+          <input ref={inputRef} type="file" accept=".zip,.md,application/zip,text/markdown" className="sr-only" onChange={(event) => { choose(event.target.files ?? []); event.currentTarget.value = '' }} />
           {importer.status === 'uploading' ? <Upload className="size-5 animate-pulse text-primary" /> : <FileArchive className="size-5 text-muted-foreground" />}
-          <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting archive…' : 'Drop ZIP or browse'}</span>
-          <span className="text-xs text-muted-foreground">A signed skill ZIP with a SKILL.md and any internal files or folders is accepted. Scripts run only when the model calls them — nothing executes during review or import.</span>
+          <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting source…' : 'Drop ZIP or SKILL.md, or browse'}</span>
+          <span className="text-xs text-muted-foreground">ZIPs can include skill resources. Review does not execute scripts; an operator signs the reviewed source before it becomes available.</span>
         </div>
         <FieldHelp helpKey="capability_import.archive" route="tools-skills" />
 

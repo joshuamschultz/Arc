@@ -1,16 +1,8 @@
-"""T-734 — arcui skill evals view + version timeline/diff/rollback (COMP-010, REQ-120).
+"""ArcUI skill evaluation and golden case routes.
 
-Drives the real Starlette app (``arcui.server.create_app``) against a real
-candidate store built through arcskill's own write path
-(``CandidateStore.save`` — never hand-written manifest JSON) and a real skill
-bundle discovered through arcagent's capability inventory seam, mirroring
-``test_knowledge_routes.py``'s fixture pattern.
-
-Covers: the read-only per-skill eval-case list (nodeids + machine/human
-provenance), the version timeline from the arcstore mirror (active badged,
-tombstones for pruned bodies), candidate body fetch, the memoized server-side
-unified diff, and the confirm-gated, audited, non-destructive rollback —
-including the retired-skill rejection (revive is a distinct operation).
+Drives the real Starlette app with a signed skill bundle discovered through
+ArcAgent's capability inventory seam. Anchored version behavior is exercised
+in test_capability_import_revision_routes.py.
 """
 
 from __future__ import annotations
@@ -22,13 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcagent.capabilities.capability_signing import sign
 from arcgateway.team_roster import RosterEntry
-from arcskill.improver.candidate_store import (  # type: ignore[import-untyped]  # reason: arcskill ships no py.typed marker
-    CandidateStore,
-)
-from arcskill.improver.models import (  # type: ignore[import-untyped]  # reason: arcskill ships no py.typed marker
-    Candidate,
-)
+from arctrust import InProcessSigner
 from arctrust.identity import AgentIdentity
 from starlette.testclient import TestClient
 
@@ -94,33 +82,6 @@ def _write_skill_bundle(agent_dir: Path) -> None:
     (bare / "SKILL.md").write_text(_SKILL_MD.replace("planner", "bare"), encoding="utf-8")
 
 
-def _seed_candidates(workspace: Path) -> None:
-    """Three generations through arcskill's own write path; one body pruned."""
-    store = CandidateStore(workspace)
-    store.save_seed(_SKILL_NAME, "seed body\n")
-    store.save(
-        _SKILL_NAME,
-        Candidate(id="aaa111", text="line one\nline two\n", generation=1),
-    )
-    store.save(
-        _SKILL_NAME,
-        Candidate(
-            id="bbb222",
-            text="line one\nline 2!\n",
-            generation=2,
-            parent_id="aaa111",
-            aggregate_scores={"quality": 0.9},
-        ),
-        active=True,
-    )
-    store.save(
-        _SKILL_NAME,
-        Candidate(id="ccc333", text="pruned body\n", generation=3, parent_id="bbb222"),
-    )
-    # Prune ccc333's body before ingest — the mirror must record a tombstone.
-    (workspace / "skill_traces" / _SKILL_NAME / "candidates" / "ccc333.md").unlink()
-
-
 def _roster(agent_dir: Path, did: str) -> list[RosterEntry]:
     return [
         RosterEntry(
@@ -162,7 +123,14 @@ def app_with_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
         encoding="utf-8",
     )
     _write_skill_bundle(agent_dir)
-    _seed_candidates(workspace)
+    signer = InProcessSigner(bytes(range(32)))
+    for name in (_SKILL_NAME, "bare"):
+        sign(
+            agent_dir / "capabilities" / "skills" / name / "SKILL.md",
+            signer_did="did:arc:operator:test",
+            signer=signer,
+            config_path=agent_dir / "arcagent.toml",
+        )
 
     auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN})
     app = create_app(
@@ -214,280 +182,6 @@ class TestSkillEvals:
 
 
 # ---------------------------------------------------------------------------
-# GET .../versions — metadata-only timeline from the arcstore mirror
-# ---------------------------------------------------------------------------
-
-
-class TestSkillVersions:
-    def test_timeline_ordered_with_active_badge_and_tombstone(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions", headers=_viewer()
-            )
-        assert resp.status_code == 200
-        items = resp.json()["items"]
-        assert [it["candidate_id"] for it in items] == ["aaa111", "bbb222", "ccc333"]
-        by_id = {it["candidate_id"]: it for it in items}
-        assert by_id["bbb222"]["active"] is True
-        assert by_id["aaa111"]["active"] is False
-        assert by_id["bbb222"]["scores"] == {"quality": 0.9}
-        assert by_id["bbb222"]["parent_id"] == "aaa111"
-        # Pruned body → tombstone row, never an error.
-        assert by_id["ccc333"]["tombstone"] is True
-        assert by_id["ccc333"]["body_hash"] is None
-        assert by_id["aaa111"]["tombstone"] is False
-        # Metadata only — bodies never ride the list payload.
-        assert all("body" not in it for it in items)
-
-    def test_skill_with_no_versions_is_200_empty(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get("/api/agents/tester/skills/bare/versions", headers=_viewer())
-        assert resp.status_code == 200
-        assert resp.json()["items"] == []
-
-    def test_unknown_agent_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/ghost/skills/{_SKILL_NAME}/versions", headers=_viewer()
-            )
-        assert resp.status_code == 404
-
-    def test_unreadable_store_is_503_with_verbatim_error(self, app_with_skill: Any) -> None:
-        class _BrokenObserve:
-            async def skill_versions(self, skill_name: str, *, limit: int = 100) -> Any:
-                raise RuntimeError("mirror exploded")
-
-        with TestClient(app_with_skill) as client:
-            app_with_skill.state.observe = _BrokenObserve()
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions", headers=_viewer()
-            )
-        assert resp.status_code == 503
-        assert "mirror exploded" in resp.json()["error"]
-
-
-# ---------------------------------------------------------------------------
-# GET .../versions/{candidate_id}/body — full text, 404 tombstone
-# ---------------------------------------------------------------------------
-
-
-class TestSkillVersionBody:
-    def test_body_fetch(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/aaa111/body",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 200
-        assert resp.json() == {"candidate_id": "aaa111", "body": "line one\nline two\n"}
-
-    def test_pruned_body_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/ccc333/body",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 404
-
-    def test_unknown_candidate_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/fff999/body",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# GET .../versions/diff?a=&b= — server-side unified diff, memoized
-# ---------------------------------------------------------------------------
-
-
-class TestSkillVersionDiff:
-    def test_unified_diff_between_candidates(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/diff?a=aaa111&b=bbb222",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["a"] == "aaa111" and data["b"] == "bbb222"
-        assert "-line two" in data["diff"]
-        assert "+line 2!" in data["diff"]
-
-    def test_missing_query_param_is_400(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/diff?a=aaa111",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 400
-
-    def test_diff_against_tombstone_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/diff?a=aaa111&b=ccc333",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 404
-
-    def test_diff_unknown_candidate_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.get(
-                f"/api/agents/tester/skills/{_SKILL_NAME}/versions/diff?a=aaa111&b=fff999",
-                headers=_viewer(),
-            )
-        assert resp.status_code == 404
-
-    def test_diff_is_memoized_per_hash_pair(self, app_with_skill: Any) -> None:
-        from arcui.routes.agent_detail.skill_versions import _unified_diff
-
-        _unified_diff.cache_clear()
-        with TestClient(app_with_skill) as client:
-            for _ in range(2):
-                resp = client.get(
-                    f"/api/agents/tester/skills/{_SKILL_NAME}/versions/diff?a=aaa111&b=bbb222",
-                    headers=_viewer(),
-                )
-                assert resp.status_code == 200
-        info = _unified_diff.cache_info()
-        assert info.misses == 1
-        assert info.hits == 1
-
-
-# ---------------------------------------------------------------------------
-# POST .../rollback — confirm-gated, audited, non-destructive
-# ---------------------------------------------------------------------------
-
-
-class TestSkillRollback:
-    def _url(self) -> str:
-        return f"/api/agents/tester/skills/{_SKILL_NAME}/rollback"
-
-    def test_viewer_is_403(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(
-                self._url(), json={"candidate_id": "aaa111", "confirm": True}, headers=_viewer()
-            )
-        assert resp.status_code == 403
-
-    def test_missing_confirm_is_400_and_no_flip(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(self._url(), json={"candidate_id": "aaa111"}, headers=_operator())
-        assert resp.status_code == 400
-        assert "confirm" in resp.json()["error"]
-        store = CandidateStore(app_with_skill.state.workspace)
-        assert store.load_manifest(_SKILL_NAME)["active_candidate_id"] == "bbb222"
-
-    def test_missing_candidate_id_is_400(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(self._url(), json={"confirm": True}, headers=_operator())
-        assert resp.status_code == 400
-
-    def test_invalid_json_body_is_400(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(
-                self._url(),
-                content=b"not json",
-                headers={**_operator(), "Content-Type": "application/json"},
-            )
-        assert resp.status_code == 400
-
-    def test_unknown_candidate_is_404(self, app_with_skill: Any) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(
-                self._url(), json={"candidate_id": "fff999", "confirm": True}, headers=_operator()
-            )
-        assert resp.status_code == 404
-
-    def test_rollback_flips_manifest_and_warns_scores_historical(
-        self, app_with_skill: Any
-    ) -> None:
-        with TestClient(app_with_skill) as client:
-            resp = client.post(
-                self._url(), json={"candidate_id": "aaa111", "confirm": True}, headers=_operator()
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "applied"
-        assert data["from_candidate_id"] == "bbb222"
-        assert data["to_candidate_id"] == "aaa111"
-        assert "historical" in data["warning"]
-        # Non-destructive flip: the manifest points back, nothing is deleted.
-        store = CandidateStore(app_with_skill.state.workspace)
-        manifest = store.load_manifest(_SKILL_NAME)
-        assert manifest["active_candidate_id"] == "aaa111"
-        assert set(manifest["candidates"]) == {"aaa111", "bbb222", "ccc333"}
-
-    def test_rollback_emits_one_ui_mutation_audit_event(
-        self, app_with_skill: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with TestClient(app_with_skill) as client:
-            with caplog.at_level("INFO", logger="arcui.audit"):
-                resp = client.post(
-                    self._url(),
-                    json={"candidate_id": "aaa111", "confirm": True},
-                    headers=_operator(),
-                )
-        assert resp.status_code == 200
-        mutations = [
-            json.loads(r.message)
-            for r in caplog.records
-            if r.name == "arcui.audit" and '"ui.mutation"' in r.message
-        ]
-        assert len(mutations) == 1
-        details = mutations[0]["details"]
-        assert details["actor_role"] == "operator"
-        assert details["operation"] == "skill.rollback"
-        assert details["outcome"] == "applied"
-        assert _SKILL_NAME in details["target"]
-        assert "from=bbb222" in details["detail"]
-        assert "to=aaa111" in details["detail"]
-
-    def test_retired_skill_is_409_and_no_flip(self, app_with_skill: Any) -> None:
-        store = CandidateStore(app_with_skill.state.workspace)
-        store.set_lifecycle_state(_SKILL_NAME, "retired", reason="unused")
-        with TestClient(app_with_skill) as client:
-            resp = client.post(
-                self._url(), json={"candidate_id": "aaa111", "confirm": True}, headers=_operator()
-            )
-        assert resp.status_code == 409
-        assert "retired" in resp.json()["error"]
-        assert store.load_manifest(_SKILL_NAME)["active_candidate_id"] == "bbb222"
-
-
-# ---------------------------------------------------------------------------
-# Ingest wiring — workspace_dir reaches StoreIngest through Observe
-# ---------------------------------------------------------------------------
-
-
-class TestObserveWorkspaceWiring:
-    async def test_observe_ingests_candidate_store_via_workspace_dir(self, tmp_path: Path) -> None:
-        from arcui.observe import Observe
-
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        _seed_candidates(workspace)
-
-        obs = Observe(data_dir=tmp_path / "data", workspace_dir=workspace)
-        await obs.start()
-        try:
-            rows = await obs.skill_versions(_SKILL_NAME)
-        finally:
-            await obs.stop()
-        assert [r["candidate_id"] for r in rows] == ["aaa111", "bbb222", "ccc333"]
-        body = None
-        obs2 = Observe(data_dir=tmp_path / "data", workspace_dir=workspace)
-        await obs2.start()
-        try:
-            body = await obs2.skill_candidate_body(_SKILL_NAME, "aaa111")
-        finally:
-            await obs2.stop()
-        assert body == "line one\nline two\n"
-
-
-# ---------------------------------------------------------------------------
 # POST .../promote — operator "promote to golden" (H-041)
 # ---------------------------------------------------------------------------
 
@@ -505,20 +199,19 @@ class TestSkillPromoteGolden:
             )
         assert resp.status_code == 403
 
-    def test_operator_emits_curated_golden_then_listed(self, app_with_skill: Any) -> None:
+    def test_without_anchor_golden_mutation_is_refused(self, app_with_skill: Any) -> None:
         with TestClient(app_with_skill) as client:
             resp = client.post(
                 self._url(),
                 json={"case_id": "inv", "gate_type": "exact_match", "ideal_output": "Acme $42"},
                 headers=_operator(),
             )
-            assert resp.status_code == 200, resp.text
-            assert resp.json()["gate_type"] == "exact_match"
+            assert resp.status_code == 503, resp.text
             listing = client.get(
                 f"/api/agents/tester/skills/{_SKILL_NAME}/evals", headers=_viewer()
             )
         provenances = {it["provenance"] for it in listing.json()["items"]}
-        assert "curated" in provenances
+        assert "curated" not in provenances
 
     def test_unpinned_judge_rubric_is_400(self, app_with_skill: Any) -> None:
         with TestClient(app_with_skill) as client:

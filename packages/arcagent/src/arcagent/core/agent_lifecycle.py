@@ -246,6 +246,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         trusted_public_keys=posture.trusted_public_keys,
         isolation_tier=agent._config.security.tier,
         isolation_relax=posture.isolation_relax,
+        skill_artifact_resolver=agent._skill_artifact_resolver,
     )
     builtin_runtime.configure(
         workspace=workspace,
