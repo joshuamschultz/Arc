@@ -1,5 +1,7 @@
 # Business reliability integration plan
 
+> **Superseded status notice — 2026-09-23:** Use the [business reliability consolidation handoff](business-reliability-consolidation.md) for current continuation. Any keep-branches, hold-merge, or branch/worktree-resume instructions in this plan are historical; the user's current direction is to consolidate on main. The approved design and acceptance criteria below remain historical reference. Root will record final merge hash, gates, and cleanup after verification; none is claimed here.
+
 Status: approved design decisions and open acceptance work. This plan does not claim the target composition or its acceptance evidence is complete. Implementation status remains in the [business reliability execution ledger](business-reliability-execution.md).
 
 ## Purpose and boundaries
