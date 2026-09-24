@@ -27,7 +27,7 @@ from arcmemory.collection_index import memory_collection, refresh_memory_documen
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.semantic import extract_wiki_links
-from arcmemory.types import Procedure, ProcedureSummary, Step
+from arcmemory.types import Procedure, ProcedureSummary, Step, parse_personal_score
 
 
 def _norm(step: str | Step) -> str:
@@ -237,6 +237,10 @@ class ProceduralStore:
             # timestamp the live write used (mirrors the entity card).
             "last_updated": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
+        # Only rendered when scored: an absent key round-trips as ``None`` (the
+        # fail-closed default), so unscored cards carry no promotion metadata.
+        if procedure.personal_score is not None:
+            frontmatter["personal_score"] = procedure.personal_score
         steps = "\n".join(
             f"{i}. {step.text} {format_hits(step.hits)}"
             for i, step in enumerate(procedure.steps, start=1)
@@ -257,11 +261,14 @@ class ProceduralStore:
         steps: list[str],
         dropped: Sequence[str] = (),
         classification: str = "unclassified",
+        personal_score: int | None = None,
     ) -> Procedure:
         """Create or EVOLVE a card: steps merge (:func:`merge_steps`), ``revisions`` bumps.
 
         A blank ``title``/``when_to_use`` keeps the stored one, so a session that refines
-        only the steps cannot blank out the trigger the card is found by.
+        only the steps cannot blank out the trigger the card is found by. A ``None``
+        ``personal_score`` keeps any score the stored card already carries — a mint that
+        was not asked to score never wipes a prior promotion score (SPEC-083 COMP-002).
         """
         slug = canonical_slug(slug)
         existing = self.read(slug)
@@ -276,6 +283,9 @@ class ProceduralStore:
             use_count=existing.use_count if existing else 0,
             revisions=(existing.revisions + 1) if existing else 1,
             classification=classification,
+            personal_score=personal_score
+            if personal_score is not None
+            else (existing.personal_score if existing else None),
         )
         self.write(procedure)
         return procedure
@@ -302,6 +312,7 @@ class ProceduralStore:
             # 0 is the truthful answer for those: nothing recorded their revisions.
             revisions=int(fm.get("revisions", 0)),
             classification=str(fm.get("classification", "unclassified")),
+            personal_score=parse_personal_score(fm.get("personal_score")),
         )
 
     def list_summaries(self) -> list[ProcedureSummary]:

@@ -402,71 +402,13 @@ class QueueJournal:
             raise ValueError("invalid queue page")
         return await self._read_retry(self._list_jobs, tenant_id, offset, limit)
 
-    def _metadata_page(
-        self, scope: QueueReadScope, cursor: str | None, limit: int
-    ) -> QueueMetadataPage:
-        before: tuple[float, str] | None = None
-        if cursor is not None:
-            if len(cursor) > 4096:
-                raise ValueError("invalid queue cursor")
-            data = self._decode(cursor)
-            if (
-                data.get("tenant_id") != scope.tenant_id
-                or data.get("owner_id") != scope.owner_id
-                or data.get("state") != scope.state
-            ):
-                raise ValueError("invalid queue cursor scope")
-            stamp, key = data.get("updated"), data.get("key")
-            if type(stamp) is not float or not isinstance(key, str) or len(key) != 64:
-                raise ValueError("invalid queue cursor")
-            before = (stamp, key)
-        with self._connect() as db:
-            db.execute("BEGIN")
-            self._verify_anchor(db)
-            if before is None:
-                rows = db.execute(
-                    "SELECT id, version, updated, sealed FROM jobs ORDER BY updated DESC, id DESC",
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    "SELECT id, version, updated, sealed FROM jobs "
-                    "WHERE (updated, id) < (?, ?) ORDER BY updated DESC, id DESC",
-                    before,
-                ).fetchall()
-        matched: list[CallJob] = []
-        more_visible = False
-        for row in rows:
-            job = self._bound_job(row)
-            if (
-                job.tenant_id == scope.tenant_id
-                and (scope.owner_id is None or job.owner_id == scope.owner_id)
-                and (scope.state is None or job.state == scope.state)
-            ):
-                if len(matched) == limit:
-                    more_visible = True
-                    break
-                matched.append(job)
-        next_cursor = None
-        if more_visible:
-            last = matched[-1]
-            next_cursor = self._encode(
-                {
-                    "tenant_id": scope.tenant_id,
-                    "owner_id": scope.owner_id,
-                    "state": scope.state,
-                    "updated": last.updated_at,
-                    "key": _key(last.call_id),
-                }
-            )
-        return QueueMetadataPage(tuple(matched), next_cursor)
-
     async def metadata_page(
         self, scope: QueueReadScope, *, cursor: str | None, limit: int
     ) -> QueueMetadataPage:
-        """Return a bounded page and scope-visible continuation only."""
+        """Refuse durable scoped paging until an authenticated tenant index exists."""
         if not 1 <= limit <= 100:
             raise ValueError("invalid queue page")
-        return await self._read_retry(self._metadata_page, scope, cursor, limit)
+        raise QueueStateUnavailableError("durable scoped queue paging is unavailable")
 
     def _save_control(self, control: dict[str, Any], expected_revision: int) -> int | None:
         with self._connect() as db:

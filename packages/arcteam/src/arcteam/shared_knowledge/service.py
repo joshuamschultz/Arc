@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from arctrust.audit import AuditEvent, emit
+
 from arcteam.shared_knowledge.backend import FleetSharedKnowledgeBackend
 
 
@@ -128,11 +130,43 @@ class FleetSharedKnowledgeService:
         signer: _Signer,
         *,
         audit_sink: Any = None,
+        decision: str | None = None,
+        effective_score: int | None = None,
     ) -> object:
         """Promote one owned personal export through the fleet's authorization gate."""
+        if decision is not None or effective_score is not None:
+            if (
+                decision not in {"auto", "approved"}
+                or type(effective_score) is not int
+                or not 1 <= effective_score <= 10
+                or audit_sink is None
+            ):
+                raise ValueError("invalid promotion decision or missing audit sink")
         source: Any = await personal.export_for_promotion(reference, access)
         self._validate_promotion(source)
         self._enforce_promotable_type(source)
+        if source.document_type == "entity":
+            raise SharedKnowledgeUnavailableError(
+                "canonical multi-contributor entity promotion is unavailable"
+            )
+        if decision is not None:
+            write_durable = getattr(audit_sink, "write_durable", None)
+            if not callable(write_durable):
+                raise ValueError("promotion decision requires a durable audit sink")
+            write_durable(
+                AuditEvent(
+                    actor_did=access.caller_did,
+                    action="knowledge.promotion_decision",
+                    target=reference,
+                    outcome="allow",
+                    classification=source.classification,
+                    extra={
+                        "item_id": reference,
+                        "effective_score": effective_score,
+                        "decision": decision,
+                    },
+                )
+            )
         collection = self._collection(access.caller_did, signer, audit_sink)
         result = await collection.save(
             _Draft(
@@ -146,6 +180,22 @@ class FleetSharedKnowledgeService:
         )
         if result.scope != "shared" or result.digest != source.digest:
             raise ValueError("fleet shared backend returned an invalid reference")
+        if decision is not None:
+            emit(
+                AuditEvent(
+                    actor_did=access.caller_did,
+                    action="knowledge.promotion_completed",
+                    target=result.identifier,
+                    outcome="allow",
+                    classification=source.classification,
+                    extra={
+                        "item_id": reference,
+                        "effective_score": effective_score,
+                        "decision": decision,
+                    },
+                ),
+                audit_sink,
+            )
         return result
 
     async def read(self, reference: str, access: _Access) -> Any:

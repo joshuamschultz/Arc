@@ -21,7 +21,9 @@ from typing import Any, ClassVar, Literal, Protocol
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field
 
-ApprovalStatus = Literal["pending", "approved", "denied", "expired"]
+ApprovalStatus = Literal[
+    "pending", "approved", "denied", "expired", "releasing", "released", "outcome_unknown"
+]
 
 _MAX_NOTE_LENGTH = 500
 
@@ -58,6 +60,7 @@ class PendingApproval(BaseModel):
     status: ApprovalStatus = "pending"
     note: str = ""
     grant: dict[str, Any] | None = None
+    release_token: str | None = None
     resolved_by: str | None = None
     created_at: str | None = None
     resolved_at: str | None = None
@@ -207,6 +210,53 @@ class ApprovalStore:
             sink=self._sink,
         )
         return await self.get(approval_id) if won else None
+
+    async def claim_release(
+        self, approval_id: str, *, actor_did: str, token: str
+    ) -> bool:
+        """Claim an approved effect before invoking its external provider."""
+        current = await self.get(approval_id)
+        if current is None or current.status != "approved":
+            return False
+        return await self._backend.update_if_with_outbox(
+            self._COLLECTION,
+            approval_id,
+            {"status": "releasing", "release_token": token},
+            where={"status": "approved"},
+            event_id=f"approval-release-claimed:{approval_id}",
+            event={
+                "approval_id": approval_id,
+                "agent_did": current.agent_did,
+                "status": "releasing",
+                "tool": current.tool,
+            },
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+
+    async def finish_release(
+        self, approval_id: str, *, actor_did: str, token: str,
+        outcome: Literal["released", "outcome_unknown"],
+    ) -> bool:
+        """Finish only the claim held by this worker; never reopen an uncertain effect."""
+        current = await self.get(approval_id)
+        if current is None or current.status != "releasing":
+            return False
+        return await self._backend.update_if_with_outbox(
+            self._COLLECTION,
+            approval_id,
+            {"status": outcome, "release_token": None},
+            where={"status": "releasing", "release_token": token},
+            event_id=f"approval-release-{outcome}:{approval_id}",
+            event={
+                "approval_id": approval_id,
+                "agent_did": current.agent_did,
+                "status": outcome,
+                "tool": current.tool,
+            },
+            actor_did=actor_did,
+            sink=self._sink,
+        )
 
 
 __all__ = ["ApprovalStatus", "ApprovalStore", "MutableApprovalBackend", "PendingApproval"]

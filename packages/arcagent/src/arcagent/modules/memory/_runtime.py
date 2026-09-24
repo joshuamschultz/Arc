@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn, cast
 
 from arcagent.brain import Brain, NullBrain, select_brain
-from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort
+from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort, SharedKnowledgePort
 from arcagent.modules.memory.config import MemoryConfig
 
 _logger = logging.getLogger("arcagent.modules.memory._runtime")
@@ -90,6 +90,8 @@ class _State:
     # Explicit curated knowledge remains local to this agent's workspace.
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
+    # Optional fleet port; its presence alone does not grant score authority.
+    shared_knowledge: SharedKnowledgePort | None = None
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)

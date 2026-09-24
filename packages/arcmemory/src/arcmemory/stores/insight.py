@@ -20,7 +20,7 @@ from pathlib import Path
 from arcmemory.collection_index import refresh_memory_document
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
 from arcmemory.slug import canonical_slug
-from arcmemory.types import Confidence, Insight
+from arcmemory.types import Confidence, Insight, parse_personal_score
 
 
 class InsightStore:
@@ -46,6 +46,10 @@ class InsightStore:
             "status": insight.status.value,
             "hits": insight.hits,
         }
+        # Only rendered when scored: an absent key round-trips as ``None`` (the
+        # fail-closed default), so unscored cards carry no promotion metadata.
+        if insight.personal_score is not None:
+            frontmatter["personal_score"] = insight.personal_score
         body = f"# {insight.id}\n\n## Statement\n{insight.statement}"
         path = self.path_for(insight.id)
         atomic_write_text(path, render_document(frontmatter, body))
@@ -72,6 +76,7 @@ class InsightStore:
             salience=float(fm.get("salience", 0.0)),
             status=Confidence(str(fm.get("status", "guessed"))),
             hits=int(fm.get("hits", 0)),
+            personal_score=parse_personal_score(fm.get("personal_score")),
         )
 
     def all_ids(self) -> list[str]:

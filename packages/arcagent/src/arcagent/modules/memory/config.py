@@ -18,9 +18,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from arcagent.core.module_config import ModuleConfig
+
+
+class MemoryPromotionConfig(BaseModel):
+    """Private -> shared promotion bands, tunable per agent (SPEC-083 COMP-009).
+
+    Module-local by design: the memory module must load under ``NullBrain`` with
+    ``arcmemory`` absent, so this mirrors ``arcmemory.promotion.config.PromotionConfig``
+    rather than importing it (that leaf lives below this layer and is an optional
+    extra). ``enabled`` is OFF by default — promotion is opt-in per REQ-447.
+    ``auto_max`` reserves the automatic band, which remains unavailable without a
+    trusted score grant. Scores up to ``approve_max`` may be queued after personal
+    export and signed operator review; anything higher stays private.
+    """
+
+    enabled: bool = False
+    auto_max: int = 4
+    approve_max: int = 7
 
 
 class MemoryConfig(ModuleConfig):
@@ -28,6 +45,11 @@ class MemoryConfig(ModuleConfig):
 
     brain: str = "none"
     tier: str = "personal"
+
+    # Private -> shared promotion bands (SPEC-083). Off by default; a nested
+    # module-local model so [modules.memory.config.promotion] parses without
+    # pulling in the optional arcmemory extra.
+    promotion: MemoryPromotionConfig = Field(default_factory=MemoryPromotionConfig)
 
     # Explicit curated documents are independent of the Brain selector. They
     # remain local to the agent workspace; fleet sharing is an ArcTeam extension.
@@ -105,4 +127,4 @@ class MemoryConfig(ModuleConfig):
         return self
 
 
-__all__ = ["MemoryConfig"]
+__all__ = ["MemoryConfig", "MemoryPromotionConfig"]

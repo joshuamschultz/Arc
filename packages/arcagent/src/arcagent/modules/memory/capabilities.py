@@ -1071,6 +1071,12 @@ async def consolidate_poll_once(*, now_local: datetime | None = None) -> bool:
             },
             agent_did=st.agent_did,
         )
+    if st.config.promotion.enabled:
+        from arcagent.modules.memory.promotion import MemoryPromotionUnavailableError
+
+        raise MemoryPromotionUnavailableError(
+            "trusted score and source authority is not attached to nightly memory"
+        )
     return True
 
 

@@ -78,6 +78,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcllm/tests/test_queue_control.py",
         "packages/arctrust/tests/test_vault_anchor.py",
     ),
+    "memory promotion source and decision integrity": (
+        "packages/arcagent/tests/modules/memory/test_promotion_approval.py",
+        "packages/arcagent/tests/e2e/test_memory_promotion_e2e.py",
+        "packages/arcteam/tests/test_promotion_audit_and_revoke.py",
+    ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",
         "packages/arcagent/tests/architecture/test_dependency_boundaries.py",

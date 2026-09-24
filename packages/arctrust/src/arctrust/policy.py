@@ -907,9 +907,16 @@ def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
       4. ``signature`` is a valid signature (per ``approval.algorithm``) over
          the grant's bytes.
     """
-    if approval.approver_did == call.agent_did:
-        return False
-    if approval.call_hash != _hash_call(call):
+    return verify_approval_for_hash(
+        _hash_call(call), approval, agent_did=call.agent_did
+    )
+
+
+def verify_approval_for_hash(
+    call_hash: str, approval: ApprovalGrant, *, agent_did: str
+) -> bool:
+    """Verify a signed approval against an exact stored request hash and agent."""
+    if approval.approver_did == agent_did or approval.call_hash != call_hash:
         return False
     if not did_matches_pubkey(approval.approver_did, approval.public_key):
         return False
@@ -1804,6 +1811,7 @@ __all__ = [
     "sign_call",
     "sign_enrollment_grant",
     "verify_approval",
+    "verify_approval_for_hash",
     "verify_call",
     "verify_enrollment",
 ]

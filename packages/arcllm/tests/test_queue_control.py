@@ -199,38 +199,21 @@ async def test_running_cancel_blocks_new_provider_attempt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sparse_scoped_metadata_page_only_returns_authorized_jobs(tmp_path: Path) -> None:
+async def test_durable_scoped_metadata_page_refuses_unindexed_global_scan(tmp_path: Path) -> None:
     journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
     coordinator = CallQueueCoordinator(store=journal)
     await coordinator.initialize()
     for index in range(21):
         tenant = "wanted" if index == 0 else "other"
         await coordinator.register(CallQueueContext(tenant, "owner", f"call-{index}"))
-    cursor = None
-    seen = []
-    for _ in range(6):
-        page = await coordinator.metadata_page(QueueReadScope("wanted"), cursor=cursor, limit=2)
-        assert len(page.jobs) <= 2
-        seen.extend(page.jobs)
-        cursor = page.next_cursor
-        if cursor is None:
-            break
-    assert [job.call_id for job in seen] == ["call-0"]
+    with pytest.raises(QueueStateUnavailableError, match="durable scoped queue paging"):
+        await coordinator.metadata_page(QueueReadScope("wanted"), limit=2)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("durable", [False, True])
-async def test_metadata_page_does_not_reveal_foreign_activity(
-    tmp_path: Path, durable: bool
-) -> None:
-    store = (
-        QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
-        if durable
-        else MemoryQueueStore()
-    )
+async def test_metadata_page_does_not_reveal_foreign_activity() -> None:
+    store = MemoryQueueStore()
     coordinator = CallQueueCoordinator(store=store)
-    if durable:
-        await coordinator.initialize()
     await coordinator.register(CallQueueContext("tenant", "owner", "visible"))
     baseline = await coordinator.metadata_page(QueueReadScope("tenant"), limit=2)
     assert [job.call_id for job in baseline.jobs] == ["visible"]
@@ -242,23 +225,20 @@ async def test_metadata_page_does_not_reveal_foreign_activity(
 
 
 @pytest.mark.asyncio
-async def test_metadata_cursor_survives_restart_and_rejects_another_scope(tmp_path: Path) -> None:
-    path = tmp_path / "calls.sqlite"
-    anchor = FakeAnchor()
-    first = CallQueueCoordinator(store=QueueJournal(path, RecordCipher(b"k" * 32), anchor))
-    await first.initialize()
+async def test_memory_metadata_cursor_rejects_another_scope() -> None:
+    store = MemoryQueueStore()
+    first = CallQueueCoordinator(store=store)
     for index in range(8):
         await first.register(CallQueueContext("tenant", "owner", f"call-{index}"))
     page = await first.metadata_page(QueueReadScope("tenant"), limit=2)
     assert len(page.jobs) == 2 and page.next_cursor is not None
-    restored = CallQueueCoordinator(store=QueueJournal(path, RecordCipher(b"k" * 32), anchor))
-    await restored.initialize()
+    restored = CallQueueCoordinator(store=store)
     following = await restored.metadata_page(
         QueueReadScope("tenant"), cursor=page.next_cursor, limit=2
     )
     assert len(following.jobs) == 2
     assert not {job.call_id for job in page.jobs} & {job.call_id for job in following.jobs}
-    with pytest.raises(ValueError, match="scope"):
+    with pytest.raises(ValueError, match="cursor"):
         await restored.metadata_page(QueueReadScope("other"), cursor=page.next_cursor, limit=2)
 
 
