@@ -1,6 +1,6 @@
 # Business reliability integration plan
 
-> **Superseded status notice — 2026-09-23:** Use the [business reliability consolidation handoff](business-reliability-consolidation.md) for current continuation. Any keep-branches, hold-merge, or branch/worktree-resume instructions in this plan are historical; the user's current direction is to consolidate on main. The approved design and acceptance criteria below remain historical reference. Root will record final merge hash, gates, and cleanup after verification; none is claimed here.
+> **Superseded status notice — 2026-09-23:** Local consolidation is complete at code checkpoint `06b80bad` and integration commit `d6b34f48` on Arc main; local branch/worktree cleanup is verified. Use the [business reliability consolidation handoff](business-reliability-consolidation.md) for current capability status. Older branch, hold-merge, and branch-resume instructions are historical. The approved design and acceptance criteria below remain reference; this notice does not claim deployment.
 
 Status: approved design decisions and open acceptance work. This plan does not claim the target composition or its acceptance evidence is complete. Implementation status remains in the [business reliability execution ledger](business-reliability-execution.md).
 

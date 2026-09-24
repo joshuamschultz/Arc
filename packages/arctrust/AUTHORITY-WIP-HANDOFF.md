@@ -1,6 +1,6 @@
 # Account authority WIP checkpoint
 
-> **Superseded status notice — 2026-09-23:** This is a historical implementation and verification record. Continue from the [business reliability consolidation handoff](../../docs/design/business-reliability-consolidation.md); the branch-isolation and do-not-merge/resume instructions below no longer apply because the user has directed consolidation on main. Preserve the technical evidence below. Final merge hash, gates, and cleanup await root verification.
+> **Superseded status notice — 2026-09-23:** This remains a historical implementation and verification record. Local consolidation is complete at code checkpoint `06b80bad` and integration commit `d6b34f48` on Arc main; local branch/worktree cleanup is verified. Continue from the [business reliability consolidation handoff](../../docs/design/business-reliability-consolidation.md). Branch-isolation and do-not-merge/resume instructions below are historical. No deployment is claimed.
 
 Branch: `codex/reliability-account-authority`. This checkpoint is **not merge ready**.
 The copied uncommitted `deploy/entrypoint.sh` and `deploy/systemd/arc.service`

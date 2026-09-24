@@ -1,6 +1,6 @@
 # Business reliability execution ledger
 
-> **Superseded status notice — 2026-09-23:** Use the [business reliability consolidation handoff](business-reliability-consolidation.md) for current continuation. The keep-branches, hold-merge, and branch/worktree-resume instructions below are historical; the user's current direction is to consolidate on main. Historical evidence is retained. Root will record final merge hash, gates, and cleanup after verification; none is claimed here.
+> **Superseded status notice — 2026-09-23:** Local consolidation is complete at code checkpoint `06b80bad` and integration commit `d6b34f48` on Arc main; local branch/worktree cleanup is verified. Use the [business reliability consolidation handoff](business-reliability-consolidation.md) for current capability status. Historical branch and review instructions below are retained as evidence, not current directions. This does not claim a new push or deployment.
 
 Started 2026-09-23 from local `main` at `3120aed5`. User directive: implement the full reliability and self-service program, use Sol for research/code/tests, Luna for documentation and screen/field help, and Astra for architecture, orchestration and review. This ledger records committed and in-flight work; it is not itself evidence of completion. The checklist and current coordination section are authoritative for present status; the evidence log is a historical record.
 
