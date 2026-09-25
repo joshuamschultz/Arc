@@ -253,11 +253,11 @@ def list_tree(
         action="gateway.fs.tree",
         target=f"{scope}:{agent_id}:{rel_path}",
         outcome="allow",
+        actor_did=caller_did,
         extra={
             "scope": scope,
             "agent_id": agent_id,
             "path": rel_path,
-            "caller_did": caller_did,
         },
     )
 

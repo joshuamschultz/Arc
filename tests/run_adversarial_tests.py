@@ -37,6 +37,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "log disclosure and audit tampering": (
         "packages/arcagent/tests/security/test_audit_at_rest.py",
+        "packages/arcgateway/tests/unit/test_fs_audit_events.py",
+        "packages/arcgateway/tests/unit/test_fs_reader.py",
         "packages/arcagent/tests/unit/core/test_checkpoint_sink.py",
         "packages/arcagent/tests/unit/core/test_spec053_hardening.py",
         "packages/arcllm/tests/test_trace_store.py",

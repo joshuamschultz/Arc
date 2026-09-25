@@ -1,7 +1,7 @@
 """Verifies fs_reader and fs_watcher emit NIST AU-2 audit events with required fields.
 
 NIST 800-53 AU-2 requires the following recorded for security-relevant events:
-- WHO  : actor_did (caller_did in our extra)
+- WHO  : actor_did (the caller's DID)
 - WHAT : action (gateway.fs.read | gateway.fs.tree | gateway.fs.changed)
 - WHERE: target (path)
 - WHEN : timestamp (auto-populated by AuditEvent)
@@ -76,9 +76,8 @@ class TestReadEmitsAudit:
             caller_did="did:arc:org:operator/josh",
         )
         evt = next(e for e in captured.events if e.action == "gateway.fs.read")
-        # WHO — actor_did is the gateway's; the human caller DID is in extra.
-        assert evt.actor_did
-        assert evt.extra.get("caller_did") == "did:arc:org:operator/josh"
+        # WHO — the actor is the human caller.
+        assert evt.actor_did == "did:arc:org:operator/josh"
         # WHAT — action.
         assert evt.action == "gateway.fs.read"
         # WHERE — path on target.
@@ -116,6 +115,6 @@ class TestTreeEmitsAudit:
             caller_did="did:arc:org:operator/josh",
         )
         evt = next(e for e in captured.events if e.action == "gateway.fs.tree")
+        assert evt.actor_did == "did:arc:org:operator/josh"
         assert evt.extra.get("agent_id") == "alice"
         assert evt.extra.get("path") == "workspace"
-        assert evt.extra.get("caller_did") == "did:arc:org:operator/josh"
