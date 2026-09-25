@@ -74,12 +74,18 @@ async def test_gate_type_is_data_not_a_caller_branch() -> None:
     cases = [
         _exact(),
         CuratedGoldenCase(
-            case_id="a", skill_name="s", gate_type="assertions",
+            case_id="a",
+            skill_name="s",
+            gate_type="assertions",
             assertions=[AssertionCheck(kind="equals", value="x")],
         ),
         CuratedGoldenCase(
-            case_id="j", skill_name="s", gate_type="judge_rubric", rubric=rubric,
-            judge_model_id="m", rubric_sha256=rubric_digest(rubric),
+            case_id="j",
+            skill_name="s",
+            gate_type="judge_rubric",
+            rubric=rubric,
+            judge_model_id="m",
+            rubric_sha256=rubric_digest(rubric),
         ),
     ]
     judge = _FakeJudge("PASS")

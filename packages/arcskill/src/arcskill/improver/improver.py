@@ -700,8 +700,7 @@ class ArcSkillImprover:
         if review_reason is not None:
             detail = f"{review_reason}; {detail}" if detail else review_reason
             _logger.info(
-                "skill %s: %s — routing candidate to operator review (auto-promotion "
-                "disallowed)",
+                "skill %s: %s — routing candidate to operator review (auto-promotion disallowed)",
                 skill_name,
                 review_reason,
             )

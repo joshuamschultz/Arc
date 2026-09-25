@@ -143,7 +143,9 @@ def test_operator_suppliable_url_without_origin_guard_is_refused(tmp_path: Path)
     manifest = load_manifest(_URL_SECRET_NO_ORIGIN_MANIFEST, tier=Tier.PERSONAL)
     with pytest.raises(Exception, match="url_origin"):
         build_attachment(
-            manifest, tmp_path, {"mcp_url": Secret("https://x.example.com/mcp"), "api_key": Secret("k")}
+            manifest,
+            tmp_path,
+            {"mcp_url": Secret("https://x.example.com/mcp"), "api_key": Secret("k")},
         )
 
 

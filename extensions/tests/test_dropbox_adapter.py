@@ -457,7 +457,5 @@ def test_a_changed_file_gets_a_higher_revision_so_edits_reindex() -> None:
     assert newer.metadata["revision"] > older.metadata["revision"]
 
     # A file with no modified time still ingests the first time (revision 1).
-    no_time = _source_object(
-        {".tag": "file", "id": "id:y", "path_display": "/b.txt", "rev": "r1"}
-    )
+    no_time = _source_object({".tag": "file", "id": "id:y", "path_display": "/b.txt", "rev": "r1"})
     assert no_time.metadata["revision"] == 1

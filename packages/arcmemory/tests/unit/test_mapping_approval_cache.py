@@ -113,7 +113,9 @@ async def test_mapping_approval_is_verified_once_per_run_not_per_object(tmp_path
     approval.list_calls = 0
 
     for index in range(5):
-        await service.ingest(source, _object(f"report-{index}"), _content(f"report-{index}"), mapping)
+        await service.ingest(
+            source, _object(f"report-{index}"), _content(f"report-{index}"), mapping
+        )
 
     assert approval.list_calls == 1, (
         "mapping approval was re-verified per object instead of once per run; "

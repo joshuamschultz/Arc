@@ -58,9 +58,7 @@ class _RecordingSink:
 def _identity(org: str = "acme", agent_type: str = "exec") -> tuple[str, bytes, bytes]:
     """A fresh (did, public_key, private_key) from real arctrust primitives."""
     keypair = generate_keypair()
-    did = arc_identity.did_from_public_key(
-        keypair.public_key, org=org, agent_type=agent_type
-    )
+    did = arc_identity.did_from_public_key(keypair.public_key, org=org, agent_type=agent_type)
     return did, keypair.public_key, keypair.private_key
 
 
@@ -75,7 +73,9 @@ def _content(name: str = "read_file", arguments: dict[str, Any] | None = None) -
     }
 
 
-def _provider(did: str, *, verb: str = "read_file", tier: str = "personal") -> AgentCapabilityProvider:
+def _provider(
+    did: str, *, verb: str = "read_file", tier: str = "personal"
+) -> AgentCapabilityProvider:
     async def _execute(args: dict[str, Any], ctx: Any) -> str:
         return f"ran {verb}({args})"
 
@@ -108,8 +108,12 @@ def test_forged_inbound_did_not_bound_to_pubkey_is_denied_and_audited() -> None:
     did_b, _, _ = _identity(org="beta")
     _, pub_a, priv_a = _identity(org="alpha")
     forged = sign_inbound(
-        _content(), nonce=new_nonce(), ts=_now(),
-        caller_did=did_b, private_key=priv_a, public_key=pub_a,
+        _content(),
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did_b,
+        private_key=priv_a,
+        public_key=pub_a,
     )
     sink = _RecordingSink()
 
@@ -126,8 +130,12 @@ def test_signed_call_is_served() -> None:
     """
     did, pub, priv = _identity()
     good = sign_inbound(
-        _content(), nonce=new_nonce(), ts=_now(),
-        caller_did=did, private_key=priv, public_key=pub,
+        _content(),
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did,
+        private_key=priv,
+        public_key=pub,
     )
     sink = _RecordingSink()
 
@@ -146,10 +154,17 @@ def test_replayed_nonce_second_presentation_is_denied_and_audited() -> None:
     nonce, ts = new_nonce(), _now()
     cache = ReplayCache()
 
-    first = sign_inbound(_content(), nonce=nonce, ts=ts, caller_did=did, private_key=priv, public_key=pub)
-    assert verify_inbound(first, replay_cache=cache, audit_sink=_RecordingSink(), tier="personal") == did
+    first = sign_inbound(
+        _content(), nonce=nonce, ts=ts, caller_did=did, private_key=priv, public_key=pub
+    )
+    assert (
+        verify_inbound(first, replay_cache=cache, audit_sink=_RecordingSink(), tier="personal")
+        == did
+    )
 
-    replay = sign_inbound(_content(), nonce=nonce, ts=ts, caller_did=did, private_key=priv, public_key=pub)
+    replay = sign_inbound(
+        _content(), nonce=nonce, ts=ts, caller_did=did, private_key=priv, public_key=pub
+    )
     sink = _RecordingSink()
     with pytest.raises(InboundRejected):
         verify_inbound(replay, replay_cache=cache, audit_sink=sink, tier="personal")
@@ -163,11 +178,20 @@ def test_stale_timestamp_outside_replay_window_is_denied_and_audited() -> None:
     """A timestamp far outside the acceptance window is rejected as stale."""
     did, pub, priv = _identity()
     stale_ts = (datetime.now(UTC) - timedelta(seconds=1000)).isoformat()
-    stale = sign_inbound(_content(), nonce=new_nonce(), ts=stale_ts, caller_did=did, private_key=priv, public_key=pub)
+    stale = sign_inbound(
+        _content(),
+        nonce=new_nonce(),
+        ts=stale_ts,
+        caller_did=did,
+        private_key=priv,
+        public_key=pub,
+    )
     sink = _RecordingSink()
 
     with pytest.raises(InboundRejected):
-        verify_inbound(stale, replay_cache=ReplayCache(window_seconds=300), audit_sink=sink, tier="personal")
+        verify_inbound(
+            stale, replay_cache=ReplayCache(window_seconds=300), audit_sink=sink, tier="personal"
+        )
     assert sink.denials(), "a stale timestamp must emit a deny audit event"
 
 
@@ -177,10 +201,16 @@ def test_stale_timestamp_outside_replay_window_is_denied_and_audited() -> None:
 def test_unsigned_call_is_denied_and_audited() -> None:
     """An empty signature is refused — at personal and (universally) at federal."""
     did, pub, priv = _identity()
-    base = sign_inbound(_content(), nonce=new_nonce(), ts=_now(), caller_did=did, private_key=priv, public_key=pub)
+    base = sign_inbound(
+        _content(), nonce=new_nonce(), ts=_now(), caller_did=did, private_key=priv, public_key=pub
+    )
     unsigned = InboundRequest(
-        caller_did=did, public_key=pub, signature=b"",
-        content=base.content, nonce=base.nonce, ts=base.ts,
+        caller_did=did,
+        public_key=pub,
+        signature=b"",
+        content=base.content,
+        nonce=base.nonce,
+        ts=base.ts,
     )
     for tier in ("personal", "federal"):
         sink = _RecordingSink()
@@ -192,11 +222,16 @@ def test_unsigned_call_is_denied_and_audited() -> None:
 def test_tampered_signature_is_denied_and_audited() -> None:
     """A signature that does not verify against the content is refused (arctrust.verify)."""
     did, pub, priv = _identity()
-    base = sign_inbound(_content(), nonce=new_nonce(), ts=_now(), caller_did=did, private_key=priv, public_key=pub)
+    base = sign_inbound(
+        _content(), nonce=new_nonce(), ts=_now(), caller_did=did, private_key=priv, public_key=pub
+    )
     corrupted = InboundRequest(
-        caller_did=did, public_key=pub,
+        caller_did=did,
+        public_key=pub,
         signature=bytes(base.signature[:-1]) + bytes([base.signature[-1] ^ 0xFF]),
-        content=base.content, nonce=base.nonce, ts=base.ts,
+        content=base.content,
+        nonce=base.nonce,
+        ts=base.ts,
     )
     sink = _RecordingSink()
 
@@ -223,13 +258,21 @@ async def test_unallowlisted_verb_is_refused_before_dispatch_and_audited() -> No
     sink = _RecordingSink()
     request = sign_inbound(
         _content(name="delete_everything", arguments={"target": "/"}),
-        nonce=new_nonce(), ts=_now(), caller_did=did, private_key=priv, public_key=pub,
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did,
+        private_key=priv,
+        public_key=pub,
     )
 
     with pytest.raises(AllowlistRefused):
         await authorize_and_dispatch(
-            request, provider=provider, allowlist=allowlist,
-            replay_cache=ReplayCache(), audit_sink=sink, tier="personal",
+            request,
+            provider=provider,
+            allowlist=allowlist,
+            replay_cache=ReplayCache(),
+            audit_sink=sink,
+            tier="personal",
         )
 
     denials = sink.denials()
@@ -257,14 +300,22 @@ async def test_unenrolled_caller_at_federal_is_denied_and_audited(enrolled: Any)
     )
     sink = _RecordingSink()
     request = sign_inbound(
-        _content(), nonce=new_nonce(), ts=_now(),
-        caller_did=did, private_key=priv, public_key=pub,
+        _content(),
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did,
+        private_key=priv,
+        public_key=pub,
     )
 
     with pytest.raises(InboundRejected):
         await authorize_and_dispatch(
-            request, provider=provider, allowlist=allowlist,
-            replay_cache=ReplayCache(), audit_sink=sink, tier="federal",
+            request,
+            provider=provider,
+            allowlist=allowlist,
+            replay_cache=ReplayCache(),
+            audit_sink=sink,
+            tier="federal",
             enrolled=enrolled,
         )
 
@@ -290,13 +341,21 @@ async def test_enrolled_caller_at_federal_is_served() -> None:
     )
     sink = _RecordingSink()
     request = sign_inbound(
-        _content(), nonce=new_nonce(), ts=_now(),
-        caller_did=did, private_key=priv, public_key=pub,
+        _content(),
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did,
+        private_key=priv,
+        public_key=pub,
     )
 
     result = await authorize_and_dispatch(
-        request, provider=provider, allowlist=allowlist,
-        replay_cache=ReplayCache(), audit_sink=sink, tier="federal",
+        request,
+        provider=provider,
+        allowlist=allowlist,
+        replay_cache=ReplayCache(),
+        audit_sink=sink,
+        tier="federal",
         enrolled=frozenset({did}),
     )
 

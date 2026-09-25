@@ -167,8 +167,12 @@ class VoiceDeskClient:
         import numpy as np  # lazy
 
         await self._client.connect()
-        _log.info("stt-wake listening (rms>=%.0f, wake=%s, target_peak=%.0f)",
-                  rms_threshold, wake_words, target_peak)
+        _log.info(
+            "stt-wake listening (rms>=%.0f, wake=%s, target_peak=%.0f)",
+            rms_threshold,
+            wake_words,
+            target_peak,
+        )
         buffer: list[bytes] = []
         silence = 0
         spoke = False
@@ -242,8 +246,18 @@ async def _default_playback(wav: bytes) -> None:
 async def _alsa_frame_source(device: str, frame_bytes: int = 2560) -> Any:
     """Yield 16 kHz mono PCM-16 frames from ``arecord`` (no PortAudio needed)."""
     proc = await asyncio.create_subprocess_exec(
-        "arecord", "-q", "-D", device, "-f", "S16_LE", "-r", str(_SAMPLE_RATE),
-        "-c", "1", "-t", "raw",
+        "arecord",
+        "-q",
+        "-D",
+        device,
+        "-f",
+        "S16_LE",
+        "-r",
+        str(_SAMPLE_RATE),
+        "-c",
+        "1",
+        "-t",
+        "raw",
         stdout=asyncio.subprocess.PIPE,
     )
     if proc.stdout is None:  # pragma: no cover - PIPE always yields a stream

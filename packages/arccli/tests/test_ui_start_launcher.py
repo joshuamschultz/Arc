@@ -94,6 +94,7 @@ def test_cli_lifespan_retries_agent_registration_after_broker_outage(
         _start(_make_args(team_root=str(team_root), no_chat=True, no_browser=True))
     assert calls >= 2
 
+
 # ---------------------------------------------------------------------------
 # C-2: browser-open fallback never echoes URL+token together
 # ---------------------------------------------------------------------------

@@ -42,9 +42,7 @@ class OutputContract:
         collapsed = self._collapse_lists(text)
         clean = self._strip_markup(collapsed)
         clean = " ".join(
-            _HEADER.sub("", line).strip()
-            for line in clean.splitlines()
-            if line.strip()
+            _HEADER.sub("", line).strip() for line in clean.splitlines() if line.strip()
         )
         clean = _WS.sub(" ", clean).strip()
 

@@ -76,9 +76,7 @@ def _redact_case(case: CuratedGoldenCase, redactor: Redactor) -> CuratedGoldenCa
         case,
         ideal_output=redactor(case.ideal_output),
         rubric=case.rubric,  # the rubric is operator-authored policy, not trace data
-        assertions=[
-            AssertionCheck(kind=c.kind, value=redactor(c.value)) for c in case.assertions
-        ],
+        assertions=[AssertionCheck(kind=c.kind, value=redactor(c.value)) for c in case.assertions],
     )
 
 
@@ -166,7 +164,7 @@ def _anchor_source(case: CuratedGoldenCase, id8: str) -> str:
     """
     return (
         '"""Curated golden anchor (H-041) — human-curated, gate_type='
-        f'{case.gate_type}.\n'
+        f"{case.gate_type}.\n"
         "\n"
         f"Provenance: curated from trace {case.source_trace_id!r}. Well-formedness and the\n"
         "judge pin (for judge_rubric) are verified here in the sandbox; the semantic/\n"

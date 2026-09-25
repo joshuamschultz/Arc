@@ -62,9 +62,7 @@ def _msg(
 class TestPredicate:
     def test_agent_question_with_no_human_reply_is_returned(self) -> None:
         messages = [_msg(signer_did=_AGENT, body="need a decision")]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert [m.id for m in out] == ["m1"]
 
     def test_agent_question_answered_by_human_is_excluded(self) -> None:
@@ -72,9 +70,7 @@ class TestPredicate:
             _msg(signer_did=_AGENT, seconds_ago=120, mid="q"),
             _msg(signer_did=_HUMAN, seconds_ago=60, body="do it", mid="a"),
         ]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_a_later_agent_reply_does_not_clear_the_question(self) -> None:
@@ -91,21 +87,15 @@ class TestPredicate:
                 mid="peer",
             ),
         ]
-        out = unanswered_by_human(
-            messages, agents={_AGENT, _AGENT_2}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT, _AGENT_2}, humans={_HUMAN}, now=_NOW)
         assert {m.id for m in out} == {"q"}
 
     def test_an_auto_posted_final_reply_is_excluded(self) -> None:
         # deliver_channel_reply auto-posts every completed channel turn's closing
         # text with action_required False (default). The agent ANSWERED — this is
         # not a waiting ask — so the flag gate must keep it out.
-        messages = [
-            _msg(signer_did=_AGENT, body="Done, report attached.", action_required=False)
-        ]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        messages = [_msg(signer_did=_AGENT, body="Done, report attached.", action_required=False)]
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_a_plain_statement_is_excluded(self) -> None:
@@ -113,25 +103,19 @@ class TestPredicate:
         messages = [
             _msg(signer_did=_AGENT, body="FYI I started the migration.", action_required=False)
         ]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_a_flagged_ask_with_no_human_reply_is_included(self) -> None:
         messages = [_msg(signer_did=_AGENT, body="Approve the deploy?", action_required=True)]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert [m.id for m in out] == ["m1"]
 
     def test_human_question_no_agent_reply_is_not_returned(self) -> None:
         # This is direction (a) — the agent's backlog, sweep.unanswered's job.
         # It must never leak into the operator's action queue.
         messages = [_msg(signer_did=_HUMAN, body="anyone alive?")]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_narration_is_excluded_even_when_flagged(self) -> None:
@@ -147,43 +131,31 @@ class TestPredicate:
                 action_required=True,
             )
         ]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     @pytest.mark.parametrize(
         "kind", [MsgType.TASK, MsgType.TASK_ASSIGNED, MsgType.RESULT, MsgType.ACK]
     )
-    def test_structured_work_envelopes_are_excluded_even_when_flagged(
-        self, kind: MsgType
-    ) -> None:
+    def test_structured_work_envelopes_are_excluded_even_when_flagged(self, kind: MsgType) -> None:
         messages = [_msg(signer_did=_AGENT, msg_type=kind, action_required=True)]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_a_stale_orphan_ages_out(self) -> None:
         messages = [_msg(signer_did=_AGENT, seconds_ago=MAX_WAIT_AGE_SECONDS + 1)]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
     def test_a_fresh_question_within_the_cap_stays(self) -> None:
         messages = [_msg(signer_did=_AGENT, seconds_ago=MAX_WAIT_AGE_SECONDS - 1)]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert [m.id for m in out] == ["m1"]
 
     def test_unsigned_candidate_is_not_attributed(self) -> None:
         # No signer_did => not in the agent set => skipped, never mis-credited.
         messages = [_msg(signer_did="", body="who am I?")]
-        out = unanswered_by_human(
-            messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW
-        )
+        out = unanswered_by_human(messages, agents={_AGENT}, humans={_HUMAN}, now=_NOW)
         assert out == []
 
 

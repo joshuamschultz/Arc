@@ -182,7 +182,9 @@ async def test_terminal_renewal_failure_stops_the_sync_before_it_runs(monkeypatc
     """
 
     async def terminal(self, account, *, renew, caller_did):  # type: ignore[no-untyped-def]
-        raise CredentialRenewalError(error_code="invalid_grant", message="operator must re-consent")
+        raise CredentialRenewalError(
+            error_code="invalid_grant", message="operator must re-consent"
+        )
 
     monkeypatch.setattr(credmod.CredentialLifecycle, "ensure_fresh", terminal)
 

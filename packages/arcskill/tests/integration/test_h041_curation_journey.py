@@ -180,8 +180,11 @@ async def test_federal_hash_only_declares_curation_unavailable(tmp_path: Path) -
         ws, config=ImproverConfig(), tier="federal", skill_path=lambda name: skill_md
     )
     await imp.observe(
-        skill_name="invoicer", tool_name="summarize", status="ok",
-        error_type=None, llm_trace_id=record.trace_id,
+        skill_name="invoicer",
+        tool_name="summarize",
+        status="ok",
+        error_type=None,
+        llm_trace_id=record.trace_id,
     )
     await imp.on_turn_end(turn=0, outcome="success")
 

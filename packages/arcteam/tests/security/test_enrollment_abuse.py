@@ -48,7 +48,9 @@ def _resolver_for(operator: OperatorApprovalAuthority):
     return resolve
 
 
-def _enrolled(operator: OperatorApprovalAuthority, *, handle: str = "hermes", nonce: str = "n-1") -> tuple[Entity, AgentIdentity]:
+def _enrolled(
+    operator: OperatorApprovalAuthority, *, handle: str = "hermes", nonce: str = "n-1"
+) -> tuple[Entity, AgentIdentity]:
     member = AgentIdentity.generate(org="acme", agent_type="hermes")
     grant = sign_enrollment_grant(
         operator=operator,

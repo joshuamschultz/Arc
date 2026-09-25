@@ -40,7 +40,11 @@ class _FakePersonalPort:
     ) -> PromotionSource:
         from arcagent.modules.memory.promotion import to_promotion_source
 
-        item = next(item for item in (_AUTO_ITEM, _NEVER_BY_SCORE, _NEVER_BY_FILTER) if item.id == reference)
+        item = next(
+            item
+            for item in (_AUTO_ITEM, _NEVER_BY_SCORE, _NEVER_BY_FILTER)
+            if item.id == reference
+        )
         if access.caller_did != _ACCESS.caller_did:
             raise PermissionError("foreign agent")
         return to_promotion_source(item)
@@ -86,12 +90,18 @@ async def test_raw_auto_score_is_unavailable_and_never_items_stay_private() -> N
 
     with pytest.raises(MemoryPromotionUnavailableError):
         await run_promotion_pass(
-            [_AUTO_ITEM], cfg=PromotionConfig(enabled=True), port=port,
-            personal=_FakePersonalPort(), access=_ACCESS,
+            [_AUTO_ITEM],
+            cfg=PromotionConfig(enabled=True),
+            port=port,
+            personal=_FakePersonalPort(),
+            access=_ACCESS,
         )
     await run_promotion_pass(
-        [_NEVER_BY_SCORE, _NEVER_BY_FILTER], cfg=PromotionConfig(enabled=True),
-        port=port, personal=_FakePersonalPort(), access=_ACCESS,
+        [_NEVER_BY_SCORE, _NEVER_BY_FILTER],
+        cfg=PromotionConfig(enabled=True),
+        port=port,
+        personal=_FakePersonalPort(),
+        access=_ACCESS,
     )
     assert port.promoted == []
 

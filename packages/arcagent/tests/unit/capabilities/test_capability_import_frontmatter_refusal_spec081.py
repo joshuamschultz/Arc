@@ -53,9 +53,7 @@ def _build(tmp_path: Path, entries: dict[str, bytes]) -> None:
     "skill_md",
     [_MISSING_NAME, _BLANK_NAME, _MISSING_DESCRIPTION, _BLANK_DESCRIPTION],
 )
-def test_import_refuses_skill_without_name_or_description(
-    tmp_path: Path, skill_md: bytes
-) -> None:
+def test_import_refuses_skill_without_name_or_description(tmp_path: Path, skill_md: bytes) -> None:
     with pytest.raises(CapabilityImportError):
         _build(tmp_path, {"skills/imported/SKILL.md": skill_md})
 

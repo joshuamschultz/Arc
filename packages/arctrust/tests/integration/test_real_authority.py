@@ -58,9 +58,12 @@ class OnceUsers:
 
 def _grant(config, key, capability):
     grant = CapabilityGrant(
-        deployment_id=config.deployment_id, tenant_id=config.tenant_id,
-        config_revision=config.revision, config_digest=config.digest,
-        capability=capability, subject="dgx-workload",
+        deployment_id=config.deployment_id,
+        tenant_id=config.tenant_id,
+        config_revision=config.revision,
+        config_digest=config.digest,
+        capability=capability,
+        subject="dgx-workload",
         expires_at=int(time.time()) + 90,
     )
     return sign_capability_grant(grant, lambda data: key.sign(data).signature)
@@ -73,14 +76,22 @@ def test_real_authority_policies_renew_revoke_and_restart(tmp_path):
         vault.configure_account_namespace("acme", "dgx")
         ca_pem = vault.cert_path.read_bytes()
         config = DeploymentAuthorityConfig(
-            deployment_id="dgx", tenant_id="acme", revision=1,
-            vault_url=vault.base_url, vault_ca_sha256=hashlib.sha256(ca_pem).hexdigest(),
+            deployment_id="dgx",
+            tenant_id="acme",
+            revision=1,
+            vault_url=vault.base_url,
+            vault_ca_sha256=hashlib.sha256(ca_pem).hexdigest(),
         )
         config_key, grant_key = SigningKey.generate(), SigningKey.generate()
         config_path = tmp_path / "authority.json"
-        config_path.write_text(json.dumps(sign_authority_config(
-            config, lambda data: config_key.sign(data).signature,
-        )))
+        config_path.write_text(
+            json.dumps(
+                sign_authority_config(
+                    config,
+                    lambda data: config_key.sign(data).signature,
+                )
+            )
+        )
         config_path.chmod(0o600)
 
         # Fixture root performs one-time enrollment; the application sees only
@@ -93,11 +104,15 @@ def test_real_authority_policies_renew_revoke_and_restart(tmp_path):
             credentials = FixtureCredentials(vault)
             audit_grant = _grant(config, grant_key, Capability.AUDIT_SIGNER)
             audit_lease = open_vault_lease(
-                config, audit_grant, trusted_grant_key=bytes(grant_key.verify_key),
-                credential_provider=credentials, ca_pem=ca_pem,
+                config,
+                audit_grant,
+                trusted_grant_key=bytes(grant_key.verify_key),
+                credential_provider=credentials,
+                ca_pem=ca_pem,
             )
             transit = VaultTransitHTTP(
-                audit_lease._adapter_client(), mount=config.transit_mount,
+                audit_lease._adapter_client(),
+                mount=config.transit_mount,
             )
             signer = VaultSigner(transit, "audit-signing")
             audit_path = tmp_path / "audit.worm"
@@ -108,14 +123,20 @@ def test_real_authority_policies_renew_revoke_and_restart(tmp_path):
                 for role in (Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR)
             }
             authority = open_account_authority(
-                config_path, trusted_config_key=bytes(config_key.verify_key),
-                expected_deployment="dgx", expected_tenant="acme", config_anchor=config_anchor,
-                signed_grants=signed_grants, trusted_grant_key=bytes(grant_key.verify_key),
-                credential_provider=credentials, ca_pem=ca_pem,
-                audit_sink=sink, strict_audit_sink=sink, actor_verifier=actor,
-                users_path=tmp_path / "users.json", bootstrap_authority=OnceUsers(
-                    f"{config.anchor_mount}/users"
-                ),
+                config_path,
+                trusted_config_key=bytes(config_key.verify_key),
+                expected_deployment="dgx",
+                expected_tenant="acme",
+                config_anchor=config_anchor,
+                signed_grants=signed_grants,
+                trusted_grant_key=bytes(grant_key.verify_key),
+                credential_provider=credentials,
+                ca_pem=ca_pem,
+                audit_sink=sink,
+                strict_audit_sink=sink,
+                actor_verifier=actor,
+                users_path=tmp_path / "users.json",
+                bootstrap_authority=OnceUsers(f"{config.anchor_mount}/users"),
             )
             try:
                 with pytest.raises(Exception, match="actor"):
@@ -124,21 +145,23 @@ def test_real_authority_policies_renew_revoke_and_restart(tmp_path):
                 store.add("operator@example.com", "correct-horse-battery", roles=("operator",))
                 issuer_client = authority._leases[Capability.ISSUER]._adapter_client()
                 issuer_client._lease_deadline = time.monotonic() + 1
-                assert issuer_client.get(
-                    f"/v1/{config.transit_mount}/keys/{store.get('operator@example.com').signing_key_ref}"
-                ).status_code == 200
+                assert (
+                    issuer_client.get(
+                        f"/v1/{config.transit_mount}/keys/{store.get('operator@example.com').signing_key_ref}"
+                    ).status_code
+                    == 200
+                )
                 # Force renewal soon, then prove a real Vault request succeeds.
                 assert issuer_client._lease_deadline > time.monotonic() + 5
                 vault.restart()
                 assert authority.user_store(actor).get("operator@example.com") is not None
                 assert verify_chain(audit_path, signer.public_key)
                 with vault.client(vault.token_for_policy("arc-acme-dgx-issuer")) as scoped:
-                    assert scoped.delete(
-                        f"/v1/{config.transit_mount}/keys/audit-signing"
-                    ).status_code == 403
-                    assert scoped.get(
-                        f"/v1/{config.anchor_mount}/data/users"
-                    ).status_code == 403
+                    assert (
+                        scoped.delete(f"/v1/{config.transit_mount}/keys/audit-signing").status_code
+                        == 403
+                    )
+                    assert scoped.get(f"/v1/{config.anchor_mount}/data/users").status_code == 403
             finally:
                 authority.close()
                 sink.close()

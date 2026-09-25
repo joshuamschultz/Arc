@@ -81,14 +81,10 @@ async def _start_agent(tmp_path: Path, *, door_enabled: bool) -> ArcAgent:
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
     modules = (
-        {"mcp_server": ModuleEntry(enabled=True, config={"expose": ["*"]})}
-        if door_enabled
-        else {}
+        {"mcp_server": ModuleEntry(enabled=True, config={"expose": ["*"]})} if door_enabled else {}
     )
     config = ArcAgentConfig(
-        agent=AgentConfig(
-            name="door", org="testorg", type="executor", workspace=str(workspace)
-        ),
+        agent=AgentConfig(name="door", org="testorg", type="executor", workspace=str(workspace)),
         llm=LLMConfig(model="test/model"),
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=False),
@@ -117,9 +113,7 @@ async def _start_federal_door_agent(tmp_path: Path) -> ArcAgent:
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
     config = ArcAgentConfig(
-        agent=AgentConfig(
-            name="door", org="testorg", type="executor", workspace=str(workspace)
-        ),
+        agent=AgentConfig(name="door", org="testorg", type="executor", workspace=str(workspace)),
         llm=LLMConfig(model="test/model"),
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=False),
@@ -219,9 +213,7 @@ async def test_post_to_unknown_agent_did_is_404() -> None:
     app = _app()
     app.state.embedded_agent_cache = _FakeAgentCache({})
 
-    resp = await _post(
-        app, "/mcp/did:arc:testorg:executor/deadbeef", json=_tools_list_message()
-    )
+    resp = await _post(app, "/mcp/did:arc:testorg:executor/deadbeef", json=_tools_list_message())
 
     assert resp.status_code == 404, resp.text
 
@@ -305,8 +297,6 @@ async def test_missing_embedded_agent_cache_is_404_not_500() -> None:
     """
     app = _app()  # note: embedded_agent_cache is never set on app.state
 
-    resp = await _post(
-        app, "/mcp/did:arc:testorg:executor/deadbeef", json=_tools_list_message()
-    )
+    resp = await _post(app, "/mcp/did:arc:testorg:executor/deadbeef", json=_tools_list_message())
 
     assert resp.status_code == 404, resp.text

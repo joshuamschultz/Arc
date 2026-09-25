@@ -19,8 +19,11 @@ def test_actor_verification_precedes_user_store_construction():
     authority = AccountAuthority.__new__(AccountAuthority)
     authority._actor_verifier = ActorVerifier()
     authority._config = DeploymentAuthorityConfig(
-        deployment_id="dgx", tenant_id="acme", revision=1,
-        vault_url="https://vault.example", vault_ca_sha256="a" * 64,
+        deployment_id="dgx",
+        tenant_id="acme",
+        revision=1,
+        vault_url="https://vault.example",
+        vault_ca_sha256="a" * 64,
     )
     with pytest.raises(AccountAuthorityError, match="actor"):
         authority._actor_did("client-chosen-did")

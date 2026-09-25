@@ -87,12 +87,7 @@ def build_sdk_server(
 
     @server.call_tool(validate_input=False)
     async def _call_tool(name: str, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
-        if (
-            provider is None
-            or allowlist is None
-            or replay_cache is None
-            or audit_sink is None
-        ):
+        if provider is None or allowlist is None or replay_cache is None or audit_sink is None:
             return _error_result("tools/call is not enabled on this door")
         request = _inbound_from_meta(server, name, arguments)
         try:

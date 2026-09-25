@@ -77,7 +77,10 @@ def test_import_review_promote_load_of_script_skill_spawns_no_process(
         asyncio, "create_subprocess_exec", _guard("asyncio.create_subprocess_exec"), raising=False
     )
     monkeypatch.setattr(
-        asyncio, "create_subprocess_shell", _guard("asyncio.create_subprocess_shell"), raising=False
+        asyncio,
+        "create_subprocess_shell",
+        _guard("asyncio.create_subprocess_shell"),
+        raising=False,
     )
 
     agent = tmp_path / "agent"

@@ -45,9 +45,15 @@ class DeploymentAuthorityConfig(BaseModel):
         from urllib.parse import urlsplit
 
         parsed = urlsplit(self.vault_url)
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username
-                or parsed.password or parsed.path not in {"", "/"} or parsed.query
-                or parsed.fragment):
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("Vault URL must be credential-free HTTPS origin")
         return self
 
@@ -86,8 +92,12 @@ def sign_authority_config(
 
 
 def load_authority_config(
-    path: Path, *, trusted_public_key: bytes, expected_deployment: str,
-    expected_tenant: str, anchor: MonotonicAnchor,
+    path: Path,
+    *,
+    trusted_public_key: bytes,
+    expected_deployment: str,
+    expected_tenant: str,
+    anchor: MonotonicAnchor,
 ) -> DeploymentAuthorityConfig:
     """Authenticate the exact signed revision against independent trust inputs."""
     if len(trusted_public_key) != 32:
@@ -96,9 +106,13 @@ def load_authority_config(
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
             meta = os.fstat(fd)
-            if (not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1
-                    or meta.st_uid not in {0, os.getuid()}
-                    or stat.S_IMODE(meta.st_mode) & 0o022 or meta.st_size > _MAX_FILE):
+            if (
+                not stat.S_ISREG(meta.st_mode)
+                or meta.st_nlink != 1
+                or meta.st_uid not in {0, os.getuid()}
+                or stat.S_IMODE(meta.st_mode) & 0o022
+                or meta.st_size > _MAX_FILE
+            ):
                 raise AuthorityConfigError("authority config file is unsafe")
             raw = os.read(fd, _MAX_FILE + 1)
         finally:
@@ -119,8 +133,12 @@ def load_authority_config(
         if anchor.scope != config.config_anchor_scope:
             raise AuthorityConfigError("authority config anchor namespace mismatch")
         head = anchor.latest()
-        if (head is None or head.scope != anchor.scope or head.version != config.revision
-                or head.digest != hashlib.sha256(config.canonical_bytes()).hexdigest()):
+        if (
+            head is None
+            or head.scope != anchor.scope
+            or head.version != config.revision
+            or head.digest != hashlib.sha256(config.canonical_bytes()).hexdigest()
+        ):
             raise AuthorityConfigError("authority config revision is not current")
         return config
     except (OSError, ValueError, TypeError, KeyError) as exc:

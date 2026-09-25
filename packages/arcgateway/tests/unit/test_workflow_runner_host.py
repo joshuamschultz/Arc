@@ -249,6 +249,7 @@ async def test_start_runner_host_starts_a_real_runner(
     # default runner factory itself intact: this test must still prove the
     # gateway builds arcteam's real engine after the PostgreSQL cutover.
     monkeypatch.setattr(arcstore.backends, "open_backend", lambda: FakeBackend())
+
     async def _memory_backend(_url: str) -> MemoryBackend:
         return MemoryBackend()
 

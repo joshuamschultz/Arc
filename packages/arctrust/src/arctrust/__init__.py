@@ -295,8 +295,15 @@ def __getattr__(name: str) -> Any:
         from arctrust import authority
 
         return getattr(authority, name)
-    if name in {"Capability", "CapabilityGrant", "VaultCredentialProvider", "VaultLease",
-                "VaultLeaseError", "open_vault_lease", "sign_capability_grant"}:
+    if name in {
+        "Capability",
+        "CapabilityGrant",
+        "VaultCredentialProvider",
+        "VaultLease",
+        "VaultLeaseError",
+        "open_vault_lease",
+        "sign_capability_grant",
+    }:
         from arctrust import vault_lease
 
         return getattr(vault_lease, name)

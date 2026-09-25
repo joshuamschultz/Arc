@@ -46,7 +46,8 @@ class VaultCipher:
         try:
             response = self._client.get(
                 f"/v1/{self._mount}/keys/{self._key}",
-                timeout=5, follow_redirects=False,
+                timeout=5,
+                follow_redirects=False,
             )
             response.raise_for_status()
             data = response.json()["data"]
@@ -66,10 +67,13 @@ class VaultCipher:
         """Return versioned Vault ciphertext without exposing the key."""
         if len(payload) > _MAX_PAYLOAD:
             raise VaultCipherError("sealed payload exceeds limit")
-        body = self._request("encrypt", {
-            "plaintext": base64.b64encode(payload).decode(),
-            "associated_data": self._aad,
-        })
+        body = self._request(
+            "encrypt",
+            {
+                "plaintext": base64.b64encode(payload).decode(),
+                "associated_data": self._aad,
+            },
+        )
         try:
             ciphertext = body["data"]["ciphertext"]
             self._check_ciphertext(ciphertext)
@@ -82,10 +86,13 @@ class VaultCipher:
     def open(self, sealed: str) -> bytes:
         """Open only ciphertext bound to this scope and record."""
         self._check_ciphertext(sealed)
-        body = self._request("decrypt", {
-            "ciphertext": sealed,
-            "associated_data": self._aad,
-        })
+        body = self._request(
+            "decrypt",
+            {
+                "ciphertext": sealed,
+                "associated_data": self._aad,
+            },
+        )
         try:
             encoded = body["data"]["plaintext"]
             if not isinstance(encoded, str):
@@ -101,7 +108,9 @@ class VaultCipher:
         try:
             response = self._client.post(
                 f"/v1/{self._mount}/{action}/{self._key}",
-                json=payload, timeout=5, follow_redirects=False,
+                json=payload,
+                timeout=5,
+                follow_redirects=False,
             )
             response.raise_for_status()
             body = response.json()

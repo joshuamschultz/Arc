@@ -25,9 +25,9 @@ _SESSION_SEGMENT = "\n\n".join(
         "<identity>\nName: Olivia. Role: research lead.\n</identity>",
         (
             "<capabilities>\n"
-            "<available-tools>\n<tool name=\"read\"><description>Read a file</description></tool>\n"
+            '<available-tools>\n<tool name="read"><description>Read a file</description></tool>\n'
             "</available-tools>\n"
-            "<available-skills>\n<skill name=\"seo-audit\"><description>Audit SEO</description></skill>\n"
+            '<available-skills>\n<skill name="seo-audit"><description>Audit SEO</description></skill>\n'
             "</available-skills>\n"
             "</capabilities>"
         ),

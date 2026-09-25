@@ -30,7 +30,9 @@ requires_vec = pytest.mark.skipif(
 
 
 def _append(episodic: EpisodicStore, scope: Scope, eid: str, text: str) -> None:
-    episodic.append(Event(event_id=eid, ts="2026-08-01T00:00:00Z", scope=scope.key, kind="obs", text=text))
+    episodic.append(
+        Event(event_id=eid, ts="2026-08-01T00:00:00Z", scope=scope.key, kind="obs", text=text)
+    )
 
 
 async def test_one_failing_upsert_does_not_abort_the_pass(

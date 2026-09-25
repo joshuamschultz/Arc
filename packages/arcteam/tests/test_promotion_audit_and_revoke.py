@@ -82,8 +82,13 @@ async def test_failed_decision_audit_prevents_shared_write(tmp_path: Path) -> No
 
     with pytest.raises(OSError, match="audit unavailable"):
         await service.promote(
-            personal, ref.identifier, access, owner,
-            audit_sink=_FailingDecisionSink(), decision="auto", effective_score=2,
+            personal,
+            ref.identifier,
+            access,
+            owner,
+            audit_sink=_FailingDecisionSink(),
+            decision="auto",
+            effective_score=2,
         )
 
     assert await service.list_documents(access) == []
@@ -100,8 +105,13 @@ async def test_invalid_promotion_decision_prevents_shared_write(tmp_path: Path) 
     for decision, score in (("auto", 0), ("approved", 11), ("never", 2)):
         with pytest.raises(ValueError, match="invalid promotion decision"):
             await service.promote(
-                personal, ref.identifier, access, owner,
-                audit_sink=sink, decision=decision, effective_score=score,
+                personal,
+                ref.identifier,
+                access,
+                owner,
+                audit_sink=sink,
+                decision=decision,
+                effective_score=score,
             )
 
     assert await service.list_documents(access) == []

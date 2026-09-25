@@ -73,9 +73,7 @@ MAX_WAIT_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 days
 # A structured work envelope is not a free-form question to a person: a task, its
 # assignment, its result, and an ack all have their own operator surface (the
 # task queue). Only conversational kinds can be an un-answered question here.
-_STRUCTURED_KINDS = frozenset(
-    {MsgType.TASK, MsgType.TASK_ASSIGNED, MsgType.RESULT, MsgType.ACK}
-)
+_STRUCTURED_KINDS = frozenset({MsgType.TASK, MsgType.TASK_ASSIGNED, MsgType.RESULT, MsgType.ACK})
 
 # The ``meta["class"]`` value RunNarrator stamps on every run/gate/handoff story
 # it posts. Such a message mirrors a run already surfaced through approvals or

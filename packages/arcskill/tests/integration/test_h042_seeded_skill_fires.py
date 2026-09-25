@@ -29,7 +29,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 _SKILL_DIR = (
-    Path(__file__).resolve().parents[4] / "blueprints" / "personal-assistant" / "skills"
+    Path(__file__).resolve().parents[4]
+    / "blueprints"
+    / "personal-assistant"
+    / "skills"
     / "daily-brief"
 )
 

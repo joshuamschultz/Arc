@@ -28,7 +28,9 @@ from arcui.schemas import ErrorResponse
 
 
 async def _agent_capability_rows(
-    agent_root: Path, live_agent: Any, kind: str,
+    agent_root: Path,
+    live_agent: Any,
+    kind: str,
     skill_artifact_resolver: Any = None,
 ) -> list[dict[str, Any]]:
     """Capability-kind (``"skill"`` or ``"tool"``) inventory rows for one agent.
@@ -43,7 +45,8 @@ async def _agent_capability_rows(
         return []
     try:
         inventory = await arcagent.collect_agent_capability_inventory(
-            config_path, live_agent=live_agent,
+            config_path,
+            live_agent=live_agent,
             skill_artifact_resolver=skill_artifact_resolver,
         )
     except Exception:  # reason: fleet resilience — see docstring
@@ -102,9 +105,7 @@ async def agent_skill_rows(
     the loader's ``source_root`` + verbatim ``status``. Returns ``[]`` when the
     agent has no config on disk.
     """
-    return await _agent_capability_rows(
-        agent_root, live_agent, "skill", skill_artifact_resolver
-    )
+    return await _agent_capability_rows(agent_root, live_agent, "skill", skill_artifact_resolver)
 
 
 async def agent_tool_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
@@ -159,7 +160,8 @@ async def get_capabilities(request: Request) -> JSONResponse:
 
     try:
         inventory = await arcagent.collect_agent_capability_inventory(
-            config_path, live_agent=_live_agent(request, agent_id),
+            config_path,
+            live_agent=_live_agent(request, agent_id),
             skill_artifact_resolver=_skill_resolver(request, agent_id, agent_root),
         )
     except Exception as exc:  # reason: surface failure explicitly, never fail-open empty

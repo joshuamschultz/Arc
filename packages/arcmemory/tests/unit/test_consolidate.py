@@ -1057,8 +1057,12 @@ async def test_clustered_procedures_the_confirmer_rejects_stay_apart(workspace, 
     from arcmemory.stores.procedural import ProceduralStore
 
     store = ProceduralStore(workspace)
-    store.upsert("start-thesis", "Start a Josh thesis", when_to_use="Josh begins a thesis", steps=["a"])
-    store.upsert("update-thesis", "Update a Josh thesis", when_to_use="Josh revises a thesis", steps=["b"])
+    store.upsert(
+        "start-thesis", "Start a Josh thesis", when_to_use="Josh begins a thesis", steps=["a"]
+    )
+    store.upsert(
+        "update-thesis", "Update a Josh thesis", when_to_use="Josh revises a thesis", steps=["b"]
+    )
 
     consolidator = Consolidator(
         db,

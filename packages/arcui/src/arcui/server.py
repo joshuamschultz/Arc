@@ -559,6 +559,7 @@ def create_app(
             embedded_gateway.workflow_runner_host if embedded_gateway is not None else None
         )
         if workflow_host is not None:
+
             async def _refresh_workflow_plane() -> None:
                 attached_runner = workflow_host.runner if workflow_host.available else None
                 while True:

@@ -93,9 +93,7 @@ class _ConformingAdapter:
             kind=SourceObjectKind.FILE,
             metadata={"revision": self._revision},
         )
-        return SyncSourcePage(
-            objects=(obj,), next_checkpoint=str(self._revision), has_more=False
-        )
+        return SyncSourcePage(objects=(obj,), next_checkpoint=str(self._revision), has_more=False)
 
     async def fetch_source(self, request: FetchSourceObject) -> SourceContent:
         return SourceContent(
@@ -144,7 +142,9 @@ class _DeadClientAfterCloseAdapter(_ConformingAdapter):
 def _bundle_source_adapter(name: str) -> SourceAdapter:
     """Build ``extensions/<name>``'s attachment and return its source adapter, offline."""
     bundle = _EXTENSIONS_ROOT / name
-    manifest = load_manifest((bundle / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL)
+    manifest = load_manifest(
+        (bundle / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
+    )
     attachment: Any = build_attachment(manifest, bundle, {})
     return attachment.source_adapter()
 

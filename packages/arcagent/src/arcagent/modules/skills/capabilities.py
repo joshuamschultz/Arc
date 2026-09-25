@@ -58,9 +58,7 @@ def _observe_accepts(adapter: Any, name: str) -> bool:
         params = inspect.signature(adapter.observe).parameters
     except (TypeError, ValueError):
         return False
-    return name in params or any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 @hook(event="agent:post_tool", priority=200)

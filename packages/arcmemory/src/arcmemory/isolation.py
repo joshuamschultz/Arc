@@ -107,20 +107,32 @@ def enforce_brain_isolation(
     # Check 1 — memory requires identity, and the claimed DID must be the proven one.
     if identity is None:
         _fail_closed(
-            workspace, agent_did, "", audit_sink, tier,
+            workspace,
+            agent_did,
+            "",
+            audit_sink,
+            tier,
             "memory requires identity but none was provided",
         )
     claimed_did = str(getattr(identity, "did", "") or "")
     if claimed_did != agent_did:
         _fail_closed(
-            workspace, agent_did, claimed_did, audit_sink, tier,
+            workspace,
+            agent_did,
+            claimed_did,
+            audit_sink,
+            tier,
             "context agent_did does not match the provided identity DID",
         )
     # Check 2 — the proven identity must be self-consistent (DID ← pubkey hash).
     public_key = bytes(getattr(identity, "public_key", b"") or b"")
     if not did_matches_pubkey(agent_did, public_key):
         _fail_closed(
-            workspace, agent_did, claimed_did, audit_sink, tier,
+            workspace,
+            agent_did,
+            claimed_did,
+            audit_sink,
+            tier,
             "identity DID does not match its own public key",
         )
     # Check 3 — the proven identity must own the workspace.
@@ -141,13 +153,21 @@ def _enforce_workspace_ownership(
             owner_key = marker.read_bytes()
         except OSError as exc:
             _fail_closed(
-                workspace, agent_did, "", audit_sink, tier,
+                workspace,
+                agent_did,
+                "",
+                audit_sink,
+                tier,
                 f"workspace owner marker is unreadable: {type(exc).__name__}",
             )
         # Constant-time compare — the key is not secret, but it gates isolation.
         if not hmac.compare_digest(owner_key, public_key):
             _fail_closed(
-                workspace, agent_did, "", audit_sink, tier,
+                workspace,
+                agent_did,
+                "",
+                audit_sink,
+                tier,
                 "workspace is owned by a different identity",
             )
         return
@@ -164,7 +184,11 @@ def _enforce_workspace_ownership(
     scopes = _recorded_scopes(memory_dir)
     if not scopes:
         _fail_closed(
-            workspace, agent_did, "", audit_sink, tier,
+            workspace,
+            agent_did,
+            "",
+            audit_sink,
+            tier,
             "workspace holds memory data with no attributable owner",
         )
     own = {s for s in scopes if s == agent_did or s.startswith(f"{agent_did}:")}
@@ -172,7 +196,11 @@ def _enforce_workspace_ownership(
         # A victim workspace: it holds scoped memory data, but NONE of it is this
         # agent's — rebinding it would adopt another agent's private recall.
         _fail_closed(
-            workspace, agent_did, sorted(scopes)[0], audit_sink, tier,
+            workspace,
+            agent_did,
+            sorted(scopes)[0],
+            audit_sink,
+            tier,
             "workspace memory data is owned only by a different agent DID",
         )
     # This agent owns its own data here. Adopt in place even when PRE-EXISTING foreign
@@ -253,7 +281,11 @@ def _write_owner_marker(
         tmp.replace(marker)
     except OSError as exc:
         _fail_closed(
-            workspace, agent_did, "", audit_sink, tier,
+            workspace,
+            agent_did,
+            "",
+            audit_sink,
+            tier,
             f"could not bind workspace owner marker: {type(exc).__name__}",
         )
 

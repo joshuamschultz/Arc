@@ -116,9 +116,7 @@ class RunnerHost:
         return self._runner
 
     @classmethod
-    async def start(
-        cls, factory: Callable[[], Awaitable[WorkflowRunnerProtocol]]
-    ) -> RunnerHost:
+    async def start(cls, factory: Callable[[], Awaitable[WorkflowRunnerProtocol]]) -> RunnerHost:
         """Build and supervise one runner with the process singleton.
 
         Raises:

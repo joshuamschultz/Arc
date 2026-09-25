@@ -142,7 +142,9 @@ class _RecordingTelemetry:
 
 
 def _registry(telemetry: _RecordingTelemetry) -> ToolRegistry:
-    return ToolRegistry(config=ToolsConfig(policy=ToolConfig()), bus=ModuleBus(), telemetry=telemetry)
+    return ToolRegistry(
+        config=ToolsConfig(policy=ToolConfig()), bus=ModuleBus(), telemetry=telemetry
+    )
 
 
 def _tool_context() -> ToolContext:

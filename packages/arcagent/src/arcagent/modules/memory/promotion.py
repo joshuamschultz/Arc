@@ -97,7 +97,9 @@ async def promote_item(
 
 
 async def _verified_source(
-    item: PromotableItem, *, personal: PersonalKnowledgePort | None,
+    item: PromotableItem,
+    *,
+    personal: PersonalKnowledgePort | None,
     access: KnowledgeAccess,
 ) -> PromotionSource:
     if personal is None:
@@ -168,8 +170,11 @@ async def run_promotion_pass(
 
 
 async def release_approved_promotions(
-    *, approval_queue: PromotionApprovalQueue, port: SharedKnowledgePort,
-    personal: PersonalKnowledgePort, access: KnowledgeAccess,
+    *,
+    approval_queue: PromotionApprovalQueue,
+    port: SharedKnowledgePort,
+    personal: PersonalKnowledgePort,
+    access: KnowledgeAccess,
 ) -> list[KnowledgeRef]:
     """Release only current, owner-authorized personal exports matching approval."""
     released: list[KnowledgeRef] = []
@@ -197,9 +202,7 @@ async def release_approved_promotions(
             raise PromotionReleaseOutcomeUnknownError(
                 "promotion release outcome requires reconciliation"
             ) from error
-        await approval_queue.finish_release(
-            candidate.item_id, token=token, outcome="released"
-        )
+        await approval_queue.finish_release(candidate.item_id, token=token, outcome="released")
         released.append(promoted)
     return released
 

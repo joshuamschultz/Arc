@@ -64,9 +64,7 @@ def _agent_config(tmp_path: Path, *, modules: dict[str, ModuleEntry]) -> ArcAgen
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)
     return ArcAgentConfig(
-        agent=AgentConfig(
-            name="probe", org="testorg", type="executor", workspace=str(workspace)
-        ),
+        agent=AgentConfig(name="probe", org="testorg", type="executor", workspace=str(workspace)),
         llm=LLMConfig(model="test/model"),
         identity=IdentityConfig(did="", key_dir=str(tmp_path / "keys"), vault_path=""),
         telemetry=TelemetryConfig(enabled=False),
@@ -180,13 +178,9 @@ class _FakeFederalAgent:
                 )
             }
         )
-        self.did = arc_identity.did_from_public_key(
-            b"\x11" * 32, org="acme", agent_type="exec"
-        )
+        self.did = arc_identity.did_from_public_key(b"\x11" * 32, org="acme", agent_type="exec")
         self.tier = "federal"
-        self.mcp_config = McpServerConfig(
-            enabled=True, expose=[_TOOL], enrolled=[enrolled_did]
-        )
+        self.mcp_config = McpServerConfig(enabled=True, expose=[_TOOL], enrolled=[enrolled_did])
         self.audit_sink = _RecordingSink()
 
 

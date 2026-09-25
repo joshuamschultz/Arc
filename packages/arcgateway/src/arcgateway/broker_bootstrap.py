@@ -198,9 +198,7 @@ async def start_broker(*, url: str | None = None, store_dir: Path | None = None)
         # ERROR without a traceback: the condition is actionable operator state
         # (no broker, install hint attached), not a crash to be debugged.
         _logger.error("broker unavailable (%s); messaging is degraded", type(exc).__name__)
-        handle = BrokerHandle(
-            url=resolved_url, available=False, reason=type(exc).__name__
-        )
+        handle = BrokerHandle(url=resolved_url, available=False, reason=type(exc).__name__)
         handle.supervise(resolved_store_dir)
         return handle
 

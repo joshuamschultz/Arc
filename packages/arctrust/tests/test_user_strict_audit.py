@@ -21,9 +21,12 @@ class StrictAudit:
 
 def _store(tmp_path, strict, *, anchor=None, issuer=None, cipher=None):
     return UserStore(
-        tmp_path / "users.json", issuer=issuer or FakeIssuer(),
-        anchor=anchor or FakeAnchor(), cipher=cipher or FakeCipher(),
-        audit_sink=FakeAudit(), strict_audit_sink=strict,
+        tmp_path / "users.json",
+        issuer=issuer or FakeIssuer(),
+        anchor=anchor or FakeAnchor(),
+        cipher=cipher or FakeCipher(),
+        audit_sink=FakeAudit(),
+        strict_audit_sink=strict,
         actor_did="did:arc:test:user/authenticated-actor",
     )
 

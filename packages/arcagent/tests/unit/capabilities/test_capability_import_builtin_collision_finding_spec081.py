@@ -92,9 +92,9 @@ def test_manifest_has_no_collision_finding_when_name_is_not_reserved(tmp_path: P
     )
 
     assert manifest.skills == ("spec081_unique_skill",)
-    assert not any(
-        "builtin_name_collision" in finding for finding in manifest.findings
-    ), f"expected no collision finding for a non-colliding skill; got {manifest.findings!r}"
+    assert not any("builtin_name_collision" in finding for finding in manifest.findings), (
+        f"expected no collision finding for a non-colliding skill; got {manifest.findings!r}"
+    )
 
 
 def test_review_surfaces_builtin_name_collision_for_real_builtin_skill(tmp_path: Path) -> None:
@@ -136,6 +136,6 @@ def test_review_has_no_collision_finding_for_non_builtin_skill(tmp_path: Path) -
     )
 
     assert manifest.skills == ("spec081_unique_skill",)
-    assert not any(
-        "builtin_name_collision" in finding for finding in manifest.findings
-    ), f"expected no collision finding for a non-colliding skill; got {manifest.findings!r}"
+    assert not any("builtin_name_collision" in finding for finding in manifest.findings), (
+        f"expected no collision finding for a non-colliding skill; got {manifest.findings!r}"
+    )

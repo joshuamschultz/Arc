@@ -503,9 +503,7 @@ class TestBrokerAbsentReportsUnavailable:
         _install_ensure(monkeypatch, recorder)
         broker_bootstrap = importlib.import_module(_BROKER_MODULE)
         with caplog.at_level("ERROR"):
-            handle = await broker_bootstrap.start_broker(
-                url="nats://user:secret-pass@broker:4222"
-            )
+            handle = await broker_bootstrap.start_broker(url="nats://user:secret-pass@broker:4222")
         assert "secret-pass" not in caplog.text
         assert "secret-pass" not in str(handle.reason)
         await handle.aclose()

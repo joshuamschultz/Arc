@@ -50,22 +50,44 @@ _CONNECTION = "ms365-test"
 #: the revisions this yields are strictly *decreasing* across the page.
 _MAIL_NEWEST_FIRST = {
     "value": [
-        {"id": "m3", "lastModifiedDateTime": "2026-03-03T00:00:00Z", "conversationId": "c3",
-         "bodyPreview": "three"},
-        {"id": "m2", "lastModifiedDateTime": "2026-02-02T00:00:00Z", "conversationId": "c2",
-         "bodyPreview": "two"},
-        {"id": "m1", "lastModifiedDateTime": "2026-01-01T00:00:00Z", "conversationId": "c1",
-         "bodyPreview": "one"},
+        {
+            "id": "m3",
+            "lastModifiedDateTime": "2026-03-03T00:00:00Z",
+            "conversationId": "c3",
+            "bodyPreview": "three",
+        },
+        {
+            "id": "m2",
+            "lastModifiedDateTime": "2026-02-02T00:00:00Z",
+            "conversationId": "c2",
+            "bodyPreview": "two",
+        },
+        {
+            "id": "m1",
+            "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+            "conversationId": "c1",
+            "bodyPreview": "one",
+        },
     ]
 }
 
 #: OneDrive files, whose Graph eTags are quoted strings (as real eTags always are).
 _FILES = {
     "value": [
-        {"id": "f1", "name": "a.txt", "file": {"mimeType": "text/plain"},
-         "eTag": '"etag1"', "lastModifiedDateTime": "2026-01-01T00:00:00Z"},
-        {"id": "f2", "name": "b.txt", "file": {"mimeType": "text/plain"},
-         "eTag": '"etag2"', "lastModifiedDateTime": "2026-02-02T00:00:00Z"},
+        {
+            "id": "f1",
+            "name": "a.txt",
+            "file": {"mimeType": "text/plain"},
+            "eTag": '"etag1"',
+            "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+        },
+        {
+            "id": "f2",
+            "name": "b.txt",
+            "file": {"mimeType": "text/plain"},
+            "eTag": '"etag2"',
+            "lastModifiedDateTime": "2026-02-02T00:00:00Z",
+        },
     ]
 }
 
@@ -73,9 +95,18 @@ _REPLIES: dict[str, Any] = {
     "list-mail-messages": _MAIL_NEWEST_FIRST,
     "list-mail-folders": {"value": [{"id": "inbox", "displayName": "Inbox"}]},
     "list-folder-files": _FILES,
-    "get-onedrive-file": {"id": "f1", "eTag": '"etag1"', "content": "hello", "mimeType": "text/plain"},
-    "get-mail-message": {"id": "m1", "changeKey": "", "lastModifiedDateTime": "2026-01-01T00:00:00Z",
-                         "bodyPreview": "one"},
+    "get-onedrive-file": {
+        "id": "f1",
+        "eTag": '"etag1"',
+        "content": "hello",
+        "mimeType": "text/plain",
+    },
+    "get-mail-message": {
+        "id": "m1",
+        "changeKey": "",
+        "lastModifiedDateTime": "2026-01-01T00:00:00Z",
+        "bodyPreview": "one",
+    },
 }
 
 
@@ -145,7 +176,9 @@ async def test_onedrive_synced_object_is_fetchable_with_its_reported_version() -
     obj = page.objects[0]
 
     content = await onedrive.fetch_source(
-        FetchSourceObject(connection_id=_CONNECTION, object_id=obj.object_id, version=obj.version or "")
+        FetchSourceObject(
+            connection_id=_CONNECTION, object_id=obj.object_id, version=obj.version or ""
+        )
     )
 
     assert content.object_id == obj.object_id

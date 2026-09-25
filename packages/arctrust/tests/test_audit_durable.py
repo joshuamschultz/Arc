@@ -12,8 +12,12 @@ from arctrust.signer import InProcessSigner
 
 
 def _event() -> AuditEvent:
-    return AuditEvent(actor_did="did:arc:test:user/actor", action="users.change",
-                      target="users", outcome="attempt")
+    return AuditEvent(
+        actor_did="did:arc:test:user/actor",
+        action="users.change",
+        target="users",
+        outcome="attempt",
+    )
 
 
 def test_durable_append_survives_reopen(tmp_path):

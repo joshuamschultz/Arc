@@ -907,14 +907,10 @@ def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
       4. ``signature`` is a valid signature (per ``approval.algorithm``) over
          the grant's bytes.
     """
-    return verify_approval_for_hash(
-        _hash_call(call), approval, agent_did=call.agent_did
-    )
+    return verify_approval_for_hash(_hash_call(call), approval, agent_did=call.agent_did)
 
 
-def verify_approval_for_hash(
-    call_hash: str, approval: ApprovalGrant, *, agent_did: str
-) -> bool:
+def verify_approval_for_hash(call_hash: str, approval: ApprovalGrant, *, agent_did: str) -> bool:
     """Verify a signed approval against an exact stored request hash and agent."""
     if approval.approver_did == agent_did or approval.call_hash != call_hash:
         return False

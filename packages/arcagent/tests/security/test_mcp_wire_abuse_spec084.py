@@ -195,7 +195,9 @@ async def _raw_post(door: HttpDoor, body: bytes, headers: dict[str, str]) -> htt
         return await client.post("/mcp", content=body, headers=headers)
 
 
-async def _refused(session: ClientSession, args: dict[str, Any], meta: dict[str, Any] | None) -> bool:
+async def _refused(
+    session: ClientSession, args: dict[str, Any], meta: dict[str, Any] | None
+) -> bool:
     """Whether a ``tools/call`` was refused — a raised ``McpError`` or an ``isError``."""
     try:
         result = await session.call_tool(_TOOL, args, meta=meta)

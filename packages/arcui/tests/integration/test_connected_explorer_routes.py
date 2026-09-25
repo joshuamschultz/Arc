@@ -153,9 +153,7 @@ def test_tables_operator_sees_only_this_connections_tables(app_with_explorer_dat
         )
     assert resp.status_code == 200
     items = resp.json()["items"]
-    assert items and all(
-        item["slug"].startswith(f"db-table-{_SOURCE_A}-") for item in items
-    )
+    assert items and all(item["slug"].startswith(f"db-table-{_SOURCE_A}-") for item in items)
     assert any(item["name"] == "invoices" for item in items)
 
 

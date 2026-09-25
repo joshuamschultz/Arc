@@ -109,14 +109,21 @@ def _block_returning(value: object):
     return _blocking
 
 
-async def test_entity_clustering_does_not_block_the_loop(workspace, db, scope, monkeypatch) -> None:
+async def test_entity_clustering_does_not_block_the_loop(
+    workspace, db, scope, monkeypatch
+) -> None:
     store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
     store.write_fact("a", "p", "1", name="Same Name", entity_type="place")
     store.write_fact("b", "p", "2", name="Same Name", entity_type="place")
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_NullDistiller(), config=MemoryConfig(),
-        embedder=_AllOnes(), confirmer=_ConfirmNothing(),
+        db,
+        workspace,
+        scope,
+        distiller=_NullDistiller(),
+        config=MemoryConfig(),
+        embedder=_AllOnes(),
+        confirmer=_ConfirmNothing(),
     )
     monkeypatch.setattr(consolidator, "_candidate_clusters", _block_returning([]))
 
@@ -130,7 +137,12 @@ async def test_cue_clustering_does_not_block_the_loop(workspace, db, scope, monk
         store.write(Insight(id=iid, statement="s", trigger="t", cues=[cue], instances=[iid]))
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_NullDistiller(), config=MemoryConfig(), embedder=_AllOnes(),
+        db,
+        workspace,
+        scope,
+        distiller=_NullDistiller(),
+        config=MemoryConfig(),
+        embedder=_AllOnes(),
     )
     monkeypatch.setattr(consolidator, "_cluster_cues", _block_returning({}))
 
@@ -146,8 +158,13 @@ async def test_procedure_clustering_does_not_block_the_loop(
     store.upsert("p-b", "Method B", steps=["y"], when_to_use="same trigger")
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_NullDistiller(), config=MemoryConfig(),
-        embedder=_AllOnes(), confirmer=_ConfirmNothing(),
+        db,
+        workspace,
+        scope,
+        distiller=_NullDistiller(),
+        config=MemoryConfig(),
+        embedder=_AllOnes(),
+        confirmer=_ConfirmNothing(),
     )
     monkeypatch.setattr(consolidator, "_procedure_clusters", _block_returning([]))
 

@@ -66,9 +66,7 @@ def test_mcp_serve_is_registered_in_the_cli() -> None:
 
 def test_stdio_mode_builds_the_door_and_serves_its_sdk_server(tmp_path: Any) -> None:
     """``arc mcp serve --stdio`` loads the agent, builds the door, and drives serve_stdio."""
-    cmd, args = resolve_command_and_args(
-        ["mcp", "serve", "--agent", str(tmp_path), "--stdio"]
-    )
+    cmd, args = resolve_command_and_args(["mcp", "serve", "--agent", str(tmp_path), "--stdio"])
     assert cmd is not None, "arc mcp serve is not registered in COMMAND_REGISTRY"
 
     load = _fake_load_arcagent()
@@ -96,7 +94,17 @@ def test_stdio_mode_builds_the_door_and_serves_its_sdk_server(tmp_path: Any) -> 
 def test_http_mode_serves_the_asgi_app_on_the_requested_port(tmp_path: Any) -> None:
     """``arc mcp serve --http --port N`` runs uvicorn with the door's ASGI app on port N."""
     cmd, args = resolve_command_and_args(
-        ["mcp", "serve", "--agent", str(tmp_path), "--http", "--host", "127.0.0.1", "--port", "9911"]
+        [
+            "mcp",
+            "serve",
+            "--agent",
+            str(tmp_path),
+            "--http",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9911",
+        ]
     )
     assert cmd is not None, "arc mcp serve is not registered in COMMAND_REGISTRY"
 

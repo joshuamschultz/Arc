@@ -211,9 +211,7 @@ class ApprovalStore:
         )
         return await self.get(approval_id) if won else None
 
-    async def claim_release(
-        self, approval_id: str, *, actor_did: str, token: str
-    ) -> bool:
+    async def claim_release(self, approval_id: str, *, actor_did: str, token: str) -> bool:
         """Claim an approved effect before invoking its external provider."""
         current = await self.get(approval_id)
         if current is None or current.status != "approved":
@@ -235,7 +233,11 @@ class ApprovalStore:
         )
 
     async def finish_release(
-        self, approval_id: str, *, actor_did: str, token: str,
+        self,
+        approval_id: str,
+        *,
+        actor_did: str,
+        token: str,
         outcome: Literal["released", "outcome_unknown"],
     ) -> bool:
         """Finish only the claim held by this worker; never reopen an uncertain effect."""

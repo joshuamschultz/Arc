@@ -196,9 +196,7 @@ class TestTracesRoute:
         # since-renamed label (exactly H-008's "no free-text match" case).
         assert trace["identity"]["name"] == "olivia"
 
-    def test_get_trace_attaches_agent_identity(
-        self, tmp_path: Path, _isolated_arc_data_dir: Path
-    ):
+    def test_get_trace_attaches_agent_identity(self, tmp_path: Path, _isolated_arc_data_dir: Path):
         team = tmp_path / "team"
         team.mkdir()
         did = "did:arc:dgx:executor/bbbb2222"

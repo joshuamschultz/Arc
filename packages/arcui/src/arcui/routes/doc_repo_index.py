@@ -100,9 +100,7 @@ async def get_source_index(request: Request) -> JSONResponse:
             operation=_OPERATION,
             outcome="error",
         )
-        return JSONResponse(
-            ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=503
-        )
+        return JSONResponse(ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=503)
 
     emit_mutation_audit(
         request,

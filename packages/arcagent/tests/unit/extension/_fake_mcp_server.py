@@ -54,9 +54,7 @@ def build_fake_mcp_server(name: str = "fake-arc-mcp") -> FastMCP:
     return server
 
 
-def build_named_mcp_server(
-    tool_names: Iterable[str], name: str = "fake-arc-mcp"
-) -> FastMCP:
+def build_named_mcp_server(tool_names: Iterable[str], name: str = "fake-arc-mcp") -> FastMCP:
     """Build a real SDK server that serves each named tool, echoing ``ran <name>``.
 
     A hosted broker (Composio) advertises tools whose names come from its own

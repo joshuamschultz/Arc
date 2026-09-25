@@ -50,8 +50,12 @@ async def test_join_resolves_payloads_at_read_time() -> None:
 async def test_federal_hash_only_is_declared_unavailable_not_empty() -> None:
     # Sealed envelope (bodies None) = federal hash-only trace mode.
     records = {
-        "llm-1": {"trace_id": "llm-1", "request_body": None, "response_body": None,
-                  "encryption": {"alg": "AES-256-GCM"}},
+        "llm-1": {
+            "trace_id": "llm-1",
+            "request_body": None,
+            "response_body": None,
+            "encryption": {"alg": "AES-256-GCM"},
+        },
     }
     join = TraceJoin(_Spans([_span("t1", ["llm-1"])]), _payload_source(records))
     result = await join.resolve("sk", "t1")

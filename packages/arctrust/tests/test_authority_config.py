@@ -29,8 +29,11 @@ class Anchor:
 
 def _write(tmp_path, signing_key, *, revision=1):
     config = DeploymentAuthorityConfig(
-        deployment_id="dgx", tenant_id="acme", revision=revision,
-        vault_url="https://vault.example", vault_ca_sha256="a" * 64,
+        deployment_id="dgx",
+        tenant_id="acme",
+        revision=revision,
+        vault_url="https://vault.example",
+        vault_ca_sha256="a" * 64,
     )
     envelope = sign_authority_config(config, lambda message: signing_key.sign(message).signature)
     path = tmp_path / "authority.json"
@@ -44,16 +47,29 @@ def _write(tmp_path, signing_key, *, revision=1):
 def test_signed_config_requires_independent_key_and_anchor(tmp_path):
     key = SigningKey.generate()
     path, config, anchor = _write(tmp_path, key)
-    assert load_authority_config(
-        path, trusted_public_key=bytes(key.verify_key),
-        expected_deployment="dgx", expected_tenant="acme", anchor=anchor,
-    ) == config
+    assert (
+        load_authority_config(
+            path,
+            trusted_public_key=bytes(key.verify_key),
+            expected_deployment="dgx",
+            expected_tenant="acme",
+            anchor=anchor,
+        )
+        == config
+    )
     with pytest.raises(AuthorityConfigError):
-        load_authority_config(path, trusted_public_key=bytes(SigningKey.generate().verify_key),
-                              expected_deployment="dgx", expected_tenant="acme", anchor=anchor)
+        load_authority_config(
+            path,
+            trusted_public_key=bytes(SigningKey.generate().verify_key),
+            expected_deployment="dgx",
+            expected_tenant="acme",
+            anchor=anchor,
+        )
 
 
-@pytest.mark.parametrize("change", ["tenant", "deployment", "rollback", "substitution", "unanchored"])
+@pytest.mark.parametrize(
+    "change", ["tenant", "deployment", "rollback", "substitution", "unanchored"]
+)
 def test_config_refuses_substitution_replay_and_rollback(tmp_path, change):
     key = SigningKey.generate()
     path, _config, anchor = _write(tmp_path, key)
@@ -71,8 +87,13 @@ def test_config_refuses_substitution_replay_and_rollback(tmp_path, change):
     else:
         anchor.head = None
     with pytest.raises(AuthorityConfigError):
-        load_authority_config(path, trusted_public_key=bytes(key.verify_key),
-                              expected_deployment=deployment, expected_tenant=tenant, anchor=anchor)
+        load_authority_config(
+            path,
+            trusted_public_key=bytes(key.verify_key),
+            expected_deployment=deployment,
+            expected_tenant=tenant,
+            anchor=anchor,
+        )
 
 
 def test_namespace_is_derived_and_cannot_be_shared_or_selected(tmp_path):
@@ -84,5 +105,10 @@ def test_namespace_is_derived_and_cannot_be_shared_or_selected(tmp_path):
     payload["config"]["transit_mount"] = "shared-transit"
     path.write_text(json.dumps(payload))
     with pytest.raises(AuthorityConfigError):
-        load_authority_config(path, trusted_public_key=bytes(key.verify_key),
-                              expected_deployment="dgx", expected_tenant="acme", anchor=anchor)
+        load_authority_config(
+            path,
+            trusted_public_key=bytes(key.verify_key),
+            expected_deployment="dgx",
+            expected_tenant="acme",
+            anchor=anchor,
+        )

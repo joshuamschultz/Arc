@@ -147,7 +147,7 @@ def gateway_voice_engines_handler(_args: list[str]) -> None:
 
     _out(f"TTS engines: {', '.join(registered_tts()) or 'none'}")
     _out(f"STT engines: {', '.join(registered_stt()) or 'none'}")
-    _out("Select in gateway.toml: [platforms.voice.engine] tts = \"<name>\"  stt = \"<name>\"")
+    _out('Select in gateway.toml: [platforms.voice.engine] tts = "<name>"  stt = "<name>"')
 
 
 __all__ = [

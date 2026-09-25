@@ -49,7 +49,9 @@ async def _seed(workspace: Path, *, classification: str = "unclassified") -> Non
         "alice shipped the widget release", kind="observation", classification=classification
     )
     await brain.capture(
-        "bob reviewed the quarterly budget numbers", kind="observation", classification=classification
+        "bob reviewed the quarterly budget numbers",
+        kind="observation",
+        classification=classification,
     )
 
 

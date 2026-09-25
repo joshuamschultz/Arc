@@ -24,7 +24,9 @@ class _FakeOWW:
 def test_oww_detector_fires_only_above_threshold() -> None:
     frame = np.zeros(1280, dtype=np.int16).tobytes()
     assert OpenWakeWordDetector(model_path="x", threshold=0.5, model=_FakeOWW(0.9)).detect(frame)
-    assert not OpenWakeWordDetector(model_path="x", threshold=0.5, model=_FakeOWW(0.2)).detect(frame)
+    assert not OpenWakeWordDetector(model_path="x", threshold=0.5, model=_FakeOWW(0.2)).detect(
+        frame
+    )
 
 
 def test_collect_utterance_stops_after_trailing_silence() -> None:

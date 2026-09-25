@@ -59,9 +59,7 @@ class _RecordingSink:
 def _identity(org: str = "acme", agent_type: str = "exec") -> tuple[str, bytes, bytes]:
     """A fresh (did, public_key, private_key) built from real arctrust primitives."""
     keypair = generate_keypair()
-    did = arc_identity.did_from_public_key(
-        keypair.public_key, org=org, agent_type=agent_type
-    )
+    did = arc_identity.did_from_public_key(keypair.public_key, org=org, agent_type=agent_type)
     return did, keypair.public_key, keypair.private_key
 
 
@@ -69,9 +67,16 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _signed(caller_did: str, public_key: bytes, private_key: bytes, *, ts: str, nonce: str) -> InboundRequest:
+def _signed(
+    caller_did: str, public_key: bytes, private_key: bytes, *, ts: str, nonce: str
+) -> InboundRequest:
     return sign_inbound(
-        _CONTENT, nonce=nonce, ts=ts, caller_did=caller_did, private_key=private_key, public_key=public_key
+        _CONTENT,
+        nonce=nonce,
+        ts=ts,
+        caller_did=caller_did,
+        private_key=private_key,
+        public_key=public_key,
     )
 
 
@@ -81,7 +86,9 @@ def test_valid_signed_request_returns_the_caller_did() -> None:
     request = _signed(did, pub, priv, ts=_now(), nonce=new_nonce())
     sink = _RecordingSink()
 
-    verified = verify_inbound(request, replay_cache=ReplayCache(), audit_sink=sink, tier="personal")
+    verified = verify_inbound(
+        request, replay_cache=ReplayCache(), audit_sink=sink, tier="personal"
+    )
 
     assert verified == did
     # A clean pass emits no denial.
@@ -122,7 +129,12 @@ def test_did_not_bound_to_public_key_is_denied() -> None:
     did_b, _, _ = _identity(org="beta")
     _, pub_a, priv_a = _identity(org="alpha")
     request = sign_inbound(
-        _CONTENT, nonce=new_nonce(), ts=_now(), caller_did=did_b, private_key=priv_a, public_key=pub_a
+        _CONTENT,
+        nonce=new_nonce(),
+        ts=_now(),
+        caller_did=did_b,
+        private_key=priv_a,
+        public_key=pub_a,
     )
     sink = _RecordingSink()
 
@@ -177,7 +189,10 @@ def test_replayed_nonce_is_denied() -> None:
     cache = ReplayCache()
 
     first = _signed(did, pub, priv, ts=ts, nonce=nonce)
-    assert verify_inbound(first, replay_cache=cache, audit_sink=_RecordingSink(), tier="personal") == did
+    assert (
+        verify_inbound(first, replay_cache=cache, audit_sink=_RecordingSink(), tier="personal")
+        == did
+    )
 
     replay = _signed(did, pub, priv, ts=ts, nonce=nonce)
     sink = _RecordingSink()

@@ -36,12 +36,18 @@ class FakeAnchor:
     def latest(self) -> AnchorHead | None:
         return self.head
 
-    def compare_and_advance(self, expected: AnchorHead | None, digest: str, intent: str) -> AnchorHead:
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
         if expected != self.head:
             raise RuntimeError("stale")
-        self.head = AnchorHead(scope=self.scope, version=1 if expected is None else expected.version + 1,
-                               digest=digest, previous_digest=None if expected is None else expected.digest,
-                               intent=intent)
+        self.head = AnchorHead(
+            scope=self.scope,
+            version=1 if expected is None else expected.version + 1,
+            digest=digest,
+            previous_digest=None if expected is None else expected.digest,
+            intent=intent,
+        )
         return self.head
 
 
@@ -57,8 +63,13 @@ class FakeCipher:
 def authority(tmp_path):
     path = tmp_path / "state" / "users.json"
     path.parent.mkdir(mode=0o700)
-    opts = dict(issuer=FakeIssuer(), anchor=FakeAnchor(), cipher=FakeCipher(),
-                audit_sink=NullSink(), actor_did="did:arc:test:user/audit")
+    opts = dict(
+        issuer=FakeIssuer(),
+        anchor=FakeAnchor(),
+        cipher=FakeCipher(),
+        audit_sink=NullSink(),
+        actor_did="did:arc:test:user/audit",
+    )
 
     def factory() -> UserStore:
         return UserStore(path, **opts)
@@ -170,7 +181,9 @@ def test_login_itself_needs_no_credentials(client):
 
 @pytest.mark.parametrize("body", ["null", "[]", '"email"', "123"])
 def test_login_rejects_non_object_json(client, body):
-    resp = client.post("/api/auth/login", content=body, headers={"Content-Type": "application/json"})
+    resp = client.post(
+        "/api/auth/login", content=body, headers={"Content-Type": "application/json"}
+    )
     assert resp.status_code == 400
 
 
@@ -180,7 +193,8 @@ def test_profile_rejects_non_object_json(client, body):
         "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
     ).json()["token"]
     resp = client.patch(
-        "/api/auth/me", content=body,
+        "/api/auth/me",
+        content=body,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
@@ -276,7 +290,8 @@ def test_profile_validation_failure_does_not_partially_save(client):
         "/api/auth/login", json={"email": "watcher@example.com", "password": GOOD}
     ).json()["token"]
     client.patch(
-        "/api/auth/me", headers={"Authorization": f"Bearer {watcher}"},
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {watcher}"},
         json={"pairings": {"someplatform": "4242"}},
     )
     boss = client.post(
@@ -284,7 +299,8 @@ def test_profile_validation_failure_does_not_partially_save(client):
     ).json()["token"]
     headers = {"Authorization": f"Bearer {boss}"}
     response = client.patch(
-        "/api/auth/me", headers=headers,
+        "/api/auth/me",
+        headers=headers,
         json={"display_name": "Should not save", "pairings": {"someplatform": "4242"}},
     )
     assert response.status_code == 400

@@ -82,7 +82,9 @@ class _RealFleetSharedPort:
         self._signer = signer
         self._personal = personal
 
-    async def save(self, draft: object, access: KnowledgeAccess) -> KnowledgeRef:  # pragma: no cover
+    async def save(
+        self, draft: object, access: KnowledgeAccess
+    ) -> KnowledgeRef:  # pragma: no cover
         raise NotImplementedError
 
     async def read(self, reference: str, access: KnowledgeAccess) -> object:
@@ -202,7 +204,9 @@ async def test_unverified_scored_cards_cannot_reach_other_agent(tmp_path: Path) 
         access = KnowledgeAccess(agent_a.did, "UNCLASSIFIED")
         shared = await port.promote(to_promotion_source(original), access)
         await service.revoke(shared.identifier, access)
-        seeded.write(original.model_copy(update={"statement": "Changed close schedule is Friday."}))
+        seeded.write(
+            original.model_copy(update={"statement": "Changed close schedule is Friday."})
+        )
 
         with pytest.raises(MemoryPromotionUnavailableError):
             await consolidate_poll_once(now_local=window)
@@ -222,7 +226,9 @@ async def test_configured_memory_without_trusted_fleet_composition_is_unavailabl
     try:
         _runtime.configure(
             config={"brain": "arcmemory", "promotion": {"enabled": True}},
-            workspace=tmp_path, agent_did=identity.did, identity=identity,
+            workspace=tmp_path,
+            agent_did=identity.did,
+            identity=identity,
         )
         window = datetime.now().astimezone().replace(hour=4, minute=59, second=0)
         with pytest.raises(MemoryPromotionUnavailableError):

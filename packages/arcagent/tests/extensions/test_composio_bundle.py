@@ -255,8 +255,7 @@ def test_composio_authenticates_with_x_api_key_header_not_bearer(
     # HTTP header names are case-insensitive; compare on a lowered view.
     lowered = {name.lower(): value for name, value in headers.items()}
     assert lowered.get("x-api-key") == "COMPOSIO_TOKEN_123", (
-        "the Composio API key must travel as an x-api-key header, "
-        f"got headers {sorted(headers)}"
+        f"the Composio API key must travel as an x-api-key header, got headers {sorted(headers)}"
     )
     assert "authorization" not in lowered, (
         "Composio's hosted MCP does not authenticate with Authorization: Bearer"
@@ -320,7 +319,9 @@ async def test_composio_probe_list_invoke_over_sdk_against_fake_backend(
     attachment = build_attachment(manifest, _COMPOSIO, _operator_secrets(manifest, "tok"))
 
     probe = await attachment.probe()
-    assert probe.reachable is True, f"probe against the fake Composio backend must reach it: {probe}"
+    assert probe.reachable is True, (
+        f"probe against the fake Composio backend must reach it: {probe}"
+    )
 
     described = {spec.name for spec in await attachment.describe_tools()}
     assert verb in described

@@ -89,8 +89,11 @@ class SessionRegistry:
             session = self._sessions.get(token)
             if session is not None:
                 self._sessions[token] = Session(
-                    token=session.token, email=session.email, did=session.did,
-                    role=role, expires_at=session.expires_at,
+                    token=session.token,
+                    email=session.email,
+                    did=session.did,
+                    role=role,
+                    expires_at=session.expires_at,
                 )
 
     def revoke_user(self, email: str) -> int:

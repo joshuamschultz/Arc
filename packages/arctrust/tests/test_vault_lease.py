@@ -18,38 +18,66 @@ from arctrust.vault_lease import (
 
 
 def _config():
-    return DeploymentAuthorityConfig(deployment_id="dgx", tenant_id="acme", revision=1,
-                                     vault_url="https://vault.example", vault_ca_sha256="a" * 64)
+    return DeploymentAuthorityConfig(
+        deployment_id="dgx",
+        tenant_id="acme",
+        revision=1,
+        vault_url="https://vault.example",
+        vault_ca_sha256="a" * 64,
+    )
 
 
 def test_policy_comes_only_from_signed_grant():
     key = SigningKey.generate()
     config = _config()
     grant = CapabilityGrant(
-        deployment_id="dgx", tenant_id="acme", config_revision=1,
-        config_digest=config.digest, capability=Capability.ISSUER,
-        subject="dgx-workload", expires_at=int(time.time()) + 60,
+        deployment_id="dgx",
+        tenant_id="acme",
+        config_revision=1,
+        config_digest=config.digest,
+        capability=Capability.ISSUER,
+        subject="dgx-workload",
+        expires_at=int(time.time()) + 60,
     )
     envelope = sign_capability_grant(grant, lambda data: key.sign(data).signature)
     assert grant.policy_name == "arc-acme-dgx-issuer"
     with pytest.raises(VaultLeaseError):
-        open_vault_lease(config, envelope, trusted_grant_key=bytes(SigningKey.generate().verify_key),
-                         credential_provider=object(), ca_pem=b"fake")
+        open_vault_lease(
+            config,
+            envelope,
+            trusted_grant_key=bytes(SigningKey.generate().verify_key),
+            credential_provider=object(),
+            ca_pem=b"fake",
+        )
 
 
 def test_grant_refuses_wrong_scope_expiry_and_policy_injection():
     key = SigningKey.generate()
     config = _config()
     grant = CapabilityGrant(
-        deployment_id="dgx", tenant_id="acme", config_revision=1,
-        config_digest=config.digest, capability=Capability.ANCHOR,
-        subject="dgx-workload", expires_at=int(time.time()) - 1,
+        deployment_id="dgx",
+        tenant_id="acme",
+        config_revision=1,
+        config_digest=config.digest,
+        capability=Capability.ANCHOR,
+        subject="dgx-workload",
+        expires_at=int(time.time()) - 1,
     )
     envelope = sign_capability_grant(grant, lambda data: key.sign(data).signature)
     with pytest.raises(VaultLeaseError):
-        open_vault_lease(config, envelope, trusted_grant_key=bytes(key.verify_key),
-                         credential_provider=object(), ca_pem=b"fake")
+        open_vault_lease(
+            config,
+            envelope,
+            trusted_grant_key=bytes(key.verify_key),
+            credential_provider=object(),
+            ca_pem=b"fake",
+        )
     envelope["grant"]["policy_name"] = "root"
     with pytest.raises(VaultLeaseError):
-        open_vault_lease(config, envelope, trusted_grant_key=bytes(key.verify_key),
-                         credential_provider=object(), ca_pem=b"fake")
+        open_vault_lease(
+            config,
+            envelope,
+            trusted_grant_key=bytes(key.verify_key),
+            credential_provider=object(),
+            ca_pem=b"fake",
+        )

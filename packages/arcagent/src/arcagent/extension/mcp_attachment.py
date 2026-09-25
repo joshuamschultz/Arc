@@ -269,9 +269,7 @@ class SdkMcpClient:
             # A degraded, readable result is the probe contract — probe answers
             # reachability for the loader and must never raise.
             return ProbeResult(reachable=False, detail=str(exc))
-        return ProbeResult(
-            reachable=True, tools=tools, detail=f"MCP SDK, {len(tools)} tool(s)"
-        )
+        return ProbeResult(reachable=True, tools=tools, detail=f"MCP SDK, {len(tools)} tool(s)")
 
     async def describe_tools(self) -> list[ToolSpec]:
         """The live tool list, classified by the manifest and by nothing else."""
@@ -359,9 +357,7 @@ class SdkMcpClient:
             {"method": method},
         )
 
-    async def _open_and_run(
-        self, operation: Callable[[ClientSession], Awaitable[_T]]
-    ) -> _T:
+    async def _open_and_run(self, operation: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         """Open one session and run the operation on it, closing it on the way out.
 
         Wrapped as a single coroutine so :func:`asyncio.wait_for` bounds the whole

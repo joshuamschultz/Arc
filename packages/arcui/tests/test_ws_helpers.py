@@ -86,7 +86,7 @@ class TestAuthenticateWS:
         assert msg == {}
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("body", ["null", "[]", '{"token": 7}', '{}'])
+    @pytest.mark.parametrize("body", ["null", "[]", '{"token": 7}', "{}"])
     async def test_non_object_or_non_string_auth_is_closed(self, body):
         ws = AsyncMock()
         ws.receive_text = AsyncMock(return_value=body)
@@ -114,10 +114,14 @@ class TestRunWSTasks:
 @pytest.mark.asyncio
 async def test_session_downgrade_rechecked_before_websocket_action():
     auth = AuthConfig({"viewer_token": "v" * 64, "operator_token": "o" * 64})
-    session = auth.sessions.issue(email="boss@example.com", did="did:arc:test:user/abc", role="operator")
+    session = auth.sessions.issue(
+        email="boss@example.com", did="did:arc:test:user/abc", role="operator"
+    )
     user = SimpleNamespace(did=session.did, disabled=False, is_operator=False)
     ws = AsyncMock()
-    ws.app.state = SimpleNamespace(hosted=True, user_store_factory=lambda: SimpleNamespace(get=lambda _: user))
+    ws.app.state = SimpleNamespace(
+        hosted=True, user_store_factory=lambda: SimpleNamespace(get=lambda _: user)
+    )
     assert await revalidate_ws(ws, session.token, auth) == "viewer"
     assert auth.identify(session.token).role == "viewer"
 
@@ -125,10 +129,14 @@ async def test_session_downgrade_rechecked_before_websocket_action():
 @pytest.mark.asyncio
 async def test_disabled_session_is_closed_before_websocket_action():
     auth = AuthConfig({"viewer_token": "v" * 64, "operator_token": "o" * 64})
-    session = auth.sessions.issue(email="boss@example.com", did="did:arc:test:user/abc", role="operator")
+    session = auth.sessions.issue(
+        email="boss@example.com", did="did:arc:test:user/abc", role="operator"
+    )
     user = SimpleNamespace(did=session.did, disabled=True, is_operator=True)
     ws = AsyncMock()
-    ws.app.state = SimpleNamespace(hosted=True, user_store_factory=lambda: SimpleNamespace(get=lambda _: user))
+    ws.app.state = SimpleNamespace(
+        hosted=True, user_store_factory=lambda: SimpleNamespace(get=lambda _: user)
+    )
     assert await revalidate_ws(ws, session.token, auth) is None
     ws.close.assert_awaited_once_with(code=CLOSE_AUTH_INVALID)
     assert auth.identify(session.token) is None
@@ -137,8 +145,12 @@ async def test_disabled_session_is_closed_before_websocket_action():
 @pytest.mark.asyncio
 async def test_account_outage_closes_websocket_without_leaking_error():
     auth = AuthConfig({"viewer_token": "v" * 64, "operator_token": "o" * 64})
-    session = auth.sessions.issue(email="boss@example.com", did="did:arc:test:user/abc", role="operator")
+    session = auth.sessions.issue(
+        email="boss@example.com", did="did:arc:test:user/abc", role="operator"
+    )
     ws = AsyncMock()
-    ws.app.state = SimpleNamespace(hosted=True, user_store_factory=lambda: (_ for _ in ()).throw(RuntimeError("sensitive")))
+    ws.app.state = SimpleNamespace(
+        hosted=True, user_store_factory=lambda: (_ for _ in ()).throw(RuntimeError("sensitive"))
+    )
     assert await revalidate_ws(ws, session.token, auth) is None
     assert "sensitive" not in str(ws.send_json.await_args)

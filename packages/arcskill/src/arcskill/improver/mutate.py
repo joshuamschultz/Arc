@@ -196,9 +196,7 @@ class LLMSkillMerger:
         self._llm = llm
         self._resolve = resolve
 
-    async def propose(
-        self, *, a: BundleView, b: BundleView, insight: str
-    ) -> BundlePatch | None:
+    async def propose(self, *, a: BundleView, b: BundleView, insight: str) -> BundlePatch | None:
         prompt = load_prompt("merge_prompt", resolve=self._resolve).format(
             skill_a_name=a.skill_name,
             skill_a_text=a.text,

@@ -132,7 +132,9 @@ async def test_hermes_foreign_member_end_to_end() -> None:
     records = await backend.read_stream(AUDIT_COLLECTION, "audit", after_seq=0, limit=1000)
     events = [r.get("event_type", "") for r in records]
     enroll_records = [
-        r for r in records if r.get("event_type") == "entity.registered" and r.get("target_id") == hermes_id.did
+        r
+        for r in records
+        if r.get("event_type") == "entity.registered" and r.get("target_id") == hermes_id.did
     ]
     assert enroll_records, "no enrollment audit record for hermes"
     assert "harness=hermes" in enroll_records[0].get("detail", "")

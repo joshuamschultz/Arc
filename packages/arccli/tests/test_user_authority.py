@@ -10,7 +10,9 @@ import pytest
 from arccli.commands.user import _store
 
 
-def test_unconfigured_account_authority_is_explicitly_unavailable(capsys: pytest.CaptureFixture[str]) -> None:
+def test_unconfigured_account_authority_is_explicitly_unavailable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with pytest.raises(SystemExit, match="1"):
         _store(argparse.Namespace(file=None))
     assert "account authority is unavailable" in capsys.readouterr().err

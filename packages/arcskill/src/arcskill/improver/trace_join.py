@@ -119,9 +119,7 @@ class TraceJoin:
             )
         return JoinedTrace(span=span, payloads=resolved)
 
-    async def curatable(
-        self, skill_name: str
-    ) -> list[JoinedTrace | CurationUnavailable]:
+    async def curatable(self, skill_name: str) -> list[JoinedTrace | CurationUnavailable]:
         """Every span for ``skill_name`` joined to its payloads (read-time), newest ids first.
 
         Each element is either a :class:`JoinedTrace` (payloads visible) or a

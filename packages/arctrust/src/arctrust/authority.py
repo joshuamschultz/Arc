@@ -44,18 +44,26 @@ class AccountAuthority:
     """Own fixed account adapters; bind every mutation store to a verified actor."""
 
     def __init__(
-        self, config: DeploymentAuthorityConfig, leases: dict[Capability, VaultLease], *,
-        audit_sink: AuditSink, strict_audit_sink: DurableAuditSink,
-        actor_verifier: AccountActorVerifier, users_path: Path,
+        self,
+        config: DeploymentAuthorityConfig,
+        leases: dict[Capability, VaultLease],
+        *,
+        audit_sink: AuditSink,
+        strict_audit_sink: DurableAuditSink,
+        actor_verifier: AccountActorVerifier,
+        users_path: Path,
         bootstrap_authority: BootstrapAuthority | None = None,
     ) -> None:
         if set(leases) != {Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR}:
             raise AccountAuthorityError("account capabilities are incomplete")
         for capability, lease in leases.items():
             grant = lease._grant
-            if (grant.capability != capability or grant.deployment_id != config.deployment_id
-                    or grant.tenant_id != config.tenant_id
-                    or grant.config_digest != config.digest):
+            if (
+                grant.capability != capability
+                or grant.deployment_id != config.deployment_id
+                or grant.tenant_id != config.tenant_id
+                or grant.config_digest != config.digest
+            ):
                 raise AccountAuthorityError("account capability scope mismatch")
         self._config = config
         self._leases = leases
@@ -67,12 +75,17 @@ class AccountAuthority:
             leases[Capability.ISSUER]._adapter_client(), mount=config.transit_mount
         )
         self._anchor = VaultKVAnchor(
-            leases[Capability.ANCHOR]._adapter_client(), mount=config.anchor_mount,
-            record="users", bootstrap_authority=bootstrap_authority,
+            leases[Capability.ANCHOR]._adapter_client(),
+            mount=config.anchor_mount,
+            record="users",
+            bootstrap_authority=bootstrap_authority,
         )
         self._cipher = VaultCipher(
-            leases[Capability.CIPHER]._adapter_client(), mount=config.transit_mount,
-            key="account-seal", scope=self._anchor.scope, record_id="users",
+            leases[Capability.CIPHER]._adapter_client(),
+            mount=config.transit_mount,
+            key="account-seal",
+            scope=self._anchor.scope,
+            record_id="users",
         )
 
     def _actor_did(self, proof: object) -> str:
@@ -89,9 +102,13 @@ class AccountAuthority:
         """Bind a store to an independently authenticated actor and strict audit."""
         did = self._actor_did(actor_proof)
         return UserStore(
-            self._users_path, issuer=self._issuer, anchor=self._anchor,
-            cipher=self._cipher, audit_sink=self._audit_sink,
-            strict_audit_sink=self._strict_audit_sink, actor_did=did,
+            self._users_path,
+            issuer=self._issuer,
+            anchor=self._anchor,
+            cipher=self._cipher,
+            audit_sink=self._audit_sink,
+            strict_audit_sink=self._strict_audit_sink,
+            actor_did=did,
         )
 
     def close(self) -> None:
@@ -100,18 +117,28 @@ class AccountAuthority:
 
 
 def open_account_authority(
-    config_path: Path, *, trusted_config_key: bytes, expected_deployment: str,
-    expected_tenant: str, config_anchor: MonotonicAnchor,
-    signed_grants: dict[Capability, dict[str, Any]], trusted_grant_key: bytes,
-    credential_provider: VaultCredentialProvider, ca_pem: bytes,
-    audit_sink: AuditSink, strict_audit_sink: DurableAuditSink,
-    actor_verifier: AccountActorVerifier, users_path: Path,
+    config_path: Path,
+    *,
+    trusted_config_key: bytes,
+    expected_deployment: str,
+    expected_tenant: str,
+    config_anchor: MonotonicAnchor,
+    signed_grants: dict[Capability, dict[str, Any]],
+    trusted_grant_key: bytes,
+    credential_provider: VaultCredentialProvider,
+    ca_pem: bytes,
+    audit_sink: AuditSink,
+    strict_audit_sink: DurableAuditSink,
+    actor_verifier: AccountActorVerifier,
+    users_path: Path,
     bootstrap_authority: BootstrapAuthority | None = None,
 ) -> AccountAuthority:
     """Open only the three account capabilities after validating config first."""
     config = load_authority_config(
-        config_path, trusted_public_key=trusted_config_key,
-        expected_deployment=expected_deployment, expected_tenant=expected_tenant,
+        config_path,
+        trusted_public_key=trusted_config_key,
+        expected_deployment=expected_deployment,
+        expected_tenant=expected_tenant,
         anchor=config_anchor,
     )
     required = {Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR}
@@ -121,16 +148,23 @@ def open_account_authority(
     try:
         for capability in sorted(required):
             lease = open_vault_lease(
-                config, signed_grants[capability], trusted_grant_key=trusted_grant_key,
-                credential_provider=credential_provider, ca_pem=ca_pem,
+                config,
+                signed_grants[capability],
+                trusted_grant_key=trusted_grant_key,
+                credential_provider=credential_provider,
+                ca_pem=ca_pem,
             )
             if lease._grant.capability != capability:
                 lease.close()
                 raise AccountAuthorityError("account capability grant mismatch")
             leases[capability] = lease
         return AccountAuthority(
-            config, leases, audit_sink=audit_sink, strict_audit_sink=strict_audit_sink,
-            actor_verifier=actor_verifier, users_path=users_path,
+            config,
+            leases,
+            audit_sink=audit_sink,
+            strict_audit_sink=strict_audit_sink,
+            actor_verifier=actor_verifier,
+            users_path=users_path,
             bootstrap_authority=bootstrap_authority,
         )
     except BaseException:

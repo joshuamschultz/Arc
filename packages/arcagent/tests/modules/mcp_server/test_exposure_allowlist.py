@@ -52,9 +52,7 @@ def test_non_allowlisted_call_is_denied_before_dispatch() -> None:
 def test_unbounded_allowlist_is_refused_at_enterprise_and_federal(tier: str) -> None:
     """A ``*`` exposure is refused outside personal (REQ-415)."""
     with pytest.raises(AllowlistRefused):
-        ExposureAllowlist.from_config(
-            McpServerConfig(enabled=True, expose=["*"]), tier=tier
-        )
+        ExposureAllowlist.from_config(McpServerConfig(enabled=True, expose=["*"]), tier=tier)
 
 
 @pytest.mark.parametrize("tier", ["enterprise", "federal"])

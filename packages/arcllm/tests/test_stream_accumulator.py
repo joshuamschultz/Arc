@@ -44,8 +44,14 @@ def test_accumulator_keeps_parallel_calls_streamed_whole_at_one_index() -> None:
     accumulator = StreamAccumulator(model="test-model")
 
     for delta in (
-        Delta(tool_call=ToolCallDelta(index=0, id="a", name="get_weather", arguments='{"city":"Tokyo"}')),
-        Delta(tool_call=ToolCallDelta(index=0, id="b", name="get_time", arguments='{"city":"Tokyo"}')),
+        Delta(
+            tool_call=ToolCallDelta(
+                index=0, id="a", name="get_weather", arguments='{"city":"Tokyo"}'
+            )
+        ),
+        Delta(
+            tool_call=ToolCallDelta(index=0, id="b", name="get_time", arguments='{"city":"Tokyo"}')
+        ),
         Delta(stop_reason="tool_use"),
     ):
         accumulator.add(delta)

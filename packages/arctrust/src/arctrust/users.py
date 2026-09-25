@@ -264,7 +264,8 @@ class UserStore:
     def _save_locked(self, candidate: dict[str, User]) -> None:
         payload = json.dumps(
             {"users": [asdict(u) for u in candidate.values()]},
-            sort_keys=True, separators=(",", ":"),
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode()
         sealed = self._cipher.seal(payload)
         digest = hashlib.sha256(sealed.encode("ascii")).hexdigest()
@@ -343,8 +344,11 @@ class UserStore:
 
     def _audit(self, action: str, outcome: str, digest: str) -> None:
         event = AuditEvent(
-            actor_did=self._actor_did, action=action, target=self._anchor.scope,
-            outcome=outcome, payload_hash=digest,
+            actor_did=self._actor_did,
+            action=action,
+            target=self._anchor.scope,
+            outcome=outcome,
+            payload_hash=digest,
         )
         if action == "users.change" and self._strict_audit_sink is not None:
             self._strict_audit_sink.write_durable(event)
@@ -365,12 +369,15 @@ class UserStore:
             raise UserStoreError("user authority lock or directory changed") from exc
         pinned_meta = os.fstat(dir_fd)
         if (directory_meta.st_dev, directory_meta.st_ino) != (
-            pinned_meta.st_dev, pinned_meta.st_ino
+            pinned_meta.st_dev,
+            pinned_meta.st_ino,
         ):
             raise UserStoreError("user authority directory changed")
         pinned_lock = os.fstat(lock_fd)
-        if ((lock_meta.st_dev, lock_meta.st_ino) != (pinned_lock.st_dev, pinned_lock.st_ino)
-                or pinned_lock.st_nlink != 1):
+        if (lock_meta.st_dev, lock_meta.st_ino) != (
+            pinned_lock.st_dev,
+            pinned_lock.st_ino,
+        ) or pinned_lock.st_nlink != 1:
             raise UserStoreError("user authority lock changed")
         return dir_fd
 
@@ -388,9 +395,12 @@ class UserStore:
             raise UserStoreError("user store is not a private regular file") from exc
         try:
             metadata = os.fstat(fd)
-            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
-                    or metadata.st_uid != os.getuid()
-                    or stat.S_IMODE(metadata.st_mode) != _FILE_MODE):
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != _FILE_MODE
+            ):
                 raise UserStoreError("user store has insecure permissions or file type")
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 return stream.read()
@@ -512,15 +522,20 @@ class UserStore:
 
     @_synchronized
     def update_profile(
-        self, email: str, *, display_name: str | None = None,
-        handle: str | None = None, pairings: dict[str, str | None] | None = None,
+        self,
+        email: str,
+        *,
+        display_name: str | None = None,
+        handle: str | None = None,
+        pairings: dict[str, str | None] | None = None,
     ) -> User:
         """Validate and persist a profile edit as one authority revision."""
         self._check_write_head()
         user = self._require(email)
         resolved_handle = (
             self._resolve_handle(handle, user.email, taken_by=user.email, strict=True)
-            if handle is not None else user.handle
+            if handle is not None
+            else user.handle
         )
         merged = dict(user.pairings)
         for raw_platform, external_id in (pairings or {}).items():

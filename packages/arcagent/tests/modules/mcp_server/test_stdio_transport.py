@@ -94,7 +94,9 @@ async def test_real_handshake_over_stdio_lists_the_catalog() -> None:
         init_line = await asyncio.wait_for(reader.readline(), timeout=5)
         assert json.loads(init_line)["id"] == 0, "no initialize result over stdio"
 
-        os.write(client_to_server_w, _line({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        os.write(
+            client_to_server_w, _line({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        )
         os.write(
             client_to_server_w,
             _line({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}),

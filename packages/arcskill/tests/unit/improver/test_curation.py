@@ -79,8 +79,12 @@ def test_manifest_tags_curated_provenance_and_gate_type(tmp_path: Path) -> None:
     skill_dir = _skill_dir(tmp_path)
     rubric = "Pass iff the output is polite."
     case = CuratedGoldenCase(
-        case_id="c", skill_name="myskill", gate_type="judge_rubric", rubric=rubric,
-        judge_model_id="anthropic:haiku", rubric_sha256=rubric_digest(rubric),
+        case_id="c",
+        skill_name="myskill",
+        gate_type="judge_rubric",
+        rubric=rubric,
+        judge_model_id="anthropic:haiku",
+        rubric_sha256=rubric_digest(rubric),
     )
     emitted = emit_golden_case(skill_dir, case, signer=_RecordingSigner())
     manifest = json.loads((skill_dir / "evals" / ".manifest.json").read_text())
@@ -95,7 +99,9 @@ def test_manifest_tags_curated_provenance_and_gate_type(tmp_path: Path) -> None:
 def test_load_suite_sees_curated_case_as_human_with_gate_type(tmp_path: Path) -> None:
     skill_dir = _skill_dir(tmp_path)
     case = CuratedGoldenCase(
-        case_id="c", skill_name="myskill", gate_type="assertions",
+        case_id="c",
+        skill_name="myskill",
+        gate_type="assertions",
         assertions=[AssertionCheck(kind="contains", value="ok")],
     )
     emit_golden_case(skill_dir, case, signer=_RecordingSigner())
@@ -109,8 +115,12 @@ def test_load_suite_sees_curated_case_as_human_with_gate_type(tmp_path: Path) ->
 def test_judge_rubric_case_without_pin_is_rejected_before_write(tmp_path: Path) -> None:
     skill_dir = _skill_dir(tmp_path)
     case = CuratedGoldenCase(
-        case_id="c", skill_name="myskill", gate_type="judge_rubric",
-        rubric="r", judge_model_id="", rubric_sha256=rubric_digest("r"),
+        case_id="c",
+        skill_name="myskill",
+        gate_type="judge_rubric",
+        rubric="r",
+        judge_model_id="",
+        rubric_sha256=rubric_digest("r"),
     )
     with pytest.raises(PinnedJudgeError):
         emit_golden_case(skill_dir, case, signer=_RecordingSigner())

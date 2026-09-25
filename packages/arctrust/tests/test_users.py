@@ -38,12 +38,18 @@ class FakeAnchor:
     def latest(self) -> AnchorHead | None:
         return self.head
 
-    def compare_and_advance(self, expected: AnchorHead | None, digest: str, intent: str) -> AnchorHead:
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
         if expected != self.head:
             raise RuntimeError("stale user authority writer")
-        self.head = AnchorHead(scope=self.scope, version=1 if expected is None else expected.version + 1,
-                               digest=digest, previous_digest=None if expected is None else expected.digest,
-                               intent=intent)
+        self.head = AnchorHead(
+            scope=self.scope,
+            version=1 if expected is None else expected.version + 1,
+            digest=digest,
+            previous_digest=None if expected is None else expected.digest,
+            intent=intent,
+        )
         return self.head
 
 
@@ -68,8 +74,13 @@ class FakeAudit:
 
 @pytest.fixture
 def authority():
-    return dict(issuer=FakeIssuer(), anchor=FakeAnchor(), cipher=FakeCipher(),
-                audit_sink=FakeAudit(), actor_did="did:arc:test:user/audit")
+    return dict(
+        issuer=FakeIssuer(),
+        anchor=FakeAnchor(),
+        cipher=FakeCipher(),
+        audit_sink=FakeAudit(),
+        actor_did="did:arc:test:user/audit",
+    )
 
 
 @pytest.fixture

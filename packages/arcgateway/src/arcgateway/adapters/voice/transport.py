@@ -67,9 +67,7 @@ class VoiceServer:
     async def start(self) -> None:
         from websockets.asyncio.server import serve  # lazy: optional [voice] dep
 
-        self._server = await serve(
-            self._handle, self._host, self._port, max_size=MAX_UTTERANCE
-        )
+        self._server = await serve(self._handle, self._host, self._port, max_size=MAX_UTTERANCE)
 
     def bound_port(self) -> int:
         """The actually-bound port (useful when started on port 0)."""

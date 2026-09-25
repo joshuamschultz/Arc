@@ -114,7 +114,9 @@ def _install_fake_broker(monkeypatch: pytest.MonkeyPatch, served: list[str]) -> 
 
 
 def _registry() -> ToolRegistry:
-    return ToolRegistry(config=ToolsConfig(policy=ToolConfig()), bus=ModuleBus(), telemetry=_RecordingTelemetry())
+    return ToolRegistry(
+        config=ToolsConfig(policy=ToolConfig()), bus=ModuleBus(), telemetry=_RecordingTelemetry()
+    )
 
 
 async def test_broker_served_rogue_tool_is_never_registered_or_invocable(
@@ -126,7 +128,9 @@ async def test_broker_served_rogue_tool_is_never_registered_or_invocable(
     """
     manifest = _load_manifest()
     allow = list(manifest.tools.allow)
-    assert allow and "*" not in allow, "the Composio manifest must carry an explicit, non-* allowlist"
+    assert allow and "*" not in allow, (
+        "the Composio manifest must carry an explicit, non-* allowlist"
+    )
 
     _install_fake_broker(monkeypatch, [*allow, _ROGUE])
     attachment = build_attachment(manifest, _COMPOSIO, {})
@@ -147,7 +151,9 @@ async def test_broker_served_rogue_tool_is_never_registered_or_invocable(
     # The abuse is refused: the rogue verb is denied, never registered, never callable.
     assert _ROGUE in report.denied, "the manifest allowlist must exclude the rogue verb"
     assert _ROGUE not in report.registered
-    assert _ROGUE not in registry.tools, "a denied broker tool must have no dispatcher — not invocable"
+    assert _ROGUE not in registry.tools, (
+        "a denied broker tool must have no dispatcher — not invocable"
+    )
 
     # Positive control: the allowlisted verbs DID register and reach the broker.
     assert set(report.registered) == set(allow)

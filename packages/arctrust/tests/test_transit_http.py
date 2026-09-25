@@ -28,17 +28,26 @@ def test_issues_nonexportable_key_and_signs_by_reference() -> None:
         if request.method == "GET":
             return httpx.Response(
                 200,
-                json={"data": {"type": "ed25519", "exportable": False,
-                               "derived": False, "allow_plaintext_backup": False,
-                               "deletion_allowed": False,
-                               "latest_version": 1,
-                               "keys": {"1": {"public_key": base64.b64encode(public).decode()}}}},
+                json={
+                    "data": {
+                        "type": "ed25519",
+                        "exportable": False,
+                        "derived": False,
+                        "allow_plaintext_backup": False,
+                        "deletion_allowed": False,
+                        "latest_version": 1,
+                        "keys": {"1": {"public_key": base64.b64encode(public).decode()}},
+                    }
+                },
             )
         return httpx.Response(
             200,
-            json={"data": {"signature": "vault:v1:" + base64.b64encode(
-                signing.sign(b"proof").signature
-            ).decode()}},
+            json={
+                "data": {
+                    "signature": "vault:v1:"
+                    + base64.b64encode(signing.sign(b"proof").signature).decode()
+                }
+            },
         )
 
     with httpx.Client(
@@ -65,24 +74,32 @@ def test_rejects_plaintext_transport_and_exportable_key() -> None:
             VaultTransitHTTP(client).public_key("arc-user-1")
 
 
-@pytest.mark.parametrize("field,value", [
-    ("exportable", True),
-    ("derived", True),
-    ("allow_plaintext_backup", True),
-    ("deletion_allowed", True),
-    ("type", "rsa-2048"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("exportable", True),
+        ("derived", True),
+        ("allow_plaintext_backup", True),
+        ("deletion_allowed", True),
+        ("type", "rsa-2048"),
+    ],
+)
 def test_refuses_unsafe_existing_key_metadata(field: str, value: object) -> None:
     metadata = {
-        "type": "ed25519", "exportable": False, "derived": False,
-        "allow_plaintext_backup": False, "deletion_allowed": False,
+        "type": "ed25519",
+        "exportable": False,
+        "derived": False,
+        "allow_plaintext_backup": False,
+        "deletion_allowed": False,
         "latest_version": 1,
         "keys": {"1": {"public_key": base64.b64encode(b"p" * 32).decode()}},
     }
     metadata[field] = value
     with httpx.Client(
         base_url="https://vault.test",
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": metadata})),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": metadata})
+        ),
     ) as client:
         with pytest.raises(SignerError, match="metadata"):
             VaultTransitHTTP(client).public_key("arc-user-1")
@@ -97,7 +114,8 @@ def test_redirect_refused_without_following_and_error_is_sanitized() -> None:
         return httpx.Response(302, headers={"Location": "https://attacker.test/steal"})
 
     with httpx.Client(
-        base_url="https://vault.test", follow_redirects=True,
+        base_url="https://vault.test",
+        follow_redirects=True,
         transport=httpx.MockTransport(transport),
     ) as client:
         with pytest.raises(SignerError, match="unavailable") as raised:

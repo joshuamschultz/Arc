@@ -38,7 +38,9 @@ class _FakeTool:
 
     name: str
     description: str
-    input_schema: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
+    input_schema: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
 
 
 @dataclass
@@ -50,7 +52,10 @@ class _FakeRegistry:
 
 def _server() -> McpServer:
     registry = _FakeRegistry(
-        tools={"read_file": _FakeTool("read_file", "Read a file"), "list_dir": _FakeTool("list_dir", "List a dir")}
+        tools={
+            "read_file": _FakeTool("read_file", "Read a file"),
+            "list_dir": _FakeTool("list_dir", "List a dir"),
+        }
     )
     return McpServer(registry)  # type: ignore[arg-type]
 
@@ -75,7 +80,12 @@ async def test_federal_refuses_a_request_without_a_client_certificate() -> None:
 async def test_oversized_body_is_rejected() -> None:
     """A body over the 8 MiB cap is refused with 413 before it is parsed."""
     door = HttpDoor(_server(), tier="personal")
-    oversized = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"blob": "x" * (_EIGHT_MIB + 1)}}
+    oversized = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"blob": "x" * (_EIGHT_MIB + 1)},
+    }
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=door), base_url="http://door"

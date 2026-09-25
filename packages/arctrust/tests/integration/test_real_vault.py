@@ -54,41 +54,56 @@ def test_real_transit_seal_anchor_policy_and_restart(vault: DisposableVault) -> 
         assert verify_signature("ed25519", message, signature, public)
 
         cipher = VaultCipher(
-            cipher_client, mount="transit", key="account-seal",
-            scope="account-test", record_id="users",
+            cipher_client,
+            mount="transit",
+            key="account-seal",
+            scope="account-test",
+            record_id="users",
         )
         sealed = cipher.seal(b"disposable account state")
         assert cipher.open(sealed) == b"disposable account state"
         other_scope = VaultCipher(
-            cipher_client, mount="transit", key="account-seal",
-            scope="other-test", record_id="users",
+            cipher_client,
+            mount="transit",
+            key="account-seal",
+            scope="other-test",
+            record_id="users",
         )
         with pytest.raises(VaultCipherError):
             other_scope.open(sealed)
 
         anchor = VaultKVAnchor(
-            anchor_client, mount="anchor", record="users",
+            anchor_client,
+            mount="anchor",
+            record="users",
             bootstrap_authority=Once("anchor/users"),
         )
         stale = VaultKVAnchor(second_anchor_client, mount="anchor", record="users")
         assert anchor.latest() is None
         first = anchor.compare_and_advance(None, hashlib.sha256(b"one").hexdigest(), "create")
         assert first.version == 1
-        second = anchor.compare_and_advance(
-            first, hashlib.sha256(b"two").hexdigest(), "update"
-        )
+        second = anchor.compare_and_advance(first, hashlib.sha256(b"two").hexdigest(), "update")
         assert second.version == 2
-        assert anchor_client.post(
-            "/v1/anchor/data/users", json={"data": {"digest": "unwitnessed"}}
-        ).status_code == 400
+        assert (
+            anchor_client.post(
+                "/v1/anchor/data/users", json={"data": {"digest": "unwitnessed"}}
+            ).status_code
+            == 400
+        )
         with pytest.raises(AnchorUnavailableError, match="stale"):
             stale.compare_and_advance(first, hashlib.sha256(b"stale").hexdigest(), "stale")
 
         # The application tokens lack export, deletion, and KV reset authority.
-        assert issuer_client.get("/v1/transit/export/signing-key/arc-user-integration").status_code == 403
+        assert (
+            issuer_client.get("/v1/transit/export/signing-key/arc-user-integration").status_code
+            == 403
+        )
         assert issuer_client.delete("/v1/transit/keys/arc-user-integration").status_code == 403
         assert anchor_client.delete("/v1/anchor/metadata/users").status_code == 403
-        assert anchor_client.post("/v1/anchor/config", json={"cas_required": False}).status_code == 403
+        assert (
+            anchor_client.post("/v1/anchor/config", json={"cas_required": False}).status_code
+            == 403
+        )
 
     vault.restart()
     with (
@@ -97,10 +112,16 @@ def test_real_transit_seal_anchor_policy_and_restart(vault: DisposableVault) -> 
         vault.client(anchor_token) as anchor_client,
     ):
         assert VaultTransitHTTP(issuer_client).public_key("arc-user-integration") == public
-        assert VaultCipher(
-            cipher_client, mount="transit", key="account-seal",
-            scope="account-test", record_id="users",
-        ).open(sealed) == b"disposable account state"
+        assert (
+            VaultCipher(
+                cipher_client,
+                mount="transit",
+                key="account-seal",
+                scope="account-test",
+                record_id="users",
+            ).open(sealed)
+            == b"disposable account state"
+        )
         assert VaultKVAnchor(anchor_client, mount="anchor", record="users").latest() == second
 
 

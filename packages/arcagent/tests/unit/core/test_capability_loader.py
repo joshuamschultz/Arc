@@ -543,9 +543,7 @@ class TestAntiShadowGuard:
 
         bus = _RecordingBus()
         reg = CapabilityRegistry()
-        loader = CapabilityLoader(
-            scan_roots=list(four_roots.items()), registry=reg, bus=bus
-        )
+        loader = CapabilityLoader(scan_roots=list(four_roots.items()), registry=reg, bus=bus)
         await loader.scan_and_register()
 
         refusals = [

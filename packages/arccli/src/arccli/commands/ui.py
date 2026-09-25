@@ -352,6 +352,7 @@ def _start(args: argparse.Namespace) -> None:
 
     fleet = None
     if team_root is not None:
+
         async def _register_agents() -> None:
             import asyncio
 
@@ -361,6 +362,7 @@ def _start(args: argparse.Namespace) -> None:
 
             agent_dirs = discover_agent_dirs(team_root)
             if agent_dirs:
+
                 async def _register_until_ready() -> None:
                     delay = 0.5
                     while True:

@@ -25,20 +25,29 @@ def _queue(store: ApprovalStore) -> Any:
     from arcmemory.promotion.approval import PromotionApprovalQueue
 
     return PromotionApprovalQueue(
-        store, agent_did=_ACCESS.caller_did,
-        operator_did=_OPERATOR.did, operator_public_key=_OPERATOR.public_key,
+        store,
+        agent_did=_ACCESS.caller_did,
+        operator_did=_OPERATOR.did,
+        operator_public_key=_OPERATOR.public_key,
     )
 
 
 async def _grant(queue: Any, item_id: str, decision: str = "approve") -> Any:
     row = await queue._store.get(queue._id(item_id))
     assert row is not None
-    call_hash = row.call_hash if decision == "approve" else queue._decision_hash(
-        item_id=item_id, digest=row.arguments["digest"],
-        classification=row.arguments["classification"],
-        document_type=row.arguments["document_type"], decision="deny",
+    call_hash = (
+        row.call_hash
+        if decision == "approve"
+        else queue._decision_hash(
+            item_id=item_id,
+            digest=row.arguments["digest"],
+            classification=row.arguments["classification"],
+            document_type=row.arguments["document_type"],
+            decision="deny",
+        )
     )
     return sign_approval_for_hash(call_hash, _OPERATOR)
+
 
 # A clean, mid-scored insight -> effective_score 6 -> APPROVE band (5-7). It is
 # neither auto-promotable (<=4) nor never (>=8): exactly the ambiguous middle a
@@ -69,7 +78,11 @@ class _FakeSharedPort:
 
     async def promote(self, source: PromotionSource, access: KnowledgeAccess) -> KnowledgeRef:
         self.promoted.append((source, access))
-        return KnowledgeRef(scope="shared", identifier=f"shared/{source.reference.identifier}", digest=source.digest)
+        return KnowledgeRef(
+            scope="shared",
+            identifier=f"shared/{source.reference.identifier}",
+            digest=source.digest,
+        )
 
     async def revoke(self, reference: str, access: KnowledgeAccess) -> None:  # pragma: no cover
         return None
@@ -82,7 +95,10 @@ class _FakePersonalPort:
     async def export_for_promotion(
         self, reference: str, access: KnowledgeAccess
     ) -> PromotionSource:
-        if access.caller_did != _ACCESS.caller_did or reference != self.source.reference.identifier:
+        if (
+            access.caller_did != _ACCESS.caller_did
+            or reference != self.source.reference.identifier
+        ):
             raise PermissionError("personal source owner mismatch")
         return self.source
 
@@ -124,7 +140,8 @@ async def test_approve_band_item_enqueues_then_bulk_approve_releases_it() -> Non
         # Operator bulk-approves; the release step promotes it through the real port.
         await queue.approve("ambiguous-mid", grant=await _grant(queue, "ambiguous-mid"))
         released = await release_approved_promotions(
-            approval_queue=queue, port=port,
+            approval_queue=queue,
+            port=port,
             personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)),
             access=_ACCESS,
         )
@@ -193,21 +210,27 @@ async def test_changed_or_foreign_personal_source_cannot_release_approval() -> N
         queue = _queue(ApprovalStore(backend))
         port = _FakeSharedPort()
         await run_promotion_pass(
-            [_APPROVE_ITEM], cfg=PromotionConfig(enabled=True),
-            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)), port=port,
-            access=_ACCESS, approval_queue=queue,
+            [_APPROVE_ITEM],
+            cfg=PromotionConfig(enabled=True),
+            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)),
+            port=port,
+            access=_ACCESS,
+            approval_queue=queue,
         )
         await queue.approve(_APPROVE_ITEM.id, grant=await _grant(queue, _APPROVE_ITEM.id))
         original = to_promotion_source(_APPROVE_ITEM)
         changed = replace(original, content="changed after approval")
         with pytest.raises(ValueError, match="source changed"):
             await release_approved_promotions(
-                approval_queue=queue, port=port,
-                personal=_FakePersonalPort(changed), access=_ACCESS,
+                approval_queue=queue,
+                port=port,
+                personal=_FakePersonalPort(changed),
+                access=_ACCESS,
             )
         with pytest.raises(PermissionError, match="owner mismatch"):
             await release_approved_promotions(
-                approval_queue=queue, port=port,
+                approval_queue=queue,
+                port=port,
                 personal=_FakePersonalPort(original),
                 access=KnowledgeAccess("did:arc:other", "unclassified"),
             )
@@ -232,18 +255,26 @@ async def test_concurrent_release_claims_one_shared_effect() -> None:
         port = _FakeSharedPort()
         personal = _FakePersonalPort(to_promotion_source(_APPROVE_ITEM))
         await run_promotion_pass(
-            [_APPROVE_ITEM], cfg=PromotionConfig(enabled=True),
-            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)), port=port,
-            access=_ACCESS, approval_queue=queue,
+            [_APPROVE_ITEM],
+            cfg=PromotionConfig(enabled=True),
+            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)),
+            port=port,
+            access=_ACCESS,
+            approval_queue=queue,
         )
         await queue.approve(_APPROVE_ITEM.id, grant=await _grant(queue, _APPROVE_ITEM.id))
 
-        results = await asyncio.gather(*(
-            release_approved_promotions(
-                approval_queue=queue, port=port, personal=personal, access=_ACCESS,
+        results = await asyncio.gather(
+            *(
+                release_approved_promotions(
+                    approval_queue=queue,
+                    port=port,
+                    personal=personal,
+                    access=_ACCESS,
+                )
+                for _ in range(2)
             )
-            for _ in range(2)
-        ))
+        )
 
         assert sum(map(len, results)) == 1
         assert len(port.promoted) == 1
@@ -265,9 +296,7 @@ async def test_crash_after_shared_effect_never_replays_approval() -> None:
         pass
 
     class _CrashingPort(_FakeSharedPort):
-        async def promote(
-            self, source: PromotionSource, access: KnowledgeAccess
-        ) -> KnowledgeRef:
+        async def promote(self, source: PromotionSource, access: KnowledgeAccess) -> KnowledgeRef:
             await super().promote(source, access)
             raise _CrashAfterEffect
 
@@ -278,19 +307,31 @@ async def test_crash_after_shared_effect_never_replays_approval() -> None:
         port = _CrashingPort()
         personal = _FakePersonalPort(to_promotion_source(_APPROVE_ITEM))
         await run_promotion_pass(
-            [_APPROVE_ITEM], cfg=PromotionConfig(enabled=True),
-            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)), port=port,
-            access=_ACCESS, approval_queue=queue,
+            [_APPROVE_ITEM],
+            cfg=PromotionConfig(enabled=True),
+            personal=_FakePersonalPort(to_promotion_source(_APPROVE_ITEM)),
+            port=port,
+            access=_ACCESS,
+            approval_queue=queue,
         )
         await queue.approve(_APPROVE_ITEM.id, grant=await _grant(queue, _APPROVE_ITEM.id))
         with pytest.raises(_CrashAfterEffect):
             await release_approved_promotions(
-                approval_queue=queue, port=port, personal=personal, access=_ACCESS,
+                approval_queue=queue,
+                port=port,
+                personal=personal,
+                access=_ACCESS,
             )
 
-        assert await release_approved_promotions(
-            approval_queue=queue, port=port, personal=personal, access=_ACCESS,
-        ) == []
+        assert (
+            await release_approved_promotions(
+                approval_queue=queue,
+                port=port,
+                personal=personal,
+                access=_ACCESS,
+            )
+            == []
+        )
         assert len(port.promoted) == 1
         row = await queue._store.get(queue._id(_APPROVE_ITEM.id))
         assert row is not None and row.status == "releasing"
@@ -310,10 +351,14 @@ async def test_forged_operator_and_cross_agent_replay_are_refused() -> None:
         queue = _queue(ApprovalStore(backend))
         source = to_promotion_source(_APPROVE_ITEM)
         await queue.enqueue(
-            item_id=source.reference.identifier, title=source.title,
-            content=source.content, classification=source.classification,
-            document_type=source.document_type, digest=source.digest,
-            effective_score=6, access=_ACCESS,
+            item_id=source.reference.identifier,
+            title=source.title,
+            content=source.content,
+            classification=source.classification,
+            document_type=source.document_type,
+            digest=source.digest,
+            effective_score=6,
+            access=_ACCESS,
         )
         grant = await _grant(queue, source.reference.identifier)
         forged = grant.model_copy(update={"approver_did": _OPERATOR.did, "signature": b"forged"})
@@ -322,14 +367,20 @@ async def test_forged_operator_and_cross_agent_replay_are_refused() -> None:
 
         other_access = KnowledgeAccess("did:arc:other", "unclassified")
         other = PromotionApprovalQueue(
-            ApprovalStore(backend), agent_did=other_access.caller_did,
-            operator_did=_OPERATOR.did, operator_public_key=_OPERATOR.public_key,
+            ApprovalStore(backend),
+            agent_did=other_access.caller_did,
+            operator_did=_OPERATOR.did,
+            operator_public_key=_OPERATOR.public_key,
         )
         await other.enqueue(
-            item_id=source.reference.identifier, title=source.title,
-            content=source.content, classification=source.classification,
-            document_type=source.document_type, digest=source.digest,
-            effective_score=6, access=other_access,
+            item_id=source.reference.identifier,
+            title=source.title,
+            content=source.content,
+            classification=source.classification,
+            document_type=source.document_type,
+            digest=source.digest,
+            effective_score=6,
+            access=other_access,
         )
         with pytest.raises(PermissionError, match="operator promotion authority denied"):
             await other.approve(source.reference.identifier, grant=grant)

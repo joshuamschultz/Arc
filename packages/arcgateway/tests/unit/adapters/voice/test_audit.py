@@ -60,9 +60,7 @@ async def test_reply_to_a_dead_link_is_audited_as_warn(
         "emit_event",
         lambda action, target, outcome, **kw: events.append((action, outcome)),
     )
-    adapter = VoiceAdapter(
-        on_message=_never, agent_did="did:arc:a", engine=FakeVoiceEngine()
-    )
+    adapter = VoiceAdapter(on_message=_never, agent_did="did:arc:a", engine=FakeVoiceEngine())
     await adapter.send(DeliveryTarget(platform="voice", chat_id="gone"), [TextPart(text="hi")])
     assert ("voice.reply.no_link", "warn") in events
 

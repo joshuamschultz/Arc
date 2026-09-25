@@ -90,13 +90,17 @@ async def test_jira_lists_each_project_once_across_pages() -> None:
 
     first = await adapter.sync_source(SyncSource(connection_id="jira", page_size=200))
     searches_after_first = sum(
-        1 for tool, _ in adapter._attachment.calls if tool == "jira_search_issues"  # type: ignore[attr-defined]
+        1
+        for tool, _ in adapter._attachment.calls
+        if tool == "jira_search_issues"  # type: ignore[attr-defined]
     )
     await adapter.sync_source(
         SyncSource(connection_id="jira", page_size=200, checkpoint=first.next_checkpoint)
     )
     searches_after_second = sum(
-        1 for tool, _ in adapter._attachment.calls if tool == "jira_search_issues"  # type: ignore[attr-defined]
+        1
+        for tool, _ in adapter._attachment.calls
+        if tool == "jira_search_issues"  # type: ignore[attr-defined]
     )
 
     # Page two adds no new search calls: it pages the cached listing.
