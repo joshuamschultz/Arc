@@ -34,6 +34,7 @@ from arcgateway.stream_bridge import StreamBridge
 
 if TYPE_CHECKING:
     import arcagent
+    import arctrust
 
     from arcgateway.adapters.base import BasePlatformAdapter
     from arcgateway.adapters.web import WebPlatformAdapter
@@ -147,6 +148,7 @@ def _make_agent_factory(
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
 ) -> Any:
     """Build an async agent_factory bound to ``team_root``.
 
@@ -176,7 +178,7 @@ def _make_agent_factory(
 
         fleet = current_fleet()
         if fleet is not None:
-            existing = fleet.get(agent_did)
+            existing = fleet.get(agent_did, required_skill_authority=skill_revision_anchor_factory)
             if existing is not None:
                 if queue_coordinator is not None:
                     if (
@@ -211,6 +213,16 @@ def _make_agent_factory(
         config = arcagent.load_config(config_path)
         # This agent is being composed into a fleet, so it is handed the fleet
         # seams instead of building a bus, a roster and an audit chain itself.
+        arc_agent: arcagent.ArcAgent
+        resolver = (
+            arcagent.LiveSkillRevisionResolver(
+                agent_did=lambda: arc_agent.did,
+                config_path=config_path,
+                anchor_factory=skill_revision_anchor_factory,
+            )
+            if skill_revision_anchor_factory is not None
+            else None
+        )
         arc_agent = arcagent.ArcAgent(
             config,
             config_path=config_path,
@@ -218,6 +230,7 @@ def _make_agent_factory(
             queue_coordinator=queue_coordinator,
             queue_tenant_id=queue_tenant_id,
             queue_owner_epoch=queue_owner_epoch,
+            skill_artifact_resolver=resolver,
         )
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
@@ -313,6 +326,7 @@ async def build_for_embedded(
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -367,6 +381,7 @@ async def build_for_embedded(
             queue_coordinator=queue_coordinator,
             queue_tenant_id=queue_tenant_id,
             queue_owner_epoch=queue_owner_epoch,
+            skill_revision_anchor_factory=skill_revision_anchor_factory,
         )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
@@ -385,6 +400,7 @@ async def _compose_embedded(
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -407,6 +423,7 @@ async def _compose_embedded(
         queue_coordinator=queue_coordinator,
         queue_tenant_id=queue_tenant_id,
         queue_owner_epoch=queue_owner_epoch,
+        skill_revision_anchor_factory=skill_revision_anchor_factory,
     )
     executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 

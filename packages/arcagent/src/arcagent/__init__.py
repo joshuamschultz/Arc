@@ -214,6 +214,10 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
+    if name in {"ControlArtifactAuthority", "SignedControlRevision"}:
+        from arcagent.core import control_contract
+
+        return getattr(control_contract, name)
     if name in {
         "AnchoredSkillRevisionResolver",
         "ReviewedSkillBundle",
@@ -223,6 +227,10 @@ def __getattr__(name: str) -> Any:
         from arcagent.modules.capability_import import revisions
 
         return getattr(revisions, name)
+    if name == "LiveSkillRevisionResolver":
+        from arcagent.modules.capability_import.authority_factory import LiveSkillRevisionResolver
+
+        return LiveSkillRevisionResolver
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -259,6 +267,7 @@ __all__ = [
     "ConnectorPlan",
     "ConnectorReconcileResult",
     "ContextError",
+    "ControlArtifactAuthority",
     "DeliveryStreamEvent",
     "DeliveryStreamSource",
     "DeliveryTerminalEvent",
@@ -280,6 +289,7 @@ __all__ = [
     "KnowledgeHit",
     "KnowledgeRef",
     "LedgerRunOwner",
+    "LiveSkillRevisionResolver",
     "ModuleBusError",
     "PersonalKnowledgePort",
     "ProbeResult",
@@ -300,6 +310,7 @@ __all__ = [
     "ScheduleStore",
     "SecurityConfig",
     "SharedKnowledgePort",
+    "SignedControlRevision",
     "SkillArtifactResolver",
     "SkillRuntime",
     "SourceRefusedError",

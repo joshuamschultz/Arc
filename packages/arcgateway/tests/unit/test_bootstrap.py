@@ -10,6 +10,7 @@ platform-specific slots, because the core names no platform.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import arcagent
 import pytest
@@ -123,6 +124,39 @@ async def test_embedded_agent_factory_receives_same_queue(
 
 
 @pytest.mark.asyncio
+async def test_embedded_factory_binds_skill_anchor_to_live_agent_did(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team_root = tmp_path / "team"
+    did = "did:arc:tenant-a:agent/abc"
+    _write_agent_dir(team_root, "agent", did, "agent")
+    seen: list[object] = []
+
+    class FakeAgent:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            self.did = did
+            seen.append(kwargs["skill_artifact_resolver"])
+
+        async def startup(self) -> None:
+            pass
+
+    monkeypatch.setattr(arcagent, "ArcAgent", FakeAgent)
+    monkeypatch.setattr("arcgateway.fleet.current_fleet", lambda: None)
+
+    def anchor_factory(_did: str, _name: str) -> SimpleNamespace:
+        return SimpleNamespace(scope="wrong")
+
+    factory = _make_agent_factory(team_root, skill_revision_anchor_factory=anchor_factory)
+    await factory(did)
+    assert len(seen) == 1
+    assert isinstance(seen[0], arcagent.LiveSkillRevisionResolver)
+    with pytest.raises(ValueError, match="scope does not match"):
+        seen[0].resolve(
+            team_root / "agent" / "capabilities" / "skills" / "reporter", "agent-skills"
+        )
+
+
+@pytest.mark.asyncio
 async def test_embedded_factory_refuses_reused_fleet_agent_with_different_queue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -134,7 +168,7 @@ async def test_embedded_factory_refuses_reused_fleet_agent_with_different_queue(
         queue_tenant_id = "tenant-a"
 
     class Fleet:
-        def get(self, _did: str) -> Existing:
+        def get(self, _did: str, *, required_skill_authority: object) -> Existing:
             return Existing()
 
     monkeypatch.setattr("arcgateway.fleet.current_fleet", Fleet)

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Any
 
+_UNSPECIFIED = object()
+
 
 class FleetRegistry:
     """DID-keyed registry of started, always-on ``ArcAgent`` instances.
@@ -37,13 +39,25 @@ class FleetRegistry:
 
     def __init__(self) -> None:
         self._agents: dict[str, Any] = {}
+        self._skill_authorities: dict[str, object | None] = {}
 
-    def add(self, agent_did: str, agent: Any) -> None:
+    def add(
+        self, agent_did: str, agent: Any, *, skill_anchor_factory: object | None = None
+    ) -> None:
         """Register a started agent under its DID (last-wins on a re-register)."""
         self._agents[agent_did] = agent
+        self._skill_authorities[agent_did] = skill_anchor_factory
 
-    def get(self, agent_did: str) -> Any | None:
+    def get(
+        self, agent_did: str, *, required_skill_authority: object = _UNSPECIFIED
+    ) -> Any | None:
         """Return the started agent for ``agent_did``, or ``None`` if not in the fleet."""
+        if (
+            agent_did in self._agents
+            and required_skill_authority is not _UNSPECIFIED
+            and self._skill_authorities[agent_did] is not required_skill_authority
+        ):
+            raise RuntimeError("existing fleet agent skill authority mismatch")
         return self._agents.get(agent_did)
 
     def dids(self) -> list[str]:

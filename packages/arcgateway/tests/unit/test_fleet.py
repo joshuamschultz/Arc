@@ -38,6 +38,18 @@ class TestFleetRegistry:
 
     def test_current_fleet_set_and_clear(self) -> None:
         assert current_fleet() is None
+
+    def test_authority_bound_reuse_refuses_unanchored_or_other_fleet_agent(self) -> None:
+        fleet = FleetRegistry()
+        authority = object()
+        other = object()
+        fleet.add("did:arc:local:agent/a1", object(), skill_anchor_factory=authority)
+        assert fleet.get("did:arc:local:agent/a1", required_skill_authority=authority) is not None
+        with pytest.raises(RuntimeError, match="skill authority mismatch"):
+            fleet.get("did:arc:local:agent/a1", required_skill_authority=other)
+        fleet.add("did:arc:local:agent/a2", object())
+        with pytest.raises(RuntimeError, match="skill authority mismatch"):
+            fleet.get("did:arc:local:agent/a2", required_skill_authority=authority)
         fleet = FleetRegistry()
         set_current_fleet(fleet)
         assert current_fleet() is fleet
@@ -46,6 +58,18 @@ class TestFleetRegistry:
 
 
 class TestFactoryReuse:
+    async def test_factory_refuses_fleet_instance_from_other_skill_authority(
+        self, tmp_path: Path
+    ) -> None:
+        fleet = FleetRegistry()
+        fleet.add("did:arc:local:agent/marketer", object())
+        set_current_fleet(fleet)
+        factory = _make_agent_factory(
+            tmp_path / "team", skill_revision_anchor_factory=lambda _did, _name: object()
+        )
+        with pytest.raises(RuntimeError, match="skill authority mismatch"):
+            await factory("did:arc:local:agent/marketer")
+
     async def test_factory_returns_fleet_instance_without_rebuilding(self, tmp_path: Path) -> None:
         """A DID in the fleet is returned as-is — the same instance every call,
         never a second ArcAgent (one durable consumer per agent)."""

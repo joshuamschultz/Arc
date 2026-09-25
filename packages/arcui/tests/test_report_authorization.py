@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
+from arcstore.backends.memory import FakeBackend
+from starlette.testclient import TestClient
 
 from arcui.report_authorization import ReportReadBusyError, ReportReadWorkerPool
+from arcui.server import create_app
 
 
 @pytest.mark.asyncio
@@ -32,3 +36,15 @@ async def test_cancelled_caller_does_not_release_running_worker() -> None:
     finally:
         release.set()
         pool.close()
+
+
+def test_app_owns_and_closes_report_workers() -> None:
+    authority = SimpleNamespace(authorize=lambda _request: None)
+    app = create_app(arcstore_backend=FakeBackend(), report_read_authority=authority)
+    pool = app.state.report_read_workers
+    assert isinstance(pool, ReportReadWorkerPool)
+    assert app.state.report_read_authority is authority
+    with TestClient(app):
+        pass
+    with pytest.raises(RuntimeError, match="closed"):
+        asyncio.run(pool.run(lambda: None))

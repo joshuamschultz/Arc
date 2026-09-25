@@ -59,9 +59,12 @@ class ReportReadWorkerPool:
         )
         self._pending: set[Future[Any]] = set()
         self._operation_timeout = operation_timeout
+        self._closed = False
 
     async def run(self, operation: Callable[[], T]) -> T:
         """Return within deadline and retain the slot until the worker really exits."""
+        if self._closed:
+            raise RuntimeError("report read workers are closed")
         try:
             await asyncio.wait_for(self._slots.acquire(), timeout=0.1)
         except TimeoutError as exc:
@@ -89,6 +92,7 @@ class ReportReadWorkerPool:
 
     def close(self) -> None:
         """Stop accepting work without waiting indefinitely for a hostile callback."""
+        self._closed = True
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 

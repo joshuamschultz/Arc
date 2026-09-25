@@ -49,6 +49,7 @@ from arcui.audit import UIAuditLogger, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
+from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
 from arcui.routes import agent_detail as agent_detail_routes
 from arcui.routes import agent_sessions as agent_sessions_routes
 from arcui.routes import agents as agents_routes
@@ -248,6 +249,7 @@ def create_app(
     operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    report_read_authority: ReportReadAuthority | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
@@ -546,6 +548,7 @@ def create_app(
                 queue_coordinator=queue_coordinator,
                 queue_tenant_id=queue_tenant_id,
                 queue_owner_epoch=queue_owner_epoch,
+                skill_revision_anchor_factory=skill_revision_anchor_factory,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.workflow_runner_host = embedded_gateway.workflow_runner_host
@@ -700,6 +703,9 @@ def create_app(
                 except TimeoutError:
                     logger.error("lifespan: hosted authority workers exceeded shutdown deadline")
                 executor.shutdown(wait=False, cancel_futures=True)
+            report_workers = starlette_app.state.report_read_workers
+            if report_workers is not None:
+                report_workers.close()
 
     # Last, so it catches only what no real route claimed: the browser router's
     # own paths, which must load directly and not just via in-app navigation.
@@ -737,6 +743,10 @@ def create_app(
     app.state.operator_signer_factory = operator_signer_factory
     app.state.user_store_factory = user_store_factory
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
+    app.state.report_read_authority = report_read_authority
+    app.state.report_read_workers = (
+        ReportReadWorkerPool() if report_read_authority is not None else None
+    )
     app.state.queue_coordinator = queue_coordinator
     app.state.queue_tenant_id = queue_tenant_id
     app.state.queue_owner_epoch = queue_owner_epoch

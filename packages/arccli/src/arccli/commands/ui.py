@@ -478,7 +478,13 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
             def deliver_for(agent_did: Callable[[], str]) -> Any:
                 return make_channel_deliver_fn(session_router, agent_did)
 
-        count = await serve_fleet_agents(team_root, fleet, warm=_warm, deliver_for=deliver_for)
+        count = await serve_fleet_agents(
+            team_root,
+            fleet,
+            warm=_warm,
+            deliver_for=deliver_for,
+            skill_revision_anchor_factory=app.state.skill_revision_anchor_factory,
+        )
         _write(f"  Fleet: {count} always-on agent(s) started (messaging inbox active).")
 
     app.state._extra_startup_hooks.append(_serve_fleet)

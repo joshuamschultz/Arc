@@ -20,11 +20,13 @@ import importlib.util
 import json
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import arcagent
+import arctrust
 from arcokf import OKFValidationError, render_collection_index, validate
 from arctrust.paths import dotenv_file, env_file
 
@@ -624,7 +626,11 @@ def _iter_skill_folders(agent_dir: Path) -> list[tuple[str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def _load_arcagent(agent_dir: Path) -> tuple[Any, Any, Path]:
+def _load_arcagent(
+    agent_dir: Path,
+    *,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+) -> tuple[Any, Any, Path]:
     """Load ArcAgent from agent directory.
 
     Returns (ArcAgent instance, ArcAgentConfig, config_path).
@@ -642,7 +648,22 @@ def _load_arcagent(agent_dir: Path) -> tuple[Any, Any, Path]:
     # fleet-facing tool reports itself unavailable on that path alone.
     from arcteam.agent_fleet import ArcTeamFleet
 
-    arc_agent = arcagent.ArcAgent(config, config_path=config_path, fleet=ArcTeamFleet())
+    arc_agent: arcagent.ArcAgent
+    resolver = (
+        arcagent.LiveSkillRevisionResolver(
+            agent_did=lambda: arc_agent.did,
+            config_path=config_path,
+            anchor_factory=skill_revision_anchor_factory,
+        )
+        if skill_revision_anchor_factory is not None
+        else None
+    )
+    arc_agent = arcagent.ArcAgent(
+        config,
+        config_path=config_path,
+        fleet=ArcTeamFleet(),
+        skill_artifact_resolver=resolver,
+    )
     return arc_agent, config, config_path
 
 

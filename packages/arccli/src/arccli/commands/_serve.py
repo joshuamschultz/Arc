@@ -20,6 +20,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+import arctrust
+
 from arccli.commands._shared import write as _write
 
 _logger = logging.getLogger("arccli.serve")
@@ -172,6 +174,7 @@ async def serve_fleet_agents(
     *,
     warm: Callable[[str, Any], Awaitable[Any]] | None = None,
     deliver_for: Callable[[Callable[[], str]], Any] | None = None,
+    skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
 ) -> int:
     """Start every discovered team agent so its messaging inbox loop runs (MSG4).
 
@@ -200,7 +203,9 @@ async def serve_fleet_agents(
     knowledge_members: list[tuple[Any, Path, str]] = []
     for agent_dir in agent_dirs:
         try:
-            agent, _config, _config_path = _load_arcagent(agent_dir)
+            agent, _config, _config_path = _load_arcagent(
+                agent_dir, skill_revision_anchor_factory=skill_revision_anchor_factory
+            )
             # Wire channel delivery BEFORE startup so agent:ready carries it and
             # the scheduler can deliver a fired schedule's output — bound to THIS
             # agent's DID so it goes out through this agent's bot, not another's.
@@ -211,7 +216,7 @@ async def serve_fleet_agents(
                 if deliver_fn is not None:
                     agent.set_channel_deliver_fn(deliver_fn)
             await agent.startup()
-            fleet.add(agent.did, agent)
+            fleet.add(agent.did, agent, skill_anchor_factory=skill_revision_anchor_factory)
             started += 1
         except Exception as exc:  # reason: best-effort — one bad agent never blocks the fleet
             _write(f"  warn: could not start agent {agent_dir.name}: {exc}")

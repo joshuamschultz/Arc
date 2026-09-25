@@ -65,7 +65,9 @@ def _team(tmp_path: Path, names: list[str]) -> Path:
 def _install_loader(monkeypatch: pytest.MonkeyPatch, agents: dict[str, _FakeAgent]) -> None:
     """Patch _load_arcagent to return a fake agent keyed by the dir name."""
 
-    def fake_load(agent_dir: Path) -> tuple[Any, Any, Path]:
+    def fake_load(
+        agent_dir: Path, *, skill_revision_anchor_factory: object = None
+    ) -> tuple[Any, Any, Path]:
         return agents[agent_dir.name], None, agent_dir / "arcagent.toml"
 
     monkeypatch.setattr("arccli.commands.agent._common._load_arcagent", fake_load)
@@ -99,6 +101,31 @@ async def test_starts_registers_and_warms_every_agent(
     # The gateway factory can now reuse the SAME started instance for web chat.
     assert fleet.get("did:arc:local:agent/josh1234") is agents["josh_agent"]
     assert sorted(warmed) == ["did:arc:local:agent/josh1234", "did:arc:local:agent/mark5678"]
+
+
+@pytest.mark.asyncio
+async def test_fleet_uses_same_skill_anchor_factory_as_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team_root = _team(tmp_path, ["josh_agent"])
+    agent = _FakeAgent("did:arc:local:agent/josh1234")
+    authority = object()
+
+    def fake_load(
+        agent_dir: Path, *, skill_revision_anchor_factory: object
+    ) -> tuple[Any, Any, Path]:
+        assert skill_revision_anchor_factory is authority
+        return agent, None, agent_dir / "arcagent.toml"
+
+    monkeypatch.setattr("arccli.commands.agent._common._load_arcagent", fake_load)
+    fleet = FleetRegistry()
+    assert (
+        await _serve.serve_fleet_agents(team_root, fleet, skill_revision_anchor_factory=authority)
+        == 1
+    )
+    assert fleet.get(agent.did, required_skill_authority=authority) is agent
+    with pytest.raises(RuntimeError, match="skill authority mismatch"):
+        fleet.get(agent.did, required_skill_authority=object())
 
 
 @pytest.mark.asyncio
@@ -213,6 +240,7 @@ class TestRegisterFleetStartup:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         adopted: dict[str, Any] = {}
+        skill_anchor_factory = object()
 
         class _Cache:
             def get(self, did: str) -> Any:
@@ -226,6 +254,7 @@ class TestRegisterFleetStartup:
                 _extra_startup_hooks=[],
                 embedded_agent_cache=_Cache(),
                 agent_registry=None,
+                skill_revision_anchor_factory=skill_anchor_factory,
             )
         )
         fake_agent = SimpleNamespace(_config=None)
@@ -233,11 +262,17 @@ class TestRegisterFleetStartup:
         seen: dict[str, Any] = {}
 
         async def fake_serve(
-            team_root: Path, fleet: Any, *, warm: Any = None, deliver_for: Any = None
+            team_root: Path,
+            fleet: Any,
+            *,
+            warm: Any = None,
+            deliver_for: Any = None,
+            skill_revision_anchor_factory: object = None,
         ) -> int:
             seen["team_root"] = team_root
             seen["fleet"] = fleet
             seen["deliver_for"] = deliver_for
+            seen["skill_anchor_factory"] = skill_revision_anchor_factory
             # warm adopts the already-started instance into the executor cache
             await warm("did:arc:local:agent/x", fake_agent)
             return 3
@@ -248,9 +283,11 @@ class TestRegisterFleetStartup:
         fleet = ui_cmd._register_fleet_startup(app, team_root)
 
         assert current_fleet() is fleet  # gateway factory will reuse these instances
+        assert seen == {}
         assert len(app.state._extra_startup_hooks) == 1
 
         await app.state._extra_startup_hooks[0]()  # run the lifespan hook
+        assert seen["skill_anchor_factory"] is skill_anchor_factory
         assert seen["team_root"] == team_root
         assert seen["fleet"] is fleet
         # No session_router on app.state in this test → delivery stays disabled.

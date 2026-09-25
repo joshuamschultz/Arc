@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arcgateway import bootstrap
 from arcgateway.adapters.web import WebPlatformAdapter
 from arcgateway.config import GatewayConfig
 from arcgateway.session import SessionRouter
@@ -51,6 +52,31 @@ enabled = true
         assert isinstance(app.state.web_adapter, WebPlatformAdapter)
         assert isinstance(app.state.session_router, SessionRouter)
         assert app.state.embedded_gateway is not None
+
+
+def test_lifespan_threads_skill_authority_to_embedded_agent_factory(
+    team_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[object] = []
+    original = bootstrap._make_agent_factory
+
+    def capture(*args: object, **kwargs: object) -> object:
+        seen.append(kwargs["skill_revision_anchor_factory"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "_make_agent_factory", capture)
+
+    def anchor_factory(_did: str, _skill: str) -> object:
+        return object()
+
+    app = create_app(
+        team_root=team_root,
+        gateway_config=GatewayConfig.from_toml_str(""),
+        skill_revision_anchor_factory=anchor_factory,
+        arcstore_backend=FakeBackend(),
+    )
+    with TestClient(app):
+        assert seen == [anchor_factory]
 
 
 def test_lifespan_no_gateway_config_keeps_state_unset(team_root: Path) -> None:
