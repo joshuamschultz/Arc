@@ -75,7 +75,9 @@ def test_the_server_composes_the_plane_from_a_hosted_runner() -> None:
             workflow_control_plane = None
 
     class _Host:
-        _runner = object()
+        # The shape RunnerHost exposes: ``available`` gates the read of ``runner``.
+        available = True
+        runner = object()
 
     class _Gateway:
         workflow_runner_host = _Host()
