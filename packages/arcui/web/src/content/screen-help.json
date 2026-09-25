@@ -768,6 +768,31 @@
         "description": "Enter the provider token required by this connector; it is masked in the UI."
       },
       {
+        "key": "connection.google_sign_in",
+        "label": "Google sign-in",
+        "description": "Opens Google in a new tab so you can let Arc read this account. Sign in as the account shown and click Allow. The link works for a few minutes; if it runs out, click the button again."
+      },
+      {
+        "key": "connection.sign_in_address",
+        "label": "Address from the browser bar",
+        "description": "After you click Allow, Google sends you to a page that does not load. That is expected. Copy the full address from the top of the browser and paste it here. It holds a one-time code that finishes the sign-in."
+      },
+      {
+        "key": "connection.google_account",
+        "label": "Google account",
+        "description": "The email address this connection reads. Each Google account is its own connection, so add one connection per address."
+      },
+      {
+        "key": "connection.google_client",
+        "label": "OAuth client",
+        "description": "Optional. The name of your own published Google OAuth client. With a published client, Google stops making you sign in again every week."
+      },
+      {
+        "key": "connection.google_access",
+        "label": "Access",
+        "description": "Read only is recommended: the agent can read mail, calendar and Drive but cannot write. Choose full access only if the agent must draft or send mail. After you change this, reconnect so Google asks again."
+      },
+      {
         "key": "connection.account_name",
         "label": "Account name",
         "description": "Label the connected account so operators can distinguish it.",

@@ -1031,6 +1031,17 @@ export interface ConnectorSecret {
   prompt: string
   sensitive: boolean
   value: string
+  /** False when the bundle declares the field optional (`required = false`), so
+   *  it may be left blank. Absent means required. */
+  required?: boolean
+  /** The allowed values; empty or absent means free text. */
+  choices?: string[]
+  /** The value used when the field is left blank. */
+  default?: string
+  /** What leaving this field blank costs. On the catalog it is the field's
+   *  blank-warning text; on a connection's auth read it is non-empty only
+   *  when the stored value IS blank. */
+  warning?: string
 }
 
 /** A binary (or similar) the bundle needs on this host. `satisfied` is this
@@ -1040,6 +1051,9 @@ export interface HostRequirement {
   name: string
   instruction: string
   satisfied?: boolean
+  /** True when this program's sign-in can be finished from the browser (a
+   *  consent link plus a pasted address), not only at a terminal. */
+  remote_login?: boolean
 }
 
 export interface ConnectorTool {
@@ -1156,6 +1170,26 @@ export interface ConnectorAuthorizationResponse {
   oauth?: boolean
   /** The provider consent URL to open (empty until the app key/secret are supplied). */
   authorize_url?: string
+  /** Whether the account is connected right now, from the server's sign-in check. */
+  sign_in?: ConnectorSignIn
+  /** The host programs this connection runs through, and how each signs in. */
+  hosts?: ConnectorHostAuthorization[]
+}
+
+/** One host program behind a connection. `remote_login` means its sign-in can be
+ *  finished from the browser via `sign-in/begin` + `sign-in/complete`. */
+export interface ConnectorHostAuthorization {
+  name: string
+  remote_login: boolean
+}
+
+/** The consent link a browser sign-in opens. `expires_in` is in seconds; the
+ *  pasted address must arrive before then or the sign-in has to start again. */
+export interface ConnectorSignInStartResponse {
+  instance: string
+  account: string
+  consent_url: string
+  expires_in: number
 }
 
 export interface ConnectorAuthResponse {
@@ -1210,9 +1244,11 @@ export interface HostSetupResponse {
  *  been signed in was drawn with a green tick reading "Signed in — dbxcli
  *  version: 3.7.1", because `dbxcli version` runs fine with no credential.
  *  `unknown` means the bundle declares no way to check: it must never be drawn
- *  as success, and never as a failure either. `command` is present when the
+ *  as success, and never as a failure either. `expired` is a sign-in the
+ *  provider stopped accepting; `not_installed` means the host program itself is
+ *  missing. `command` is present when the
  *  login can only be completed by a person at a terminal. */
-export type ConnectorSignIn = 'signed_in' | 'signed_out' | 'unknown'
+export type ConnectorSignIn = 'signed_in' | 'signed_out' | 'expired' | 'not_installed' | 'unknown'
 
 export interface ConnectorAuthStatusResponse {
   sign_in: ConnectorSignIn

@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { HostSetupPanel } from '@/components/host-setup-panel'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useConnectorAuthorization, useInstallConnector, useReauthConnector } from '@/lib/queries'
-import type { ConnectorProbeResponse } from '@/lib/types'
+import type { ConnectorProbeResponse, ConnectorSecret } from '@/lib/types'
 import { agentLabel, grantName } from '@/lib/agent-names'
 import { ApiError, apiPost } from '@/lib/api'
 import {
@@ -25,6 +25,8 @@ import { FieldHelp } from '@/components/help'
 
 function connectorHelpKey(name: string, sensitive: boolean): string | null {
   const normalized = name.toLowerCase()
+  if (normalized === 'read_only') return 'connection.google_access'
+  if (normalized === 'client') return 'connection.google_client'
   if (normalized.includes('url') || normalized.includes('endpoint')) return 'connection.endpoint'
   if (normalized.includes('account') || normalized.includes('name')) return 'connection.account_name'
   return sensitive ? 'connection.secret' : null
@@ -63,6 +65,8 @@ export function ConnectorSecretsSheet({
   const [operatorMode] = useOperatorMode()
 
   const [okMsg, setOkMsg] = useState<string | null>(null)
+  // Fields whose blank-warning the operator accepted ("leave it blank for now").
+  const [accepted, setAccepted] = useState<Record<string, boolean>>({})
   const [verifying, setVerifying] = useState(false)
   const rotating = instance !== undefined
   const busy = install.isPending || reauth.isPending || verifying
@@ -83,7 +87,12 @@ export function ConnectorSecretsSheet({
     const known = configured.data?.credentials.find((c) => c.name === field)
     return known && !known.sensitive ? known.value : ''
   }
-  const valueFor = (field: string) => values[field] ?? stored(field)
+  // A choice field always holds one of its choices: blank falls to its default.
+  const valueFor = (field: string) => {
+    const typed = values[field] ?? stored(field)
+    const declared = bundle.secrets.find((s) => s.name === field)
+    return typed || (declared?.choices?.length ? (declared.default ?? '') : typed)
+  }
   // An OAuth connector's refresh token is obtained by the Connect (code-exchange)
   // flow, never typed here — the server's credential list already omits it, so a
   // rotating OAuth form asks only for the app key/secret. Fall back to every
@@ -94,7 +103,15 @@ export function ConnectorSecretsSheet({
   const fields = authNames ? bundle.secrets.filter((s) => authNames.has(s.name)) : bundle.secrets
   const submitted = () => Object.fromEntries(fields.map((s) => [s.name, valueFor(s.name)]))
 
-  const complete = fields.every((s) => valueFor(s.name).length > 0)
+  // Only a field the server explicitly marks optional may stay blank; one that
+  // says nothing is required, so an older server never gets a half-filled form.
+  // On a browser-sign-in bundle a field that warns about being blank (Google's
+  // OAuth client) is required too, unless the operator ticks that they accept
+  // the warning — the default works, but it quietly expires every week.
+  const remoteLogin = bundle.host_requires.some((r) => r.remote_login)
+  const mustFill = (s: ConnectorSecret) =>
+    s.required !== false || (remoteLogin && !!s.warning && !accepted[s.name])
+  const complete = fields.every((s) => !mustFill(s) || valueFor(s.name).length > 0)
   const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
 
   const clear = () => {
@@ -102,6 +119,7 @@ export function ConnectorSecretsSheet({
     setError(null)
     setUnsatisfied([])
     setOkMsg(null)
+    setAccepted({})
   }
 
   // Writing a credential and reporting nothing is what made a good save look
@@ -292,16 +310,48 @@ export function ConnectorSecretsSheet({
                 {s.name}
               </label>
               <FieldHelp helpKey={connectorHelpKey(s.name, s.sensitive) ?? ''} route="connections" />
-              <Input
-                id={`connector-secret-${s.name}`}
-                type={s.sensitive ? 'password' : 'text'}
-                autoComplete="off"
-                spellCheck={false}
-                value={valueFor(s.name)}
-                onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}
-                placeholder={s.sensitive ? '••••••••' : 'https://…'}
-              />
+              {s.choices?.length ? (
+                <select
+                  id={`connector-secret-${s.name}`}
+                  value={valueFor(s.name)}
+                  onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {s.choices.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {choice}
+                      {choice === s.default ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  id={`connector-secret-${s.name}`}
+                  type={s.sensitive ? 'password' : 'text'}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={valueFor(s.name)}
+                  onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}
+                  placeholder={s.sensitive ? '••••••••' : s.default || 'https://…'}
+                />
+              )}
               <p className="text-[11px] text-muted-foreground">{s.prompt}</p>
+              {s.warning && !valueFor(s.name) && (
+                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
+                  {s.warning}
+                </p>
+              )}
+              {s.warning && remoteLogin && !valueFor(s.name) && (
+                <label className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={!!accepted[s.name]}
+                    onChange={(e) => setAccepted({ ...accepted, [s.name]: e.target.checked })}
+                  />
+                  <span>Leave {s.name} blank for now and accept the warning above.</span>
+                </label>
+              )}
             </div>
           ))}
           {bundle.secrets.length === 0 && (

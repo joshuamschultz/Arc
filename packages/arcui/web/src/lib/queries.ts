@@ -6,6 +6,7 @@ import type {
   ConnectorApproveResponse,
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
+  ConnectorSignInStartResponse,
   ConnectorAuthorizationResponse,
   ConnectorCatalogResponse,
   ConnectorDoctorResponse,
@@ -1659,6 +1660,29 @@ export const useCompleteOauth = (instance: string) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
       queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
+    },
+  })
+}
+
+// Browser sign-in, step 1: the server starts the host program's remote login and
+// hands back the consent link to open. Operator-only server side. The server
+// refuses while a field with a blank-warning is blank (Google: no own OAuth
+// client) unless `accept_warnings` says the operator read the warning.
+export const useBeginSignIn = (instance: string) =>
+  useMutation<ConnectorSignInStartResponse, Error, { accept_warnings?: boolean }>({
+    mutationFn: (body) => apiPost(connectionPath(instance, '/sign-in/begin'), body),
+  })
+
+// Browser sign-in, step 2: send the address the browser landed on after consent.
+// The server finishes the login and answers with the verified sign-in state.
+export const useCompleteSignIn = (instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorAuthStatusResponse, Error, { redirect_url: string }>({
+    mutationFn: (body) => apiPost(connectionPath(instance, '/sign-in/complete'), body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
+      queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
+      queryClient.invalidateQueries({ queryKey: doctorKey(instance) })
     },
   })
 }

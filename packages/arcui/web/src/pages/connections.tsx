@@ -18,6 +18,7 @@ import { StatusChip } from '@/components/ai'
 import { ContextNote } from '@/components/hitl'
 import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
+import { RemoteSignInPanel } from '@/components/remote-sign-in-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
@@ -35,7 +36,7 @@ import {
   useRemoveConnector,
   useRoster,
 } from '@/lib/queries'
-import type { Agent, CatalogBundle, ConnectorInstance } from '@/lib/types'
+import type { Agent, CatalogBundle, ConnectorInstance, ConnectorSignIn } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { agentLabel, grantName } from '@/lib/agent-names'
 
@@ -141,6 +142,28 @@ function ReachabilityChip({
   return <span className="text-[11px] text-muted-foreground">Not checked</span>
 }
 
+// A browser-sign-in connection's state as one short chip. Same tones as the
+// doctor rows; the full sentence lives in the sign-in panel below.
+const SIGN_IN_CHIP: Record<ConnectorSignIn, { label: string; tone: string }> = {
+  signed_in: { label: 'Working', tone: 'border-status-online/30 bg-status-online/12 text-status-online' },
+  expired: { label: 'Reconnect needed', tone: 'border-status-warning/30 bg-status-warning/12 text-status-warning' },
+  signed_out: { label: 'Not signed in', tone: 'border-status-warning/30 bg-status-warning/12 text-status-warning' },
+  not_installed: { label: 'Not installed', tone: 'border-status-error/30 bg-status-error/12 text-status-error' },
+  unknown: { label: "Can't tell yet", tone: 'border-border bg-muted/40 text-muted-foreground' },
+}
+
+function SignInChip({ signIn }: { signIn: ConnectorSignIn }) {
+  const chip = SIGN_IN_CHIP[signIn]
+  return (
+    <span
+      data-sign-in-chip
+      className={cn('rounded-sm border px-1.5 py-0.5 text-[11px] font-medium', chip.tone)}
+    >
+      {chip.label}
+    </span>
+  )
+}
+
 function ConnectionCard({
   inst,
   bundle,
@@ -161,7 +184,6 @@ function ConnectionCard({
   const approve = useApproveConnector(inst.instance)
   const remove = useRemoveConnector()
   const [showDoctor, setShowDoctor] = useState(false)
-  const [showAuth, setShowAuth] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
 
   const busy = probe.isPending || approve.isPending || remove.isPending
@@ -175,9 +197,21 @@ function ConnectionCard({
   // operator kept pasting a "refresh token" they could never obtain.
   const authz = useConnectorAuthorization(inst.instance, true)
   const isOauth = authz.data?.oauth === true
+  // A host program whose sign-in finishes in the browser (Google via gog): this
+  // card signs in with a consent link and a pasted address, and its Re-auth
+  // form only edits the account and client — it never holds a credential.
+  const remoteLogin = authz.data?.hosts?.some((h) => h.remote_login) === true
+  const signIn: ConnectorSignIn = authz.data?.sign_in ?? 'unknown'
+  const account = authz.data?.credentials.find((c) => c.name === 'account')?.value ?? ''
+  // Open the sign-in by default when the account needs one; the person's own
+  // toggle wins once they touch it.
+  const needsSignIn = remoteLogin && (signIn === 'expired' || signIn === 'signed_out')
+  const [authToggled, setAuthToggled] = useState<boolean | null>(null)
+  const showAuth = authToggled ?? needsSignIn
+  const setShowAuth = (open: boolean) => setAuthToggled(open)
 
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div data-connection-card className="rounded-lg border border-border bg-card">
       <div className="flex flex-wrap items-start justify-between gap-3 p-4">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="font-display text-[15px] font-semibold text-foreground">
@@ -189,6 +223,12 @@ function ConnectionCard({
           >
             {inst.extension_display_name}
           </span>
+          {remoteLogin && (
+            <div className="flex w-full flex-wrap items-center gap-2">
+              {account && <span className="text-xs text-muted-foreground">{account}</span>}
+              <SignInChip signIn={signIn} />
+            </div>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1 text-right">
           <ReachabilityChip probe={probe} />
@@ -266,7 +306,7 @@ function ConnectionCard({
             >
               <ShieldCheck /> Approve
             </Button>
-            {(holdsOwnLogin || isOauth) && (
+            {(holdsOwnLogin || isOauth || remoteLogin) && (
               <Button
                 variant="outline"
                 size="xs"
@@ -274,10 +314,19 @@ function ConnectionCard({
                 title={
                   isOauth
                     ? `Connect ${inst.extension_display_name} — open the URL and paste the code`
-                    : `Check or renew the ${inst.extension_display_name} sign-in on this computer`
+                    : remoteLogin
+                      ? `Sign in to ${account || 'this account'} from your browser`
+                      : `Check or renew the ${inst.extension_display_name} sign-in on this computer`
                 }
               >
-                <LogIn /> {showAuth ? 'Hide sign-in' : isOauth ? 'Connect' : 'Sign in'}
+                <LogIn />{' '}
+                {showAuth
+                  ? 'Hide sign-in'
+                  : isOauth
+                    ? 'Connect'
+                    : remoteLogin && signIn === 'expired'
+                      ? 'Reconnect'
+                      : 'Sign in'}
               </Button>
             )}
             {!holdsOwnLogin && (
@@ -290,11 +339,13 @@ function ConnectionCard({
                   bundle
                     ? isOauth
                       ? 'Set or replace the app key and secret'
-                      : 'Replace this connection’s credentials'
+                      : remoteLogin
+                        ? 'Change which account and client this connection uses'
+                        : 'Replace this connection’s credentials'
                     : `${inst.extension_display_name} is no longer on the extension search path`
                 }
               >
-                {isOauth ? 'App key/secret' : 'Re-auth'}
+                {isOauth ? 'App key/secret' : remoteLogin ? 'Edit details' : 'Re-auth'}
               </Button>
             )}
             {confirmRemove ? (
@@ -346,11 +397,19 @@ function ConnectionCard({
 
       {showAuth && (
         <div className="border-t border-border p-4">
-          <ConnectorAuthorizePanel
-            instance={inst.instance}
-            extension={inst.extension}
-            operatorMode={operatorMode}
-          />
+          {remoteLogin ? (
+            <RemoteSignInPanel
+              instance={inst.instance}
+              operatorMode={operatorMode}
+              onEditDetails={bundle ? () => onReauth(bundle, inst.instance) : undefined}
+            />
+          ) : (
+            <ConnectorAuthorizePanel
+              instance={inst.instance}
+              extension={inst.extension}
+              operatorMode={operatorMode}
+            />
+          )}
         </div>
       )}
       {showDoctor && (
@@ -427,7 +486,7 @@ function ConnectionKnowledgeAction({
   )
 }
 
-function BundleCard({
+export function BundleCard({
   bundle,
   connectedCount,
   operatorMode,
@@ -438,6 +497,9 @@ function BundleCard({
   operatorMode: boolean
   onConnect: (bundle: CatalogBundle) => void
 }) {
+  // One bundle, many accounts: a browser-sign-in bundle (Google) is added once
+  // per address, so the button says what it does each time.
+  const perAccount = bundle.host_requires.some((r) => r.remote_login)
   return (
     // The bundle's directory is on the card as a hover title rather than a line
     // of its own. It matters exactly twice — telling two same-named bundles
@@ -494,9 +556,14 @@ function BundleCard({
         {operatorMode ? (
           <>
             <Button size="sm" onClick={() => onConnect(bundle)}>
-              <Plug /> Connect
+              <Plug /> {perAccount ? 'Add an account' : 'Connect'}
             </Button>
             <FieldHelp helpKey="connection.bundle" route="connections" />
+            {perAccount && (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Each account is its own connection. After adding it, click Sign in on its card.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-xs italic text-muted-foreground/80">
