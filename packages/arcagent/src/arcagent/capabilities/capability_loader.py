@@ -815,18 +815,33 @@ class CapabilityLoader:
             return
         active_folder = revision.parent if revision is not None else folder
         skill_md = revision or skill_md
-        verified_content = (
-            self._skill_artifact_resolver.read_current(folder, skill_md)
-            if revision is not None
-            else self._read_direct_skill(skill_md, folder.name, root_name)
-        )
-        if verified_content is None:
+        try:
+            candidate_content = (
+                self._skill_artifact_resolver.read_current(folder, skill_md)
+                if revision is not None
+                else skill_md.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError):
+            candidate_content = None
+        if candidate_content is None:
             detail = "skill changed or trust validation failed before registration"
             delta.errors.append((str(skill_md), detail))
+            delta.outcomes.append(
+                CapabilityOutcome(
+                    kind="skill",
+                    name=folder.name,
+                    version="",
+                    description="",
+                    scan_root=root_name,
+                    source_path=str(skill_md),
+                    status="unavailable",
+                    status_detail=detail,
+                )
+            )
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
         validation = validate_skill_folder(
-            active_folder, root_name, verified_content=verified_content
+            active_folder, root_name, verified_content=candidate_content
         )
         if not validation.ok or validation.entry is None:
             detail = "; ".join(f"{e.code}: {e.detail}" for e in validation.errors)
@@ -911,6 +926,23 @@ class CapabilityLoader:
                         status_detail=gate.detail,
                     )
                 )
+                return
+            if self._read_direct_skill(skill_md, entry.name, root_name) != candidate_content:
+                detail = "skill changed or trust validation failed before registration"
+                delta.errors.append((str(skill_md), detail))
+                delta.outcomes.append(
+                    CapabilityOutcome(
+                        kind="skill",
+                        name=entry.name,
+                        version=entry.version,
+                        description=entry.description,
+                        scan_root=root_name,
+                        source_path=str(skill_md),
+                        status="unavailable",
+                        status_detail=detail,
+                    )
+                )
+                await self._emit_registration_failed(skill_md, "skill", detail)
                 return
         for warning in validation.warnings:
             await self._emit_registration_warning(skill_md, warning.code, warning.detail)

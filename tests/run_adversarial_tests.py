@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS: dict[str, tuple[str, ...]] = {
     "artifact tampering and unauthorized capability load": (
         "packages/arcagent/tests/security/test_sign_gate_load.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_inventory.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_gating.py",
         "packages/arcagent/tests/security/test_module_capability_trust.py",
         "packages/arcagent/tests/security/capabilities/test_capability_import_drift.py",
     ),
@@ -38,6 +40,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/core/test_checkpoint_sink.py",
         "packages/arcagent/tests/unit/core/test_spec053_hardening.py",
         "packages/arcllm/tests/test_trace_store.py",
+        "packages/arctrust/tests/test_machine_rekey.py",
+        "packages/arctrust/tests/test_hosted_rekey.py",
         "packages/arcrun/tests/security/test_event_tampering.py",
         "packages/arcui/tests/test_session_replay_media.py",
         "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
@@ -102,8 +106,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcstore/tests/unit/test_accepted_runs.py",
         "packages/arcagent/tests/unit/modules/run_intents/test_ledger.py",
         "packages/arcagent/tests/unit/modules/run_intents/test_collected.py",
+        "packages/arcagent/tests/unit/modules/run_intents/test_reply_outbox.py",
         "packages/arcagent/tests/unit/core/test_accepted_stream.py",
         "packages/arcgateway/tests/unit/test_signed_delivery.py",
+        "packages/arcteam/tests/unit/test_messenger_signing.py",
     ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,
