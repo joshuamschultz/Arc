@@ -134,6 +134,19 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/integration/test_connector_remote_login.py",
         "packages/arcui/tests/integration/test_google_remote_sign_in_e2e.py",
     ),
+    # One tool name, several granted accounts (Google via gog): the account a call
+    # acts as is resolved against THIS agent's grants, never believed. An agent
+    # granted one account naming another (exact, case/space/Unicode variants,
+    # aliases, connection names), flags smuggled into other arguments
+    # (--account, -a, --client, --home, GOG_*=), concurrent calls for two
+    # accounts, a read-only sign-in asked to write, oversized pages/answers and
+    # attachment path escapes must all fail closed, audited with the REAL
+    # connection. Covers ASI02/ASI03/LLM06/LLM10.
+    "multi-account routing — confused deputy across granted connections": (
+        "packages/arcagent/tests/unit/modules/connectors/test_routing.py",
+        "packages/arcagent/tests/unit/extension/test_cli_attachment_bounds.py",
+        "packages/arcagent/tests/integration/test_google_account_routing.py",
+    ),
 }
 
 

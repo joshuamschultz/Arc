@@ -52,6 +52,7 @@ instead of silently reducing coverage.
 | Key theft and cross-agent/tenant reads | trust-store permissions, DID/key separation, runtime and classification isolation |
 | Direct ArcRun invocation and resource abuse | package dependency direction, absence of ArcAgent authority, time/memory/spawn bounds |
 | Browser sign-in abuse (pasted callback, argv injection, out-of-order steps) | consent-host pinning, loopback/path/query checks on the pasted address, strict account shape, one waiting sign-in per binary, spent-code refusal, step timeout, code never written by Arc |
+| Multi-account confused deputy (one tool name, several granted accounts) | selector resolved only against the calling agent's grants (NFKC+casefold, no aliases or whitespace), grant re-read per call, smuggled account/client/home flags refused, read-only sign-in enforced, page/output/download bounds, audit names the real connection |
 
 The manifest is intentionally curated. Package-local security suites remain
 broader; this battery is the fast release gate for the hostile-insider threat
