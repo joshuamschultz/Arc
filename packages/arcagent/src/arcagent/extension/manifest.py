@@ -455,11 +455,65 @@ class DeclaredTool(_ManifestModel):
     capability_tags: list[str] = Field(default_factory=list)
 
 
+class ToolRouting(_ManifestModel):
+    """``[tools.routing]`` — one tool name serving every connection of this bundle.
+
+    A bundle connected more than once (two mailboxes, two Jira sites) would
+    otherwise serve the same tool names twice, and only the first connection could
+    register them. With this table the agent's registry holds ONE tool per name
+    and each call is routed to a connection the calling agent is granted:
+
+    * ``argument`` is the tool argument that selects the connection. It is added
+      to every tool's schema by the router, stripped before the call reaches the
+      attachment, and may not be any command's own argument — so it never reaches
+      argv as typed.
+    * ``field`` is the connection's own non-sensitive field it is matched against
+      (``account``). The value that is USED is always the connection's stored one.
+    * ``match`` is the comparison: ``exact``, or ``email`` (Unicode NFKC and
+      case-folded, nothing else forgiven).
+    * ``refuse_values`` is a regex; an argument value matching it is refused
+      before anything runs (a flag or environment assignment smuggled into a
+      query). ``free_text`` names arguments it does not apply to (a mail body may
+      legitimately say anything).
+    """
+
+    argument: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    field: str
+    match: Literal["exact", "email"] = "exact"
+    refuse_values: str = ""
+    free_text: list[str] = Field(default_factory=list)
+
+    @field_validator("refuse_values")
+    @classmethod
+    def _refusal_must_compile(cls, pattern: str) -> str:
+        if pattern:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"refuse_values is not a valid regex: {exc}") from exc
+        return pattern
+
+
+class ReadOnlyMode(_ManifestModel):
+    """``[tools.read_only]`` — a connection field that makes every write tool refuse.
+
+    When the connection's ``field`` (or its declared default, when blank) equals
+    ``when``, a tool whose classification is not ``read_only`` is refused with a
+    readable reason before it runs — rather than reaching the service and coming
+    back as its own permission error.
+    """
+
+    field: str
+    when: str = Field(min_length=1)
+
+
 class ToolPolicy(_ManifestModel):
     """``[tools]`` — which tools may register, and what each one is."""
 
     allow: list[str] | None = None
     declared: list[DeclaredTool] = Field(default_factory=list)
+    routing: ToolRouting | None = None
+    read_only: ReadOnlyMode | None = None
 
     @property
     def is_unbounded(self) -> bool:
@@ -538,6 +592,61 @@ class ExtensionManifest(_ManifestModel):
     @classmethod
     def _drop_denied_keys(cls, config: dict[str, Any]) -> dict[str, Any]:
         return _strip_denied(config)
+
+    @model_validator(mode="after")
+    def _routing_names_visible_fields(self) -> ExtensionManifest:
+        """The selector and the read-only switch read settings, never a credential.
+
+        And the selector is never also a command's own argument: it is resolved
+        against the connection, and a command declaring it would put the model's
+        raw value on argv beside the resolved one.
+        """
+        by_name = {declared.name: declared for declared in self.secrets}
+        for role, field in (
+            ("[tools.routing].field", self.tools.routing.field if self.tools.routing else None),
+            (
+                "[tools.read_only].field",
+                self.tools.read_only.field if self.tools.read_only else None,
+            ),
+        ):
+            if field is None:
+                continue
+            declared = by_name.get(field)
+            if declared is None:
+                raise ValueError(f"{role} = {field!r} is not a field this bundle declares")
+            if declared.sensitive:
+                raise ValueError(
+                    f"{role} = {field!r} is a credential; it must be a visible setting"
+                )
+        read_only = self.tools.read_only
+        if read_only is not None:
+            choices = by_name[read_only.field].choices
+            if choices and read_only.when not in choices:
+                raise ValueError(
+                    f"[tools.read_only].when = {read_only.when!r} is not one of "
+                    f"{read_only.field}'s choices"
+                )
+        routing = self.tools.routing
+        if routing is not None:
+            for tool, argument in self._command_arguments():
+                if argument == routing.argument:
+                    raise ValueError(
+                        f"{tool} declares {argument!r}, which is the routing selector; the "
+                        f"selector is resolved against the connection and never reaches argv"
+                    )
+        return self
+
+    def _command_arguments(self) -> list[tuple[str, str]]:
+        """Every (tool, argument name) a declared CLI command takes."""
+        found: list[tuple[str, str]] = []
+        declared: Any = self.config.get("cli", {}).get("commands", [])
+        for command in declared if isinstance(declared, list) else []:
+            if not isinstance(command, dict):
+                continue
+            for argument in command.get("arguments", []) or []:
+                if isinstance(argument, dict) and isinstance(argument.get("name"), str):
+                    found.append((str(command.get("tool", "a command")), argument["name"]))
+        return found
 
     @model_validator(mode="after")
     def _oauth_names_declared_secrets(self) -> ExtensionManifest:
@@ -682,9 +791,11 @@ __all__ = [
     "HostRequirement",
     "KnowledgeDeclaration",
     "PlatformArtifact",
+    "ReadOnlyMode",
     "RemoteLogin",
     "SecretRequirement",
     "ToolPolicy",
+    "ToolRouting",
     "fill_placeholders",
     "load_manifest",
     "placeholders",

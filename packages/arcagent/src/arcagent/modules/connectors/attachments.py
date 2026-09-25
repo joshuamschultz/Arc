@@ -47,11 +47,7 @@ def _same_origin(url: str, origin: str) -> bool:
     ``url_origin`` allow-list happens to be written (SEC-01).
     """
     got, want = urlsplit(url), urlsplit(origin)
-    return (
-        got.scheme == want.scheme
-        and got.hostname == want.hostname
-        and got.port == want.port
-    )
+    return got.scheme == want.scheme and got.hostname == want.hostname and got.port == want.port
 
 
 @contextlib.contextmanager
@@ -187,8 +183,13 @@ def build_attachment(
     secrets: Mapping[str, Secret],
     *,
     connection_id: str = "",
+    download_dir: Path | None = None,
 ) -> ExtensionAttachment:
     """Build the declared attachment at the sole credential-reveal boundary.
+
+    ``download_dir`` is where a CLI command that saves a file may write — the
+    agent's own downloads folder for this connection. ``None`` (every management
+    surface) refuses every download.
 
     ``connection_id`` names WHICH account this is. An extension that keeps
     per-connection operator configuration — the semantic layer describing one
@@ -223,6 +224,17 @@ def build_attachment(
             resilience=declared.resilience,
             env=placement_environment(manifest, secrets),
             values=visible_values(manifest, secrets),
+            owned_env=frozenset(
+                declared.placement.variable
+                for declared in manifest.secrets
+                if declared.placement is not None
+            ),
+            visible_env=frozenset(
+                declared.placement.variable
+                for declared in manifest.secrets
+                if declared.placement is not None and not declared.sensitive
+            ),
+            download_dir=download_dir,
         )
         return _with_source_adapter(manifest, bundle, cli_attachment)
     if kind == "mcp":
@@ -248,9 +260,7 @@ def build_attachment(
                     attachment=kind,
                 )
             token = (
-                secrets.get(http_config.credential_field)
-                if http_config.credential_field
-                else None
+                secrets.get(http_config.credential_field) if http_config.credential_field else None
             )
             # The credential is revealed into the header mapping the SDK transport
             # carries. Most hosted MCP servers take an Authorization: Bearer header;
