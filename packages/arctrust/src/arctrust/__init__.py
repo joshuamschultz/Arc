@@ -275,6 +275,8 @@ from arctrust.witness import (
 
 if TYPE_CHECKING:
     from arctrust.authority import AccountActorVerifier, AccountAuthority
+    from arctrust.hosted_claim import HostedClaimError, HostedFirstClaim
+    from arctrust.hosted_journal import HostedClaimJournal, HostedJournalError
     from arctrust.transit_http import VaultTransitHTTP
     from arctrust.vault_anchor import VaultKVAnchor
     from arctrust.vault_cipher import VaultCipher
@@ -288,6 +290,14 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str) -> Any:
     """Load optional Vault leaves only when their public name is requested."""
+    if name in {"HostedClaimError", "HostedFirstClaim"}:
+        from arctrust import hosted_claim
+
+        return getattr(hosted_claim, name)
+    if name in {"HostedClaimJournal", "HostedJournalError"}:
+        from arctrust import hosted_journal
+
+        return getattr(hosted_journal, name)
     if name == "VaultKVAnchor":
         from arctrust.vault_anchor import VaultKVAnchor
 
@@ -359,6 +369,10 @@ __all__ = [
     "EnrollmentGrant",
     "EntityToggle",
     "FileNotaryTransit",
+    "HostedClaimError",
+    "HostedClaimJournal",
+    "HostedFirstClaim",
+    "HostedJournalError",
     "InProcessSigner",
     "KeyPair",
     "MonotonicAnchor",

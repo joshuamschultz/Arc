@@ -60,6 +60,22 @@ describe('configuration field help', () => {
       .toBe('settings.config_value')
   })
 
+  it('documents the hosted first-account setup journey and safe claim recovery', () => {
+    const setup = content.setup
+    expect(setup.title).toBe('Create your account')
+    expect(setup.fields.map((field) => field.key)).toEqual([
+      'setup.status',
+      'setup.password',
+      'setup.password_confirmation',
+      'setup.create_account',
+      'setup.sign_in',
+    ])
+    expect(setup.fields.find((field) => field.key === 'setup.password')?.description).toContain('at least 12 characters')
+    expect(setup.fields.find((field) => field.key === 'setup.password_confirmation')?.description).toContain('must match')
+    expect(setup.fields.find((field) => field.key === 'setup.create_account')?.description).toContain('verified order page')
+    expect(setup.troubleshooting[2].action).toContain('Do not try a manual account bootstrap')
+  })
+
   it('keeps every screen field ID unique', () => {
     const fields = Object.values(content).flatMap((screen) => screen.fields)
     expect(new Set(fields.map((field) => field.key)).size).toBe(fields.length)

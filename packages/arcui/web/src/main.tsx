@@ -17,9 +17,11 @@ import '@fontsource/ibm-plex-mono/latin-600.css'
 import './index.css'
 import App from './App.tsx'
 import { bootstrapAuth } from '@/lib/auth'
+import { bootstrapHostedClaim } from '@/lib/hosted-claim'
 
 // Consume `#auth=<token>` from the URL before anything else renders.
 bootstrapAuth()
+bootstrapHostedClaim()
 
 // Default: light. Add dark only if user explicitly picked dark.
 const storedTheme = (() => { try { return localStorage.getItem('arc-theme') } catch { return null } })()

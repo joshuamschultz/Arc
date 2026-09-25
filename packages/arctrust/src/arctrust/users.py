@@ -114,6 +114,7 @@ class User:
     pairings: dict[str, str] = field(default_factory=dict)
     disabled: bool = False
     created_at: float = field(default_factory=time.time)
+    initial_claim_digest: str | None = None
 
     @property
     def is_operator(self) -> bool:
@@ -474,6 +475,36 @@ class UserStore:
         pairings: dict[str, str] | None = None,
         org: str = "arc",
     ) -> User:
+        return self._add_new(
+            email, password, handle=handle, display_name=display_name,
+            roles=roles, pairings=pairings, org=org, initial_claim_digest=None,
+        )
+
+    @_synchronized
+    def claim_first_operator(
+        self, email: str, password: str, *, org: str, claim_digest: str
+    ) -> User:
+        """Bind the first operator to the exact reserved hosted grant."""
+        self._load()
+        if self._users or not re.fullmatch(r"[0-9a-f]{64}", claim_digest):
+            raise UserStoreError("first operator claim is unavailable")
+        return self._add_new(
+            email, password, roles=(OPERATOR,), org=org,
+            initial_claim_digest=claim_digest,
+        )
+
+    def _add_new(
+        self,
+        email: str,
+        password: str,
+        *,
+        handle: str | None = None,
+        display_name: str = "",
+        roles: tuple[str, ...] = (VIEWER,),
+        pairings: dict[str, str] | None = None,
+        org: str = "arc",
+        initial_claim_digest: str | None,
+    ) -> User:
         self._check_write_head()
         email = _normalize(email)
         if email in self._users:
@@ -499,6 +530,7 @@ class UserStore:
             display_name=display_name.strip(),
             roles=tuple(roles),
             pairings=dict(pairings or {}),
+            initial_claim_digest=initial_claim_digest,
         )
         self._save({**self._users, email: user})
         return user

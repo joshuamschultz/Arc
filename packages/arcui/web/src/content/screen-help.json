@@ -1,4 +1,54 @@
 {
+  "setup": {
+    "title": "Create your account",
+    "summary": "Claim the Arc account for the deployment opened from your verified order page.",
+    "steps": [
+      "Wait for the page to report that secure setup is ready before creating the account.",
+      "Choose a password with at least 12 characters, enter it again, then select Create account.",
+      "After setup, Arc signs you in when the sign-in service is available; otherwise use the sign-in link with the account email and password you just created."
+    ],
+    "fields": [
+      {
+        "key": "setup.status",
+        "label": "Setup status",
+        "description": "Shows whether this deployment is awaiting account setup, already set up, or secure setup is unavailable. Service readiness alone does not mean the customer account has been claimed."
+      },
+      {
+        "key": "setup.password",
+        "label": "Password",
+        "description": "Create the first account password. Use at least 12 characters. The browser sends it only to this deployment’s setup service; do not share it in chat or support messages."
+      },
+      {
+        "key": "setup.password_confirmation",
+        "label": "Repeat password",
+        "description": "Enter the same password again to catch typing mistakes. Both entries must match and meet the 12-character minimum."
+      },
+      {
+        "key": "setup.create_account",
+        "label": "Create account",
+        "description": "Submits the one-time customer claim proof held in this browser tab together with the new password. The signed claim expires and cannot be reused after setup. If the link has expired or the claim is refused, return to your verified order page and open a fresh setup link; do not use a manual bootstrap path."
+      },
+      {
+        "key": "setup.sign_in",
+        "label": "Already set up? Sign in",
+        "description": "Opens Arc sign-in for an account that has already been created. Use the account email and password established during setup."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "The setup link is missing, expired, or refused",
+        "action": "Return to the verified order page and open a fresh setup link. Claim proof is kept only in the current browser tab and is removed from the address bar; do not copy or share it."
+      },
+      {
+        "symptom": "The setup request reports a temporary error or is busy",
+        "action": "Wait briefly and retry from the same setup page while its claim is still valid. If the claim is rejected or the link is no longer valid, return to the verified order page for a fresh setup link."
+      },
+      {
+        "symptom": "The page says setup is still being prepared",
+        "action": "Return to the order page and check deployment setup status. Do not try a manual account bootstrap."
+      }
+    ]
+  },
   "home": {
     "title": "Home",
     "summary": "See the fleet snapshot, recent activity, and items that may need operator attention.",

@@ -47,6 +47,10 @@ _UNAUTHENTICATED_PATHS = frozenset(
         # Tells the login screen whether this deployment has any accounts yet,
         # so a fresh install can say "run arc user add" instead of failing.
         "/api/auth/mode",
+        "/api/setup/status",
+        "/api/setup/challenge",
+        "/api/setup/grant",
+        "/api/setup/claim",
     }
 )
 

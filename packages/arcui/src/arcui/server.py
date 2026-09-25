@@ -17,6 +17,7 @@ import contextlib
 import logging
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,8 @@ from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
+from arcui.routes.hosted_setup import ROUTES as _HOSTED_SETUP_ROUTES
+from arcui.routes.hosted_setup import HostedClaimService
 from arcui.team_stream import TeamStreamHub
 
 logger = logging.getLogger(__name__)
@@ -228,6 +231,8 @@ def create_app(
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
     queue_coordinator: Any | None = None,
     hosted: bool = False,
+    hosted_claim: HostedClaimService | None = None,
+    hosted_origin: str | None = None,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -311,6 +316,10 @@ def create_app(
         Route("/sw.js", _service_worker),
         Route("/api/health", _health),
         Route("/api/ready", _ready),
+        *(
+            Route(path, handler, methods=methods)
+            for path, handler, methods in _HOSTED_SETUP_ROUTES
+        ),
         Route("/api/info", _agent_info),
         # SPEC-057 REQ-043: sign in as a person, so approvals name one.
         *[Route(path, handler, methods=methods) for path, handler, methods in _AUTH_ROUTES],
@@ -635,6 +644,17 @@ def create_app(
                     logger.exception("lifespan: error stopping the managed broker")
             if standalone_broker is not None:
                 await standalone_broker.aclose()
+            if hosted:
+                executor = starlette_app.state.hosted_claim_executor
+                try:
+                    async with asyncio.timeout(40):
+                        await asyncio.gather(*(
+                            asyncio.wrap_future(future)
+                            for future in tuple(starlette_app.state.hosted_claim_pending)
+                        ), return_exceptions=True)
+                except TimeoutError:
+                    logger.error("lifespan: hosted authority workers exceeded shutdown deadline")
+                executor.shutdown(wait=False, cancel_futures=True)
 
     # Last, so it catches only what no real route claimed: the browser router's
     # own paths, which must load directly and not just via in-app navigation.
@@ -674,6 +694,13 @@ def create_app(
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
     app.state.queue_coordinator = queue_coordinator
     app.state.hosted = hosted
+    app.state.hosted_claim = hosted_claim
+    app.state.hosted_origin = hosted_origin
+    app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
+    app.state.hosted_claim_pending = set()
+    app.state.hosted_claim_executor = ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="arc-hosted-claim"
+    ) if hosted else None
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
     app.state.observe = Observe(

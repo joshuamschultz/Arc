@@ -1,5 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppShell } from '@/components/shell/app-shell'
+import { AuthGate } from '@/components/auth-gate'
+import { SetupPage } from '@/pages/setup'
 import { HomePage } from '@/pages/home'
 import { AgentsPage } from '@/pages/agents'
 import { TasksPage } from '@/pages/tasks'
@@ -21,9 +23,10 @@ import { LazyWorkflowDetailPage } from './lazy-workflow-detail'
 import { DEFAULT_PATH } from './nav'
 
 export const router = createBrowserRouter([
+  { path: '/setup', element: <SetupPage /> },
   {
     path: '/',
-    element: <AppShell />,
+    element: <AuthGate><AppShell /></AuthGate>,
     children: [
       { index: true, element: <Navigate to={`/${DEFAULT_PATH}`} replace /> },
 

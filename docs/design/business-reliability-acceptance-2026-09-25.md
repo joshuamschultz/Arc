@@ -28,11 +28,232 @@ This is the current product acceptance register for the reliability and self-ser
 | Workflows, pulses and schedules | Customer creates/runs workflows and schedules in ArcUI. Claims, leases, retries, misfire policy and per-item failures survive restart/outage; one poisoned run cannot stall peers; progress and terminal failure are visible. | ArcTeam workflow engine and ArcAgent scheduler; UI `packages/arcui/web/src/pages/workflows.tsx`, `pages/workflow-detail.tsx`; tests `packages/arcagent/tests/integration/test_scheduler_integration.py`, `test_workflow_trigger_wiring.py`, `packages/arcteam/tests/unit/workflow/`. | Workflow restart/failure-budget fix `b122761b` has 374 workflow tests and a root fresh rerun; it adds persistent fenced counters and healthy-run isolation. Durable schedule/pulse ownership and customer journey acceptance remain open. |
 | Slack and email | Inbound acceptance and outbound delivery are durable and correlated; bounded retry, credential renewal, duplicate/replay control and uncertain side-effect state prevent silent loss or duplicate external actions. | Gateway adapters under `packages/arcgateway/src/arcgateway/adapters/`; messaging and connector tests under `packages/arcgateway/tests/` and `packages/arcagent/tests/`. | Execution ledger status is pending. Require real channel contract/journey tests, outage/expiry/reconnect and crash-boundary reconciliation. |
 | HTML reports | Authorized report reads use an isolated sandbox/CSP viewer, bounded untrusted content and provenance; listing metadata excludes private bodies. Scripts, network, origin and privileged-browser access are denied. Missing policy or viewer setup never serves raw HTML. | Backend `packages/arcui/src/arcui/routes/agent_detail/report_preview.py`; UI `packages/arcui/web/src/components/file-tree.tsx`; tests `packages/arcui/tests/test_report_preview.py`, `packages/arcui/web/src/components/file-tree.test.tsx`, and `packages/arcui/web/src/lib/api.test.ts`. | Sanitized static preview, no-script/no-network CSP, sandboxed iframe, cancellation and error behavior are implemented and have focused tests. Acceptance remains open for deployment-scoped read policy and real hosted authority composition; local route/component tests do not prove hosted customer authorization. |
-| Help on every screen and field | Every shipped route and conditional control explains purpose, setup, current status, safe action and common failure. Every dynamic Settings field gets schema/path-accurate help or an explicit unavailable/generic extension description. Links, route IDs and field-path matching are checked. | `packages/arcui/web/src/content/screen-help.json`, `components/help.tsx`, `lib/help.ts`, `lib/help.test.ts`, `components/help.test.tsx`; route source `packages/arcui/web/src/app/router.tsx`; inventory [arcui-field-help-inventory.md](arcui-field-help-inventory.md). | The catalog contains 18 route entries and 672 field entries, including 529 Settings entries. Static audit found missing attached help for live task filters, message attachments, workflow-node controls, report preview, schedules, channel management, rubric editing and trace filters/search/export; this change adds help for task and message controls, workflow editing and gate notes, report preview, schedules, channels, rubric, trace filters/search/export, command palette, sign-in, knowledge memory/chunk controls, tool filtering and restart database option; tests live static FieldHelp references plus optional table-search help. Catalog totals alone do not prove every rendered control is covered. Hosted queue controls are future UI; skill-revision UI exists and needs canonical field-help IDs from its owner. |
+| Help on every screen and field | Every shipped route and conditional control explains purpose, setup, current status, safe action and common failure. Every dynamic Settings field gets schema/path-accurate help or an explicit unavailable/generic extension description. Links, route IDs and field-path matching are checked. | `packages/arcui/web/src/content/screen-help.json`, `components/help.tsx`, `lib/help.ts`, `lib/help.test.ts`, `components/help.test.tsx`; route source `packages/arcui/web/src/app/router.tsx`; inventory [arcui-field-help-inventory.md](arcui-field-help-inventory.md). | The catalog contains 19 route entries and 677 field entries, including 529 Settings entries. Setup now has five attached help IDs: `setup.status`, `setup.password`, `setup.password_confirmation`, `setup.create_account`, and `setup.sign_in`. A prior static audit identified help gaps for task filters, message attachments, workflow controls, reports, schedules, channels, rubric editing and trace filters/search/export. Current source attaches help to those controls and to the setup route; its five IDs are listed above and verified against `packages/arcui/web/src/pages/setup.tsx`. The catalog tests check static `FieldHelp` references plus optional table-search help. Totals and passing catalog tests do not prove every conditional control is rendered or accepted. Hosted queue controls remain future UI; skill revision UI remains subject to its production signer/anchor gates. |
 | Connections and Knowledge setup | A granted connection card shows per-agent auth/enrollment, sync/index revision, pending work/error and remediation. Customer can configure, choose resources, approve mapping, sync/reindex/revoke and retrieve searchable knowledge. Credentials are scoped, masked, renewable and never exposed in samples/logs. | ArcUI Connections/Knowledge pages; `packages/arcagent/src/arcagent/modules/connected_data/`; tests `packages/arcui/web/src/pages/connections.test.tsx`, `packages/arcagent/tests/integration/test_connection_grants.py`, `packages/arcagent/tests/modules/connected_data/`. | Existing generic connection/config controls do not themselves satisfy source enrollment lifecycle. Test from a real granted account through searchable knowledge and revocation; missing provider or authority must be explicit. |
 | $20 hosted setup, account authority and provisioning | Payment -> one tenant/deployment -> real scoped authority -> first claim/setup -> capability readiness -> usable ArcUI, with BYOK and declared quotas/costs. Duplicate/lost payment or provider responses reconcile idempotently; account authority is nonexportable and survives restart. `awaiting_setup` is distinct from infrastructure readiness. On cancellation, customer data is retained for 30 days under the approved retention policy, then deleted by the documented lifecycle; export/recovery is available during retention. | The browser setup page is in Arc at `packages/arcui/web/src/pages/setup.tsx`; Arc Cloud remains a separate repository for cloud broker/provisioner work. Arc-side seams include `packages/arctrust/src/arctrust/`, ArcUI server/auth and ArcCLI setup; cloud references in integration plan (`arc-cloud/provisioner/src/arccloud/`, `site/src/pages/ready.astro`). | Canonical signed-grant primitives are committed at `4fa78fce` (9 tests). Arc Cloud `POST /api/orders/{id}/setup` source checks email session, live payment and provider machine, then seals the outbox before delivery. Machine factory, durable restart recovery, actually configured Vault, customer setup and release acceptance remain open. Mock Vault tests, readiness HTTP 200 and source recovery are not launch evidence. The user confirmed a 30-day cancellation recovery window and source-state retention policy. Actual provider export, deletion execution, and backup behavior are unverified and remain acceptance gaps. Need separate self-hosted and fresh Arc Cloud composition evidence; preserve $20/month BYOK behavior. |
 | Hosted lifecycle: updates, rollback, restore, isolation | Signed immutable tested artifacts update atomically; failed activation rolls back runtime without changing durable state or restoring revoked authority. Secrets never appear in process args/userdata/logs. Backup restore and tenant isolation are proven. | Runtime installer/update and deployment code; deployment acceptance commands and runbook evidence recorded in execution ledger. | Runtime/update/restore proof remains open. Peer-reported DGX/Azure deployment is `0e516029` only. Newer local source has not been pushed or deployed; no soak is claimed. |
 | Incident attribution and sustained operation | Sanitized incident timeline ties sessions, structured error classes, dependency transitions and recovery to an exact deployed artifact without exposing prompts/credentials. Crash/partition/expiry/idle tests and staged soak establish recovery, error/cost budgets and customer-visible status. | Structured telemetry, ArcUI Activity/Audit, deployment/operator runbooks; `docs/runbooks/operate/business-reliability.md`; integration-plan production evidence rules. | Root cause of reported outage is not established by the initial NATS/process observations or broad log grep. Full suite, deployment sync/load soak and sustained proof are absent. Earlier diagnostic token exposure needs authenticated rotation explicitly verified. |
+
+## Detailed criteria for open capabilities
+
+The following criteria preserve the detailed open requirements for skill lifecycle, report viewing, skill-improvement outcomes, and memory/shared-knowledge promotion. They supplement the summary rows above; none of these capabilities is accepted by local helper tests alone.
+
+### Acceptance rules
+
+- A capability is complete only when its customer-facing production path and
+  its failure behavior meet the criteria below. A unit test of an isolated
+  helper does not close a capability.
+- An explicit typed `unavailable` result means the capability is safely absent
+  and remains **open**. It is not success, degraded completion, or evidence
+  that the feature works.
+- Every implementation must preserve the package seams and optional-removal
+  behavior in `AGENTS.md`. Missing signers, anchors, trusted sources, or fleet
+  attachments must fail closed with the declared typed result, not a memory
+  fallback or import/startup failure.
+- Record the exact command and revision, dependencies and configuration,
+  test-data class, exercised customer path, observed state and audit evidence,
+  and any remaining deployment limits in the execution ledger. Keep local
+  code/test evidence separate from deployment and soak evidence.
+
+### Skill import, revision, and activation
+
+**Current status:** Open. The consolidation handoff records production
+signer/anchor factories, authenticated startup composition, and customer
+recovery as acceptance gates. The integration plan says the ArcTrust monotonic
+anchor contract and ArcUI factory injection point exist, while anchored
+revision resolution/editing and factory-to-runtime composition remain
+incomplete.
+
+### Required behavior
+
+1. A real ArcAgent customer startup receives its skill signer, revision
+   resolver, and monotonic anchor factory before capability loading begins.
+2. Import and edit use the customer surface to produce a complete immutable
+   signed bundle. Activation binds the agent and authorized scope to a new
+   anchored version and records the previous and target digests.
+3. The runtime consumes the exact bytes whose complete bundle signature and
+   anchor version were checked. Reload re-verifies both content and current
+   anchor; a workspace edit cannot silently replace the active skill.
+4. Rollback is an authorized, newly signed activation of a previously verified
+   bundle. It advances the anchor and audits actor, scope, new version,
+   previous digest, target digest, and outcome. It never rewinds or deletes the
+   anchor.
+5. Missing authority is a visible typed unavailable state. It must not enable
+   unsigned activation or silently load a mutable workspace copy.
+
+### Evidence required to close
+
+- An end-to-end test through the actual agent factory and customer import/edit
+  surfaces, followed by activation, runtime use, reload, and authorized
+  rollback. Route-only and resolver-only tests do not suffice.
+- Tests for modified bundle bytes, partial/missing bundle files, stale or
+  conflicting anchor digest/version, unauthorized edit/activation/rollback,
+  anchor outage, signer outage, and crashes around anchor advance and state
+  persistence. Refusals must be audited and must leave the prior verified
+  activation intact or return typed unavailable.
+- Evidence that the running skill uses the verified content-addressed bytes,
+  including after restart, plus audit records for activation and rollback.
+- In each deployment composition claimed as supported, verify configured
+  signer/anchor factories and customer recovery. Mock providers alone do not
+  establish deployment acceptance.
+
+### Isolated HTML report viewer
+
+**Current status:** Open. The acceptance register records deployment-scoped read policy and hosted authority composition as open, with component/security review evidence still required.
+The consolidation handoff includes production authority and deployment-scoped
+read policy among the remaining skill/report gates.
+
+### Required behavior
+
+1. A report is viewable only after an authenticated caller passes the
+   deployment-scoped read policy for that report. Knowing a URL, report ID, or
+   filesystem path grants no access.
+2. Rendering is isolated with the approved sandbox and Content Security Policy.
+   Report content is bounded, treated as untrusted, and cannot escape into the
+   ArcUI origin or reach privileged browser capabilities.
+3. The report view preserves provenance sufficient to identify its source,
+   producing run/revision, and integrity. Access is authorized and audited;
+   private report bodies are not exposed in listing metadata.
+4. Missing read authority, malformed or oversized content, and viewer setup
+   failure produce a clear unavailable/error state without serving unsafe raw
+   content.
+
+### Evidence required to close
+
+- Authenticated customer-path tests for allowed and denied report reads across
+  agents/tenants/deployments, including guessed IDs and direct asset requests.
+- Browser/component security tests for script execution, event handlers,
+  `javascript:` URLs, external resource loading, frame escape, origin access,
+  CSP enforcement, sandbox restrictions, and bounded input/output. Verify the
+  rendered page, not only response headers or string sanitization helpers.
+- Tests for missing/changed source provenance, content limit boundaries,
+  concurrent replacement, and absent policy authority. Denials and successful
+  reads must have the expected audit events without leaking report bodies.
+- A completed independent component/security review and the exact frontend
+  lint, type, build, and relevant test results recorded with the revision.
+
+### Skill-improvement outcome bridge
+
+**Current status:** Open. Same-call run/session correlation and event outcome mapping remain in progress. Outcome capture and promotion must not be claimed until the production bridge and route-to-runtime path are verified.
+
+### Required behavior
+
+1. The production run event bridge and skill hook share one typed payload
+   contract for successful and failed tool outcomes. The contract carries the
+   fields needed to identify the agent, run/session, skill/tool, result, and
+   outcome without exposing secrets or private bodies unnecessarily.
+2. A successful eligible outcome reaches the actual improvement evaluator.
+   Errors, cancellation, timeout, malformed payloads, or ineligible skills
+   cannot be interpreted as success or trigger promotion.
+3. The customer surface reports truthful, bounded states for eligible,
+   blocked, evaluating, and promoted outcomes, with a reason for blocked
+   states. State changes correspond to persisted/audited events.
+4. Evaluation enforces configured spend and change bounds. Promotion remains
+   subject to the required authorization, signature, review, and activation
+   path; an observed outcome alone never authorizes executable skill changes.
+5. If the event bridge, evaluator, or required authority is absent, report a
+   typed unavailable/blocked state and do not imply outcome capture or
+   promotion.
+
+### Evidence required to close
+
+- Contract tests proving the emitted production event is accepted unchanged by
+  the registered listener for success and explicit error outcomes, including
+  schema validation and correlation fields.
+- An end-to-end test from a real tool completion through run bridge, listener,
+  evaluator, visible status, and authorized promotion/activation. Include a
+  negative case proving no promotion occurs from failure, cancellation,
+  timeout, replay, malformed data, or an unapproved change.
+- Tests for duplicate and out-of-order events, stale run/skill revisions,
+  tenant/agent mismatch, spend/change ceilings, evaluator outage, and audit
+  failure. Verify bounded idempotent handling and audit of refusals.
+- Customer UI/API evidence that each state and reason is truthful and remains
+  available after reload/restart; include the typed unavailable behavior.
+
+### Memory promotion and shared knowledge
+
+**Current status:** Open with explicit unavailable behavior. The consolidation
+handoff states that automatic promotion raises
+`MemoryPromotionUnavailableError` because verified score grants and trusted
+source/fleet attachment are unavailable; nightly enabled-promotion follows the
+same unavailable path. Shared-knowledge entity promotion raises
+`SharedKnowledgeUnavailableError` pending signed contributor/provenance
+design. Ordinary signed-document promotion is available and is a distinct
+capability; it does not prove either open path complete.
+
+### Automatic memory promotion
+
+#### Required behavior
+
+1. Promotion requires a verifiable score grant and trusted source identity,
+   with tenant/agent scope, provenance, freshness, and authorization checked at
+   the public seam.
+2. Source revocation has a stable fence: a revoked or stale source cannot race
+   with promotion, survive restart as trusted, or re-enter through a cache or
+   nightly job.
+3. ArcTeam attaches and detaches the fleet extension through the public
+   lifecycle seam on already-started agents. ArcMemory remains team-agnostic;
+   absence of ArcTeam or collection mechanics is a typed unavailable result.
+4. Nightly consolidation uses the same trust, authorization, revocation, audit,
+   and idempotency rules as interactive promotion. Enabling the schedule cannot
+   convert unavailable trust into a successful no-op or fabricated completion.
+5. Until these dependencies are composed, both interactive and nightly paths
+   remain explicitly unavailable and expose that state to the caller.
+
+#### Evidence required to close
+
+- Contract tests for default, fake, and each real score/source implementation,
+  plus architecture/startup tests with the optional ArcTeam or memory
+  collection component physically absent.
+- End-to-end grant-to-promotion and nightly promotion tests using real trusted
+  source/fleet attachment composition, with signed provenance and persisted
+  searchable result verified through the public retrieval path.
+- Abuse/fault tests for forged or wrong-scope score grants, source substitution,
+  revocation during promotion, stale revisions, replay, cache/index poisoning,
+  attach/detach failure, process restart, and audit/anchor failure. Verify
+  refused operations are audited and do not leave promoted residue.
+- Tests showing missing trust, attachment, or collection capability returns
+  the documented typed unavailable result without import failure, memory
+  fallback, or a success-shaped response.
+
+### Shared-knowledge entity promotion
+
+#### Required behavior
+
+1. Cross-agent or multi-contributor entity promotion has an approved signed
+   contributor and provenance contract. Each contribution remains attributed,
+   scoped, and independently revocable; canonicalization cannot launder
+   classifications or erase provenance.
+2. Authorization verifies contributor identity, tenant/agent scope, purpose,
+   freshness, signature, and revocation before accepting or retrieving the
+   promoted entity.
+3. Until the contract and implementation exist, this path returns
+   `SharedKnowledgeUnavailableError`. Ordinary signed-document promotion is
+   not evidence that entity promotion is available.
+
+#### Evidence required to close
+
+- A documented, reviewed signed contributor/provenance contract and public
+  typed seam, with no ArcMemory-to-ArcTeam dependency or internal-table access.
+- End-to-end multi-contributor promotion and retrieval tests, including
+  contributor/source revocation and removal, and proof that returned knowledge
+  preserves contributor provenance and policy scope.
+- Refusal/audit tests for forged signatures, replay, stale revisions,
+  cross-tenant contributors, revoked sources, classification laundering,
+  poisoned indexes, and unavailable optional fleet/collection components.
+
+### Status recording
+
+For each subsection, mark acceptance complete only after all listed behavior
+and evidence are recorded against an exact source revision. Record each
+deployment composition separately. Keep `unavailable` as the status while a
+required signer, anchor, policy, trusted source, or fleet capability is absent;
+do not count it as a passing feature. Do not infer production acceptance from
+local tests, a healthy process, or ordinary signed-document promotion.
+
+The source status references are the [consolidation handoff](business-reliability-consolidation.md),
+[execution ledger](business-reliability-execution.md), and
+[integration plan](business-reliability-integration-plan.md).
 
 ## Help and customer-documentation ownership
 
