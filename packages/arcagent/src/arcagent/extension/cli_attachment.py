@@ -28,8 +28,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -53,6 +55,14 @@ _logger = logging.getLogger(__name__)
 #: The token that ends flag parsing. A manifest puts it last in a command's fixed
 #: ``argv`` to make that command's positional arguments unreadable as flags.
 _TERMINATOR = "--"
+
+#: A whole positive integer, as a model would type it — no sign, no spaces, no
+#: exponent, no leading zero.
+_COUNT = re.compile(r"^[1-9][0-9]{0,8}$")
+
+#: A plain file name a download may be saved under: no directory, no leading dot
+#: or dash, nothing a filesystem or a parser reads as structure.
+_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ ()+-]{0,127}$")
 
 
 class _Declaration(BaseModel):
@@ -81,6 +91,18 @@ class CliArgument(_Declaration):
     #: the manifest owns the shape and the caller fills one slot, so a crawl
     #: verb can be exposed without also granting everything beside it.
     template: str = ""
+    #: A ceiling for a count argument (a page size). Set, the value must be a whole
+    #: number from 1 to this, or the call is refused before anything runs.
+    maximum: int | None = Field(default=None, ge=1)
+
+    def refusal(self, value: object) -> str:
+        """Why ``value`` may not be passed, or empty when it may."""
+        if self.maximum is None:
+            return ""
+        text = str(value)
+        if not _COUNT.fullmatch(text) or int(text) > self.maximum:
+            return f"{self.name} must be a whole number from 1 to {self.maximum}"
+        return ""
 
     @model_validator(mode="after")
     def _a_template_names_exactly_one_slot(self) -> CliArgument:
@@ -104,6 +126,21 @@ class CliArgument(_Declaration):
         return rendered if not self.flag else f"{self.flag}={rendered}"
 
 
+class CliDownload(_Declaration):
+    """A command that writes a file, and where Arc — never the model — puts it.
+
+    ``argument`` is the declared argument carrying only a plain FILE NAME. Arc
+    joins it to the attachment's download directory and passes the result under
+    ``flag``; the name the model chose is never a path and never its own argv
+    token. A file larger than ``max_bytes`` after the run is removed and the call
+    fails.
+    """
+
+    argument: str
+    flag: str = Field(pattern=r"^--[a-z][a-z0-9-]*$")
+    max_bytes: int = Field(ge=1)
+
+
 class CliCommand(_Declaration):
     """One command of the binary, exposed to the agent as its own named tool.
 
@@ -122,6 +159,30 @@ class CliCommand(_Declaration):
     #: no format flag can wrap — a secret resolve. Declared per command, so no other
     #: verb loses a check it depends on.
     output: Literal["json", "text"] = "json"
+    #: The most a successful run may print. Above it the call fails with a
+    #: readable reason instead of handing the model an unbounded payload (LLM10).
+    max_output_bytes: int | None = Field(default=None, ge=1)
+    download: CliDownload | None = None
+
+    @model_validator(mode="after")
+    def _a_download_names_a_plain_argument(self) -> CliCommand:
+        """The download name is a declared, flagless, untemplated argument."""
+        if self.download is None:
+            return self
+        match = [
+            argument for argument in self.arguments if argument.name == self.download.argument
+        ]
+        if not match or match[0].flag or match[0].template:
+            raise ValueError(
+                f"{self.tool}: download.argument must name a declared argument with no flag "
+                f"or template"
+            )
+        return self
+
+    def _placed(self) -> list[CliArgument]:
+        """The arguments that become argv tokens — every one but a download's name."""
+        name = self.download.argument if self.download else None
+        return [argument for argument in self.arguments if argument.name != name]
 
     @model_validator(mode="after")
     def _a_positional_is_only_legal_behind_a_terminator(self) -> CliCommand:
@@ -137,7 +198,7 @@ class CliCommand(_Declaration):
         BEFORE the terminator and every positional after it, so a value can never
         land in a flag position and a flag can never be read as a value.
         """
-        if all(argument.flag for argument in self.arguments):
+        if all(argument.flag for argument in self._placed()):
             return self
         if _TERMINATOR not in self.argv:
             raise ValueError(f"{self.tool} takes a positional argument but declares no '--'")
@@ -192,7 +253,7 @@ class CliCommand(_Declaration):
         is a value. They are spliced in before it instead, which is the only
         order in which a command taking both can be built safely.
         """
-        declared = {argument.name: argument for argument in self.arguments}
+        declared = {argument.name: argument for argument in self._placed()}
         flags = [
             declared[name].token(args[name])
             for name in declared
@@ -276,8 +337,21 @@ class CliAttachment:
         resilience: CliResilience | None = None,
         env: Mapping[str, Secret] | None = None,
         values: Mapping[str, str] | None = None,
+        owned_env: frozenset[str] = frozenset(),
+        visible_env: frozenset[str] = frozenset(),
+        download_dir: Path | None = None,
     ) -> None:
         self._binary = binary
+        # Variables the bundle PLACES belong to this connection: set from its own
+        # value or absent, never inherited from the service environment, where a
+        # stray one would silently act as another account.
+        self._owned_env = owned_env
+        # Placed values that are settings, not credentials (an account address):
+        # left readable in output, where redacting them hides which account answered.
+        self._visible_env = visible_env
+        # Where a download command may write. ``None`` refuses every download:
+        # a surface that did not say where files go gets none.
+        self._download_dir = download_dir
         # Configured fields are filled into the FIXED argv once, here, over manifest
         # data only. Doing it at construction rather than per call is what makes it
         # impossible for a model's value to be a substitution input or a target: by
@@ -349,7 +423,23 @@ class CliAttachment:
                 details={"tool": tool, "declared": sorted(self._commands)},
             )
         command.tokens(args)  # refuses an undeclared argument before anything runs
+        declared = {argument.name: argument for argument in command.arguments}
+        for name, value in args.items():
+            refusal = declared[name].refusal(value)
+            if refusal:
+                return self._error(tool, refusal)
+        target: Path | None = None
+        if command.download is not None:
+            prepared = self._download_target(command.download, args)
+            if isinstance(prepared, str):
+                return self._error(tool, prepared)
+            target = prepared
+            args = {
+                name: value for name, value in args.items() if name != command.download.argument
+            }
         argv = [self._binary, *command.argv_for(args)]
+        if target is not None and command.download is not None:
+            argv = _with_flag(argv, f"{command.download.flag}={target}")
 
         retry_after = self._breaker.retry_after()
         if retry_after is not None:
@@ -366,7 +456,27 @@ class CliAttachment:
                 f"{self._binary} {tool} did not finish within "
                 f"{self._resilience.timeout_seconds:.0f}s",
             )
-        return self._result(command, returncode, stdout, stderr)
+        result = self._result(command, returncode, stdout, stderr)
+        if target is not None and command.download is not None:
+            return _checked_download(result, target, command.download.max_bytes)
+        return result
+
+    def _download_target(self, download: CliDownload, args: dict[str, Any]) -> Path | str:
+        """Where this download goes, or the reason it may not go anywhere."""
+        if self._download_dir is None:
+            return "this connection has no download directory, so it cannot save files"
+        name = str(args.get(download.argument, ""))
+        if not _FILE_NAME.fullmatch(name) or name in {".", ".."}:
+            return (
+                f"{download.argument} must be a plain file name (letters, digits, . _ - "
+                f"space), with no folder in it"
+            )
+        directory = self._download_dir
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target = directory / name
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            return f"{name} already exists and is not a plain file; choose another name"
+        return target
 
     # --- execution -----------------------------------------------------------
 
@@ -381,9 +491,7 @@ class CliAttachment:
             *argv,
             # The one place a placed credential is unwrapped: straight into the child's
             # environment, never onto argv, which every other user on the box can read.
-            env=scrubbed_environment(
-                {name: secret.reveal() for name, secret in self._env.items()}
-            ),
+            env=self._child_environment(),
             # No inherited stdin, ever. A vendor CLI that decides to prompt — a
             # confirmation, a missing required field, an editor — would otherwise
             # block on the service's stdin until the tool deadline and report a
@@ -406,6 +514,13 @@ class CliAttachment:
             stdout.decode("utf-8", "replace"),
             stderr.decode("utf-8", "replace"),
         )
+
+    def _child_environment(self) -> dict[str, str]:
+        """The placed values, the scrubbed inheritance, and no stray owned variable."""
+        env = scrubbed_environment({name: secret.reveal() for name, secret in self._env.items()})
+        for name in self._owned_env - set(self._env):
+            env.pop(name, None)
+        return env
 
     async def _attempt(self, argv: list[str]) -> tuple[int, str, str]:
         """Spawn with a bounded retry on timeouts, backing off between attempts.
@@ -442,7 +557,14 @@ class CliAttachment:
         logged, shown to an operator, and put in front of the model as a tool
         result (LLM02).
         """
-        return redact(text, (secret.reveal() for secret in self._env.values()))
+        return redact(
+            text,
+            (
+                secret.reveal()
+                for name, secret in self._env.items()
+                if name not in self._visible_env
+            ),
+        )
 
     def _result(
         self, command: CliCommand, returncode: int, stdout: str, stderr: str
@@ -463,6 +585,14 @@ class CliAttachment:
             )
 
         text = stdout.strip()
+        size = len(text.encode("utf-8"))
+        if command.max_output_bytes is not None and size > command.max_output_bytes:
+            return self._error(
+                command.tool,
+                f"{self._binary} {command.tool} answered with {size} bytes, too large to "
+                f"return (limit {command.max_output_bytes}); narrow the query or ask for "
+                f"fewer results",
+            )
         if not text:
             return self._error(
                 command.tool,
@@ -487,4 +617,28 @@ class CliAttachment:
         return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-__all__ = ["CliArgument", "CliAttachment", "CliCommand", "CliResilience"]
+def _with_flag(argv: list[str], flag: str) -> list[str]:
+    """``argv`` with ``flag`` placed ahead of any ``--`` terminator."""
+    if _TERMINATOR in argv:
+        at = argv.index(_TERMINATOR)
+        return [*argv[:at], flag, *argv[at:]]
+    return [*argv, flag]
+
+
+def _checked_download(result: ToolResult, target: Path, max_bytes: int) -> ToolResult:
+    """Keep the file only if it is a plain file within its bound."""
+    if result.outcome is not ToolOutcome.OK:
+        return result
+    if target.is_symlink() or not target.is_file():
+        target.unlink(missing_ok=True)
+        return CliAttachment._error(result.tool, "the download did not produce a plain file")
+    size = target.stat().st_size
+    if size > max_bytes:
+        target.unlink()
+        return CliAttachment._error(
+            result.tool, f"the file was larger than {max_bytes} bytes and was not kept"
+        )
+    return result
+
+
+__all__ = ["CliArgument", "CliAttachment", "CliCommand", "CliDownload", "CliResilience"]

@@ -38,7 +38,7 @@ from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
 from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import ConnectionRegistry
-from arcagent.extension.host_login import authorization_verdict
+from arcagent.extension.host_login import authorization_verdict, expired_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
 from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
@@ -305,10 +305,18 @@ def test_every_credential_a_spawning_bundle_declares_has_somewhere_to_go(
     if manifest.extension.attachment == "native":
         return
     delivered_by_a_command = manifest.fields_named_by_commands()
+    # An ``http`` MCP bundle may name the field whose value IS its endpoint
+    # (``[config.mcp].url_secret_field``, origin-pinned by ``url_origin``): the
+    # attachment connects to that URL, so the field is delivered by being the
+    # address — there is no program environment for it to be placed into.
+    mcp = manifest.config.get("mcp", {})
+    delivered_as_endpoint = {mcp.get("url_secret_field", "")} if isinstance(mcp, dict) else set()
     unplaced = [
         declared.name
         for declared in manifest.secrets
-        if declared.placement is None and declared.name not in delivered_by_a_command
+        if declared.placement is None
+        and declared.name not in delivered_by_a_command
+        and declared.name not in delivered_as_endpoint
     ]
     assert not unplaced, (
         f"{manifest.extension.name} attaches as {manifest.extension.attachment!r} and "
@@ -521,9 +529,18 @@ _RECORDED_OUTPUT: dict[str, tuple[tuple[int, str], tuple[int, str]]] = {
         ),
     ),
     "google_workspace": (
-        # (m) THE case that breaks an exit-code-only check: signed out, exit 0.
-        (0, "No tokens stored"),
-        (0, "joshua@blackarc.example\tdefault\tgmail,drive,calendar\t2026-07-14\toauth"),
+        # `gog auth list` was the check here, and it is the reason the check moved:
+        # it only proves a token is STORED, so two accounts whose refresh tokens
+        # Google had revoked (invalid_grant) listed exactly like working ones. The
+        # check is now a real read made as the connection's account. Signed out is
+        # gog's own no-token refusal (errfmt.go, v0.34.1); signed in is the --plain
+        # output of `gmail labels get` (gmail_labels.go, v0.34.1).
+        (1, "No auth for gmail josh@blackarc.example.\n\nOAuth (browser flow):\n  gog auth add"),
+        (
+            0,
+            "id\tINBOX\nname\tINBOX\ntype\tsystem\nmessages_total\t1204\n"
+            "messages_unread\t3\nthreads_total\t980\nthreads_unread\t3",
+        ),
     ),
     "microsoft365": (
         (0, '{"success":false,"message":"Login failed - no token received"}'),
@@ -553,6 +570,56 @@ def test_a_declared_sign_in_check_really_tells_the_two_states_apart(
     for required in checked:
         assert not authorization_verdict(required, out_code, out_text)
         assert authorization_verdict(required, in_code, in_text)
+
+
+#: What a declared check prints for a credential that is STORED but no longer
+#: honoured — the third state, rendered "Reconnect needed". (m) measured on the
+#: deployment: both Google accounts, a week after their sign-in, through
+#: `gog auth list --check`, which surfaces the same refresh error a read does.
+_RECORDED_EXPIRED: dict[str, tuple[int, str]] = {
+    "google_workspace": (
+        1,
+        'Error: refresh access token: oauth2: "invalid_grant" "Bad Request"',
+    ),
+}
+
+
+def test_a_declared_expired_pattern_really_separates_a_dead_credential(
+    manifest: ExtensionManifest,
+) -> None:
+    """Replayed through :func:`expired_verdict`: dead is not the same as never signed in."""
+    checked = [required for required in manifest.host_requires if required.verify_expired_pattern]
+    if not checked:
+        return
+    recorded = _RECORDED_EXPIRED.get(manifest.extension.name)
+    assert recorded is not None, (
+        f"{manifest.extension.name} declares verify_expired_pattern with no recorded "
+        f"output to prove it — add its real output to _RECORDED_EXPIRED"
+    )
+    (out_code, out_text), (in_code, in_text) = _RECORDED_OUTPUT[manifest.extension.name]
+    for required in checked:
+        assert expired_verdict(required, *recorded)
+        assert not expired_verdict(required, out_code, out_text)
+        assert not expired_verdict(required, in_code, in_text)
+
+
+def test_a_remote_login_declares_matching_steps(manifest: ExtensionManifest) -> None:
+    """gog resumes a step-1 state only when the steps ask for the same scopes and flags.
+
+    A complete step that asked for different services than its begin would fail
+    every sign-in with a state mismatch the operator cannot see the cause of.
+    """
+    for required in manifest.host_requires:
+        login = required.remote_login
+        if login is None:
+            continue
+        begin = login.begin.split()
+        complete = login.complete.split()
+        step = begin.index("1")
+        assert begin[step - 1] == "--step" and complete[step] == "2"
+        shared = [token for token in complete if token not in ("{redirect_url}", "--auth-url")]
+        shared[step] = "1"
+        assert shared == begin, "begin and complete must differ only in step and the address"
 
 
 def test_a_bundle_with_no_sign_in_check_is_recorded_as_a_deliberate_choice(
@@ -759,12 +826,18 @@ _SHAPED_PLACEHOLDER: dict[str, str] = {
     "https_url": "unused.example.net",
     "api_token": "unused",
     "email": "unused@example.net",
+    "name": "unused",
 }
 
 
 def _placeholders(manifest: ExtensionManifest) -> dict[str, str]:
     """One acceptable value per declared credential, keyed by field name."""
-    return {declared.name: _SHAPED_PLACEHOLDER[declared.format] for declared in manifest.secrets}
+    return {
+        declared.name: (
+            declared.choices[0] if declared.choices else _SHAPED_PLACEHOLDER[declared.format]
+        )
+        for declared in manifest.secrets
+    }
 
 
 def _egress_bundles() -> list[Path]:

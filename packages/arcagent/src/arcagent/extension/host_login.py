@@ -30,6 +30,14 @@ close the hole :mod:`arcagent.extension.host` keeps shut by never running
 * the command is killed if it does not end, because one mis-declared as
   non-interactive would otherwise wait forever.
 
+**Signing in from a browser.** A third kind is neither a token nor a person at
+the host: a manifest-declared ``remote_login`` whose first step prints a consent
+link and whose second exchanges the address the operator's browser lands on. Both
+steps run here, under the same bounds, and every check on what they are given is
+in :mod:`arcagent.extension.remote_login` — including why the pasted address,
+which carries a single-use PKCE-bound code, is acceptable as an argv value when a
+token never is.
+
 **The token crosses on stdin and nowhere else.** Never on argv — that is the
 process table, readable by every other user on the box — and it appears in no
 value this module returns, no log record, and no audit event. The one surface
@@ -45,6 +53,7 @@ import re
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlsplit
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
@@ -52,7 +61,19 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.field_formats import normalize
-from arcagent.extension.manifest import HostRequirement, fill_placeholders, placeholders
+from arcagent.extension.manifest import (
+    REDIRECT_URL_SLOT,
+    HostRequirement,
+    fill_placeholders,
+    placeholders,
+)
+from arcagent.extension.remote_login import (
+    ConsentLink,
+    PendingLogin,
+    checked_argv_value,
+    checked_redirect_url,
+    consent_link,
+)
 from arcagent.extension.secrets import Secret, redact
 
 _logger = logging.getLogger("arcagent.extension.host_login")
@@ -73,6 +94,10 @@ _CHECK_TIMEOUT_SECONDS = 20.0
 _ACTION = "extension.host.authorize"
 
 _CHECK_ACTION = "extension.host.verify"
+
+_BEGIN_ACTION = "extension.host.remote_login.begin"
+
+_COMPLETE_ACTION = "extension.host.remote_login.complete"
 
 
 @dataclass(frozen=True)
@@ -101,6 +126,24 @@ class AuthorizationCheck:
     authorized: bool
     known: bool
     detail: str
+    #: True when the check failed in the way the manifest's
+    #: ``verify_expired_pattern`` says a stored-but-dead credential fails: an
+    #: account that needs reconnecting, not one that was never connected.
+    expired: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteLoginStep:
+    """What one step of a remote sign-in did, and the line to show the operator.
+
+    ``link`` is set only by a begin that produced a consent link on the declared
+    host. ``reason`` is a coordinate for the audit record — never a value.
+    """
+
+    completed: bool
+    detail: str
+    link: ConsentLink | None = None
+    reason: str = ""
 
 
 async def run_token_login(
@@ -230,6 +273,19 @@ def authorization_verdict(requirement: HostRequirement, returncode: int, output:
     return re.search(requirement.verify_pattern, output) is not None
 
 
+def expired_verdict(requirement: HostRequirement, returncode: int, output: str) -> bool:
+    """Whether a FAILED check failed the way a stored-but-dead credential does.
+
+    Only ever true for a check that did not pass: a success that happens to print
+    the pattern is still a success. Separate from :func:`authorization_verdict`
+    for the same reason that is — recorded output replays through it.
+    """
+    if authorization_verdict(requirement, returncode, output):
+        return False
+    pattern = requirement.verify_expired_pattern
+    return bool(pattern) and re.search(pattern, output) is not None
+
+
 async def run_authorization_check(
     requirement: HostRequirement,
     *,
@@ -237,6 +293,7 @@ async def run_authorization_check(
     audit_sink: AuditSink,
     tier: Tier,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
     timeout: float = _CHECK_TIMEOUT_SECONDS,
 ) -> AuthorizationCheck:
     """Ask one host binary whether it is signed in, or say plainly that Arc cannot.
@@ -252,6 +309,8 @@ async def run_authorization_check(
             out" without them, so a check taken outside the placed environment
             reports a just-connected account as not connected. The values are
             handed to the child and appear in no verdict, log line, or audit event.
+        visible: Placed variables that carry no credential (an account address),
+            left readable in the detail line.
         timeout: Seconds before the check is killed and reported as unknown.
 
     Returns:
@@ -273,12 +332,15 @@ async def run_authorization_check(
             ),
         )
 
-    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="", env=env)
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
     if run.returncode is None:
         result = AuthorizationCheck(authorized=False, known=False, detail=run.text)
     else:
         result = AuthorizationCheck(
             authorized=authorization_verdict(requirement, run.returncode, run.text),
+            expired=expired_verdict(requirement, run.returncode, run.text),
             known=True,
             # No fallback to the binary's name: a caller names the command it ran,
             # and a check that printed nothing must not have that gap filled in
@@ -306,11 +368,248 @@ def _record_check(
             target=f"host:{requirement.name}",
             outcome="allow" if result.authorized else "deny",
             tier=tier.value,
-            extra={"binary": requirement.name, "known": result.known},
+            extra={"binary": requirement.name, "known": result.known, "expired": result.expired},
         ),
         sink,
     )
     return result
+
+
+async def run_remote_login_begin(
+    requirement: HostRequirement,
+    *,
+    values: Mapping[str, str],
+    caller_did: str,
+    audit_sink: AuditSink,
+    tier: Tier,
+    instance: str,
+    env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
+    optional: frozenset[str] = frozenset(),
+    timeout: float = _LOGIN_TIMEOUT_SECONDS,
+) -> RemoteLoginStep:
+    """Run step one of a remote sign-in and hand back the consent link it printed.
+
+    Args:
+        requirement: The declared prerequisite. Its ``remote_login.begin`` is the
+            only command that runs, and only when ``argv[0]`` is ``name``.
+        values: The bundle's own non-sensitive fields; every one the step names
+            must be present and pass :func:`~arcagent.extension.remote_login.
+            checked_argv_value` before anything runs.
+        caller_did: The operator recorded as the actor (Pillar 1).
+        audit_sink: Where the verdict is recorded, either way.
+        tier: Deployment stringency, stamped on the record.
+        instance: The connection this sign-in is for — a coordinate on the record.
+        env: The connection's ``[secrets.placement]`` entries, so the step acts as
+            the same account and OAuth client the connection's verbs do.
+        visible: Placed variables that carry no credential, left readable in
+            what the binary prints.
+        optional: Fields the bundle declares optional. One left blank fills its
+            slot with nothing — allowed only where the slot is glued to a flag
+            (``--client={client}`` → ``--client=``), never as an empty argument.
+        timeout: Seconds before the step is killed and reported as unfinished.
+
+    Returns:
+        The step. ``link`` is set only when the binary printed a link to the
+        declared consent host. Never raises for a refused step.
+    """
+    login = requirement.remote_login
+    argv, refusal = _step_argv(requirement, login.begin if login else "", values, "", optional)
+    if argv is None or login is None:
+        return _record_step(
+            requirement, _BEGIN_ACTION, instance, caller_did, audit_sink, tier, refusal
+        )
+
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
+    if run.returncode != 0:
+        step = RemoteLoginStep(
+            completed=False,
+            detail=_readable(run.text, "") or f"{requirement.name} could not start a sign-in",
+            reason="step_failed",
+        )
+        return _record_step(
+            requirement, _BEGIN_ACTION, instance, caller_did, audit_sink, tier, step
+        )
+    link = consent_link(run.text, login.consent_host)
+    step = (
+        RemoteLoginStep(
+            completed=True,
+            detail=f"Open the {login.consent_host} link and sign in as the connection's account.",
+            link=link,
+        )
+        if link is not None
+        else RemoteLoginStep(
+            completed=False,
+            detail=(
+                f"{requirement.name} did not print a sign-in link to {login.consent_host}, "
+                f"so Arc has nothing safe to open for you"
+            ),
+            reason="no_consent_link",
+        )
+    )
+    return _record_step(requirement, _BEGIN_ACTION, instance, caller_did, audit_sink, tier, step)
+
+
+async def run_remote_login_complete(
+    requirement: HostRequirement,
+    *,
+    values: Mapping[str, str],
+    redirect_url: str,
+    expected: PendingLogin | None,
+    caller_did: str,
+    audit_sink: AuditSink,
+    tier: Tier,
+    instance: str,
+    env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
+    optional: frozenset[str] = frozenset(),
+    timeout: float = _LOGIN_TIMEOUT_SECONDS,
+) -> RemoteLoginStep:
+    """Run step two with the address the operator pasted, or refuse it unrun.
+
+    The address is checked first (:func:`~arcagent.extension.remote_login.
+    checked_redirect_url`) against the sign-in ``expected`` began, and fills the
+    reserved ``{redirect_url}`` slot as exactly one argument. It carries a
+    single-use authorization code, so it — and the code inside it — is redacted
+    from the binary's output and appears in no returned line, log record, or
+    audit event.
+
+    Returns:
+        The step. ``completed`` is the binary's own exit verdict; whether the
+        account now WORKS is a separate question the caller answers by running
+        the declared check. Never raises for a refused step.
+    """
+    try:
+        pasted = checked_redirect_url(redirect_url, expected=expected)
+    except ExtensionError as refusal:
+        step = RemoteLoginStep(completed=False, detail=refusal.message, reason="invalid_input")
+        return _record_step(
+            requirement, _COMPLETE_ACTION, instance, caller_did, audit_sink, tier, step
+        )
+
+    login = requirement.remote_login
+    argv, refusal_step = _step_argv(
+        requirement, login.complete if login else "", values, pasted, optional
+    )
+    if argv is None:
+        return _record_step(
+            requirement, _COMPLETE_ACTION, instance, caller_did, audit_sink, tier, refusal_step
+        )
+
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
+    spoken = redact(run.text, (pasted, *_query_values(pasted)))
+    step = RemoteLoginStep(
+        completed=run.returncode == 0,
+        detail=_readable(spoken, "") or requirement.name,
+        reason="" if run.returncode == 0 else "step_failed",
+    )
+    return _record_step(
+        requirement, _COMPLETE_ACTION, instance, caller_did, audit_sink, tier, step
+    )
+
+
+def _query_values(url: str) -> tuple[str, ...]:
+    """Every value in a pasted address's query, so a binary echoing one is redacted."""
+    return tuple(value for _, value in parse_qsl(urlsplit(url).query) if len(value) >= 8)
+
+
+def _step_argv(
+    requirement: HostRequirement,
+    command: str,
+    values: Mapping[str, str],
+    pasted: str,
+    optional: frozenset[str],
+) -> tuple[list[str] | None, RemoteLoginStep]:
+    """The argv for one step, or ``None`` and the refusal that says why not."""
+    if not command:
+        return None, RemoteLoginStep(
+            completed=False,
+            detail=f"{requirement.name} declares no sign-in Arc can run from a browser",
+            reason="not_declared",
+        )
+    supplied: dict[str, str] = {}
+    for field in placeholders(command):
+        if field == REDIRECT_URL_SLOT:
+            supplied[field] = pasted
+            continue
+        value = values.get(field, "")
+        if not value and field in optional and _only_glued(command, field):
+            supplied[field] = ""
+            continue
+        if not value:
+            return None, RemoteLoginStep(
+                completed=False,
+                detail=f"set this connection's {field} first, then start the sign-in again",
+                reason="missing_field",
+            )
+        try:
+            supplied[field] = checked_argv_value(field, value)
+        except ExtensionError as refusal:
+            return None, RemoteLoginStep(
+                completed=False, detail=refusal.message, reason="invalid_input"
+            )
+    argv = _argv(command, requirement.name, supplied)
+    if argv is None:
+        return None, RemoteLoginStep(
+            completed=False,
+            detail=f"{requirement.name}'s sign-in step does not invoke {requirement.name}",
+            reason="not_declared",
+        )
+    return argv, RemoteLoginStep(completed=True, detail="")
+
+
+def _only_glued(command: str, field: str) -> bool:
+    """True when every use of ``{field}`` shares its argument with other text.
+
+    A blank value there leaves the flag (``--client=``), which the binary reads as
+    "use your default"; a blank standing alone would be an empty argument that
+    shifts every argument after it.
+    """
+    slot = "{" + field + "}"
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return all(token != slot for token in tokens if slot in token)
+
+
+def _record_step(
+    requirement: HostRequirement,
+    action: str,
+    instance: str,
+    caller_did: str,
+    sink: AuditSink,
+    tier: Tier,
+    step: RemoteLoginStep,
+) -> RemoteLoginStep:
+    """Hand one sign-in step to the single emission point. Coordinates only.
+
+    No link, no pasted address, no code: the record says who tried which step
+    for which connection and how it ended — which is what an auditor needs and
+    all that is safe to keep.
+    """
+    emit(
+        AuditEvent(
+            actor_did=caller_did,
+            action=action,
+            target=f"host:{requirement.name}",
+            outcome="allow" if step.completed else "deny",
+            tier=tier.value,
+            extra={"binary": requirement.name, "connection": instance, "reason": step.reason},
+        ),
+        sink,
+    )
+    _logger.info(
+        "remote sign-in %s for connection %s %s",
+        action.rsplit(".", 1)[-1],
+        instance,
+        "completed" if step.completed else f"refused ({step.reason})",
+    )
+    return step
 
 
 @dataclass(frozen=True)
@@ -333,6 +632,7 @@ async def _capture(
     timeout: float,
     timeout_hint: str,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
 ) -> _Run:
     """Run ``argv`` to completion, killing it if it does not end.
 
@@ -342,6 +642,11 @@ async def _capture(
     are unwrapped straight into the child. The raw output comes back untruncated,
     because a caller matching a declared pattern against it must see all of it;
     truncation belongs to the line an operator reads.
+
+    ``visible`` names placed variables whose values are NOT credentials (an
+    account address, a client name): those are left readable in the output, so
+    "authorized as X, expected Y" still names Y. Every other placed value is
+    redacted.
     """
     placed = env or {}
     try:
@@ -380,7 +685,8 @@ async def _capture(
     return _Run(
         returncode=process.returncode or 0,
         text=redact(
-            output.decode("utf-8", "replace"), (secret.reveal() for secret in placed.values())
+            output.decode("utf-8", "replace"),
+            (secret.reveal() for name, secret in placed.items() if name not in visible),
         ),
     )
 
@@ -437,7 +743,11 @@ def _record(
 __all__ = [
     "AuthorizationCheck",
     "LoginResult",
+    "RemoteLoginStep",
     "authorization_verdict",
+    "expired_verdict",
     "run_authorization_check",
+    "run_remote_login_begin",
+    "run_remote_login_complete",
     "run_token_login",
 ]

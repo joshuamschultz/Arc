@@ -22,6 +22,8 @@ class TestLoadEvalModel:
                 trace_store=None,
                 on_event=None,
                 modules={"retry": True},
+                queue_coordinator=None,
+                queue_context=None,
             )
             assert result is not None
 
@@ -39,6 +41,8 @@ class TestLoadEvalModel:
                 trace_store=None,
                 on_event=None,
                 modules={"retry": True},
+                queue_coordinator=None,
+                queue_context=None,
             )
 
     def test_forwards_agent_did_to_arcllm(self) -> None:

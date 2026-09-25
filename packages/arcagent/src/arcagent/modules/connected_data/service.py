@@ -237,6 +237,7 @@ class ConnectedDataService:
         restart_backoff_seconds: float = 30.0,
         restart_backoff_max_seconds: float = 1800.0,
         stall_grace_seconds: float = 120.0,
+        terminal_recheck_seconds: float = 3600.0,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -267,7 +268,10 @@ class ConnectedDataService:
         self._credentials = credentials or _default_credential_lifecycle()
         self._credential_renew = credential_renew or _unsupported_renew
         self._operator_notifier = operator_notifier
-        self._health = ConnectionHealthTracker()
+        # A credential that died is rechecked slowly rather than never: it can come
+        # back without any act inside Arc (a host binary re-signed in its own
+        # keyring), and a latch nothing clears is a source that never syncs again.
+        self._health = ConnectionHealthTracker(recheck_after=terminal_recheck_seconds)
         self._timing = SyncSchedule(
             interval_seconds=interval_seconds,
             backoff_seconds=restart_backoff_seconds,

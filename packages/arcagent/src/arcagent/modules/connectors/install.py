@@ -51,7 +51,7 @@ from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
 from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
-from arcagent.extension.field_formats import normalize
+from arcagent.extension.field_formats import choose, normalize
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.host import HostPrerequisiteDirector
 from arcagent.extension.loader import ExtensionLoader
@@ -442,7 +442,11 @@ def shape_supplied(plan: ConnectorPlan, values: Mapping[str, str]) -> dict[str, 
     """
     declared = {field.name: field for field in plan.secrets}
     return {
-        name: normalize(declared[name].format, name, value) if name in declared else value
+        name: (
+            choose(name, normalize(declared[name].format, name, value), declared[name].choices)
+            if name in declared and value
+            else value
+        )
         for name, value in values.items()
     }
 

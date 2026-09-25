@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import shlex
 import tomllib
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -76,6 +77,9 @@ _WILDCARD = "*"
 #: environment, and anything outside this either cannot be exported or is folded onto a
 #: neighbouring name — both of which deliver the credential nowhere.
 _ENV_NAME = r"^[A-Z][A-Z0-9_]*$"
+
+#: One declared choice: a plain lowercase word that cannot start like a flag.
+_CHOICE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 def _strip_denied(config: dict[str, Any]) -> dict[str, Any]:
@@ -169,6 +173,56 @@ class ArtifactPin(_ManifestModel):
         return self.platforms.get(host) or self.platforms.get(ANY_PLATFORM)
 
 
+#: The one slot a remote login's complete step fills with what the operator
+#: pasted. Reserved: no ``[[secrets]]`` field may be called this, because the value
+#: is typed at sign-in time and never stored.
+REDIRECT_URL_SLOT = "redirect_url"
+
+#: A consent host is a bare DNS name: no scheme, no port, no path. Arc hands the
+#: operator a link only when it points at exactly this host.
+_CONSENT_HOST = r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+
+
+class RemoteLogin(_ManifestModel):
+    """``[host_requires.remote_login]`` — a two-step sign-in a browser can finish.
+
+    The shape a headless OAuth login has: ``begin`` prints a consent URL on
+    ``consent_host``; the person signs in there in their own browser, lands on a
+    loopback redirect that fails to load, and pastes that address; ``complete``
+    exchanges it. Nothing waits on a prompt, so unlike ``authorize_command`` Arc
+    can run both steps and report a sign-in only when the binary reports one.
+
+    ``complete`` carries the pasted address in the reserved ``{redirect_url}``
+    slot, as one whole argument. Every other slot names a non-sensitive field of
+    this bundle — the same argv rule every declared command obeys.
+    """
+
+    begin: str = Field(min_length=1)
+    complete: str = Field(min_length=1)
+    consent_host: str = Field(pattern=_CONSENT_HOST)
+
+    @model_validator(mode="after")
+    def _redirect_slot_is_complete_only(self) -> RemoteLogin:
+        """The pasted address goes to the exchange step, whole, and nowhere else."""
+        slot = "{" + REDIRECT_URL_SLOT + "}"
+        if REDIRECT_URL_SLOT in placeholders(self.begin):
+            raise ValueError("remote_login.begin may not name {redirect_url}")
+        if REDIRECT_URL_SLOT not in placeholders(self.complete):
+            raise ValueError("remote_login.complete must carry the pasted {redirect_url}")
+        try:
+            tokens = shlex.split(self.complete)
+        except ValueError as exc:
+            raise ValueError(f"remote_login.complete does not parse: {exc}") from exc
+        holders = [token for token in tokens if slot in token]
+        if holders != [slot]:
+            raise ValueError("remote_login.complete must pass {redirect_url} as its own argument")
+        return self
+
+    def commands(self) -> tuple[tuple[str, str], ...]:
+        """Both steps, labelled for a refusal that names which one is wrong."""
+        return (("remote_login.begin", self.begin), ("remote_login.complete", self.complete))
+
+
 class HostRequirement(_ManifestModel):
     """``[[host_requires]]`` — a prerequisite the operator installs on the host (REQ-262).
 
@@ -198,6 +252,15 @@ class HostRequirement(_ManifestModel):
     which every surface must render as unknown: never as signed in, which is the
     defect, and never as signed out, which sends an operator to redo a login they
     already completed.
+
+    ``verify_expired_pattern`` separates a FAILED check into "a credential is
+    stored and the provider no longer honours it" from "nothing is signed in".
+    Both are failures, but they send an operator to different places: an OAuth
+    refresh token the provider revoked (``invalid_grant``) is a *Reconnect*, and
+    rendering it as never-signed-in hides that the account was working last week.
+
+    ``remote_login`` is the two-step headless sign-in (:class:`RemoteLogin`) — the
+    kind a web page can drive, where ``authorize_command`` is only ever shown.
     """
 
     name: str
@@ -207,8 +270,10 @@ class HostRequirement(_ManifestModel):
     token_command: str = ""
     verify_command: str = ""
     verify_pattern: str = ""
+    verify_expired_pattern: str = ""
+    remote_login: RemoteLogin | None = None
 
-    @field_validator("verify_pattern")
+    @field_validator("verify_pattern", "verify_expired_pattern")
     @classmethod
     def _pattern_must_compile(cls, pattern: str) -> str:
         """A pattern that will not compile must not become a runtime verdict.
@@ -221,14 +286,28 @@ class HostRequirement(_ManifestModel):
             try:
                 re.compile(pattern)
             except re.error as exc:
-                raise ValueError(f"verify_pattern is not a valid regex: {exc}") from exc
+                raise ValueError(f"verify pattern is not a valid regex: {exc}") from exc
         return pattern
 
     @model_validator(mode="after")
     def _pattern_needs_a_command(self) -> HostRequirement:
         """A pattern nothing runs is a control an operator believes is in force."""
-        if self.verify_pattern and not self.verify_command:
-            raise ValueError("verify_pattern is set but no verify_command runs it")
+        if (self.verify_pattern or self.verify_expired_pattern) and not self.verify_command:
+            raise ValueError("a verify pattern is set but no verify_command runs it")
+        return self
+
+    @model_validator(mode="after")
+    def _remote_login_runs_this_binary(self) -> HostRequirement:
+        """Each step authorises this one program, never a program of the manifest's choosing."""
+        if self.remote_login is None:
+            return self
+        for label, command in self.remote_login.commands():
+            try:
+                first = shlex.split(command)[:1]
+            except ValueError as exc:
+                raise ValueError(f"{label} does not parse: {exc}") from exc
+            if first != [self.name]:
+                raise ValueError(f"{label} must invoke {self.name} and nothing else")
         return self
 
 
@@ -305,6 +384,39 @@ class SecretRequirement(_ManifestModel):
     sensitive: bool = True
     required: bool = True
     format: SuppliedFormat = ""
+    #: A closed set of values, for a setting rather than a free-text entry. Each is
+    #: a plain lowercase word, because a choice may be filled into a command.
+    choices: list[str] = Field(default_factory=list)
+    #: What a blank optional field means, stated in the bundle rather than left to
+    #: whatever the tool does with nothing — for a setting whose safe value is not
+    #: the tool's own default.
+    default: str = ""
+    #: Shown when this optional field is blank, and acknowledged before a sign-in
+    #: proceeds without it: the way a bundle says "blank works, but costs you this".
+    blank_warning: str = ""
+
+    @field_validator("choices")
+    @classmethod
+    def _choices_are_plain_words(cls, choices: list[str]) -> list[str]:
+        """A choice may be filled into argv, so it can never read as a flag."""
+        for choice in choices:
+            if not _CHOICE.fullmatch(choice):
+                raise ValueError(f"choice {choice!r} must be a plain lowercase word")
+        return choices
+
+    @model_validator(mode="after")
+    def _settings_are_visible_and_consistent(self) -> SecretRequirement:
+        """Choices, a default and a blank warning describe settings, never credentials."""
+        if self.sensitive and (self.choices or self.default or self.blank_warning):
+            raise ValueError(
+                f"{self.name} is sensitive; choices, default and blank_warning describe "
+                f"visible settings only"
+            )
+        if self.default and self.choices and self.default not in self.choices:
+            raise ValueError(f"{self.name}'s default {self.default!r} is not one of its choices")
+        if self.blank_warning and self.required:
+            raise ValueError(f"{self.name} is required, so it is never blank to warn about")
+        return self
 
 
 class OAuthFlow(_ManifestModel):
@@ -343,11 +455,65 @@ class DeclaredTool(_ManifestModel):
     capability_tags: list[str] = Field(default_factory=list)
 
 
+class ToolRouting(_ManifestModel):
+    """``[tools.routing]`` — one tool name serving every connection of this bundle.
+
+    A bundle connected more than once (two mailboxes, two sites of one service) would
+    otherwise serve the same tool names twice, and only the first connection could
+    register them. With this table the agent's registry holds ONE tool per name
+    and each call is routed to a connection the calling agent is granted:
+
+    * ``argument`` is the tool argument that selects the connection. It is added
+      to every tool's schema by the router, stripped before the call reaches the
+      attachment, and may not be any command's own argument — so it never reaches
+      argv as typed.
+    * ``field`` is the connection's own non-sensitive field it is matched against
+      (``account``). The value that is USED is always the connection's stored one.
+    * ``match`` is the comparison: ``exact``, or ``email`` (Unicode NFKC and
+      case-folded, nothing else forgiven).
+    * ``refuse_values`` is a regex; an argument value matching it is refused
+      before anything runs (a flag or environment assignment smuggled into a
+      query). ``free_text`` names arguments it does not apply to (a mail body may
+      legitimately say anything).
+    """
+
+    argument: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    field: str
+    match: Literal["exact", "email"] = "exact"
+    refuse_values: str = ""
+    free_text: list[str] = Field(default_factory=list)
+
+    @field_validator("refuse_values")
+    @classmethod
+    def _refusal_must_compile(cls, pattern: str) -> str:
+        if pattern:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"refuse_values is not a valid regex: {exc}") from exc
+        return pattern
+
+
+class ReadOnlyMode(_ManifestModel):
+    """``[tools.read_only]`` — a connection field that makes every write tool refuse.
+
+    When the connection's ``field`` (or its declared default, when blank) equals
+    ``when``, a tool whose classification is not ``read_only`` is refused with a
+    readable reason before it runs — rather than reaching the service and coming
+    back as its own permission error.
+    """
+
+    field: str
+    when: str = Field(min_length=1)
+
+
 class ToolPolicy(_ManifestModel):
     """``[tools]`` — which tools may register, and what each one is."""
 
     allow: list[str] | None = None
     declared: list[DeclaredTool] = Field(default_factory=list)
+    routing: ToolRouting | None = None
+    read_only: ReadOnlyMode | None = None
 
     @property
     def is_unbounded(self) -> bool:
@@ -428,6 +594,61 @@ class ExtensionManifest(_ManifestModel):
         return _strip_denied(config)
 
     @model_validator(mode="after")
+    def _routing_names_visible_fields(self) -> ExtensionManifest:
+        """The selector and the read-only switch read settings, never a credential.
+
+        And the selector is never also a command's own argument: it is resolved
+        against the connection, and a command declaring it would put the model's
+        raw value on argv beside the resolved one.
+        """
+        by_name = {declared.name: declared for declared in self.secrets}
+        for role, field in (
+            ("[tools.routing].field", self.tools.routing.field if self.tools.routing else None),
+            (
+                "[tools.read_only].field",
+                self.tools.read_only.field if self.tools.read_only else None,
+            ),
+        ):
+            if field is None:
+                continue
+            declared = by_name.get(field)
+            if declared is None:
+                raise ValueError(f"{role} = {field!r} is not a field this bundle declares")
+            if declared.sensitive:
+                raise ValueError(
+                    f"{role} = {field!r} is a credential; it must be a visible setting"
+                )
+        read_only = self.tools.read_only
+        if read_only is not None:
+            choices = by_name[read_only.field].choices
+            if choices and read_only.when not in choices:
+                raise ValueError(
+                    f"[tools.read_only].when = {read_only.when!r} is not one of "
+                    f"{read_only.field}'s choices"
+                )
+        routing = self.tools.routing
+        if routing is not None:
+            for tool, argument in self._command_arguments():
+                if argument == routing.argument:
+                    raise ValueError(
+                        f"{tool} declares {argument!r}, which is the routing selector; the "
+                        f"selector is resolved against the connection and never reaches argv"
+                    )
+        return self
+
+    def _command_arguments(self) -> list[tuple[str, str]]:
+        """Every (tool, argument name) a declared CLI command takes."""
+        found: list[tuple[str, str]] = []
+        declared: Any = self.config.get("cli", {}).get("commands", [])
+        for command in declared if isinstance(declared, list) else []:
+            if not isinstance(command, dict):
+                continue
+            for argument in command.get("arguments", []) or []:
+                if isinstance(argument, dict) and isinstance(argument.get("name"), str):
+                    found.append((str(command.get("tool", "a command")), argument["name"]))
+        return found
+
+    @model_validator(mode="after")
     def _oauth_names_declared_secrets(self) -> ExtensionManifest:
         """An ``[oauth]`` flow may only wire ``[[secrets]]`` this bundle declares.
 
@@ -466,9 +687,16 @@ class ExtensionManifest(_ManifestModel):
         """
         visible = {declared.name for declared in self.secrets if not declared.sensitive}
         declared_names = {declared.name for declared in self.secrets}
+        if REDIRECT_URL_SLOT in declared_names:
+            raise ValueError(
+                f"[[secrets]] may not be named {REDIRECT_URL_SLOT!r}: that slot carries the "
+                f"address an operator pastes at sign-in, and it is never stored"
+            )
         for source, command in self._commands_naming_fields():
             for field in placeholders(command):
-                if field in visible:
+                if field in visible or (
+                    field == REDIRECT_URL_SLOT and source.endswith("remote_login.complete")
+                ):
                     continue
                 reason = (
                     "is a credential and may never reach argv"
@@ -490,6 +718,7 @@ class ExtensionManifest(_ManifestModel):
             field
             for _, command in self._commands_naming_fields()
             for field in placeholders(command)
+            if field != REDIRECT_URL_SLOT
         }
 
     def _commands_naming_fields(self) -> list[tuple[str, str]]:
@@ -497,6 +726,12 @@ class ExtensionManifest(_ManifestModel):
         sources = [
             (f"{required.name}'s token_command", required.token_command)
             for required in self.host_requires
+        ]
+        sources += [
+            (f"{required.name}'s {label}", command)
+            for required in self.host_requires
+            if required.remote_login is not None
+            for label, command in required.remote_login.commands()
         ]
         declared: Any = self.config.get("cli", {}).get("commands", [])
         for command in declared if isinstance(declared, list) else []:
@@ -546,6 +781,7 @@ def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
 
 
 __all__ = [
+    "REDIRECT_URL_SLOT",
     "ApprovalPolicy",
     "ArtifactPin",
     "CredentialPlacement",
@@ -555,8 +791,11 @@ __all__ = [
     "HostRequirement",
     "KnowledgeDeclaration",
     "PlatformArtifact",
+    "ReadOnlyMode",
+    "RemoteLogin",
     "SecretRequirement",
     "ToolPolicy",
+    "ToolRouting",
     "fill_placeholders",
     "load_manifest",
     "placeholders",

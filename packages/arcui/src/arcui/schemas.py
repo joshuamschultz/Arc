@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from arcstore.tasks import Task, TaskBoardFacets, TaskBoardProjection
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Generic / shared
@@ -800,6 +800,14 @@ class ConnectorSecretField(BaseModel):
     prompt: str
     sensitive: bool = True
     value: str = ""
+    #: The manifest's shape for the field, so a form can leave an optional one
+    #: blank, draw a choice as a choice, and say what blank means.
+    required: bool = True
+    choices: list[str] = Field(default_factory=list)
+    default: str = ""
+    #: Catalog: the bundle's warning for leaving this field blank. A connected
+    #: instance: the same text, present only while the stored value IS blank.
+    warning: str = ""
 
 
 class ConnectorHostRequirement(BaseModel):
@@ -816,6 +824,9 @@ class ConnectorHostRequirement(BaseModel):
     name: str
     instruction: str
     satisfied: bool = False
+    #: True when this binary's sign-in can be finished from the browser, so a
+    #: bundle card can offer "Add an account" rather than a terminal step.
+    remote_login: bool = False
 
 
 class ConnectorTool(BaseModel):
@@ -979,6 +990,8 @@ class ConnectorHostAuthorization(BaseModel):
     command: str
     instruction: str
     token_command: str
+    #: True when Arc can drive this binary's sign-in from the browser in two steps.
+    remote_login: bool = False
 
 
 class ConnectorAuthStatusResponse(BaseModel):
@@ -1008,10 +1021,27 @@ class ConnectorAuthStatusResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sign_in: Literal["signed_in", "signed_out", "unknown"]
+    sign_in: Literal["signed_in", "signed_out", "expired", "not_installed", "unknown"]
     reachable: bool
     detail: str
     command: str
+
+
+class ConnectorSignInStartResponse(BaseModel):
+    """Body of ``POST /api/connections/{instance}/sign-in/begin``.
+
+    ``consent_url`` is the provider's own consent page, checked server-side to be
+    on the host the bundle declares; it carries only public values (client id, a
+    CSRF state, a PKCE challenge). ``expires_in`` is how many seconds the operator
+    has to paste the address back before starting again.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    account: str
+    consent_url: str
+    expires_in: int
 
 
 class ConnectorHostSetupResponse(BaseModel):
@@ -1056,6 +1086,9 @@ class ConnectorAuthorizationResponse(BaseModel):
     #: or for a non-OAuth connector). Safe to render: it names only the public client
     #: id, never a secret.
     authorize_url: str = ""
+    #: The account-connected answer, taken with the same check ``auth-status``
+    #: runs, so a card reading this one call can show it without a second.
+    sign_in: Literal["signed_in", "signed_out", "expired", "not_installed", "unknown"] = "unknown"
 
 
 class ConnectorProbeResponse(BaseModel):

@@ -315,3 +315,46 @@ def test_a_format_core_does_not_implement_is_refused_at_parse_time() -> None:
     """A shape nothing enforces is a control an operator believes is in force."""
     with pytest.raises(ValidationError):
         load_manifest(_MANIFEST.replace('"https_url"', '"iso_date"'), tier=Tier.PERSONAL)
+
+
+# --- ``name``: a short identifier a tool uses as a key or a file name -----------
+
+
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [("arc-google", "arc-google"), ("  Work_2 ", "work_2"), ("a", "a")],
+)
+def test_a_name_is_trimmed_and_lowercased(typed: str, stored: str) -> None:
+    assert normalize("name", "client", typed) == stored
+
+
+@pytest.mark.parametrize("typed", ["", "-x", "../etc", "a b", "a/b", "é", "x" * 65, "_lead"])
+def test_anything_but_a_plain_name_is_refused(typed: str) -> None:
+    """A name becomes a key, an environment value, or part of a file name."""
+    with pytest.raises(ExtensionError) as refused:
+        normalize("name", "client", typed)
+    assert "client" in refused.value.message
+
+
+# --- a closed set of choices -----------------------------------------------------
+
+
+def test_a_choice_is_trimmed_and_lowercased() -> None:
+    from arcagent.extension.field_formats import choose
+
+    assert choose("read_only", " Yes ", ("yes", "no")) == "yes"
+
+
+def test_a_value_outside_the_choices_is_refused_by_name() -> None:
+    from arcagent.extension.field_formats import choose
+
+    with pytest.raises(ExtensionError) as refused:
+        choose("read_only", "maybe", ("yes", "no"))
+    assert "read_only" in refused.value.message
+    assert "yes" in refused.value.message and "maybe" not in refused.value.message
+
+
+def test_no_choices_means_any_value() -> None:
+    from arcagent.extension.field_formats import choose
+
+    assert choose("x", "Anything", ()) == "Anything"

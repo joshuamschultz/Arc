@@ -200,3 +200,14 @@ def test_a_bundle_that_places_nothing_is_refused_by_name(
     captured = capsys.readouterr()
     assert "access_token" in captured.out + captured.err
     assert _SENTINEL not in captured.out + captured.err
+
+
+def test_every_sign_in_state_has_a_line_an_operator_can_read() -> None:
+    """A state the seam can report and the CLI cannot print is a KeyError at the prompt."""
+    from typing import get_args
+
+    from arcagent.connections import SignInState
+
+    from arccli.commands.connector import _SIGN_IN_LINE
+
+    assert set(get_args(SignInState)) == set(_SIGN_IN_LINE)

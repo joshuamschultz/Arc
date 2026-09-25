@@ -124,6 +124,34 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "MCP wire abuse over the real SDK transport (SPEC-084)": (
         "packages/arcagent/tests/security/test_mcp_wire_abuse_spec084.py",
     ),
+    # Browser sign-in for host binaries (Google accounts via gog --remote): the
+    # pasted callback address is untrusted input that becomes one argv value of a
+    # program holding an OAuth client. A lookalike consent host, a non-loopback or
+    # wrong-path callback, flag text in the account or the address, a complete
+    # with no begin or for another connection, a second begin over a waiting one,
+    # a replayed spent code, and a hung binary must all fail closed — most before
+    # any process runs — be audited, and never write the single-use code anywhere
+    # Arc writes. Driven through the real routes and runner against a fake gog.
+    # Covers LLM01/LLM05/LLM10 and ASI02/ASI03/ASI05.
+    "browser sign-in abuse — pasted callback, argv injection, out-of-order steps": (
+        "packages/arcagent/tests/unit/extension/test_remote_login.py",
+        "packages/arcagent/tests/unit/extension/test_host_remote_login.py",
+        "packages/arcagent/tests/integration/test_connector_remote_login.py",
+        "packages/arcui/tests/integration/test_google_remote_sign_in_e2e.py",
+    ),
+    # One tool name, several granted accounts (Google via gog): the account a call
+    # acts as is resolved against THIS agent's grants, never believed. An agent
+    # granted one account naming another (exact, case/space/Unicode variants,
+    # aliases, connection names), flags smuggled into other arguments
+    # (--account, -a, --client, --home, GOG_*=), concurrent calls for two
+    # accounts, a read-only sign-in asked to write, oversized pages/answers and
+    # attachment path escapes must all fail closed, audited with the REAL
+    # connection. Covers ASI02/ASI03/LLM06/LLM10.
+    "multi-account routing — confused deputy across granted connections": (
+        "packages/arcagent/tests/unit/modules/connectors/test_routing.py",
+        "packages/arcagent/tests/unit/extension/test_cli_attachment_bounds.py",
+        "packages/arcagent/tests/integration/test_google_account_routing.py",
+    ),
 }
 
 

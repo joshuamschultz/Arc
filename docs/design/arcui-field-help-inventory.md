@@ -4,7 +4,7 @@ This inventory describes controls present in ArcUI today. The stable help IDs li
 
 ## Coverage and exceptions
 
-Verified against `screen-help.json`: it contains **622 field entries across 18 route entries**, of which **528 are Settings entries**. This is a catalog count, not a count of controls rendered in a particular deployment. Settings has path-specific descriptions for known schema values, patterns for named entries, section/control help, and fallbacks. `configHelpKey(file, path)` resolves the full serialized file/path: exact keys win, then `*` matches exactly one dot-separated segment, preferring fewer wildcards. Unknown extension modules and undeclared provider additions use the unavailable-description fallback; other unmatched fields use neutral configuration guidance. The approval card's help ID is `approvals.request`; it displays the gate reason and offers Approve/Deny without a decision-reason input.
+Verified against `screen-help.json`: it contains **627 field entries across 18 route entries**, of which **528 are Settings entries**. This is a catalog count, not a count of controls rendered in a particular deployment. Settings has path-specific descriptions for known schema values, patterns for named entries, section/control help, and fallbacks. `configHelpKey(file, path)` resolves the full serialized file/path: exact keys win, then `*` matches exactly one dot-separated segment, preferring fewer wildcards. Unknown extension modules and undeclared provider additions use the unavailable-description fallback; other unmatched fields use neutral configuration guidance. The approval card's help ID is `approvals.request`; it displays the gate reason and offers Approve/Deny without a decision-reason input.
 
 Outside Settings, help IDs such as `task.owner`, `connection.secret`, and `settings.scope` are contextual content identifiers; they are not serialized config paths. Settings entries such as `settings.arcrun.max_turns` are matched to serialized file/path values by the resolver. Do not infer config location from a help ID unless it is a Settings key.
 
@@ -23,7 +23,7 @@ The route entries are Home, Fleet, Agent detail, Chat, Tasks, Approvals, Pending
 | Knowledge | Agent/source selectors, document/chunk search, datastore lookup controls, provenance lookup, mapping filter, and configure/sync actions. Resource checkboxes and mapping facts come from the selected source. |
 | Shared knowledge, Model usage | Search and time-window selector respectively. Results and chart values are read-only. |
 | Tools & Skills | Agent filter and capability import controls for target agent, ZIP archive, staged file, and staged content. The current committed flow accepts signed ZIP packages and stages them for review. Working-tree edits add single-file `SKILL.md` import and a signed revision editor; both remain unfinished. |
-| Connections | Bundle/account selection, grants, authorization code, connector-defined credential and endpoint controls, and Doctor/Probe actions. Schema-defined fields use connector descriptions where supplied; secrets never have sample values. |
+| Connections | Bundle/account selection, grants, authorization code, connector-defined credential and endpoint controls, and Doctor/Probe actions. Schema-defined fields use connector descriptions where supplied; secrets never have sample values. A connector with a browser sign-in (Google Workspace) adds `connection.google_account`, `connection.google_client`, `connection.google_access`, `connection.google_sign_in` (Open Google sign-in) and `connection.sign_in_address` (the pasted browser address); a field with declared choices renders as a select preset to its default. `connection.agent_grant` also states that an agent granted several Google accounts gets one tool set and picks a granted account per call; `connection.check` names Approve after a tool-contract change. |
 | Settings | Scope and provider-key controls; each configuration section has guided scalar fields plus Advanced JSON. `settings.<file>.<path>` is notation for serialized setting paths, not a literal catalog ID; authored entries use concrete file/path keys and `*` matches one operator-defined segment. `settings.section.arcllm`, `settings.section.arcrun`, `settings.section.arcagent`, and `settings.section.gateway` attach to section headings. Provider key display reports presence without revealing saved values. |
 
 ## Configuration guidance
@@ -59,7 +59,7 @@ Named exceptions that cannot receive a truthful per-field description from these
 
 ## Incomplete controls: proposed help for later integration
 
-These are proposals for controls absent or unfinished in the committed UI. They are not part of the 622 existing entries and must not be represented as available recovery actions.
+These are proposals for controls absent or unfinished in the committed UI. They are not part of the 627 existing entries and must not be represented as available recovery actions.
 
 | Proposed surface/control | Proposed field path or help ID | Proposed operator guidance and effect |
 |---|---|---|

@@ -47,3 +47,57 @@ def test_a_single_account_host_places_no_gog_account() -> None:
     # gog uses its one token with no --account, so an unset account must place
     # nothing rather than an empty GOG_ACCOUNT gog would misread.
     assert placement_environment(_manifest(), {}) == {}
+
+
+# --- the standard tool set --------------------------------------------------------
+
+_SENDS = {
+    "google_gmail_send",
+    "google_gmail_draft_send",
+    "google_gmail_reply",
+    "google_gmail_reply_all",
+    "google_gmail_forward",
+}
+
+
+def _commands():  # type: ignore[no-untyped-def]
+    from arcagent.extension.cli_attachment import CliCommand
+
+    return [CliCommand.model_validate(raw) for raw in _manifest().config["cli"]["commands"]]
+
+
+def test_every_google_call_is_routed_and_read_only_is_a_switch() -> None:
+    manifest = _manifest()
+    routing = manifest.tools.routing
+    assert routing is not None
+    assert (routing.argument, routing.field) == ("account", "account")
+    assert manifest.tools.read_only is not None
+
+
+def test_no_command_can_be_told_another_account_client_or_home() -> None:
+    forbidden = ("--account", "-a", "--client", "--home", "--access-token", "--attach")
+    for command in _commands():
+        flags = [argument.flag for argument in command.arguments]
+        assert not [flag for flag in flags if flag in forbidden], command.tool
+        fixed = [token for token in command.argv if token.split("=")[0] in forbidden]
+        assert not fixed, command.tool
+
+
+def test_only_the_send_verbs_are_egress_and_every_read_is_read_only() -> None:
+    declared = {tool.name: tool for tool in _manifest().tools.declared}
+    for command in _commands():
+        tool = declared[command.tool]
+        egress = "network_egress" in tool.capability_tags
+        assert egress == (command.tool in _SENDS), command.tool
+        assert command.classification == tool.classification, command.tool
+        if tool.classification == "read_only":
+            assert "--readonly" in command.argv, command.tool
+        else:
+            assert "--readonly" not in command.argv, command.tool
+
+
+def test_every_page_size_is_bounded() -> None:
+    for command in _commands():
+        for argument in command.arguments:
+            if argument.flag == "--max":
+                assert argument.maximum is not None, command.tool

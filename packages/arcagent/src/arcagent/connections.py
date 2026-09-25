@@ -37,7 +37,8 @@ credential by writing a config block.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -63,7 +64,12 @@ from arcagent.extension.grants import (
 )
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.host_install import host_install_dir, install_pinned_binary
-from arcagent.extension.host_login import run_authorization_check, run_token_login
+from arcagent.extension.host_login import (
+    run_authorization_check,
+    run_remote_login_begin,
+    run_remote_login_complete,
+    run_token_login,
+)
 from arcagent.extension.manifest import (
     ArtifactPin,
     DeclaredTool,
@@ -71,6 +77,13 @@ from arcagent.extension.manifest import (
     SecretRequirement,
 )
 from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
+from arcagent.extension.remote_login import (
+    REMOTE_LOGIN_FAILED,
+    REMOTE_LOGIN_NEEDS_CONFIRMATION,
+    PendingLogin,
+    RemoteLoginLedger,
+    checked_account,
+)
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
@@ -383,6 +396,26 @@ class HostAuthorization:
     command: str
     instruction: str
     token_command: str = ""
+    #: True when the manifest declares a two-step remote sign-in Arc can drive
+    #: from a browser, so a surface offers that instead of a terminal command.
+    remote_login: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteLoginStart:
+    """A begun remote sign-in: the link to open, and how long it stays completable.
+
+    ``consent_url`` is the provider's own consent page, checked to be on the host
+    the manifest declares. It carries only public values (the client id, a CSRF
+    ``state``, a PKCE challenge), never a credential.
+    """
+
+    instance: str
+    account: str
+    consent_url: str
+    expires_in: int
+    #: Blank-field warnings the operator accepted to start this sign-in.
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -400,11 +433,13 @@ class HostSetupReport:
     manual_steps: str = ""
 
 
-#: Whether this connection's account is actually connected. Three states, not two,
-#: because "Arc cannot tell" is a real answer and both collapses of it are lies: a
-#: bundle reported signed in when it is not is the defect that shipped, and one
-#: reported signed out sends an operator to redo a login already done.
-SignInState = Literal["signed_in", "signed_out", "unknown"]
+#: Whether this connection's account is actually connected. More than two states,
+#: because each collapse is a lie with a cost: "Arc cannot tell" (``unknown``)
+#: drawn as signed in is the defect that shipped, and drawn as signed out sends an
+#: operator to redo a login already done. ``expired`` is a credential the provider
+#: stopped honouring — a *Reconnect*, not a first sign-in — and ``not_installed``
+#: is a binary that is not on this host, which no sign-in can fix.
+SignInState = Literal["signed_in", "signed_out", "expired", "not_installed", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -429,6 +464,13 @@ class SuppliedCredential:
     prompt: str
     sensitive: bool = True
     value: str = ""
+    #: The manifest's own word on the field's shape, so a form can draw a choice
+    #: as a choice and say what blank means. Never a value that was stored.
+    required: bool = True
+    choices: tuple[str, ...] = ()
+    default: str = ""
+    #: The bundle's warning for this field, set only while it is blank.
+    warning: str = ""
 
 
 @dataclass(frozen=True)
@@ -516,14 +558,38 @@ class Authorization:
         """The command only a person at this host can run, or empty when Arc can do it.
 
         A surface renders this under "Arc cannot finish this for you", so a
-        token-accepting connector must NOT produce one: sending an operator to a
-        terminal for a sign-in the button would have completed is the same lie
-        told in the other direction.
+        token-accepting or browser-finishable connector must NOT produce one:
+        sending an operator to a terminal for a sign-in the button would have
+        completed is the same lie told in the other direction.
         """
         for host in self.hosts:
-            if not host.token_command:
+            if not host.token_command and not host.remote_login:
                 return host.command
         return ""
+
+    @property
+    def remote_login(self) -> bool:
+        """True when the next step is the browser sign-in Arc drives in two steps."""
+        return any(host.remote_login for host in self.hosts)
+
+
+def _optional_fields(plan: ConnectorPlan) -> frozenset[str]:
+    """The fields the bundle declares optional — the only ones a step may leave blank."""
+    return frozenset(declared.name for declared in plan.secrets if not declared.required)
+
+
+def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
+    """The placed variables that carry no credential, by the manifest's own word.
+
+    An account address placed into ``GOG_ACCOUNT`` is configuration; redacting it
+    from what the binary prints turns "authorized as X, expected Y" into a line
+    that no longer says which account was expected.
+    """
+    return frozenset(
+        declared.placement.variable
+        for declared in plan.secrets
+        if not declared.sensitive and declared.placement is not None
+    )
 
 
 async def _oauth_post(
@@ -572,9 +638,10 @@ def _authorization(
                 command=required.authorize_command,
                 instruction=required.instruction,
                 token_command=required.token_command,
+                remote_login=required.remote_login is not None,
             )
             for required in plan.manifest.host_requires
-            if required.authorize_command
+            if required.authorize_command or required.remote_login is not None
         ),
         reachable=probe.status == "reachable",
         detail=f"{note} {probe.detail}".strip() if note else probe.detail,
@@ -603,6 +670,8 @@ class Connections:
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
+        remote_logins: RemoteLoginLedger | None = None,
+        host_step_timeout: float | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
@@ -610,6 +679,11 @@ class Connections:
         self._install_dir = install_dir
         self._state_opener = state_opener
         self._connector_control = connector_control
+        # A begun sign-in lives as long as the process that can complete it, so the
+        # ledger belongs to the long-lived caller; a fresh one here serves a
+        # one-shot surface (a CLI verb) whose begin and complete are one process.
+        self._remote_logins = remote_logins if remote_logins is not None else RemoteLoginLedger()
+        self._host_step_timeout = host_step_timeout
 
     @classmethod
     def for_deployment(
@@ -624,6 +698,8 @@ class Connections:
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
+        remote_logins: RemoteLoginLedger | None = None,
+        host_step_timeout: float | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -639,6 +715,8 @@ class Connections:
             install_dir=install_dir,
             state_opener=state_opener,
             connector_control=connector_control,
+            remote_logins=remote_logins,
+            host_step_timeout=host_step_timeout,
         )
 
     @property
@@ -933,6 +1011,10 @@ class Connections:
         checks = [required for required in plan.manifest.host_requires if required.verify_command]
         if not checks:
             return ("unknown", "")
+        missing = {verdict.name for verdict in plan.unsatisfied_host}
+        for required in checks:
+            if required.name in missing:
+                return ("not_installed", f"{required.name} is not installed on this host")
 
         placed = await self._placement(plan, sink)
         detail = ""
@@ -943,6 +1025,8 @@ class Connections:
                 audit_sink=sink,
                 tier=self._world.tier,
                 env=placed,
+                visible=_visible_placements(plan),
+                **self._timeout_kwargs(),
             )
             # The command, then what it said. A surface renders this beside the
             # badge, so it has to be the evidence FOR that badge: the probe's own
@@ -951,9 +1035,196 @@ class Connections:
             detail = f"{required.verify_command}: {result.detail}".strip().rstrip(":")
             if not result.known:
                 return ("unknown", detail)
+            if result.expired:
+                return ("expired", detail)
             if not result.authorized:
                 return ("signed_out", detail)
         return ("signed_in", detail)
+
+    def _timeout_kwargs(self) -> dict[str, float]:
+        """The step timeout a caller pinned, or nothing so each verb keeps its default."""
+        return {} if self._host_step_timeout is None else {"timeout": self._host_step_timeout}
+
+    # --- remote sign-in ----------------------------------------------------
+
+    async def begin_remote_login(
+        self, instance: str, *, accept_warnings: bool = False
+    ) -> RemoteLoginStart:
+        """Start the browser sign-in for one connection and return the link to open.
+
+        One sign-in per host binary may be waiting at a time (see
+        :class:`~arcagent.extension.remote_login.RemoteLoginLedger`); starting the
+        same connection again replaces its own, and a different connection is
+        refused by name rather than silently taking its place.
+
+        A blank field its bundle warns about (``blank_warning`` — for Google, no
+        OAuth client of the operator's own, so sign-ins expire in a week) refuses
+        the begin with that warning until the operator accepts it: the fallback
+        exists, and it is labelled rather than silent.
+
+        Raises:
+            ExtensionError: No such connection (``code`` :data:`NOT_INSTALLED`), the
+                bundle declares no remote sign-in, another account's sign-in is
+                waiting, the connection's account is not a plain address, or the
+                binary refused or printed no safe link (``code``
+                :data:`~arcagent.extension.remote_login.REMOTE_LOGIN_FAILED`).
+        """
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            required = self._remote_login_host(plan)
+            async with self._remote_logins.lock(required.name):
+                with self._refusal_recorded(sink, "begin", instance, required.name):
+                    values = await self._login_values(plan, sink)
+                    account = values.get("account", "")
+                    warnings = await self._blank_warnings(plan, sink)
+                    if warnings and not accept_warnings:
+                        raise _refuse(
+                            REMOTE_LOGIN_NEEDS_CONFIRMATION,
+                            " ".join(warnings),
+                            connection=instance,
+                        )
+                    self._remote_logins.admit_begin(
+                        required.name, instance=instance, account=account
+                    )
+                step = await run_remote_login_begin(
+                    required,
+                    values=values,
+                    caller_did=self._world.did,
+                    audit_sink=sink,
+                    tier=self._world.tier,
+                    instance=instance,
+                    env=await self._placement(plan, sink),
+                    visible=_visible_placements(plan),
+                    optional=_optional_fields(plan),
+                    **self._timeout_kwargs(),
+                )
+                if not step.completed or step.link is None:
+                    raise _refuse(REMOTE_LOGIN_FAILED, step.detail, connection=instance)
+                self._remote_logins.record(
+                    required.name,
+                    PendingLogin(
+                        instance=instance,
+                        account=account,
+                        redirect_base=step.link.redirect_base,
+                        state=step.link.state,
+                        started=self._remote_logins.now(),
+                    ),
+                )
+        return RemoteLoginStart(
+            instance=instance,
+            account=account,
+            consent_url=step.link.url,
+            expires_in=int(self._remote_logins.ttl),
+            warnings=warnings,
+        )
+
+    async def complete_remote_login(self, instance: str, *, redirect_url: str) -> Authorization:
+        """Finish the browser sign-in with the address the operator pasted, then check it.
+
+        The address is checked against the sign-in :meth:`begin_remote_login`
+        started for this same connection before the binary runs. Once the binary
+        has run, the begun sign-in is spent whatever it answered — its code is
+        single-use — so a failure asks the operator to start again rather than
+        retry a dead code. The answer is the manifest's own check, run afterwards
+        with this connection's account: the only evidence the account WORKS.
+
+        Raises:
+            ExtensionError: As :meth:`begin_remote_login`, plus no waiting sign-in
+                for this connection (``code`` :data:`~arcagent.extension.
+                remote_login.REMOTE_LOGIN_NOT_STARTED`) or a pasted address that
+                fails its checks or that the binary refused.
+        """
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            required = self._remote_login_host(plan)
+            placed = await self._placement(plan, sink)
+            async with self._remote_logins.lock(required.name):
+                with self._refusal_recorded(sink, "complete", instance, required.name):
+                    values = await self._login_values(plan, sink)
+                    pending = self._remote_logins.admit_complete(
+                        required.name, instance=instance, account=values.get("account", "")
+                    )
+                step = await run_remote_login_complete(
+                    required,
+                    values=values,
+                    redirect_url=redirect_url,
+                    expected=pending,
+                    caller_did=self._world.did,
+                    audit_sink=sink,
+                    tier=self._world.tier,
+                    instance=instance,
+                    env=placed,
+                    visible=_visible_placements(plan),
+                    optional=_optional_fields(plan),
+                    **self._timeout_kwargs(),
+                )
+                if step.reason != "invalid_input":
+                    self._remote_logins.clear(required.name)
+            if not step.completed:
+                raise _refuse(REMOTE_LOGIN_FAILED, step.detail, connection=instance)
+            probe = await self._reachability(plan, sink)
+            sign_in = await self._sign_in_state(plan, sink)
+            supplied = await self._supplied(plan, sink)
+        return _authorization(instance, plan, probe, sign_in, supplied, note=step.detail)
+
+    @contextmanager
+    def _refusal_recorded(
+        self, sink: AuditSink, step: str, instance: str, binary: str
+    ) -> Iterator[None]:
+        """Audit a sign-in step refused before its binary ran, then let the refusal go.
+
+        The runner records every step it starts; this records the ones stopped
+        earlier — a busy ledger, a bad account, a complete with nothing begun — so
+        a repeated forged or out-of-order attempt is visible in the chain too.
+        """
+        try:
+            yield
+        except ExtensionError as refusal:
+            emit(
+                AuditEvent(
+                    actor_did=self._world.did,
+                    action=f"extension.host.remote_login.{step}",
+                    target=f"host:{binary}",
+                    outcome="deny",
+                    tier=self._world.tier.value,
+                    extra={"binary": binary, "connection": instance, "reason": refusal.code},
+                ),
+                sink,
+            )
+            raise
+
+    def _remote_login_host(self, plan: ConnectorPlan) -> HostRequirement:
+        """The prerequisite whose sign-in a browser can drive, or a refusal naming why not."""
+        for required in plan.manifest.host_requires:
+            if required.remote_login is not None:
+                return required
+        raise _refuse(
+            REMOTE_LOGIN_FAILED,
+            f"{plan.extension} has no sign-in Arc can run from a browser",
+            connection=plan.instance,
+        )
+
+    async def _login_values(self, plan: ConnectorPlan, sink: AuditSink) -> dict[str, str]:
+        """The non-sensitive fields a sign-in step may name, shaped for argv.
+
+        A field the manifest declares as an email address is held to the strict
+        address rule before it can become an argument: the stored value passed
+        the looser entry check, and argv is where a leading ``-`` becomes a flag.
+        """
+        formats = {declared.name: declared.format for declared in plan.secrets}
+        values: dict[str, str] = {}
+        for field in await self._supplied(plan, sink):
+            value = field.value or field.default
+            if field.sensitive or not value:
+                continue
+            values[field.name] = (
+                checked_account(value) if formats.get(field.name) == "email" else value
+            )
+        return values
+
+    async def _blank_warnings(self, plan: ConnectorPlan, sink: AuditSink) -> tuple[str, ...]:
+        """The bundle's warnings for fields this connection left blank, in order."""
+        return tuple(field.warning for field in await self._supplied(plan, sink) if field.warning)
 
     async def _run_login(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
         """Run the one login Arc can finish, or say plainly why it did not run one.
@@ -1439,6 +1710,10 @@ class Connections:
                     prompt=declared.prompt,
                     sensitive=declared.sensitive,
                     value=value,
+                    required=declared.required,
+                    choices=tuple(declared.choices),
+                    default=declared.default,
+                    warning=declared.blank_warning if not value else "",
                 )
             )
         return tuple(rows)
@@ -1534,6 +1809,8 @@ __all__ = [
     "HostVerdict",
     "InstallReport",
     "ProbeResult",
+    "RemoteLoginLedger",
+    "RemoteLoginStart",
     "RemovalReport",
     "SecretRequirement",
     "SignInState",
