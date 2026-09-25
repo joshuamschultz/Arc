@@ -277,7 +277,11 @@ from arctrust.witness import (
 
 if TYPE_CHECKING:
     from arctrust.authority import AccountActorVerifier, AccountAuthority
-    from arctrust.broker_queue_client import QueueBrokerAnchor, QueueBrokerError
+    from arctrust.broker_queue_client import (
+        BrokerQueueByteCipher,
+        QueueBrokerAnchor,
+        QueueBrokerError,
+    )
     from arctrust.broker_queue_proofs import (
         BrokerQueueLease,
         BrokerQueueProofError,
@@ -325,7 +329,7 @@ def __getattr__(name: str) -> Any:
         from arctrust import broker_queue_proofs
 
         return getattr(broker_queue_proofs, name)
-    if name in {"QueueBrokerAnchor", "QueueBrokerError"}:
+    if name in {"BrokerQueueByteCipher", "QueueBrokerAnchor", "QueueBrokerError"}:
         from arctrust import broker_queue_client
 
         return getattr(broker_queue_client, name)
@@ -411,6 +415,7 @@ __all__ = [
     "AuditSink",
     "AuthorityConfigError",
     "BootstrapAuthority",
+    "BrokerQueueByteCipher",
     "BrokerQueueLease",
     "BrokerQueueProofError",
     "BrokerQueueRecoveryProof",

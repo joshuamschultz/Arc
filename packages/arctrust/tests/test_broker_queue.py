@@ -30,7 +30,13 @@ def test_signed_lease_exact_scope_and_issuer() -> None:
         issued_at=now - 1,
         expires_at=now + 60,
         next_sequence=7,
-        allowed_purposes=["anchor.read", "anchor.advance", "queue.recover"],
+        allowed_purposes=[
+            "anchor.read",
+            "anchor.advance",
+            "queue.recover",
+            "record.seal",
+            "record.open",
+        ],
     )
     envelope = arctrust.sign_broker_queue_lease(lease, lambda payload: key.sign(payload).signature)
     arctrust.verify_broker_queue_lease(envelope, issuer_public_key=public, expected=lease, now=now)

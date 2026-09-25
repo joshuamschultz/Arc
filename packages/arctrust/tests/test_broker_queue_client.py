@@ -10,6 +10,7 @@ import pytest
 
 from arctrust import (
     ED25519,
+    BrokerQueueByteCipher,
     BrokerQueueLease,
     BrokerQueueRecoveryProof,
     InProcessSigner,
@@ -43,7 +44,13 @@ def _lease(machine: InProcessSigner, now: int) -> BrokerQueueLease:
         issued_at=now - 1,
         expires_at=now + 60,
         next_sequence=1,
-        allowed_purposes=("anchor.read", "anchor.advance", "queue.recover"),
+        allowed_purposes=(
+            "anchor.read",
+            "anchor.advance",
+            "queue.recover",
+            "record.seal",
+            "record.open",
+        ),
     )
 
 
@@ -63,7 +70,13 @@ def test_queue_broker_refuses_unsigned_or_unscoped_lease() -> None:
         issued_at=int(time.time()) - 1,
         expires_at=int(time.time()) + 60,
         next_sequence=1,
-        allowed_purposes=("anchor.read", "anchor.advance", "queue.recover"),
+        allowed_purposes=(
+            "anchor.read",
+            "anchor.advance",
+            "queue.recover",
+            "record.seal",
+            "record.open",
+        ),
     )
     envelope = sign_broker_queue_lease(facts, broker.sign)
     client = httpx.Client(base_url="https://broker.example")
@@ -295,3 +308,77 @@ def test_broker_refuses_unbounded_or_redirected_response(kind: str) -> None:
     with pytest.raises(QueueBrokerError):
         anchor.latest()
     assert seen == 1
+
+
+def test_record_cipher_uses_same_lease_sequence_as_queue_anchor() -> None:
+    now = 1000
+    machine = InProcessSigner(b"a" * 32)
+    broker = InProcessSigner(b"b" * 32)
+    lease = _lease(machine, now)
+    sequence = 1
+    head: dict[str, object] | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sequence, head
+        operation = json.loads(
+            base64.urlsafe_b64decode(request.headers["X-Arc-Machine-Operation"] + "=" * 3)
+        )
+        if request.method == "GET":
+            assert operation["sequence"] == 0
+            return _json_response(
+                {
+                    "head": head,
+                    "lease": sign_broker_queue_lease(
+                        lease.model_copy(update={"next_sequence": sequence}), broker.sign
+                    ),
+                }
+            )
+        assert operation["sequence"] == sequence
+        body = json.loads(request.content)
+        if request.url.path == "/broker/queue/cas":
+            assert operation["purpose"] == "anchor.advance"
+            head = {
+                "scope": "queue/tenant-a",
+                "version": 1,
+                "digest": body["digest"],
+                "previous_digest": None,
+                "intent": body["intent"],
+            }
+            result: dict[str, object] = {"head": head}
+        elif request.url.path.endswith("/seal"):
+            assert body["purpose"] == "queue.record"
+            assert operation["purpose"] == "record.seal"
+            result = {"ciphertext": "vault:v1:sealed"}
+        else:
+            assert body["purpose"] == "queue.record"
+            assert operation["purpose"] == "record.open"
+            result = {"plaintext": base64.urlsafe_b64encode(b"record").decode().rstrip("=")}
+        sequence += 1
+        return _json_response(
+            {
+                **result,
+                "lease": sign_broker_queue_lease(
+                    lease.model_copy(update={"next_sequence": sequence}), broker.sign
+                ),
+            }
+        )
+
+    client = httpx.Client(
+        base_url="https://broker.example", transport=httpx.MockTransport(handler)
+    )
+    anchor = QueueBrokerAnchor(
+        client,
+        tenant_id="tenant-a",
+        journal_scope="queue/tenant-a",
+        machine_id="machine-a",
+        tls_fingerprint="c" * 64,
+        signer=machine,
+        broker_public_key=broker.public_key,
+        lease_envelope=sign_broker_queue_lease(lease, broker.sign),
+        clock=lambda: now,
+    )
+    cipher = BrokerQueueByteCipher(anchor)
+    assert cipher.seal(b"record") == "vault:v1:sealed"
+    assert cipher.open("vault:v1:sealed") == b"record"
+    assert anchor.compare_and_advance(None, "d" * 64, "accepted").version == 1
+    assert sequence == 4

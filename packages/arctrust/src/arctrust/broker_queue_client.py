@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from arctrust.broker_queue_proofs import (
     BrokerQueueLease,
@@ -68,6 +68,20 @@ class _BrokerResponse(BaseModel):
     head: AnchorHead | None
     lease: dict[str, Any]
     recovery_proof: dict[str, Any] | None = None
+
+
+class _SealedRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    ciphertext: str = Field(min_length=1, max_length=1_048_576)
+    lease: dict[str, Any]
+
+
+class _OpenedRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    plaintext: str = Field(min_length=1, max_length=700_000)
+    lease: dict[str, Any]
 
 
 class QueueBrokerAnchor:
@@ -160,6 +174,7 @@ class QueueBrokerAnchor:
         headers: dict[str, str],
         params: dict[str, str] | None = None,
         content: bytes | None = None,
+        response_limit: int = 16_384,
     ) -> tuple[int, bytes]:
         with self._client.stream(
             method,
@@ -178,7 +193,7 @@ class QueueBrokerAnchor:
                 raise QueueBrokerError("queue broker compressed response refused")
             try:
                 length = response.headers.get("content-length")
-                if length is not None and int(length) > 16_384:
+                if length is not None and int(length) > response_limit:
                     raise QueueBrokerError("queue broker response exceeds limit")
             except ValueError as exc:
                 raise QueueBrokerError("queue broker response length invalid") from exc
@@ -186,7 +201,7 @@ class QueueBrokerAnchor:
             size = 0
             for chunk in response.iter_raw(chunk_size=4096):
                 size += len(chunk)
-                if size > 16_384:
+                if size > response_limit:
                     raise QueueBrokerError("queue broker response exceeds limit")
                 chunks.append(chunk)
             return response.status_code, b"".join(chunks)
@@ -196,14 +211,6 @@ class QueueBrokerAnchor:
             raise QueueBrokerError("queue broker response unavailable")
         try:
             body = _BrokerResponse.model_validate(json.loads(payload))
-            lease = self._verify_lease(body.lease)
-            if (
-                lease.lease_id != self._lease.lease_id
-                or lease.active_owner_epoch != self.owner_epoch
-                or lease.next_sequence < self._lease.next_sequence
-                or int(lease.fenced_through_epoch) < int(self._lease.fenced_through_epoch)
-            ):
-                raise QueueBrokerError("queue broker owner changed")
             if body.head is not None and body.head.scope != self._scope:
                 raise QueueBrokerError("queue broker head scope mismatch")
             if self._seen_head is not None and (
@@ -212,11 +219,91 @@ class QueueBrokerAnchor:
                 or (body.head.version == self._seen_head.version and body.head != self._seen_head)
             ):
                 raise QueueBrokerError("queue broker head rollback detected")
-            self._lease = lease
+            self._accept_lease(body.lease)
             self._seen_head = body.head
             return body
         except (ValidationError, ValueError, TypeError) as exc:
             raise QueueBrokerError("queue broker response invalid") from exc
+
+    def _accept_lease(self, envelope: dict[str, Any]) -> None:
+        lease = self._verify_lease(envelope)
+        if (
+            lease.lease_id != self._lease.lease_id
+            or lease.active_owner_epoch != self.owner_epoch
+            or lease.next_sequence < self._lease.next_sequence
+            or int(lease.fenced_through_epoch) < int(self._lease.fenced_through_epoch)
+        ):
+            raise QueueBrokerError("queue broker owner changed")
+        self._lease = lease
+
+    def _record_request(self, action: Literal["seal", "open"], value: str) -> dict[str, Any]:
+        with self._lock:
+            path = f"/broker/record/{action}"
+            field = "plaintext" if action == "seal" else "ciphertext"
+            body = {
+                "tenant_id": self._tenant_id,
+                "journal_scope": self._scope,
+                "purpose": "queue.record",
+                field: value,
+            }
+            payload = canonical_json(body)
+            sequence = self._lease.next_sequence
+            operation = self._operation(
+                f"record.{action}", "POST", path, hashlib.sha256(payload).hexdigest(), sequence
+            )
+            try:
+                status, raw = self._request(
+                    "POST",
+                    path,
+                    content=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Arc-Machine-Operation": operation,
+                    },
+                    response_limit=1_500_000,
+                )
+            except httpx.HTTPError as exc:
+                raise QueueBrokerError("queue record outcome uncertain") from exc
+            if status != 200:
+                raise QueueBrokerError("queue record refused or uncertain")
+            try:
+                parsed = json.loads(raw)
+                result = (
+                    _SealedRecord.model_validate(parsed)
+                    if action == "seal"
+                    else _OpenedRecord.model_validate(parsed)
+                )
+            except (ValidationError, ValueError, TypeError) as exc:
+                raise QueueBrokerError("queue record response invalid") from exc
+            self._accept_lease(result.lease)
+            if self._lease.next_sequence != sequence + 1:
+                raise QueueBrokerError("queue record sequence did not advance")
+            return result.model_dump(mode="json")
+
+    def seal_record(self, payload: bytes) -> str:
+        """Seal bounded bytes under the same lease sequence as queue root CAS."""
+        if type(payload) is not bytes or len(payload) > 512 * 1024:
+            raise QueueBrokerError("queue record plaintext exceeds limit")
+        encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        return str(self._record_request("seal", encoded)["ciphertext"])
+
+    def open_record(self, ciphertext: str) -> bytes:
+        """Open one scoped Vault ciphertext through the live broker lease."""
+        if type(ciphertext) is not str or not 0 < len(ciphertext) <= 1_048_576:
+            raise QueueBrokerError("queue record ciphertext invalid")
+        encoded = self._record_request("open", ciphertext)["plaintext"]
+        if not isinstance(encoded, str) or "=" in encoded:
+            raise QueueBrokerError("queue record plaintext encoding invalid")
+        try:
+            payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        except (ValueError, TypeError) as exc:
+            raise QueueBrokerError("queue record plaintext encoding invalid") from exc
+        if (
+            len(payload) > 512 * 1024
+            or base64.urlsafe_b64encode(payload).decode().rstrip("=") != encoded
+        ):
+            raise QueueBrokerError("queue record plaintext encoding invalid")
+        return payload
 
     def _operation(self, purpose: str, method: str, path: str, digest: str, sequence: int) -> str:
         facts = {
@@ -410,3 +497,18 @@ class QueueBrokerAnchor:
             if head is None:
                 raise QueueBrokerError("queue broker head missing")
             return head
+
+
+class BrokerQueueByteCipher:
+    """ByteCipher bound to the queue anchor's one mTLS lease and CAS sequence."""
+
+    def __init__(self, anchor: QueueBrokerAnchor) -> None:
+        self._anchor = anchor
+
+    def seal(self, payload: bytes) -> str:
+        """Seal bytes through the anchor's live broker session."""
+        return self._anchor.seal_record(payload)
+
+    def open(self, sealed: str) -> bytes:
+        """Open bytes through the anchor's live broker session."""
+        return self._anchor.open_record(sealed)

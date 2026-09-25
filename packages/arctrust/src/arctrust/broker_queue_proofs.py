@@ -38,7 +38,11 @@ class BrokerQueueLease(BaseModel):
     expires_at: int = Field(gt=0)
     next_sequence: int = Field(ge=1)
     allowed_purposes: tuple[
-        Literal["anchor.read"], Literal["anchor.advance"], Literal["queue.recover"]
+        Literal["anchor.read"],
+        Literal["anchor.advance"],
+        Literal["queue.recover"],
+        Literal["record.seal"],
+        Literal["record.open"],
     ] = Field(strict=False)
 
     @model_validator(mode="after")
