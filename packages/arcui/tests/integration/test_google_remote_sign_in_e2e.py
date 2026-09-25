@@ -59,6 +59,8 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FAKE_GOG_HOME", str(tmp_path / "gog"))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    # The adversarial battery exports its own team root; this world has its own.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.delenv("GOG_ACCOUNT", raising=False)
     monkeypatch.delenv("GOG_CLIENT", raising=False)
     bin_dir = tmp_path / "bin"
