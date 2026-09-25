@@ -5,29 +5,32 @@
 # names every command as its own tool and is what grants authority. Part 3 is
 # `skills/google_workspace/SKILL.md`, which teaches when to use which.
 #
-# No `[[secrets]]`, and this one is a LIMIT, not a posture. `gog auth add` puts an
-# OAuth refresh token in the platform keyring and Arc never sees it, which is the
-# strongest thing the mechanism can express — but it also means this connector
-# cannot be finished from a browser, and there is no `[secrets.placement]` that
-# would change that:
+# Signing in is finished FROM THE BROWSER. `gog auth add --remote` is a two-step
+# headless OAuth flow: step 1 prints a Google consent link; the operator signs in
+# in their own browser, lands on a http://127.0.0.1:<port>/oauth2/callback page
+# that fails to load, and pastes that address; step 2 exchanges it. The PKCE
+# verifier from step 1 stays in gog's state directory on this host, so the pasted
+# code is useless anywhere else. `[host_requires.remote_login]` below declares both
+# steps and Arc drives them from the connection card — no terminal, no
+# port-forward. The refresh token still lands only in this host's gog keyring and
+# Arc never sees it.
 #
-#   * gog reads no environment variable for a credential. Checked against its
-#     published flag and command reference: the only env override is GOG_HOME,
-#     which relocates its whole config tree rather than carrying a credential.
-#   * Its one headless path is a service-account key file, registered by running
-#     `gog auth service-account set <workspace-admin> --key <file>`. That is a
-#     command with an operator-specific argument, not a value Arc can place.
+# gog reads no environment variable for a credential, so there is still no
+# `[secrets.placement]` for one. A service-account key is gog's other headless
+# path, but gog documents it as "Workspace only; domain-wide delegation": a plain
+# @gmail.com address has no domain to delegate in, so it does not help a personal
+# account.
 #
-# AND IT WOULD NOT HELP A PERSONAL ACCOUNT ANYWAY. gog documents service accounts
-# as "Workspace only; domain-wide delegation" — the impersonation that makes them
-# work is a Workspace-domain admin setting. A plain @gmail.com address has no
-# domain to delegate in, so for a personal Google account `gog auth add` at this
-# host is the only way in, full stop. Said here so nobody builds a paste field
-# that cannot work.
+# WHY TOKENS DIED EVERY WEEK. Google expires the refresh tokens of an OAuth app
+# whose consent screen is in "Testing" after about 7 days (invalid_grant). The fix
+# is the operator's own Google Cloud OAuth client, published "In production", and
+# the optional `client` field below naming it — see
+# docs/runbooks/operate/google-accounts.md.
 #
-# Multi-account routing (D-550/D-571) is `--account`. It is declared as a tool
-# ARGUMENT rather than pinned per instance because nothing in the mechanism
-# carries an instance identity into an attachment — see the report.
+# Multi-account (D-550/D-571): each connection binds ONE account through the
+# `account` field below, placed into GOG_ACCOUNT for every gog process that
+# connection starts, and signs it in independently. Several verbs also accept an
+# `--account` tool argument, which gog lets override GOG_ACCOUNT.
 
 [extension]
 name = "google_workspace"
@@ -68,50 +71,56 @@ url = "https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.
 sha256 = "14ae529f1ca9404252c5606689cd1e40a02b7357ca60f6491d9c85937342d3d4"
 member = "gog"
 
-# No `token_command`: `gog auth add` runs the Google OAuth consent flow, which
-# opens a browser and waits for a person. There is no token to pipe in, so Arc
-# must not offer a button that would hang at the prompt and then report a
-# sign-in nobody completed.
+# No `token_command`: there is no token to pipe in. The sign-in Arc runs is the
+# two-step `remote_login` below.
 #
-# `gog auth list` is the sign-in check, and this bundle is WHY `verify_pattern`
-# exists. Measured on the deployment: with no account stored it prints
-# "No tokens stored" and exits 0 — the same exit code as success. A check read on
-# its exit code alone would report every unauthorised install here as signed in,
-# which is the defect moved rather than fixed.
+# The sign-in CHECK is a real, read-only Gmail call made AS THIS CONNECTION'S
+# ACCOUNT (GOG_ACCOUNT is placed from the `account` field), not `gog auth list`.
+# `gog auth list` only proves a token is STORED: an account whose refresh token
+# Google revoked lists exactly like a working one, which is how two dead accounts
+# were reported "Signed in". Reading the INBOX label forces a token refresh, so it
+# answers the question that matters — does this account work right now.
 #
-# An account row is TSV opening with the account's email address, so requiring an
-# "@" separates the two states on the real output of the real command. Arc merges
-# the binary's stderr into what it reads, so the empty-store line is seen and
-# correctly matches nothing.
+#   * working:        exit 0, `id<TAB>INBOX` on the first line (--plain output)
+#   * never signed in: exit 1, "No auth for gmail <account>" / "Secret not found"
+#   * revoked/expired: exit 1, `oauth2: "invalid_grant"` — measured on the
+#                      deployment for both dead accounts. That is
+#                      `verify_expired_pattern`, rendered as "Reconnect needed".
 [[host_requires]]
 name = "gog"
 minimum_version = "0.34.1"
 authorize_command = "gog auth add"
-verify_command = "gog auth list"
-verify_pattern = "@"
+verify_command = "gog gmail labels get INBOX --plain --readonly --gmail-no-send --no-input"
+verify_pattern = '(?m)^id\tINBOX\s*$'
+verify_expired_pattern = 'invalid_grant|invalid_rapt|Token has been expired or revoked'
 instruction = """
-Install the gogcli binary on this host, then authorise the accounts:
+Install the gogcli binary on this host:
 
   1. curl -fsSLO https://github.com/openclaw/gogcli/releases/download/v0.34.1/gogcli_0.34.1_linux_arm64.tar.gz
   2. echo '8510db6492c27f7704bf60af276f34ede81b67d88b6ffcf953153da841eaa3ed  gogcli_0.34.1_linux_arm64.tar.gz' | sha256sum -c -
   3. tar xzf gogcli_0.34.1_linux_arm64.tar.gz && install -m 0755 gog ~/.local/bin/gog
-  4. gog auth add            # once per Google account you want reachable
-  5. gog auth list           # confirm the accounts and note their addresses
 
-Step 4 has to be run BY A PERSON AT THIS HOST: it opens a Google consent page in
-a browser. Arc cannot finish it for you and does not pretend to. There is no
-token you can paste into Arc instead — gog keeps its credential in this machine's
-keyring and reads it from no environment variable.
-
-A service-account key is the only unattended alternative, it needs a Google
-Workspace domain whose admin has granted domain-wide delegation, and it is
-registered with `gog auth service-account set <admin@yourdomain> --key <file>`.
-It does NOT work for a personal @gmail.com account.
+Then sign each Google account in from its connection card in Arc: Open Google
+sign-in, allow access, and paste the address the browser lands on. No terminal is
+needed. So tokens do not expire every week, register your own OAuth client first
+(docs/runbooks/operate/google-accounts.md) and set its name as the connection's
+client.
 
 Step 2 is not optional: it is the pin in [artifact] being checked. Steps 1 and 2
 are for linux/arm64; for another platform take that asset and its line from the
 same release's checksums.txt. [artifact] pins all four Arc can install for you.
 """
+
+# The two-step sign-in, both steps run by Arc with this connection's placed
+# environment (GOG_ACCOUNT, GOG_CLIENT), so the token lands in the same account and
+# OAuth-client bucket the connection reads. The steps must ask for the SAME
+# services and flags: gog only resumes a step-1 state whose client, scopes and
+# consent flag match. The scopes are what the declared tools need and no more —
+# Gmail (read, draft, send), Calendar, and Drive read-only.
+[host_requires.remote_login]
+begin = "gog auth add {account} --remote --step 1 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input"
+complete = "gog auth add {account} --remote --step 2 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input --auth-url {redirect_url}"
+consent_host = "accounts.google.com"
 
 [tools]
 allow = [
@@ -210,6 +219,23 @@ format = "email"
 
 [secrets.placement]
 variable = "GOG_ACCOUNT"
+
+# WHICH OAuth client this connection's token belongs to. gog keeps named client
+# credentials (`gog --client <name> auth credentials set client_secret.json`) and a
+# separate token bucket per client; GOG_CLIENT selects both, for the sign-in steps
+# and for every verb. Empty uses gog's default client. Set it to the name of your
+# own Google Cloud OAuth client, published "In production", and tokens stop
+# expiring every seven days. A name, not a secret: the client secret stays in
+# gog's own config on this host.
+[[secrets]]
+name = "client"
+prompt = "Optional. The name of your own Google OAuth client on this host, as you stored it with `gog --client <name> auth credentials set` — for example arc. Leave blank to use gog's default client."
+sensitive = false
+required = false
+format = "name"
+
+[secrets.placement]
+variable = "GOG_CLIENT"
 
 [approval]
 default = "outbound"
