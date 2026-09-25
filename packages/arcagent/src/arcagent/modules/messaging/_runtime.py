@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcagent.core.run_contract import TeamReplyPort
 from arcagent.modules.messaging.config import MessagingConfig
 
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ class _State:
     # a hard import-time dependency on the optional arcteam package.
     svc: Any  # MessagingService
     registry: Any  # EntityRegistry
+    reply_port: TeamReplyPort | None = None
     arcstore_opener: Any = None
     # Deliver a policy-gated teammate message into the agent's current run
     # (REQ-040/041); bound from the agent:ready payload alongside agent_run_fn.
@@ -71,6 +73,10 @@ class _State:
     last_unread: dict[str, int] = field(default_factory=dict)
     # agent.run_collected() callback — bound via agent:ready event.
     agent_run_fn: Any = None
+    requires_signed_runs: bool = False
+    trigger_issuer: Any = None
+    prepare_collected_request: Any = None
+    accepted_reply_fn: Any = None
     # One bounded model call through ArcRun (agent.run_oneshot) — bound at
     # agent:ready. Breaks a tie the deterministic prefilter could not (ADR-032).
     oneshot_fn: Any = None
@@ -202,6 +208,7 @@ def configure(
             operator_signer=operator_signer,
             arcstore_opener=arcstore_opener,
             svc=svc,
+            reply_port=svc,
             registry=registry,
             digests=DigestStore(backend),
         )
@@ -282,6 +289,7 @@ async def ensure_live_backend(handler: Any = None) -> Any:
         raise
     st.registry = registry
     st.svc = svc
+    st.reply_port = svc
     st.digests = DigestStore(backend)
     st.mail_service = None
     st.live_backend = backend
@@ -314,6 +322,7 @@ async def close_live_backend() -> None:
             audit,
             signer=None,
         )
+        st.reply_port = st.svc
         st.digests = DigestStore(unavailable)
         st.mail_service = None
     try:

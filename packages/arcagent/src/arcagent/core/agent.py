@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
@@ -62,7 +63,14 @@ from arcagent.core.model_manager import (
     ensure_model,
 )
 from arcagent.core.module_bus import ModuleBus
-from arcagent.core.run_contract import AcceptedRunOwner, CanonicalRunRequest
+from arcagent.core.run_contract import (
+    AcceptedReplyOwner,
+    AcceptedRunOwner,
+    CanonicalRunRequest,
+    ReplyLookup,
+    ReplySender,
+    RunTriggerIssuer,
+)
 from arcagent.core.runtime_dependencies import RuntimeBinding, RuntimeDependencies
 from arcagent.core.session_coordination import SessionRunCoordinator
 from arcagent.core.session_internal import ContextManager, SessionManager
@@ -163,14 +171,26 @@ class ArcAgent:
         fleet: Any = None,
         queue_coordinator: arcrun.CallQueueCoordinator | None = None,
         queue_tenant_id: str | None = None,
+        queue_owner_epoch: str | None = None,
         skill_artifact_resolver: SkillArtifactResolver | None = None,
         accepted_run_owner: AcceptedRunOwner | None = None,
+        trigger_issuer: RunTriggerIssuer | None = None,
         require_durable_runs: bool = False,
     ) -> None:
         if (queue_coordinator is None) != (queue_tenant_id is None):
             raise ValueError("queue coordinator and trusted tenant must be supplied together")
         if queue_tenant_id is not None and not queue_tenant_id:
             raise ValueError("queue tenant must be nonempty")
+        if queue_owner_epoch is not None and not (
+            type(queue_owner_epoch) is str and re.fullmatch(r"[1-9][0-9]{0,18}", queue_owner_epoch)
+        ):
+            raise ValueError("queue owner epoch must be canonical decimal")
+        if (
+            queue_coordinator is not None
+            and getattr(queue_coordinator.store, "requires_recovery_owner", False)
+            and queue_owner_epoch is None
+        ):
+            raise ValueError("durable queue owner epoch is required")
         if require_durable_runs and accepted_run_owner is None:
             raise RuntimeError("durable accepted-run owner is required")
         self._config = config
@@ -232,8 +252,9 @@ class ArcAgent:
         self._queue_coordinator = queue_coordinator
         self._queue_tenant_id = queue_tenant_id
         self._accepted_run_owner = accepted_run_owner
+        self._trigger_issuer = trigger_issuer
         self._require_durable_runs = require_durable_runs
-        self._queue_owner_epoch = uuid.uuid4().hex
+        self._queue_owner_epoch = queue_owner_epoch or uuid.uuid4().hex
         self._skill_artifact_resolver = skill_artifact_resolver
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
         # exists only while it executes; a teammate message arriving mid-run is
@@ -623,6 +644,14 @@ class ArcAgent:
                 "deliver_fn": self.deliver_message,
                 "channel_deliver_fn": self._channel_deliver_fn,
                 "oneshot_fn": self.run_oneshot,
+                "requires_signed_runs": self.requires_signed_runs,
+                "trigger_issuer": self._trigger_issuer,
+                "prepare_collected_request": self.prepare_collected_request,
+                "accepted_reply_fn": (
+                    self.deliver_accepted_reply
+                    if isinstance(self._accepted_run_owner, AcceptedReplyOwner)
+                    else None
+                ),
                 "skill_registry": self._capability_registry,
                 "capability_ledger": self._capability_ledger,
             },
@@ -733,17 +762,29 @@ class ArcAgent:
         return self._model
 
     def set_queue_coordinator(
-        self, coordinator: arcrun.CallQueueCoordinator, *, tenant_id: str
+        self,
+        coordinator: arcrun.CallQueueCoordinator,
+        *,
+        tenant_id: str,
+        owner_epoch: str | None = None,
     ) -> None:
         """Attach the hosted shared queue before the cached model is built."""
         if not tenant_id:
             raise ValueError("queue tenant must be nonempty")
+        if owner_epoch is not None and not (
+            type(owner_epoch) is str and re.fullmatch(r"[1-9][0-9]{0,18}", owner_epoch)
+        ):
+            raise ValueError("queue owner epoch must be canonical decimal")
+        if getattr(coordinator.store, "requires_recovery_owner", False) and owner_epoch is None:
+            raise ValueError("durable queue owner epoch is required")
         if self._model is not None:
             raise RuntimeError("queue must be attached before model construction")
         if self._queue_coordinator is not None and self._queue_coordinator is not coordinator:
             raise RuntimeError("queue coordinator already attached")
         self._queue_coordinator = coordinator
         self._queue_tenant_id = tenant_id
+        if owner_epoch is not None:
+            self._queue_owner_epoch = owner_epoch
 
     @property
     def queue_coordinator(self) -> arcrun.CallQueueCoordinator | None:
@@ -754,6 +795,11 @@ class ArcAgent:
     def queue_tenant_id(self) -> str | None:
         """Expose the queue's tenant scope for deployment composition checks."""
         return self._queue_tenant_id
+
+    @property
+    def queue_owner_epoch(self) -> str:
+        """Return the queue owner epoch bound before the first model call."""
+        return self._queue_owner_epoch
 
     def _queue_run_context(
         self,
@@ -872,6 +918,38 @@ class ArcAgent:
         ):
             yield event
 
+    def prepare_collected_request(
+        self,
+        input_text: str,
+        *,
+        session_key: str,
+        run_id: str,
+        occurrence_id: str,
+        run_purpose: Literal["manual", "message", "schedule", "pulse", "workflow"],
+        caller_did: str | None = None,
+        tool_choice: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
+        allowed_strategies: list[str] | None = None,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+    ) -> CanonicalRunRequest:
+        """Produce the exact collected request a trigger issuer must authorize."""
+        return CanonicalRunRequest(
+            run_id=run_id,
+            session_key=session_key,
+            input_text=input_text,
+            tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
+            allowed_strategies=allowed_strategies,
+            reply_target=reply_target,
+            reply_label=reply_label,
+            caller_did=caller_did,
+            purpose=run_purpose,
+            occurrence_id=occurrence_id,
+        )
+
     async def run_collected(
         self,
         input_text: str,
@@ -905,10 +983,10 @@ class ArcAgent:
         """
 
         final_run_id = run_id or uuid.uuid4().hex
-        request = CanonicalRunRequest(
+        request = self.prepare_collected_request(
+            input_text,
             run_id=final_run_id,
             session_key=session_key,
-            input_text=input_text,
             tool_choice=tool_choice,
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
@@ -916,7 +994,7 @@ class ArcAgent:
             reply_target=reply_target,
             reply_label=reply_label,
             caller_did=caller_did,
-            purpose=run_purpose,
+            run_purpose=run_purpose,
             occurrence_id=occurrence_id or final_run_id,
         )
 
@@ -951,6 +1029,15 @@ class ArcAgent:
             max_result_bytes=max_result_bytes,
             invoke=collect_plain,
         )
+
+    async def deliver_accepted_reply(
+        self, run_id: str, *, send: ReplySender, lookup: ReplyLookup
+    ) -> str:
+        """Deliver or reconcile a completed run's channel reply through its owner."""
+        owner = self._accepted_run_owner
+        if not isinstance(owner, AcceptedReplyOwner):
+            raise RuntimeError("accepted reply owner is unavailable")
+        return await owner.deliver_reply(run_id, send=send, lookup=lookup)
 
     @property
     def requires_signed_runs(self) -> bool:

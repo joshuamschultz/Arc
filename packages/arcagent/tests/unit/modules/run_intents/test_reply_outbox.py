@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import arcrun
 import arcstore
@@ -11,9 +11,8 @@ import arctrust
 import pytest
 from arcstore.backends.memory import FakeBackend
 
-from arcagent.core.run_contract import CanonicalRunRequest
+from arcagent.core.run_contract import CanonicalRunRequest, ChannelReply
 from arcagent.modules.run_intents.ledger import (
-    ReplyDispatch,
     RunIntentLedger,
     VerifiedRunAuthorization,
 )
@@ -51,19 +50,34 @@ class Audit:
         return
 
 
-def _ledger(request: CanonicalRunRequest) -> RunIntentLedger:
+def _ledger(
+    request: CanonicalRunRequest,
+    *,
+    execute_deadline: datetime = _DEADLINE,
+    reconcile_deadline: datetime = _DEADLINE,
+) -> RunIntentLedger:
     return RunIntentLedger(
-        tenant_id="tenant", agent_did="agent",
+        tenant_id="tenant",
+        agent_did="agent",
         store=arcstore.AcceptedRunStore(
-            FakeBackend(), arctrust.RecordCipher(bytes(range(32))),
-            authorize=lambda _action, _tenant, _agent: True, audit_sink=Audit(),
+            FakeBackend(),
+            arctrust.RecordCipher(bytes(range(32))),
+            authorize=lambda _action, _tenant, _agent: True,
+            audit_sink=Audit(),
         ),
         anchor=Anchor(),
-        verify_authorization=lambda _evidence: VerifiedRunAuthorization(
-            tenant_id="tenant", agent_did="agent", run_id=request.run_id,
-            session_id=request.session_key, owner_epoch=1,
-            request_digest=request.digest(), deadline=_DEADLINE,
-            purpose=request.purpose, occurrence_id=request.occurrence_id, nonce="nonce-1",
+        verify_authorization=lambda evidence: VerifiedRunAuthorization(
+            tenant_id="tenant",
+            agent_did="agent",
+            run_id=request.run_id,
+            session_id=request.session_key,
+            owner_epoch=1,
+            request_digest=request.digest(),
+            deadline=reconcile_deadline if evidence == b"reconcile" else execute_deadline,
+            purpose=request.purpose,
+            occurrence_id=request.occurrence_id,
+            nonce="reconcile-nonce" if evidence == b"reconcile" else "nonce-1",
+            action="reconcile" if evidence == b"reconcile" else "execute",
         ),
         owner_epoch=1,
     )
@@ -83,15 +97,72 @@ async def _completed_reply_run() -> tuple[LedgerRunOwner, str]:
 
     async def invoke(_accepted: CanonicalRunRequest) -> arcrun.RunResult:
         return arcrun.RunResult(
-            content="answer", turns=1, tool_calls_made=0, cost_usd=0,
+            content="answer",
+            turns=1,
+            tool_calls_made=0,
+            cost_usd=0,
             tokens_used={"input": 1, "output": 1, "total": 2},
         )
 
     await owner.execute(
-        request, signed_authorization=b"proof", deadline=_DEADLINE,
-        max_result_bytes=500, invoke=invoke,
+        request,
+        signed_authorization=b"proof",
+        deadline=_DEADLINE,
+        max_result_bytes=500,
+        invoke=invoke,
     )
     return owner, request.run_id
+
+
+async def test_expired_execution_grant_allows_only_signed_terminal_reconciliation() -> None:
+    request = CanonicalRunRequest(
+        run_id="expired-run",
+        session_key="channel-session",
+        input_text="question",
+        reply_target="channel://ops",
+        caller_did="did:arc:user:alice",
+        purpose="message",
+        occurrence_id="message-expired",
+    )
+    execute_deadline = datetime.now(UTC) + timedelta(milliseconds=400)
+    reconcile_deadline = datetime.now(UTC) + timedelta(minutes=1)
+    owner = LedgerRunOwner(
+        _ledger(
+            request,
+            execute_deadline=execute_deadline,
+            reconcile_deadline=reconcile_deadline,
+        )
+    )
+    effects = 0
+
+    async def effect(_accepted: CanonicalRunRequest) -> arcrun.RunResult:
+        nonlocal effects
+        effects += 1
+        return arcrun.RunResult(
+            content="answer",
+            turns=1,
+            tool_calls_made=0,
+            cost_usd=0,
+            tokens_used={"input": 1, "output": 1, "total": 2},
+        )
+
+    await owner.execute(
+        request,
+        signed_authorization=b"proof",
+        deadline=execute_deadline,
+        max_result_bytes=500,
+        invoke=effect,
+    )
+    await asyncio.sleep(0.45)
+    result = await owner.execute(
+        request,
+        signed_authorization=b"reconcile",
+        deadline=reconcile_deadline,
+        max_result_bytes=500,
+        invoke=effect,
+    )
+    assert result.content == "answer"
+    assert effects == 1
 
 
 async def test_lost_send_response_reconciles_without_duplicate_reply() -> None:
@@ -99,13 +170,13 @@ async def test_lost_send_response_reconciles_without_duplicate_reply() -> None:
     sent: dict[str, object] = {}
     calls = 0
 
-    async def send(reply: ReplyDispatch) -> None:
+    async def send(reply: ChannelReply) -> None:
         nonlocal calls
         calls += 1
         sent[reply.message_id] = reply
         raise TimeoutError("publish response lost")
 
-    async def lookup(reply: ReplyDispatch) -> bool:
+    async def lookup(reply: ChannelReply) -> bool:
         return sent.get(reply.message_id) == reply
 
     first = await owner.deliver_reply(run_id, send=send, lookup=lookup)
@@ -119,12 +190,12 @@ async def test_unprovable_reply_remains_unknown_until_external_reconciliation() 
     calls = 0
     visible = False
 
-    async def send(_reply: ReplyDispatch) -> None:
+    async def send(_reply: ChannelReply) -> None:
         nonlocal calls
         calls += 1
         raise TimeoutError("transport ambiguous")
 
-    async def lookup(_reply: ReplyDispatch) -> bool:
+    async def lookup(_reply: ChannelReply) -> bool:
         return visible
 
     assert await owner.deliver_reply(run_id, send=send, lookup=lookup) == "outcome_unknown"
@@ -139,12 +210,12 @@ async def test_crash_after_sending_anchor_never_republishes() -> None:
     owner, run_id = await _completed_reply_run()
     calls = 0
 
-    async def send(_reply: ReplyDispatch) -> None:
+    async def send(_reply: ChannelReply) -> None:
         nonlocal calls
         calls += 1
         raise asyncio.CancelledError
 
-    async def absent(_reply: ReplyDispatch) -> bool:
+    async def absent(_reply: ChannelReply) -> bool:
         return False
 
     with pytest.raises(asyncio.CancelledError):

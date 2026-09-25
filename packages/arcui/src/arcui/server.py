@@ -250,6 +250,7 @@ def create_app(
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
+    queue_owner_epoch: str | None = None,
     hosted: bool = False,
     hosted_claim: HostedClaimService | None = None,
     hosted_origin: str | None = None,
@@ -281,6 +282,7 @@ def create_app(
         auth_config: Token/role configuration. Auto-generated if None.
         queue_coordinator: Initialized coordinator shared with embedded agents.
         queue_tenant_id: Trusted deployment tenant bound to that coordinator.
+        queue_owner_epoch: Broker-issued lease epoch used by durable queue jobs.
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
         max_agents: Maximum concurrent agent connections (default 100).
@@ -329,6 +331,16 @@ def create_app(
         raise ValueError("queue coordinator and trusted tenant must be paired")
     if queue_coordinator is not None and queue_coordinator.tenant_scope != queue_tenant_id:
         raise ValueError("queue coordinator tenant scope mismatch")
+    if queue_owner_epoch is not None and (
+        queue_coordinator is None or re.fullmatch(r"[1-9][0-9]{0,18}", queue_owner_epoch) is None
+    ):
+        raise ValueError("queue owner epoch is invalid")
+    if (
+        queue_coordinator is not None
+        and getattr(queue_coordinator.store, "requires_recovery_owner", False)
+        and queue_owner_epoch is None
+    ):
+        raise ValueError("durable queue owner epoch is required")
     auth = auth_config or AuthConfig()
 
     # TaskStore writer (SPEC-056 Phase D, FR-7): one configured backend shared
@@ -533,6 +545,7 @@ def create_app(
                 attachment_scanner_factory=attachment_scanner_factory,
                 queue_coordinator=queue_coordinator,
                 queue_tenant_id=queue_tenant_id,
+                queue_owner_epoch=queue_owner_epoch,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.workflow_runner_host = embedded_gateway.workflow_runner_host
@@ -726,6 +739,7 @@ def create_app(
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
     app.state.queue_coordinator = queue_coordinator
     app.state.queue_tenant_id = queue_tenant_id
+    app.state.queue_owner_epoch = queue_owner_epoch
     app.state.requires_queue = hosted
     app.state.hosted = hosted
     app.state.hosted_claim = hosted_claim

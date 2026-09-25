@@ -274,7 +274,23 @@ async def _wake_on(message: Any) -> None:
         caller_did = message.signer_did or message.sender
         session_key = _inbox_session(caller_did, st.identity)
         reply_target, reply_label = _origin_reply_target(message)
-        if st.deliver_fn is not None:
+        if st.requires_signed_runs:
+            from arcagent.modules.messaging.signed_delivery import deliver
+
+            outcome = await deliver(
+                st,
+                message,
+                prompt=_format_delivery(message),
+                session_key=session_key,
+                reply_target=reply_target,
+                reply_label=reply_label,
+            )
+            if st.telemetry is not None:
+                st.telemetry.audit_event(
+                    "messaging.accepted_delivery",
+                    {"message_id": message.id, "outcome": outcome},
+                )
+        elif st.deliver_fn is not None:
             try:
                 await st.deliver_fn(
                     caller_did=caller_did,
@@ -395,10 +411,16 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     run_fn = data.get("run_fn")
     if run_fn is not None:
         st.agent_run_fn = run_fn
+    st.requires_signed_runs = bool(data.get("requires_signed_runs"))
+    st.trigger_issuer = data.get("trigger_issuer")
+    st.prepare_collected_request = data.get("prepare_collected_request")
+    st.accepted_reply_fn = data.get("accepted_reply_fn")
     deliver_fn = data.get("deliver_fn")
     if deliver_fn is not None:
         st.deliver_fn = deliver_fn
     st.oneshot_fn = data.get("oneshot_fn")
+    if st.requires_signed_runs:
+        st.oneshot_fn = None
     st.channel_deliver_fn = data.get("channel_deliver_fn")
     _logger.info("Bound agent run/deliver callbacks for message processing")
 
@@ -482,6 +504,8 @@ async def deliver_channel_reply(ctx: Any) -> None:
     An empty final text (the model answered through a tool and closed silently)
     is skipped too: there is nothing to echo, and whitespace would be noise.
     """
+    if _runtime.state().requires_signed_runs:
+        return
     target = turn_context.inbound_channel()
     if not target or not target.startswith("channel://"):
         return

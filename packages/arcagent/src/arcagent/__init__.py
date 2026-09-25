@@ -210,6 +210,10 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import CanonicalRunRequest
 
         return CanonicalRunRequest
+    if name == "DeliveryUnavailableError":
+        from arcagent.core.run_contract import DeliveryUnavailableError
+
+        return DeliveryUnavailableError
     if name in {
         "AnchoredSkillRevisionResolver",
         "ReviewedSkillBundle",
@@ -260,6 +264,7 @@ __all__ = [
     "DeliveryTerminalEvent",
     "DeliveryTextEvent",
     "DeliveryToolEvent",
+    "DeliveryUnavailableError",
     "ExtensionError",
     "GatedItem",
     "HostPrerequisiteDirector",

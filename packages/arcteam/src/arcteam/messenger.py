@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, NoReturn  # used for DLQ entry dicts
 
+import arcagent
 import arctrust
 from arctrust import ReplayCache
 from arctrust.classification import Classification, dominates, parse_classification
@@ -465,6 +466,28 @@ class MessagingService:
         message.seq = last_seq
         message.status = "sent"
         return message
+
+    async def send_channel_reply(
+        self,
+        *,
+        message_id: str,
+        sender: str,
+        target: str,
+        body: str,
+        classification: str,
+        hop: int,
+    ) -> None:
+        """Publish an exact accepted-run reply through the fleet's signed envelope."""
+        await self.send(
+            Message(
+                id=message_id,
+                sender=sender,
+                to=[target],
+                body=body,
+                classification=classification,
+                hop=hop,
+            )
+        )
 
     async def find_sent(
         self,
@@ -939,7 +962,7 @@ class MessagingService:
         except asyncio.CancelledError:
             seen_ids.discard(message.id)
             raise
-        except RetryableDeliveryError:
+        except (RetryableDeliveryError, arcagent.DeliveryUnavailableError):
             # Transient downstream backpressure — release the claim and do NOT
             # ack; the durable consumer redelivers after ack_wait so the message
             # is deferred rather than lost.

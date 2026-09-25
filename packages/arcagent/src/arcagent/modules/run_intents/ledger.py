@@ -7,7 +7,6 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -16,11 +15,20 @@ import arcstore
 import arctrust
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from arcagent.core.run_contract import CanonicalRunRequest
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    ChannelReply,
+    ReplyLookup,
+    ReplySender,
+)
 
 
 class RunIntentUnavailableError(RuntimeError):
     """Accepted work cannot be proven safe to start or recover."""
+
+
+class RunAuthorizationRefusedError(RunIntentUnavailableError):
+    """A signed claim is invalid or does not bind the requested operation."""
 
 
 class RunOutcomeUnknownError(Exception):
@@ -68,26 +76,13 @@ class VerifiedRunAuthorization(BaseModel):
     purpose: Literal["manual", "message", "schedule", "pulse", "workflow"]
     occurrence_id: str = Field(min_length=1)
     nonce: str = Field(min_length=1)
+    action: Literal["execute", "reconcile"] = "execute"
 
 
 RunAuthorizationVerifier = Callable[[bytes], VerifiedRunAuthorization]
 RunEffect = Callable[[bytes], Awaitable[bytes]]
 _logger = logging.getLogger(__name__)
 _RESULT_ADAPTER = TypeAdapter(arcrun.RunResult)
-
-
-@dataclass(frozen=True)
-class ReplyDispatch:
-    """One signed-run result and fixed channel destination for an outbox attempt."""
-
-    message_id: str
-    target: str
-    text: str
-    digest: str
-
-
-ReplySender = Callable[[ReplyDispatch], Awaitable[None]]
-ReplyLookup = Callable[[ReplyDispatch], Awaitable[bool]]
 
 
 class RunIntentLedger:
@@ -170,11 +165,12 @@ class RunIntentLedger:
         request_digest: str,
         purpose: str,
         occurrence_id: str,
+        action: Literal["execute", "reconcile"] = "execute",
     ) -> VerifiedRunAuthorization:
         try:
             claims = self._verify_authorization(evidence)
         except Exception as exc:
-            raise RunIntentUnavailableError("signed run authorization refused") from exc
+            raise RunAuthorizationRefusedError("signed run authorization refused") from exc
         if not isinstance(claims, VerifiedRunAuthorization) or (
             claims.tenant_id != self.tenant_id
             or claims.agent_did != self.agent_did
@@ -185,11 +181,63 @@ class RunIntentLedger:
             or claims.request_digest != request_digest
             or claims.purpose != purpose
             or claims.occurrence_id != occurrence_id
+            or claims.action != action
             or claims.deadline.tzinfo is None
             or claims.deadline.utcoffset() is None
         ):
-            raise RunIntentUnavailableError("signed run authorization binding refused")
+            raise RunAuthorizationRefusedError("signed run authorization binding refused")
         return claims
+
+    def authorization_action(self, evidence: bytes) -> Literal["execute", "reconcile"]:
+        """Read a verified action claim; every operation rechecks all bound facts."""
+        try:
+            claims = self._verify_authorization(evidence)
+        except Exception as exc:
+            raise RunAuthorizationRefusedError("signed run authorization refused") from exc
+        if not isinstance(claims, VerifiedRunAuthorization):
+            raise RunAuthorizationRefusedError("signed run authorization type refused")
+        return claims.action
+
+    async def reconcile(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        request: bytes,
+        signed_authorization: bytes,
+        deadline: datetime,
+        purpose: Literal["manual", "message", "schedule", "pulse", "workflow"],
+        occurrence_id: str,
+    ) -> arcstore.StoredRunIntent:
+        """Authorize terminal read without extending an expired execution grant."""
+        if (
+            deadline.tzinfo is None
+            or deadline.utcoffset() is None
+            or deadline <= datetime.now(UTC)
+        ):
+            raise RunAuthorizationRefusedError("reconciliation deadline invalid")
+        request_digest = hashlib.sha256(request).hexdigest()
+        self._verify(
+            signed_authorization,
+            run_id=run_id,
+            session_id=session_id,
+            owner_epoch=self.owner_epoch,
+            deadline=deadline,
+            request_digest=request_digest,
+            purpose=purpose,
+            occurrence_id=occurrence_id,
+            action="reconcile",
+        )
+        current = await self.get(run_id)
+        if (
+            current.status not in ("completed", "outcome_unknown")
+            or current.session_id != session_id
+            or current.purpose != purpose
+            or current.occurrence_id != occurrence_id
+            or current.request_digest != request_digest
+        ):
+            raise RunIntentUnavailableError("terminal run identity unavailable")
+        return current
 
     @staticmethod
     def anchor_scope(tenant_id: str, agent_did: str) -> str:
@@ -496,7 +544,7 @@ class RunIntentLedger:
             raise RunIntentUnavailableError("terminal run result unavailable")
         return await self._store.read_blob(self.tenant_id, self.agent_did, current.result_ref)
 
-    async def _reply_dispatch(self, intent: arcstore.StoredRunIntent) -> ReplyDispatch | None:
+    async def _reply_dispatch(self, intent: arcstore.StoredRunIntent) -> ChannelReply | None:
         if (
             intent.status != "completed"
             or intent.purpose != "message"
@@ -540,7 +588,7 @@ class RunIntentLedger:
             separators=(",", ":"),
         )
         message_id = "reply_" + _digest("arc.channel-reply.v1\0" + identity)
-        return ReplyDispatch(
+        return ChannelReply(
             message_id=message_id,
             target=request.reply_target,
             text=result.content,
@@ -558,8 +606,7 @@ class RunIntentLedger:
         if manifest.entries.get(current.run_id) != current:
             raise RunIntentUnavailableError("reply state changed under another owner")
         if current.reply_state != "none" and (
-            current.reply_message_id != message_id
-            or current.reply_digest != digest
+            current.reply_message_id != message_id or current.reply_digest != digest
         ):
             raise RunIntentUnavailableError("reply identity changed")
         updated = current.model_copy(
@@ -597,9 +644,7 @@ class RunIntentLedger:
             current = await self._reply_transition(
                 current, "pending", reply.message_id, reply.digest
             )
-        current = await self._reply_transition(
-            current, "sending", reply.message_id, reply.digest
-        )
+        current = await self._reply_transition(current, "sending", reply.message_id, reply.digest)
         try:
             await send(reply)
         except Exception:
@@ -607,13 +652,11 @@ class RunIntentLedger:
         if await self._reply_visible(reply, lookup):
             await self._reply_transition(current, "sent", reply.message_id, reply.digest)
             return "sent"
-        await self._reply_transition(
-            current, "outcome_unknown", reply.message_id, reply.digest
-        )
+        await self._reply_transition(current, "outcome_unknown", reply.message_id, reply.digest)
         return "outcome_unknown"
 
     @staticmethod
-    async def _reply_visible(reply: ReplyDispatch, lookup: ReplyLookup) -> bool:
+    async def _reply_visible(reply: ChannelReply, lookup: ReplyLookup) -> bool:
         try:
             return await lookup(reply)
         except Exception:

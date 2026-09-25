@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import arcrun
 from pydantic import BaseModel, ConfigDict, Field
@@ -63,5 +64,58 @@ class RunAdmissionRefusedError(RuntimeError):
     """Signed request failed before an agent effect could start."""
 
 
+class RunAdmissionUnavailableError(RuntimeError):
+    """Admission or reconciliation could not reach its durable authority."""
+
+
+class DeliveryUnavailableError(RuntimeError):
+    """A verified inbox item must remain unacknowledged until its owner recovers."""
+
+
 class RunOutcomeUnknownError(RuntimeError):
     """An accepted run may have performed effects that require reconciliation."""
+
+
+RunTriggerIssuer = Callable[[CanonicalRunRequest, bytes], Awaitable[tuple[bytes, datetime]]]
+
+
+@dataclass(frozen=True)
+class ChannelReply:
+    """Exact signed-run output and channel destination for one outbox attempt."""
+
+    message_id: str
+    target: str
+    text: str
+    digest: str
+
+
+ReplySender = Callable[[ChannelReply], Awaitable[None]]
+ReplyLookup = Callable[[ChannelReply], Awaitable[bool]]
+
+
+@runtime_checkable
+class AcceptedReplyOwner(Protocol):
+    """Optional accepted-run owner capability for durable channel replies."""
+
+    async def deliver_reply(
+        self, run_id: str, *, send: ReplySender, lookup: ReplyLookup
+    ) -> str: ...
+
+
+class TeamReplyPort(Protocol):
+    """Fleet-owned transport actions available to an optional inbox adapter."""
+
+    async def send_channel_reply(
+        self,
+        *,
+        message_id: str,
+        sender: str,
+        target: str,
+        body: str,
+        classification: str,
+        hop: int,
+    ) -> None: ...
+
+    async def find_sent(
+        self, *, message_id: str, target: str, body_digest: str
+    ) -> bool: ...

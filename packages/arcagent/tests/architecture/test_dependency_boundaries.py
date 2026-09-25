@@ -23,6 +23,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _ARCAGENT_SRC = _REPO_ROOT / "packages" / "arcagent" / "src" / "arcagent"
 _ARCRUN_INIT = _REPO_ROOT / "packages" / "arcrun" / "src" / "arcrun" / "__init__.py"
+_SIGNED_DELIVERY = _ARCAGENT_SRC / "modules" / "messaging" / "signed_delivery.py"
 
 _FORBIDDEN_ARCAGENT_IMPORTS = ("arcllm", "arcgateway", "arcui")
 _FORBIDDEN_ARCAGENT_DEPENDENCIES = frozenset({"arcllm", "arcgateway", "arcui"})
@@ -30,6 +31,11 @@ _FORBIDDEN_ARCAGENT_DEPENDENCIES = frozenset({"arcllm", "arcgateway", "arcui"})
 
 def _python_sources(root: Path) -> list[Path]:
     return sorted(root.rglob("*.py"))
+
+
+def test_signed_delivery_depends_only_on_neutral_fleet_port() -> None:
+    """Accepted inbox logic must not acquire a reverse ArcTeam dependency."""
+    assert all(not module.startswith("arcteam") for _, _, module in _imports(_SIGNED_DELIVERY))
 
 
 def _imports(path: Path) -> Iterable[tuple[int, str, str]]:

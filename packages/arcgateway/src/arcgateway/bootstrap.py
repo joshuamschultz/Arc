@@ -17,6 +17,7 @@ Module boundary (SDD §2):
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -145,6 +146,7 @@ def _make_agent_factory(
     *,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
+    queue_owner_epoch: str | None = None,
 ) -> Any:
     """Build an async agent_factory bound to ``team_root``.
 
@@ -180,6 +182,10 @@ def _make_agent_factory(
                     if (
                         existing.queue_coordinator is not queue_coordinator
                         or existing.queue_tenant_id != queue_tenant_id
+                        or (
+                            queue_owner_epoch is not None
+                            and existing.queue_owner_epoch != queue_owner_epoch
+                        )
                     ):
                         raise RuntimeError("existing fleet agent queue ownership mismatch")
                 return existing
@@ -211,6 +217,7 @@ def _make_agent_factory(
             fleet=ArcTeamFleet(),
             queue_coordinator=queue_coordinator,
             queue_tenant_id=queue_tenant_id,
+            queue_owner_epoch=queue_owner_epoch,
         )
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
@@ -305,6 +312,7 @@ async def build_for_embedded(
     attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
+    queue_owner_epoch: str | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -330,6 +338,16 @@ async def build_for_embedded(
         raise ValueError("embedded queue coordinator and tenant must be paired")
     if queue_coordinator is not None and queue_coordinator.tenant_scope != queue_tenant_id:
         raise ValueError("embedded queue tenant scope mismatch")
+    if queue_owner_epoch is not None and (
+        queue_coordinator is None or re.fullmatch(r"[1-9][0-9]{0,18}", queue_owner_epoch) is None
+    ):
+        raise ValueError("embedded queue owner epoch is invalid")
+    if (
+        queue_coordinator is not None
+        and getattr(queue_coordinator.store, "requires_recovery_owner", False)
+        and queue_owner_epoch is None
+    ):
+        raise ValueError("embedded durable queue owner epoch is required")
     if queue_coordinator is not None and gateway_config.gateway.tier == "federal":
         raise RuntimeError("federal subprocess queue composition is unavailable")
 
@@ -348,6 +366,7 @@ async def build_for_embedded(
             attachment_scanner_factory=attachment_scanner_factory,
             queue_coordinator=queue_coordinator,
             queue_tenant_id=queue_tenant_id,
+            queue_owner_epoch=queue_owner_epoch,
         )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
@@ -365,6 +384,7 @@ async def _compose_embedded(
     attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
+    queue_owner_epoch: str | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -386,6 +406,7 @@ async def _compose_embedded(
         _deliver_for,
         queue_coordinator=queue_coordinator,
         queue_tenant_id=queue_tenant_id,
+        queue_owner_epoch=queue_owner_epoch,
     )
     executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 

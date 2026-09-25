@@ -95,20 +95,31 @@ async def test_embedded_agent_factory_receives_same_queue(
     team_root = tmp_path / "team"
     _write_agent_dir(team_root, "agent", "did:arc:tenant-a:agent/abc", "agent")
     queue = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
-    seen: list[tuple[object, object]] = []
+    seen: list[tuple[object, object, object]] = []
 
     class FakeAgent:
         def __init__(self, *_args: object, **kwargs: object) -> None:
-            seen.append((kwargs["queue_coordinator"], kwargs["queue_tenant_id"]))
+            seen.append(
+                (
+                    kwargs["queue_coordinator"],
+                    kwargs["queue_tenant_id"],
+                    kwargs["queue_owner_epoch"],
+                )
+            )
 
         async def startup(self) -> None:
             pass
 
     monkeypatch.setattr(arcagent, "ArcAgent", FakeAgent)
     monkeypatch.setattr("arcgateway.fleet.current_fleet", lambda: None)
-    factory = _make_agent_factory(team_root, queue_coordinator=queue, queue_tenant_id="tenant-a")
+    factory = _make_agent_factory(
+        team_root,
+        queue_coordinator=queue,
+        queue_tenant_id="tenant-a",
+        queue_owner_epoch="42",
+    )
     await factory("did:arc:tenant-a:agent/abc")
-    assert seen == [(queue, "tenant-a")]
+    assert seen == [(queue, "tenant-a", "42")]
 
 
 @pytest.mark.asyncio

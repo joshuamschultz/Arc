@@ -211,6 +211,16 @@ def test_app_refuses_mismatched_coordinator_scope_before_startup() -> None:
         create_app(queue_coordinator=coordinator, queue_tenant_id="tenant-a")
 
 
+def test_app_refuses_noncanonical_queue_owner_epoch() -> None:
+    coordinator = arcrun.CallQueueCoordinator(tenant_scope="tenant-a")
+    with pytest.raises(ValueError, match="queue owner epoch"):
+        create_app(
+            queue_coordinator=coordinator,
+            queue_tenant_id="tenant-a",
+            queue_owner_epoch="01",
+        )
+
+
 def test_hosted_readiness_reports_missing_queue() -> None:
     app = create_app(hosted=True)
     response = TestClient(app).get("/api/ready")
