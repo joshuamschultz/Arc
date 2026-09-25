@@ -755,7 +755,7 @@
       {
         "key": "connection.agent_grant",
         "label": "Agent access",
-        "description": "Grant or remove this account’s access for an agent."
+        "description": "Grant or remove this account’s access for an agent. An agent granted several Google accounts gets one set of Google tools and picks the account per call; it can never reach an account it was not granted."
       },
       {
         "key": "connection.authorization_code",
@@ -785,12 +785,12 @@
       {
         "key": "connection.google_client",
         "label": "OAuth client",
-        "description": "Optional. The name of your own published Google OAuth client. With a published client, Google stops making you sign in again every week."
+        "description": "The name of your own published Google OAuth client, as stored on this computer. With a published client, Google stops making you sign in again every week. Leaving it blank uses the built-in client, whose sign-ins expire in about 7 days."
       },
       {
         "key": "connection.google_access",
         "label": "Access",
-        "description": "Read only is recommended: the agent can read mail, calendar and Drive but cannot write. Choose full access only if the agent must draft or send mail. After you change this, reconnect so Google asks again."
+        "description": "Read only is recommended: the agent can read mail, calendar and Drive, and every draft, label, trash or send tool refuses with a clear message. Choose full access only if the agent must draft, organise or send mail. After you change this, reconnect so Google asks again."
       },
       {
         "key": "connection.account_name",
@@ -812,7 +812,7 @@
       {
         "key": "connection.check",
         "label": "Connection check",
-        "description": "Use Doctor for diagnostics or Probe to check live reachability."
+        "description": "Use Doctor for diagnostics or Probe to check live reachability. Use Approve after an update changes the connector’s tools: until then, changed tools stay switched off for this connection."
       }
     ],
     "troubleshooting": [

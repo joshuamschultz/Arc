@@ -80,6 +80,80 @@ that account resumes on its own: a source stopped by a dead credential is
 rechecked about once an hour. To sync at once, use **Sync now** for the source
 under **Knowledge → Connections**.
 
+## How agents use several accounts
+
+An agent granted several Google connections gets **one** set of Google tools,
+not one per account. Each call names the account it is for:
+
+- The tools take an optional `account` argument (the address).
+- An agent granted exactly one Google account may leave it out.
+- An agent granted several must name one. If it does not, the call fails and
+  lists the accounts that agent may use.
+- The address must match a connection **granted to that agent**. Case does not
+  matter; spaces, look-alike letters, gog aliases and connection names do not
+  match. An address the agent was not granted is refused and audited
+  (`connector.account.denied`).
+- The call always runs as the matched connection's own account and OAuth
+  client. No tool can pass `--account`, `--client` or `--home` to gog; a value
+  that tries is refused before gog runs.
+- Every answer says which connection and account it came from, and the audit
+  record (`connector.account.routed`) names the same.
+
+To keep an agent from writing at all, leave the connection's `read_only` at
+`yes`: every draft, label, trash and send tool then refuses with a sentence.
+To stop one agent from using a single tool (for example
+`google_gmail_send`) while another may, add it to that agent's tool policy deny
+list in its `arcagent.toml`:
+
+```toml
+[tools.policy]
+deny = ["google_gmail_send", "google_gmail_forward"]
+```
+
+Every write and send also still waits for your approval, unless you relaxed
+the connection's approval mode.
+
+### The tools
+
+| Tool | What it does | Kind |
+|---|---|---|
+| `google_gmail_labels`, `google_gmail_label` | List labels; read one label with counts | read |
+| `google_gmail_search` | Search threads with Gmail search syntax (1-100 per page) | read |
+| `google_gmail_messages` | List messages for a query (also used by Knowledge sync) | read |
+| `google_gmail_message` | Read one message: headers, text, attachment names | read |
+| `google_gmail_thread`, `google_gmail_thread_attachments` | Read a whole thread; list its attachments | read |
+| `google_gmail_history` | Changes since a history id (also used by Knowledge sync) | read |
+| `google_gmail_attachment` | Download one attachment (max 25 MB) into `downloads/google_workspace/<connection>/` in the agent's workspace | read |
+| `google_gmail_drafts`, `google_gmail_draft_get` | List drafts; read one | read |
+| `google_gmail_draft`, `google_gmail_draft_update`, `google_gmail_draft_delete` | Create, change, delete a draft | write |
+| `google_gmail_modify`, `google_gmail_thread_modify` | Add or remove labels (star, archive, read state) | write |
+| `google_gmail_mark_read`, `google_gmail_mark_unread`, `google_gmail_archive` | Common label changes | write |
+| `google_gmail_trash`, `google_gmail_untrash` | Move to Trash and back | write |
+| `google_gmail_send`, `google_gmail_draft_send`, `google_gmail_reply`, `google_gmail_reply_all`, `google_gmail_forward` | Send mail | send (egress) |
+| `google_drive_list` | List or filter Drive files | read |
+| `google_calendar_list`, `google_calendar_events`, `google_calendar_freebusy` | Calendars, events, availability | read |
+
+Mail, thread, draft, search, Drive and Calendar results are marked as untrusted
+content: an agent must never follow instructions found in them.
+
+## After an update: Approve each Google connection
+
+Arc pins each connection's tool list (its "contract"). When an update adds or
+changes Google tools, those tools stay switched off for a connection until you
+approve them once:
+
+- **Arc web:** Connections → the Google connection's card → **Approve** (with
+  operator controls on). Repeat for each Google connection.
+- **Terminal:** `arc connector approve <connection>`, for example
+  `arc connector approve blackarc`.
+
+The agents pick the change up on their next reconcile or restart. Until you
+approve, the audit log shows `connector.tool.contract.unapproved` (a tool that
+is new) or `connector.tool.contract.suspend` (a tool that changed) for that
+connection; a call routed to it for a switched-off tool is refused with
+"approve it with Approve on that connection's card". An approved contract is
+not reported again on restart.
+
 ## Stop the weekly expiry
 
 **Why tokens die every week.** Google expires refresh tokens after seven days
@@ -169,3 +243,7 @@ only until your own client exists.
 | "authorized as X, expected Y" | Sign in as the connection's address; use Google's account chooser. |
 | "this connection's account is not a plain email address" | **Edit details** and fix the account. |
 | Reconnect needed again after a week | The connection is not using a published client. Do [the durable fix](#stop-the-weekly-expiry). |
+| "this agent holds several google_workspace connections; pass account …" | Name the account in the call, or grant the agent only one. |
+| "account does not name a connection this agent may use" | Grant that connection to the agent, or use one of the listed accounts. |
+| "… is signed in read-only, so … cannot run" | Set `read_only` to `no` with **Edit details**, then **Reconnect**. |
+| "… is not approved for the connection …" | Click **Approve** on that connection's card. |
