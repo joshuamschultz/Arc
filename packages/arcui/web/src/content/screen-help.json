@@ -6,7 +6,28 @@
       "Review Needs you for pending approvals and review tasks.",
       "Open Fleet or Activity to inspect a count in context."
     ],
-    "fields": [],
+    "fields": [
+      {
+        "key": "commands.search",
+        "label": "Destination and action search",
+        "description": "Search the screens and available actions. Use the arrow keys to move through matches and press Enter to open or run the selection."
+      },
+      {
+        "key": "auth.email",
+        "label": "Account email",
+        "description": "Email address for this deployment account."
+      },
+      {
+        "key": "auth.password",
+        "label": "Account password",
+        "description": "Password for this deployment account. Passwords are sent to the configured sign-in service and are not displayed."
+      },
+      {
+        "key": "auth.token",
+        "label": "Viewer or operator token",
+        "description": "Paste a token issued by this Arc deployment. Treat it as a credential and do not share it."
+      }
+    ],
     "troubleshooting": [
       {
         "symptom": "A count is zero or missing",
@@ -113,6 +134,31 @@
         "description": "Review scheduled tasks for this agent."
       },
       {
+        "key": "agent.schedule.enabled",
+        "label": "Schedule enabled",
+        "description": "Enable or pause this scheduled task. Pausing stops future scheduled starts; it does not cancel a run that is already executing."
+      },
+      {
+        "key": "agent.schedule.timing",
+        "label": "Schedule timing",
+        "description": "Set when the task runs. Cron schedules can use the guided frequency/time controls or an advanced five-part expression; interval schedules use seconds; one-time schedules use an ISO 8601 timestamp."
+      },
+      {
+        "key": "agent.schedule.prompt",
+        "label": "Schedule prompt",
+        "description": "Instructions supplied to the agent when this scheduled run starts. Keep them scoped to the intended work and do not put credentials here."
+      },
+      {
+        "key": "agent.schedule.timeout",
+        "label": "Schedule timeout",
+        "description": "Maximum run time in seconds before this scheduled attempt times out."
+      },
+      {
+        "key": "agent.schedule.deliver_to",
+        "label": "Schedule delivery channel",
+        "description": "Choose a previously used channel for the run result, enter a custom target when required, or leave None to keep the result internal."
+      },
+      {
         "key": "agent.tab.policy",
         "label": "Policy tab",
         "description": "Review policy bullets associated with this agent."
@@ -131,6 +177,11 @@
         "key": "agent.tab.files",
         "label": "Files tab",
         "description": "Browse files visible in this agent’s file view."
+      },
+      {
+        "key": "report.preview.open",
+        "label": "View report",
+        "description": "Open a sanitized static preview of this HTML report. Scripts, links, external images, and interactive content are unavailable; if preview fails, return to the source and use the displayed error to guide recovery."
       },
       {
         "key": "agent.tab.connect",
@@ -173,6 +224,16 @@
         "label": "Voice speed",
         "description": "Enter the playback speed multiplier.",
         "example": "1.12"
+      },
+      {
+        "key": "agent.rubric.checklist",
+        "label": "Rubric checklist",
+        "description": "Edit a checklist criterion used to evaluate this skill. Keep each row specific and observable; rubric changes affect future evaluations after saving."
+      },
+      {
+        "key": "agent.rubric.calibration",
+        "label": "Rubric calibration",
+        "description": "Explain how to avoid over-scoring this dimension. Keep the calibration guidance tied to the rubric's evidence and expected score."
       }
     ],
     "troubleshooting": [
@@ -205,6 +266,36 @@
         "label": "Message",
         "description": "Text to send to the selected conversation. Avoid placing credentials or sensitive secrets in chat.",
         "example": "Please summarize the latest deployment status."
+      },
+      {
+        "key": "messages.attachment",
+        "label": "Message attachments",
+        "description": "Attach files to this message. Supported images are sent as image content; other supported files remain document attachments. Remove a file before sending if it is not intended for this conversation."
+      },
+      {
+        "key": "channel.name",
+        "label": "Channel name",
+        "description": "Choose a unique, readable name for the new team channel. The name is visible in ArcUI and ArcTeam channel listings."
+      },
+      {
+        "key": "channel.initial_members",
+        "label": "Initial channel members",
+        "description": "Optional comma-separated agent references to add when creating the channel. Use a roster name, agent ID or DID and confirm the member list after creation."
+      },
+      {
+        "key": "channel.member.add",
+        "label": "Add channel member",
+        "description": "Select a listed agent or signed-in operator, then add that identity to this channel. Only available identities are offered."
+      },
+      {
+        "key": "channel.member.remove",
+        "label": "Remove channel member",
+        "description": "Remove this identity from the channel. Check the displayed member name before confirming the action."
+      },
+      {
+        "key": "workflow.gate.notes",
+        "label": "Revision notes",
+        "description": "Describe the changes needed before returning this workflow gate for revision. These notes are attached to the review decision."
       }
     ],
     "troubleshooting": [
@@ -236,6 +327,26 @@
         "key": "tasks.tag_filter",
         "label": "Tag filter",
         "description": "Show tasks matching a tag or all tags."
+      },
+      {
+        "key": "tasks.status_filter",
+        "label": "Task status filter",
+        "description": "Limit the board to tasks in the selected status. Counts and facets reflect the current board scope; use pagination to inspect more tasks."
+      },
+      {
+        "key": "tasks.priority_filter",
+        "label": "Task priority filter",
+        "description": "Limit the board to tasks with the selected priority. Counts and facets reflect the current board scope; use pagination to inspect more tasks."
+      },
+      {
+        "key": "tasks.owner_did_filter",
+        "label": "Owner DID filter",
+        "description": "Enter an exact owner DID and press Enter to filter when the owner list is too large to show every option."
+      },
+      {
+        "key": "tasks.tag_search",
+        "label": "Tag search",
+        "description": "Enter a tag and press Enter when the tag list is too large to show every option."
       },
       {
         "key": "task.title",
@@ -471,6 +582,41 @@
         "description": "Stable identifier used to refer to this node within the workflow."
       },
       {
+        "key": "workflow.node.agent",
+        "label": "Node agent",
+        "description": "Agent that executes this node. Leave blank to use the workflow owner; choose an agent that has the required capability."
+      },
+      {
+        "key": "workflow.node.skill",
+        "label": "Node skill",
+        "description": "Optional activated skill for this agent node. Suggestions reflect skills currently loaded by the selected agent."
+      },
+      {
+        "key": "workflow.node.strategy",
+        "label": "Node strategy",
+        "description": "Choose strategies for the agent node. A shortlist lets the runtime choose; leaving it empty uses the default reactive strategy."
+      },
+      {
+        "key": "workflow.node.tool",
+        "label": "Node tool",
+        "description": "The single tool this node invokes. Suggestions reflect tools currently loaded by the selected agent; the runtime still validates authorization and availability."
+      },
+      {
+        "key": "workflow.node.router_mode",
+        "label": "Router mode",
+        "description": "Rules mode selects the first matching condition. LLM mode asks the model to choose among the declared route IDs."
+      },
+      {
+        "key": "workflow.node.routes",
+        "label": "Router routes",
+        "description": "Each route names a target node and may include a condition; mark at most one fallback route. Rules mode checks conditions in order, while LLM mode chooses a declared target."
+      },
+      {
+        "key": "workflow.node.join",
+        "label": "Join behavior",
+        "description": "For a node with multiple upstream dependencies, all waits for every upstream node and any proceeds after the first upstream completes."
+      },
+      {
         "key": "workflow.node.type",
         "label": "Node type",
         "description": "Choose the node behavior from the available types."
@@ -515,6 +661,21 @@
         "key": "workflow.node.loop_back_to",
         "label": "Loop back to",
         "description": "Target node for a loop-back edge."
+      },
+      {
+        "key": "workflow.node.max_iterations",
+        "label": "Maximum loop iterations",
+        "description": "Upper bound on how many times a loop-back may repeat. Set this whenever a loop-back target is configured."
+      },
+      {
+        "key": "workflow.node.timeout",
+        "label": "Node timeout",
+        "description": "Maximum time in seconds allowed for this node attempt before it times out."
+      },
+      {
+        "key": "workflow.node.max_attempts",
+        "label": "Maximum attempts",
+        "description": "Maximum number of attempts for this node, subject to the workflow's retry and timeout rules."
       },
       {
         "key": "workflow.trigger.type",
@@ -636,6 +797,26 @@
         "key": "knowledge.mapping.status",
         "label": "Mapping status",
         "description": "Filter mapping profiles by review state."
+      },
+      {
+        "key": "knowledge.chunk_mode",
+        "label": "Chunk search mode",
+        "description": "Literal searches text directly; vector mode uses semantic similarity to find related content."
+      },
+      {
+        "key": "knowledge.memory.text",
+        "label": "Memory text",
+        "description": "Edit the stored memory text. Review the full content before saving because this updates the agent memory record."
+      },
+      {
+        "key": "knowledge.memory.importance",
+        "label": "Memory importance",
+        "description": "Set the memory importance from 1 (lowest) to 10 (highest); this affects ranking in memory recall."
+      },
+      {
+        "key": "knowledge.memory.search",
+        "label": "Memory search",
+        "description": "Search this agent’s memories using ranked recall. Clear the query to return to the paged memory list."
       }
     ],
     "troubleshooting": [
@@ -683,6 +864,41 @@
         "key": "model_usage.window",
         "label": "Time window",
         "description": "Select the period summarized by the charts."
+      },
+      {
+        "key": "trace.filter.provider",
+        "label": "Trace provider filter",
+        "description": "Show model calls from one provider or all providers. This only filters the calls currently loaded in the table."
+      },
+      {
+        "key": "trace.filter.model",
+        "label": "Trace model filter",
+        "description": "Show calls for one model or all models among the loaded traces."
+      },
+      {
+        "key": "trace.filter.agent",
+        "label": "Trace agent filter",
+        "description": "Show calls attributed to one agent or all agents among the loaded traces."
+      },
+      {
+        "key": "trace.filter.status",
+        "label": "Trace status filter",
+        "description": "Show calls with one status or all statuses among the loaded traces."
+      },
+      {
+        "key": "trace.filter.type",
+        "label": "Trace capability filter",
+        "description": "Show calls in one capability class or all classes among the loaded traces."
+      },
+      {
+        "key": "trace.search",
+        "label": "Search model calls",
+        "description": "Search the currently loaded trace rows across visible table fields. This is a local filter and does not fetch more history."
+      },
+      {
+        "key": "trace.export",
+        "label": "Export filtered calls",
+        "description": "Download metadata for the currently filtered trace rows as CSV. The export contains call metadata, not prompt or response payloads."
       }
     ],
     "troubleshooting": [
@@ -725,6 +941,11 @@
         "key": "capability_import.content",
         "label": "File content",
         "description": "Review or edit the selected staged file; changes are part of the staged import."
+      },
+      {
+        "key": "tools.filter",
+        "label": "Filter tools",
+        "description": "Filter the displayed tools by name, source, transport, classification, or loader status."
       }
     ],
     "troubleshooting": [
@@ -3480,6 +3701,11 @@
         "key": "settings.arcagent.modules.skills.config.improver.suite.flake_runs",
         "label": "Flake check runs",
         "description": "Repeated runs used to detect flaky evaluation cases."
+      },
+      {
+        "key": "settings.restart.include_databases",
+        "label": "Include databases",
+        "description": "Also restart the Postgres container that holds Arc’s store and memory index. Leave this off for routine restarts."
       }
     ],
     "troubleshooting": [

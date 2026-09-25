@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { configHelpKey, fieldHelp } from '@/lib/help'
+import { createElement } from 'react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { DataTable } from '@/components/data-table'
+import { configHelpKey, fieldHelp, helpRoute } from '@/lib/help'
 import content from '@/content/screen-help.json'
+
+const staticHelpSources = import.meta.glob(['../pages/**/*.tsx', '../components/**/*.tsx'], {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>
+
+const staticHelpUses = Object.entries(staticHelpSources)
+  .flatMap(([file, source]) => {
+    return [...source.matchAll(/<FieldHelp\s+helpKey="([^"]+)"(?:\s+route="([^"]+)")?/g)]
+      .map(([, key, route]) => ({ file, key, route }))
+  })
 
 describe('configuration field help', () => {
   it.each([
@@ -47,5 +63,36 @@ describe('configuration field help', () => {
   it('keeps every screen field ID unique', () => {
     const fields = Object.values(content).flatMap((screen) => screen.fields)
     expect(new Set(fields.map((field) => field.key)).size).toBe(fields.length)
+  })
+
+  it.each(staticHelpUses)('resolves live FieldHelp usage $key in $file', ({ file, key, route }) => {
+    const entry = route ? fieldHelp(key, route) : fieldHelp(key)
+    expect(entry, `${file} references missing help ID ${key}${route ? ` on ${route}` : ''}`).toBeTruthy()
+    expect(entry?.description.trim()).not.toBe('')
+  })
+
+  it('maps the rendered agent and workflow detail routes to their shared help entries', () => {
+    expect(helpRoute('/agents/agent-123/inbox')).toBe('agents/:id')
+    expect(helpRoute('/workflows/workflow-123')).toBe('workflows/:id')
+    expect(helpRoute('/unrecognized')).toBeNull()
+  })
+
+  it('places optional table-search help beside the search field without changing generic tables', async () => {
+    const columns = [{ accessorKey: 'name', header: 'Name' }]
+    const { unmount } = render(createElement(DataTable, {
+      columns,
+      data: [{ name: 'call one' }],
+      searchable: true,
+      searchPlaceholder: 'Search calls…',
+      searchHelpKey: 'trace.search',
+    }))
+    expect(screen.getByPlaceholderText('Search calls…')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Help for Search model calls' }))
+    expect(screen.getByText(content.arcllm.fields.find((field) => field.key === 'trace.search')!.description)).toBeTruthy()
+    unmount()
+
+    const generic = render(createElement(DataTable, { columns, data: [{ name: 'call one' }], searchable: true }))
+    expect(screen.queryByRole('button', { name: 'Help for Search model calls' })).toBeNull()
+    generic.unmount()
   })
 })

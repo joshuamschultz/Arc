@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/states'
 
@@ -19,6 +20,8 @@ interface DataTableProps<T> {
   /** Enable the client-side search box (matches across all cells). */
   searchable?: boolean
   searchPlaceholder?: string
+  /** Attach contextual help beside this table's search field. */
+  searchHelpKey?: string
   onRowClick?: (row: T) => void
   /** Marks a row visually selected (e.g. open in a detail drawer). */
   isRowActive?: (row: T) => boolean
@@ -37,6 +40,7 @@ export function DataTable<T>({
   data,
   searchable,
   searchPlaceholder = 'Search…',
+  searchHelpKey,
   onRowClick,
   isRowActive,
   emptyTitle = 'No rows',
@@ -64,14 +68,17 @@ export function DataTable<T>({
   return (
     <div className="flex flex-col gap-3">
       {searchable && (
-        <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder={searchPlaceholder}
-            className="pl-8"
-          />
+        <div className="flex w-full max-w-xs items-center gap-1">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={globalFilter}
+              onChange={(e) => setGlobalFilter(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="pl-8"
+            />
+          </div>
+          {searchHelpKey && <FieldHelp helpKey={searchHelpKey} />}
         </div>
       )}
 

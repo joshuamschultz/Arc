@@ -26,6 +26,7 @@ import {
 import { useAgentChannels } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { Dict } from '@/lib/types'
+import { FieldHelp } from '@/components/help'
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
@@ -293,23 +294,29 @@ function ScheduleDetail({
       <div className="flex-1 space-y-5 overflow-auto p-5">
         {editing ? (
           <section className="space-y-3">
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-                className="size-4 accent-primary"
-              />
-              Enabled
-            </label>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                {type === 'cron'
-                  ? 'Cron expression'
-                  : type === 'interval'
-                    ? 'Every (seconds)'
-                    : 'Run at (ISO 8601)'}
+            <div className="flex items-center gap-2 text-sm text-foreground">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) => setEnabled(e.target.checked)}
+                  className="size-4 accent-primary"
+                />
+                Enabled
               </label>
+              <FieldHelp helpKey="agent.schedule.enabled" route="agents/:id" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  {type === 'cron'
+                    ? 'Cron expression'
+                    : type === 'interval'
+                      ? 'Every (seconds)'
+                      : 'Run at (ISO 8601)'}
+                </label>
+                <FieldHelp helpKey="agent.schedule.timing" route="agents/:id" />
+              </div>
               {type === 'cron' && <CronBuilder value={expression} onChange={setExpression} />}
               {type === 'interval' && (
                 <Input
@@ -332,11 +339,17 @@ function ScheduleDetail({
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Prompt</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-muted-foreground">Prompt</label>
+                <FieldHelp helpKey="agent.schedule.prompt" route="agents/:id" />
+              </div>
               <Textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Timeout (seconds)</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-muted-foreground">Timeout (seconds)</label>
+                <FieldHelp helpKey="agent.schedule.timeout" route="agents/:id" />
+              </div>
               <Input
                 type="number"
                 min={1}
@@ -345,7 +358,10 @@ function ScheduleDetail({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Deliver to (channel)</label>
+              <div className="flex items-center gap-1">
+                <label className="text-xs font-medium text-muted-foreground">Deliver to (channel)</label>
+                <FieldHelp helpKey="agent.schedule.deliver_to" route="agents/:id" />
+              </div>
               <ChannelSelect agentId={agentId} value={deliverTo} onChange={setDeliverTo} />
               <p className="text-xs text-muted-foreground">
                 Where the run's output is sent when it fires. Pick a channel the agent has

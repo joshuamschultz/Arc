@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AlertTriangle, Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
 import { useChunks, useChunkSearch } from '@/lib/queries'
@@ -153,8 +154,10 @@ export function ChunkBrowser({ agentId }: { agentId: string }) {
             placeholder="Search chunks (literal or vector)…"
             className="pl-8"
           />
+          <FieldHelp helpKey="knowledge.chunk_search" route="knowledge" />
         </div>
         <ModeToggle mode={mode} onChange={setMode} />
+        <FieldHelp helpKey="knowledge.chunk_mode" route="knowledge" />
       </div>
 
       {searching ? (

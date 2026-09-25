@@ -341,6 +341,7 @@ function ChatPanel({
           onRemove={uploader.removeAttachment}
           disabled={status !== 'ready'}
         />
+        <FieldHelp helpKey="messages.attachment" route="messages" />
         <MentionComposer
           value={text}
           onChange={setText}

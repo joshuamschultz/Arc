@@ -154,6 +154,7 @@ export function TasksPage() {
               count: statusCounts[s] ?? 0,
             }))}
           />
+          <FieldHelp helpKey="tasks.status_filter" route="tasks" />
           <FilterPills
             value={priorityFilter}
             onChange={(v) => { setPageCursors([]); setPriorityFilter(v as TaskPriority | 'all') }}
@@ -163,6 +164,7 @@ export function TasksPage() {
               count: priorityCounts[p] ?? 0,
             }))}
           />
+          <FieldHelp helpKey="tasks.priority_filter" route="tasks" />
           <Select value={ownerFilter} onValueChange={(v) => { setPageCursors([]); setOwnerFilter(v) }}>
             <SelectTrigger size="sm"><SelectValue placeholder="Owner" /></SelectTrigger>
             <SelectContent>
@@ -176,6 +178,7 @@ export function TasksPage() {
           {facets?.owners_truncated && <Input aria-label="Owner DID filter" placeholder="Filter by owner DID"
             value={ownerSearch} onChange={(e) => setOwnerSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { setPageCursors([]); setOwnerFilter(ownerSearch || 'all') } }} />}
+          {facets?.owners_truncated && <FieldHelp helpKey="tasks.owner_did_filter" route="tasks" />}
           {tags.length > 0 && (
             <><Select value={tagFilter} onValueChange={(v) => { setPageCursors([]); setTagFilter(v) }}>
               <SelectTrigger size="sm"><SelectValue placeholder="Tag" /></SelectTrigger>
@@ -190,6 +193,7 @@ export function TasksPage() {
           {facets?.tags_truncated && <Input aria-label="Tag filter" placeholder="Filter by tag"
             value={tagSearch} onChange={(e) => setTagSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { setPageCursors([]); setTagFilter(tagSearch || 'all') } }} />}
+          {facets?.tags_truncated && <FieldHelp helpKey="tasks.tag_search" route="tasks" />}
         </div>
 
         {query.isPending ? <LoadingRows /> : query.isError ? <ErrorState error={query.error} /> : (

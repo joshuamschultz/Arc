@@ -7,6 +7,7 @@ import { StatusText } from '@/components/status-badge'
 import { AgentIdentity } from '@/components/AgentIdentity'
 import { CapabilityBadge } from '@/components/llm/capability-badge'
 import { Button } from '@/components/ui/button'
+import { FieldHelp } from '@/components/help'
 import {
   Select,
   SelectContent,
@@ -164,25 +165,29 @@ function downloadCsv(rows: Trace[]) {
 }
 
 function FilterSelect({
-  value, onChange, options, placeholder,
+  value, onChange, options, placeholder, helpKey,
 }: {
   value: string
   onChange: (v: string) => void
   options: string[]
   placeholder: string
+  helpKey: string
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-auto min-w-28 text-xs">
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ALL}>{placeholder}</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o} value={o}>{o}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="inline-flex items-center gap-1">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-8 w-auto min-w-28 text-xs">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>{placeholder}</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o} value={o}>{o}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <FieldHelp helpKey={helpKey} />
+    </div>
   )
 }
 
@@ -219,11 +224,11 @@ export function TraceTable({ traces }: { traces: Trace[] }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <FilterSelect value={provider} onChange={setProvider} options={providers} placeholder="All providers" />
-        <FilterSelect value={model} onChange={setModel} options={models} placeholder="All models" />
-        <FilterSelect value={agent} onChange={setAgent} options={agents} placeholder="All agents" />
-        <FilterSelect value={status} onChange={setStatus} options={statuses} placeholder="All status" />
-        <FilterSelect value={type} onChange={setType} options={types} placeholder="All types" />
+        <FilterSelect value={provider} onChange={setProvider} options={providers} placeholder="All providers" helpKey="trace.filter.provider" />
+        <FilterSelect value={model} onChange={setModel} options={models} placeholder="All models" helpKey="trace.filter.model" />
+        <FilterSelect value={agent} onChange={setAgent} options={agents} placeholder="All agents" helpKey="trace.filter.agent" />
+        <FilterSelect value={status} onChange={setStatus} options={statuses} placeholder="All status" helpKey="trace.filter.status" />
+        <FilterSelect value={type} onChange={setType} options={types} placeholder="All types" helpKey="trace.filter.type" />
         <Button
           variant="outline"
           size="sm"
@@ -233,12 +238,14 @@ export function TraceTable({ traces }: { traces: Trace[] }) {
         >
           <Download className="size-4" /> Export
         </Button>
+        <FieldHelp helpKey="trace.export" />
       </div>
       <DataTable
         columns={columns}
         data={filtered}
         searchable
         searchPlaceholder="Search calls…"
+        searchHelpKey="trace.search"
         onRowClick={setActive}
         isRowActive={(t) => t.trace_id === active?.trace_id}
         emptyTitle="No LLM calls yet"

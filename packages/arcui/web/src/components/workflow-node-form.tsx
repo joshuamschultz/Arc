@@ -198,7 +198,7 @@ export function WorkflowNodeForm({
       </Field>
 
       {draft.kind !== 'gate' && (
-        <Field label="Agent" hint="@handle that runs this node. Defaults to the workflow owner.">
+        <Field label="Agent" hint="@handle that runs this node. Defaults to the workflow owner." helpKey="workflow.node.agent">
           <Suggested
             listId={`agents-${draft.id}`}
             value={draft.agent}
@@ -216,6 +216,7 @@ export function WorkflowNodeForm({
           </Field>
           <Field
             label="Skill"
+            helpKey="workflow.node.skill"
             hint={
               skills.length > 0
                 ? 'Activated for this node. Suggestions are what this agent has loaded.'
@@ -232,6 +233,7 @@ export function WorkflowNodeForm({
           <Field
             label="Strategy"
             hint="Pin one, or offer a shortlist and let the loop choose. None = react."
+            helpKey="workflow.node.strategy"
           >
             <ChipMultiSelect
               selected={strategySelected}
@@ -246,6 +248,7 @@ export function WorkflowNodeForm({
         <>
           <Field
             label="Tool"
+            helpKey="workflow.node.tool"
             hint={
               tools.length > 0
                 ? 'The single tool this node calls. Suggestions are what the named agent has.'
@@ -291,6 +294,7 @@ export function WorkflowNodeForm({
         <>
           <Field
             label="Mode"
+            helpKey="workflow.node.router_mode"
             hint={
               draft.mode === 'rules'
                 ? 'Rules: the first matching condition wins.'
@@ -308,9 +312,10 @@ export function WorkflowNodeForm({
             </Select>
           </Field>
           <div className="space-y-2">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Routes
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Routes</span>
+              <FieldHelp helpKey="workflow.node.routes" route="workflows/:id" />
+            </div>
             {draft.routes.map((route, i) => (
               <div key={i} className="space-y-1 rounded-lg border border-border p-2">
                 <div className="flex items-center gap-2">
@@ -397,7 +402,7 @@ export function WorkflowNodeForm({
           </div>
         )}
         {draft.needs.length > 1 && (
-          <Field label="Join" hint="all: wait for every upstream. any: first one through wins.">
+          <Field label="Join" hint="all: wait for every upstream. any: first one through wins." helpKey="workflow.node.join">
             <Select value={draft.join} onValueChange={(v) => set('join', v as 'all' | 'any')}>
               <SelectTrigger>
                 <SelectValue />
@@ -434,21 +439,21 @@ export function WorkflowNodeForm({
           <Field label="Loop back to" hint="Declared back-edge target. Needs a max iterations bound." helpKey="workflow.node.loop_back_to">
             <Input value={draft.loopBackTo} onChange={(e) => set('loopBackTo', e.target.value)} />
           </Field>
-          <Field label="Max iterations">
+          <Field label="Max iterations" helpKey="workflow.node.max_iterations">
             <Input
               value={draft.maxIterations}
               inputMode="numeric"
               onChange={(e) => set('maxIterations', e.target.value)}
             />
           </Field>
-          <Field label="Timeout (seconds)">
+          <Field label="Timeout (seconds)" helpKey="workflow.node.timeout">
             <Input
               value={draft.timeout}
               inputMode="numeric"
               onChange={(e) => set('timeout', e.target.value)}
             />
           </Field>
-          <Field label="Max attempts">
+          <Field label="Max attempts" helpKey="workflow.node.max_attempts">
             <Input
               value={draft.maxAttempts}
               inputMode="numeric"

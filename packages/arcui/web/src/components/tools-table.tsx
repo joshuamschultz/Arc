@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { CapabilityStatusBadge } from '@/components/capability-table'
 import { cn } from '@/lib/utils'
 import type { Dict } from '@/lib/types'
@@ -101,6 +102,7 @@ export function ToolsTable({
         placeholder="Filter tools…"
         className="h-8 max-w-xs"
       />
+      <FieldHelp helpKey="tools.filter" route="tools-skills" />
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FieldHelp } from '@/components/help'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { apiPost, ApiError } from '@/lib/api'
 
@@ -46,6 +47,7 @@ export function RestartStackButton({ size = 'sm' }: { size?: 'sm' | 'default' })
         />
         Include databases
       </label>
+      <FieldHelp helpKey="settings.restart.include_databases" route="settings" />
       <Button
         type="button"
         size={size}

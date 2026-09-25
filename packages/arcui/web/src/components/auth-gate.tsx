@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { ArcLogo } from '@/components/arc-logo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { hasToken, setToken } from '@/lib/auth'
 
 /**
@@ -97,6 +98,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && submitLogin()}
               />
+              <FieldHelp helpKey="auth.email" />
               <Input
                 type="password"
                 autoComplete="current-password"
@@ -105,6 +107,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && submitLogin()}
               />
+              <FieldHelp helpKey="auth.password" />
               <Button onClick={submitLogin} disabled={busy || !email.trim() || !password}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </Button>
@@ -138,6 +141,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 onChange={(e) => setTokenValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && submitToken()}
               />
+              <FieldHelp helpKey="auth.token" />
               <Button onClick={submitToken} disabled={!tokenValue.trim()}>
                 Connect
               </Button>

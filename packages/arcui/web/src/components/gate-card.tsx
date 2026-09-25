@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, GitPullRequestArrow, ShieldQuestion, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FieldHelp } from '@/components/help'
 import { Textarea } from '@/components/ui/textarea'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useResolveGate } from '@/lib/queries'
@@ -74,13 +75,16 @@ export function GateCard({
           ) : operatorMode ? (
             <div className="mt-3 space-y-2">
               {notesFor === 'return_for_revision' && (
-                <Textarea
-                  autoFocus
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Notes for the revision (what needs to change)…"
-                />
+                <>
+                  <Textarea
+                    autoFocus
+                    rows={2}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Notes for the revision (what needs to change)…"
+                  />
+                  <FieldHelp helpKey="workflow.gate.notes" route="messages" />
+                </>
               )}
               <div className="flex items-center gap-2">
                 <Button size="sm" disabled={busy} onClick={() => resolve('approve')}>

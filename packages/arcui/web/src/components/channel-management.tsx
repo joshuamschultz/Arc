@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { apiDelete, apiPost, ApiError } from '@/lib/api'
 import { useMe, useRoster } from '@/lib/queries'
 import type { Agent, Channel } from '@/lib/types'
+import { FieldHelp } from '@/components/help'
 
 /** All the keys a channel member ref could arrive as for this agent — DID,
  *  agent id, name, and the DID's trailing hex — so membership can be checked
@@ -119,13 +120,19 @@ export function CreateChannelSheet({ open, onOpenChange }: { open: boolean; onOp
             </div>
           )}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Name</label>
+            <div className="flex items-center gap-1">
+              <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Name</label>
+              <FieldHelp helpKey="channel.name" route="messages" />
+            </div>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="incident-response" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-              Members (comma-separated agent refs, optional)
-            </label>
+            <div className="flex items-center gap-1">
+              <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Members (comma-separated agent refs, optional)
+              </label>
+              <FieldHelp helpKey="channel.initial_members" route="messages" />
+            </div>
             <Input value={members} onChange={(e) => setMembers(e.target.value)} placeholder="coder, marketer" />
           </div>
           <Button className="w-full" disabled={busy || !name.trim()} onClick={submit}>
@@ -249,9 +256,12 @@ export function ChannelMembersSheet({
                     <span className="truncate font-mono text-[10px] text-muted-foreground">{m}</span>
                   </span>
                   {operatorMode && (
-                    <Button variant="ghost" size="icon-xs" disabled={busy === m} onClick={() => remove(m)} title="Remove member">
-                      <UserMinus className="size-3.5" />
-                    </Button>
+                    <span className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon-xs" disabled={busy === m} onClick={() => remove(m)} title="Remove member">
+                        <UserMinus className="size-3.5" />
+                      </Button>
+                      <FieldHelp helpKey="channel.member.remove" route="messages" />
+                    </span>
                   )}
                 </li>
               ))}
@@ -296,6 +306,7 @@ export function ChannelMembersSheet({
                   )}
                 </SelectContent>
               </Select>
+              <FieldHelp helpKey="channel.member.add" route="messages" />
               <Button size="sm" disabled={!newMember || busy === newMember} onClick={add}>
                 <UserPlus className="size-3.5" /> Add
               </Button>

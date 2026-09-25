@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { Search, CornerDownLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { FieldHelp } from '@/components/help'
 import {
   useCommandPalette,
   useCommandPaletteStore,
@@ -134,6 +135,7 @@ export function CommandPalette() {
               onKeyDown={onInputKeyDown}
               className="h-12 w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             />
+            <FieldHelp helpKey="commands.search" />
           </div>
 
           <div

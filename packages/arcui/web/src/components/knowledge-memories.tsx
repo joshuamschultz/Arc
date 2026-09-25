@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Pencil, Search, Trash2, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -165,6 +166,7 @@ function MemoryDetail({
                   onChange={(e) => setDraftText(e.target.value)}
                   className="h-32 w-full resize-none rounded-md border border-border bg-muted/30 p-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
                 />
+                <FieldHelp helpKey="knowledge.memory.text" route="knowledge" />
                 <div className="flex justify-end gap-2">
                   <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditingText(false)}>
                     Cancel
@@ -220,6 +222,7 @@ function MemoryDetail({
                     onChange={(e) => setDraftImportance(Number(e.target.value))}
                     className="h-7 w-14 rounded-md border border-border bg-muted/30 px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
                   />
+                  <FieldHelp helpKey="knowledge.memory.importance" route="knowledge" />
                   <Button variant="ghost" size="icon-xs" disabled={busy} onClick={() => setEditingImportance(false)}>
                     <X className="size-3" />
                   </Button>
@@ -366,6 +369,7 @@ export function MemoryBrowser({
           placeholder="Search memories (ranked recall)…"
           className="pl-8"
         />
+        <FieldHelp helpKey="knowledge.memory.search" route="knowledge" />
       </div>
 
       {searching ? (

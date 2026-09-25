@@ -16,6 +16,7 @@ import { JsonBlock } from '@/components/json-block'
 import { Button } from '@/components/ui/button'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
+import { FieldHelp } from '@/components/help'
 
 function baseName(path: string): string {
   const parts = path.split('/').filter(Boolean)
@@ -315,9 +316,12 @@ function FileViewer({
         <div className="flex shrink-0 items-center gap-2">
           <span>{fmtBytes(q.data.size)}</span>
           {isReport && (
-            <Button variant="outline" size="sm" onClick={() => void viewReport()}>
-              View report
-            </Button>
+            <>
+              <Button variant="outline" size="sm" onClick={() => void viewReport()}>
+                View report
+              </Button>
+              <FieldHelp helpKey="report.preview.open" />
+            </>
           )}
           {operatorMode && !editing && !isBinary && (
             <Button variant="ghost" size="sm" onClick={startEdit}>

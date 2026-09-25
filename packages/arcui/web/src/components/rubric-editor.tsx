@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { ErrorState, LoadingRows } from '@/components/states'
+import { FieldHelp } from '@/components/help'
 import { useRubric, useSaveRubric } from '@/lib/queries'
 import { apiDelete, ApiError } from '@/lib/api'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
@@ -209,6 +210,7 @@ export function RubricEditor({
                             className="h-8 font-mono text-xs"
                             aria-label={`${dim} checklist row ${i + 1}`}
                           />
+                          <FieldHelp helpKey="agent.rubric.checklist" route="agents/:id" />
                           <Button
                             variant="ghost"
                             size="icon"
@@ -239,9 +241,12 @@ export function RubricEditor({
                   </Button>
                 )}
                 <div className="space-y-1 pt-1">
-                  <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Calibration
-                  </label>
+                  <div className="flex items-center gap-1">
+                    <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Calibration
+                    </label>
+                    <FieldHelp helpKey="agent.rubric.calibration" route="agents/:id" />
+                  </div>
                   {editing ? (
                     <Textarea
                       value={d.anti_inflation}
