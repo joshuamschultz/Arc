@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, NoReturn  # used for DLQ entry dicts
 
+import arctrust
 from arctrust import ReplayCache
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import ValidationError
@@ -23,6 +26,7 @@ from arcteam.types import (
     Cursor,
     DeliveryKind,
     Entity,
+    EntityStatus,
     Message,
     generate_message_id,
     parse_uri,
@@ -461,6 +465,123 @@ class MessagingService:
         message.seq = last_seq
         message.status = "sent"
         return message
+
+    async def find_sent(
+        self,
+        *,
+        message_id: str,
+        target: str,
+        body_digest: str,
+        max_scan: int = 10_000,
+    ) -> bool:
+        """Prove one exact signed envelope exists after a lost publish response.
+
+        A missing, conflicting, unverifiable, or unbounded history is not proof
+        that publishing failed. Callers must keep such replies uncertain and
+        must not send them again automatically.
+        """
+        if not message_id or max_scan < 1:
+            raise ValueError("invalid reply lookup scope")
+        scheme, channel_name = parse_uri(target)
+        if scheme != "channel":
+            raise ValueError("reply lookup is limited to channel targets")
+        stream = _stream_name_from_uri(target)
+        signer = self._signer
+        if signer is None:
+            await self._audit.log(
+                event_type="message.lookup_refused",
+                subject=stream,
+                actor_id="unbound",
+                detail="No signing capability for reply lookup",
+            )
+            return False
+        sender_did = signer.did
+        await self._audit.log(
+            event_type="message.lookup_requested",
+            subject=stream,
+            actor_id=sender_did,
+            detail=f"Reply {message_id} lookup requested",
+        )
+        entities = await self._registry.list_entities()
+        sender = next((entity for entity in entities if entity.did == sender_did), None)
+        challenge = json.dumps(
+            ["arc.reply.lookup.v1", target, message_id, body_digest], separators=(",", ":")
+        ).encode()
+        signer_valid = False
+        if sender is not None and sender.public_key:
+            try:
+                signer_valid = arctrust.verify(
+                    challenge,
+                    arctrust.sign(challenge, signer.private_key),
+                    bytes.fromhex(sender.public_key),
+                )
+            except ValueError:
+                signer_valid = False
+        if (
+            sender is None
+            or sender.status != EntityStatus.active
+            or not signer_valid
+            or not await self._check_channel_membership(sender.id, channel_name, entities)
+        ):
+            await self._audit.log(
+                event_type="message.lookup_refused",
+                subject=stream,
+                actor_id=sender_did,
+                detail=f"Signing identity or channel membership refused {message_id}",
+            )
+            return False
+        await self._audit.log(
+            event_type="message.lookup_authorized",
+            subject=stream,
+            actor_id=sender_did,
+            detail=f"Exact signed reply lookup authorized {message_id}",
+        )
+        last = await self._backend.read_last(STREAMS_COLLECTION, stream)
+        last_seq = int(last.get("seq", 0)) if last else 0
+        after = 0
+        scanned = 0
+        matches = 0
+        while after < last_seq and scanned < max_scan:
+            page = await self._backend.read_stream(
+                STREAMS_COLLECTION, stream, after_seq=after, limit=min(100, max_scan - scanned)
+            )
+            if not page:
+                break
+            for record in page:
+                seq = int(record.get("seq", 0))
+                if seq <= after:
+                    raise RuntimeError("message history did not advance")
+                after = seq
+                scanned += 1
+                if record.get("id") != message_id:
+                    continue
+                try:
+                    candidate = Message.model_validate(record)
+                    signature_ok = verify_message(candidate, bytes.fromhex(sender.public_key))
+                    sender_ok = resolve_ref(entities, candidate.sender) == sender_did
+                except (ValueError, UnknownHandle):
+                    signature_ok = False
+                    sender_ok = False
+                if (
+                    signature_ok
+                    and sender_ok
+                    and candidate.signer_did == sender_did
+                    and candidate.to == [target]
+                    and not candidate.cc
+                    and not candidate.bcc
+                    and hashlib.sha256(candidate.body.encode()).hexdigest() == body_digest
+                ):
+                    matches += 1
+                else:
+                    matches += 2
+        proved = after >= last_seq and matches == 1
+        await self._audit.log(
+            event_type="message.lookup",
+            subject=stream,
+            actor_id=sender_did,
+            detail=f"Reply {message_id} {'proved' if proved else 'unresolved'}",
+        )
+        return proved
 
     async def _fanout_mentions_to_inboxes(
         self,

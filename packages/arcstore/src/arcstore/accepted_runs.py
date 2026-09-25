@@ -51,6 +51,9 @@ class StoredRunIntent(BaseModel):
     request_ref: RunBlobRef | None = None
     result_ref: RunBlobRef | None = None
     reserved_bytes: int = Field(ge=0)
+    reply_state: Literal["none", "pending", "sending", "sent", "outcome_unknown"] = "none"
+    reply_message_id: str | None = None
+    reply_digest: str | None = None
 
     @field_validator("deadline")
     @classmethod

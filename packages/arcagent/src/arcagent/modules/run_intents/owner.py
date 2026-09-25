@@ -14,6 +14,8 @@ from arcagent.core.run_contract import (
     RunOutcomeUnknownError,
 )
 from arcagent.modules.run_intents.ledger import (
+    ReplyLookup,
+    ReplySender,
     RunIntentLedger,
     RunIntentUnavailableError,
 )
@@ -29,6 +31,12 @@ class LedgerRunOwner:
 
     def __init__(self, ledger: RunIntentLedger) -> None:
         self._ledger = ledger
+
+    async def deliver_reply(
+        self, run_id: str, *, send: ReplySender, lookup: ReplyLookup
+    ) -> str:
+        """Deliver or reconcile one anchored channel reply without re-sending unknown work."""
+        return await self._ledger.deliver_reply(run_id, send=send, lookup=lookup)
 
     async def execute(
         self,

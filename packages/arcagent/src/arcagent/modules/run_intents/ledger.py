@@ -7,12 +7,16 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+import arcrun
 import arcstore
 import arctrust
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+
+from arcagent.core.run_contract import CanonicalRunRequest
 
 
 class RunIntentUnavailableError(RuntimeError):
@@ -69,6 +73,21 @@ class VerifiedRunAuthorization(BaseModel):
 RunAuthorizationVerifier = Callable[[bytes], VerifiedRunAuthorization]
 RunEffect = Callable[[bytes], Awaitable[bytes]]
 _logger = logging.getLogger(__name__)
+_RESULT_ADAPTER = TypeAdapter(arcrun.RunResult)
+
+
+@dataclass(frozen=True)
+class ReplyDispatch:
+    """One signed-run result and fixed channel destination for an outbox attempt."""
+
+    message_id: str
+    target: str
+    text: str
+    digest: str
+
+
+ReplySender = Callable[[ReplyDispatch], Awaitable[None]]
+ReplyLookup = Callable[[ReplyDispatch], Awaitable[bool]]
 
 
 class RunIntentLedger:
@@ -477,6 +496,130 @@ class RunIntentLedger:
             raise RunIntentUnavailableError("terminal run result unavailable")
         return await self._store.read_blob(self.tenant_id, self.agent_did, current.result_ref)
 
+    async def _reply_dispatch(self, intent: arcstore.StoredRunIntent) -> ReplyDispatch | None:
+        if (
+            intent.status != "completed"
+            or intent.purpose != "message"
+            or intent.request_ref is None
+            or intent.authorization_ref is None
+            or intent.result_ref is None
+        ):
+            raise RunIntentUnavailableError("reply requires a completed message run")
+        body = await self._store.read_blob(self.tenant_id, self.agent_did, intent.request_ref)
+        request = CanonicalRunRequest.model_validate_json(body)
+        if (
+            request.canonical_bytes() != body
+            or request.run_id != intent.run_id
+            or request.session_key != intent.session_id
+            or request.occurrence_id != intent.occurrence_id
+            or request.digest() != intent.request_digest
+        ):
+            raise RunIntentUnavailableError("reply request differs from accepted run")
+        evidence = await self._store.read_blob(
+            self.tenant_id, self.agent_did, intent.authorization_ref
+        )
+        self._verify(
+            evidence,
+            run_id=intent.run_id,
+            session_id=intent.session_id,
+            owner_epoch=intent.owner_epoch,
+            deadline=intent.deadline,
+            request_digest=intent.request_digest,
+            purpose=intent.purpose,
+            occurrence_id=intent.occurrence_id,
+        )
+        if request.reply_target is None or not request.reply_target.startswith("channel://"):
+            return None
+        payload = await self.result_bytes(intent)
+        result = _RESULT_ADAPTER.validate_json(payload)
+        if result.outcome_unknown is not None or not result.content:
+            return None
+        digest = hashlib.sha256(result.content.encode()).hexdigest()
+        identity = json.dumps(
+            [self.tenant_id, self.agent_did, intent.run_id, request.reply_target, digest],
+            separators=(",", ":"),
+        )
+        message_id = "reply_" + _digest("arc.channel-reply.v1\0" + identity)
+        return ReplyDispatch(
+            message_id=message_id,
+            target=request.reply_target,
+            text=result.content,
+            digest=digest,
+        )
+
+    async def _reply_transition(
+        self,
+        current: arcstore.StoredRunIntent,
+        state: Literal["pending", "sending", "sent", "outcome_unknown"],
+        message_id: str,
+        digest: str,
+    ) -> arcstore.StoredRunIntent:
+        head, manifest = await self._read()
+        if manifest.entries.get(current.run_id) != current:
+            raise RunIntentUnavailableError("reply state changed under another owner")
+        if current.reply_state != "none" and (
+            current.reply_message_id != message_id
+            or current.reply_digest != digest
+        ):
+            raise RunIntentUnavailableError("reply identity changed")
+        updated = current.model_copy(
+            update={
+                "version": current.version + 1,
+                "reply_state": state,
+                "reply_message_id": message_id,
+                "reply_digest": digest,
+            }
+        )
+        await self._advance(head, manifest, updated)
+        await self._project(current, updated)
+        return updated
+
+    async def deliver_reply(
+        self, run_id: str, *, send: ReplySender, lookup: ReplyLookup
+    ) -> Literal["sent", "outcome_unknown", "not_applicable"]:
+        """Send a completed result once; uncertain sends require durable reconciliation."""
+        current = await self.get(run_id)
+        reply = await self._reply_dispatch(current)
+        if reply is None:
+            return "not_applicable"
+        if current.reply_state == "sent":
+            return "sent"
+        if current.reply_state in ("sending", "outcome_unknown"):
+            if await self._reply_visible(reply, lookup):
+                await self._reply_transition(current, "sent", reply.message_id, reply.digest)
+                return "sent"
+            if current.reply_state == "sending":
+                await self._reply_transition(
+                    current, "outcome_unknown", reply.message_id, reply.digest
+                )
+            return "outcome_unknown"
+        if current.reply_state == "none":
+            current = await self._reply_transition(
+                current, "pending", reply.message_id, reply.digest
+            )
+        current = await self._reply_transition(
+            current, "sending", reply.message_id, reply.digest
+        )
+        try:
+            await send(reply)
+        except Exception:
+            _logger.exception("channel reply publish outcome uncertain: %s", run_id)
+        if await self._reply_visible(reply, lookup):
+            await self._reply_transition(current, "sent", reply.message_id, reply.digest)
+            return "sent"
+        await self._reply_transition(
+            current, "outcome_unknown", reply.message_id, reply.digest
+        )
+        return "outcome_unknown"
+
+    @staticmethod
+    async def _reply_visible(reply: ReplyDispatch, lookup: ReplyLookup) -> bool:
+        try:
+            return await lookup(reply)
+        except Exception:
+            _logger.exception("channel reply reconciliation unavailable: %s", reply.message_id)
+            return False
+
     async def recover(self) -> tuple[arcstore.StoredRunIntent, ...]:
         """Reconcile all anchored intents; executing ones become outcome unknown."""
         _, manifest = await self._read()
@@ -485,5 +628,11 @@ class RunIntentLedger:
             intent = await self.get(run_id)
             if intent.status == "executing":
                 intent = await self.mark_unknown(intent)
+            if intent.reply_state == "sending":
+                if intent.reply_message_id is None or intent.reply_digest is None:
+                    raise RunIntentUnavailableError("sending reply has no anchored identity")
+                intent = await self._reply_transition(
+                    intent, "outcome_unknown", intent.reply_message_id, intent.reply_digest
+                )
             recovered.append(intent)
         return tuple(recovered)
