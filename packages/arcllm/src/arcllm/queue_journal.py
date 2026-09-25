@@ -49,7 +49,7 @@ class QueueJournal:
     def __init__(
         self,
         path: Path,
-        cipher: arctrust.RecordCipher,
+        cipher: arctrust.RecordEnvelopeCipher,
         anchor: arctrust.MonotonicAnchor,
         *,
         history_limit: int = 1000,

@@ -176,6 +176,7 @@ from arctrust.paths import (
     module_root,
     nats_dir,
     operator_dir,
+    queue_journal_file,
     runtime_bin,
     runtime_venv,
     skills_dir,
@@ -206,6 +207,7 @@ from arctrust.policy import (
     verify_enrollment,
     verify_scenario_grant,
 )
+from arctrust.record_envelope import RecordEnvelopeCipher
 from arctrust.redaction import (
     ALL_CATEGORIES,
     DEFAULT_OFF_ENTITIES,
@@ -275,6 +277,16 @@ from arctrust.witness import (
 
 if TYPE_CHECKING:
     from arctrust.authority import AccountActorVerifier, AccountAuthority
+    from arctrust.broker_queue_client import QueueBrokerAnchor, QueueBrokerError
+    from arctrust.broker_queue_proofs import (
+        BrokerQueueLease,
+        BrokerQueueProofError,
+        BrokerQueueRecoveryProof,
+        sign_broker_queue_lease,
+        sign_broker_queue_recovery,
+        verify_broker_queue_lease,
+        verify_broker_queue_recovery,
+    )
     from arctrust.hosted_claim import HostedClaimError, HostedFirstClaim
     from arctrust.hosted_journal import HostedClaimJournal, HostedJournalError
     from arctrust.hosted_rekey import HostedRekeyCoordinator, HostedRekeyError
@@ -296,10 +308,31 @@ if TYPE_CHECKING:
         VaultCredentialProvider,
         VaultLease,
     )
+    from arctrust.vault_record_cipher import VaultRecordCipher
 
 
 def __getattr__(name: str) -> Any:
     """Load optional Vault leaves only when their public name is requested."""
+    if name in {
+        "BrokerQueueLease",
+        "BrokerQueueProofError",
+        "BrokerQueueRecoveryProof",
+        "sign_broker_queue_lease",
+        "sign_broker_queue_recovery",
+        "verify_broker_queue_lease",
+        "verify_broker_queue_recovery",
+    }:
+        from arctrust import broker_queue_proofs
+
+        return getattr(broker_queue_proofs, name)
+    if name in {"QueueBrokerAnchor", "QueueBrokerError"}:
+        from arctrust import broker_queue_client
+
+        return getattr(broker_queue_client, name)
+    if name == "VaultRecordCipher":
+        from arctrust.vault_record_cipher import VaultRecordCipher
+
+        return VaultRecordCipher
     if name in {"HostedClaimError", "HostedFirstClaim"}:
         from arctrust import hosted_claim
 
@@ -313,8 +346,12 @@ def __getattr__(name: str) -> Any:
 
         return getattr(hosted_rekey, name)
     if name in {
-        "MachineRekeyError", "MachineRekeyGrant", "MachineRekeyIntent",
-        "sign_rekey_grant", "sign_rekey_intent", "verify_rekey_grant",
+        "MachineRekeyError",
+        "MachineRekeyGrant",
+        "MachineRekeyIntent",
+        "sign_rekey_grant",
+        "sign_rekey_intent",
+        "verify_rekey_grant",
         "verify_rekey_intent",
     }:
         from arctrust import machine_rekey
@@ -374,6 +411,9 @@ __all__ = [
     "AuditSink",
     "AuthorityConfigError",
     "BootstrapAuthority",
+    "BrokerQueueLease",
+    "BrokerQueueProofError",
+    "BrokerQueueRecoveryProof",
     "ByteCipher",
     "Capability",
     "CapabilityGrant",
@@ -411,7 +451,10 @@ __all__ = [
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
+    "QueueBrokerAnchor",
+    "QueueBrokerError",
     "RecordCipher",
+    "RecordEnvelopeCipher",
     "RedactionConfigError",
     "RegexPiiDetector",
     "ReplayCache",
@@ -435,6 +478,7 @@ __all__ = [
     "VaultKVAnchor",
     "VaultLease",
     "VaultLeaseError",
+    "VaultRecordCipher",
     "VaultSigner",
     "VaultTransit",
     "VaultTransitHTTP",
@@ -500,6 +544,7 @@ __all__ = [
     "parse_did",
     "persist_validators",
     "pin_key",
+    "queue_journal_file",
     "read_verified_anchor",
     "redact_text",
     "register_operator",
@@ -510,6 +555,8 @@ __all__ = [
     "sign_artifact",
     "sign_artifact_with_signer",
     "sign_authority_config",
+    "sign_broker_queue_lease",
+    "sign_broker_queue_recovery",
     "sign_capability_grant",
     "sign_challenge",
     "sign_deployment_grant",
@@ -526,6 +573,8 @@ __all__ = [
     "verify",
     "verify_approval_for_hash",
     "verify_artifact",
+    "verify_broker_queue_lease",
+    "verify_broker_queue_recovery",
     "verify_chain",
     "verify_challenge",
     "verify_deployment_grant",

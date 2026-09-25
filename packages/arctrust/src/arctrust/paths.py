@@ -412,6 +412,11 @@ def users_file(base: Base = None) -> Path:
     return arc_state(base) / "users.json"
 
 
+def queue_journal_file(base: Base = None) -> Path:
+    """Return the durable queue journal: ``<arc_state>/queue/journal.sqlite``."""
+    return arc_state(base) / "queue" / "journal.sqlite"
+
+
 # ---------------------------------------------------------------------------
 # runtime/ — replaced wholesale on update
 # ---------------------------------------------------------------------------

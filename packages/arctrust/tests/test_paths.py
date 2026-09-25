@@ -138,6 +138,7 @@ def test_the_runtime_holds_the_interpreter_that_runs_arc(arc_root: Path) -> None
         "gateway_pairing_db",
         "audit_dir",
         "users_file",
+        "queue_journal_file",
         "env_file",
         "module_root",
         "runtime_venv",
@@ -374,6 +375,7 @@ def test_an_explicit_base_overrides_the_env_for_every_accessor(
     assert paths.config_file("arcagent.toml", other) == other / "config" / "arcagent.toml"
     assert paths.default_operator_key_path(other) == other / "state" / "operator" / "operator.key"
     assert paths.module_root(other) == other / "runtime" / "current" / "modules"
+    assert paths.queue_journal_file(other) == other / "state" / "queue" / "journal.sqlite"
     assert paths.arc_team("coding", other) == other / "coding"
     # ...and the env-resolved answers are untouched by it.
     assert paths.trust_dir() == arc_root / "state" / "trust"

@@ -142,7 +142,7 @@ def load_model(
 
 def create_queue_journal(
     path: Path,
-    cipher: arctrust.RecordCipher,
+    cipher: arctrust.RecordEnvelopeCipher,
     anchor: arctrust.MonotonicAnchor,
     *,
     history_limit: int = 1000,
