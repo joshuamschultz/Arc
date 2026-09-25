@@ -189,6 +189,10 @@ def modules_path() -> Path:
 
 def __getattr__(name: str) -> Any:
     """Load optional ArcAgent exports only when requested."""
+    if name in {"RunIntentLedger", "RunIntentUnavailableError", "VerifiedRunAuthorization"}:
+        from arcagent.modules import run_intents
+
+        return getattr(run_intents, name)
     if name in {
         "AnchoredSkillRevisionResolver",
         "ReviewedSkillBundle",
@@ -258,6 +262,9 @@ __all__ = [
     "RemoteLoginStart",
     "ReviewedSkillBundle",
     "RootTokenBudget",
+    "RunIntentLedger",
+    "RunIntentUnavailableError",
+    "VerifiedRunAuthorization",
     "ScheduleEntry",
     "ScheduleMetadata",
     "ScheduleStore",

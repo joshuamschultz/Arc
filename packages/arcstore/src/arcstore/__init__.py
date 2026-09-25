@@ -20,6 +20,7 @@ resolve_data_dir — env > default Arc data dir resolution (shared by all entry 
 
 from __future__ import annotations
 
+from arcstore.accepted_runs import AcceptedRunStore, RunBlobRef, StoredRunIntent
 from arcstore.approval_dispatcher import (
     ApprovalDispatcherConfig,
     ApprovalNotification,
@@ -58,6 +59,7 @@ from arcstore.source_sync import (
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
+    "AcceptedRunStore",
     "ApprovalDispatcherConfig",
     "ApprovalNotification",
     "ApprovalNotificationDispatcher",
@@ -83,11 +85,13 @@ __all__ = [
     "ProjectionEvent",
     "ReadReceipt",
     "ReadState",
+    "RunBlobRef",
     "SourceSyncBackend",
     "SourceSyncLease",
     "SourceSyncState",
     "SourceSyncStatus",
     "SpoolRecord",
+    "StoredRunIntent",
     "Thread",
     "ThreadPage",
     "TraceMetadata",
