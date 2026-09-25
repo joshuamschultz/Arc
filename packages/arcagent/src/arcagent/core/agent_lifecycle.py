@@ -321,6 +321,11 @@ def configure_module_runtimes(
         arcstore_opener=agent._arcstore_opener,
         fleet=agent._fleet,
         source_sync_store_opener=agent._make_source_sync_store_opener(),
+        control_artifact_authority=agent._control_artifact_authority,
+        control_tenant_id=agent._control_tenant_id,
+        control_actor_proof_source=agent._control_actor_proof_source,
+        trigger_issuer=agent._trigger_issuer,
+        prepare_collected_request=agent.prepare_collected_request,
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).

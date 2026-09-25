@@ -19,6 +19,18 @@ from arcagent.modules.scheduler.models import (
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
 from arcagent.modules.scheduler.store import ScheduleStore
 
+
+@pytest.fixture(autouse=True)
+def _isolate_timer_from_signed_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run_bound_callback(engine: SchedulerEngine, entry: ScheduleEntry) -> object:
+        run_fn = engine._agent_run_fn
+        if run_fn is None:
+            raise RuntimeError("no agent run callback is bound")
+        return await run_fn(entry.prompt, session_key=f"scheduler:{entry.id}")
+
+    monkeypatch.setattr(SchedulerEngine, "_dispatch", run_bound_callback)
+
+
 # --- should_fire evaluation ---
 
 

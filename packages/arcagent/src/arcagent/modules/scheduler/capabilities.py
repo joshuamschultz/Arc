@@ -26,12 +26,17 @@ import logging
 from typing import Any
 
 from arcagent.core import turn_context
+from arcagent.core.control_contract import (
+    ControlArtifactRefusedError,
+    ControlArtifactUnavailableError,
+)
 from arcagent.modules.scheduler import _runtime
 from arcagent.modules.scheduler.models import (
     ScheduleEntry,
     generate_schedule_id,
     validate_prompt,
 )
+from arcagent.modules.scheduler.registration import register_schedule_revision
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
 from arcagent.tools._decorator import capability, hook, tool
 
@@ -70,6 +75,11 @@ class Scheduler:
             agent_run_fn=st.agent_run_fn,
             bus=st.bus,
             channel_deliver_fn=st.channel_deliver_fn,
+            control_artifact_authority=st.control_artifact_authority,
+            control_tenant_id=st.control_tenant_id,
+            agent_did=st.agent_did,
+            trigger_issuer=st.trigger_issuer,
+            prepare_collected_request=st.prepare_collected_request,
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
@@ -189,10 +199,29 @@ async def schedule_create(
             },
             context=st.config.validation_context(),
         )
+        if (
+            st.control_artifact_authority is None
+            or st.control_tenant_id is None
+            or st.control_actor_proof_source is None
+        ):
+            raise ControlArtifactUnavailableError("signed schedule registration unavailable")
+        entry = await register_schedule_revision(
+            entry,
+            previous=None,
+            tenant_id=st.control_tenant_id,
+            agent_did=st.agent_did,
+            authority=st.control_artifact_authority,
+            actor_proof_source=st.control_actor_proof_source,
+        )
         st.store.add(entry)
         _logger.info("Created schedule %s (type=%s)", entry.id, type)
         return entry.model_dump_json()
-    except (ValueError, TypeError) as exc:
+    except (
+        ValueError,
+        TypeError,
+        ControlArtifactRefusedError,
+        ControlArtifactUnavailableError,
+    ) as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -207,7 +236,7 @@ async def schedule_list(enabled_only: bool = False) -> str:
     entries = st.store.load()
     if enabled_only:
         entries = [e for e in entries if e.enabled]
-    return json.dumps([e.model_dump() for e in entries])
+    return json.dumps([e.model_dump(mode="json") for e in entries])
 
 
 @tool(
@@ -242,12 +271,37 @@ async def schedule_update(
     try:
         if "prompt" in updates:
             validate_prompt(updates["prompt"], max_length=st.config.max_prompt_length)
-        updated = st.store.update(id, updates, context=st.config.validation_context())
+        prior = st.store.get(id)
+        if prior is None:
+            raise KeyError(id)
+        candidate = ScheduleEntry.model_validate(
+            {**prior.model_dump(), **updates}, context=st.config.validation_context()
+        )
+        if (
+            st.control_artifact_authority is None
+            or st.control_tenant_id is None
+            or st.control_actor_proof_source is None
+        ):
+            raise ControlArtifactUnavailableError("signed schedule registration unavailable")
+        updated = await register_schedule_revision(
+            candidate,
+            previous=prior,
+            tenant_id=st.control_tenant_id,
+            agent_did=st.agent_did,
+            authority=st.control_artifact_authority,
+            actor_proof_source=st.control_actor_proof_source,
+        )
+        st.store.update(id, updated.model_dump(), context=st.config.validation_context())
         _logger.info("Updated schedule %s", id)
         return updated.model_dump_json()
     except KeyError:
         return json.dumps({"error": f"Schedule '{id}' not found"})
-    except (ValueError, TypeError) as exc:
+    except (
+        ValueError,
+        TypeError,
+        ControlArtifactRefusedError,
+        ControlArtifactUnavailableError,
+    ) as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -263,15 +317,39 @@ async def schedule_cancel(
     """Disable a schedule, or delete it if ``delete=True``."""
     st = _runtime.state()
     try:
+        prior = st.store.get(id)
+        if prior is None:
+            raise KeyError(id)
+        if (
+            st.control_artifact_authority is None
+            or st.control_tenant_id is None
+            or st.control_actor_proof_source is None
+        ):
+            raise ControlArtifactUnavailableError("signed schedule registration unavailable")
+        disabled = await register_schedule_revision(
+            prior.model_copy(update={"enabled": False}),
+            previous=prior,
+            tenant_id=st.control_tenant_id,
+            agent_did=st.agent_did,
+            authority=st.control_artifact_authority,
+            actor_proof_source=st.control_actor_proof_source,
+        )
+        st.store.update(id, disabled.model_dump())
         if delete:
             st.store.remove(id)
             _logger.info("Deleted schedule %s", id)
             return json.dumps({"status": "deleted", "id": id})
-        st.store.update(id, {"enabled": False})
         _logger.info("Disabled schedule %s", id)
         return json.dumps({"status": "disabled", "id": id})
     except KeyError:
         return json.dumps({"error": f"Schedule '{id}' not found"})
+    except (
+        ValueError,
+        TypeError,
+        ControlArtifactRefusedError,
+        ControlArtifactUnavailableError,
+    ) as exc:
+        return json.dumps({"error": str(exc)})
 
 
 # --- Helpers --------------------------------------------------------------

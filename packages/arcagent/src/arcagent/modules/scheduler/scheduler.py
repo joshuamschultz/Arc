@@ -16,6 +16,15 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
+from arcagent.core.control_contract import (
+    ControlArtifactAuthority,
+    ControlArtifactUnavailableError,
+)
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    RunAdmissionUnavailableError,
+    RunTriggerIssuer,
+)
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ScheduleEntry
@@ -58,6 +67,11 @@ class SchedulerEngine:
         agent_run_fn: AgentRunFn | None,
         bus: ModuleBus | None = None,
         channel_deliver_fn: ChannelDeliverFn | None = None,
+        control_artifact_authority: ControlArtifactAuthority | None = None,
+        control_tenant_id: str | None = None,
+        agent_did: str = "",
+        trigger_issuer: RunTriggerIssuer | None = None,
+        prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None,
     ) -> None:
         self._store = store
         self._config = config
@@ -65,6 +79,11 @@ class SchedulerEngine:
         self._agent_run_fn: AgentRunFn | None = agent_run_fn
         self._bus = bus
         self._channel_deliver_fn = channel_deliver_fn
+        self._control_artifact_authority = control_artifact_authority
+        self._control_tenant_id = control_tenant_id
+        self._agent_did = agent_did
+        self._trigger_issuer = trigger_issuer
+        self._prepare_collected_request = prepare_collected_request
 
         self._in_flight: set[str] = set()
         self._fire_and_forget: set[asyncio.Task[Any]] = set()
@@ -149,6 +168,9 @@ class SchedulerEngine:
             )
             self.on_execution_failed(entry, TimeoutError(f"Timed out after {timeout}s"))
             return None
+        except (ControlArtifactUnavailableError, RunAdmissionUnavailableError) as exc:
+            _logger.error("Schedule %s remains pending: %s", entry.id, exc)
+            return None
         except Exception as exc:  # reason: fail-open — log + continue
             elapsed = time.monotonic() - start_time
             _logger.error(
@@ -173,17 +195,31 @@ class SchedulerEngine:
         firing SKIPS), the timeout, and the consecutive-failure circuit breaker
         all apply identically to both actions.
         """
-        if entry.action == "workflow_run":
-            from arcagent.modules.workflows.run_entry import start_workflow_run
-
-            return await start_workflow_run(str(entry.workflow_id), entry.workflow_input)
         run_fn = self._agent_run_fn
-        if run_fn is None:
+        if run_fn is None and entry.action == "prompt":
             # The tick refuses to run a due entry without a callback, so this is
             # only reachable by calling execute() directly. Refuse loudly rather
             # than record a firing that never happened.
             raise RuntimeError("no agent run callback is bound")
-        return await run_fn(entry.prompt, session_key=f"scheduler:{entry.id}")
+        authority = self._control_artifact_authority
+        tenant_id = self._control_tenant_id
+        issuer = self._trigger_issuer
+        prepare = self._prepare_collected_request
+        if authority is None or tenant_id is None:
+            raise ControlArtifactUnavailableError("signed schedule authority is unavailable")
+        from arcagent.modules.scheduler.signed_dispatch import dispatch_signed_schedule
+
+        return await dispatch_signed_schedule(
+            entry,
+            now=datetime.now(UTC),
+            default_timezone=self._config.timezone or "UTC",
+            tenant_id=tenant_id,
+            agent_did=self._agent_did,
+            authority=authority,
+            issuer=issuer,
+            prepare=prepare,
+            run_fn=run_fn,
+        )
 
     # --- Evaluation ---
 

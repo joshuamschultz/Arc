@@ -24,6 +24,7 @@ read from their task rows; the Run's trace carries what the task rows cannot.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -99,6 +100,7 @@ class WorkflowRunStore:
         workflow_id: str,
         version: int,
         content_hash: str,
+        trigger_digest: str | None = None,
         initiator_did: str,
         channel: str | None,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
@@ -107,38 +109,63 @@ class WorkflowRunStore:
         budget_wall_clock_s: float | None,
         fence: RunnerFence | None = None,
     ) -> FlowRun:
+        request_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "workflow_id": workflow_id,
+                    "version": version,
+                    "content_hash": content_hash,
+                    "trigger_digest": trigger_digest,
+                    "initiator_did": initiator_did,
+                    "channel": channel,
+                    "input": dict(input),
+                    "budget_tokens": budget_tokens,
+                    "budget_cost_usd": budget_cost_usd,
+                    "budget_wall_clock_s": budget_wall_clock_s,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
         await self._runs.create(
             Run(
                 id=run_id,
                 workflow_id=workflow_id,
                 workflow_version=version,
                 content_hash=content_hash,
+                request_digest=request_digest,
                 status="running",
                 initiator_did=initiator_did,
             ),
             fence=fence,
         )
-        await self._backend.mutable_write(
+        state: dict[str, Any] = {
+            "run_id": run_id,
+            "request_digest": request_digest,
+            "trigger_digest": trigger_digest,
+            "channel": channel,
+            "input": dict(input),
+            "budget_tokens": budget_tokens,
+            "budget_cost_usd": budget_cost_usd,
+            "budget_wall_clock_s": budget_wall_clock_s,
+            "path": [],
+            "path_len": 0,
+            "resolution": None,
+            "advance_failure_count": 0,
+            "advance_failure_basis": "running:0",
+            "advance_failure_revision": 0,
+        }
+        rows = await self._backend.mutable_create_batch(
             _STATE_COLLECTION,
-            run_id,
-            {
-                "run_id": run_id,
-                "channel": channel,
-                "input": dict(input),
-                "budget_tokens": budget_tokens,
-                "budget_cost_usd": budget_cost_usd,
-                "budget_wall_clock_s": budget_wall_clock_s,
-                "path": [],
-                "path_len": 0,
-                "resolution": None,
-                "advance_failure_count": 0,
-                "advance_failure_basis": "running:0",
-                "advance_failure_revision": 0,
-            },
+            [(run_id, state)],
             actor_did=initiator_did,
             sink=self._sink,
             fence=fence,
         )
+        if rows[0].get("request_digest") != request_digest:
+            raise ValueError("workflow companion identity already exists with a different request")
         loaded = await self.get(run_id)
         if loaded is None:  # pragma: no cover — the row was just written
             raise RuntimeError(f"run {run_id} vanished immediately after creation")

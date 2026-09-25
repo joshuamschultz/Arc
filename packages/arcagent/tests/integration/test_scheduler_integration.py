@@ -13,13 +13,18 @@ Tests:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from arcagent.core.control_contract import SignedControlRevision
+from arcagent.core.run_contract import CanonicalRunRequest
 from arcagent.modules.scheduler import _runtime
 from arcagent.modules.scheduler.capabilities import (
     Scheduler,
@@ -27,7 +32,40 @@ from arcagent.modules.scheduler.capabilities import (
     schedule_create,
     schedule_list,
 )
-from arcagent.modules.scheduler.models import ScheduleEntry
+
+
+class _Authority:
+    async def register_revision(self, **kwargs: Any) -> SignedControlRevision:
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def verify_current(self, **kwargs: Any) -> None:
+        assert (
+            kwargs["approval"].definition_digest
+            == hashlib.sha256(kwargs["canonical_definition"]).hexdigest()
+        )
+
+
+async def _proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+    return b"authenticated-test-proof"
+
+
+async def _issuer(request: CanonicalRunRequest, evidence: bytes) -> tuple[bytes, datetime]:
+    return request.digest().encode(), datetime.now(UTC) + timedelta(minutes=1)
+
+
+def _prepare(prompt: str, **kwargs: Any) -> CanonicalRunRequest:
+    kwargs["purpose"] = kwargs.pop("run_purpose")
+    return CanonicalRunRequest(input_text=prompt, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +81,12 @@ def _configure(tmp_path: Path, agent_run_fn: _runtime.AgentRunFn, **config: obje
         telemetry=MagicMock(),
         workspace=tmp_path,
         agent_run_fn=agent_run_fn,
+        control_artifact_authority=_Authority(),
+        control_tenant_id="tenant-test",
+        control_actor_proof_source=_proof,
+        agent_did="did:arc:test:agent",
+        trigger_issuer=_issuer,
+        prepare_collected_request=_prepare,
     )
 
 
@@ -130,19 +174,17 @@ class TestSchedulerIntegration:
         cap = Scheduler()
         await cap.setup(None)
         try:
-            entry = ScheduleEntry(
-                id="sched_fail_test",
-                type="interval",
-                prompt="Will fail",
-                every_seconds=300,
+            created = json.loads(
+                await schedule_create(type="interval", prompt="Will fail", every_seconds=300)
             )
-            st.store.add(entry)
+            entry = st.store.get(created["id"])
+            assert entry is not None
 
             assert st.engine is not None
             for _ in range(3):
                 await st.engine.execute(entry)
 
-            updated = st.store.get("sched_fail_test")
+            updated = st.store.get(created["id"])
             assert updated is not None
             assert updated.enabled is False
         finally:
@@ -166,13 +208,10 @@ class TestSchedulerIntegration:
         _configure(tmp_path, mock_run, check_interval_seconds=1)
         st = _runtime.state()
 
-        entry = ScheduleEntry(
-            id="sched_loop",
-            type="interval",
-            prompt="Loop test",
-            every_seconds=300,
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Loop test", every_seconds=300)
         )
-        st.store.add(entry)
+        assert st.store.get(created["id"]) is not None
 
         cap = Scheduler()
         await cap.setup(None)

@@ -269,6 +269,7 @@ class FlowRunStore:
         workflow_id: str,
         version: int,
         content_hash: str,
+        trigger_digest: str | None = None,
         initiator_did: str,
         channel: str | None,
         input: Mapping[str, Any],  # noqa: A002
@@ -277,6 +278,7 @@ class FlowRunStore:
         budget_wall_clock_s: float | None,
         fence: Any | None = None,
     ) -> RunRow:
+        del trigger_digest
         row = RunRow(
             run_id=run_id,
             workflow_id=workflow_id,

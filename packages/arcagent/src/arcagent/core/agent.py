@@ -56,6 +56,7 @@ from arcagent.core.agent_dispatch import dispatch_stream
 from arcagent.core.agent_lifecycle import setup_capabilities
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
+from arcagent.core.control_contract import ControlActionProofSource, ControlArtifactAuthority
 from arcagent.core.errors import ExtensionError
 from arcagent.core.model_manager import (
     create_arcllm_bridge,
@@ -175,6 +176,9 @@ class ArcAgent:
         skill_artifact_resolver: SkillArtifactResolver | None = None,
         accepted_run_owner: AcceptedRunOwner | None = None,
         trigger_issuer: RunTriggerIssuer | None = None,
+        control_artifact_authority: ControlArtifactAuthority | None = None,
+        control_tenant_id: str | None = None,
+        control_actor_proof_source: ControlActionProofSource | None = None,
         require_durable_runs: bool = False,
     ) -> None:
         if (queue_coordinator is None) != (queue_tenant_id is None):
@@ -193,6 +197,8 @@ class ArcAgent:
             raise ValueError("durable queue owner epoch is required")
         if require_durable_runs and accepted_run_owner is None:
             raise RuntimeError("durable accepted-run owner is required")
+        if (control_artifact_authority is None) != (control_tenant_id is None):
+            raise ValueError("control authority and trusted tenant must be supplied together")
         self._config = config
         self._config_path = config_path or Path("arcagent.toml")
 
@@ -253,6 +259,9 @@ class ArcAgent:
         self._queue_tenant_id = queue_tenant_id
         self._accepted_run_owner = accepted_run_owner
         self._trigger_issuer = trigger_issuer
+        self._control_artifact_authority = control_artifact_authority
+        self._control_tenant_id = control_tenant_id
+        self._control_actor_proof_source = control_actor_proof_source
         self._require_durable_runs = require_durable_runs
         self._queue_owner_epoch = queue_owner_epoch or uuid.uuid4().hex
         self._skill_artifact_resolver = skill_artifact_resolver

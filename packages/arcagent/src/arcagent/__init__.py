@@ -214,10 +214,19 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
-    if name in {"ControlArtifactAuthority", "SignedControlRevision"}:
+    if name in {
+        "ControlArtifactAuthority",
+        "ControlArtifactRefusedError",
+        "ControlArtifactUnavailableError",
+        "SignedControlRevision",
+    }:
         from arcagent.core import control_contract
 
         return getattr(control_contract, name)
+    if name == "register_schedule_revision":
+        from arcagent.modules.scheduler.registration import register_schedule_revision
+
+        return register_schedule_revision
     if name in {
         "AnchoredSkillRevisionResolver",
         "ReviewedSkillBundle",
@@ -268,6 +277,8 @@ __all__ = [
     "ConnectorReconcileResult",
     "ContextError",
     "ControlArtifactAuthority",
+    "ControlArtifactRefusedError",
+    "ControlArtifactUnavailableError",
     "DeliveryStreamEvent",
     "DeliveryStreamSource",
     "DeliveryTerminalEvent",
@@ -354,6 +365,7 @@ __all__ = [
     "operator_key_path",
     "pin_name_for",
     "read_capability_source",
+    "register_schedule_revision",
     "resolve_deployment",
     "resolve_roots",
     "resolve_workspace_import_policy",

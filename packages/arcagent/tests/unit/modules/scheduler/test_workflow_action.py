@@ -16,7 +16,9 @@ repository's recurring failure mode.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,8 +26,11 @@ from typing import Any
 import pytest
 from arctrust import AgentIdentity
 
+from arcagent.core.control_contract import SignedControlRevision
+from arcagent.core.run_contract import CanonicalRunRequest
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ActiveHours, ScheduleEntry
+from arcagent.modules.scheduler.occurrence import canonical_definition
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
 from arcagent.modules.scheduler.store import ScheduleStore
 
@@ -81,12 +86,31 @@ def _engine(tmp_path: Path, **config: Any) -> tuple[SchedulerEngine, list[str], 
         prompts.append(prompt)
         return "ran"
 
+    async def issuer(request: CanonicalRunRequest, evidence: bytes) -> tuple[bytes, datetime]:
+        return request.digest().encode(), datetime.now(UTC) + timedelta(minutes=1)
+
+    def prepare(prompt: str, **kwargs: Any) -> CanonicalRunRequest:
+        kwargs["purpose"] = kwargs.pop("run_purpose")
+        return CanonicalRunRequest(input_text=prompt, **kwargs)
+
+    class Authority:
+        async def verify_current(self, **kwargs: Any) -> None:
+            assert (
+                kwargs["approval"].definition_digest
+                == hashlib.sha256(kwargs["canonical_definition"]).hexdigest()
+            )
+
     store = ScheduleStore(tmp_path / "schedules.json")
     engine = SchedulerEngine(
         store=store,
         config=SchedulerConfig(check_interval_seconds=1, **config),
         telemetry=None,  # type: ignore[arg-type]  # engine only forwards it
         agent_run_fn=agent_run_fn,
+        control_artifact_authority=Authority(),
+        control_tenant_id="tenant-test",
+        agent_did="did:arc:test:agent",
+        trigger_issuer=issuer,
+        prepare_collected_request=prepare,
     )
     return engine, prompts, store
 
@@ -101,7 +125,25 @@ def _workflow_entry(**overrides: Any) -> ScheduleEntry:
         "every_seconds": 60,
     }
     data.update(overrides)
-    return ScheduleEntry.model_validate(data)
+    return _approved(ScheduleEntry.model_validate(data))
+
+
+def _approved(entry: ScheduleEntry) -> ScheduleEntry:
+    return entry.model_copy(
+        update={
+            "approval": SignedControlRevision(
+                tenant_id="tenant-test",
+                agent_did="did:arc:test:agent",
+                purpose="schedule",
+                artifact_id=entry.id,
+                revision=1,
+                definition_digest=hashlib.sha256(canonical_definition(entry)).hexdigest(),
+                actor_did="did:arc:test:operator",
+                issued_at=datetime.now(UTC),
+                signature="aa",
+            )
+        }
+    )
 
 
 async def _tick_until(predicate: Any, engine: SchedulerEngine, timeout: float = 2.0) -> None:
@@ -137,8 +179,15 @@ class TestTypedTriggerThroughTheRealTick:
     ) -> None:
         engine, prompts, store = _engine(tmp_path)
         store.add(
-            ScheduleEntry.model_validate(
-                {"id": "sched_p", "type": "interval", "prompt": "check email", "every_seconds": 60}
+            _approved(
+                ScheduleEntry.model_validate(
+                    {
+                        "id": "sched_p",
+                        "type": "interval",
+                        "prompt": "check email",
+                        "every_seconds": 60,
+                    }
+                )
             )
         )
 

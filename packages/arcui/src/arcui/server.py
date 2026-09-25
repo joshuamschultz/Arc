@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -249,6 +249,11 @@ def create_app(
     operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    schedule_control_authority: arcagent.ControlArtifactAuthority | None = None,
+    schedule_tenant_id: str | None = None,
+    schedule_operator_proof_issuer: (
+        Callable[[Request, str, str, bytes], Awaitable[bytes]] | None
+    ) = None,
     report_read_authority: ReportReadAuthority | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
@@ -743,6 +748,9 @@ def create_app(
     app.state.operator_signer_factory = operator_signer_factory
     app.state.user_store_factory = user_store_factory
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
+    app.state.schedule_control_authority = schedule_control_authority
+    app.state.schedule_tenant_id = schedule_tenant_id
+    app.state.schedule_operator_proof_issuer = schedule_operator_proof_issuer
     app.state.report_read_authority = report_read_authority
     app.state.report_read_workers = (
         ReportReadWorkerPool() if report_read_authority is not None else None

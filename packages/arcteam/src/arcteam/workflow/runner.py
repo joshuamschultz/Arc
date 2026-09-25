@@ -242,6 +242,7 @@ class WorkflowRunner:
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         initiator_did: str,
         run_id: str | None = None,
+        trigger_digest: str | None = None,
         detached: bool = False,
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier.
@@ -278,6 +279,7 @@ class WorkflowRunner:
             workflow_id=definition.id,
             version=definition.version,
             content_hash=bundle.content_hash,
+            trigger_digest=trigger_digest,
             initiator_did=initiator_did,
             channel=definition.channel,
             input=dict(input),

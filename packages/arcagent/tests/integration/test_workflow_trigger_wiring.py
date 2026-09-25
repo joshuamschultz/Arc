@@ -10,14 +10,43 @@ definition store injected at the same seam production reads.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from arcagent.core.control_contract import SignedControlRevision
 from arcagent.modules.scheduler import _runtime as scheduler_runtime
 from arcagent.modules.scheduler import workflow_sync
 from arcagent.modules.scheduler.config import SchedulerConfig
+
+
+class _Authority:
+    async def register_revision(self, **kwargs: Any) -> SignedControlRevision:
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def verify_current(self, **kwargs: Any) -> None:
+        assert (
+            kwargs["approval"].definition_digest
+            == hashlib.sha256(kwargs["canonical_definition"]).hexdigest()
+        )
+
+
+async def _proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+    return b"authenticated-test-proof"
 
 
 class _FakeDefinition:
@@ -62,6 +91,10 @@ def wired(tmp_path: Path) -> Iterator[dict[str, object]]:
         telemetry=None,  # type: ignore[arg-type]  # engine only forwards it
         workspace=tmp_path,
         agent_name="sales_agent",
+        control_artifact_authority=_Authority(),
+        control_tenant_id="tenant-test",
+        control_actor_proof_source=_proof,
+        agent_did="did:arc:test:agent",
     )
     workflow_sync._definitions_factory = lambda: _FakeDefinitions(triggers)
     yield triggers

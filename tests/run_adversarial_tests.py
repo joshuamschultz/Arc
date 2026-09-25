@@ -89,6 +89,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "LLM queue rollback, stale owner and resource exhaustion": (
         "packages/arcllm/tests/test_queue_control.py",
         "packages/arctrust/tests/test_vault_anchor.py",
+        "packages/arctrust/tests/test_broker_queue.py",
+        "packages/arctrust/tests/test_broker_queue_client.py",
+        "packages/arctrust/tests/test_vault_record_cipher.py",
+        "packages/arccli/tests/test_queue_runtime.py",
     ),
     "memory promotion source and decision integrity": (
         "packages/arcagent/tests/modules/memory/test_promotion_approval.py",
@@ -114,6 +118,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/core/test_accepted_stream.py",
         "packages/arcgateway/tests/unit/test_signed_delivery.py",
         "packages/arcteam/tests/unit/test_messenger_signing.py",
+    ),
+    "scheduled control revision and occurrence replay refusal": (
+        "packages/arcagent/tests/unit/core/test_control_contract.py",
+        "packages/arcagent/tests/unit/modules/scheduler/test_signed_dispatch.py",
+        "packages/arcagent/tests/unit/modules/scheduler/test_scheduler_capabilities.py",
+        "packages/arcagent/tests/integration/test_workflow_trigger_wiring.py",
+        "packages/arcui/tests/integration/test_schedule_write_routes.py",
+        "packages/arcteam/tests/unit/workflow/test_run_create_idempotence.py",
     ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,

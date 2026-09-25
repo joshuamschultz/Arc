@@ -85,6 +85,7 @@ class Run(BaseModel):
     workflow_id: str
     workflow_version: int
     content_hash: str
+    request_digest: str = ""
     status: RunStatus = "pending"
     initiator_did: str
     runner_did: str | None = None
@@ -121,6 +122,16 @@ class MutableRunBackend(Protocol):
     ) -> None: ...
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
+
+    async def mutable_create_batch(
+        self,
+        collection: str,
+        entries: list[tuple[str, dict[str, Any]]],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+        fence: RunnerFence | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     async def mutable_query(
         self, collection: str, *, where: dict[str, Any] | None = None
@@ -192,15 +203,24 @@ class RunStore:
     async def create(self, run: Run, *, fence: RunnerFence | None = None) -> Run:
         now = _now()
         run = run.model_copy(update={"created_at": now, "updated_at": now})
-        await self._backend.mutable_write(
+        rows = await self._backend.mutable_create_batch(
             self._COLLECTION,
-            run.id,
-            run.model_dump(mode="json"),
+            [(run.id, run.model_dump(mode="json"))],
             actor_did=run.initiator_did,
             sink=self._sink,
             fence=fence,
         )
-        return run
+        stored = self._load(rows[0])
+        if (
+            stored.id != run.id
+            or stored.workflow_id != run.workflow_id
+            or stored.workflow_version != run.workflow_version
+            or stored.content_hash != run.content_hash
+            or stored.request_digest != run.request_digest
+            or stored.initiator_did != run.initiator_did
+        ):
+            raise ValueError("workflow run identity already exists with a different definition")
+        return stored
 
     async def get(self, run_id: str) -> Run | None:
         raw = await self._backend.mutable_read(self._COLLECTION, run_id)

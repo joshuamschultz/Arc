@@ -87,7 +87,7 @@ class ScheduleStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         json_bytes = json.dumps(
-            [e.model_dump() for e in entries] + self._invalid,
+            [e.model_dump(mode="json") for e in entries] + self._invalid,
             indent=2,
         ).encode("utf-8")
 

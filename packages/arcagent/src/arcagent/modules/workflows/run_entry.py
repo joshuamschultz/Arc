@@ -22,7 +22,11 @@ _logger = logging.getLogger("arcagent.modules.workflows.run_entry")
 
 
 async def start_workflow_run(
-    workflow_id: str, workflow_input: dict[str, Any] | None = None
+    workflow_id: str,
+    workflow_input: dict[str, Any] | None = None,
+    *,
+    run_id: str | None = None,
+    trigger_digest: str | None = None,
 ) -> dict[str, Any]:
     """Start a run of ``workflow_id``. Raises on refusal so a caller's breaker sees it.
 
@@ -40,6 +44,8 @@ async def start_workflow_run(
         workflow_id,
         input=workflow_input or {},
         actor_did=st.identity.did,
+        run_id=run_id,
+        trigger_digest=trigger_digest,
     )
     if not result.ok:
         # The control plane RETURNS refusals; the scheduler's breaker counts

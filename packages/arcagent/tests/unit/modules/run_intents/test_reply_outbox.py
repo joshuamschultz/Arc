@@ -11,7 +11,11 @@ import arctrust
 import pytest
 from arcstore.backends.memory import FakeBackend
 
-from arcagent.core.run_contract import CanonicalRunRequest, ChannelReply
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    ChannelReply,
+    RunAdmissionUnavailableError,
+)
 from arcagent.modules.run_intents.ledger import (
     RunIntentLedger,
     VerifiedRunAuthorization,
@@ -226,6 +230,6 @@ async def test_crash_after_sending_anchor_never_republishes() -> None:
     )
     recovered = await owner._ledger.recover()
     assert recovered[0].reply_state == "outcome_unknown"
-    with pytest.raises(Exception, match="authorization refused"):
+    with pytest.raises(RunAdmissionUnavailableError, match="accepted reply authority unavailable"):
         await owner.deliver_reply(run_id, send=send, lookup=absent)
     assert calls == 1

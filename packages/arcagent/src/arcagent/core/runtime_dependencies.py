@@ -12,7 +12,9 @@ from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 from arctrust import AgentIdentity, Signer
 
 from arcagent.core.config import EvalConfig, LLMConfig
+from arcagent.core.control_contract import ControlActionProofSource, ControlArtifactAuthority
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.extension.source_catalog import SourceCatalog
@@ -46,6 +48,11 @@ class RuntimeDependencies:
     fleet: Any = None
     arcstore_opener: Callable[[], Awaitable[Any]] | None = None
     source_sync_store_opener: Callable[[], Awaitable[Any]] | None = None
+    control_artifact_authority: ControlArtifactAuthority | None = None
+    control_tenant_id: str | None = None
+    control_actor_proof_source: ControlActionProofSource | None = None
+    trigger_issuer: RunTriggerIssuer | None = None
+    prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None
     source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
 
     def select_for(
@@ -98,6 +105,11 @@ class DependencyKey(Enum):
     SOURCE_SYNC_STORE_OPENER = "source_sync_store_opener"
     SOURCE_CATALOG = "source_catalog"
     FLEET = "fleet"
+    CONTROL_ARTIFACT_AUTHORITY = "control_artifact_authority"
+    CONTROL_TENANT_ID = "control_tenant_id"
+    CONTROL_ACTOR_PROOF_SOURCE = "control_actor_proof_source"
+    TRIGGER_ISSUER = "trigger_issuer"
+    PREPARE_COLLECTED_REQUEST = "prepare_collected_request"
 
 
 class RuntimeModule(Protocol):

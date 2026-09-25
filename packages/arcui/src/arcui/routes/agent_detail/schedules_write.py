@@ -23,16 +23,18 @@ import os
 import re
 import stat
 import tempfile
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import arcagent
 from croniter import croniter
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arcui.audit import emit_mutation_audit
-from arcui.routes.agent_detail._common import _agent_root
+from arcui.routes.agent_detail._common import _agent_did, _agent_root
 from arcui.schemas import ErrorResponse
 
 # Default limits, matching arcagent scheduler module defaults (SchedulerConfig).
@@ -194,7 +196,54 @@ async def patch_schedule(request: Request) -> JSONResponse:
         )
         return _error(invalid, 400)
 
-    entries[index] = {**entries[index], **edits}
+    authority = getattr(request.app.state, "schedule_control_authority", None)
+    tenant_id = getattr(request.app.state, "schedule_tenant_id", None)
+    proof_issuer = cast(
+        Callable[[Request, str, str, bytes], Awaitable[bytes]] | None,
+        getattr(request.app.state, "schedule_operator_proof_issuer", None),
+    )
+    agent_did = _agent_did(request, agent_id)
+    if authority is None or tenant_id is None or proof_issuer is None or agent_did is None:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="schedule.update",
+            outcome="error",
+            detail="signed schedule authority unavailable",
+        )
+        return _error("signed schedule authority unavailable", 503)
+    try:
+        previous = arcagent.ScheduleEntry.model_validate(entries[index])
+        candidate = arcagent.ScheduleEntry.model_validate({**entries[index], **edits})
+
+        async def actor_proof_source(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+            proof = await proof_issuer(request, purpose, artifact_id, definition)
+            if not isinstance(proof, bytes) or not proof:
+                raise arcagent.ControlArtifactRefusedError("operator proof is invalid")
+            return proof
+
+        approved = await arcagent.register_schedule_revision(
+            candidate,
+            previous=previous if previous.approval is not None else None,
+            tenant_id=tenant_id,
+            agent_did=agent_did,
+            authority=authority,
+            actor_proof_source=actor_proof_source,
+        )
+    except arcagent.ControlArtifactRefusedError as exc:
+        emit_mutation_audit(
+            request, target=target, operation="schedule.update", outcome="denied", detail=str(exc)
+        )
+        return _error(str(exc), 403)
+    except arcagent.ControlArtifactUnavailableError as exc:
+        emit_mutation_audit(
+            request, target=target, operation="schedule.update", outcome="error", detail=str(exc)
+        )
+        return _error(str(exc), 503)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+
+    entries[index] = approved.model_dump(mode="json")
     try:
         _atomic_write_json(path, entries)
     except OSError as exc:

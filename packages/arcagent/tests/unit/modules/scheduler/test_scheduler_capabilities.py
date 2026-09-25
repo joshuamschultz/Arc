@@ -19,6 +19,8 @@ Verifies:
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -32,7 +34,32 @@ from arcagent.capabilities.capability_registry import (
     LifecycleEntry,
     ToolEntry,
 )
+from arcagent.core.control_contract import SignedControlRevision
 from arcagent.modules.scheduler import _runtime
+
+
+class _Authority:
+    async def register_revision(self, **kwargs: Any) -> SignedControlRevision:
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose=kwargs["purpose"],
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+
+class _UnavailableAuthority:
+    async def register_revision(self, **kwargs: Any) -> SignedControlRevision:
+        raise RuntimeError("broker offline")
+
+
+async def _proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+    return b"authenticated-test-proof"
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +78,10 @@ def configured(tmp_path: Path) -> Path:
         config={"enabled": True},
         telemetry=telemetry,
         workspace=workspace,
+        control_artifact_authority=_Authority(),
+        control_tenant_id="tenant-test",
+        control_actor_proof_source=_proof,
+        agent_did="did:arc:test:agent",
     )
     return workspace
 
@@ -221,6 +252,25 @@ class TestRuntimeContract:
 
 @pytest.mark.asyncio
 class TestCrudTools:
+    async def test_failed_registration_preserves_prior_active_revision(
+        self, configured: Path
+    ) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_create, schedule_update
+
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Original", every_seconds=300)
+        )
+        prior = _runtime.state().store.get(created["id"])
+        assert prior is not None and prior.approval is not None
+        _runtime.state().control_artifact_authority = _UnavailableAuthority()
+        denied = json.loads(await schedule_update(id=created["id"], prompt="Changed"))
+        assert "error" in denied
+        current = _runtime.state().store.get(created["id"])
+        assert current is not None and current.prompt == "Original"
+        assert current.approval == prior.approval
+
     async def test_schedule_create_and_list(self, configured: Path) -> None:
         import json
 
@@ -339,6 +389,10 @@ class TestConfigLimitsHonored:
             config={"enabled": True, **overrides},
             telemetry=MagicMock(),
             workspace=workspace,
+            control_artifact_authority=_Authority(),
+            control_tenant_id="tenant-test",
+            control_actor_proof_source=_proof,
+            agent_did="did:arc:test:agent",
         )
 
     async def test_min_interval_rejects_below_operator_floor(self, tmp_path: Path) -> None:

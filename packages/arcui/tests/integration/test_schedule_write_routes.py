@@ -10,9 +10,13 @@ bounds are refused (400, audited), and a legit edit lands atomically on disk
 
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+import arcagent
 import pytest
 from arcgateway import team_roster
 from starlette.applications import Starlette
@@ -46,6 +50,31 @@ _SCHEDULES = [
 ]
 
 
+class _Authority:
+    async def register_revision(self, **kwargs: Any) -> arcagent.SignedControlRevision:
+        return arcagent.SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def verify_current(self, **kwargs: Any) -> None:
+        return None
+
+
+async def _operator_proof(
+    request: Any, purpose: str, artifact_id: str, definition: bytes
+) -> bytes:
+    assert request.state.role == "operator"
+    return b"authenticated-test-proof"
+
+
 def _build_team_dir(tmp_path: Path) -> Path:
     root = tmp_path / "team"
     root.mkdir()
@@ -71,6 +100,9 @@ def _build_app(team_root: Path) -> Starlette:
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.session_tracker = SessionTracker()
     app.state.team_root = team_root
+    app.state.schedule_control_authority = _Authority()
+    app.state.schedule_tenant_id = "tenant-test"
+    app.state.schedule_operator_proof_issuer = _operator_proof
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         online = {a.agent_id for a in registry.list_agents()}
@@ -213,6 +245,31 @@ class TestChannelsEndpoint:
 
 
 class TestGuards:
+    def test_missing_signed_authority_is_unavailable_without_mutation(
+        self, ctx: tuple[TestClient, Path]
+    ) -> None:
+        client, agent_dir = ctx
+        client.app.state.schedule_control_authority = None
+        before = _entry(agent_dir, "sched_ffa77e980f06")
+        resp = client.patch(_URL, headers=_op(), json={"enabled": False})
+        assert resp.status_code == 503
+        assert _entry(agent_dir, "sched_ffa77e980f06") == before
+
+    def test_refused_approval_cannot_change_existing_definition(
+        self, ctx: tuple[TestClient, Path]
+    ) -> None:
+        client, agent_dir = ctx
+
+        class RefusingAuthority(_Authority):
+            async def register_revision(self, **kwargs: Any) -> arcagent.SignedControlRevision:
+                raise arcagent.ControlArtifactRefusedError("operator proof rejected")
+
+        client.app.state.schedule_control_authority = RefusingAuthority()
+        before = _entry(agent_dir, "sched_ffa77e980f06")
+        resp = client.patch(_URL, headers=_op(), json={"enabled": False})
+        assert resp.status_code == 403
+        assert _entry(agent_dir, "sched_ffa77e980f06") == before
+
     def test_viewer_forbidden(self, ctx: tuple[TestClient, Path]) -> None:
         client, agent_dir = ctx
         resp = client.patch(_URL, headers=_viewer(), json={"enabled": False})

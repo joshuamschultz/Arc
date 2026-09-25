@@ -11,6 +11,8 @@ from zoneinfo import available_timezones
 from croniter import croniter
 from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
+from arcagent.core.control_contract import SignedControlRevision
+
 # Zero-width characters used in Unicode homoglyph attacks.
 _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff]")
 
@@ -157,6 +159,7 @@ class ScheduleEntry(BaseModel):
 
     # Audit.
     metadata: ScheduleMetadata = ScheduleMetadata()
+    approval: SignedControlRevision | None = None
 
     @property
     def label(self) -> str:

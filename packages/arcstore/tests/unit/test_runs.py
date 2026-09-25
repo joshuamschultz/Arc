@@ -144,6 +144,38 @@ class TestRunModel:
 
 
 class TestRunStoreCreateGetList:
+    async def test_duplicate_create_preserves_progress_and_refuses_changed_identity(
+        self, tmp_path: Path
+    ) -> None:
+        from arcstore.runs import Run, RunStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = RunStore(be)
+            request = Run(
+                id=_new_id(),
+                workflow_id=_WORKFLOW,
+                workflow_version=2,
+                content_hash="sha256:original",
+                request_digest="request-a",
+                initiator_did=_INITIATOR,
+                status="running",
+            )
+            await store.create(request)
+            progressed, result = await store.transition(
+                request.id, "done", actor_did=_INITIATOR, expected_status="running"
+            )
+            assert result == "applied" and progressed is not None
+            duplicate = await store.create(request)
+            assert duplicate.status == "done"
+            assert duplicate.completed_at == progressed.completed_at
+            with pytest.raises(ValueError, match="different definition"):
+                await store.create(request.model_copy(update={"request_digest": "request-b"}))
+            final = await store.get(request.id)
+            assert final is not None and final.status == "done"
+        finally:
+            await be.stop()
+
     async def test_create_persists_all_fields_and_stamps_timestamps(self, tmp_path: Path) -> None:
         from arcstore.runs import Run, RunBudget, RunStore
 

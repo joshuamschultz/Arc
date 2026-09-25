@@ -46,6 +46,7 @@ from arcagent.modules.scheduler.models import (
     ScheduleEntry,
     ScheduleMetadata,
 )
+from arcagent.modules.scheduler.registration import register_schedule_revision
 from arcagent.modules.scheduler.store import ScheduleStore
 
 _logger = logging.getLogger("arcagent.modules.scheduler.workflow_sync")
@@ -290,7 +291,19 @@ async def reconcile_workflow_schedules() -> None:
             return
         state = _runtime.state()
         triggers = _owned_triggers(definitions, state.agent_name)
-        full_reconcile(state.store, state.config, triggers, anchor=_now())
+        for workflow_id, trigger in triggers.items():
+            entry = desired_entry(workflow_id, trigger, state.config, anchor=_now())
+            if entry is not None and state.store.get(entry.id) is None:
+                approved = await _approve_derived(entry, previous=None)
+                state.store.add(approved)
+        wanted = {
+            derived_id(workflow_id)
+            for workflow_id, trigger in triggers.items()
+            if desired_entry(workflow_id, trigger, state.config) is not None
+        }
+        for entry in state.store.load():
+            if _is_derived(entry) and entry.id not in wanted:
+                await _disable_derived(entry)
         _logger.info("Reconciled %d owned workflow trigger(s) into the scheduler", len(triggers))
     except Exception:  # reason: a sync failure must never break scheduler startup
         _logger.warning("workflow-trigger schedule reconciliation failed", exc_info=True)
@@ -306,9 +319,59 @@ async def sync_workflow_schedule(workflow_id: str) -> None:
         bundle = definitions.load(workflow_id)
         if _owner_of(bundle) != state.agent_name:
             return  # only the owner schedules its workflow
-        push_one(state.store, state.config, workflow_id, bundle.effective_trigger, anchor=_now())
+        entry = desired_entry(workflow_id, bundle.effective_trigger, state.config, anchor=_now())
+        current = state.store.get(derived_id(workflow_id))
+        if entry is None:
+            if current is not None and _is_derived(current):
+                await _disable_derived(current)
+            return
+        if current is None:
+            state.store.add(await _approve_derived(entry, previous=None))
+            return
+        updates: dict[str, Any] = {
+            "workflow_id": workflow_id,
+            "action": "workflow_run",
+            "prompt": "",
+        }
+        for field in _TIMING_FIELDS:
+            value = getattr(entry, field)
+            updates[field] = value.model_dump() if isinstance(value, ActiveHours) else value
+        candidate = ScheduleEntry.model_validate(
+            {**current.model_dump(), **updates}, context=state.config.validation_context()
+        )
+        state.store.update(
+            current.id,
+            (await _approve_derived(candidate, previous=current)).model_dump(),
+            context=state.config.validation_context(),
+        )
     except Exception:  # reason: a sync failure must never break the builder tool
         _logger.warning("could not sync a schedule for workflow '%s'", workflow_id, exc_info=True)
+
+
+async def _approve_derived(
+    entry: ScheduleEntry, *, previous: ScheduleEntry | None
+) -> ScheduleEntry:
+    state = _runtime.state()
+    authority = state.control_artifact_authority
+    tenant_id = state.control_tenant_id
+    proof_source = state.control_actor_proof_source
+    if authority is None or tenant_id is None or proof_source is None:
+        raise RuntimeError("signed workflow schedule registration unavailable")
+    return await register_schedule_revision(
+        entry,
+        previous=previous,
+        tenant_id=tenant_id,
+        agent_did=state.agent_did,
+        authority=authority,
+        actor_proof_source=proof_source,
+    )
+
+
+async def _disable_derived(entry: ScheduleEntry) -> None:
+    state = _runtime.state()
+    disabled = await _approve_derived(entry.model_copy(update={"enabled": False}), previous=entry)
+    state.store.update(entry.id, disabled.model_dump())
+    state.store.remove(entry.id)
 
 
 __all__ = [

@@ -325,6 +325,7 @@ class RunStoreLike(Protocol):
         workflow_id: str,
         version: int,
         content_hash: str,
+        trigger_digest: str | None = None,
         initiator_did: str,
         channel: str | None,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary

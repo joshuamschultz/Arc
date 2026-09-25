@@ -243,6 +243,8 @@ class WorkflowControlPlane:
         *,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         actor_did: str,
+        run_id: str | None = None,
+        trigger_digest: str | None = None,
         detached: bool = False,
     ) -> ControlPlaneResult:
         """Start a run. The dashboard, the CLI, and an agent all land here.
@@ -252,7 +254,12 @@ class WorkflowControlPlane:
         """
         try:
             record = await self._runner.start_run(
-                workflow_id, input=input, initiator_did=actor_did, detached=detached
+                workflow_id,
+                input=input,
+                initiator_did=actor_did,
+                run_id=run_id,
+                trigger_digest=trigger_digest,
+                detached=detached,
             )
         except Exception as exc:
             self._emit(
