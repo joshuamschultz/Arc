@@ -5,5 +5,11 @@ from arcagent.modules.run_intents.ledger import (
     RunIntentUnavailableError,
     VerifiedRunAuthorization,
 )
+from arcagent.modules.run_intents.owner import LedgerRunOwner
 
-__all__ = ["RunIntentLedger", "RunIntentUnavailableError", "VerifiedRunAuthorization"]
+__all__ = [
+    "LedgerRunOwner",
+    "RunIntentLedger",
+    "RunIntentUnavailableError",
+    "VerifiedRunAuthorization",
+]

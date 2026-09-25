@@ -33,9 +33,12 @@ continue to work unchanged.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import arcagent
@@ -90,6 +93,7 @@ class InboundEvent(BaseModel):
     message: str
     parts: list[Part] = Field(default_factory=list)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+    occurrence_id: str | None = None
 
     @model_validator(mode="after")
     def _keep_projections_consistent(self) -> InboundEvent:
@@ -157,7 +161,8 @@ class Delta(BaseModel):
     is_final: bool = False
     turn_id: str = ""
     sequence: int = 0
-    status: Literal["completed", "cancelled", "failed"] = "completed"
+    status: Literal["completed", "cancelled", "failed", "outcome_unknown"] = "completed"
+    occurrence_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +236,26 @@ def _reply_label(event: InboundEvent) -> str:
 # ``deliver_message(*, caller_did, message, session_key, reply_target,
 # reply_label, on_handle) -> str`` (ArcAgent satisfies it).
 AgentFactory = Callable[[str], Any]
+RunAuthorizationIssuer = Callable[
+    [InboundEvent, arcagent.CanonicalRunRequest], Awaitable[tuple[bytes, datetime]]
+]
+
+
+def _accepted_run_id(event: InboundEvent) -> str:
+    """Bind a stable platform occurrence to its agent, caller, and session."""
+    if not event.occurrence_id or not event.session_key:
+        raise ValueError("signed delivery requires a session and occurrence ID")
+    body = json.dumps(
+        [
+            "arc.gateway.run.v1",
+            event.agent_did,
+            event.user_did,
+            event.session_key,
+            event.occurrence_id,
+        ],
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(body).hexdigest()
 
 
 class AsyncioExecutor:
@@ -265,7 +290,11 @@ class AsyncioExecutor:
         _agent_factory: Optional async callable producing an agent instance.
     """
 
-    def __init__(self, agent_factory: AgentFactory | None = None) -> None:
+    def __init__(
+        self,
+        agent_factory: AgentFactory | None = None,
+        run_authorization_issuer: RunAuthorizationIssuer | None = None,
+    ) -> None:
         """Initialise AsyncioExecutor.
 
         Args:
@@ -276,7 +305,12 @@ class AsyncioExecutor:
                 tests and dev without a real ArcAgent config).
         """
         self._agent_factory = agent_factory
+        self._run_authorization_issuer = run_authorization_issuer
         self._live_agents: dict[tuple[str, str], Any] = {}
+
+    def set_run_authorization_issuer(self, issuer: RunAuthorizationIssuer) -> None:
+        """Attach a trusted issuer that verifies ingress and signs exact requests."""
+        self._run_authorization_issuer = issuer
 
     def set_agent_factory(self, agent_factory: AgentFactory | None) -> None:
         """Replace the agent factory after construction.
@@ -362,6 +396,34 @@ class AsyncioExecutor:
                 if any(part.kind != "text" for part in event.parts):
                     extra["parts"] = [part.model_dump() for part in event.parts]
                 if isinstance(agent, arcagent.DeliveryStreamSource):
+                    if getattr(agent, "requires_signed_runs", False):
+                        if self._run_authorization_issuer is None:
+                            raise RuntimeError("signed run issuer unavailable")
+                        run_id = _accepted_run_id(event)
+                        prepare = getattr(agent, "prepare_delivered_request", None)
+                        if not callable(prepare):
+                            raise RuntimeError("signed agent cannot prepare canonical requests")
+                        request = prepare(
+                            caller_did=event.user_did,
+                            message=event.message,
+                            session_key=event.session_key,
+                            reply_target=_reply_target(event),
+                            reply_label=_reply_label(event),
+                            run_id=run_id,
+                            occurrence_id=event.occurrence_id,
+                            **extra,
+                        )
+                        if not isinstance(request, arcagent.CanonicalRunRequest):
+                            raise RuntimeError("invalid canonical delivery request")
+                        signed_authorization, deadline = await self._run_authorization_issuer(
+                            event, request
+                        )
+                        extra.update(
+                            run_id=run_id,
+                            occurrence_id=event.occurrence_id,
+                            signed_authorization=signed_authorization,
+                            authorization_deadline=deadline,
+                        )
                     live_key = (event.agent_did, event.session_key)
                     self._live_agents[live_key] = agent
                     try:
@@ -380,6 +442,7 @@ class AsyncioExecutor:
                                         content=text,
                                         turn_id=stream_event.run_id or turn_id,
                                         sequence=stream_event.sequence,
+                                        occurrence_id=event.occurrence_id,
                                     )
                                 case arcagent.DeliveryToolEvent(name=name):
                                     yield Delta(
@@ -387,6 +450,7 @@ class AsyncioExecutor:
                                         content=name,
                                         turn_id=stream_event.run_id or turn_id,
                                         sequence=stream_event.sequence,
+                                        occurrence_id=event.occurrence_id,
                                     )
                                 case arcagent.DeliveryTerminalEvent(status=status):
                                     yield Delta(
@@ -395,6 +459,7 @@ class AsyncioExecutor:
                                         turn_id=stream_event.run_id or turn_id,
                                         sequence=stream_event.sequence,
                                         status=status,
+                                        occurrence_id=event.occurrence_id,
                                     )
                                     return
                     finally:
@@ -451,7 +516,13 @@ class AsyncioExecutor:
                     content="[agent-error] the run failed; see server logs",
                     is_final=False,
                     turn_id=turn_id,
+                    occurrence_id=event.occurrence_id,
                 )
+                yield Delta(
+                    kind="done", content="", is_final=True, turn_id=turn_id,
+                    status="failed", occurrence_id=event.occurrence_id,
+                )
+                return
             yield Delta(kind="done", content="", is_final=True, turn_id=turn_id)
             return
 

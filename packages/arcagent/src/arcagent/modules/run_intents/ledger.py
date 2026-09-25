@@ -19,6 +19,14 @@ class RunIntentUnavailableError(RuntimeError):
     """Accepted work cannot be proven safe to start or recover."""
 
 
+class RunOutcomeUnknownError(Exception):
+    """An effect stopped with a bounded result that records its uncertainty."""
+
+    def __init__(self, result: bytes) -> None:
+        super().__init__("run outcome requires reconciliation")
+        self.result = result
+
+
 class _Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -371,6 +379,16 @@ class RunIntentLedger:
         )
         try:
             result = await effect(request)
+        except RunOutcomeUnknownError as exc:
+            allowed_result = (
+                executing.reserved_bytes
+                - executing.request_ref.size
+                - executing.authorization_ref.size
+            )
+            return await self.mark_unknown(
+                executing,
+                result=exc.result if len(exc.result) <= allowed_result else None,
+            )
         except BaseException:
             await self.mark_unknown(executing)
             raise
@@ -397,13 +415,33 @@ class RunIntentLedger:
         await self._project(executing, completed)
         return completed
 
-    async def mark_unknown(self, executing: arcstore.StoredRunIntent) -> arcstore.StoredRunIntent:
+    async def mark_unknown(
+        self, executing: arcstore.StoredRunIntent, *, result: bytes | None = None
+    ) -> arcstore.StoredRunIntent:
         """Record uncertain effect outcome; no caller may retry execution."""
         head, manifest = await self._read()
         if manifest.entries.get(executing.run_id) != executing:
             raise RunIntentUnavailableError("executing run anchor changed")
+        result_ref = None
+        if result is not None:
+            if executing.request_ref is None or executing.authorization_ref is None:
+                raise RunIntentUnavailableError("run reservation is incomplete")
+            available = (
+                executing.reserved_bytes
+                - executing.request_ref.size
+                - executing.authorization_ref.size
+            )
+            if len(result) > available:
+                raise RunIntentUnavailableError("unknown result exceeded reserved capacity")
+            result_ref = await self._store.write_blob(
+                self.tenant_id, self.agent_did, result, purpose="result"
+            )
         unknown = executing.model_copy(
-            update={"status": "outcome_unknown", "version": executing.version + 1}
+            update={
+                "status": "outcome_unknown",
+                "version": executing.version + 1,
+                "result_ref": result_ref,
+            }
         )
         await self._advance(head, manifest, unknown)
         await self._project(executing, unknown)
@@ -431,8 +469,12 @@ class RunIntentLedger:
     async def result_bytes(self, intent: arcstore.StoredRunIntent) -> bytes:
         """Read a completed result only after matching the authenticated manifest."""
         current = await self.get(intent.run_id)
-        if current != intent or current.status != "completed" or current.result_ref is None:
-            raise RunIntentUnavailableError("completed run result unavailable")
+        if (
+            current != intent
+            or current.status not in ("completed", "outcome_unknown")
+            or current.result_ref is None
+        ):
+            raise RunIntentUnavailableError("terminal run result unavailable")
         return await self._store.read_blob(self.tenant_id, self.agent_did, current.result_ref)
 
     async def recover(self) -> tuple[arcstore.StoredRunIntent, ...]:

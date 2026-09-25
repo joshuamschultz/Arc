@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 
 
@@ -33,7 +34,7 @@ class DeliveryToolEvent(DeliveryStreamEvent):
 class DeliveryTerminalEvent(DeliveryStreamEvent):
     """The one terminal outcome for a transport stream."""
 
-    status: Literal["completed", "cancelled", "failed"]
+    status: Literal["completed", "cancelled", "failed", "outcome_unknown"]
 
 
 @runtime_checkable
@@ -49,4 +50,8 @@ class DeliveryStreamSource(Protocol):
         reply_target: str | None = None,
         reply_label: str | None = None,
         parts: list[dict[str, Any]] | None = None,
+        run_id: str | None = None,
+        occurrence_id: str | None = None,
+        signed_authorization: bytes | None = None,
+        authorization_deadline: datetime | None = None,
     ) -> AsyncIterator[DeliveryStreamEvent]: ...

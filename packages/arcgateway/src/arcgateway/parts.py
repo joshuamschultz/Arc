@@ -61,6 +61,12 @@ class MediaPart(BaseModel):
     mime: str
     declared_name: str
     ref: str
+    attachment_id: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
+    session_key: str | None = None
+    owner_did: str | None = None
+    agent_did: str | None = None
 
 
 # Discriminated on `kind` — pydantic resolves a raw platform dict to the right

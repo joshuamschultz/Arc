@@ -30,6 +30,7 @@ file instead.
 from __future__ import annotations
 
 import base64
+import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,20 @@ class PartTranslator:
             relative to it and fenced inside it.
     """
 
-    def __init__(self, *, workspace: Path) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: Path,
+        session_key: str | None = None,
+        owner_did: str | None = None,
+        agent_did: str | None = None,
+        require_proof: bool = False,
+    ) -> None:
         self._workspace = workspace
+        self._session_key = session_key
+        self._owner_did = owner_did
+        self._agent_did = agent_did
+        self._require_proof = require_proof
 
     def to_history_content(self, parts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         """Turn inbound parts into content safe to append to the session log.
@@ -120,6 +133,17 @@ class PartTranslator:
                 "declared_name": part["declared_name"],
                 "ref": part["ref"],
             }
+            for field in (
+                "attachment_id",
+                "sha256",
+                "size_bytes",
+                "session_key",
+                "owner_did",
+                "agent_did",
+            ):
+                if part.get(field) is not None:
+                    media[field] = part[field]
+            self._validate_media_binding(media)
             return {"type": "text", "text": _readable_line(media), _MEDIA: media}
         msg = f"unknown part kind: {kind!r}"
         raise ValueError(msg)
@@ -129,7 +153,9 @@ class PartTranslator:
         media = block.get(_MEDIA)
         if not isinstance(media, Mapping):
             return _BLOCK_ADAPTER.validate_python(block)
+        self._validate_media_binding(media)
         if media.get("kind") != "image":
+            self._verify_media_bytes(media)
             if self._looks_like_pdf(media):
                 try:
                     text = self._read_pdf_content(str(media["ref"]))
@@ -151,10 +177,55 @@ class PartTranslator:
             # Non-PDF files retain the historical reference-only behaviour.
             return arcrun.TextBlock(text=_readable_line(media))
         payload = self._read_artefact(str(media["ref"]))
+        self._verify_media_bytes(media, payload=payload)
+        mime = str(media["mime"])
+        if (mime == "image/png" and not payload.startswith(b"\x89PNG\r\n\x1a\n")) or (
+            mime == "image/jpeg" and not payload.startswith(b"\xff\xd8\xff")
+        ):
+            raise ValueError("image MIME does not match stored bytes")
         return arcrun.ImageBlock(
             source=base64.b64encode(payload).decode("ascii"),
-            media_type=str(media["mime"]),
+            media_type=mime,
         )
+
+    def _validate_media_binding(self, media: Mapping[str, Any]) -> None:
+        """Keep one claimed attachment inside its authenticated run scope."""
+        expected = {
+            "session_key": self._session_key,
+            "owner_did": self._owner_did,
+            "agent_did": self._agent_did,
+        }
+        if self._require_proof and any(
+            media.get(field) is None
+            for field in ("sha256", "size_bytes", "session_key", "owner_did", "agent_did")
+        ):
+            raise ValueError("media custody proof is required")
+        for field, value in expected.items():
+            if value is not None and media.get(field) is not None and media[field] != value:
+                raise ValueError("media custody scope mismatch")
+
+    def _verify_media_bytes(
+        self, media: Mapping[str, Any], *, payload: bytes | None = None
+    ) -> None:
+        """Reject a changed workspace object before it reaches the model."""
+        digest = media.get("sha256")
+        size = media.get("size_bytes")
+        if digest is None and size is None:
+            return
+        path = self._resolve_artefact(str(media["ref"])) if payload is None else None
+        actual_size = len(payload) if payload is not None else path.stat().st_size if path else -1
+        if size is not None and actual_size != size:
+            raise ValueError("media size changed after custody")
+        if digest is not None:
+            actual = hashlib.sha256()
+            if payload is not None:
+                actual.update(payload)
+            elif path is not None:
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(65536), b""):
+                        actual.update(chunk)
+            if digest != f"sha256:{actual.hexdigest()}":
+                raise ValueError("media content changed after custody")
 
     def _read_artefact(self, ref: str) -> bytes:
         """Read a referenced artefact from the workspace, fenced by ancestry.

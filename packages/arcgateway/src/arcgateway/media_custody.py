@@ -147,6 +147,11 @@ class MediaCustodian:
             mime=stored.mime,
             declared_name=stored.declared_name,
             ref=stored.ref,
+            sha256=stored.sha256,
+            size_bytes=stored.size_bytes,
+            session_key=event.session_key,
+            owner_did=event.user_did,
+            agent_did=event.agent_did,
         )
 
     @staticmethod

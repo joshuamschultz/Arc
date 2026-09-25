@@ -28,6 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from datetime import datetime
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -49,6 +50,7 @@ from arctrust import (
 
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.core import agent_security
+from arcagent.core.accepted_stream import stream_accepted_run
 from arcagent.core.agent_dispatch import dispatch_stream
 from arcagent.core.agent_lifecycle import setup_capabilities
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
@@ -60,6 +62,7 @@ from arcagent.core.model_manager import (
     ensure_model,
 )
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.run_contract import AcceptedRunOwner, CanonicalRunRequest
 from arcagent.core.runtime_dependencies import RuntimeBinding, RuntimeDependencies
 from arcagent.core.session_coordination import SessionRunCoordinator
 from arcagent.core.session_internal import ContextManager, SessionManager
@@ -161,11 +164,15 @@ class ArcAgent:
         queue_coordinator: arcrun.CallQueueCoordinator | None = None,
         queue_tenant_id: str | None = None,
         skill_artifact_resolver: SkillArtifactResolver | None = None,
+        accepted_run_owner: AcceptedRunOwner | None = None,
+        require_durable_runs: bool = False,
     ) -> None:
         if (queue_coordinator is None) != (queue_tenant_id is None):
             raise ValueError("queue coordinator and trusted tenant must be supplied together")
         if queue_tenant_id is not None and not queue_tenant_id:
             raise ValueError("queue tenant must be nonempty")
+        if require_durable_runs and accepted_run_owner is None:
+            raise RuntimeError("durable accepted-run owner is required")
         self._config = config
         self._config_path = config_path or Path("arcagent.toml")
 
@@ -224,6 +231,8 @@ class ArcAgent:
         self._trace_store: Any = None
         self._queue_coordinator = queue_coordinator
         self._queue_tenant_id = queue_tenant_id
+        self._accepted_run_owner = accepted_run_owner
+        self._require_durable_runs = require_durable_runs
         self._queue_owner_epoch = uuid.uuid4().hex
         self._skill_artifact_resolver = skill_artifact_resolver
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
@@ -837,6 +846,8 @@ class ArcAgent:
         (scheduler-driven, messaging inbox).
         """
         self._ensure_started()
+        if self._accepted_run_owner is not None:
+            raise RuntimeError("direct run requires an accepted request")
         async for event in dispatch_stream(
             self,
             input_text,
@@ -863,7 +874,13 @@ class ArcAgent:
         allowed_strategies: list[str] | None = None,
         reply_target: str | None = None,
         reply_label: str | None = None,
-    ) -> Any:
+        signed_authorization: bytes | None = None,
+        authorization_deadline: datetime | None = None,
+        max_result_bytes: int = 1_048_576,
+        run_purpose: Literal["manual", "message", "schedule", "pulse", "workflow"] = "manual",
+        occurrence_id: str | None = None,
+        caller_did: str | None = None,
+    ) -> arcrun.RunResult:
         """Run a turn on the ``session_key`` session and collect to a result.
 
         The single callback every non-streaming surface binds (scheduler,
@@ -876,19 +893,97 @@ class ArcAgent:
         ``reply_target`` / ``reply_label`` name the channel this turn arrived on,
         so a reply (notify_user / a schedule) returns there (see :meth:`run`).
         """
-        session = await self.session(session_key)
-        return await arcrun.collect(
-            self.run(
-                input_text,
-                session=session,
-                tool_choice=tool_choice,
-                max_tokens=max_tokens,
-                max_cost_usd=max_cost_usd,
-                run_id=run_id,
-                allowed_strategies=allowed_strategies,
-                reply_target=reply_target,
-                reply_label=reply_label,
+
+        final_run_id = run_id or uuid.uuid4().hex
+        request = CanonicalRunRequest(
+            run_id=final_run_id,
+            session_key=session_key,
+            input_text=input_text,
+            tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
+            allowed_strategies=allowed_strategies,
+            reply_target=reply_target,
+            reply_label=reply_label,
+            caller_did=caller_did,
+            purpose=run_purpose,
+            occurrence_id=occurrence_id or final_run_id,
+        )
+
+        async def collect_plain(accepted: CanonicalRunRequest) -> arcrun.RunResult:
+            if accepted != request:
+                raise RuntimeError("accepted run owner changed the request")
+            session = await self.session(accepted.session_key)
+            return await arcrun.collect(
+                dispatch_stream(
+                    self,
+                    accepted.input_text,
+                    session=session,
+                    tool_choice=accepted.tool_choice,
+                    max_tokens=accepted.max_tokens,
+                    max_cost_usd=accepted.max_cost_usd,
+                    run_id=accepted.run_id,
+                    allowed_strategies=accepted.allowed_strategies,
+                    reply_target=accepted.reply_target,
+                    reply_label=accepted.reply_label,
+                )
             )
+
+        owner = self._accepted_run_owner
+        if owner is None:
+            return await collect_plain(request)
+        if signed_authorization is None or authorization_deadline is None:
+            raise RuntimeError("signed run authorization is required")
+        return await owner.execute(
+            request,
+            deadline=authorization_deadline,
+            signed_authorization=signed_authorization,
+            max_result_bytes=max_result_bytes,
+            invoke=collect_plain,
+        )
+
+    @property
+    def requires_signed_runs(self) -> bool:
+        """Whether external ingress must supply an accepted-run authorization."""
+        return self._accepted_run_owner is not None
+
+    def prepare_delivered_request(
+        self,
+        *,
+        caller_did: str,
+        message: str,
+        session_key: str,
+        run_id: str,
+        occurrence_id: str,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+        parts: Sequence[Mapping[str, Any]] | None = None,
+    ) -> CanonicalRunRequest:
+        """Validate and canonicalize the exact delivery an issuer must authorize."""
+        canonical_parts = [dict(part) for part in parts] if parts else None
+        if canonical_parts:
+            from arcagent.parts import PartTranslator
+
+            content = PartTranslator(
+                workspace=self._workspace,
+                session_key=session_key,
+                owner_did=caller_did,
+                agent_did=self._identity.did if self._identity is not None else None,
+                require_proof=True,
+            ).to_history_content(canonical_parts)
+            canonical_text = _flatten_blocks(content)
+            if message != canonical_text:
+                raise ValueError("message and protected parts disagree")
+        return CanonicalRunRequest(
+            run_id=run_id,
+            session_key=session_key,
+            input_text=message,
+            parts=canonical_parts,
+            reply_target=reply_target,
+            reply_label=reply_label,
+            caller_did=caller_did,
+            purpose="message",
+            occurrence_id=occurrence_id,
         )
 
     async def stream_delivered_message(
@@ -900,6 +995,11 @@ class ArcAgent:
         reply_target: str | None = None,
         reply_label: str | None = None,
         parts: Sequence[Mapping[str, Any]] | None = None,
+        run_id: str | None = None,
+        occurrence_id: str | None = None,
+        signed_authorization: bytes | None = None,
+        authorization_deadline: datetime | None = None,
+        max_result_bytes: int = 1_048_576,
     ) -> AsyncIterator[DeliveryStreamEvent]:
         """Deliver an interactive message and yield transport-safe events.
 
@@ -909,6 +1009,67 @@ class ArcAgent:
         run whose handle remains steerable and cancellable while events flow.
         """
         self._ensure_started()
+        owner = self._accepted_run_owner
+        if owner is not None:
+            if (
+                run_id is None
+                or occurrence_id is None
+                or signed_authorization is None
+                or authorization_deadline is None
+            ):
+                raise RuntimeError("interactive delivery requires a signed accepted request")
+            request = self.prepare_delivered_request(
+                run_id=run_id,
+                occurrence_id=occurrence_id,
+                session_key=session_key,
+                message=message,
+                parts=parts,
+                reply_target=reply_target,
+                reply_label=reply_label,
+                caller_did=caller_did,
+            )
+
+            async def owned_stream(
+                accepted: CanonicalRunRequest,
+            ) -> AsyncIterator[arcrun.StreamEvent]:
+                if accepted != request:
+                    raise RuntimeError("accepted run owner changed the request")
+                session = await self.session(accepted.session_key)
+                accepted_content = None
+                if accepted.parts:
+                    from arcagent.parts import PartTranslator
+
+                    accepted_content = PartTranslator(
+                        workspace=self._workspace,
+                        session_key=accepted.session_key,
+                        owner_did=accepted.caller_did,
+                        agent_did=self._identity.did if self._identity is not None else None,
+                        require_proof=True,
+                    ).to_history_content(accepted.parts)
+                async for event in dispatch_stream(
+                    self,
+                    accepted.input_text,
+                    session=session,
+                    run_id=accepted.run_id,
+                    reply_target=accepted.reply_target,
+                    reply_label=accepted.reply_label,
+                    interactive=True,
+                    content=accepted_content,
+                ):
+                    yield event
+
+            async with self._run_coordinator.delivery(session_key):
+                async for owned_item in stream_accepted_run(
+                    owner,
+                    request,
+                    signed_authorization=signed_authorization,
+                    deadline=authorization_deadline,
+                    max_result_bytes=max_result_bytes,
+                    stream=owned_stream,
+                    project=_delivery_projection,
+                ):
+                    yield owned_item
+            return
         content = self._compose_from_parts(parts) if parts else None
         if content is not None:
             message = _flatten_blocks(content)
@@ -1016,6 +1177,8 @@ class ArcAgent:
         from arcagent.core.agent_dispatch import start_tracked_run
 
         self._ensure_started()
+        if self._accepted_run_owner is not None:
+            raise RuntimeError("tracked run requires a signed accepted request")
         return await start_tracked_run(
             self,
             input_text,
@@ -1043,6 +1206,8 @@ class ArcAgent:
         holds the handle and passes it on, and never invokes it (ADR-032).
         """
         self._ensure_started()
+        if self._accepted_run_owner is not None:
+            raise RuntimeError("one-shot run requires a signed accepted request")
         from arcstore.spool import current_request_id, request_context
 
         from arcagent.core.session_internal.capability_ledger import current_session_id
@@ -1138,6 +1303,8 @@ class ArcAgent:
         if content is not None:
             message = _flatten_blocks(content)
         self._ensure_started()
+        if self._accepted_run_owner is not None:
+            raise RuntimeError("message delivery requires a signed accepted request")
         async with self._run_coordinator.delivery(session_key):
             handle = self._run_coordinator.injection_target(session_key)
             if handle is None:

@@ -117,6 +117,12 @@ class StoredMedia(BaseModel):
     size_bytes: int
     """Bytes written."""
 
+    attachment_id: str | None = None
+    sha256: str | None = None
+    session_key: str | None = None
+    owner_did: str | None = None
+    agent_did: str | None = None
+
 
 class AttachmentManifest(BaseModel):
     """Durable, reference-only metadata for a quarantined or promoted file."""
@@ -412,6 +418,11 @@ class MediaStore:
             kind=manifest.kind,
             mime=manifest.detected_mime,
             size_bytes=manifest.size_bytes,
+            attachment_id=manifest.attachment_id,
+            sha256=manifest.sha256,
+            session_key=manifest.session_key,
+            owner_did=manifest.owner_did,
+            agent_did=manifest.agent_did,
         )
 
     def _manifest_path(self, attachment_id: str) -> Path:
@@ -507,6 +518,7 @@ class MediaStore:
             kind=kind,
             mime=detected_mime,
             size_bytes=size_bytes,
+            sha256=f"sha256:{hashlib.sha256(data).hexdigest()}",
         )
 
     def record_sent(

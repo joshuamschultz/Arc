@@ -222,6 +222,27 @@ async def test_ingest_builds_correct_inbound_event() -> None:
     await adapter.disconnect()
 
 
+async def test_ingest_preserves_stable_request_id_across_reconnect() -> None:
+    received: list[InboundEvent] = []
+
+    async def capture(event: InboundEvent) -> None:
+        received.append(event)
+
+    adapter = _make_adapter(on_message=capture)
+    request_id = "2ac7c119-7a7e-4ad9-a735-65dcf8c8b507"
+    first = FakeWebSocket()
+    adapter.register_socket(first, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.ingest("chat-1", "hello", client_seq=1, ws=first, request_id=request_id)
+    adapter.unregister_socket(first)
+    second = FakeWebSocket()
+    adapter.register_socket(second, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.ingest("chat-1", "hello", client_seq=1, ws=second, request_id=request_id)
+    assert [item.occurrence_id for item in received] == [request_id, request_id]
+    with pytest.raises(ValueError, match="request_id"):
+        await adapter.ingest("chat-1", "forged", ws=second, request_id="not-a-uuid")
+    await adapter.disconnect()
+
+
 async def test_abandoned_run_is_cancelled_after_the_grace_window() -> None:
     """A truly abandoned final observer cancels its run — but only AFTER the
     grace window (no reconnect), never the instant the socket closed."""

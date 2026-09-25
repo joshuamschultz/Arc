@@ -34,6 +34,7 @@ import contextlib
 import hashlib
 import logging
 import time
+import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -443,6 +444,7 @@ class WebPlatformAdapter:
         client_seq: int | None = None,
         ws: WebSocketLike | None = None,
         attachment_ids: list[str] | None = None,
+        request_id: str | None = None,
     ) -> None:
         """Build an InboundEvent from a browser frame and forward it.
 
@@ -462,6 +464,13 @@ class WebPlatformAdapter:
         if len(text.encode("utf-8")) > self.max_frame_bytes:
             msg = "frame too large"
             raise ValueError(msg)
+        if request_id is not None:
+            try:
+                parsed_id = uuid.UUID(request_id)
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError("request_id must be a UUID") from exc
+            if str(parsed_id) != request_id or parsed_id.version != 4:
+                raise ValueError("request_id must be a canonical UUIDv4")
 
         if client_seq is not None:
             seq_key: Any = ws if ws is not None else chat_id
@@ -498,6 +507,7 @@ class WebPlatformAdapter:
             message=text,
             raw_payload=raw_payload,
             parts=parts,
+            occurrence_id=request_id,
         )
         await self._on_message(event)
 
@@ -547,6 +557,7 @@ class WebPlatformAdapter:
             "run_id": delta.turn_id,
             "event_sequence": delta.sequence,
             "ts": _utcnow_iso(),
+            **({"request_id": delta.occurrence_id} if delta.occurrence_id else {}),
         }
 
     def _terminal_seen(self, chat_id: str, run_id: str) -> bool:

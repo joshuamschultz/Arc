@@ -124,6 +124,14 @@ from arcagent.tools._secret_guard import find_secret
 from arcagent.utils import config_render
 from arcagent.utils.toml_writer import dumps_toml
 
+CallJob = arcrun.CallJob
+CallQueueCoordinator = arcrun.CallQueueCoordinator
+QueueCancellation = arcrun.QueueCancellation
+QueueControlSnapshot = arcrun.QueueControlSnapshot
+QueueLimits = arcrun.QueueLimits
+QueueMetadataPage = arcrun.QueueMetadataPage
+QueueReadScope = arcrun.QueueReadScope
+
 
 def stream_token_text(event: object) -> str | None:
     """Return token text for an ArcAgent stream event, else ``None``.
@@ -189,10 +197,19 @@ def modules_path() -> Path:
 
 def __getattr__(name: str) -> Any:
     """Load optional ArcAgent exports only when requested."""
-    if name in {"RunIntentLedger", "RunIntentUnavailableError", "VerifiedRunAuthorization"}:
+    if name in {
+        "LedgerRunOwner",
+        "RunIntentLedger",
+        "RunIntentUnavailableError",
+        "VerifiedRunAuthorization",
+    }:
         from arcagent.modules import run_intents
 
         return getattr(run_intents, name)
+    if name == "CanonicalRunRequest":
+        from arcagent.core.run_contract import CanonicalRunRequest
+
+        return CanonicalRunRequest
     if name in {
         "AnchoredSkillRevisionResolver",
         "ReviewedSkillBundle",
@@ -215,6 +232,9 @@ __all__ = [
     "AttachmentFactory",
     "AuditChain",
     "Authorization",
+    "CallJob",
+    "CallQueueCoordinator",
+    "CanonicalRunRequest",
     "CapabilityImportError",
     "CapabilityImportLimits",
     "CapabilityImportManifest",
@@ -254,17 +274,22 @@ __all__ = [
     "KnowledgeDraft",
     "KnowledgeHit",
     "KnowledgeRef",
+    "LedgerRunOwner",
     "ModuleBusError",
     "PersonalKnowledgePort",
     "ProbeResult",
     "PromotionSource",
+    "QueueCancellation",
+    "QueueControlSnapshot",
+    "QueueLimits",
+    "QueueMetadataPage",
+    "QueueReadScope",
     "RemoteLoginLedger",
     "RemoteLoginStart",
     "ReviewedSkillBundle",
     "RootTokenBudget",
     "RunIntentLedger",
     "RunIntentUnavailableError",
-    "VerifiedRunAuthorization",
     "ScheduleEntry",
     "ScheduleMetadata",
     "ScheduleStore",
@@ -282,6 +307,7 @@ __all__ = [
     "ToolResult",
     "ToolSpec",
     "ToolVetoedError",
+    "VerifiedRunAuthorization",
     "append_module_scan_roots",
     "audit_tier_relaxations",
     "build_mcp_door",

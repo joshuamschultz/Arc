@@ -9,11 +9,15 @@ chat() (user + assistant turns land in the session's SessionManager).
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import arcrun
 import pytest
 from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 
@@ -26,6 +30,8 @@ from arcagent.core.config import (
     LLMConfig,
     TelemetryConfig,
 )
+from arcagent.core.run_contract import CanonicalRunRequest, RunInvoker
+from arcagent.streaming import DeliveryTerminalEvent
 
 
 @pytest.fixture()
@@ -199,6 +205,188 @@ async def test_run_collected_returns_result_for_callbacks(
             await agent.shutdown()
 
     assert result.content == "done"
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_injected_owner_is_the_only_collected_dispatch_entry(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    accepted: list[CanonicalRunRequest] = []
+
+    class Owner:
+        async def execute(
+            self,
+            request: CanonicalRunRequest,
+            *,
+            signed_authorization: bytes,
+            deadline: datetime,
+            max_result_bytes: int,
+            invoke: RunInvoker,
+        ) -> Any:
+            assert signed_authorization == b"signed-request"
+            assert deadline.tzinfo is not None
+            assert max_result_bytes == 1024
+            accepted.append(request)
+            return await invoke(request)
+
+    agent = ArcAgent(config=agent_config, accepted_run_owner=Owner(), require_durable_runs=True)
+    with _patch_stream("done"):
+        await agent.startup()
+        try:
+            session = await agent.session("unit:owned")
+            with pytest.raises(RuntimeError, match="direct run"):
+                _ = [event async for event in agent.run("go", session=session)]
+            with pytest.raises(RuntimeError, match="signed run authorization"):
+                await agent.run_collected("go", session_key="unit:owned")
+            result = await agent.run_collected(
+                "go",
+                session_key="unit:owned",
+                run_id="run-1",
+                tool_choice={"type": "required"},
+                reply_target="channel://ops",
+                signed_authorization=b"signed-request",
+                authorization_deadline=datetime(2030, 1, 1, tzinfo=UTC),
+                max_result_bytes=1024,
+                run_purpose="message",
+                occurrence_id="message-1",
+            )
+        finally:
+            await agent.shutdown()
+    assert result.content == "done"
+    assert len(accepted) == 1
+    assert accepted[0].tool_choice == {"type": "required"}
+    assert accepted[0].reply_target == "channel://ops"
+    assert accepted[0].purpose == "message"
+    assert accepted[0].occurrence_id == "message-1"
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_signed_interactive_entry_streams_through_owner(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+
+    class Owner:
+        async def execute(
+            self,
+            request: CanonicalRunRequest,
+            *,
+            signed_authorization: bytes,
+            deadline: datetime,
+            max_result_bytes: int,
+            invoke: RunInvoker,
+        ) -> Any:
+            assert request.caller_did == "did:arc:user/1"
+            assert request.reply_target == "web:chat-1"
+            assert signed_authorization == b"proof"
+            return await invoke(request)
+
+    agent = ArcAgent(config=agent_config, accepted_run_owner=Owner(), require_durable_runs=True)
+    with _patch_stream("live"):
+        await agent.startup()
+        try:
+            events = [
+                event
+                async for event in agent.stream_delivered_message(
+                    caller_did="did:arc:user/1",
+                    message="question",
+                    session_key="web:chat-1",
+                    reply_target="web:chat-1",
+                    run_id="run-1",
+                    occurrence_id="event-1",
+                    signed_authorization=b"proof",
+                    authorization_deadline=datetime(2030, 1, 1, tzinfo=UTC),
+                )
+            ]
+        finally:
+            await agent.shutdown()
+    assert any(getattr(event, "text", None) == "live" for event in events)
+    assert isinstance(events[-1], DeliveryTerminalEvent)
+    assert events[-1].status == "completed"
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_signed_png_reaches_provider_as_image_block(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+    workspace: Path,
+) -> None:
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    payload = b"\x89PNG\r\n\x1a\n" + b"picture"
+    target = workspace / "attachments/objects/picture.png"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+
+    class Owner:
+        async def execute(
+            self,
+            request: CanonicalRunRequest,
+            *,
+            signed_authorization: bytes,
+            deadline: datetime,
+            max_result_bytes: int,
+            invoke: RunInvoker,
+        ) -> Any:
+            assert request.parts is not None
+            assert request.parts[1]["sha256"] == f"sha256:{hashlib.sha256(payload).hexdigest()}"
+            return await invoke(request)
+
+    agent = ArcAgent(config=agent_config, accepted_run_owner=Owner(), require_durable_runs=True)
+    captured, patcher = _capture_stream("seen")
+    with patcher:
+        await agent.startup()
+        try:
+            assert agent._identity is not None
+            parts = [
+                {"kind": "text", "text": "What is in this?"},
+                {
+                    "kind": "image",
+                    "mime": "image/png",
+                    "declared_name": "picture.png",
+                    "ref": "attachments/objects/picture.png",
+                    "sha256": f"sha256:{hashlib.sha256(payload).hexdigest()}",
+                    "size_bytes": len(payload),
+                    "session_key": "session-1",
+                    "owner_did": "did:arc:user/1",
+                    "agent_did": agent._identity.did,
+                },
+            ]
+            events = [
+                event
+                async for event in agent.stream_delivered_message(
+                    caller_did="did:arc:user/1",
+                    message=(
+                        "What is in this?\nimage: picture.png (image/png) "
+                        "at attachments/objects/picture.png"
+                    ),
+                    session_key="session-1",
+                    parts=parts,
+                    run_id="run-1",
+                    occurrence_id="message-1",
+                    signed_authorization=b"proof",
+                    authorization_deadline=datetime(2030, 1, 1, tzinfo=UTC),
+                )
+            ]
+        finally:
+            await agent.shutdown()
+    assert isinstance(events[-1], DeliveryTerminalEvent)
+    assert events[-1].status == "completed"
+    history = captured["messages"]
+    images = [
+        block
+        for message in history
+        if isinstance(message.content, list)
+        for block in message.content
+        if isinstance(block, arcrun.ImageBlock)
+    ]
+    assert len(images) == 1
+    assert base64.b64decode(images[0].source) == payload
 
 
 @pytest.mark.asyncio

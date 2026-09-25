@@ -40,6 +40,7 @@ export function useChatSession(agentId: string | null) {
   const wsRef = useRef<WebSocket | null>(null)
   const lastSeq = useRef(-1)
   const clientSeq = useRef(0)
+  const pending = useRef(new Map<string, { text: string; attachmentIds: string[] }>())
   const chatId = useRef<string | null>(null)
   const attempts = useRef(0)
   const deadline = useRef(0)
@@ -141,6 +142,13 @@ export function useChatSession(agentId: string | null) {
           setSessionKey(chatId.current)
           setStatus('ready')
           if (chatId.current) loadHistory(agentId, chatId.current)
+          for (const [requestId, message] of pending.current) {
+            clientSeq.current += 1
+            ws.send(JSON.stringify({
+              type: 'message', text: message.text, client_seq: clientSeq.current,
+              attachment_ids: message.attachmentIds, request_id: requestId,
+            }))
+          }
           return
         }
         if (frame.error) {
@@ -187,6 +195,7 @@ export function useChatSession(agentId: string | null) {
             return
           }
           if (frame.event === 'end') {
+            if (typeof frame.request_id === 'string') pending.current.delete(frame.request_id)
             setMessages((previous) =>
               previous.map((message) =>
                 message.id === `stream-${runId}` ? { ...message, streaming: false } : message,
@@ -247,6 +256,7 @@ export function useChatSession(agentId: string | null) {
     chatId.current = null
     setSessionKey(null)
     historyLoaded.current = true
+    pending.current.clear()
     try {
       wsRef.current?.close()
     } catch {
@@ -272,6 +282,8 @@ export function useChatSession(agentId: string | null) {
         })
         return false
       }
+      const requestId = crypto.randomUUID()
+      pending.current.set(requestId, { text, attachmentIds: opaqueIds })
       clientSeq.current += 1
       append({
         id: `u${clientSeq.current}`,
@@ -280,7 +292,7 @@ export function useChatSession(agentId: string | null) {
         time: now(),
         attachments: opaqueIds,
       })
-      ws.send(JSON.stringify({ type: 'message', text, client_seq: clientSeq.current, attachment_ids: opaqueIds }))
+      ws.send(JSON.stringify({ type: 'message', text, client_seq: clientSeq.current, attachment_ids: opaqueIds, request_id: requestId }))
       return true
     },
     [append],

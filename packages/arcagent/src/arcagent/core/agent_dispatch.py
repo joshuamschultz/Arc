@@ -328,6 +328,7 @@ async def dispatch_stream(
     allowed_strategies: list[str] | None = None,
     interactive: bool = False,
     on_handle: Callable[[arcrun.RunHandle], None] | None = None,
+    content: list[dict[str, Any]] | None = None,
 ) -> AsyncGenerator[arcrun.StreamEvent, None]:
     """The single execution path: stream one agent turn into a session.
 
@@ -368,6 +369,7 @@ async def dispatch_stream(
                     allowed_strategies=allowed_strategies,
                     interactive=interactive,
                     on_handle=on_handle,
+                    content=content,
                 )
             ) as stream:
                 async for event in stream:
@@ -412,6 +414,7 @@ async def _dispatch_stream_locked(
     allowed_strategies: list[str] | None,
     interactive: bool,
     on_handle: Callable[[arcrun.RunHandle], None] | None,
+    content: list[dict[str, Any]] | None,
     overheard: bool = False,
 ) -> AsyncGenerator[arcrun.StreamEvent, None]:
     """Execute a turn after its session serialization lock is held."""
@@ -431,7 +434,7 @@ async def _dispatch_stream_locked(
         with agent._queue_run_context(session.session_id, run_id):
             run_ctx = await build_run_context(agent, input_text)
         telemetry, bus, model, provider, prompt, bridge = run_ctx
-        await session.append_message(prompt.session_record(input_text))
+        await session.append_message(prompt.session_record(content or input_text))
         history = wire_messages(session.get_messages(), workspace=agent._workspace)
         transform = agent._context.transform_context if agent._context else None
         # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun

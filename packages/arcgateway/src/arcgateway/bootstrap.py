@@ -257,6 +257,12 @@ def _build_web_adapter(
                 mime=stored.mime,
                 declared_name=stored.declared_name,
                 ref=stored.ref,
+                attachment_id=stored.attachment_id,
+                sha256=stored.sha256,
+                size_bytes=stored.size_bytes,
+                session_key=stored.session_key,
+                owner_did=stored.owner_did,
+                agent_did=stored.agent_did,
             )
             for stored in (
                 store.claim(
