@@ -148,3 +148,49 @@ def test_an_unknown_key_in_the_table_is_refused() -> None:
             _manifest(_remote() + 'shell = "yes"\n'),
             tier=Tier.PERSONAL,
         )
+
+
+# --- choices, a default, and a warning for a blank field ---------------------------
+
+
+def _field(**extra: object) -> dict[str, object]:
+    return {"name": "read_only", "sensitive": False, "required": False, **extra}
+
+
+def test_a_field_may_offer_a_closed_set_of_choices_with_a_default() -> None:
+    from arcagent.extension.manifest import SecretRequirement
+
+    field = SecretRequirement.model_validate(_field(choices=["yes", "no"], default="yes"))
+    assert field.choices == ["yes", "no"]
+    assert field.default == "yes"
+
+
+def test_a_default_outside_the_choices_is_refused() -> None:
+    from arcagent.extension.manifest import SecretRequirement
+
+    with pytest.raises(ValidationError, match="default"):
+        SecretRequirement.model_validate(_field(choices=["yes", "no"], default="maybe"))
+
+
+def test_a_choice_that_could_read_as_a_flag_is_refused() -> None:
+    from arcagent.extension.manifest import SecretRequirement
+
+    with pytest.raises(ValidationError, match="choice"):
+        SecretRequirement.model_validate(_field(choices=["--all", "no"]))
+
+
+def test_a_credential_cannot_have_choices_a_default_or_a_blank_warning() -> None:
+    from arcagent.extension.manifest import SecretRequirement
+
+    for extra in ({"choices": ["a"]}, {"default": "a"}, {"blank_warning": "x"}):
+        with pytest.raises(ValidationError, match="sensitive"):
+            SecretRequirement.model_validate({"name": "token", **extra})
+
+
+def test_a_required_field_has_no_blank_to_warn_about() -> None:
+    from arcagent.extension.manifest import SecretRequirement
+
+    with pytest.raises(ValidationError, match="required"):
+        SecretRequirement.model_validate(
+            {"name": "client", "sensitive": False, "required": True, "blank_warning": "x"}
+        )

@@ -385,6 +385,7 @@ async def run_remote_login_begin(
     instance: str,
     env: Mapping[str, Secret] | None = None,
     visible: frozenset[str] = frozenset(),
+    optional: frozenset[str] = frozenset(),
     timeout: float = _LOGIN_TIMEOUT_SECONDS,
 ) -> RemoteLoginStep:
     """Run step one of a remote sign-in and hand back the consent link it printed.
@@ -403,6 +404,9 @@ async def run_remote_login_begin(
             the same account and OAuth client the connection's verbs do.
         visible: Placed variables that carry no credential, left readable in
             what the binary prints.
+        optional: Fields the bundle declares optional. One left blank fills its
+            slot with nothing — allowed only where the slot is glued to a flag
+            (``--client={client}`` → ``--client=``), never as an empty argument.
         timeout: Seconds before the step is killed and reported as unfinished.
 
     Returns:
@@ -410,7 +414,7 @@ async def run_remote_login_begin(
         declared consent host. Never raises for a refused step.
     """
     login = requirement.remote_login
-    argv, refusal = _step_argv(requirement, login.begin if login else "", values, "")
+    argv, refusal = _step_argv(requirement, login.begin if login else "", values, "", optional)
     if argv is None or login is None:
         return _record_step(
             requirement, _BEGIN_ACTION, instance, caller_did, audit_sink, tier, refusal
@@ -460,6 +464,7 @@ async def run_remote_login_complete(
     instance: str,
     env: Mapping[str, Secret] | None = None,
     visible: frozenset[str] = frozenset(),
+    optional: frozenset[str] = frozenset(),
     timeout: float = _LOGIN_TIMEOUT_SECONDS,
 ) -> RemoteLoginStep:
     """Run step two with the address the operator pasted, or refuse it unrun.
@@ -485,7 +490,9 @@ async def run_remote_login_complete(
         )
 
     login = requirement.remote_login
-    argv, refusal_step = _step_argv(requirement, login.complete if login else "", values, pasted)
+    argv, refusal_step = _step_argv(
+        requirement, login.complete if login else "", values, pasted, optional
+    )
     if argv is None:
         return _record_step(
             requirement, _COMPLETE_ACTION, instance, caller_did, audit_sink, tier, refusal_step
@@ -511,7 +518,11 @@ def _query_values(url: str) -> tuple[str, ...]:
 
 
 def _step_argv(
-    requirement: HostRequirement, command: str, values: Mapping[str, str], pasted: str
+    requirement: HostRequirement,
+    command: str,
+    values: Mapping[str, str],
+    pasted: str,
+    optional: frozenset[str],
 ) -> tuple[list[str] | None, RemoteLoginStep]:
     """The argv for one step, or ``None`` and the refusal that says why not."""
     if not command:
@@ -526,6 +537,9 @@ def _step_argv(
             supplied[field] = pasted
             continue
         value = values.get(field, "")
+        if not value and field in optional and _only_glued(command, field):
+            supplied[field] = ""
+            continue
         if not value:
             return None, RemoteLoginStep(
                 completed=False,
@@ -546,6 +560,21 @@ def _step_argv(
             reason="not_declared",
         )
     return argv, RemoteLoginStep(completed=True, detail="")
+
+
+def _only_glued(command: str, field: str) -> bool:
+    """True when every use of ``{field}`` shares its argument with other text.
+
+    A blank value there leaves the flag (``--client=``), which the binary reads as
+    "use your default"; a blank standing alone would be an empty argument that
+    shifts every argument after it.
+    """
+    slot = "{" + field + "}"
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return all(token != slot for token in tokens if slot in token)
 
 
 def _record_step(

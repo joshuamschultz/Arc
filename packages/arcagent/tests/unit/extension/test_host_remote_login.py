@@ -243,3 +243,54 @@ async def test_the_check_reports_expired(tmp_path: Path) -> None:
         requirement, caller_did=_CALLER, audit_sink=_RecordingSink(), tier=Tier.PERSONAL
     )
     assert check.known and not check.authorized and check.expired
+
+
+# --- an optional field left blank ------------------------------------------------
+
+
+def _requirement_with(begin: str, script: Path) -> HostRequirement:
+    run = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    return HostRequirement(
+        name=sys.executable,
+        remote_login=RemoteLogin(
+            begin=f"{run} {begin}",
+            complete=f"{run} complete --auth-url {{redirect_url}}",
+            consent_host="accounts.google.com",
+        ),
+    )
+
+
+async def test_a_blank_optional_field_glued_to_its_flag_fills_it_with_nothing(
+    tmp_path: Path,
+) -> None:
+    """``--client={client}`` with no client is ``--client=`` — the binary's default."""
+    seen = tmp_path / "argv"
+    body = f"open({str(seen)!r}, 'w').write(repr(sys.argv[1:]))\n" + _PRINTS_LINK
+    step = await run_remote_login_begin(
+        _requirement_with("begin --client={client} {account}", _script(tmp_path, body)),
+        values={"account": "a@b.com"},
+        optional=frozenset({"client"}),
+        caller_did=_CALLER,
+        audit_sink=_RecordingSink(),
+        tier=Tier.PERSONAL,
+        instance="work",
+    )
+    assert step.completed, step.detail
+    assert seen.read_text() == repr(["begin", "--client=", "a@b.com"])
+
+
+async def test_a_blank_optional_field_standing_alone_is_refused(tmp_path: Path) -> None:
+    """Alone it would be an empty ARGUMENT, which shifts every argument after it."""
+    marker = tmp_path / "ran"
+    body = f"open({str(marker)!r}, 'w').write('x')\n"
+    step = await run_remote_login_begin(
+        _requirement_with("begin {client} {account}", _script(tmp_path, body)),
+        values={"account": "a@b.com"},
+        optional=frozenset({"client"}),
+        caller_did=_CALLER,
+        audit_sink=_RecordingSink(),
+        tier=Tier.PERSONAL,
+        instance="work",
+    )
+    assert not step.completed
+    assert not marker.exists()

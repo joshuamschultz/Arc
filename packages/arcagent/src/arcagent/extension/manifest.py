@@ -78,6 +78,9 @@ _WILDCARD = "*"
 #: neighbouring name — both of which deliver the credential nowhere.
 _ENV_NAME = r"^[A-Z][A-Z0-9_]*$"
 
+#: One declared choice: a plain lowercase word that cannot start like a flag.
+_CHOICE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
 
 def _strip_denied(config: dict[str, Any]) -> dict[str, Any]:
     """Drop trusted-admin-only keys a manifest must not set (see ``_DENIED_CONFIG_PATHS``)."""
@@ -381,6 +384,39 @@ class SecretRequirement(_ManifestModel):
     sensitive: bool = True
     required: bool = True
     format: SuppliedFormat = ""
+    #: A closed set of values, for a setting rather than a free-text entry. Each is
+    #: a plain lowercase word, because a choice may be filled into a command.
+    choices: list[str] = Field(default_factory=list)
+    #: What a blank optional field means, stated in the bundle rather than left to
+    #: whatever the tool does with nothing — for a setting whose safe value is not
+    #: the tool's own default.
+    default: str = ""
+    #: Shown when this optional field is blank, and acknowledged before a sign-in
+    #: proceeds without it: the way a bundle says "blank works, but costs you this".
+    blank_warning: str = ""
+
+    @field_validator("choices")
+    @classmethod
+    def _choices_are_plain_words(cls, choices: list[str]) -> list[str]:
+        """A choice may be filled into argv, so it can never read as a flag."""
+        for choice in choices:
+            if not _CHOICE.fullmatch(choice):
+                raise ValueError(f"choice {choice!r} must be a plain lowercase word")
+        return choices
+
+    @model_validator(mode="after")
+    def _settings_are_visible_and_consistent(self) -> SecretRequirement:
+        """Choices, a default and a blank warning describe settings, never credentials."""
+        if self.sensitive and (self.choices or self.default or self.blank_warning):
+            raise ValueError(
+                f"{self.name} is sensitive; choices, default and blank_warning describe "
+                f"visible settings only"
+            )
+        if self.default and self.choices and self.default not in self.choices:
+            raise ValueError(f"{self.name}'s default {self.default!r} is not one of its choices")
+        if self.blank_warning and self.required:
+            raise ValueError(f"{self.name} is required, so it is never blank to warn about")
+        return self
 
 
 class OAuthFlow(_ManifestModel):

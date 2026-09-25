@@ -79,6 +79,7 @@ from arcagent.extension.manifest import (
 from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
 from arcagent.extension.remote_login import (
     REMOTE_LOGIN_FAILED,
+    REMOTE_LOGIN_NEEDS_CONFIRMATION,
     PendingLogin,
     RemoteLoginLedger,
     checked_account,
@@ -413,6 +414,8 @@ class RemoteLoginStart:
     account: str
     consent_url: str
     expires_in: int
+    #: Blank-field warnings the operator accepted to start this sign-in.
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -461,6 +464,13 @@ class SuppliedCredential:
     prompt: str
     sensitive: bool = True
     value: str = ""
+    #: The manifest's own word on the field's shape, so a form can draw a choice
+    #: as a choice and say what blank means. Never a value that was stored.
+    required: bool = True
+    choices: tuple[str, ...] = ()
+    default: str = ""
+    #: The bundle's warning for this field, set only while it is blank.
+    warning: str = ""
 
 
 @dataclass(frozen=True)
@@ -561,6 +571,11 @@ class Authorization:
     def remote_login(self) -> bool:
         """True when the next step is the browser sign-in Arc drives in two steps."""
         return any(host.remote_login for host in self.hosts)
+
+
+def _optional_fields(plan: ConnectorPlan) -> frozenset[str]:
+    """The fields the bundle declares optional — the only ones a step may leave blank."""
+    return frozenset(declared.name for declared in plan.secrets if not declared.required)
 
 
 def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
@@ -1032,13 +1047,20 @@ class Connections:
 
     # --- remote sign-in ----------------------------------------------------
 
-    async def begin_remote_login(self, instance: str) -> RemoteLoginStart:
+    async def begin_remote_login(
+        self, instance: str, *, accept_warnings: bool = False
+    ) -> RemoteLoginStart:
         """Start the browser sign-in for one connection and return the link to open.
 
         One sign-in per host binary may be waiting at a time (see
         :class:`~arcagent.extension.remote_login.RemoteLoginLedger`); starting the
         same connection again replaces its own, and a different connection is
         refused by name rather than silently taking its place.
+
+        A blank field its bundle warns about (``blank_warning`` — for Google, no
+        OAuth client of the operator's own, so sign-ins expire in a week) refuses
+        the begin with that warning until the operator accepts it: the fallback
+        exists, and it is labelled rather than silent.
 
         Raises:
             ExtensionError: No such connection (``code`` :data:`NOT_INSTALLED`), the
@@ -1054,6 +1076,13 @@ class Connections:
                 with self._refusal_recorded(sink, "begin", instance, required.name):
                     values = await self._login_values(plan, sink)
                     account = values.get("account", "")
+                    warnings = await self._blank_warnings(plan, sink)
+                    if warnings and not accept_warnings:
+                        raise _refuse(
+                            REMOTE_LOGIN_NEEDS_CONFIRMATION,
+                            " ".join(warnings),
+                            connection=instance,
+                        )
                     self._remote_logins.admit_begin(
                         required.name, instance=instance, account=account
                     )
@@ -1066,6 +1095,7 @@ class Connections:
                     instance=instance,
                     env=await self._placement(plan, sink),
                     visible=_visible_placements(plan),
+                    optional=_optional_fields(plan),
                     **self._timeout_kwargs(),
                 )
                 if not step.completed or step.link is None:
@@ -1085,6 +1115,7 @@ class Connections:
             account=account,
             consent_url=step.link.url,
             expires_in=int(self._remote_logins.ttl),
+            warnings=warnings,
         )
 
     async def complete_remote_login(self, instance: str, *, redirect_url: str) -> Authorization:
@@ -1124,6 +1155,7 @@ class Connections:
                     instance=instance,
                     env=placed,
                     visible=_visible_placements(plan),
+                    optional=_optional_fields(plan),
                     **self._timeout_kwargs(),
                 )
                 if step.reason != "invalid_input":
@@ -1182,12 +1214,17 @@ class Connections:
         formats = {declared.name: declared.format for declared in plan.secrets}
         values: dict[str, str] = {}
         for field in await self._supplied(plan, sink):
-            if field.sensitive or not field.value:
+            value = field.value or field.default
+            if field.sensitive or not value:
                 continue
             values[field.name] = (
-                checked_account(field.value) if formats.get(field.name) == "email" else field.value
+                checked_account(value) if formats.get(field.name) == "email" else value
             )
         return values
+
+    async def _blank_warnings(self, plan: ConnectorPlan, sink: AuditSink) -> tuple[str, ...]:
+        """The bundle's warnings for fields this connection left blank, in order."""
+        return tuple(field.warning for field in await self._supplied(plan, sink) if field.warning)
 
     async def _run_login(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
         """Run the one login Arc can finish, or say plainly why it did not run one.
@@ -1673,6 +1710,10 @@ class Connections:
                     prompt=declared.prompt,
                     sensitive=declared.sensitive,
                     value=value,
+                    required=declared.required,
+                    choices=tuple(declared.choices),
+                    default=declared.default,
+                    warning=declared.blank_warning if not value else "",
                 )
             )
         return tuple(rows)

@@ -334,3 +334,27 @@ def test_anything_but_a_plain_name_is_refused(typed: str) -> None:
     with pytest.raises(ExtensionError) as refused:
         normalize("name", "client", typed)
     assert "client" in refused.value.message
+
+
+# --- a closed set of choices -----------------------------------------------------
+
+
+def test_a_choice_is_trimmed_and_lowercased() -> None:
+    from arcagent.extension.field_formats import choose
+
+    assert choose("read_only", " Yes ", ("yes", "no")) == "yes"
+
+
+def test_a_value_outside_the_choices_is_refused_by_name() -> None:
+    from arcagent.extension.field_formats import choose
+
+    with pytest.raises(ExtensionError) as refused:
+        choose("read_only", "maybe", ("yes", "no"))
+    assert "read_only" in refused.value.message
+    assert "yes" in refused.value.message and "maybe" not in refused.value.message
+
+
+def test_no_choices_means_any_value() -> None:
+    from arcagent.extension.field_formats import choose
+
+    assert choose("x", "Anything", ()) == "Anything"

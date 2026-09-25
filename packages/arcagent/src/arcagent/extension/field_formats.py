@@ -119,6 +119,23 @@ def _name(field: str, value: str) -> str:
     return typed
 
 
+def choose(field: str, value: str, choices: tuple[str, ...] | list[str]) -> str:
+    """One of a field's declared choices, or a refusal listing them.
+
+    Empty ``choices`` means a free-text field and the value passes untouched. The
+    refusal names the choices, never what was typed.
+
+    Raises:
+        ExtensionError: The value is not one of ``choices``.
+    """
+    if not choices:
+        return value
+    picked = value.strip().lower()
+    if picked not in choices:
+        return _refuse(field, "it is not one of its choices", f"choose {' or '.join(choices)}")
+    return picked
+
+
 def _visible(field: str, value: str) -> str:
     """One run of visible characters: trimmed at the ends, refused in the middle.
 
@@ -226,4 +243,4 @@ def _refuse(field: str, wrong: str, fix: str) -> str:
     )
 
 
-__all__ = ["FIELD_FORMAT_INVALID", "SuppliedFormat", "normalize"]
+__all__ = ["FIELD_FORMAT_INVALID", "SuppliedFormat", "choose", "normalize"]

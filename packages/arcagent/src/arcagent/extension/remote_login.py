@@ -62,6 +62,10 @@ REMOTE_LOGIN_NOT_STARTED = "REMOTE_LOGIN_NOT_STARTED"
 #: A step the binary itself refused, or that did not finish.
 REMOTE_LOGIN_FAILED = "REMOTE_LOGIN_FAILED"
 
+#: A sign-in that would proceed with a blank field its bundle warns about, not
+#: yet acknowledged by the operator.
+REMOTE_LOGIN_NEEDS_CONFIRMATION = "REMOTE_LOGIN_NEEDS_CONFIRMATION"
+
 #: The longest address accepted. A real callback is a few hundred characters; the
 #: bound is what stops a paste from becoming an unbounded argv value (LLM10).
 _MAX_REDIRECT_LENGTH = 2048
@@ -363,6 +367,7 @@ __all__ = [
     "REMOTE_LOGIN_BUSY",
     "REMOTE_LOGIN_FAILED",
     "REMOTE_LOGIN_INVALID",
+    "REMOTE_LOGIN_NEEDS_CONFIRMATION",
     "REMOTE_LOGIN_NOT_STARTED",
     "ConsentLink",
     "PendingLogin",
