@@ -170,9 +170,12 @@ the fact from recall.
 - **S3/MinIO:** provide vault-backed access key material, region and an HTTPS
   endpoint. Grant the credential read-only list/get access only to intended
   buckets; then select buckets or narrower prefixes.
-- **Gmail:** install the pinned `gog` binary and run `gog auth add` as a person on
-  the host. The OAuth refresh token stays in the platform keyring. Select the
-  mailbox or labels after granting the Google Workspace connection.
+- **Gmail:** install the pinned `gog` binary, then add one Google Workspace
+  connection per account and sign each in from its card (**Sign in → Open Google
+  sign-in → paste the address the browser lands on**). The OAuth refresh token
+  stays in `gog`'s keyring on the host. Select the mailbox or labels after
+  granting the connection. See [Google accounts](google-accounts.md), including
+  how to stop tokens expiring every week.
 - **Confluence, GitHub, Jira and Readwise Reader:** connect and grant the account
   on **Connections**, then use the per-agent **Configure & sync** action on that
   same card. Select the spaces, repositories, projects, library locations or
