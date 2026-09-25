@@ -54,9 +54,13 @@ class QueueJournal:
         *,
         history_limit: int = 1000,
         recovery_authority: QueueRecoveryAuthority | None = None,
+        tenant_scope: str | None = None,
     ) -> None:
         if history_limit < 1:
             raise ValueError("history_limit must be positive")
+        if tenant_scope is not None and not tenant_scope:
+            raise ValueError("queue tenant scope must be nonempty")
+        self._tenant_scope = tenant_scope
         self._path = path
         self._cipher = cipher
         self._anchor = anchor
@@ -68,6 +72,11 @@ class QueueJournal:
         self._initialize()
 
     requires_recovery_owner = True
+
+    @property
+    def tenant_scope(self) -> str | None:
+        """Return the trusted deployment tenant bound at construction."""
+        return self._tenant_scope
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -196,7 +205,7 @@ class QueueJournal:
                 raise QueueStateUnavailableError("queue anchor scope mismatch")
             if latest.digest != local:
                 self._recover_one(db, latest, local)
-            self._verify_all_leaves(db, latest.digest)
+            self._verify_all_leaves(db, latest.digest, self.tenant_scope)
         except QueueStateUnavailableError:
             self._broken = True
             raise
@@ -209,7 +218,7 @@ class QueueJournal:
         self._broken = False
 
     @staticmethod
-    def _verify_all_leaves(db: sqlite3.Connection, digest: str) -> None:
+    def _verify_all_leaves(db: sqlite3.Connection, digest: str, tenant_scope: str | None) -> None:
         rows = db.execute(
             "SELECT id, tenant_key, owner_key, state, version, updated, sealed FROM jobs"
         ).fetchall()
@@ -219,6 +228,10 @@ class QueueJournal:
         )
         if len(actual) != len(rows) or set(actual) != set(expected):
             raise ValueError("queue ID directory omits a job")
+        if tenant_scope is not None and any(
+            row[1] != queue_merkle.tenant_key(tenant_scope) for row in rows
+        ):
+            raise QueueStateUnavailableError("queue journal contains another tenant")
         for key in actual:
             node = db.execute(
                 "SELECT digest FROM queue_nodes WHERE prefix = ? AND kind = 'leaf'",
@@ -321,7 +334,7 @@ class QueueJournal:
             if head is None or head.scope != self._anchor.scope or head.digest != self._digest(db):
                 raise QueueStateUnavailableError("queue journal diverged from anchor")
             if verify_rows:
-                self._verify_all_leaves(db, head.digest)
+                self._verify_all_leaves(db, head.digest, self.tenant_scope)
             return head
         except (QueueStateUnavailableError, ValueError, TypeError, sqlite3.Error) as exc:
             self._broken = True
@@ -460,6 +473,8 @@ class QueueJournal:
         return job
 
     def _create(self, job: CallJob) -> None:
+        if self.tenant_scope is not None and job.tenant_id != self.tenant_scope:
+            raise ValueError("queue tenant is outside journal scope")
         row_id = _key(job.call_id)
         queue_merkle.sort_suffix(job.updated_at, row_id)
         with self._connect() as db:

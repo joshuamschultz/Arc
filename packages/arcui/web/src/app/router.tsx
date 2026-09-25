@@ -12,6 +12,7 @@ import { KnowledgePage } from '@/pages/knowledge'
 import { SharedKnowledgePage } from '@/pages/shared-knowledge'
 import { ArcLlmPage } from '@/pages/arcllm'
 import { ArcRunPage } from '@/pages/arcrun'
+import { QueuePage } from '@/pages/queue'
 import { AgentDetailPage } from '@/pages/agent-detail'
 import { MessagesPage } from '@/pages/messages'
 import { ApprovalsPage } from '@/pages/approvals'
@@ -47,6 +48,7 @@ export const router = createBrowserRouter([
       // Phase 4–6 — ArcLLM / ArcRun / agent detail.
       { path: 'arcllm', element: <ArcLlmPage /> },
       { path: 'arcrun', element: <ArcRunPage /> },
+      { path: 'queue', element: <QueuePage /> },
       { path: 'agents/:id', element: <AgentDetailPage /> },
       { path: 'agents/:id/:tab', element: <AgentDetailPage /> },
 

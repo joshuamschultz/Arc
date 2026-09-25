@@ -32,6 +32,8 @@ from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
 
 if TYPE_CHECKING:
+    import arcagent
+
     from arcgateway.adapters.base import BasePlatformAdapter
     from arcgateway.adapters.web import WebPlatformAdapter
     from arcgateway.config import GatewayConfig
@@ -140,6 +142,9 @@ def _resolve_agent_dir(
 def _make_agent_factory(
     team_root: Path,
     deliver_for: Callable[[str], Any] | None = None,
+    *,
+    queue_coordinator: arcagent.CallQueueCoordinator | None = None,
+    queue_tenant_id: str | None = None,
 ) -> Any:
     """Build an async agent_factory bound to ``team_root``.
 
@@ -171,6 +176,12 @@ def _make_agent_factory(
         if fleet is not None:
             existing = fleet.get(agent_did)
             if existing is not None:
+                if queue_coordinator is not None:
+                    if (
+                        existing.queue_coordinator is not queue_coordinator
+                        or existing.queue_tenant_id != queue_tenant_id
+                    ):
+                        raise RuntimeError("existing fleet agent queue ownership mismatch")
                 return existing
 
         # Lazy import — arcagent is optional at install time for this package.
@@ -198,6 +209,8 @@ def _make_agent_factory(
             config,
             config_path=config_path,
             fleet=ArcTeamFleet(),
+            queue_coordinator=queue_coordinator,
+            queue_tenant_id=queue_tenant_id,
         )
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
@@ -290,6 +303,8 @@ async def build_for_embedded(
     gateway_config: GatewayConfig,
     *,
     attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
+    queue_coordinator: arcagent.CallQueueCoordinator | None = None,
+    queue_tenant_id: str | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -311,6 +326,12 @@ async def build_for_embedded(
             "bootstrap: team_root %s does not exist — agent_factory will fail at runtime",
             team_root,
         )
+    if (queue_coordinator is None) != (queue_tenant_id is None):
+        raise ValueError("embedded queue coordinator and tenant must be paired")
+    if queue_coordinator is not None and queue_coordinator.tenant_scope != queue_tenant_id:
+        raise ValueError("embedded queue tenant scope mismatch")
+    if queue_coordinator is not None and gateway_config.gateway.tier == "federal":
+        raise RuntimeError("federal subprocess queue composition is unavailable")
 
     # COMP-008 / REQ-306: the broker is part of starting Arc, not of one CLI
     # verb. Every launch path composes through this function, so ensuring it
@@ -325,6 +346,8 @@ async def build_for_embedded(
             gateway_config,
             broker,
             attachment_scanner_factory=attachment_scanner_factory,
+            queue_coordinator=queue_coordinator,
+            queue_tenant_id=queue_tenant_id,
         )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
@@ -340,6 +363,8 @@ async def _compose_embedded(
     broker: BrokerHandle,
     *,
     attachment_scanner_factory: AttachmentScannerFactory | AttachmentScanner | None = None,
+    queue_coordinator: arcagent.CallQueueCoordinator | None = None,
+    queue_tenant_id: str | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -356,7 +381,12 @@ async def _compose_embedded(
 
         return make_channel_deliver_fn(router, agent_did)
 
-    agent_factory = _make_agent_factory(team_root, _deliver_for)
+    agent_factory = _make_agent_factory(
+        team_root,
+        _deliver_for,
+        queue_coordinator=queue_coordinator,
+        queue_tenant_id=queue_tenant_id,
+    )
     executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 
     # [security].require_pairing activates DM pairing enforcement. This is

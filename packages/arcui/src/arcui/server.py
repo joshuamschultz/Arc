@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import arcagent
 import arctrust
 from arcgateway import team_roster
 from arcgateway.approval_notifications import (
@@ -71,6 +72,7 @@ from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
 from arcui.routes import mcp as mcp_routes
 from arcui.routes import observe_run as observe_run_routes
+from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import stack as stack_routes
 from arcui.routes import stats as stats_routes
@@ -143,7 +145,24 @@ async def _ready(request: Request) -> JSONResponse:
             and getattr(state, "workflow_control_plane", None) is not None
         )
         components["workflow"] = "ready" if workflow_ready else "unavailable"
-    ready = store_ready and fleet_ready and workflow_ready
+    queue_ready = True
+    if getattr(state, "requires_queue", False):
+        queue = getattr(state, "queue_coordinator", None)
+        tenant = getattr(state, "queue_tenant_id", None)
+        queue_ready = bool(
+            queue is not None
+            and isinstance(tenant, str)
+            and tenant
+            and queue.tenant_scope == tenant
+            and getattr(queue.store, "tenant_scope", None) == tenant
+        )
+        if queue_ready and queue is not None:
+            try:
+                queue.control()
+            except Exception:
+                queue_ready = False
+        components["queue"] = "ready" if queue_ready else "unavailable"
+    ready = store_ready and fleet_ready and workflow_ready and queue_ready
     return JSONResponse(
         {"status": "ready" if ready else "degraded", "components": components},
         status_code=200 if ready else 503,
@@ -229,7 +248,8 @@ def create_app(
     operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
-    queue_coordinator: Any | None = None,
+    queue_coordinator: arcagent.CallQueueCoordinator | None = None,
+    queue_tenant_id: str | None = None,
     hosted: bool = False,
     hosted_claim: HostedClaimService | None = None,
     hosted_origin: str | None = None,
@@ -259,6 +279,8 @@ def create_app(
 
     Args:
         auth_config: Token/role configuration. Auto-generated if None.
+        queue_coordinator: Initialized coordinator shared with embedded agents.
+        queue_tenant_id: Trusted deployment tenant bound to that coordinator.
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
         max_agents: Maximum concurrent agent connections (default 100).
@@ -303,6 +325,10 @@ def create_app(
     Returns:
         Configured Starlette app, ready for uvicorn.
     """
+    if (queue_coordinator is None) != (queue_tenant_id is None):
+        raise ValueError("queue coordinator and trusted tenant must be paired")
+    if queue_coordinator is not None and queue_coordinator.tenant_scope != queue_tenant_id:
+        raise ValueError("queue coordinator tenant scope mismatch")
     auth = auth_config or AuthConfig()
 
     # TaskStore writer (SPEC-056 Phase D, FR-7): one configured backend shared
@@ -329,6 +355,7 @@ def create_app(
         *system_config_routes.routes,
         *stats_routes.routes,
         *observe_run_routes.routes,
+        *queue_routes.routes,
         *export_routes.routes,
         *cost_efficiency_routes.routes,
         *chat_ws_routes.routes,
@@ -504,6 +531,8 @@ def create_app(
                 team_root,
                 gateway_config,
                 attachment_scanner_factory=attachment_scanner_factory,
+                queue_coordinator=queue_coordinator,
+                queue_tenant_id=queue_tenant_id,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.workflow_runner_host = embedded_gateway.workflow_runner_host
@@ -648,10 +677,13 @@ def create_app(
                 executor = starlette_app.state.hosted_claim_executor
                 try:
                     async with asyncio.timeout(40):
-                        await asyncio.gather(*(
-                            asyncio.wrap_future(future)
-                            for future in tuple(starlette_app.state.hosted_claim_pending)
-                        ), return_exceptions=True)
+                        await asyncio.gather(
+                            *(
+                                asyncio.wrap_future(future)
+                                for future in tuple(starlette_app.state.hosted_claim_pending)
+                            ),
+                            return_exceptions=True,
+                        )
                 except TimeoutError:
                     logger.error("lifespan: hosted authority workers exceeded shutdown deadline")
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -693,14 +725,18 @@ def create_app(
     app.state.user_store_factory = user_store_factory
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
     app.state.queue_coordinator = queue_coordinator
+    app.state.queue_tenant_id = queue_tenant_id
+    app.state.requires_queue = hosted
     app.state.hosted = hosted
     app.state.hosted_claim = hosted_claim
     app.state.hosted_origin = hosted_origin
     app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
     app.state.hosted_claim_pending = set()
-    app.state.hosted_claim_executor = ThreadPoolExecutor(
-        max_workers=2, thread_name_prefix="arc-hosted-claim"
-    ) if hosted else None
+    app.state.hosted_claim_executor = (
+        ThreadPoolExecutor(max_workers=2, thread_name_prefix="arc-hosted-claim")
+        if hosted
+        else None
+    )
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
     app.state.observe = Observe(

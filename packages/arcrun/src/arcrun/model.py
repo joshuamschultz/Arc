@@ -147,6 +147,7 @@ def create_queue_journal(
     *,
     history_limit: int = 1000,
     recovery_authority: QueueRecoveryAuthority | None = None,
+    tenant_scope: str | None = None,
 ) -> CallQueueStore:
     """Open the optional encrypted queue store through the ArcRun facade."""
     return cast(
@@ -157,6 +158,7 @@ def create_queue_journal(
             anchor,
             history_limit=history_limit,
             recovery_authority=recovery_authority,
+            tenant_scope=tenant_scope,
         ),
     )
 

@@ -60,6 +60,27 @@ describe('configuration field help', () => {
       .toBe('settings.config_value')
   })
 
+  it('documents queue tenant scope, revisions, limits, and cancellation outcomes', () => {
+    expect(helpRoute('/queue')).toBe('queue')
+    const queue = content.queue
+    expect(queue.fields.map((field) => field.key)).toEqual([
+      'queue.jobs.state',
+      'queue.control.paused',
+      'queue.limits.max_concurrent',
+      'queue.limits.max_queued',
+      'queue.limits.wait_timeout',
+      'queue.limits.history_limit',
+      'queue.cancel.status',
+    ])
+    expect(queue.fields.find((field) => field.key === 'queue.jobs.state')?.description).toContain('authenticated tenant scope')
+    expect(queue.fields.find((field) => field.key === 'queue.control.paused')?.description).toContain('refresh controls')
+    expect(queue.fields.find((field) => field.key === 'queue.limits.max_concurrent')?.description).toContain('at least 1')
+    expect(queue.fields.find((field) => field.key === 'queue.limits.max_queued')?.description).toContain('Zero allows no waiting calls')
+    expect(queue.fields.find((field) => field.key === 'queue.limits.wait_timeout')?.description).toContain('seconds')
+    expect(queue.fields.find((field) => field.key === 'queue.limits.history_limit')?.description).toContain('Positive integer')
+    expect(queue.fields.find((field) => field.key === 'queue.cancel.status')?.description).toContain('does not undo external effects')
+  })
+
   it('documents the hosted first-account setup journey and safe claim recovery', () => {
     const setup = content.setup
     expect(setup.title).toBe('Create your account')

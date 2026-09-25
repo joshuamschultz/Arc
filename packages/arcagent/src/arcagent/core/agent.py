@@ -745,6 +745,16 @@ class ArcAgent:
         self._queue_coordinator = coordinator
         self._queue_tenant_id = tenant_id
 
+    @property
+    def queue_coordinator(self) -> arcrun.CallQueueCoordinator | None:
+        """Expose the attached shared queue for deployment composition checks."""
+        return self._queue_coordinator
+
+    @property
+    def queue_tenant_id(self) -> str | None:
+        """Expose the queue's tenant scope for deployment composition checks."""
+        return self._queue_tenant_id
+
     def _queue_run_context(
         self,
         session_id: str | None,

@@ -438,8 +438,18 @@ class CallQueueCoordinator:
     """
 
     def __init__(
-        self, *, store: CallQueueStore | None = None, limits: QueueLimits | None = None
+        self,
+        *,
+        store: CallQueueStore | None = None,
+        limits: QueueLimits | None = None,
+        tenant_scope: str | None = None,
     ) -> None:
+        if tenant_scope is not None and not tenant_scope:
+            raise ValueError("queue tenant scope must be nonempty")
+        if store is not None and getattr(store, "requires_recovery_owner", False):
+            if getattr(store, "tenant_scope", None) != tenant_scope:
+                raise ValueError("queue coordinator and journal tenant scope mismatch")
+        self._tenant_scope = tenant_scope
         self.limits = limits or QueueLimits()
         self.store = store or MemoryQueueStore(history_limit=self.limits.history_limit)
         self._pools: dict[str, _ProviderPool] = {}
@@ -465,6 +475,11 @@ class CallQueueCoordinator:
             yield
         finally:
             self._current_context.reset(token)
+
+    @property
+    def tenant_scope(self) -> str | None:
+        """Return the trusted deployment tenant bound at construction."""
+        return self._tenant_scope
 
     @property
     def current_context(self) -> CallQueueContext | None:
@@ -508,6 +523,8 @@ class CallQueueCoordinator:
             raise QueueStateUnavailableError("durable queue not initialized")
         if not context.tenant_id or not context.owner_id:
             raise ValueError("queue tenant and owner are required")
+        if self.tenant_scope is not None and context.tenant_id != self.tenant_scope:
+            raise ValueError("queue tenant is outside coordinator scope")
         now = time.time()
         job = CallJob(
             call_id=context.call_id or uuid.uuid4().hex,
@@ -760,6 +777,17 @@ class CallQueueCoordinator:
         if current is not None and current.state == "cancelled":
             return QueueCancellation("confirmed", current)
         return QueueCancellation("requested", current or changed)
+
+    async def cancel_scoped(
+        self, call_id: str, *, scope: QueueReadScope, expected_version: int
+    ) -> QueueCancellation:
+        """Cancel only a call in an already authorized tenant and owner scope."""
+        job = await self.store.get(call_id)
+        if job is None or job.tenant_id != scope.tenant_id:
+            return QueueCancellation("unavailable")
+        if scope.owner_id is not None and job.owner_id != scope.owner_id:
+            return QueueCancellation("unavailable")
+        return await self.cancel(call_id, owner_id=job.owner_id, expected_version=expected_version)
 
     async def pause(self, *, expected_revision: int) -> QueueControlSnapshot:
         """Stop new provider attempts and persist controller state."""

@@ -902,6 +902,67 @@
       }
     ]
   },
+  "queue": {
+    "title": "Model call queue",
+    "summary": "Review payload-free model-call status and manage provider admission for your authorized tenant.",
+    "steps": [
+      "Review call state and the current admission controls for your tenant. Queue rows show metadata only; prompts and provider payloads are not shown.",
+      "Pause admission or change limits only when you understand the effect on calls waiting for a provider slot. Existing provider calls may continue while admission is paused.",
+      "If a control change reports a revision conflict, refresh the queue controls, review the current values, then submit again only if the change is still intended.",
+      "After requesting cancellation, check the call state for confirmation. Cancellation cannot undo an external action that the provider or a tool already completed."
+    ],
+    "fields": [
+      {
+        "key": "queue.jobs.state",
+        "label": "Call state",
+        "description": "Shows payload-free call metadata within your authenticated tenant scope. States include queued, running, cancel requested, completed, failed, cancelled, timed out, and outcome unknown. A listed state does not expose prompts or prove that an external side effect was undone."
+      },
+      {
+        "key": "queue.control.paused",
+        "label": "Pause provider admission",
+        "description": "Stops new provider attempts from taking a queue slot; calls already running may continue, and waiting calls remain queued. The change uses a control revision. On a revision conflict, refresh controls and review the latest state before retrying."
+      },
+      {
+        "key": "queue.limits.max_concurrent",
+        "label": "Maximum concurrent calls",
+        "description": "Positive integer limit for active calls in each provider scope. The current code requires at least 1 and defines no upper bound; choose a value that the deployment and provider can support. A stale control revision requires refresh and review before retry."
+      },
+      {
+        "key": "queue.limits.max_queued",
+        "label": "Maximum waiting calls",
+        "description": "Non-negative integer limit for calls waiting for a provider slot in each provider scope. Zero allows no waiting calls, so excess calls are refused while capacity is busy. A stale control revision requires refresh and review before retry."
+      },
+      {
+        "key": "queue.limits.wait_timeout",
+        "label": "Provider-slot wait timeout",
+        "description": "Finite positive number of seconds a call may wait to obtain a provider slot before timing out. This bounds admission wait; the provider's execution timeout is separate. A stale control revision requires refresh and review before retry."
+      },
+      {
+        "key": "queue.limits.history_limit",
+        "label": "Queue history limit",
+        "description": "Positive integer maximum number of call records retained by the queue store. When space is needed, the store may evict oldest terminal records; active records are not discarded to meet the limit. A stale control revision requires refresh and review before retry."
+      },
+      {
+        "key": "queue.cancel.status",
+        "label": "Cancellation status",
+        "description": "Requested means cancellation was recorded but is not yet confirmed; confirmed means the call reached the cancelled terminal state. A version conflict means the row changed, so refresh its state before retrying. Cancelling a call does not undo external effects that already completed."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Queue data or controls are unavailable",
+        "action": "The queue service or authenticated tenant scope may be unavailable. Retry after checking service status; do not interpret missing rows as an empty queue."
+      },
+      {
+        "symptom": "A queue control reports a revision conflict",
+        "action": "Refresh the current control values, review them, and retry only if your intended change is still needed."
+      },
+      {
+        "symptom": "Cancellation is requested but not confirmed",
+        "action": "Refresh the call state and inspect Activity. A running provider operation may still finish, and cancellation cannot reverse effects that already occurred."
+      }
+    ]
+  },
   "arcllm": {
     "title": "Model usage",
     "summary": "Review recorded model request, token, latency, and cost summaries.",

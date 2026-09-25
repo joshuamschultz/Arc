@@ -11,11 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import arcagent
 import pytest
 
 from arcgateway.attachment_scanner import CleanScanner, ScanStatus
 from arcgateway.bootstrap import (
     EmbeddedGateway,
+    _make_agent_factory,
     build_for_embedded,
 )
 from arcgateway.config import GatewayConfig
@@ -63,6 +65,71 @@ async def test_build_for_embedded_no_platforms(empty_team_root: Path) -> None:
     assert bundle.web_adapter is None
     assert bundle.adapters == ()
     assert isinstance(bundle.executor, AsyncioExecutor)
+
+
+@pytest.mark.asyncio
+async def test_embedded_queue_scope_must_match_trusted_tenant(empty_team_root: Path) -> None:
+    queue = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
+    with pytest.raises(ValueError, match="queue tenant scope mismatch"):
+        await build_for_embedded(
+            empty_team_root, _config(""), queue_coordinator=queue, queue_tenant_id="tenant-b"
+        )
+
+
+@pytest.mark.asyncio
+async def test_federal_queue_refuses_unwired_subprocess_executor(empty_team_root: Path) -> None:
+    queue = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
+    with pytest.raises(RuntimeError, match="subprocess queue composition"):
+        await build_for_embedded(
+            empty_team_root,
+            _config('[gateway]\ntier = "federal"\n'),
+            queue_coordinator=queue,
+            queue_tenant_id="tenant-a",
+        )
+
+
+@pytest.mark.asyncio
+async def test_embedded_agent_factory_receives_same_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team_root = tmp_path / "team"
+    _write_agent_dir(team_root, "agent", "did:arc:tenant-a:agent/abc", "agent")
+    queue = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
+    seen: list[tuple[object, object]] = []
+
+    class FakeAgent:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            seen.append((kwargs["queue_coordinator"], kwargs["queue_tenant_id"]))
+
+        async def startup(self) -> None:
+            pass
+
+    monkeypatch.setattr(arcagent, "ArcAgent", FakeAgent)
+    monkeypatch.setattr("arcgateway.fleet.current_fleet", lambda: None)
+    factory = _make_agent_factory(team_root, queue_coordinator=queue, queue_tenant_id="tenant-a")
+    await factory("did:arc:tenant-a:agent/abc")
+    assert seen == [(queue, "tenant-a")]
+
+
+@pytest.mark.asyncio
+async def test_embedded_factory_refuses_reused_fleet_agent_with_different_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
+    other = arcagent.CallQueueCoordinator(tenant_scope="tenant-a")
+
+    class Existing:
+        queue_coordinator = other
+        queue_tenant_id = "tenant-a"
+
+    class Fleet:
+        def get(self, _did: str) -> Existing:
+            return Existing()
+
+    monkeypatch.setattr("arcgateway.fleet.current_fleet", Fleet)
+    factory = _make_agent_factory(tmp_path, queue_coordinator=queue, queue_tenant_id="tenant-a")
+    with pytest.raises(RuntimeError, match="queue ownership mismatch"):
+        await factory("did:arc:tenant-a:agent/abc")
 
 
 @pytest.mark.asyncio

@@ -108,6 +108,13 @@ def _ui_handler(args: list[str]) -> None:
     ui_handler(args)
 
 
+def _queue_handler(args: list[str]) -> None:
+    """Dispatch queue operator commands."""
+    from arccli.commands.queue import queue_handler
+
+    queue_handler(args)
+
+
 def _store_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.store import store_handler
@@ -651,6 +658,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Tools & Skills",
         args_hint="<subcommand>",
         handler=_ui_handler,
+    ),
+    CommandDef(
+        name="queue",
+        description="Inspect and control the live model-call queue",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_queue_handler,
     ),
     CommandDef(
         name="store",

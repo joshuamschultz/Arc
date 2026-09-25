@@ -191,6 +191,51 @@ async def test_stale_job_version_does_not_cancel_or_disclose_foreign_owner() -> 
 
 
 @pytest.mark.asyncio
+async def test_scoped_operator_cancel_never_mutates_foreign_tenant_or_owner() -> None:
+    coordinator = CallQueueCoordinator()
+    foreign = await coordinator.register(CallQueueContext("tenant-b", "owner-b", "foreign"))
+    own = await coordinator.register(CallQueueContext("tenant-a", "owner-a", "own"))
+    tenant_scope = QueueReadScope(tenant_id="tenant-a")
+    assert (
+        await coordinator.cancel_scoped(
+            foreign.call_id, scope=tenant_scope, expected_version=foreign.version
+        )
+    ).status == "unavailable"
+    assert (
+        await coordinator.cancel_scoped(
+            own.call_id,
+            scope=QueueReadScope(tenant_id="tenant-a", owner_id="owner-b"),
+            expected_version=own.version,
+        )
+    ).status == "unavailable"
+    assert (await coordinator.store.get(foreign.call_id)).state == "queued"
+    assert (await coordinator.store.get(own.call_id)).state == "queued"
+    assert (
+        await coordinator.cancel_scoped(own.call_id, scope=tenant_scope, expected_version=own.version)
+    ).status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_scoped_coordinator_rejects_foreign_admission() -> None:
+    coordinator = CallQueueCoordinator(tenant_scope="tenant-a")
+    with pytest.raises(ValueError, match="outside coordinator scope"):
+        await coordinator.register(CallQueueContext("tenant-b", "owner", "foreign"))
+    assert await coordinator.store.get("foreign") is None
+
+
+@pytest.mark.asyncio
+async def test_scoped_journal_refuses_authenticated_foreign_history(tmp_path: Path) -> None:
+    anchor = FakeAnchor()
+    path = tmp_path / "calls.sqlite"
+    journal = QueueJournal(path, RecordCipher(b"k" * 32), anchor)
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    await coordinator.register(CallQueueContext("tenant-b", "owner", "foreign"))
+    with pytest.raises(QueueStateUnavailableError, match="another tenant"):
+        QueueJournal(path, RecordCipher(b"k" * 32), anchor, tenant_scope="tenant-a")
+
+
+@pytest.mark.asyncio
 async def test_running_cancel_blocks_new_provider_attempt() -> None:
     coordinator = CallQueueCoordinator()
     entered = asyncio.Event()

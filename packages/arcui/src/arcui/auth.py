@@ -51,6 +51,8 @@ _UNAUTHENTICATED_PATHS = frozenset(
         "/api/setup/challenge",
         "/api/setup/grant",
         "/api/setup/claim",
+        "/api/setup/rekey-intent",
+        "/api/setup/rekey",
     }
 )
 
@@ -246,6 +248,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
+        request.state.account_did = None
 
         # Skip auth for non-API routes (static files, dashboard SPA, etc.)
         if not path.startswith("/api/"):
@@ -287,6 +290,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"error": "Session is no longer authorized"}, status_code=401)
             role = "operator" if user.is_operator else "viewer"
             self._auth.sessions.set_role(token, role)
+            request.state.account_did = user.did
 
         request.state.role = role
         # SPEC-019 T5.3: emit session_start at-most-once per (token, addr).
