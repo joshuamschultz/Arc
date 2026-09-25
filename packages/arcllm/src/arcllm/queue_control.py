@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, Protocol
 
+import arctrust
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass as validated_dataclass
 
@@ -104,6 +105,35 @@ class QueueMetadataPage:
 
 
 @dataclass(frozen=True, slots=True)
+class QueueRecoveryPage:
+    """A stable internal recovery snapshot page, fenced by current row versions."""
+
+    jobs: tuple[CallJob, ...]
+    next_cursor: str | None
+
+
+class QueueRecoveryAuthority(Protocol):
+    """Atomically check a signed, fresh, revocable fence and advance the queue root.
+
+    The broker binds proof to journal scope, tenant, owner epoch, and purpose;
+    expiry and revocation are checked in the same authoritative CAS transaction.
+    """
+
+    def compare_and_advance(
+        self,
+        expected: arctrust.AnchorHead,
+        digest: str,
+        intent: str,
+        proof: str,
+        *,
+        journal_scope: str,
+        tenant_id: str,
+        owner_epoch: str,
+        purpose: Literal["queue.recover"],
+    ) -> arctrust.AnchorHead: ...
+
+
+@dataclass(frozen=True, slots=True)
 class QueueControlSnapshot:
     """Versioned admission settings; live counts remain in snapshot()."""
 
@@ -145,6 +175,15 @@ class CallQueueStore(Protocol):
     async def metadata_page(
         self, scope: QueueReadScope, *, cursor: str | None, limit: int
     ) -> QueueMetadataPage: ...
+    async def recovery_page(self, *, cursor: str | None, limit: int) -> QueueRecoveryPage: ...
+    async def recovery_compare_and_set(
+        self,
+        job: CallJob,
+        state: QueueState,
+        *,
+        owned_epoch: str | None,
+        proof: str | None,
+    ) -> CallJob | None: ...
 
 
 class MemoryQueueStore:
@@ -155,6 +194,7 @@ class MemoryQueueStore:
         self._control: dict[str, Any] | None = None
         self._history_limit = history_limit
         self._page_cursors: dict[str, tuple[QueueReadScope, tuple[float, str]]] = {}
+        self._recovery_snapshots: dict[str, tuple[tuple[str, ...], int]] = {}
 
     async def create(self, job: CallJob) -> None:
         """Create one unique call."""
@@ -205,6 +245,21 @@ class MemoryQueueStore:
         )
         self._jobs[call_id] = new
         return new
+
+    async def recovery_compare_and_set(
+        self,
+        job: CallJob,
+        state: QueueState,
+        *,
+        owned_epoch: str | None,
+        proof: str | None,
+    ) -> CallJob | None:
+        """Apply a locally owned ephemeral recovery transition."""
+        if owned_epoch is not None and not (
+            job.owner_id == owned_epoch or job.owner_id.startswith(f"{owned_epoch}:")
+        ):
+            return None
+        return await self.compare_and_set(job.call_id, job.version, state, job.owner_id)
 
     async def list_jobs(
         self, *, tenant_id: str | None = None, offset: int = 0, limit: int = 100
@@ -271,6 +326,34 @@ class MemoryQueueStore:
             if len(self._page_cursors) > 1000:
                 self._page_cursors.pop(next(iter(self._page_cursors)))
         return QueueMetadataPage(tuple(matched), next_cursor)
+
+    async def recovery_page(self, *, cursor: str | None, limit: int) -> QueueRecoveryPage:
+        """Page a fixed set of IDs while reading each job's current version."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid queue recovery page")
+        if cursor is None:
+            self._recovery_snapshots.clear()
+            ids = tuple(
+                sorted(self._jobs, key=lambda value: hashlib.sha256(value.encode()).hexdigest())
+            )
+            position = 0
+        else:
+            saved = self._recovery_snapshots.get(cursor)
+            if saved is None:
+                raise ValueError("invalid queue recovery cursor")
+            ids, position = saved
+        page_ids = ids[position : position + limit]
+        next_position = position + len(page_ids)
+        next_cursor = None
+        if next_position < len(ids):
+            next_cursor = uuid.uuid4().hex
+            self._recovery_snapshots[next_cursor] = (ids, next_position)
+            if len(self._recovery_snapshots) > 2:
+                self._recovery_snapshots.pop(next(iter(self._recovery_snapshots)))
+        return QueueRecoveryPage(
+            tuple(self._jobs[job_id] for job_id in page_ids if job_id in self._jobs),
+            next_cursor,
+        )
 
 
 @dataclass(slots=True)
@@ -695,24 +778,38 @@ class CallQueueCoordinator:
             pool.grant_next(0 if self._paused else self.limits.max_concurrent)
         return self.control()
 
-    async def recover(self) -> int:
+    async def recover(
+        self, *, owned_epoch: str | None = None, recovery_proof: str | None = None
+    ) -> int:
         """Truthfully close orphan states; never issue a provider request."""
+        if getattr(self.store, "requires_recovery_owner", False) and (
+            owned_epoch is None or not owned_epoch or ":" in owned_epoch or len(owned_epoch) > 256
+        ):
+            raise ValueError("durable queue recovery requires a fenced owner epoch")
+        if getattr(self.store, "requires_recovery_owner", False) and not recovery_proof:
+            raise QueueStateUnavailableError("durable queue recovery authority unavailable")
         async with self._lifecycle_lock:
             if self._live:
                 raise RuntimeError("cannot recover queue with live calls")
-            return await self._recover_unlocked()
+            return await self._recover_unlocked(owned_epoch, recovery_proof)
 
-    async def _recover_unlocked(self) -> int:
+    async def _recover_unlocked(self, owned_epoch: str | None, recovery_proof: str | None) -> int:
         count = 0
-        offset = 0
+        cursor = None
         while True:
-            page = await self.store.list_jobs(offset=offset, limit=100)
-            if not page:
-                return count
-            for job in page:
+            page = await self.store.recovery_page(cursor=cursor, limit=100)
+            for job in page.jobs:
+                if owned_epoch is not None and not (
+                    job.owner_id == owned_epoch or job.owner_id.startswith(f"{owned_epoch}:")
+                ):
+                    continue
                 if job.state not in {"queued", "running", "cancel_requested"}:
                     continue
                 state: QueueState = "failed" if job.state == "queued" else "outcome_unknown"
-                if await self.store.compare_and_set(job.call_id, job.version, state, job.owner_id):
+                if await self.store.recovery_compare_and_set(
+                    job, state, owned_epoch=owned_epoch, proof=recovery_proof
+                ):
                     count += 1
-            offset += len(page)
+            if page.next_cursor is None:
+                return count
+            cursor = page.next_cursor

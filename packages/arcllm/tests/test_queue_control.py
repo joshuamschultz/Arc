@@ -1,16 +1,23 @@
 """Shared queue ownership and durable state regressions."""
 
 import asyncio
+import hashlib
+import json
+import math
 import os
 import sqlite3
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
 import pytest
-from arctrust import AnchorHead, AnchorUnavailableError, RecordCipher
+from arctrust import AnchorHead, AnchorUnavailableError, RecordCipher, verify_signature
+from nacl.signing import SigningKey
 
+from arcllm import queue_merkle
 from arcllm.exceptions import ArcLLMConfigError, QueueFullError, QueueStateUnavailableError
 from arcllm.modules.queue import QueueModule
 from arcllm.queue_control import (
@@ -20,10 +27,23 @@ from arcllm.queue_control import (
     MemoryQueueStore,
     QueueLimits,
     QueueReadScope,
+    QueueRecoveryPage,
     QueueState,
     _ProviderPool,
     _Waiter,
 )
+
+
+def test_optional_journal_absence_keeps_standalone_memory_queue_importable() -> None:
+    code = (
+        'import sys; sys.modules["arcllm.queue_journal"] = None; '
+        "import arcllm, arcrun, arcagent; "
+        "assert isinstance(arcllm.CallQueueCoordinator().store, arcllm.MemoryQueueStore)"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed interpreter and test-only literal code
+        [sys.executable, "-c", code], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
@@ -199,15 +219,170 @@ async def test_running_cancel_blocks_new_provider_attempt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_durable_scoped_metadata_page_refuses_unindexed_global_scan(tmp_path: Path) -> None:
+async def test_durable_scoped_metadata_page_is_tenant_bounded(tmp_path: Path) -> None:
     journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
     coordinator = CallQueueCoordinator(store=journal)
     await coordinator.initialize()
-    for index in range(21):
-        tenant = "wanted" if index == 0 else "other"
+    for index in range(41):
+        tenant = "wanted" if index < 3 else "other"
         await coordinator.register(CallQueueContext(tenant, "owner", f"call-{index}"))
-    with pytest.raises(QueueStateUnavailableError, match="durable scoped queue paging"):
+    with patch.object(journal, "_bound_job", wraps=journal._bound_job) as decoded:
+        first = await coordinator.metadata_page(QueueReadScope("wanted"), limit=2)
+    assert len(first.jobs) == 2 and first.next_cursor is not None
+    assert decoded.call_count <= 3
+    second = await coordinator.metadata_page(
+        QueueReadScope("wanted"), cursor=first.next_cursor, limit=2
+    )
+    assert len(second.jobs) == 1 and second.next_cursor is None
+    assert {job.call_id for job in (*first.jobs, *second.jobs)} == {
+        "call-0",
+        "call-1",
+        "call-2",
+    }
+    with pytest.raises(ValueError, match="cursor"):
+        await coordinator.metadata_page(QueueReadScope("other"), cursor=first.next_cursor, limit=2)
+
+
+@pytest.mark.asyncio
+async def test_durable_scoped_cursor_survives_restart_and_ignores_foreign_writes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "calls.sqlite"
+    cipher = RecordCipher(b"k" * 32)
+    anchor = FakeAnchor()
+    journal = QueueJournal(path, cipher, anchor)
+    first = CallQueueCoordinator(store=journal)
+    await first.initialize()
+    for index in range(3):
+        await first.register(CallQueueContext("wanted", "owner", f"visible-{index}"))
+    page = await first.metadata_page(QueueReadScope("wanted"), limit=1)
+    assert page.next_cursor is not None
+    await first.register(CallQueueContext("foreign", "owner", "foreign"))
+    restored = CallQueueCoordinator(store=QueueJournal(path, cipher, anchor))
+    await restored.initialize()
+    following = await restored.metadata_page(
+        QueueReadScope("wanted"), cursor=page.next_cursor, limit=2
+    )
+    assert len(following.jobs) == 2
+    assert page.jobs[0].call_id not in {job.call_id for job in following.jobs}
+
+
+@pytest.mark.asyncio
+async def test_durable_scoped_page_rejects_index_omission(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    journal = QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor())
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    await coordinator.register(CallQueueContext("wanted", "owner", "visible"))
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE jobs SET tenant_key = ?", ("0" * 64,))
+    with pytest.raises(QueueStateUnavailableError):
         await coordinator.metadata_page(QueueReadScope("wanted"), limit=2)
+
+
+@pytest.mark.asyncio
+async def test_durable_scoped_page_refuses_deleted_row_and_corrupt_proof(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    journal = QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor())
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    await coordinator.register(CallQueueContext("wanted", "owner", "visible"))
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM jobs")
+    with pytest.raises(QueueStateUnavailableError):
+        await coordinator.metadata_page(QueueReadScope("wanted"), limit=2)
+
+    separate = tmp_path / "separate.sqlite"
+    clean = QueueJournal(separate, RecordCipher(b"k" * 32), FakeAnchor())
+    valid = CallQueueCoordinator(store=clean)
+    await valid.initialize()
+    await valid.register(CallQueueContext("wanted", "owner", "visible"))
+    with sqlite3.connect(separate) as db:
+        db.execute("UPDATE queue_nodes SET digest = ? WHERE depth = 64", ("0" * 64,))
+    with pytest.raises(QueueStateUnavailableError):
+        await valid.metadata_page(QueueReadScope("wanted"), limit=2)
+
+
+@pytest.mark.asyncio
+async def test_durable_scoped_page_filters_owner_and_state_without_foreign_cursor(
+    tmp_path: Path,
+) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    one = await coordinator.register(CallQueueContext("tenant", "owner-a", "one"))
+    await coordinator.register(CallQueueContext("tenant", "owner-b", "two"))
+    await coordinator.register(CallQueueContext("tenant", "owner-a", "three"))
+    await journal.compare_and_set(one.call_id, one.version, "completed", "owner-a")
+    page = await coordinator.metadata_page(QueueReadScope("tenant", "owner-a", "queued"), limit=1)
+    assert [job.call_id for job in page.jobs] == ["three"]
+    assert page.next_cursor is None
+    completed = await coordinator.metadata_page(
+        QueueReadScope("tenant", "owner-a", "completed"), limit=1
+    )
+    assert [job.call_id for job in completed.jobs] == ["one"]
+
+
+def test_journal_refuses_old_format_without_rewriting_it(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE jobs (id TEXT PRIMARY KEY, version INTEGER, updated REAL, sealed TEXT)"
+        )
+    path.chmod(0o600)
+    with pytest.raises(QueueStateUnavailableError, match="format"):
+        QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor())
+    with sqlite3.connect(path) as db:
+        assert [row[1] for row in db.execute("PRAGMA table_info(jobs)")] == [
+            "id",
+            "version",
+            "updated",
+            "sealed",
+        ]
+        assert {
+            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        } == {"jobs"}
+
+
+@pytest.mark.parametrize("value", [-1.0, math.nan, math.inf, -math.inf])
+def test_queue_index_rejects_invalid_timestamp(value: float) -> None:
+    with pytest.raises(ValueError, match="timestamp"):
+        queue_merkle.sort_suffix(value, "0" * 64)
+
+
+def test_recovery_page_contract_is_public_through_adjacent_facade() -> None:
+    import arcllm
+
+    assert arcllm.QueueRecoveryPage is QueueRecoveryPage
+
+
+@pytest.mark.asyncio
+async def test_durable_page_proof_cost_is_page_bounded_with_large_tenant(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    journal = QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor(), history_limit=200)
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    for index in range(150):
+        await coordinator.register(CallQueueContext("tenant", "owner", f"call-{index}"))
+    queries: list[str] = []
+    with sqlite3.connect(path) as db:
+        db.set_trace_callback(queries.append)
+        scope = queue_merkle.scope_key(queue_merkle.tenant_key("tenant"), None, None)
+        first = queue_merkle.page_keys(
+            db, scope, journal._anchor.latest().digest, after=None, limit=2
+        )
+        assert len(first) == 2
+        assert [queue_merkle.row_for_key(db, key)[0] for key in first]
+    assert len(queries) < 400
+    assert not any(
+        "SELECT id, tenant_key" in query and "FROM jobs WHERE id" not in query for query in queries
+    )
+    page = await coordinator.metadata_page(QueueReadScope("tenant"), limit=100)
+    assert len(page.jobs) == 100 and page.next_cursor is not None
+    following = await coordinator.metadata_page(
+        QueueReadScope("tenant"), cursor=page.next_cursor, limit=100
+    )
+    assert len(following.jobs) == 50 and following.next_cursor is None
 
 
 @pytest.mark.asyncio
@@ -291,6 +466,69 @@ class FakeAnchor:
         return self.head
 
 
+class FakeRecoveryAuthority:
+    """Test broker that checks a signed lease in the same queue-root CAS."""
+
+    def __init__(self, anchor: FakeAnchor) -> None:
+        self.anchor = anchor
+        self.signer = SigningKey.generate()
+        self.revoked = False
+        self.expired = False
+
+    def issue(self, tenant_id: str, owner_epoch: str, *, scope: str | None = None) -> str:
+        body = json.dumps(
+            [scope or self.anchor.scope, tenant_id, owner_epoch, "queue.recover"],
+            separators=(",", ":"),
+        ).encode()
+        return f"{body.hex()}.{self.signer.sign(body).signature.hex()}"
+
+    def compare_and_advance(
+        self,
+        expected: AnchorHead,
+        digest: str,
+        intent: str,
+        proof: str,
+        *,
+        journal_scope: str,
+        tenant_id: str,
+        owner_epoch: str,
+        purpose: str,
+    ) -> AnchorHead:
+        try:
+            body_hex, signature_hex = proof.split(".", 1)
+            body = bytes.fromhex(body_hex)
+            signature = bytes.fromhex(signature_hex)
+            fields = json.loads(body)
+        except (ValueError, TypeError) as exc:
+            raise AnchorUnavailableError("invalid recovery proof") from exc
+        if (
+            self.revoked
+            or self.expired
+            or fields != [journal_scope, tenant_id, owner_epoch, purpose]
+            or journal_scope != self.anchor.scope
+            or not verify_signature("ed25519", body, signature, bytes(self.signer.verify_key))
+        ):
+            raise AnchorUnavailableError("recovery proof expired, revoked, or wrong scope")
+        return self.anchor.compare_and_advance(expected, digest, intent)
+
+
+class LostResponseAnchor(FakeAnchor):
+    """Advance durable authority, then lose the caller's response once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lose_next = False
+
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
+        head = super().compare_and_advance(expected, digest, intent)
+        if self.lose_next:
+            self.lose_next = False
+            raise AnchorUnavailableError("anchor response lost")
+        return head
+
+
 @pytest.mark.asyncio
 async def test_provider_capacity_is_shared_and_tenant_fair() -> None:
     coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=1, max_queued=4))
@@ -332,21 +570,30 @@ async def test_journal_is_encrypted_and_recovery_marks_uncertain(tmp_path: Path)
             row = await journal.get("call-1")
             assert row is not None and row.state == "running"
             raw = (tmp_path / "calls.sqlite").read_bytes()
-            assert b"tenant" not in raw and b"provider:primary" not in raw
+            assert b'"tenant"' not in raw and b"provider:primary" not in raw
     row = await journal.get("call-1")
     assert row is not None and row.state == "completed"
 
 
 @pytest.mark.asyncio
 async def test_recovery_never_replays_or_accepts_stale_owner(tmp_path: Path) -> None:
-    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    anchor = FakeAnchor()
+    authority = FakeRecoveryAuthority(anchor)
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite",
+        RecordCipher(b"k" * 32),
+        anchor,
+        recovery_authority=authority,
+    )
     coordinator = CallQueueCoordinator(store=journal)
     await coordinator.initialize()
     context = CallQueueContext(tenant_id="tenant", owner_id="run", call_id="call-2")
     job = await coordinator.register(context)
     started = await journal.compare_and_set(job.call_id, job.version, "running", "run")
     assert started is not None
-    recovered = await CallQueueCoordinator(store=journal).recover()
+    recovered = await CallQueueCoordinator(store=journal).recover(
+        owned_epoch="run", recovery_proof=authority.issue("tenant", "run")
+    )
     assert recovered == 1
     row = await journal.get(job.call_id)
     assert row is not None and row.state == "outcome_unknown"
@@ -354,8 +601,55 @@ async def test_recovery_never_replays_or_accepts_stale_owner(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_durable_recovery_rejects_forged_foreign_expired_and_revoked_fence(
+    tmp_path: Path,
+) -> None:
+    anchor = FakeAnchor()
+    authority = FakeRecoveryAuthority(anchor)
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite",
+        RecordCipher(b"k" * 32),
+        anchor,
+        recovery_authority=authority,
+    )
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    job = await coordinator.register(CallQueueContext("tenant", "epoch", "call"))
+    invalid = [
+        "forged",
+        authority.issue("foreign", "epoch"),
+        authority.issue("tenant", "other-epoch"),
+        authority.issue("tenant", "epoch", scope="other/journal"),
+    ]
+    for proof in invalid:
+        with pytest.raises(QueueStateUnavailableError):
+            await journal.recovery_compare_and_set(job, "failed", owned_epoch="epoch", proof=proof)
+        assert (await journal.get("call")).state == "queued"
+    valid = authority.issue("tenant", "epoch")
+    authority.expired = True
+    with pytest.raises(QueueStateUnavailableError):
+        await journal.recovery_compare_and_set(job, "failed", owned_epoch="epoch", proof=valid)
+    authority.expired = False
+    authority.revoked = True
+    with pytest.raises(QueueStateUnavailableError):
+        await journal.recovery_compare_and_set(job, "failed", owned_epoch="epoch", proof=valid)
+    authority.revoked = False
+    assert (
+        await journal.recovery_compare_and_set(job, "failed", owned_epoch="epoch", proof=valid)
+        is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_recovery_marks_orphaned_cancel_request_unknown(tmp_path: Path) -> None:
-    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    anchor = FakeAnchor()
+    authority = FakeRecoveryAuthority(anchor)
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite",
+        RecordCipher(b"k" * 32),
+        anchor,
+        recovery_authority=authority,
+    )
     owner = CallQueueCoordinator(store=journal)
     await owner.initialize()
     job = await owner.register(CallQueueContext("tenant", "run", "orphan-cancel"))
@@ -365,7 +659,12 @@ async def test_recovery_marks_orphaned_cancel_request_unknown(tmp_path: Path) ->
         job.call_id, running.version, "cancel_requested", "run"
     )
     assert cancelled is not None
-    assert await CallQueueCoordinator(store=journal).recover() == 1
+    assert (
+        await CallQueueCoordinator(store=journal).recover(
+            owned_epoch="run", recovery_proof=authority.issue("tenant", "run")
+        )
+        == 1
+    )
     final = await journal.get(job.call_id)
     assert final is not None and final.state == "outcome_unknown"
 
@@ -791,11 +1090,13 @@ async def test_journal_rejects_ciphertext_transplant_and_version_tamper(tmp_path
     with sqlite3.connect(tmp_path / "calls.sqlite") as db:
         rows = db.execute("SELECT id, sealed FROM jobs ORDER BY id").fetchall()
         db.execute("UPDATE jobs SET sealed = ? WHERE id = ?", (rows[0][1], rows[1][0]))
-    with pytest.raises(QueueStateUnavailableError, match="rollback"):
+    with pytest.raises(QueueStateUnavailableError, match="proof unavailable"):
         await journal.list_jobs()
     with sqlite3.connect(tmp_path / "calls.sqlite") as db:
         transplanted = db.execute(
-            "SELECT id, version, updated, sealed FROM jobs WHERE id = ?", (rows[1][0],)
+            "SELECT id, tenant_key, owner_key, state, version, updated, sealed "
+            "FROM jobs WHERE id = ?",
+            (rows[1][0],),
         ).fetchone()
     with pytest.raises(ValueError, match="binding"):
         journal._bound_job(transplanted)
@@ -803,7 +1104,9 @@ async def test_journal_rejects_ciphertext_transplant_and_version_tamper(tmp_path
         db.execute("UPDATE jobs SET version = 99 WHERE id = ?", (rows[0][0],))
     with sqlite3.connect(tmp_path / "calls.sqlite") as db:
         version_tampered = db.execute(
-            "SELECT id, version, updated, sealed FROM jobs WHERE id = ?", (rows[0][0],)
+            "SELECT id, tenant_key, owner_key, state, version, updated, sealed "
+            "FROM jobs WHERE id = ?",
+            (rows[0][0],),
         ).fetchone()
     with pytest.raises(ValueError, match="binding"):
         journal._bound_job(version_tampered)
@@ -862,9 +1165,11 @@ async def test_crash_after_anchor_advance_replays_only_verified_intent(
     def crash_after_anchor(
         db: sqlite3.Connection,
         previous: AnchorHead,
-        before: tuple[dict[str, tuple[int, float, str]], str | None],
+        before: tuple[dict[str, tuple[str, str, str, int, float, str]], str | None],
+        after: tuple[dict[str, tuple[str, str, str, int, float, str]], str | None],
     ) -> None:
-        intent = journal._intent(before, journal._snapshot(db))
+        intent = journal._intent(before, after)
+        journal._update_indexes(db, before, after)
         anchor.compare_and_advance(previous, journal._digest(db), intent)
         raise RuntimeError("simulated process death before SQLite commit")
 
@@ -873,11 +1178,270 @@ async def test_crash_after_anchor_advance_replays_only_verified_intent(
     await crashing.initialize()
     with pytest.raises(RuntimeError, match="simulated process death"):
         await crashing.register(CallQueueContext("tenant", "owner", "crashed-call"))
-    recovered = QueueJournal(path, cipher, anchor)
+    authority = FakeRecoveryAuthority(anchor)
+    recovered = QueueJournal(path, cipher, anchor, recovery_authority=authority)
     row = await recovered.get("crashed-call")
     assert row is not None and row.state == "queued"
-    assert await CallQueueCoordinator(store=recovered).recover() == 1
+    assert (
+        await CallQueueCoordinator(store=recovered).recover(
+            owned_epoch="owner", recovery_proof=authority.issue("tenant", "owner")
+        )
+        == 1
+    )
     assert (await recovered.get("crashed-call")).state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_lost_anchor_response_recovers_create_and_eviction(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    cipher = RecordCipher(b"k" * 32)
+    anchor = LostResponseAnchor()
+    journal = QueueJournal(path, cipher, anchor, history_limit=2)
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    first = await coordinator.register(CallQueueContext("tenant", "owner", "first"))
+    await journal.compare_and_set(first.call_id, first.version, "completed", "owner")
+    await coordinator.register(CallQueueContext("tenant", "owner", "second"))
+    anchor.lose_next = True
+    with pytest.raises(QueueStateUnavailableError):
+        await coordinator.register(CallQueueContext("tenant", "owner", "third"))
+    restored = QueueJournal(path, cipher, anchor, history_limit=2)
+    assert await restored.get("first") is None
+    assert {job.call_id for job in await restored.list_jobs()} == {"second", "third"}
+
+
+@pytest.mark.asyncio
+async def test_lost_anchor_response_recovers_state_and_control(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    cipher = RecordCipher(b"k" * 32)
+    anchor = LostResponseAnchor()
+    journal = QueueJournal(path, cipher, anchor)
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    job = await coordinator.register(CallQueueContext("tenant", "owner", "call"))
+    anchor.lose_next = True
+    with pytest.raises(QueueStateUnavailableError):
+        await journal.compare_and_set(job.call_id, job.version, "running", "owner")
+    recovered = QueueJournal(path, cipher, anchor)
+    assert (await recovered.get("call")).state == "running"
+    anchor.lose_next = True
+    with pytest.raises(QueueStateUnavailableError):
+        await recovered.save_control({"paused": True}, expected_revision=0)
+    final = QueueJournal(path, cipher, anchor)
+    assert (await final.load_control()) == {"paused": True, "revision": 1}
+
+
+@pytest.mark.asyncio
+async def test_recovery_snapshot_fences_epoch_and_excludes_new_jobs(tmp_path: Path) -> None:
+    anchor = FakeAnchor()
+    authority = FakeRecoveryAuthority(anchor)
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite",
+        RecordCipher(b"k" * 32),
+        anchor,
+        history_limit=200,
+        recovery_authority=authority,
+    )
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    for index in range(120):
+        owner = "epoch" if index % 2 == 0 else "epoch-other"
+        await journal.create(
+            CallJob(
+                call_id=f"job-{index}",
+                tenant_id="tenant",
+                owner_id=owner,
+                agent_id=None,
+                session_id=None,
+                run_id=None,
+                state="queued",
+                version=0,
+                created_at=float(1000 + index),
+                updated_at=float(2000 + (119 - index)),
+            )
+        )
+    original_page = journal.recovery_page
+    inserted = False
+
+    async def page_with_new_job(*, cursor: str | None, limit: int) -> object:
+        nonlocal inserted
+        page = await original_page(cursor=cursor, limit=limit)
+        if not inserted:
+            inserted = True
+            await journal.create(
+                CallJob(
+                    call_id="new-after-snapshot",
+                    tenant_id="tenant",
+                    owner_id="epoch",
+                    agent_id=None,
+                    session_id=None,
+                    run_id=None,
+                    state="queued",
+                    version=0,
+                    created_at=9000.0,
+                    updated_at=9000.0,
+                )
+            )
+        return page
+
+    with patch.object(journal, "recovery_page", side_effect=page_with_new_job):
+        assert (
+            await coordinator.recover(
+                owned_epoch="epoch", recovery_proof=authority.issue("tenant", "epoch")
+            )
+            == 60
+        )
+    assert (await journal.get("new-after-snapshot")).state == "queued"
+    for index in range(120):
+        row = await journal.get(f"job-{index}")
+        assert row is not None
+        assert row.state == ("failed" if index % 2 == 0 else "queued")
+    with pytest.raises(ValueError, match="fenced owner epoch"):
+        await coordinator.recover()
+    with pytest.raises(ValueError, match="fenced owner epoch"):
+        await coordinator.recover(owned_epoch="")
+    with pytest.raises(ValueError, match="fenced owner epoch"):
+        await coordinator.recover(owned_epoch="epoch:")
+
+
+@pytest.mark.asyncio
+async def test_recovery_page_refuses_corrupted_remaining_job(tmp_path: Path) -> None:
+    path = tmp_path / "calls.sqlite"
+    journal = QueueJournal(path, RecordCipher(b"k" * 32), FakeAnchor())
+    await journal.create(
+        CallJob(
+            call_id="a",
+            tenant_id="tenant",
+            owner_id="epoch",
+            agent_id=None,
+            session_id=None,
+            run_id=None,
+            state="queued",
+            version=0,
+            created_at=1.0,
+            updated_at=1.0,
+        )
+    )
+    await journal.create(
+        CallJob(
+            call_id="b",
+            tenant_id="tenant",
+            owner_id="epoch",
+            agent_id=None,
+            session_id=None,
+            run_id=None,
+            state="queued",
+            version=0,
+            created_at=2.0,
+            updated_at=2.0,
+        )
+    )
+    first = await journal.recovery_page(cursor=None, limit=1)
+    assert first.next_cursor is not None
+    remaining = ({"a", "b"} - {first.jobs[0].call_id}).pop()
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE jobs SET sealed = ? WHERE id = ?",
+            (
+                "corrupt",
+                hashlib.sha256(remaining.encode()).hexdigest(),
+            ),
+        )
+    with pytest.raises(QueueStateUnavailableError):
+        await journal.recovery_page(cursor=first.next_cursor, limit=1)
+
+
+@pytest.mark.asyncio
+async def test_recovery_page_allows_only_proven_terminal_retention(tmp_path: Path) -> None:
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor(), history_limit=2
+    )
+    first_id, terminal_id = sorted(
+        ("first", "terminal"), key=lambda value: hashlib.sha256(value.encode()).hexdigest()
+    )
+    for index, call_id in enumerate((first_id, terminal_id)):
+        await journal.create(
+            CallJob(
+                call_id=call_id,
+                tenant_id="tenant",
+                owner_id="epoch",
+                agent_id=None,
+                session_id=None,
+                run_id=None,
+                state="queued",
+                version=0,
+                created_at=float(index + 1),
+                updated_at=float(index + 1),
+            )
+        )
+    await journal.compare_and_set(terminal_id, 0, "completed", "epoch")
+    first = await journal.recovery_page(cursor=None, limit=1)
+    assert first.jobs[0].call_id == first_id and first.next_cursor is not None
+    await journal.create(
+        CallJob(
+            call_id="new",
+            tenant_id="tenant",
+            owner_id="epoch",
+            agent_id=None,
+            session_id=None,
+            run_id=None,
+            state="queued",
+            version=0,
+            created_at=3.0,
+            updated_at=3.0,
+        )
+    )
+    second = await journal.recovery_page(cursor=first.next_cursor, limit=1)
+    assert second.jobs == () and second.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_cas_race_keeps_known_completion(tmp_path: Path) -> None:
+    anchor = FakeAnchor()
+    authority = FakeRecoveryAuthority(anchor)
+    journal = QueueJournal(
+        tmp_path / "calls.sqlite",
+        RecordCipher(b"k" * 32),
+        anchor,
+        recovery_authority=authority,
+    )
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    await coordinator.register(CallQueueContext("tenant", "epoch", "call"))
+    original = journal.recovery_compare_and_set
+    raced = False
+
+    async def concurrent_completion(*args: object, **kwargs: object) -> CallJob | None:
+        nonlocal raced
+        if not raced:
+            raced = True
+            await journal.compare_and_set("call", 0, "completed", "epoch")
+        return await original(*args, **kwargs)
+
+    with patch.object(journal, "recovery_compare_and_set", side_effect=concurrent_completion):
+        assert (
+            await coordinator.recover(
+                owned_epoch="epoch", recovery_proof=authority.issue("tenant", "epoch")
+            )
+            == 0
+        )
+    assert (await journal.get("call")).state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_durable_cursor_refuses_changed_scope_after_state_transition(tmp_path: Path) -> None:
+    journal = QueueJournal(tmp_path / "calls.sqlite", RecordCipher(b"k" * 32), FakeAnchor())
+    coordinator = CallQueueCoordinator(store=journal)
+    await coordinator.initialize()
+    for index in range(3):
+        await coordinator.register(CallQueueContext("tenant", "owner", f"call-{index}"))
+    first = await coordinator.metadata_page(QueueReadScope("tenant"), limit=1)
+    assert first.next_cursor is not None
+    await journal.compare_and_set("call-0", 0, "completed", "owner")
+    with pytest.raises(ValueError, match="stale queue cursor"):
+        await coordinator.metadata_page(
+            QueueReadScope("tenant"), cursor=first.next_cursor, limit=1
+        )
 
 
 @pytest.mark.asyncio

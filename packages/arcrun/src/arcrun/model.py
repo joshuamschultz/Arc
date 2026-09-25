@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeAlias, cast
 
 import arcllm
-from arctrust import MonotonicAnchor, RecordCipher
+import arctrust
 
 ContentBlock = arcllm.ContentBlock
 Delta = arcllm.Delta
@@ -42,6 +42,8 @@ QueueLimits = arcllm.QueueLimits
 QueueCancellation = arcllm.QueueCancellation
 QueueControlSnapshot = arcllm.QueueControlSnapshot
 QueueMetadataPage = arcllm.QueueMetadataPage
+QueueRecoveryPage = arcllm.QueueRecoveryPage
+QueueRecoveryAuthority: TypeAlias = arcllm.QueueRecoveryAuthority
 QueueReadScope = arcllm.QueueReadScope
 
 Model: TypeAlias = arcllm.LLMProvider
@@ -140,14 +142,22 @@ def load_model(
 
 def create_queue_journal(
     path: Path,
-    cipher: RecordCipher,
-    anchor: MonotonicAnchor,
+    cipher: arctrust.RecordCipher,
+    anchor: arctrust.MonotonicAnchor,
     *,
     history_limit: int = 1000,
+    recovery_authority: QueueRecoveryAuthority | None = None,
 ) -> CallQueueStore:
     """Open the optional encrypted queue store through the ArcRun facade."""
     return cast(
-        CallQueueStore, arcllm.QueueJournal(path, cipher, anchor, history_limit=history_limit)
+        CallQueueStore,
+        arcllm.QueueJournal(
+            path,
+            cipher,
+            anchor,
+            history_limit=history_limit,
+            recovery_authority=recovery_authority,
+        ),
     )
 
 
