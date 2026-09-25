@@ -175,3 +175,77 @@ async def test_terminal_failure_surfaces_needs_attention_health() -> None:
         "a terminal AUTH_REQUIRED failure was not surfaced as needs_attention health; "
         f"the source's surfaced status was {final.status!r} (detail={final.detail!r})"
     )
+
+
+class _RevokedThenRestoredSource(_AuthRevokedSource):
+    """Revoked on the first sync; the operator re-signs in OUTSIDE Arc before the next.
+
+    The shape of a Google account reconnected through ``gog``: the credential lives
+    in the binary's own keyring, so nothing in Arc changes when it comes back and
+    no operator action in Arc ever clears the latch.
+    """
+
+    async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        self.sync_attempts += 1
+        if self.sync_attempts == 1:
+            raise SourceError(
+                SourceFailureCode.AUTH_REQUIRED,
+                'oauth2: "invalid_grant" "Token has been expired or revoked."',
+            )
+        return SyncSourcePage(objects=(), next_checkpoint="c1")
+
+
+@pytest.mark.asyncio
+async def test_a_dead_credential_is_rechecked_and_resumes_once_it_works_again() -> None:
+    """Backed off is not latched forever: a slow recheck finds the restored credential."""
+    catalog = SourceCatalog()
+    source = _RevokedThenRestoredSource()
+    await catalog.register("mail", source)
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: _ApprovedIngest(),
+        limits=SyncLimits(),
+        global_concurrency=1,
+        interval_seconds=0.01,
+        terminal_recheck_seconds=0.05,
+    )
+    await service.start()
+
+    async def recovered() -> bool:
+        statuses = await service.list_sources()
+        return (
+            source.sync_attempts >= 2
+            and bool(statuses)
+            and statuses[0].status != ("needs_attention")
+        )
+
+    reached = False
+    for _ in range(100):
+        if await recovered():
+            reached = True
+            break
+        await asyncio.sleep(0.01)
+    final = (await service.list_sources())[0]
+    await service.close()
+
+    assert reached, (
+        "a credential restored outside Arc was never rechecked — the source stayed "
+        f"latched ({source.sync_attempts} attempt(s), status {final.status!r})"
+    )
+
+
+def test_a_recheck_that_fails_again_backs_off_again_without_a_second_notice() -> None:
+    from arcagent.modules.connected_data.health import ConnectionHealthTracker
+
+    now = [0.0]
+    tracker = ConnectionHealthTracker(recheck_after=60.0, clock=lambda: now[0])
+    assert tracker.note_terminal_failure("mail") is True
+    assert tracker.is_backed_off("mail")
+    now[0] = 61.0
+    assert not tracker.is_backed_off("mail"), "the recheck window passed"
+    assert tracker.note_terminal_failure("mail") is False, "one notice per outage"
+    assert tracker.is_backed_off("mail")
+    tracker.clear("mail")
+    assert not tracker.is_backed_off("mail")
