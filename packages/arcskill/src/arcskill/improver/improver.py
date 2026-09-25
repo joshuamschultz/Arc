@@ -221,6 +221,8 @@ class ArcSkillImprover:
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        run_id: str | None = None,
+        call_id: str | None = None,
         args: dict[str, Any] | None = None,
         llm_trace_id: str | None = None,
     ) -> None:
@@ -233,10 +235,17 @@ class ArcSkillImprover:
             error_type=error_type,
             args=args,
             llm_trace_id=llm_trace_id,
+            session_id=session_id,
+            run_id=run_id,
+            call_id=call_id,
         )
 
-    async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
-        self._store.close_turn(outcome=outcome)
+    async def on_turn_end(
+        self, *, turn: int, outcome: str, session_id: str | None = None, run_id: str | None = None
+    ) -> None:
+        self._store.close_turn(
+            outcome=outcome, session_id=session_id, run_id=run_id, turn_number=turn
+        )
 
     async def maybe_improve(self, *, insight: str = "", session_id: str | None = None) -> None:
         """Spawn a bounded background optimization for every over-threshold skill."""

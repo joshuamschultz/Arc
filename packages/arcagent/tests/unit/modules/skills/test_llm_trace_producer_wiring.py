@@ -29,7 +29,12 @@ _SECRET_BODY = "Acme owes $42 for invoice #7."
 
 
 class _Ctx:
+    _next_call_id = 0
+
     def __init__(self, **data: Any) -> None:
+        if "tool" in data and "call_id" not in data:
+            type(self)._next_call_id += 1
+            data["call_id"] = f"test-call-{self._next_call_id}"
         self.data = data
         self.is_vetoed = False
 
@@ -160,7 +165,7 @@ async def test_trace_id_is_turn_scoped_and_cleared(tmp_path: Path) -> None:
     _bind_real_improver(ws, skill_md)
 
     await skills_llm_call_complete(_Ctx(trace_id="abc123"))
-    assert _runtime.state().current_llm_trace_id == "abc123"
+    assert _runtime.state().turn("", "").llm_trace_id == "abc123"
 
     await skills_post_plan(_Ctx(task_outcome="success", turn_number=0, messages=[]))
-    assert _runtime.state().current_llm_trace_id is None
+    assert ("", "") not in _runtime.state().turns

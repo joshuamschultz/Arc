@@ -93,6 +93,16 @@ async def _run_turn(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class TestToolActivityBuffer:
+    def test_persisted_activity_redacts_credentials_and_keeps_safe_context(self) -> None:
+        activity = ToolActivity()
+        activity.record_call("http", {"query": "safe-query", "password": "hunter2"})
+        activity.record_result("http", "Authorization: Bearer abcdefghijklmnopqrstuvwxyz")
+        persisted = str(activity.to_json())
+        assert "safe-query" in persisted
+        assert "hunter2" not in persisted
+        assert "abcdefghijklmnopqrstuvwxyz" not in persisted
+        assert "[redacted]" in persisted
+
     def test_pairs_call_with_its_result(self) -> None:
         activity = ToolActivity()
         activity.record_call("web_search", {"query": "arc"})

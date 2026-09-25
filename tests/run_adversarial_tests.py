@@ -89,7 +89,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcrun/tests/security/test_resource_exhaustion.py",
         "packages/arcrun/tests/security/test_spawn_depth_bomb.py",
         "packages/arcgateway/tests/unit/test_workflow_runner_host.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_escalation.py",
+        "packages/arctrust/tests/test_deployment_grant.py",
         "packages/arcui/tests/test_health.py",
+    ),
+    "accepted run and intent ledger refusal": (
+        "packages/arcstore/tests/unit/test_accepted_runs.py",
+        "packages/arcagent/tests/unit/modules/run_intents/test_ledger.py",
     ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,
@@ -101,6 +107,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/capabilities/test_capability_import_rich_skill_invalidation_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_integrity_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_skillname_jail_spec081.py",
+    ),
+    "skill outcome bridge replay, cancellation and credential isolation": (
+        "packages/arcagent/tests/integration/test_skill_tool_outcome_bridge.py",
+        "packages/arcagent/tests/unit/modules/skills/test_sweep_and_args_wiring.py",
+        "packages/arcagent/tests/unit/modules/policy/test_policy_tool_activity.py",
+        "packages/arcagent/tests/unit/modules/memory/test_memory_wiring.py",
+        "packages/arcrun/tests/test_executor.py",
+        "packages/arcrun/tests/test_run_context.py",
+        "packages/arcrun/tests/reliability/test_tool_ledger.py",
     ),
     # SPEC-082 MCP door + connectors: an outside operator/agent drives Arc's own
     # tools through the same signed-authorized-audited envelope. Every hostile

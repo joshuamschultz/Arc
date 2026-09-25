@@ -25,7 +25,12 @@ from arcagent.skilladapt import NullSkillAdapter
 
 
 class _Ctx:
+    _next_call_id = 0
+
     def __init__(self, **data: Any) -> None:
+        if "tool" in data and "call_id" not in data:
+            type(self)._next_call_id += 1
+            data["call_id"] = f"test-call-{self._next_call_id}"
         self.data = data
         self.is_vetoed = False
 
@@ -49,8 +54,8 @@ class _SweepAdapter:
         return frozenset()
 
 
-class _LegacyAdapter:
-    """A pre-SPEC-054 adapter: no sweep_suites, observe without the args kwarg."""
+class _MinimalAdapter:
+    """Records canonical observations for a minimal skill adapter."""
 
     def __init__(self) -> None:
         self.observations: list[dict[str, Any]] = []
@@ -64,11 +69,29 @@ class _LegacyAdapter:
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        run_id: str | None = None,
+        call_id: str = "",
+        llm_trace_id: str | None = None,
+        args: dict[str, Any] | None = None,
     ) -> None:
-        self.observations.append({"skill_name": skill_name, "tool_name": tool_name})
+        self.observations.append(
+            {
+                "skill_name": skill_name,
+                "tool_name": tool_name,
+                "call_id": call_id,
+                "run_id": run_id,
+                "args": args,
+            }
+        )
 
     async def review_lifecycle(self, *, turn: int) -> None:
         self.reviews += 1
+
+    async def sweep_suites(self) -> None:
+        return None
+
+    async def review_consolidation(self, *, turn: int) -> None:
+        return None
 
     def retired_skills(self) -> frozenset[str]:
         return frozenset()
@@ -88,6 +111,9 @@ class _ArgsAdapter:
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        run_id: str | None = None,
+        call_id: str = "",
+        llm_trace_id: str | None = None,
         args: dict[str, Any] | None = None,
     ) -> None:
         self.observations.append({"tool_name": tool_name, "args": args})
@@ -106,7 +132,7 @@ def _bind(adapter: Any, workspace: Path, *, active_skill: str | None = None) -> 
         active=True,
         workspace=workspace,
     )
-    state.active_skill = active_skill
+    state.turn("", "").active_skill = active_skill
     _runtime.bind(state)
 
 
@@ -124,28 +150,6 @@ async def test_lifecycle_sweep_calls_sweep_suites_after_review(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_sweep_tolerates_adapter_without_sweep_suites(tmp_path: Path) -> None:
-    adapter = _LegacyAdapter()
-    _bind(adapter, tmp_path)
-
-    await _runtime.run_lifecycle_sweep()
-
-    assert adapter.reviews == 1
-
-
-@pytest.mark.asyncio
-async def test_lifecycle_sweep_tolerates_adapter_without_review_consolidation(
-    tmp_path: Path,
-) -> None:
-    """A BYO adapter predating H-042's consolidate seam must not crash the sweep."""
-    adapter = _LegacyAdapter()
-    _bind(adapter, tmp_path)
-
-    await _runtime.run_lifecycle_sweep()  # must not raise AttributeError
-
-    assert adapter.reviews == 1
-
-
 @pytest.mark.asyncio
 async def test_null_adapter_gains_additive_noop_surface() -> None:
     """Every hook is inert — the call must not raise (a ``-> None`` seam has nothing else
@@ -153,10 +157,17 @@ async def test_null_adapter_gains_additive_noop_surface() -> None:
     null = NullSkillAdapter()
     await null.sweep_suites()
     await null.review_consolidation(turn=1)
-    await null.observe(skill_name="s", tool_name="t", status="ok", error_type=None, args={"x": 1})
+    await null.observe(
+        skill_name="s",
+        tool_name="t",
+        status="ok",
+        error_type=None,
+        call_id="test-call",
+        args={"x": 1},
+    )
 
 
-# -- REQ-117: post_tool forwards args only to adapters that accept them ---------
+# -- REQ-117: post_tool forwards bounded, scrubbed arguments -------------------
 
 
 @pytest.mark.asyncio
@@ -180,11 +191,44 @@ async def test_post_tool_forwards_empty_args_as_none(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_tool_omits_args_for_legacy_adapter(tmp_path: Path) -> None:
-    """A BYO adapter without the args kwarg keeps working — no TypeError, no args."""
-    adapter = _LegacyAdapter()
+async def test_post_tool_never_forwards_nested_credentials_to_an_adapter(tmp_path: Path) -> None:
+    adapter = _ArgsAdapter()
     _bind(adapter, tmp_path, active_skill="my-skill")
 
-    await skills_post_tool(_Ctx(tool="bash", args={"command": "ls"}))
+    await skills_post_tool(
+        _Ctx(tool="http", args={"body": {"client_secret": "hunter2", "query": "safe"}})
+    )
+    await skills_post_tool(
+        _Ctx(tool="http", args={"query": "sk-abcdefghijklmnopqrstuvwxyz123456"})
+    )
 
-    assert adapter.observations == [{"skill_name": "my-skill", "tool_name": "bash"}]
+    assert adapter.observations == [
+        {"tool_name": "http", "args": None},
+        {"tool_name": "http", "args": None},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_post_tool_forwards_canonical_correlation_to_adapter(tmp_path: Path) -> None:
+    adapter = _MinimalAdapter()
+    _bind(adapter, tmp_path, active_skill="my-skill")
+    _runtime.state().turn("", "run-a").active_skill = "my-skill"
+
+    await skills_post_tool(
+        _Ctx(
+            tool="bash",
+            args={"command": "ls"},
+            call_id="call-a",
+            run_id="run-a",
+        )
+    )
+
+    assert adapter.observations == [
+        {
+            "skill_name": "my-skill",
+            "tool_name": "bash",
+            "call_id": "call-a",
+            "run_id": "run-a",
+            "args": {"command": "ls"},
+        }
+    ]

@@ -167,12 +167,17 @@ def create_arcrun_bridge(
     agent_label: str = "",
     task_supervisor: BackgroundTaskSupervisor | None = None,
     reply_target: str | None = None,
+    bridge_only_tools: frozenset[str] | None = None,
+    take_tool_outcome: Callable[[str, str], dict[str, Any] | None] | None = None,
+    session_id: str | None = None,
+    agent_did: str = "",
 ) -> Callable[[arcrun.Event], None]:
     """Create on_event callback for arcrun.run().
 
     Maps ArcRun lifecycle events to Module Bus events:
       tool.start  → agent:pre_tool
-      tool.end    → agent:post_tool
+      tool.end    → agent:post_tool after ArcRun confirms the terminal outcome
+      tool.error  → agent:post_tool with explicit failure status
       turn.start  → agent:pre_plan  (+ agent:run_progress heartbeat tick)
       turn.end    → agent:post_plan
       dynamic.*        → agent:run_progress
@@ -195,8 +200,6 @@ def create_arcrun_bridge(
     so we schedule the async bus.emit via the running event loop.
     """
     _event_map = {
-        "tool.start": "agent:pre_tool",
-        "tool.end": "agent:post_tool",
         "turn.start": "agent:pre_plan",
         "turn.end": "agent:post_plan",
     }
@@ -218,9 +221,29 @@ def create_arcrun_bridge(
         # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
         # requires dict[str, Any]. Shallow copy is intentional here.
         forwarded: list[tuple[str, dict[str, Any]]] = []
+        if event.type.startswith("tool."):
+            tool_event = _tool_bus_event(
+                event,
+                bridge_only_tools=bridge_only_tools,
+                take_tool_outcome=take_tool_outcome,
+                session_id=session_id,
+                agent_did=agent_did,
+            )
+            if tool_event is not None:
+                forwarded.append(tool_event)
         mapped = _event_map.get(event.type)
         if mapped is not None:
-            forwarded.append((mapped, dict(event.data)))
+            forwarded.append(
+                (
+                    mapped,
+                    {
+                        **dict(event.data),
+                        "session_id": session_id,
+                        "run_id": event.run_id,
+                        "agent_did": agent_did,
+                    },
+                )
+            )
         moment = decision_point_moment(event)
         if moment is not None:
             forwarded.append(("agent:moment", moment))
@@ -246,9 +269,83 @@ def create_arcrun_bridge(
             )
             return
         for bus_event, data in forwarded:
-            supervisor.create(bus.emit(bus_event, data), name=f"arcrun_bridge:{bus_event}")
+            bus.publish_ordered(
+                event.run_id, bus_event, data, supervisor=supervisor, agent_did=agent_did
+            )
 
     return bridge
+
+
+def _tool_bus_event(
+    event: arcrun.Event,
+    *,
+    bridge_only_tools: frozenset[str] | None,
+    take_tool_outcome: Callable[[str, str], dict[str, Any] | None] | None,
+    session_id: str | None,
+    agent_did: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Forward one terminal tool outcome without duplicating registry emissions."""
+    data = event.data
+    tool = data.get("name") or data.get("tool")
+    if not isinstance(tool, str) or not tool:
+        return None
+    owned_by_bridge = bridge_only_tools is None or tool in bridge_only_tools
+    call_id = data.get("tool_call_id") if isinstance(data.get("tool_call_id"), str) else ""
+    turn_number = data.get("turn_number")
+    if event.type == "tool.start":
+        args = data.get("arguments")
+        if not owned_by_bridge:
+            return None
+        return "agent:pre_tool", {"tool": tool, "args": args if isinstance(args, dict) else {}}
+    if event.type not in {"tool.end", "tool.error"}:
+        return None
+    if not call_id:
+        _logger.warning("ArcRun terminal tool event missing tool_call_id")
+        return None
+    if not isinstance(turn_number, int) or turn_number < 1:
+        _logger.warning("ArcRun terminal tool event missing turn_number")
+        return None
+    staged = take_tool_outcome(event.run_id, call_id) if take_tool_outcome else None
+    if event.type == "tool.end":
+        if data.get("replayed"):
+            return None
+        status = "ok"
+    elif event.type == "tool.error":
+        status = _tool_error_status(data.get("error"))
+    else:
+        return None
+    outcome: dict[str, Any] = {
+        "tool": tool,
+        "status": status,
+        "run_id": event.run_id,
+        "session_id": session_id,
+        "agent_did": agent_did,
+        "call_id": call_id,
+        "turn_number": turn_number,
+        "source": "arcrun",
+    }
+    if status == "ok" and staged is not None:
+        outcome["args"] = staged["args"]
+        outcome["result"] = staged["result"]
+        outcome["duration"] = staged["duration"]
+    if status != "ok":
+        error = data.get("error")
+        outcome["error_type"] = (
+            error
+            if isinstance(error, str) and error.isidentifier() and len(error) <= 64
+            else "ToolError"
+        )
+    return "agent:post_tool", outcome
+
+
+def _tool_error_status(error: Any) -> str:
+    """Classify an ArcRun error without propagating a private exception message."""
+    kind = str(error)
+    if "Cancel" in kind or "cancel" in kind:
+        return "cancelled"
+    if "Timeout" in kind or "timeout" in kind or "Deadline" in kind:
+        return "timeout"
+    return "error"
 
 
 def create_arcllm_bridge(
@@ -273,13 +370,29 @@ def create_arcllm_bridge(
     supervisor = task_supervisor or BackgroundTaskSupervisor(logger=_logger)
 
     def bridge(record: Any) -> None:
+        from arcagent.core.session_internal.capability_ledger import current_session_id
+
         data = record.model_dump() if hasattr(record, "model_dump") else record
         event_type = data.get("event_type", "")
         bus_event = _event_map.get(event_type)
         if bus_event is not None:
+            lineage = data.get("lineage")
+            lineage = lineage if isinstance(lineage, dict) else {}
+            session_id = (
+                data.get("session_id") or lineage.get("session_id") or current_session_id()
+            )
+            run_id = data.get("run_id") or lineage.get("run_id") or arcrun.current_run_id()
+            data = {
+                **data,
+                "session_id": session_id,
+                "run_id": run_id,
+            }
             try:
                 asyncio.get_running_loop()
-                supervisor.create(bus.emit(bus_event, data), name=f"arcllm_bridge:{bus_event}")
+                if not isinstance(run_id, str) or not run_id:
+                    _logger.warning("LLM bridge event missing canonical run_id: %s", event_type)
+                    return
+                bus.publish_ordered(run_id, bus_event, data, supervisor=supervisor)
             except RuntimeError:
                 _logger.warning(
                     "No running event loop for LLM bridge event: %s",

@@ -430,6 +430,30 @@ async def test_capture_tool_skips_noise() -> None:
     assert len(spy.captures) == 0
 
 
+async def test_capture_tool_never_persists_reusable_credential() -> None:
+    spy = _SpyBrain()
+    _configure_with(spy)
+    await capture_tool(
+        _ctx(
+            {
+                "tool": "http",
+                "result": "request complete; password: hunter2",
+            }
+        )
+    )
+    await capture_tool(
+        _ctx(
+            {
+                "tool": "http",
+                "result": "request complete with useful nonsecret status",
+            }
+        )
+    )
+    assert len(spy.captures) == 1
+    assert "useful nonsecret status" in spy.captures[0]
+    assert "hunter2" not in str(spy.captures)
+
+
 async def test_memory_search_tool_returns_boundary_marked() -> None:
     spy = _SpyBrain()
     _configure_with(spy)

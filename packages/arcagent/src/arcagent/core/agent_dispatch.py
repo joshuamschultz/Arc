@@ -29,7 +29,11 @@ from arcagent.core import known_channels, turn_context
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire_messages
-from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
+from arcagent.core.session_internal.capability_ledger import (
+    bind_session_id,
+    current_session_id,
+    reset_session_id,
+)
 from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 from arcagent.tools._policy_fill import resolve_run_budget
 from arcagent.tools.approval_policy import narrowed_loop_controls
@@ -144,6 +148,10 @@ async def build_run_context(
         agent_label=agent._config.agent.name,
         task_supervisor=agent._background_tasks,
         reply_target=turn_context.inbound_channel(),
+        bridge_only_tools=frozenset(tool.name for tool in ctx_tools),
+        take_tool_outcome=tool_registry.take_tool_outcome,
+        session_id=current_session_id(),
+        agent_did=agent._identity.did if agent._identity else "",
     )
 
     provider = AgentCapabilityProvider(
@@ -554,7 +562,10 @@ async def start_tracked_run(
         )
         from arcstore.spool import request_context
 
-        with request_context(run_id), agent._queue_run_context(session.session_id, run_id):
+        with (
+            request_context(run_id),
+            agent._queue_run_context(session.session_id, run_id),
+        ):
             _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
                 agent, input_text
             )

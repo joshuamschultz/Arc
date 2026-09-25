@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from arcagent.core.background_tasks import BackgroundTaskSupervisor
+
 _logger = logging.getLogger("arcagent.module_bus")
 
 _DEFAULT_HANDLER_TIMEOUT = 30.0
@@ -79,6 +81,53 @@ class ModuleBus:
     def __init__(self) -> None:
         self._handlers: dict[str, list[_HandlerRegistration]] = defaultdict(list)
         self._next_token = 1
+        self._ordered_tails: dict[str, asyncio.Task[EventContext]] = {}
+        self._ordered_pending: dict[str, int] = defaultdict(int)
+
+    def publish_ordered(
+        self,
+        run_id: str,
+        event: str,
+        data: dict[str, Any],
+        *,
+        supervisor: BackgroundTaskSupervisor,
+        agent_did: str = "",
+    ) -> asyncio.Task[EventContext]:
+        """Schedule one event after prior events from the same run finish."""
+        if not run_id:
+            raise ValueError("ordered event requires run_id")
+        if self._ordered_pending[run_id] >= 4096:
+            raise RuntimeError("ordered event backlog exceeded")
+        previous = self._ordered_tails.get(run_id)
+        snapshot = dict(data)
+
+        async def deliver() -> EventContext:
+            if previous is not None:
+                try:
+                    await previous
+                except Exception:
+                    _logger.exception("Prior ordered event failed for run %s", run_id)
+            return await self.emit(event, snapshot, agent_did=agent_did)
+
+        task = supervisor.create(deliver(), name=f"module_bus:{event}")
+        self._ordered_pending[run_id] += 1
+        self._ordered_tails[run_id] = task
+
+        def completed(done: asyncio.Task[EventContext]) -> None:
+            self._ordered_pending[run_id] -= 1
+            if self._ordered_pending[run_id] == 0:
+                self._ordered_pending.pop(run_id, None)
+            if self._ordered_tails.get(run_id) is done:
+                self._ordered_tails.pop(run_id, None)
+
+        task.add_done_callback(completed)
+        return task
+
+    async def flush_ordered(self, run_id: str) -> None:
+        """Wait until all events already published for one run are delivered."""
+        tail = self._ordered_tails.get(run_id)
+        if tail is not None:
+            await tail
 
     def subscribe(
         self,

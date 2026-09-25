@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -60,6 +61,7 @@ from arcagent.core.tool_policy_bridge import (
 )
 from arcagent.tools._egress_policy import EgressVerdict, egress_verdict, is_extension_origin
 from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
+from arcagent.tools._secret_guard import redact_tool_event_value
 from arcagent.tools._transport import (
     _PY_TYPE_MAP,
     RegisteredTool,
@@ -98,6 +100,9 @@ class ToolDispatchContext:
     tool: RegisteredTool
     args: dict[str, Any]
     parent_state: Any = None
+    run_id: str = ""
+    call_id: str = ""
+    in_run: bool = False
     session_id: str = ""
     call_legs: frozenset[str] = field(default_factory=frozenset)
     arg_summary: str = ""
@@ -165,6 +170,7 @@ class ToolRegistry:
         self._resource_classifications = resource_classifications or {}
         self._classification_strict = classification_strict
         self._tools: dict[str, RegisteredTool] = {}
+        self._pending_outcomes: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
         self._prompt_cache: str | None = None
         self._preamble: str = config.preamble or load_stock("arcagent", "tool_manifest_preamble")
 
@@ -179,6 +185,10 @@ class ToolRegistry:
         if tool is None:
             return "state_modifying"
         return tool.classification
+
+    def take_tool_outcome(self, run_id: str, call_id: str) -> dict[str, Any] | None:
+        """Consume one executed result after ArcRun confirms its terminal outcome."""
+        return self._pending_outcomes.pop((run_id, call_id), None)
 
     @property
     def tools(self) -> dict[str, RegisteredTool]:
@@ -376,7 +386,13 @@ class ToolRegistry:
                 # wrapped executor so it can build ProviderUsage for the
                 # ProviderLayer (SPEC-038 REQ-004). arcrun exposes state;
                 # arcagent bridges; arctrust decides.
-                raw_result = await _w(args, parent_state=ctx.parent_state)
+                raw_result = await _w(
+                    args,
+                    parent_state=ctx.parent_state,
+                    run_id=ctx.run_id,
+                    call_id=ctx.tool_call_id,
+                    in_run=ctx.event_bus is not None,
+                )
                 return str(raw_result)
 
             result.append(
@@ -605,10 +621,25 @@ class ToolRegistry:
     async def _record_dispatch(self, dispatch: ToolDispatchContext) -> None:
         """Publish the successful result and write its audit envelope."""
         tool = dispatch.tool
-        await self._bus.emit(
-            "agent:post_tool",
-            {"tool": tool.name, "result": dispatch.result, "duration": dispatch.elapsed},
-        )
+        outcome = {
+            "tool": tool.name,
+            "args": redact_tool_event_value(dispatch.args),
+            "result": redact_tool_event_value(dispatch.result),
+            "duration": dispatch.elapsed,
+            "status": "ok",
+            "run_id": dispatch.run_id,
+            "call_id": dispatch.call_id,
+            "session_id": dispatch.session_id,
+            "agent_did": self._agent_did,
+            "source": "registry",
+        }
+        if dispatch.in_run:
+            self._pending_outcomes[(dispatch.run_id, dispatch.call_id)] = outcome
+            if len(self._pending_outcomes) > 4096:
+                self._pending_outcomes.popitem(last=False)
+                _logger.warning("Unclaimed tool outcome expired before ArcRun terminal event")
+        else:
+            await self._bus.emit("agent:post_tool", outcome, agent_did=self._agent_did)
         if self._agent_did == "did:arc:unknown":
             self._telemetry.audit_event(
                 "security.unidentified_tool_call",
@@ -647,12 +678,19 @@ class ToolRegistry:
             args: dict[str, Any] | None = None,
             *,
             parent_state: Any = None,
+            run_id: str = "",
+            call_id: str = "",
+            in_run: bool = False,
             **kwargs: Any,
         ) -> Any:
             dispatch = ToolDispatchContext(
                 tool=tool,
                 args=dict(kwargs if args is None else args),
                 parent_state=parent_state,
+                run_id=run_id,
+                call_id=call_id,
+                in_run=in_run,
+                session_id=current_session_id(),
             )
             self._normalize_dispatch(dispatch)
 
@@ -668,5 +706,6 @@ class ToolRegistry:
     async def shutdown(self) -> None:
         """Clean up all tool connections."""
         self._tools.clear()
+        self._pending_outcomes.clear()
         self._prompt_cache = None
         _logger.info("Tool registry shut down")

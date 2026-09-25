@@ -359,7 +359,9 @@ async def capture_tool(ctx: Any) -> None:
     if not st.active:
         return
     tool_name = str(ctx.data.get("tool", ""))
-    result = str(ctx.data.get("result", ""))
+    from arcagent.tools._secret_guard import redact_tool_event_value
+
+    result = str(redact_tool_event_value(ctx.data.get("result", "")))
     if not _worth_capturing_tool(tool_name, result):
         return
     text = f"tool:{tool_name} -> {result}".strip()

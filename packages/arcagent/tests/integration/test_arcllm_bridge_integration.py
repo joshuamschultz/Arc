@@ -7,7 +7,6 @@ Verifies:
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -72,12 +71,12 @@ class TestArcLLMBridgeIntegration:
                 "duration_ms": 100.0 + i * 50,
                 "cost_usd": 0.001 * (i + 1),
                 "total_tokens": 500 + i * 100,
+                "lineage": {"run_id": "run-test", "session_id": "session-test"},
             }
             bridge(record)
 
         # Allow tasks to complete
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await bus.flush_ordered("run-test")
 
         assert len(received) == 3
         assert received[0]["trace_id"] == "trace-0"
@@ -106,16 +105,41 @@ class TestArcLLMBridgeIntegration:
         bridge = create_arcllm_bridge(bus)
 
         # LLM call
-        bridge({"event_type": "llm_call", "provider": "anthropic", "model": "claude-sonnet-4"})
+        bridge(
+            {
+                "event_type": "llm_call",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4",
+                "lineage": {"run_id": "run-test"},
+            }
+        )
         # Config change
-        bridge({"event_type": "config_change", "event_data": {"actor": "operator"}})
+        bridge(
+            {
+                "event_type": "config_change",
+                "event_data": {"actor": "operator"},
+                "lineage": {"run_id": "run-test"},
+            }
+        )
         # Circuit change
-        bridge({"event_type": "circuit_change", "event_data": {"new_state": "OPEN"}})
+        bridge(
+            {
+                "event_type": "circuit_change",
+                "event_data": {"new_state": "OPEN"},
+                "lineage": {"run_id": "run-test"},
+            }
+        )
         # Another LLM call
-        bridge({"event_type": "llm_call", "provider": "openai", "model": "gpt-4o"})
+        bridge(
+            {
+                "event_type": "llm_call",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "lineage": {"run_id": "run-test"},
+            }
+        )
 
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await bus.flush_ordered("run-test")
 
         assert len(llm_calls) == 2
         assert len(config_changes) == 1
@@ -150,11 +174,11 @@ class TestArcLLMBridgeIntegration:
                 "duration_ms": 250.0,
                 "cost_usd": 0.005,
                 "total_tokens": 1200,
+                "lineage": {"run_id": "run-test"},
             }
         )
 
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await agent._bus.flush_ordered("run-test")
 
         assert len(received) == 1
         assert received[0]["trace_id"] == "test-trace-001"

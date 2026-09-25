@@ -122,7 +122,7 @@ class TestExecuteToolCall:
         assert state.tool_calls_made == 0
         error_events = [e for e in bus.events if e.type == "tool.error"]
         assert len(error_events) == 1
-        assert "boom" in error_events[0].data["error"]
+        assert error_events[0].data["error"] == "RuntimeError"
 
     @pytest.mark.asyncio
     async def test_events_emitted_on_success(self):
@@ -166,10 +166,11 @@ class TestExecuteToolCall:
         assert any("timed out" in str(block) for block in result_msg.content)
         error_events = [e for e in bus.events if e.type == "tool.error"]
         assert len(error_events) == 1
-        assert "timeout" in error_events[0].data["error"]
+        assert error_events[0].data["error"] == "TimeoutError"
+        assert error_events[0].data["tool_call_id"] == "tc1"
 
     @pytest.mark.asyncio
-    async def test_tool_error_truncated_for_llm(self):
+    async def test_tool_error_exposes_only_type_to_llm_and_events(self):
         from arcrun.executor import execute_tool_call
 
         async def verbose_error(params, ctx):
@@ -188,14 +189,14 @@ class TestExecuteToolCall:
 
         result_msg, ok = await execute_tool_call(tc, state, sandbox)
         assert ok is False
-        # LLM message should be truncated
+        # Neither event metadata nor the LLM result may contain the exception body.
         llm_text = str(result_msg.content)
         assert "RuntimeError" in llm_text
-        assert len(llm_text) < 500
-        # Event should have full error
+        assert "x" * 20 not in llm_text
         error_events = [e for e in bus.events if e.type == "tool.error"]
         assert len(error_events) == 1
-        assert len(error_events[0].data["error"]) == 500
+        assert error_events[0].data["error"] == "RuntimeError"
+        assert error_events[0].data["tool_call_id"] == "tc1"
 
     @pytest.mark.asyncio
     async def test_global_timeout_used_when_no_per_tool(self):

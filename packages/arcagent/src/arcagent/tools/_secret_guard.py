@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
+from itertools import islice
 from typing import Any
 
 import arctrust
@@ -52,6 +53,23 @@ _GENERIC_TOKEN_RE = re.compile(
     r"\bbearer\s+[A-Za-z0-9_\-.]{16,}\b"
     r")"
 )
+_CREDENTIAL_LABEL_RE = re.compile(
+    r"(?i)(?:password|passwd|secret|token|api[_-]?key|credential|authorization|cookie)"
+    r"[\s\"']*[:=]\s*[\"']?\S+"
+)
+_CREDENTIAL_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "credential",
+    "authorization",
+    "cookie",
+)
+_MAX_EVENT_TEXT = 4_096
+_MAX_EVENT_SCAN = 65_536
+_MAX_EVENT_ITEMS = 32
 
 
 def find_secret(content: str) -> str | None:
@@ -62,6 +80,34 @@ def find_secret(content: str) -> str | None:
     if _GENERIC_TOKEN_RE.search(content):
         return "GENERIC_API_TOKEN"
     return None
+
+
+def redact_tool_event_value(value: Any, *, _depth: int = 0) -> Any:
+    """Copy a tool event value without reusable credentials or opaque objects."""
+    if _depth > 4:
+        return "[redacted: nested]"
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[redacted]"
+                if any(part in str(key).lower() for part in _CREDENTIAL_KEY_PARTS)
+                else redact_tool_event_value(item, _depth=_depth + 1)
+            )
+            for key, item in islice(value.items(), _MAX_EVENT_ITEMS)
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            redact_tool_event_value(item, _depth=_depth + 1) for item in value[:_MAX_EVENT_ITEMS]
+        ]
+    if isinstance(value, str):
+        if len(value) > _MAX_EVENT_SCAN:
+            return "[redacted: oversized]"
+        if find_secret(value) or _CREDENTIAL_LABEL_RE.search(value):
+            return "[redacted]"
+        return value[:_MAX_EVENT_TEXT]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return "[redacted]"
 
 
 def enforce_no_secret_content(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,23 @@ from arcrun.types import LoopResult, SandboxConfig
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_CALLER_DID = "did:arc:unknown"
+_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "arcrun_current_run_id", default=None
+)
+
+
+def current_run_id() -> str | None:
+    """Return the identity of the ArcRun call in the current async context."""
+    return _current_run_id.get()
+
+
+@contextmanager
+def _run_context(run_id: str) -> Iterator[None]:
+    token = _current_run_id.set(run_id)
+    try:
+        yield
+    finally:
+        _current_run_id.reset(token)
 
 
 def _build_state(
@@ -259,9 +278,10 @@ async def run_oneshot(
         strategy_name="oneshot",
     )
     call = available_strategies()["oneshot"](model, state, Sandbox(config=None, event_bus=bus), 1)
-    if timeout is None:
-        return await call
-    return await asyncio.wait_for(call, timeout=timeout)
+    with _run_context(run_id):
+        if timeout is None:
+            return await call
+        return await asyncio.wait_for(call, timeout=timeout)
 
 
 class StructuredCallError(RuntimeError):
@@ -382,7 +402,7 @@ async def run_async(
     # RunHandle — so an operator cancel or a teammate's interrupt arriving
     # during that call would have nothing to reach (ASI09/ASI10). Creating the
     # task first makes the run steerable from the moment it is started.
-    with request_context(state.run_id):
+    with request_context(state.run_id), _run_context(state.run_id):
         loop_task = asyncio.create_task(
             _select_then_run(allowed_strategies, model, state, sandbox_obj, max_turns)
         )

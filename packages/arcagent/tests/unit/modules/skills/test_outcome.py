@@ -101,12 +101,19 @@ class _FakeAdapter:
     async def observe(self, **kwargs: Any) -> None:
         self.observations.append(kwargs)
 
-    async def on_turn_end(self, *, turn: int, outcome: str) -> None:
+    async def on_turn_end(
+        self, *, turn: int, outcome: str, session_id: str | None, run_id: str | None
+    ) -> None:
         self.turn_ends.append({"turn": turn, "outcome": outcome})
 
 
 class _Ctx:
+    _next_call_id = 0
+
     def __init__(self, **data: Any) -> None:
+        if "tool" in data and "call_id" not in data:
+            type(self)._next_call_id += 1
+            data["call_id"] = f"test-call-{self._next_call_id}"
         self.data = data
         self.is_vetoed = False
 

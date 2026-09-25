@@ -18,7 +18,11 @@ async def test_null_adapter_is_a_silent_noop(tmp_path: Path) -> None:
     """Every method returns immediately and writes nothing (AC-1)."""
     adapter = NullSkillAdapter()
     await adapter.observe(
-        skill_name="s", tool_name="read", status="error", error_type="ValueError"
+        skill_name="s",
+        tool_name="read",
+        status="error",
+        error_type="ValueError",
+        call_id="test-call",
     )
     await adapter.on_turn_end(turn=1, outcome="success")
     await adapter.maybe_improve(insight="x")

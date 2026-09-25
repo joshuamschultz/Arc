@@ -24,6 +24,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from arcagent.tools._secret_guard import redact_tool_event_value
+
 # ~40 entries x ~2KB worst case keeps the buffer well inside the eval token
 # budget even before ``PolicyEngine._chunk_for_budget`` splits it.
 MAX_ENTRIES = 40
@@ -45,9 +47,9 @@ def _clip(text: str, limit: int) -> str:
 def _render_args(args: Any) -> str:
     """Serialize tool arguments compactly; never raise on an exotic value."""
     try:
-        text = json.dumps(args, default=str, sort_keys=True)
+        text = json.dumps(redact_tool_event_value(args), sort_keys=True)
     except (TypeError, ValueError):
-        text = repr(args)
+        text = "[redacted]"
     return _clip(text, MAX_ARGS_CHARS)
 
 
@@ -78,7 +80,18 @@ class ToolActivity:
         dispatched before this module was configured) the result is kept anyway —
         a result without its arguments still teaches output handling.
         """
-        clipped = _clip(str(result), MAX_RESULT_CHARS)
+        safe = str(redact_tool_event_value(result))
+        if (
+            isinstance(result, str)
+            and len(result) > MAX_RESULT_CHARS
+            and not safe.startswith("[redacted")
+        ):
+            clipped = (
+                f"{safe[:MAX_RESULT_CHARS]} "
+                f"[truncated: showing first {MAX_RESULT_CHARS} of {len(result)} chars]"
+            )
+        else:
+            clipped = _clip(safe, MAX_RESULT_CHARS)
         for entry in reversed(self.entries):
             if entry.tool == tool and entry.result is None:
                 entry.result = clipped

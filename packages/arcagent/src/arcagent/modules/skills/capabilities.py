@@ -20,13 +20,14 @@ With a :class:`~arcagent.skilladapt.NullSkillAdapter` selected, ``state().active
 
 from __future__ import annotations
 
-import inspect
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 from arcagent.modules.skills import _runtime
 from arcagent.tools._decorator import background_task, hook
+from arcagent.tools._secret_guard import find_secret
 from arcagent.utils.periodic import PeriodicRunner
 
 _logger = logging.getLogger("arcagent.modules.skills.capabilities")
@@ -34,31 +35,67 @@ _logger = logging.getLogger("arcagent.modules.skills.capabilities")
 # @background_task interval is metadata only; the loop owns its own sleep, reading the
 # live cadence from config each cycle (default hourly).
 _SWEEP_POLL_DEFAULT = 3_600.0
+_MAX_OBSERVATION_ARGS_BYTES = 4_096
+_CREDENTIAL_KEYS = (
+    "password",
+    "secret",
+    "token",
+    "credential",
+    "api_key",
+    "private_key",
+    "authorization",
+    "cookie",
+)
 
 
 def _call_status(ctx: Any) -> tuple[str, str | None]:
     """Derive (status, error_type) from an EventContext result."""
     if getattr(ctx, "is_vetoed", False):
         return "vetoed", None
+    explicit = ctx.data.get("status")
+    if explicit in {"error", "timeout"}:
+        error_type = ctx.data.get("error_type")
+        return "error", error_type if isinstance(error_type, str) else "ToolError"
+    if explicit in {"cancelled", "replayed"}:
+        return explicit, None
+    if explicit == "ok":
+        return "ok", None
+    if explicit is not None:
+        return "invalid", None
     result = ctx.data.get("result")
     if isinstance(result, Exception):
         return "error", type(result).__name__
     return "ok", None
 
 
-def _observe_accepts(adapter: Any, name: str) -> bool:
-    """Whether the adapter's ``observe`` takes the optional ``name`` kwarg (REQ-117 / H-041).
-
-    A BYO adapter written against an older protocol must keep working: an optional kwarg
-    (``args``, ``llm_trace_id``) is forwarded only to adapters that declare the parameter
-    (or accept ``**kwargs``). Every unknown kwarg is withheld rather than risking a
-    ``TypeError`` on an adapter that never learned it.
-    """
+def _safe_observation_args(args: Any) -> dict[str, Any] | None:
+    """Omit credentials before any skill adapter can persist tool arguments."""
+    if not isinstance(args, dict) or not args:
+        return None
     try:
-        params = inspect.signature(adapter.observe).parameters
+        serialized = json.dumps(args)
     except (TypeError, ValueError):
-        return False
-    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        return None
+    if len(serialized.encode("utf-8")) > _MAX_OBSERVATION_ARGS_BYTES:
+        return None
+    safe = json.loads(serialized)
+    if not isinstance(safe, dict):
+        return None
+    if _has_credential_key(safe) or find_secret(serialized):
+        return None
+    return safe
+
+
+def _has_credential_key(value: Any) -> bool:
+    """Find sensitive field names in nested tool arguments."""
+    if isinstance(value, dict):
+        return any(
+            any(part in str(key).lower() for part in _CREDENTIAL_KEYS) or _has_credential_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_has_credential_key(item) for item in value)
+    return False
 
 
 @hook(event="agent:post_tool", priority=200)
@@ -67,10 +104,32 @@ async def skills_post_tool(ctx: Any) -> None:
     st = _runtime.state()
     if not st.active:
         return
+    session_id = str(ctx.data.get("session_id") or "")
+    run_id = str(ctx.data.get("run_id") or "")
+    turn_state = st.turn(session_id, run_id)
+    if turn_state is None:
+        return
+    turn_number = ctx.data.get("turn_number")
+    if ctx.data.get("source") == "arcrun" and not isinstance(turn_number, int):
+        return
+    if isinstance(turn_number, int) and turn_state.turn_number not in (None, turn_number):
+        return
     tool = ctx.data.get("tool", "")
+    status, error_type = _call_status(ctx)
+    if status in {"cancelled", "replayed", "invalid", "vetoed"}:
+        return
+    call_id = ctx.data.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        _logger.warning("Skill tool outcome missing call_id")
+        return
+    if not turn_state.accept_call(call_id):
+        return
 
     if tool == "read":
-        file_path = ctx.data.get("args", {}).get("file_path", "")
+        if status != "ok":
+            return
+        args = ctx.data.get("args")
+        file_path = args.get("file_path", "") if isinstance(args, dict) else ""
         if file_path:
             try:
                 resolved = Path(file_path).resolve()
@@ -78,28 +137,24 @@ async def skills_post_tool(ctx: Any) -> None:
                 return
             skill_name = st.skill_paths.get(resolved)
             if skill_name is not None:
-                st.active_skill = skill_name
+                turn_state.active_skill = skill_name
         return
 
-    if st.active_skill is not None and tool:
-        status, error_type = _call_status(ctx)
+    if turn_state.active_skill is not None and tool:
         if status == "error":
-            st.error_counts[st.active_skill] = st.error_counts.get(st.active_skill, 0) + 1
-        # Optional forwarding (REQ-117 / H-041): arcagent only forwards; the scrub/persist
-        # decision lives entirely adapter-side (the arcskill TraceStore). ``llm_trace_id`` is
-        # the current turn's arcllm trace id (stashed by ``skills_llm_call_complete``) — the
-        # producer that lets the read-time curation join resolve the real payload later.
-        extra: dict[str, Any] = {}
-        if _observe_accepts(st.adapter, "args"):
-            extra["args"] = ctx.data.get("args") or None
-        if st.current_llm_trace_id and _observe_accepts(st.adapter, "llm_trace_id"):
-            extra["llm_trace_id"] = st.current_llm_trace_id
+            turn_state.error_counts[turn_state.active_skill] = (
+                turn_state.error_counts.get(turn_state.active_skill, 0) + 1
+            )
         await st.adapter.observe(
-            skill_name=st.active_skill,
+            skill_name=turn_state.active_skill,
             tool_name=tool,
             status=status,
             error_type=error_type,
-            **extra,
+            args=_safe_observation_args(ctx.data.get("args")),
+            session_id=session_id or None,
+            run_id=run_id or None,
+            call_id=call_id,
+            llm_trace_id=turn_state.llm_trace_id,
         )
 
 
@@ -114,16 +169,34 @@ async def skills_post_plan(ctx: Any) -> None:
     st = _runtime.state()
     if not st.active:
         return
+    session_id = str(ctx.data.get("session_id") or "")
+    run_id = str(ctx.data.get("run_id") or "")
+    turn_state = st.turn(session_id, run_id)
+    if turn_state is None:
+        return
     outcome = str(ctx.data.get("task_outcome", ""))
     turn = int(ctx.data.get("turn_number", 0))
+    if turn_state.turn_number is not None and turn_state.turn_number != turn:
+        return
     _runtime.record_turn(turn)
-    outcome = await _classify_outcome(st, ctx) or outcome
-    await st.adapter.on_turn_end(turn=turn, outcome=outcome)
-    st.active_skill = None
-    st.error_counts.clear()
-    # Turn-scoped: drop the linked trace id so the next turn's tools never inherit a stale
-    # one — the next LLM call restashes a fresh id before any tool runs (H-041).
-    st.current_llm_trace_id = None
+    outcome = await _classify_outcome(st, turn_state, ctx) or outcome
+    await st.adapter.on_turn_end(
+        turn=turn, outcome=outcome, session_id=session_id or None, run_id=run_id or None
+    )
+    st.close_turn(session_id, run_id)
+
+
+@hook(event="agent:pre_plan", priority=200)
+async def skills_pre_plan(ctx: Any) -> None:
+    """Open the next turn of a run after its previous span was closed."""
+    st = _runtime.state()
+    if st.active:
+        number = ctx.data.get("turn_number")
+        st.begin_turn(
+            str(ctx.data.get("session_id") or ""),
+            str(ctx.data.get("run_id") or ""),
+            number if isinstance(number, int) else None,
+        )
 
 
 @hook(event="llm:call_complete", priority=200)
@@ -143,10 +216,14 @@ async def skills_llm_call_complete(ctx: Any) -> None:
         return
     trace_id = ctx.data.get("trace_id")
     if trace_id:
-        st.current_llm_trace_id = str(trace_id)
+        turn_state = st.turn(
+            str(ctx.data.get("session_id") or ""), str(ctx.data.get("run_id") or "")
+        )
+        if turn_state is not None:
+            turn_state.llm_trace_id = str(trace_id)
 
 
-async def _classify_outcome(st: _runtime._State, ctx: Any) -> str:
+async def _classify_outcome(st: _runtime._State, turn_state: _runtime._TurnState, ctx: Any) -> str:
     """Consult the turn-end classifier; '' when unconfigured, signal-less, or failing.
 
     Fail-open (REQ-115): classification is a background labeler — an exception must
@@ -154,13 +231,13 @@ async def _classify_outcome(st: _runtime._State, ctx: Any) -> str:
     a label could not be attributed anyway.
     """
     messages = ctx.data.get("messages") or []
-    if st.outcome_classifier is None or not messages or st.active_skill is None:
+    if st.outcome_classifier is None or not messages or turn_state.active_skill is None:
         return ""
     try:
         label = await st.outcome_classifier.classify(
             transcript_window=messages,
-            active_skills=[st.active_skill],
-            error_counts=dict(st.error_counts),
+            active_skills=[turn_state.active_skill],
+            error_counts=dict(turn_state.error_counts),
         )
     except Exception:  # reason: fail-open — labeling must never break turn end
         _logger.warning("turn-end outcome classification failed", exc_info=True)
@@ -229,6 +306,7 @@ __all__ = [
     "skills_llm_call_complete",
     "skills_post_plan",
     "skills_post_tool",
+    "skills_pre_plan",
     "skills_pre_respond",
     "skills_ready",
     "skills_review_lifecycle_loop",

@@ -35,6 +35,7 @@ from arcrun.ledger import (
 from arcrun.loop import (
     RunHandle,
     StructuredCallError,
+    current_run_id,
     run,
     run_async,
     run_oneshot,
@@ -188,6 +189,7 @@ __all__ = [
     "content_text",
     "create_model_trace_store",
     "create_queue_journal",
+    "current_run_id",
     "detached_context",
     "dispatch_ready",
     "embed_texts",

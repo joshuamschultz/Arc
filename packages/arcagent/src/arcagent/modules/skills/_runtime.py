@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,25 @@ class _SidecarSigner:
 
 
 @dataclass
+class _TurnState:
+    turn_number: int | None = None
+    active_skill: str | None = None
+    error_counts: dict[str, int] = field(default_factory=dict)
+    llm_trace_id: str | None = None
+    seen_calls: OrderedDict[str, None] = field(default_factory=OrderedDict)
+
+    def accept_call(self, call_id: str) -> bool:
+        if not call_id:
+            return True
+        if call_id in self.seen_calls:
+            return False
+        self.seen_calls[call_id] = None
+        if len(self.seen_calls) > 4096:
+            self.seen_calls.popitem(last=False)
+        return True
+
+
+@dataclass
 class _State:
     adapter: SkillAdapter
     active: bool
@@ -63,21 +83,39 @@ class _State:
     # Signal-extraction state (the split-off half of the old trace_collector):
     # resolved SKILL.md path -> skill name, and the currently active skill span.
     skill_paths: dict[Path, str] = field(default_factory=dict)
-    active_skill: str | None = None
-    # Turn-end outcome classifier (SPEC-054 REQ-115/116) and the turn's per-skill error
-    # counts feeding its attribution fallback; both reset as the turn closes.
+    turns: OrderedDict[tuple[str, str], _TurnState] = field(default_factory=OrderedDict)
+    closed_turns: OrderedDict[tuple[str, str], None] = field(default_factory=OrderedDict)
+    # Turn-end outcome classifier (SPEC-054 REQ-115/116).
     outcome_classifier: OutcomeClassifier | None = None
-    error_counts: dict[str, int] = field(default_factory=dict)
-    # The arcllm request/trace id of the LLM call driving the CURRENT turn (H-041). Stashed
-    # from ``llm:call_complete`` (the arcllm bridge) so the turn's tool observations can link
-    # to the exact payload arcllm persisted; cleared at turn end so a turn with no LLM call
-    # never inherits a stale id. Same DID-scoped state as the rest of the module.
-    current_llm_trace_id: str | None = None
     # Curator lifecycle-sweep cadence (CRITICAL-1): how often the @background_task loop
     # wakes. The 30-day inactivity *window* lives in the improver's LifecycleConfig.
     sweep_poll_seconds: float = 3_600.0
     sweep_turn: int = 0
     last_turn: int = 0  # stashed from agent:post_plan so the off-loop sweep has a turn label
+
+    def turn(self, session_id: str, run_id: str) -> _TurnState | None:
+        key = (session_id, run_id)
+        if key in self.closed_turns:
+            return None
+        if key not in self.turns:
+            self.turns[key] = _TurnState()
+            if len(self.turns) > 1024:
+                self.turns.popitem(last=False)
+        self.turns.move_to_end(key)
+        return self.turns[key]
+
+    def close_turn(self, session_id: str, run_id: str) -> None:
+        key = (session_id, run_id)
+        self.turns.pop(key, None)
+        self.closed_turns[key] = None
+        if len(self.closed_turns) > 4096:
+            self.closed_turns.popitem(last=False)
+
+    def begin_turn(self, session_id: str, run_id: str, turn_number: int | None) -> None:
+        self.closed_turns.pop((session_id, run_id), None)
+        turn = self.turn(session_id, run_id)
+        if turn is not None:
+            turn.turn_number = turn_number
 
     def index_skills(self, registry: Any) -> None:
         """Rebuild the SKILL.md-path -> name lookup from the CapabilityRegistry."""
@@ -230,16 +268,8 @@ async def run_lifecycle_sweep() -> None:
     st.sweep_turn += 1
     turn_label = st.last_turn or st.sweep_turn
     await st.adapter.review_lifecycle(turn=turn_label)
-    # Suite-bootstrap backstop (SPEC-054 REQ-107) piggybacks the Curator cadence.
-    # getattr-guarded so a BYO adapter predating sweep_suites never breaks the sweep.
-    sweep_suites = getattr(st.adapter, "sweep_suites", None)
-    if sweep_suites is not None:
-        await sweep_suites()
-    # Consolidation sweep (H-042): same cadence, same getattr guard — a BYO adapter
-    # predating review_consolidation never breaks the sweep.
-    review_consolidation = getattr(st.adapter, "review_consolidation", None)
-    if review_consolidation is not None:
-        await review_consolidation(turn=turn_label)
+    await st.adapter.sweep_suites()
+    await st.adapter.review_consolidation(turn=turn_label)
     await reconcile_suppression()
 
 

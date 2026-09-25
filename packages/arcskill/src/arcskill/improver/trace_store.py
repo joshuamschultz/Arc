@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,8 @@ class TraceStore:
         self._session_id = session_id or str(uuid.uuid4())[:8]
         # Federal stays hash-only regardless of the knob (SI-12(2), non-overridable).
         self._capture_args = capture_args and tier != "federal"
-        self._active: dict[str, SkillTrace] = {}  # skill_name -> open span
+        self._active: OrderedDict[tuple[str, str, str], SkillTrace] = OrderedDict()
+        self._seen_calls: OrderedDict[tuple[str, str, str], None] = OrderedDict()
         self._usage_counts: dict[str, int] = {}
         self._turn_number = 0
 
@@ -61,6 +63,9 @@ class TraceStore:
         error_type: str | None,
         args: dict[str, Any] | None = None,
         llm_trace_id: str | None = None,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        call_id: str | None = None,
     ) -> None:
         """Open a span for ``skill_name`` on first sight this turn, then record the call.
 
@@ -68,18 +73,34 @@ class TraceStore:
         tool step belongs to; it is recorded as span METADATA so the read-time join can
         later resolve the payload from arcllm's store. The body itself is never copied.
         """
-        span = self._active.get(skill_name)
+        scope = (session_id or self._session_id, run_id or "")
+        if call_id:
+            identity = (*scope, call_id)
+            if identity in self._seen_calls:
+                return
+            self._seen_calls[identity] = None
+            if len(self._seen_calls) > 8192:
+                self._seen_calls.popitem(last=False)
+        span_key = (*scope, skill_name)
+        span = self._active.get(span_key)
         if span is None:
             span = SkillTrace(
                 trace_id=str(uuid.uuid4()),
-                session_id=self._session_id,
+                session_id=scope[0],
                 skill_name=skill_name,
                 skill_version=0,
                 turn_number=self._turn_number,
                 started_at=datetime.now(UTC),
             )
-            self._active[skill_name] = span
+            self._active[span_key] = span
             self._usage_counts[skill_name] = self._usage_counts.get(skill_name, 0) + 1
+            if len(self._active) > 1024:
+                _, expired = self._active.popitem(last=False)
+                expired.ended_at = datetime.now(UTC)
+                self._persist(expired)
+                _logger.warning("Skill trace span expired before turn close")
+        else:
+            self._active.move_to_end(span_key)
         if llm_trace_id and llm_trace_id not in span.llm_trace_ids:
             span.llm_trace_ids.append(llm_trace_id)
         args_hash = ""
@@ -102,13 +123,25 @@ class TraceStore:
             )
         )
 
-    def close_turn(self, *, outcome: str = "") -> None:
+    def close_turn(
+        self,
+        *,
+        outcome: str = "",
+        session_id: str | None = None,
+        run_id: str | None = None,
+        turn_number: int | None = None,
+    ) -> None:
         """Close + persist every active span at turn end; advance the turn counter."""
         self._turn_number += 1
-        for span in self._active.values():
+        scope = (session_id or self._session_id, run_id or "")
+        for key, span in list(self._active.items()):
+            if key[:2] != scope:
+                continue
+            if turn_number is not None:
+                span.turn_number = turn_number
             self._finalize(span, outcome)
             self._persist(span)
-        self._active.clear()
+            del self._active[key]
 
     def _finalize(self, span: SkillTrace, outcome: str) -> None:
         span.ended_at = datetime.now(UTC)

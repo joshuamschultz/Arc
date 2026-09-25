@@ -22,8 +22,6 @@ from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.types import ParentRunContext, ToolContext
 
-_MAX_ERROR_LEN = 200
-
 
 def _digest_and_size(value: Any) -> tuple[str | None, int | None]:
     """sha256 + byte length of a tool's args/result CONTENT (SPEC-028 C1).
@@ -53,6 +51,7 @@ async def execute_tool_call(
     Strategy owns cancel/steer checks — call this only for tool calls you want to run.
     """
     bus = state.event_bus
+    turn_number = state.turn_count + 1
 
     # Digest the args once at source (C1) and reuse for start + error events.
     args_digest, args_size = _digest_and_size(tc.arguments)
@@ -60,23 +59,75 @@ async def execute_tool_call(
         "tool.start",
         {
             "name": tc.name,
+            "tool_call_id": tc.id,
+            "turn_number": turn_number,
             "arguments": tc.arguments,
             "args_digest": args_digest,
             "args_size": args_size,
         },
     )
 
-    allowed, reason = await sandbox.check(tc.name, tc.arguments)
+    try:
+        allowed, reason = await sandbox.check(tc.name, tc.arguments)
+    except asyncio.CancelledError:
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "CancelledError",
+            },
+        )
+        raise
+    except Exception as exc:
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": type(exc).__name__,
+            },
+        )
+        return tool_result(tc.id, f"Error: {type(exc).__name__}"), False
     if not allowed:
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "ToolDenied",
+            },
+        )
         return tool_result(tc.id, f"Error: tool denied — {reason}"), False
 
     tool_def = state.registry.get(tc.name)
     if tool_def is None:
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "ToolNotFound",
+            },
+        )
         return tool_result(tc.id, f"Error: tool '{tc.name}' not found"), False
 
     try:
         jsonschema.validate(tc.arguments, tool_def.input_schema)
     except jsonschema.ValidationError as ve:
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "ValidationError",
+            },
+        )
         return tool_result(tc.id, f"Error: invalid params — {ve.message}"), False
 
     invocation_key: str | None = None
@@ -84,7 +135,15 @@ async def execute_tool_call(
         try:
             invocation_key = tool_invocation_key(state.run_id, tc.id, tc.name, tc.arguments)
         except CanonicalToolArgumentsError as exc:
-            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": type(exc).__name__,
+                },
+            )
             return tool_result(tc.id, "Error: tool arguments are not canonical JSON"), False
         intent = ToolExecutionIntent(
             invocation_key=invocation_key,
@@ -95,20 +154,69 @@ async def execute_tool_call(
         )
         try:
             entry = await state.await_work(state.tool_ledger.begin(intent))
+        except asyncio.CancelledError:
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": "CancelledError",
+                },
+            )
+            raise
         except Exception as exc:
             message = f"Error: tool ledger unavailable: {type(exc).__name__}"
-            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": type(exc).__name__,
+                },
+            )
             return tool_result(tc.id, message), False
         if entry.status == "completed" and entry.outcome is not None:
-            bus.emit("tool.replayed", {"name": tc.name, "invocation_key": invocation_key})
-            bus.emit("tool.end", {"name": tc.name, "replayed": True})
+            bus.emit(
+                "tool.replayed",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "invocation_key": invocation_key,
+                },
+            )
+            bus.emit(
+                "tool.end",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "replayed": True,
+                },
+            )
             state.tool_calls_made += 1
             return tool_result(tc.id, entry.outcome.content), entry.outcome.success
         if entry.status != "new":
             bus.emit(
-                "tool.reconciliation_required", {"name": tc.name, "invocation_key": invocation_key}
+                "tool.reconciliation_required",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "invocation_key": invocation_key,
+                },
             )
-            bus.emit("tool.error", {"name": tc.name, "error": "reconciliation_required"})
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": "reconciliation_required",
+                },
+            )
             return tool_result(tc.id, "Error: prior tool intent requires reconciliation"), False
 
     ctx = ToolContext(
@@ -142,25 +250,39 @@ async def execute_tool_call(
             "tool.error",
             {
                 "name": tc.name,
-                "error": f"timeout after {timeout}s",
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "TimeoutError",
+                "timeout_seconds": timeout,
                 "args_digest": args_digest,
                 "args_size": args_size,
             },
         )
         return tool_result(tc.id, f"Error: tool timed out after {timeout}s"), False
-    except Exception as exc:  # reason: best-effort — record + continue
-        error_detail = str(exc)
+    except asyncio.CancelledError:
         bus.emit(
             "tool.error",
             {
                 "name": tc.name,
-                "error": error_detail,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": "CancelledError",
+            },
+        )
+        raise
+    except Exception as exc:  # reason: best-effort — record + continue
+        bus.emit(
+            "tool.error",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "error": type(exc).__name__,
                 "args_digest": args_digest,
                 "args_size": args_size,
             },
         )
-        truncated = error_detail[:_MAX_ERROR_LEN]
-        return tool_result(tc.id, f"Error: {type(exc).__name__}: {truncated}"), False
+        return tool_result(tc.id, f"Error: {type(exc).__name__}"), False
 
     duration_ms = (time.time() - tool_start) * 1000
     if state.tool_ledger is not None and invocation_key is not None:
@@ -172,13 +294,34 @@ async def execute_tool_call(
                     )
                 )
             )
+        except asyncio.CancelledError:
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": "CancelledError",
+                },
+            )
+            raise
         except Exception as exc:
             message = f"Error: tool outcome not durable: {type(exc).__name__}"
-            bus.emit("tool.error", {"name": tc.name, "error": type(exc).__name__})
+            bus.emit(
+                "tool.error",
+                {
+                    "name": tc.name,
+                    "tool_call_id": tc.id,
+                    "turn_number": turn_number,
+                    "error": type(exc).__name__,
+                },
+            )
             return tool_result(tc.id, message), False
     result_digest, result_size = _digest_and_size(result)
     end_data: dict[str, Any] = {
         "name": tc.name,
+        "tool_call_id": tc.id,
+        "turn_number": turn_number,
         "result_length": len(result),
         "duration_ms": duration_ms,
         "result_digest": result_digest,

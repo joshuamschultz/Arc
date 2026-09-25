@@ -231,6 +231,13 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
         await agent.startup()
         try:
             session = await agent.session("chat-thread")
+            bridge_records: list[dict[str, Any]] = []
+
+            async def capture_bridge(ctx: Any) -> None:
+                bridge_records.append(ctx.data)
+
+            assert agent._bus is not None
+            agent._bus.subscribe("llm:call_complete", capture_bridge, module_name="test")
             model = agent._ensure_model()
             while not isinstance(model, TelemetryModule):
                 model = model._inner
@@ -314,6 +321,9 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
                 reset_session_id(session_token)
             jobs = await coordinator.jobs()
             traces, _cursor = await agent._trace_store.query(limit=100)
+            for record in traces:
+                if record.lineage and isinstance(record.lineage.get("run_id"), str):
+                    await agent._bus.flush_ordered(record.lineage["run_id"])
         finally:
             await agent.shutdown()
 
@@ -330,6 +340,11 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
     )
     run_traces = [record for record in traces if record.lineage and record.lineage.get("run_id")]
     assert run_traces
+    for record in run_traces:
+        matching = [item for item in bridge_records if item.get("trace_id") == record.trace_id]
+        assert matching
+        assert matching[0]["session_id"] == session.session_id
+        assert matching[0]["run_id"] == record.lineage["run_id"]
     for record in run_traces:
         assert record.encryption is not None
         assert record.request_body is None

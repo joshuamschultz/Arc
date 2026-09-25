@@ -35,17 +35,22 @@ class SkillAdapter(Protocol):
         tool_name: str,
         status: str,
         error_type: str | None,
+        call_id: str,
         session_id: str | None = None,
+        run_id: str | None = None,
         args: dict[str, Any] | None = None,
+        llm_trace_id: str | None = None,
     ) -> None:
         """Record one tool call inside an active skill-usage span.
 
-        ``args`` is the raw tool-call argument dict (REQ-117). arcagent only forwards;
-        whether args are scrubbed, hashed, or persisted is the adapter's decision.
+        ``args`` is a bounded, credential-filtered copy of tool arguments. The
+        adapter applies its own scrub before hashing or persistence.
         """
         ...
 
-    async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
+    async def on_turn_end(
+        self, *, turn: int, outcome: str, session_id: str | None = None, run_id: str | None = None
+    ) -> None:
         """Close the active span at turn end; accrue usage statistics."""
         ...
 
@@ -90,12 +95,17 @@ class NullSkillAdapter:
         tool_name: str,
         status: str,
         error_type: str | None,
+        call_id: str,
         session_id: str | None = None,
+        run_id: str | None = None,
         args: dict[str, Any] | None = None,
+        llm_trace_id: str | None = None,
     ) -> None:
         return None
 
-    async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
+    async def on_turn_end(
+        self, *, turn: int, outcome: str, session_id: str | None = None, run_id: str | None = None
+    ) -> None:
         return None
 
     async def maybe_improve(self, *, insight: str = "", session_id: str | None = None) -> None:
