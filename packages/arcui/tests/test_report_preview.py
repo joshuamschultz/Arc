@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +13,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.report_authorization import ReportReadGrant, ReportReadRequest, ReportReadWorkerPool
 from arcui.routes.agent_detail import report_preview
 from arcui.routes.agent_detail.report_preview import get_report_preview
 
@@ -31,10 +34,26 @@ def _client(tmp_path: Path, *, is_operator: bool = True) -> tuple[TestClient, Pa
     app.state.user_store_factory = lambda: SimpleNamespace(
         get=lambda email: user if email == user.email else None
     )
+    app.state.report_read_authority = SimpleNamespace(
+        authorize=lambda request: _grant(root, request)
+    )
+    app.state.report_read_workers = ReportReadWorkerPool()
     session = auth.sessions.issue(
         email=user.email, did=user.did, role="operator" if is_operator else "viewer"
     )
     return TestClient(app), root, session.token
+
+
+def _grant(root: Path, request: ReportReadRequest) -> ReportReadGrant:
+    return ReportReadGrant(
+        caller_did=request.caller_did,
+        agent_did=request.agent_did,
+        report_id=request.report_id,
+        source_id="tool:report-generator/run-1",
+        source_sha256=hashlib.sha256(
+            (root / request.root / request.report_id).read_bytes()
+        ).hexdigest(),
+    )
 
 
 def test_report_keeps_static_table_and_blocks_active_content(tmp_path: Path) -> None:
@@ -63,6 +82,91 @@ def test_report_keeps_static_table_and_blocks_active_content(tmp_path: Path) -> 
     assert "script-src 'none'" in response.headers["content-security-policy"]
     assert "sandbox" in response.headers["content-security-policy"]
     assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-arc-report-source"] == "tool:report-generator/run-1"
+    assert (
+        response.headers["x-arc-report-sha256"]
+        == hashlib.sha256((root / "workspace" / "report.html").read_bytes()).hexdigest()
+    )
+
+
+def test_report_requires_deployment_policy_and_exact_provenance(tmp_path: Path) -> None:
+    client, root, token = _client(tmp_path)
+    (root / "workspace" / "report.html").write_text("<h1>Private</h1>")
+    url = "/api/agents/ada/files/report?path=report.html"
+    headers = {"Authorization": f"Bearer {token}"}
+    client.app.state.report_read_authority = None
+    absent = client.get(url, headers=headers)
+    assert absent.status_code == 503
+    assert "Private" not in absent.text
+
+    client.app.state.report_read_authority = SimpleNamespace(authorize=lambda _request: None)
+    denied = client.get(url, headers=headers)
+    assert denied.status_code == 403
+    assert "Private" not in denied.text
+
+    client.app.state.report_read_authority = SimpleNamespace(
+        authorize=lambda request: ReportReadGrant(
+            caller_did=request.caller_did,
+            agent_did=request.agent_did,
+            report_id=request.report_id,
+            source_id="tool:report-generator/run-1",
+            source_sha256="0" * 64,
+        )
+    )
+    stale = client.get(url, headers=headers)
+    assert stale.status_code == 403
+    assert "Private" not in stale.text
+
+
+def test_report_rejects_cross_agent_grant(tmp_path: Path) -> None:
+    client, root, token = _client(tmp_path)
+    (root / "workspace" / "report.html").write_text("<h1>Private</h1>")
+    client.app.state.report_read_authority = SimpleNamespace(
+        authorize=lambda request: ReportReadGrant(
+            caller_did=request.caller_did,
+            agent_did="did:arc:agent:other",
+            report_id=request.report_id,
+            source_id="tool:report-generator/run-1",
+            source_sha256=hashlib.sha256(b"<h1>Private</h1>").hexdigest(),
+        )
+    )
+    denied = client.get(
+        "/api/agents/ada/files/report?path=report.html",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert denied.status_code == 403
+    assert "Private" not in denied.text
+
+
+def test_hung_report_authority_keeps_worker_occupied_after_deadline(tmp_path: Path) -> None:
+    client, root, token = _client(tmp_path)
+    (root / "workspace" / "report.html").write_text("<h1>Private</h1>")
+    release = threading.Event()
+    entered = threading.Event()
+
+    def hung_authorize(_request: ReportReadRequest) -> None:
+        entered.set()
+        release.wait(2)
+        return None
+
+    client.app.state.report_read_workers.close()
+    client.app.state.report_read_workers = ReportReadWorkerPool(
+        max_workers=1, operation_timeout=0.05
+    )
+    client.app.state.report_read_authority = SimpleNamespace(authorize=hung_authorize)
+    url = "/api/agents/ada/files/report?path=report.html"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        with client:
+            first = client.get(url, headers=headers)
+            assert entered.is_set()
+            assert first.status_code == 503
+            second = client.get(url, headers=headers)
+            assert second.status_code == 503
+            assert "Private" not in second.text
+    finally:
+        release.set()
+        client.app.state.report_read_workers.close()
 
 
 def test_report_rejects_cross_agent_symlink_and_oversize(tmp_path: Path) -> None:

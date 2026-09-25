@@ -74,6 +74,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/integration/test_file_delete_routes.py",
         "packages/arcui/tests/integration/test_path_traversal_e2e.py",
     ),
+    "report read authority and provenance refusal": (
+        "packages/arcui/tests/test_report_preview.py",
+    ),
     "voice channel abuse — pairing, tier gate, spoken injection (SPEC-077)": (
         "packages/arcgateway/tests/security/test_voice_abuse.py",
     ),

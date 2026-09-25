@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 
 from arcui.audit import emit_read_audit
 from arcui.query_validators import safe_choice
+from arcui.report_authorization import ReportReadGrant, ReportReadRequest, ReportReadWorkerPool
 from arcui.routes.agent_detail._common import (
     _VALID_ROOTS,
     _agent_did,
@@ -138,36 +140,68 @@ async def get_report_preview(request: Request) -> HTMLResponse | JSONResponse:
     if user is None or user.disabled or user.did != session.did:
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
         return _error("Session is no longer authorized", 403)
-    if _agent_did(request, agent_id) is None:
+    agent_did = _agent_did(request, agent_id)
+    if agent_did is None:
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
         return _error("Agent identity is unavailable", 503)
     if getattr(request.state, "role", None) != "operator" or not user.is_operator:
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
         return _error("Operator account required for report preview", 403)
+    authority = getattr(request.app.state, "report_read_authority", None)
+    pool = getattr(request.app.state, "report_read_workers", None)
+    if authority is None or not isinstance(pool, ReportReadWorkerPool):
+        emit_read_audit(request, target=target, operation="report.preview", outcome="error")
+        return _error("Report read authority is unavailable", 503)
     try:
-        expected_root = await asyncio.to_thread(os.stat, base, follow_symlinks=False)
-    except OSError:
+        expected_root = await pool.run(lambda: os.stat(base, follow_symlinks=False))
+    except (OSError, RuntimeError):
         emit_read_audit(request, target=target, operation="report.preview", outcome="error")
         return _error("Report root is unavailable", 503)
 
-    def authorize_opened(root_stat: os.stat_result, _file_stat: os.stat_result) -> bool:
-        return (root_stat.st_dev, root_stat.st_ino) == (
+    grant: ReportReadGrant | None = None
+
+    def authorize_opened(root_stat: os.stat_result, file_stat: os.stat_result) -> bool:
+        nonlocal grant
+        if (root_stat.st_dev, root_stat.st_ino) != (
             expected_root.st_dev,
             expected_root.st_ino,
+        ):
+            return False
+        request_model = ReportReadRequest(
+            caller_did=session.did,
+            agent_did=agent_did,
+            report_id=path,
+            root=root,
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            size=file_stat.st_size,
+            modified_ns=file_stat.st_mtime_ns,
         )
+        decision = authority.authorize(request_model)
+        if decision is None or not isinstance(decision, ReportReadGrant):
+            return False
+        if (
+            decision.caller_did != session.did
+            or decision.agent_did != agent_did
+            or decision.report_id != path
+        ):
+            return False
+        grant = decision
+        return True
 
     try:
         if _is_key_material(base / path):
             emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
             return _error("Private key material cannot be viewed", 403)
-        content = await asyncio.to_thread(
-            fs_reader.read_file,
-            scope="agent",
-            agent_id=agent_id,
-            agent_root=base,
-            rel_path=path,
-            caller_did=session.did,
-            authorize_opened=authorize_opened,
+        content = await pool.run(
+            lambda: fs_reader.read_file(
+                scope="agent",
+                agent_id=agent_id,
+                agent_root=base,
+                rel_path=path,
+                caller_did=session.did,
+                authorize_opened=authorize_opened,
+            )
         )
     except ReadAuthorizationError:
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
@@ -184,14 +218,21 @@ async def get_report_preview(request: Request) -> HTMLResponse | JSONResponse:
     except (OSError, RuntimeError, UnicodeError):
         emit_read_audit(request, target=target, operation="report.preview", outcome="error")
         return _error("Report is unavailable", 503)
+    except Exception:
+        emit_read_audit(request, target=target, operation="report.preview", outcome="error")
+        return _error("Report read authority is unavailable", 503)
     if content.content_type != "text":
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
         return _error("Report is not text HTML", 415)
+    digest = hashlib.sha256(content.content.encode("utf-8")).hexdigest()
+    if grant is None or digest != grant.source_sha256:
+        emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
+        return _error("Report provenance is invalid", 403)
     if arcagent.find_secret(content.content) is not None:
         emit_read_audit(request, target=target, operation="report.preview", outcome="denied")
         return _error("Report contains protected key material", 403)
     try:
-        sanitized = await asyncio.to_thread(_CLEANER.clean, content.content)
+        sanitized = await pool.run(lambda: _CLEANER.clean(content.content))
     except Exception:
         emit_read_audit(request, target=target, operation="report.preview", outcome="error")
         return _error("Report preview failed", 503)
@@ -208,6 +249,8 @@ async def get_report_preview(request: Request) -> HTMLResponse | JSONResponse:
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
             "Content-Disposition": "inline",
+            "X-Arc-Report-Source": grant.source_id,
+            "X-Arc-Report-Sha256": grant.source_sha256,
         }
     )
     return response
