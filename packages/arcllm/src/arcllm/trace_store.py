@@ -12,8 +12,8 @@ an external signed anchor (arctrust's ``WormSink``). ``JSONLTraceStore``
 stays dependency-free of arctrust: wire a ``checkpoint_sink`` callback at
 construction and this module builds+emits a pre-purge checkpoint (see
 ``arcllm.trace_retention.build_checkpoint``) at every rotation boundary;
-the caller supplies the signer (e.g. arctrust's ``WormSink`` via
-``emit()``). ``arcllm.trace_retention.verify_against_anchor`` is the
+the caller supplies the signer (e.g. arctrust's durable ``WormSink`` write).
+``arcllm.trace_retention.verify_against_anchor`` is the
 matching read-side check that a live store still contains an anchored
 head. JSONLTraceStore implements the TraceStore Protocol with daily
 rotation.
@@ -241,10 +241,12 @@ class JSONLTraceStore:
         self._retention_max_age_days = retention_max_age_days
         self._retention_max_bytes = retention_max_bytes
         # Trace-checkpoint signed anchor: the caller supplies the signer
-        # (e.g. arctrust's WormSink via emit()); this module only builds
+        # (e.g. arctrust's durable WormSink write); this module only builds
         # and hands off the checkpoint. No arctrust import here — arcllm
         # stays dependency-free of arctrust (CLAUDE.md "don't mix concerns").
         self._checkpoint_sink = checkpoint_sink
+        self._checkpoint_failed = False
+        self._rotation_target: str | None = None
 
     def _file_for_date(self, date_str: str) -> Path:
         """Return the JSONL file path for a given date."""
@@ -275,56 +277,41 @@ class JSONLTraceStore:
             # thread (M3) — this can be an arbitrarily large file and must
             # not block the event loop while the append() lock is held.
             text = await asyncio.to_thread(last_file.read_text)
-            lines = text.strip().split("\n")
+            lines = text.splitlines()
             self._line_count = len(lines)
-            if lines and lines[-1]:
-                try:
-                    last_record = json.loads(lines[-1])
-                    self._last_hash = last_record.get("record_hash", "0" * 64)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse last line of %s", last_file)
-
-            # Verify tail of chain (last 10 records) for tamper detection
-            self._verify_tail(lines)
+            last_record = self._verify_tail(lines)
+            self._last_hash = last_record.record_hash
+            if last_record.event_type == "rotation" and last_record.event_data is not None:
+                self._rotation_target = last_record.event_data.get("next_file")
 
         self._warm_started = True
 
-    def _verify_tail(self, lines: list[str], tail_size: int = 10) -> None:
-        """Verify hash chain linkage on the last N records.
-
-        Logs a warning if tampering is detected. Does not block startup —
-        full verification can be triggered via verify_chain().
-        """
-        valid_lines = [ln for ln in lines if ln.strip()]
-        check_lines = valid_lines[-tail_size:] if len(valid_lines) > tail_size else valid_lines
+    def _verify_tail(self, lines: list[str], tail_size: int = 10) -> TraceRecord:
+        """Refuse malformed or broken tail records before resuming the chain."""
+        if not lines:
+            raise RuntimeError("trace tail integrity failure: empty file")
+        check_lines = lines[-tail_size:]
 
         prev_hash: str | None = None
+        last_record: TraceRecord | None = None
         for line in check_lines:
             try:
-                data = json.loads(line)
-                record = TraceRecord(**data)
+                record = TraceRecord.model_validate_json(line)
             except (json.JSONDecodeError, ValidationError, TypeError):
-                logger.warning("Unparseable record in tail verification")
-                continue
+                raise RuntimeError("trace tail integrity failure: malformed record") from None
 
             if prev_hash is not None and record.prev_hash != prev_hash:
-                logger.error(
-                    "TAMPER DETECTED: hash chain broken — expected prev=%s, got prev=%s",
-                    prev_hash,
-                    record.prev_hash,
-                )
-                return
+                raise RuntimeError("trace tail integrity failure: broken chain")
 
             expected = record.compute_hash()
             if record.record_hash != expected:
-                logger.error(
-                    "TAMPER DETECTED: record hash mismatch — stored=%s, computed=%s",
-                    record.record_hash,
-                    expected,
-                )
-                return
+                raise RuntimeError("trace tail integrity failure: invalid record hash")
 
             prev_hash = record.record_hash
+            last_record = record
+        if last_record is None:
+            raise RuntimeError("trace tail integrity failure: empty tail")
+        return last_record
 
     async def _maybe_rotate(self) -> None:
         """Rotate to a new file if the date has changed."""
@@ -334,17 +321,23 @@ class JSONLTraceStore:
 
         # Write rotation tombstone to current file. Dispatched to a worker
         # thread (M3) — same blocking-write concern as append().
-        if self._current_file is not None and self._current_file.exists():
+        target = f"traces-{today}.jsonl"
+        if (
+            self._current_file is not None
+            and self._current_file.exists()
+            and self._rotation_target != target
+        ):
             tombstone = TraceRecord(
                 provider="system",
                 model="system",
                 event_type="rotation",
-                event_data={"next_file": f"traces-{today}.jsonl"},
+                event_data={"next_file": target},
             ).with_hash(self._last_hash)
-            self._last_hash = tombstone.record_hash
             await asyncio.to_thread(
                 self._write_line_sync, self._current_file, tombstone.model_dump()
             )
+            self._last_hash = tombstone.record_hash
+            self._rotation_target = target
 
         self._current_date = today
         self._current_file = self._file_for_date(today)
@@ -358,8 +351,7 @@ class JSONLTraceStore:
         SPEC-016 D-440: purge only fires once per rotation (daily), never
         on every append, and only ever deletes already-rotated files — the
         file we just rotated *into* (today's) is never a purge candidate.
-        Failures are logged, not raised: a purge hiccup must never break
-        the calling append().
+        Retention purge failures are logged; checkpoint failures stop append.
 
         The checkpoint anchor runs BEFORE purge deletes anything, and on
         every rotation regardless of whether retention is configured — the
@@ -383,9 +375,8 @@ class JSONLTraceStore:
     def _anchor_checkpoint(self) -> None:
         """Build and emit a pre-purge checkpoint via ``checkpoint_sink``, if wired.
 
-        Fail-open (NIST AU-5): a signer/sink failure must never break trace
-        capture or the retention purge it precedes. No-op when no
-        ``checkpoint_sink`` was supplied at construction.
+        A configured sink must succeed before retention can remove traces.
+        A failed checkpoint poisons this store until it is reconstructed.
         """
         if self._checkpoint_sink is None:
             return
@@ -394,8 +385,9 @@ class JSONLTraceStore:
 
             checkpoint = build_checkpoint(self._traces_dir)
             self._checkpoint_sink(checkpoint)
-        except Exception:  # reason: an anchor failure must never break capture
-            logger.warning("Checkpoint anchor failed for %s", self._traces_dir, exc_info=True)
+        except Exception:
+            self._checkpoint_failed = True
+            raise
 
     @staticmethod
     def _write_line_sync(file_path: Path, payload: dict[str, Any]) -> None:
@@ -427,6 +419,8 @@ class JSONLTraceStore:
         store while still preserving strict append ordering.
         """
         async with self._lock:
+            if self._checkpoint_failed:
+                raise RuntimeError("trace checkpoint failed; reopen store after recovery")
             await self._warm_start()
             await self._maybe_rotate()
 

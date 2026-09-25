@@ -12,8 +12,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from arctrust import OperatorKey, read_verified_anchor
 
+from arcagent.core import model_manager
 from arcagent.core.model_manager import build_checkpoint_sink
 
 
@@ -65,3 +67,42 @@ def test_federal_checkpoint_submitted_to_witness(tmp_path: Path) -> None:
     submitted_cp, sig = witness.submitted[0]
     assert submitted_cp["head_hash"] == "e" * 64
     assert len(sig) == 64  # Ed25519 operator signature over the checkpoint
+
+
+def test_durable_anchor_failure_refuses_witness_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingWitness:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def submit(self, checkpoint: dict[str, Any], signature: bytes) -> str:
+            self.calls += 1
+            return "proof"
+
+    def fail_write(_self: Any, _event: Any) -> None:
+        raise OSError("audit disk unavailable")
+
+    monkeypatch.setattr(model_manager.WormSink, "write_durable", fail_write)
+    witness = RecordingWitness()
+    signer = OperatorKey.generate().into_signer()
+    sink = build_checkpoint_sink(
+        tmp_path, signer, actor_did="did:arc:test:exec/aa", witness=witness
+    )
+    with pytest.raises(OSError, match="audit disk unavailable"):
+        sink(_checkpoint("a" * 64))
+    assert witness.calls == 0
+    assert (
+        read_verified_anchor(tmp_path / ".audit" / "trace-checkpoint.worm", signer.public_key)
+        is None
+    )
+
+
+def test_anchor_readback_must_match_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signer = OperatorKey.generate().into_signer()
+    monkeypatch.setattr(model_manager, "read_verified_anchor", lambda *_args, **_kwargs: None)
+    sink = build_checkpoint_sink(tmp_path, signer, actor_did="did:arc:test:exec/aa")
+    with pytest.raises(RuntimeError, match="verification"):
+        sink(_checkpoint("b" * 64))

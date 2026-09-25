@@ -35,6 +35,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "log disclosure and audit tampering": (
         "packages/arcagent/tests/security/test_audit_at_rest.py",
+        "packages/arcagent/tests/unit/core/test_checkpoint_sink.py",
+        "packages/arcagent/tests/unit/core/test_spec053_hardening.py",
+        "packages/arcllm/tests/test_trace_store.py",
         "packages/arcrun/tests/security/test_event_tampering.py",
         "packages/arcui/tests/test_session_replay_media.py",
         "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
@@ -72,6 +75,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "browser media custody and MIME spoofing": (
         "packages/arcgateway/tests/security/test_media_store_refusals.py",
+        "packages/arcagent/tests/security/test_run_media_custody.py",
         "packages/arcui/tests/integration/test_attachment_session_identity.py",
     ),
     "LLM queue rollback, stale owner and resource exhaustion": (
@@ -94,8 +98,12 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_health.py",
     ),
     "accepted run and intent ledger refusal": (
+        "packages/arcagent/tests/architecture/test_run_owner_optional_absence.py",
         "packages/arcstore/tests/unit/test_accepted_runs.py",
         "packages/arcagent/tests/unit/modules/run_intents/test_ledger.py",
+        "packages/arcagent/tests/unit/modules/run_intents/test_collected.py",
+        "packages/arcagent/tests/unit/core/test_accepted_stream.py",
+        "packages/arcgateway/tests/unit/test_signed_delivery.py",
     ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,
@@ -116,6 +124,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcrun/tests/test_executor.py",
         "packages/arcrun/tests/test_run_context.py",
         "packages/arcrun/tests/reliability/test_tool_ledger.py",
+        "packages/arcrun/tests/reliability/test_tool_outcome_unknown.py",
+    ),
+    "hosted claim and journal refusal": (
+        "packages/arctrust/tests/test_hosted_claim.py",
+        "packages/arctrust/tests/test_hosted_journal.py",
+        "packages/arctrust/tests/test_hosted_optional_import.py",
+        "packages/arcui/tests/test_hosted_setup.py",
     ),
     # SPEC-082 MCP door + connectors: an outside operator/agent drives Arc's own
     # tools through the same signed-authorized-audited envelope. Every hostile

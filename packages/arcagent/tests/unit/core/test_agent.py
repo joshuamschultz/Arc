@@ -253,6 +253,7 @@ class TestArcLLMBridge:
         record = MagicMock()
         record.model_dump.return_value = {
             "event_type": "llm_call",
+            "run_id": "run-llm-call",
             "provider": "anthropic",
             "model": "claude-sonnet-4",
             "duration_ms": 150.0,
@@ -278,6 +279,7 @@ class TestArcLLMBridge:
         record = MagicMock()
         record.model_dump.return_value = {
             "event_type": "config_change",
+            "run_id": "run-config-change",
             "event_data": {
                 "actor": "operator",
                 "changes": {"temperature": {"old": 0.7, "new": 0.3}},
@@ -303,6 +305,7 @@ class TestArcLLMBridge:
         record = MagicMock()
         record.model_dump.return_value = {
             "event_type": "circuit_change",
+            "run_id": "run-circuit-change",
             "event_data": {"provider": "anthropic", "old_state": "CLOSED", "new_state": "OPEN"},
         }
         bridge(record)
@@ -344,7 +347,14 @@ class TestArcLLMBridge:
 
         bridge = create_arcllm_bridge(bus)
         # Pass a raw dict instead of a Pydantic model
-        bridge({"event_type": "llm_call", "provider": "openai", "model": "gpt-4o"})
+        bridge(
+            {
+                "event_type": "llm_call",
+                "run_id": "run-dict",
+                "provider": "openai",
+                "model": "gpt-4o",
+            }
+        )
 
         for _ in range(5):
             await asyncio.sleep(0)
@@ -758,6 +768,7 @@ class TestLLMBridgeWiring:
         record = MagicMock()
         record.model_dump.return_value = {
             "event_type": "llm_call",
+            "run_id": "run-agent-wiring",
             "provider": "anthropic",
             "model": "claude-sonnet-4",
             "duration_ms": 120.0,

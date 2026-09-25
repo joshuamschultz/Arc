@@ -464,18 +464,109 @@ class TestCheckpointSinkAnchor:
         store = JSONLTraceStore(tmp_path)
         await store._maybe_purge()  # must not raise
 
-    async def test_checkpoint_sink_failure_is_swallowed(self, tmp_path: Path) -> None:
-        """A signer/sink failure must never break capture (NIST AU-5)."""
+    async def test_checkpoint_sink_failure_stops_capture_and_retention(
+        self, tmp_path: Path
+    ) -> None:
+        """A failed anchor must stop purge and later appends on this store."""
 
         def _boom(_checkpoint: dict[str, object]) -> None:
             raise RuntimeError("signer unavailable")
 
-        store = JSONLTraceStore(tmp_path, checkpoint_sink=_boom)
+        old_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+        old_file = _write_rotated_file(tmp_path / "traces", old_date)
+        store = JSONLTraceStore(tmp_path, retention_max_age_days=5, checkpoint_sink=_boom)
+        with pytest.raises(RuntimeError, match="signer unavailable"):
+            await store._maybe_purge()
+        assert old_file.exists()
+        with pytest.raises(RuntimeError, match="checkpoint"):
+            await store.append(
+                TraceRecord(provider="anthropic", model="claude", trace_id="after-failure")
+            )
 
-        await store._maybe_purge()  # must not raise
+    async def test_failed_rotation_checkpoint_blocks_new_trace(self, tmp_path: Path) -> None:
+        old_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+        old_file = _write_rotated_file(tmp_path / "traces", old_date)
 
-        # Capture still succeeds after an anchor failure.
-        await store.append(
-            TraceRecord(provider="anthropic", model="claude", trace_id="after-failure")
+        def fail_anchor(_checkpoint: dict[str, object]) -> None:
+            raise RuntimeError("witness unavailable")
+
+        store = JSONLTraceStore(tmp_path, retention_max_age_days=5, checkpoint_sink=fail_anchor)
+        record = TraceRecord(provider="anthropic", model="claude", trace_id="blocked")
+        with pytest.raises(RuntimeError, match="witness unavailable"):
+            await store.append(record)
+        assert old_file.exists()
+        assert not store._file_for_date(store._today()).exists()
+        with pytest.raises(RuntimeError, match="checkpoint"):
+            await store.append(record)
+
+    async def test_failed_checkpoint_retries_after_reopen_before_purge(
+        self, tmp_path: Path
+    ) -> None:
+        old_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+        old_file = _write_rotated_file(tmp_path / "traces", old_date)
+
+        def fail_anchor(_checkpoint: dict[str, object]) -> None:
+            raise RuntimeError("witness unavailable")
+
+        record = TraceRecord(provider="anthropic", model="claude", trace_id="after-reopen")
+        for _ in range(2):
+            store = JSONLTraceStore(
+                tmp_path, retention_max_age_days=5, checkpoint_sink=fail_anchor
+            )
+            with pytest.raises(RuntimeError, match="witness unavailable"):
+                await store.append(record)
+            assert old_file.exists()
+            assert not store._file_for_date(store._today()).exists()
+
+        anchored: list[dict[str, object]] = []
+        recovered = JSONLTraceStore(
+            tmp_path, retention_max_age_days=5, checkpoint_sink=anchored.append
         )
-        assert await store.verify_chain() is True
+        await recovered.append(record)
+        assert len(anchored) == 1
+        assert old_file.name in anchored[0]["files"]
+        assert not old_file.exists()
+        assert recovered._file_for_date(recovered._today()).exists()
+
+    async def test_reopen_reuses_failed_rotation_tombstone(self, tmp_path: Path) -> None:
+        old_date = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+        old_file = _write_rotated_file(tmp_path / "traces", old_date)
+
+        def fail_anchor(_checkpoint: dict[str, object]) -> None:
+            raise RuntimeError("witness unavailable")
+
+        record = TraceRecord(provider="anthropic", model="claude", trace_id="after-reopen")
+        failing = JSONLTraceStore(tmp_path, checkpoint_sink=fail_anchor)
+        with pytest.raises(RuntimeError, match="witness unavailable"):
+            await failing.append(record)
+        assert len(old_file.read_text().splitlines()) == 2
+
+        recovered = JSONLTraceStore(tmp_path, checkpoint_sink=lambda _checkpoint: None)
+        await recovered.append(record)
+        assert len(old_file.read_text().splitlines()) == 2
+
+
+@pytest.mark.parametrize("damage", ["malformed", "hash", "link"])
+async def test_reopen_refuses_corrupt_tail(tmp_path: Path, damage: str) -> None:
+    store = JSONLTraceStore(tmp_path)
+    await store.append(TraceRecord(provider="anthropic", model="claude", trace_id="first"))
+    await store.append(TraceRecord(provider="anthropic", model="claude", trace_id="second"))
+    path = store._file_for_date(store._today())
+    lines = path.read_text().splitlines()
+    if damage == "malformed":
+        lines[-1] = "{not-json"
+    else:
+        record = json.loads(lines[-1])
+        if damage == "hash":
+            record["record_hash"] = "0" * 64
+        else:
+            record["prev_hash"] = "f" * 64
+        lines[-1] = json.dumps(record)
+    path.write_text("\n".join(lines) + "\n")
+
+    reopened = JSONLTraceStore(tmp_path)
+    with pytest.raises(RuntimeError, match="trace tail integrity"):
+        await reopened.append(
+            TraceRecord(provider="anthropic", model="claude", trace_id="blocked")
+        )
+    assert len(path.read_text().splitlines()) == 2

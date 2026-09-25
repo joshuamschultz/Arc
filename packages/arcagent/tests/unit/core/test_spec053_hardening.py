@@ -138,13 +138,12 @@ def test_federal_witness_submit_failure_fails_closed(tmp_path: Path) -> None:
         operator.into_signer(),
         actor_did="did:arc:test:exec/a",
         witness=_FailingWitness(),
-        federal=True,
     )
     with pytest.raises(OSError, match="witness medium unavailable"):
         sink({"head_hash": "f" * 64, "record_count": 1, "files": []})
 
 
-def test_nonfederal_witness_submit_failure_is_swallowed(tmp_path: Path) -> None:
+def test_configured_witness_submit_failure_fails_closed_below_federal(tmp_path: Path) -> None:
     agent_root = tmp_path / "agent"
     agent_root.mkdir()
     operator = OperatorKey.generate()
@@ -153,9 +152,9 @@ def test_nonfederal_witness_submit_failure_is_swallowed(tmp_path: Path) -> None:
         operator.into_signer(),
         actor_did="did:arc:test:exec/a",
         witness=_FailingWitness(),
-        federal=False,
     )
-    sink({"head_hash": "0" * 64, "record_count": 1, "files": []})  # no raise (AU-5)
+    with pytest.raises(OSError, match="witness medium unavailable"):
+        sink({"head_hash": "0" * 64, "record_count": 1, "files": []})
 
 
 # ---------------------------------------------------------------------------

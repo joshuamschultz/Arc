@@ -5,6 +5,7 @@ models it declared, never to one merely configured on the machine.
 """
 
 import pytest
+from arctrust import OperatorKey
 from pydantic import ValidationError
 
 from arcagent.core.config import ArcAgentConfig, LLMConfig
@@ -133,7 +134,12 @@ class TestRoutesReachTheRealModelPath:
             routes={"cheap": {"model": "anthropic/claude-haiku-4-5", "phrases": ["quick"]}}
         )
 
-        model, _trace_store = ensure_model(config=config, workspace=workspace, bus=None)
+        model, _trace_store = ensure_model(
+            config=config,
+            workspace=workspace,
+            bus=None,
+            operator_signer=OperatorKey.generate().into_signer(),
+        )
 
         router = model
         while not isinstance(router, RoutingModule):
@@ -149,12 +155,40 @@ class TestRoutesReachTheRealModelPath:
         workspace = tmp_path / "agent" / "workspace"
         workspace.mkdir(parents=True)
 
-        model, _trace_store = ensure_model(config=_config(), workspace=workspace, bus=None)
+        model, _trace_store = ensure_model(
+            config=_config(),
+            workspace=workspace,
+            bus=None,
+            operator_signer=OperatorKey.generate().into_signer(),
+        )
 
         router = model
         while not isinstance(router, RoutingModule):
             router = router._inner
         assert router.routes == ("default",)
+
+    def test_ensure_model_without_operator_signer_fails_closed(self, tmp_path):
+        from arcagent.core.model_manager import ensure_model
+
+        workspace = tmp_path / "agent" / "workspace"
+        workspace.mkdir(parents=True)
+        with pytest.raises(RuntimeError, match="operator signer required"):
+            ensure_model(config=_config(), workspace=workspace, bus=None)
+
+    def test_federal_ensure_model_without_witness_fails_closed(self, tmp_path):
+        from arcagent.core.model_manager import ensure_model
+
+        workspace = tmp_path / "agent" / "workspace"
+        workspace.mkdir(parents=True)
+        config = _config()
+        config.security.tier = "federal"
+        with pytest.raises(RuntimeError, match="external witness required"):
+            ensure_model(
+                config=config,
+                workspace=workspace,
+                bus=None,
+                operator_signer=OperatorKey.generate().into_signer(),
+            )
 
 
 class TestRoutesReachLoadModel:

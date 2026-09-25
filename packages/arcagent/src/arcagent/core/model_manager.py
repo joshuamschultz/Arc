@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import arcrun
-from arctrust import AuditEvent, RecordCipher, Signer, WormSink, emit
+from arctrust import AuditEvent, RecordCipher, Signer, WormSink, read_verified_anchor
 
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
@@ -44,7 +44,6 @@ def build_checkpoint_sink(
     *,
     actor_did: str,
     witness: WitnessAnchor | None = None,
-    federal: bool = False,
     cipher: RecordCipher | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the trace-store checkpoint sink — an OPERATOR-signed WORM anchor.
@@ -52,26 +51,22 @@ def build_checkpoint_sink(
     arcllm's ``JSONLTraceStore`` emits a ``build_checkpoint`` manifest at each
     rotation; this sink anchors it as one operator-signed ``trace.checkpoint``
     WORM record (SPEC-053 REQ-002/008), so ``read_verified_anchor`` proves the
-    head under the operator pubkey — never the agent DID. At federal tier the
-    same operator-signed head is also submitted to an external ``witness``
-    (REQ-009), making a rollback past the last anchor detectable even by a
-    holder of the operator key.
+    head under the operator pubkey — never the agent DID. When configured, the
+    external ``witness`` receives the same operator-signed head (REQ-009).
 
     The chain lives in ``<agent_root>/.audit`` (outside the workspace). The
     WormSink is opened per-checkpoint (append + close): checkpoints are rare
     (rotation boundaries) and the sink restores its tip from the file, so this
     keeps ``ensure_model`` stateless with no long-held lock.
 
-    Local WORM anchoring is fail-open (AU-5) — it must never break a run. The
-    federal witness is NOT: an unwitnessed head silently defeats the rollback
-    defense, so at ``federal`` a failed ``witness.submit`` fails the operation
-    (REQ-009). Below federal the witness is best-effort and swallowed.
+    A failed durable append, verification, or configured witness submission
+    refuses the checkpoint at every tier.
     """
     chain = agent_root / ".audit" / "trace-checkpoint.worm"
 
     def _sink(checkpoint: dict[str, Any]) -> None:
         _anchor_local(chain, signer, actor_did, checkpoint, cipher)
-        _submit_witness(witness, signer, checkpoint, federal=federal)
+        _submit_witness(witness, signer, checkpoint)
 
     return _sink
 
@@ -83,47 +78,34 @@ def _anchor_local(
     checkpoint: dict[str, Any],
     cipher: RecordCipher | None,
 ) -> None:
-    """Append the operator-signed checkpoint to the local WORM chain (fail-open)."""
+    """Append and verify the operator-signed checkpoint before continuing."""
+    worm = WormSink(chain, signer, cipher=cipher)
     try:
-        worm = WormSink(chain, signer, cipher=cipher)
-        try:
-            emit(
-                AuditEvent(
-                    actor_did=actor_did,
-                    action="trace.checkpoint",
-                    target="trace-store",
-                    outcome="anchored",
-                    extra=checkpoint,
-                ),
-                worm,
+        worm.write_durable(
+            AuditEvent(
+                actor_did=actor_did,
+                action="trace.checkpoint",
+                target="trace-store",
+                outcome="anchored",
+                extra=checkpoint,
             )
-        finally:
-            worm.close()
-    except Exception:  # reason: fail-open — local anchoring must never break a run (AU-5)
-        _logger.warning("trace checkpoint anchoring failed — swallowing (AU-5)", exc_info=True)
+        )
+    finally:
+        worm.close()
+    if read_verified_anchor(chain, signer.public_key, cipher=cipher) != checkpoint:
+        raise RuntimeError("trace checkpoint anchor verification failed")
 
 
 def _submit_witness(
     witness: WitnessAnchor | None,
     signer: Signer,
     checkpoint: dict[str, Any],
-    *,
-    federal: bool,
 ) -> None:
-    """Submit the operator-signed head to the external witness.
-
-    Federal: mandatory — a failed submit raises (an unwitnessed head defeats the
-    rollback defense). Below federal: best-effort, swallowed (REQ-009).
-    """
+    """Submit a configured witness and propagate refusal at every tier."""
     if witness is None:
         return
     signature = signer.sign(_canonical_checkpoint_bytes(checkpoint))
-    try:
-        witness.submit(checkpoint, signature)
-    except Exception:
-        if federal:
-            raise
-        _logger.warning("witness submission failed (non-federal) — swallowing", exc_info=True)
+    witness.submit(checkpoint, signature)
 
 
 def decision_point_moment(event: arcrun.Event) -> dict[str, Any] | None:
@@ -423,27 +405,24 @@ def ensure_model(
     the workspace tool sandbox — the trace store wants the agent
     root, not the workspace subdirectory.
 
-    When an ``operator_signer`` is supplied, the store's rotation checkpoints
-    are anchored in an operator-signed WORM chain (SPEC-053) via the arctrust
-    ``Signer`` seam; at federal tier the ``witness`` externally witnesses each
-    head (REQ-009).
+    Rotation checkpoints require an operator signer and are anchored in a
+    durable, verified WORM chain. A configured witness also receives each head.
 
     Returns ``(model, trace_store)``. The caller is responsible for
     caching both — this helper is intentionally stateless so it can
     be unit-tested without an ArcAgent instance.
     """
     agent_root = workspace.parent
-    checkpoint_sink = (
-        build_checkpoint_sink(
-            agent_root,
-            operator_signer,
-            actor_did=actor_did,
-            witness=witness,
-            federal=config.security.tier == "federal",
-            cipher=record_cipher,
-        )
-        if operator_signer is not None
-        else None
+    if operator_signer is None:
+        raise RuntimeError("operator signer required for trace checkpoints")
+    if config.security.tier == "federal" and witness is None:
+        raise RuntimeError("external witness required for federal trace checkpoints")
+    checkpoint_sink = build_checkpoint_sink(
+        agent_root,
+        operator_signer,
+        actor_did=actor_did,
+        witness=witness,
+        cipher=record_cipher,
     )
     trace_store = arcrun.create_model_trace_store(agent_root, checkpoint_sink=checkpoint_sink)
     on_event = (
