@@ -86,7 +86,7 @@ async def _connected(
     )
     for instance, account in accounts:
         plan = connections.plan("google_workspace", instance)
-        await connections.install(plan, {"account": account})
+        await connections.install(plan, {"account": account, "client": "arc"})
     return connections
 
 
@@ -123,7 +123,7 @@ async def test_a_sign_in_begins_completes_and_reads_working(
 async def test_an_expired_token_reads_expired(tmp_path: Path, gog_home: Path) -> None:
     connections = await _connected(tmp_path, _Sink(), RemoteLoginLedger(), ("blackarc", _ACCOUNT))
     gog_home.mkdir(exist_ok=True)
-    (gog_home / "tokens.json").write_text(json.dumps({f"default:{_ACCOUNT}": "expired"}))
+    (gog_home / "tokens.json").write_text(json.dumps({f"arc:{_ACCOUNT}": "expired"}))
 
     doctor = {row.check: row for row in await connections.doctor("blackarc")}
 
@@ -192,3 +192,34 @@ async def test_a_spent_code_asks_for_a_fresh_start(tmp_path: Path, gog_home: Pat
         await connections.complete_remote_login("blackarc", redirect_url=landed)
 
     assert again.value.code == REMOTE_LOGIN_NOT_STARTED
+
+
+async def test_a_blank_warned_field_must_be_accepted_and_the_refusal_is_audited(
+    tmp_path: Path, gog_home: Path
+) -> None:
+    from arcagent.extension.remote_login import REMOTE_LOGIN_NEEDS_CONFIRMATION
+
+    sink = _Sink()
+    root = tmp_path / "extensions"
+    shutil.copytree(
+        _BUNDLE, root / "google_workspace", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    backend = FakeBackend()
+    connections = Connections.for_deployment(
+        arc_dir=tmp_path / "arc",
+        data_dir=tmp_path / "data",
+        extensions_root=root,
+        audit=AuditChain.held(sink),
+        state_opener=lambda: _open(backend),
+    )
+    await connections.install(
+        connections.plan("google_workspace", "legacy"), {"account": _ACCOUNT}
+    )
+
+    with pytest.raises(ExtensionError) as refused:
+        await connections.begin_remote_login("legacy")
+    assert refused.value.code == REMOTE_LOGIN_NEEDS_CONFIRMATION
+    assert sink.events[-1].extra["reason"] == REMOTE_LOGIN_NEEDS_CONFIRMATION
+
+    started = await connections.begin_remote_login("legacy", accept_warnings=True)
+    assert started.warnings and "7 days" in started.warnings[0]

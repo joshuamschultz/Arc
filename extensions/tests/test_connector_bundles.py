@@ -832,7 +832,12 @@ _SHAPED_PLACEHOLDER: dict[str, str] = {
 
 def _placeholders(manifest: ExtensionManifest) -> dict[str, str]:
     """One acceptable value per declared credential, keyed by field name."""
-    return {declared.name: _SHAPED_PLACEHOLDER[declared.format] for declared in manifest.secrets}
+    return {
+        declared.name: (
+            declared.choices[0] if declared.choices else _SHAPED_PLACEHOLDER[declared.format]
+        )
+        for declared in manifest.secrets
+    }
 
 
 def _egress_bundles() -> list[Path]:

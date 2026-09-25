@@ -36,7 +36,10 @@ from urllib.parse import parse_qs, quote, urlsplit
 HOME = Path(os.environ["FAKE_GOG_HOME"])
 HOME.mkdir(parents=True, exist_ok=True)
 ARGS = sys.argv[1:]
-CLIENT = os.environ.get("GOG_CLIENT", "") or "default"
+#: Like gog: an explicit ``--client=<name>`` wins, then GOG_CLIENT, then "default".
+#: ``--client=`` (blank) means "not set".
+_FLAGGED = [arg.split("=", 1)[1] for arg in ARGS if arg.startswith("--client=")]
+CLIENT = (_FLAGGED[-1] if _FLAGGED else "") or os.environ.get("GOG_CLIENT", "") or "default"
 ACCOUNT = os.environ.get("GOG_ACCOUNT", "")
 
 

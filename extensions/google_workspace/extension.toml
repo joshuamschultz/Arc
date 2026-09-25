@@ -115,11 +115,20 @@ same release's checksums.txt. [artifact] pins all four Arc can install for you.
 # environment (GOG_ACCOUNT, GOG_CLIENT), so the token lands in the same account and
 # OAuth-client bucket the connection reads. The steps must ask for the SAME
 # services and flags: gog only resumes a step-1 state whose client, scopes and
-# consent flag match. The scopes are what the declared tools need and no more —
-# Gmail (read, draft, send), Calendar, and Drive read-only.
+# consent flag match.
+#
+# Scopes are explicit and minimal. Left to itself `gog auth add` asks for
+# `--services user` — ads, analytics, chat, classroom, photos and a dozen more —
+# which an unverified app should never request. Here: Gmail, Calendar and Drive,
+# Drive always read-only, and `--readonly={read_only}` (default yes) makes Gmail
+# and Calendar read-only too. Drafting and sending mail is the opt-in `no`.
+#
+# `--client={client}` names the operator's own OAuth client. Blank leaves
+# `--client=`, gog's built-in client — the labelled legacy fallback whose
+# sign-ins Google expires after about 7 days (see `client` below).
 [host_requires.remote_login]
-begin = "gog auth add {account} --remote --step 1 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input"
-complete = "gog auth add {account} --remote --step 2 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input --auth-url {redirect_url}"
+begin = "gog auth add {account} --client={client} --readonly={read_only} --remote --step 1 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input"
+complete = "gog auth add {account} --client={client} --readonly={read_only} --remote --step 2 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input --auth-url {redirect_url}"
 consent_host = "accounts.google.com"
 
 [tools]
@@ -221,21 +230,37 @@ format = "email"
 variable = "GOG_ACCOUNT"
 
 # WHICH OAuth client this connection's token belongs to. gog keeps named client
-# credentials (`gog --client <name> auth credentials set client_secret.json`) and a
-# separate token bucket per client; GOG_CLIENT selects both, for the sign-in steps
-# and for every verb. Empty uses gog's default client. Set it to the name of your
-# own Google Cloud OAuth client, published "In production", and tokens stop
-# expiring every seven days. A name, not a secret: the client secret stays in
-# gog's own config on this host.
+# credentials (`gog auth credentials set client_secret.json --client <name>`) and
+# a separate token bucket per client; it is passed as --client to both sign-in
+# steps and placed into GOG_CLIENT for every verb. Set it to the name of your own
+# Google Cloud OAuth client, published "In production", and tokens stop expiring
+# every seven days. A name, not a secret: the client secret stays in gog's own
+# config on this host.
+#
+# Optional only so connections made before it existed keep working; blank is the
+# labelled legacy fallback, and a sign-in without it must be acknowledged.
 [[secrets]]
 name = "client"
-prompt = "Optional. The name of your own Google OAuth client on this host, as you stored it with `gog --client <name> auth credentials set` — for example arc. Leave blank to use gog's default client."
+prompt = "The name of your own Google OAuth client, exactly as you stored it on this host with `gog auth credentials set <file> --client <name>` — for example arc."
 sensitive = false
 required = false
 format = "name"
+blank_warning = "No OAuth client is set, so this sign-in uses gog's built-in client. Google expires those sign-ins after about 7 days. Set your own client (Edit details) to stop that."
 
 [secrets.placement]
 variable = "GOG_CLIENT"
+
+# How much the sign-in asks Google for. `yes` (the default): read Gmail, Calendar
+# and Drive, nothing else. `no`: also draft and send Gmail — google_gmail_draft
+# and google_gmail_send need it. Used only by the sign-in steps, so a change takes
+# effect at the next Reconnect.
+[[secrets]]
+name = "read_only"
+prompt = "Read-only access? yes = the agent can read mail, calendar and Drive but cannot draft or send (recommended). no = also allow drafting and sending Gmail. Reconnect after changing it."
+sensitive = false
+required = false
+choices = ["yes", "no"]
+default = "yes"
 
 [approval]
 default = "outbound"
