@@ -625,6 +625,7 @@ def test_an_unsatisfied_host_prerequisite_is_400_and_writes_nothing(world: Path)
             "name": "definitely_not_installed_xyz",
             "instruction": "brew install definitely-not-installed-xyz",
             "satisfied": False,
+            "remote_login": False,
         }
     ]
     assert _defined(world) == {}
@@ -1867,15 +1868,12 @@ def _embed_fake_agent(
     did = resolve_agent_did(client.app.state.roster_provider(), agent_id)
     assert did is not None
     statuses = tuple(
-        types.SimpleNamespace(connection_id=cid, status="needs_attention")
-        for cid in attention_ids
+        types.SimpleNamespace(connection_id=cid, status="needs_attention") for cid in attention_ids
     )
     service = _FakeConnectedDataService(statuses)
     entry = types.SimpleNamespace(instance=types.SimpleNamespace(service=service))
     registry = _FakeCapabilityRegistry({"connected_data": entry})
-    modules = (
-        {"mcp_server": types.SimpleNamespace(enabled=True)} if door_enabled else {}
-    )
+    modules = {"mcp_server": types.SimpleNamespace(enabled=True)} if door_enabled else {}
     agent = types.SimpleNamespace(
         _config=types.SimpleNamespace(modules=modules),
         _capability_registry=registry,
@@ -1889,9 +1887,7 @@ def test_agent_connectors_reports_the_mcp_door_is_open(world: Path) -> None:
     client, agent_id, _dir = _agent(world)
     _embed_fake_agent(client, agent_id, door_enabled=True)
 
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
     assert body["mcp_door_enabled"] is True
 
 
@@ -1900,13 +1896,9 @@ def test_agent_connectors_flags_a_connection_needing_attention(world: Path) -> N
     client, agent_id, _dir = _agent(world)
     _write_bundle(_bundles(world))
     assert _install(client).status_code == 200
-    _embed_fake_agent(
-        client, agent_id, door_enabled=False, attention_ids=(_INSTANCE,)
-    )
+    _embed_fake_agent(client, agent_id, door_enabled=False, attention_ids=(_INSTANCE,))
 
-    body = client.get(
-        f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")
-    ).json()
+    body = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
     row = next(r for r in body["instances"] if r["instance"] == _INSTANCE)
     assert row["needs_attention"] is True
     assert body["mcp_door_enabled"] is False

@@ -51,6 +51,7 @@ instead of silently reducing coverage.
 | Manual/forged/replayed agent actions | ArcUI operator gates, signed approvals, gateway identity and replay dedup |
 | Key theft and cross-agent/tenant reads | trust-store permissions, DID/key separation, runtime and classification isolation |
 | Direct ArcRun invocation and resource abuse | package dependency direction, absence of ArcAgent authority, time/memory/spawn bounds |
+| Browser sign-in abuse (pasted callback, argv injection, out-of-order steps) | consent-host pinning, loopback/path/query checks on the pasted address, strict account shape, one waiting sign-in per binary, spent-code refusal, step timeout, code never written by Arc |
 
 The manifest is intentionally curated. Package-local security suites remain
 broader; this battery is the fast release gate for the hostile-insider threat

@@ -77,6 +77,7 @@ from arcui.schemas import (
     ConnectorProbeResponse,
     ConnectorRemoveResponse,
     ConnectorSecretField,
+    ConnectorSignInStartResponse,
     ConnectorTool,
     ConnectorUnreadableBundle,
 )
@@ -132,7 +133,23 @@ def _connections(request: Request) -> Connections:
         audit=AuditChain.held(operator_audit_sink(request)),
         state_opener=state_opener if backend is not None else None,
         connector_control=_connector_control(request),
+        remote_logins=_remote_logins(request),
+        host_step_timeout=getattr(request.app.state, "connector_step_timeout", None),
     )
+
+
+def _remote_logins(request: Request) -> arcagent.RemoteLoginLedger:
+    """The one ledger of begun browser sign-ins, held for this server's lifetime.
+
+    A begun sign-in is completed by a LATER request, so it cannot live in the
+    per-request seam. Created on first use and kept on the app; there is no await
+    between the read and the write, so two requests cannot each create one.
+    """
+    ledger = getattr(request.app.state, "remote_login_ledger", None)
+    if not isinstance(ledger, arcagent.RemoteLoginLedger):
+        ledger = arcagent.RemoteLoginLedger()
+        request.app.state.remote_login_ledger = ledger
+    return ledger
 
 
 class _InProcessConnectorControl:
@@ -336,13 +353,15 @@ def _missing_secrets(plan: ConnectorPlan, supplied: dict[str, str]) -> list[str]
 
     An OAuth connector's refresh token is obtained by the authorize flow AFTER
     install, never typed here, so it is not a missing credential to refuse the
-    install over — the operator supplies only the app key/secret.
+    install over — the operator supplies only the app key/secret. Neither is a
+    field the bundle declares ``required = false``: leaving one blank is how an
+    operator says "not this" (a single-account host, gog's default OAuth client).
     """
     managed = plan.manifest.oauth.refresh_token_secret if plan.manifest.oauth else None
     return [
         declared.name
         for declared in plan.secrets
-        if declared.name != managed and not supplied.get(declared.name)
+        if declared.required and declared.name != managed and not supplied.get(declared.name)
     ]
 
 
@@ -438,8 +457,11 @@ def _catalog_entry(
                 # as broken.
                 instruction=verdict.instruction,
                 satisfied=verdict.satisfied,
+                remote_login=declared.remote_login is not None,
             )
-            for verdict in director.check(entry.host_requires)
+            for declared, verdict in zip(
+                entry.host_requires, director.check(entry.host_requires), strict=True
+            )
         ],
         tools=[
             ConnectorTool(
@@ -759,6 +781,7 @@ async def get_connector_auth(request: Request) -> JSONResponse:
                     command=host.command,
                     instruction=host.instruction,
                     token_command=host.token_command,
+                    remote_login=host.remote_login,
                 )
                 for host in auth.hosts
             ],
@@ -766,6 +789,7 @@ async def get_connector_auth(request: Request) -> JSONResponse:
             detail=auth.detail,
             oauth=auth.oauth,
             authorize_url=auth.authorize_url,
+            sign_in=auth.sign_in,
         ).model_dump(mode="json")
     )
 
@@ -950,6 +974,97 @@ async def post_connector_oauth(request: Request) -> JSONResponse:
     return _auth_status(auth)
 
 
+async def post_connector_sign_in_begin(request: Request) -> JSONResponse:
+    """POST /api/connections/{instance}/sign-in/begin — start a browser sign-in.
+
+    Operator only: it runs the bundle's declared first sign-in step on the host.
+    Answers with the provider's consent link for THIS connection's account; the
+    operator opens it, signs in, and pastes back the address the browser lands on.
+    One sign-in per host binary may be waiting at a time, and a second account's
+    begin is refused by name rather than silently replacing the first.
+    """
+    if not _is_operator(request):
+        return _error("Operator role required", 403)
+    try:
+        body = await read_json_object(request)
+    except BodyTooLargeError:
+        return _error("Request body too large", 413)
+    if body is None:
+        return _error("Body must be a JSON object", 400)
+
+    instance = request.path_params["instance"]
+    try:
+        started = await _connections(request).begin_remote_login(instance)
+    except ExtensionError as exc:
+        emit_mutation_audit(
+            request,
+            target=f"connector:{instance}",
+            operation="connector.sign_in.begin",
+            outcome="denied",
+            detail=exc.code,
+        )
+        return _refused(exc)
+
+    emit_mutation_audit(
+        request,
+        target=f"connector:{instance}",
+        operation="connector.sign_in.begin",
+        outcome="applied",
+    )
+    return JSONResponse(
+        ConnectorSignInStartResponse(
+            instance=started.instance,
+            account=started.account,
+            consent_url=started.consent_url,
+            expires_in=started.expires_in,
+        ).model_dump(mode="json")
+    )
+
+
+async def post_connector_sign_in_complete(request: Request) -> JSONResponse:
+    """POST /api/connections/{instance}/sign-in/complete — finish it with the pasted address.
+
+    Operator only. ``redirect_url`` is the address the browser landed on; it holds
+    a single-use authorization code, so it is checked and passed to the bundle's
+    declared second step and appears in no response, log line, or audit event
+    this route produces. The answer is the connection's sign-in taken AFTERWARDS
+    with the bundle's own check — "working" only when the account really works.
+    """
+    if not _is_operator(request):
+        return _error("Operator role required", 403)
+    try:
+        body = await read_json_object(request)
+    except BodyTooLargeError:
+        return _error("Request body too large", 413)
+    if body is None:
+        return _error("Body must be a JSON object", 400)
+    pasted = body.get("redirect_url")
+    if not isinstance(pasted, str) or not pasted.strip():
+        return _error("Paste the address the browser landed on after signing in", 400)
+
+    instance = request.path_params["instance"]
+    try:
+        auth = await _connections(request).complete_remote_login(instance, redirect_url=pasted)
+    except ExtensionError as exc:
+        emit_mutation_audit(
+            request,
+            target=f"connector:{instance}",
+            operation="connector.sign_in.complete",
+            outcome="denied",
+            detail=exc.code,
+        )
+        return _refused(exc)
+
+    emit_mutation_audit(
+        request,
+        target=f"connector:{instance}",
+        operation="connector.sign_in.complete",
+        outcome="applied" if auth.working else "denied",
+        detail=auth.sign_in,
+    )
+    return _auth_status(auth)
+
+
 async def post_connector_host_setup(request: Request) -> JSONResponse:
     """POST /api/connections/{extension}/host-setup — install what it needs.
 
@@ -1090,6 +1205,16 @@ routes = [
     Route("/api/connections/{instance}/auth-status", get_connector_auth_status, methods=["GET"]),
     Route("/api/connections/{instance}/authorize", post_connector_authorize, methods=["POST"]),
     Route("/api/connections/{instance}/oauth", post_connector_oauth, methods=["POST"]),
+    Route(
+        "/api/connections/{instance}/sign-in/begin",
+        post_connector_sign_in_begin,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/connections/{instance}/sign-in/complete",
+        post_connector_sign_in_complete,
+        methods=["POST"],
+    ),
     Route("/api/connections/{instance}/host-setup", post_connector_host_setup, methods=["POST"]),
     Route("/api/connections/{instance}/probe", post_connector_probe, methods=["POST"]),
     Route("/api/connections/{instance}/doctor", get_connector_doctor, methods=["GET"]),
@@ -1113,6 +1238,8 @@ __all__ = [
     "post_connector_host_setup",
     "post_connector_oauth",
     "post_connector_probe",
+    "post_connector_sign_in_begin",
+    "post_connector_sign_in_complete",
     "put_connector_auth",
     "routes",
 ]
