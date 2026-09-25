@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from arcstore.tasks import Task, TaskBoardFacets, TaskBoardProjection
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Generic / shared
@@ -799,6 +799,14 @@ class ConnectorSecretField(BaseModel):
     prompt: str
     sensitive: bool = True
     value: str = ""
+    #: The manifest's shape for the field, so a form can leave an optional one
+    #: blank, draw a choice as a choice, and say what blank means.
+    required: bool = True
+    choices: list[str] = Field(default_factory=list)
+    default: str = ""
+    #: Catalog: the bundle's warning for leaving this field blank. A connected
+    #: instance: the same text, present only while the stored value IS blank.
+    warning: str = ""
 
 
 class ConnectorHostRequirement(BaseModel):

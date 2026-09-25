@@ -105,8 +105,17 @@ def _headers(token: str = "operator") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _add(client: TestClient, instance: str, account: str, *, oauth_client: str = "") -> Any:
+def _add(
+    client: TestClient,
+    instance: str,
+    account: str,
+    *,
+    oauth_client: str = "arc",
+    read_only: str = "",
+) -> Any:
     extra = {"client": oauth_client} if oauth_client else {}
+    if read_only:
+        extra["read_only"] = read_only
     return client.post(
         "/api/connections",
         json={
@@ -119,9 +128,12 @@ def _add(client: TestClient, instance: str, account: str, *, oauth_client: str =
     )
 
 
-def _begin(client: TestClient, instance: str, token: str = "operator") -> Any:
+def _begin(
+    client: TestClient, instance: str, token: str = "operator", *, accept: bool = False
+) -> Any:
+    body = {"accept_warnings": True} if accept else {}
     return client.post(
-        f"/api/connections/{instance}/sign-in/begin", json={}, headers=_headers(token)
+        f"/api/connections/{instance}/sign-in/begin", json=body, headers=_headers(token)
     )
 
 
@@ -161,7 +173,7 @@ def _sign_in_calls(world: Path) -> list[dict[str, Any]]:
     return [call for call in _calls(world) if call["argv"][:2] == ["auth", "add"]]
 
 
-def _mark(world: Path, account: str, state: str, client: str = "default") -> None:
+def _mark(world: Path, account: str, state: str, client: str = "arc") -> None:
     path = world / "gog" / "tokens.json"
     tokens = json.loads(path.read_text()) if path.exists() else {}
     tokens[f"{client}:{account}"] = state
@@ -235,6 +247,8 @@ def test_a_named_oauth_client_is_used_for_sign_in_and_for_the_check(world: Path)
     assert done.json()["sign_in"] == "signed_in", done.text
     tokens = json.loads((world / "gog" / "tokens.json").read_text())
     assert tokens == {"arc-prod:hello@joshuaschultz.com": "good"}
+    adds = _sign_in_calls(world)
+    assert all("--client=arc-prod" in call["argv"] for call in adds)
     assert {call["client"] for call in _calls(world) if call["argv"] != ["--version"]} == {
         "arc-prod"
     }
@@ -382,3 +396,51 @@ def test_the_code_is_never_written_anywhere_arc_writes(world: Path) -> None:
     arc_owned = [world / "arc", world / "data"]
     assert [hit for root in arc_owned for hit in _files_holding(root, code)] == []
     assert [hit for root in arc_owned for hit in _files_holding(root, landed)] == []
+
+
+# --- scopes, and the legacy client -------------------------------------------------
+
+
+def test_sign_in_asks_for_read_only_scopes_unless_drafting_is_chosen(world: Path) -> None:
+    client = _client(world)
+    assert _add(client, "blackarc", _INDUSTRIAL).status_code == 200
+    assert _add(client, "systems", _SYSTEMS, read_only="no").status_code == 200
+
+    for instance, account in (("blackarc", _INDUSTRIAL), ("systems", _SYSTEMS)):
+        begun = _begin(client, instance).json()
+        landed = _landed(begun["consent_url"], account)
+        assert _complete(client, instance, landed).status_code == 200
+
+    by_account = {call["argv"][2]: call["argv"] for call in _sign_in_calls(world)}
+    assert "--readonly=yes" in by_account[_INDUSTRIAL]
+    assert "--readonly=no" in by_account[_SYSTEMS]
+    for argv in by_account.values():
+        assert argv[argv.index("--services") + 1] == "gmail,calendar,drive"
+        assert argv[argv.index("--drive-scope") + 1] == "readonly"
+
+
+def test_a_choice_outside_its_set_is_refused_at_entry(world: Path) -> None:
+    client = _client(world)
+    assert _add(client, "blackarc", _INDUSTRIAL, read_only="maybe").status_code == 400
+
+
+def test_the_built_in_client_is_a_labelled_fallback_that_must_be_accepted(world: Path) -> None:
+    client = _client(world)
+    assert _add(client, "legacy", _INDUSTRIAL, oauth_client="").status_code == 200
+
+    auth = client.get("/api/connections/legacy/auth", headers=_headers("viewer")).json()
+    warning = next(row["warning"] for row in auth["credentials"] if row["name"] == "client")
+    assert "about 7 days" in warning
+
+    refused = _begin(client, "legacy")
+    assert refused.status_code == 400
+    assert "about 7 days" in refused.json()["error"]
+    assert _sign_in_calls(world) == []
+
+    begun = _begin(client, "legacy", accept=True)
+    assert begun.status_code == 200, begun.text
+    done = _complete(client, "legacy", _landed(begun.json()["consent_url"], _INDUSTRIAL))
+    assert done.json()["sign_in"] == "signed_in"
+    assert all("--client=" in call["argv"] for call in _sign_in_calls(world))
+    tokens = json.loads((world / "gog" / "tokens.json").read_text())
+    assert tokens == {f"default:{_INDUSTRIAL}": "good"}

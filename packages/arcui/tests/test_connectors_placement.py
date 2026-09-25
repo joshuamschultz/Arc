@@ -358,6 +358,10 @@ def test_the_web_never_learns_that_a_placement_exists(world: Path) -> None:
             # Declared nothing, so masked — and therefore never read back.
             "sensitive": True,
             "value": "",
+            "required": True,
+            "choices": [],
+            "default": "",
+            "warning": "",
         }
     ]
     assert "placement" not in str(body)

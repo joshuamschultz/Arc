@@ -445,7 +445,13 @@ def _catalog_entry(
             # No ``value`` here and there could not be one: the catalog describes a
             # bundle nobody has connected yet, so there is nothing configured to show.
             ConnectorSecretField(
-                name=declared.name, prompt=declared.prompt, sensitive=declared.sensitive
+                name=declared.name,
+                prompt=declared.prompt,
+                sensitive=declared.sensitive,
+                required=declared.required,
+                choices=list(declared.choices),
+                default=declared.default,
+                warning=declared.blank_warning,
             )
             for declared in entry.secrets
         ],
@@ -772,6 +778,10 @@ async def get_connector_auth(request: Request) -> JSONResponse:
                     prompt=required.prompt,
                     sensitive=required.sensitive,
                     value=required.value,
+                    required=required.required,
+                    choices=list(required.choices),
+                    default=required.default,
+                    warning=required.warning,
                 )
                 for required in auth.credentials
             ],
@@ -980,6 +990,8 @@ async def post_connector_sign_in_begin(request: Request) -> JSONResponse:
     Operator only: it runs the bundle's declared first sign-in step on the host.
     Answers with the provider's consent link for THIS connection's account; the
     operator opens it, signs in, and pastes back the address the browser lands on.
+    A field the bundle warns about leaving blank (Google: no OAuth client of the
+    operator's own) refuses with that warning unless ``accept_warnings`` is true.
     One sign-in per host binary may be waiting at a time, and a second account's
     begin is refused by name rather than silently replacing the first.
     """
@@ -993,8 +1005,11 @@ async def post_connector_sign_in_begin(request: Request) -> JSONResponse:
         return _error("Body must be a JSON object", 400)
 
     instance = request.path_params["instance"]
+    # Only a literal ``true`` accepts the bundle's blank-field warnings: the
+    # fallback they describe is a deliberate choice, never a default.
+    accept = body.get("accept_warnings") is True
     try:
-        started = await _connections(request).begin_remote_login(instance)
+        started = await _connections(request).begin_remote_login(instance, accept_warnings=accept)
     except ExtensionError as exc:
         emit_mutation_audit(
             request,
