@@ -86,7 +86,7 @@ Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
     activate_runtime    — atomic ``current`` symlink flip (update / rollback)
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 from typing import TYPE_CHECKING, Any
 
@@ -121,6 +121,15 @@ from arctrust.classification import (
     Classification,
     dominates,
     parse_classification,
+)
+from arctrust.deployment_grant import (
+    DeploymentChallenge,
+    DeploymentGrant,
+    DeploymentGrantError,
+    sign_challenge,
+    sign_deployment_grant,
+    verify_challenge,
+    verify_deployment_grant,
 )
 from arctrust.fips import (
     ArcTrustFipsError,
@@ -343,6 +352,9 @@ __all__ = [
     "ClearanceContext",
     "Decision",
     "DeploymentAuthorityConfig",
+    "DeploymentChallenge",
+    "DeploymentGrant",
+    "DeploymentGrantError",
     "DurableAuditSink",
     "EnrollmentGrant",
     "EntityToggle",
@@ -458,6 +470,8 @@ __all__ = [
     "sign_artifact_with_signer",
     "sign_authority_config",
     "sign_capability_grant",
+    "sign_challenge",
+    "sign_deployment_grant",
     "sign_enrollment_grant",
     "sign_scenario_grant",
     "skills_dir",
@@ -470,6 +484,8 @@ __all__ = [
     "verify_approval_for_hash",
     "verify_artifact",
     "verify_chain",
+    "verify_challenge",
+    "verify_deployment_grant",
     "verify_enrollment",
     "verify_local_head_witnessed",
     "verify_scenario_grant",
