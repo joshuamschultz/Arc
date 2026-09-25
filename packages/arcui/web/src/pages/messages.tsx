@@ -255,7 +255,7 @@ function ChatPanel({
           </Button>
         </div>
       </div>
-      <div className="flex flex-1 flex-col gap-0.5 overflow-auto p-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto p-3">
         {rows.length === 0 ? (
           <EmptyState icon={<MessageSquare className="size-7" />} title="No messages yet" description="Say hello to start the conversation." />
         ) : (
@@ -321,7 +321,7 @@ function ChatPanel({
         <div ref={endRef} />
       </div>
       {pending.length > 0 && (
-        <div className="space-y-2 border-t border-border bg-status-warning/5 px-3 py-3">
+        <div className="max-h-[70%] min-h-0 shrink-0 space-y-2 overflow-y-auto border-t border-border bg-status-warning/5 px-3 py-3">
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-status-warning">
             Needs your approval to continue
           </div>
@@ -330,7 +330,7 @@ function ChatPanel({
           ))}
         </div>
       )}
-      <div className="flex items-end gap-2 border-t border-border bg-card/30 p-3">
+      <div className="flex shrink-0 items-end gap-2 border-t border-border bg-card/30 p-3">
         <div className="flex w-full flex-col gap-2">
         <AttachmentPicker
           key={sessionKey ?? 'not-ready'}
