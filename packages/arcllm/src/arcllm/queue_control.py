@@ -10,7 +10,7 @@ import math
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, Protocol
@@ -119,6 +119,16 @@ class QueueRecoveryAuthority(Protocol):
     expiry and revocation are checked in the same authoritative CAS transaction.
     """
 
+    def validate(
+        self,
+        proof: str,
+        *,
+        journal_scope: str,
+        tenant_id: str,
+        owner_epoch: str,
+        purpose: Literal["queue.recover"],
+    ) -> None: ...
+
     def compare_and_advance(
         self,
         expected: arctrust.AnchorHead,
@@ -176,14 +186,16 @@ class CallQueueStore(Protocol):
         self, scope: QueueReadScope, *, cursor: str | None, limit: int
     ) -> QueueMetadataPage: ...
     async def recovery_page(self, *, cursor: str | None, limit: int) -> QueueRecoveryPage: ...
-    async def recovery_compare_and_set(
+    async def validate_recovery_proofs(
+        self, *, owned_epoch: str | None, proofs: Mapping[str, str]
+    ) -> None: ...
+    async def recovery_transition_batch(
         self,
-        job: CallJob,
-        state: QueueState,
+        jobs: tuple[CallJob, ...],
         *,
         owned_epoch: str | None,
         proof: str | None,
-    ) -> CallJob | None: ...
+    ) -> int: ...
 
 
 class MemoryQueueStore:
@@ -246,20 +258,29 @@ class MemoryQueueStore:
         self._jobs[call_id] = new
         return new
 
-    async def recovery_compare_and_set(
+    async def recovery_transition_batch(
         self,
-        job: CallJob,
-        state: QueueState,
+        jobs: tuple[CallJob, ...],
         *,
         owned_epoch: str | None,
         proof: str | None,
-    ) -> CallJob | None:
-        """Apply a locally owned ephemeral recovery transition."""
-        if owned_epoch is not None and not (
-            job.owner_id == owned_epoch or job.owner_id.startswith(f"{owned_epoch}:")
-        ):
-            return None
-        return await self.compare_and_set(job.call_id, job.version, state, job.owner_id)
+    ) -> int:
+        """Apply locally owned ephemeral recovery transitions."""
+        changed = 0
+        for job in jobs:
+            if owned_epoch is not None and not (
+                job.owner_id == owned_epoch or job.owner_id.startswith(f"{owned_epoch}:")
+            ):
+                continue
+            state: QueueState = "failed" if job.state == "queued" else "outcome_unknown"
+            if await self.compare_and_set(job.call_id, job.version, state, job.owner_id):
+                changed += 1
+        return changed
+
+    async def validate_recovery_proofs(
+        self, *, owned_epoch: str | None, proofs: Mapping[str, str]
+    ) -> None:
+        """Ephemeral local recovery has no external authority."""
 
     async def list_jobs(
         self, *, tenant_id: str | None = None, offset: int = 0, limit: int = 100
@@ -779,22 +800,27 @@ class CallQueueCoordinator:
         return self.control()
 
     async def recover(
-        self, *, owned_epoch: str | None = None, recovery_proof: str | None = None
+        self,
+        *,
+        owned_epoch: str | None = None,
+        recovery_proofs: Mapping[str, str] | None = None,
     ) -> int:
         """Truthfully close orphan states; never issue a provider request."""
         if getattr(self.store, "requires_recovery_owner", False) and (
             owned_epoch is None or not owned_epoch or ":" in owned_epoch or len(owned_epoch) > 256
         ):
             raise ValueError("durable queue recovery requires a fenced owner epoch")
-        if getattr(self.store, "requires_recovery_owner", False) and not recovery_proof:
+        if getattr(self.store, "requires_recovery_owner", False) and recovery_proofs is None:
             raise QueueStateUnavailableError("durable queue recovery authority unavailable")
         async with self._lifecycle_lock:
             if self._live:
                 raise RuntimeError("cannot recover queue with live calls")
-            return await self._recover_unlocked(owned_epoch, recovery_proof)
+            return await self._recover_unlocked(owned_epoch, recovery_proofs)
 
-    async def _recover_unlocked(self, owned_epoch: str | None, recovery_proof: str | None) -> int:
-        count = 0
+    async def _recover_unlocked(
+        self, owned_epoch: str | None, recovery_proofs: Mapping[str, str] | None
+    ) -> int:
+        selected: list[CallJob] = []
         cursor = None
         while True:
             page = await self.store.recovery_page(cursor=cursor, limit=100)
@@ -805,11 +831,28 @@ class CallQueueCoordinator:
                     continue
                 if job.state not in {"queued", "running", "cancel_requested"}:
                     continue
-                state: QueueState = "failed" if job.state == "queued" else "outcome_unknown"
-                if await self.store.recovery_compare_and_set(
-                    job, state, owned_epoch=owned_epoch, proof=recovery_proof
-                ):
-                    count += 1
+                selected.append(job)
             if page.next_cursor is None:
-                return count
+                break
             cursor = page.next_cursor
+        tenants = {job.tenant_id for job in selected}
+        if recovery_proofs is not None and any(
+            not recovery_proofs.get(tenant) for tenant in tenants
+        ):
+            raise QueueStateUnavailableError("durable queue recovery tenant proof unavailable")
+        await self.store.validate_recovery_proofs(
+            owned_epoch=owned_epoch,
+            proofs={tenant: recovery_proofs[tenant] for tenant in tenants}
+            if recovery_proofs is not None
+            else {},
+        )
+        count = 0
+        for tenant in sorted(tenants):
+            jobs = [job for job in selected if job.tenant_id == tenant]
+            for start in range(0, len(jobs), 100):
+                count += await self.store.recovery_transition_batch(
+                    tuple(jobs[start : start + 100]),
+                    owned_epoch=owned_epoch,
+                    proof=recovery_proofs[tenant] if recovery_proofs is not None else None,
+                )
+        return count

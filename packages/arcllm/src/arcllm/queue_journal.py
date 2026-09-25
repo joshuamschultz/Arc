@@ -12,7 +12,7 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -133,7 +133,7 @@ class QueueJournal:
                         "queue journal format requires operator recovery"
                     )
                 version = db.execute("SELECT format FROM queue_meta WHERE id = 1").fetchone()
-                if version is None or version[0] != 3:
+                if version is None or version[0] != 4:
                     raise QueueStateUnavailableError(
                         "queue journal format requires operator recovery"
                     )
@@ -150,15 +150,21 @@ class QueueJournal:
                 )
                 db.execute(
                     "CREATE TABLE queue_nodes "
-                    "(depth INTEGER NOT NULL, prefix TEXT NOT NULL, digest TEXT NOT NULL, "
-                    "PRIMARY KEY(depth, prefix))"
+                    "(prefix TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, "
+                    "children TEXT NOT NULL)"
                 )
+                db.execute(
+                    "CREATE TABLE queue_root "
+                    "(id INTEGER PRIMARY KEY CHECK(id = 1), "
+                    "prefix TEXT NOT NULL, digest TEXT NOT NULL)"
+                )
+                db.execute("INSERT INTO queue_root(id, prefix, digest) VALUES (1, '', '')")
                 db.execute(
                     "CREATE TABLE queue_meta "
                     "(id INTEGER PRIMARY KEY CHECK(id = 1), "
-                    "format INTEGER NOT NULL CHECK(format = 3))"
+                    "format INTEGER NOT NULL CHECK(format = 4))"
                 )
-                db.execute("INSERT INTO queue_meta(id, format) VALUES (1, 3)")
+                db.execute("INSERT INTO queue_meta(id, format) VALUES (1, 4)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
             if columns != {
                 "id",
@@ -207,13 +213,19 @@ class QueueJournal:
         rows = db.execute(
             "SELECT id, tenant_key, owner_key, state, version, updated, sealed FROM jobs"
         ).fetchall()
-        expected = {queue_merkle.id_key(row[0]) for row in rows}
-        actual = set(queue_merkle.all_id_keys(db, digest))
-        if expected != actual:
+        expected = {queue_merkle.id_key(row[0]): row for row in rows}
+        actual = queue_merkle.page_keys(
+            db, queue_merkle.ID_SCOPE, digest, after=None, limit=len(rows) + 1
+        )
+        if len(actual) != len(rows) or set(actual) != set(expected):
             raise ValueError("queue ID directory omits a job")
-        for row in rows:
-            key = queue_merkle.id_key(row[0])
-            queue_merkle.verify_point(db, key, queue_merkle.row_digest(key, row), digest)
+        for key in actual:
+            node = db.execute(
+                "SELECT digest FROM queue_nodes WHERE prefix = ? AND kind = 'leaf'",
+                (key,),
+            ).fetchone()
+            if node is None or node[0] != queue_merkle.row_digest(key, expected[key]):
+                raise ValueError("queue ID leaf does not bind its row")
         control = db.execute("SELECT sealed FROM controls WHERE id = 1").fetchone()
         queue_merkle.verify_point(
             db,
@@ -394,6 +406,7 @@ class QueueJournal:
         before: tuple[dict[str, tuple[str, str, str, int, float, str]], str | None],
         after: tuple[dict[str, tuple[str, str, str, int, float, str]], str | None],
     ) -> None:
+        changes: dict[str, str] = {}
         for row_id in before[0].keys() | after[0].keys():
             old_data = before[0].get(row_id)
             new_data = after[0].get(row_id)
@@ -404,17 +417,19 @@ class QueueJournal:
             old_keys = set(queue_merkle.index_keys(old_row)) if old_row else set()
             new_keys = set(queue_merkle.index_keys(new_row)) if new_row else set()
             for key in sorted(old_keys - new_keys):
-                queue_merkle.set_leaf(db, key, queue_merkle.empty_leaf())
+                changes[key] = queue_merkle.empty_leaf()
             if new_row is not None:
                 for key in sorted(new_keys):
-                    queue_merkle.set_leaf(db, key, queue_merkle.row_digest(key, new_row))
+                    changes[key] = queue_merkle.row_digest(key, new_row)
         if before[1] != after[1]:
             digest = (
                 queue_merkle.control_digest(after[1])
                 if after[1] is not None
                 else queue_merkle.empty_leaf()
             )
-            queue_merkle.set_leaf(db, queue_merkle.CONTROL_KEY, digest)
+            changes[queue_merkle.CONTROL_KEY] = digest
+        if changes:
+            queue_merkle.set_leaves(db, changes)
 
     def _encode(self, value: dict[str, Any]) -> str:
         return json.dumps(self._cipher.seal({"extra": value})["extra"], separators=(",", ":"))
@@ -526,7 +541,6 @@ class QueueJournal:
         owner_id: str,
         provider_scope: str | None,
         attempt_id: str | None,
-        recovery: tuple[CallJob, str, str] | None = None,
     ) -> CallJob | None:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -541,18 +555,6 @@ class QueueJournal:
             if row is None or row[4] != version:
                 return None
             old = self._bound_job(row, call_id)
-            if recovery is not None:
-                observed, proof, owned_epoch = recovery
-                if (
-                    old != observed
-                    or not proof
-                    or not owned_epoch
-                    or ":" in owned_epoch
-                    or not (
-                        old.owner_id == owned_epoch or old.owner_id.startswith(f"{owned_epoch}:")
-                    )
-                ):
-                    raise QueueStateUnavailableError("queue recovery owner or snapshot refused")
             if (
                 old.owner_id != owner_id
                 or old.state in _TERMINAL
@@ -594,7 +596,6 @@ class QueueJournal:
                 head,
                 (self._row_change(row), None),
                 (self._row_change(changed), None),
-                (recovery[1], old.tenant_id, recovery[2]) if recovery is not None else None,
             )
             return new
 
@@ -613,27 +614,100 @@ class QueueJournal:
             self._compare_and_set, call_id, version, state, owner_id, provider_scope, attempt_id
         )
 
-    async def recovery_compare_and_set(
+    def _recovery_transition_batch(
+        self, jobs: tuple[CallJob, ...], owned_epoch: str, proof: str
+    ) -> int:
+        if not jobs or len(jobs) > 100 or not owned_epoch or ":" in owned_epoch:
+            raise ValueError("invalid queue recovery batch")
+        tenant_id = jobs[0].tenant_id
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            head = self._verify_anchor(db, verify_rows=False)
+            before: dict[str, tuple[str, str, str, int, float, str]] = {}
+            after: dict[str, tuple[str, str, str, int, float, str]] = {}
+            for observed in jobs:
+                if observed.tenant_id != tenant_id or not (
+                    observed.owner_id == owned_epoch
+                    or observed.owner_id.startswith(f"{owned_epoch}:")
+                ):
+                    raise QueueStateUnavailableError("queue recovery owner or tenant refused")
+                row_id = _key(observed.call_id)
+                row = db.execute(
+                    "SELECT id, tenant_key, owner_key, state, version, updated, sealed "
+                    "FROM jobs WHERE id = ?",
+                    (row_id,),
+                ).fetchone()
+                self._verify_row(db, row_id, row, head.digest)
+                if row is None:
+                    raise QueueStateUnavailableError("unfinished recovery job disappeared")
+                current = self._bound_job(row, observed.call_id)
+                if current.version != observed.version or current.state in _TERMINAL:
+                    continue
+                if current != observed:
+                    raise QueueStateUnavailableError("queue recovery snapshot changed")
+                state: QueueState = "failed" if current.state == "queued" else "outcome_unknown"
+                changed = replace(
+                    current, state=state, version=current.version + 1, updated_at=time.time()
+                )
+                sealed = self._encode(asdict(changed))
+                db.execute(
+                    "UPDATE jobs SET state = ?, version = ?, updated = ?, sealed = ? "
+                    "WHERE id = ? AND version = ?",
+                    (state, changed.version, changed.updated_at, sealed, row_id, current.version),
+                )
+                before.update(self._row_change(row))
+                after[row_id] = (
+                    row[1],
+                    row[2],
+                    state,
+                    changed.version,
+                    changed.updated_at,
+                    sealed,
+                )
+            if not after:
+                return 0
+            self._commit_anchored(
+                db, head, (before, None), (after, None), (proof, tenant_id, owned_epoch)
+            )
+            return len(after)
+
+    async def recovery_transition_batch(
         self,
-        job: CallJob,
-        state: QueueState,
+        jobs: tuple[CallJob, ...],
         *,
         owned_epoch: str | None,
         proof: str | None,
-    ) -> CallJob | None:
-        """Commit a recovery transition only through an atomic external fence CAS."""
-        if owned_epoch is None or proof is None or self._recovery_authority is None:
+    ) -> int:
+        """Commit a bounded tenant batch through one atomic external fence CAS."""
+        if owned_epoch is None or not proof or self._recovery_authority is None:
             raise QueueStateUnavailableError("durable queue recovery authority unavailable")
-        return await asyncio.to_thread(
-            self._compare_and_set,
-            job.call_id,
-            job.version,
-            state,
-            job.owner_id,
-            None,
-            None,
-            (job, proof, owned_epoch),
-        )
+        return await asyncio.to_thread(self._recovery_transition_batch, jobs, owned_epoch, proof)
+
+    def _validate_recovery_proofs(
+        self, owned_epoch: str | None, proofs: Mapping[str, str]
+    ) -> None:
+        authority = self._recovery_authority
+        if authority is None or not owned_epoch:
+            raise QueueStateUnavailableError("durable queue recovery authority unavailable")
+        try:
+            for tenant_id, proof in proofs.items():
+                if not proof:
+                    raise ValueError("missing queue recovery proof")
+                authority.validate(
+                    proof,
+                    journal_scope=self._anchor.scope,
+                    tenant_id=tenant_id,
+                    owner_epoch=owned_epoch,
+                    purpose="queue.recover",
+                )
+        except Exception as exc:
+            raise QueueStateUnavailableError("durable queue recovery proof refused") from exc
+
+    async def validate_recovery_proofs(
+        self, *, owned_epoch: str | None, proofs: Mapping[str, str]
+    ) -> None:
+        """Preflight all selected tenants before the first fenced batch CAS."""
+        await asyncio.to_thread(self._validate_recovery_proofs, owned_epoch, proofs)
 
     def _list_jobs(self, tenant_id: str | None, offset: int, limit: int) -> list[CallJob]:
         scope = (
@@ -738,7 +812,7 @@ class QueueJournal:
                     raise ValueError("invalid queue cursor")
                 raw = base64.urlsafe_b64decode(cursor.encode("ascii"))
                 data = self._decode(raw.decode("ascii"))
-                if data.get("format") != 3 or data.get("scope") != scope_key:
+                if data.get("format") != 4 or data.get("scope") != scope_key:
                     raise ValueError("invalid queue cursor")
                 prior_scope_digest = str(data["scope_digest"])
                 if len(prior_scope_digest) != 64:
@@ -771,7 +845,7 @@ class QueueJournal:
         next_cursor = None
         if len(keys) > limit:
             payload = {
-                "format": 3,
+                "format": 4,
                 "scope": scope_key,
                 "scope_digest": current_scope_digest,
                 "key": keys[limit - 1],
