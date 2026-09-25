@@ -10,7 +10,15 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arctrust.audit import AuditEvent, DurableAuditSink
 from arctrust.deployment_grant import DeploymentChallenge, DeploymentGrant
+from arctrust.identity import did_from_public_key
+from arctrust.machine_rekey import (
+    MachineRekeyError,
+    MachineRekeyGrant,
+    MachineRekeyIntent,
+    verify_rekey_grant,
+)
 from arctrust.monotonic import AnchorHead, MonotonicAnchor
 
 
@@ -137,6 +145,80 @@ class HostedClaimJournal:
                 previous_digest=state.digest, challenge=challenge, epoch=epoch,
             )
             return self._advance(previous, next_state)
+
+    def rekey_challenge(
+        self, envelope: dict[str, Any], *, issuer_public_key: bytes,
+        tenant_id: str, audit_sink: DurableAuditSink, now: int | None = None,
+    ) -> AnchorHead:
+        """Replace a lost ephemeral boot key only on dual-signed cloud authority."""
+        with self._lock:
+            previous, state = self._read()
+            if previous is None or state is None or not (
+                state.intent == "challenge" or state.intent.startswith("granted:")
+            ):
+                raise HostedJournalError("hosted rekey state is unavailable")
+            actor_did = did_from_public_key(
+                bytes.fromhex(state.challenge.machine_public_key),
+                org=tenant_id, agent_type="machine",
+            )
+            try:
+                grant = MachineRekeyGrant.model_validate(envelope["facts"])
+                intent = MachineRekeyIntent.model_validate(grant.intent["facts"])
+                verify_rekey_grant(
+                    envelope, issuer_public_key=issuer_public_key,
+                    expected=grant, now=now,
+                )
+                old_challenge = state.challenge
+                next_challenge = intent.challenge
+                old_head = AnchorHead(
+                    scope=self.scope, version=previous.version,
+                    digest=state.digest, previous_digest=state.previous_digest,
+                    intent=state.intent,
+                )
+                immutable = (
+                    "order_id", "server_id", "domain", "release_id", "arc_image_digest",
+                )
+                if (
+                    intent.previous_head_scope != old_head.scope
+                    or intent.previous_head_version != old_head.version
+                    or intent.previous_head_digest != old_head.digest
+                    or intent.previous_challenge_digest
+                    != hashlib.sha256(old_challenge.canonical_bytes()).hexdigest()
+                    or intent.current_epoch != state.epoch
+                    or intent.next_epoch != state.epoch + int(state.grant is not None)
+                    or next_challenge.machine_public_key == old_challenge.machine_public_key
+                    or next_challenge.nonce == old_challenge.nonce
+                    or next_challenge.issued_at <= old_challenge.issued_at
+                    or any(
+                        getattr(next_challenge, name) != getattr(old_challenge, name)
+                        for name in immutable
+                    )
+                ):
+                    raise ValueError("machine rekey binding changed")
+                if state.grant is not None:
+                    old_grant = DeploymentGrant.model_validate(state.grant["facts"])
+                    if (
+                        grant.customer_id != old_grant.customer_id
+                        or grant.subscription_id != old_grant.subscription_id
+                    ):
+                        raise ValueError("machine rekey customer changed")
+                audit_sink.write_durable(AuditEvent(
+                    actor_did=actor_did,
+                    action="hosted.claim.rekey", target=self.scope, outcome="attempt",
+                ))
+                next_state = _State(
+                    intent="challenge",
+                    digest=hashlib.sha256(next_challenge.canonical_bytes()).hexdigest(),
+                    previous_digest=state.digest, challenge=next_challenge,
+                    epoch=intent.next_epoch,
+                )
+                return self._advance(previous, next_state)
+            except (KeyError, TypeError, ValueError, MachineRekeyError, HostedJournalError) as exc:
+                audit_sink.write_durable(AuditEvent(
+                    actor_did=actor_did,
+                    action="hosted.claim.rekey", target=self.scope, outcome="deny",
+                ))
+                raise HostedJournalError("hosted machine rekey refused") from exc
 
     def compare_and_advance(
         self, expected: AnchorHead | None, digest: str, intent: str

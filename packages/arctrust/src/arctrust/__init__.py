@@ -277,6 +277,16 @@ if TYPE_CHECKING:
     from arctrust.authority import AccountActorVerifier, AccountAuthority
     from arctrust.hosted_claim import HostedClaimError, HostedFirstClaim
     from arctrust.hosted_journal import HostedClaimJournal, HostedJournalError
+    from arctrust.hosted_rekey import HostedRekeyCoordinator, HostedRekeyError
+    from arctrust.machine_rekey import (
+        MachineRekeyError,
+        MachineRekeyGrant,
+        MachineRekeyIntent,
+        sign_rekey_grant,
+        sign_rekey_intent,
+        verify_rekey_grant,
+        verify_rekey_intent,
+    )
     from arctrust.transit_http import VaultTransitHTTP
     from arctrust.vault_anchor import VaultKVAnchor
     from arctrust.vault_cipher import VaultCipher
@@ -298,6 +308,18 @@ def __getattr__(name: str) -> Any:
         from arctrust import hosted_journal
 
         return getattr(hosted_journal, name)
+    if name in {"HostedRekeyCoordinator", "HostedRekeyError"}:
+        from arctrust import hosted_rekey
+
+        return getattr(hosted_rekey, name)
+    if name in {
+        "MachineRekeyError", "MachineRekeyGrant", "MachineRekeyIntent",
+        "sign_rekey_grant", "sign_rekey_intent", "verify_rekey_grant",
+        "verify_rekey_intent",
+    }:
+        from arctrust import machine_rekey
+
+        return getattr(machine_rekey, name)
     if name == "VaultKVAnchor":
         from arctrust.vault_anchor import VaultKVAnchor
 
@@ -373,8 +395,13 @@ __all__ = [
     "HostedClaimJournal",
     "HostedFirstClaim",
     "HostedJournalError",
+    "HostedRekeyCoordinator",
+    "HostedRekeyError",
     "InProcessSigner",
     "KeyPair",
+    "MachineRekeyError",
+    "MachineRekeyGrant",
+    "MachineRekeyIntent",
     "MonotonicAnchor",
     "NullSink",
     "OperatorKey",
@@ -487,6 +514,8 @@ __all__ = [
     "sign_challenge",
     "sign_deployment_grant",
     "sign_enrollment_grant",
+    "sign_rekey_grant",
+    "sign_rekey_intent",
     "sign_scenario_grant",
     "skills_dir",
     "store_dir",
@@ -502,6 +531,8 @@ __all__ = [
     "verify_deployment_grant",
     "verify_enrollment",
     "verify_local_head_witnessed",
+    "verify_rekey_grant",
+    "verify_rekey_intent",
     "verify_scenario_grant",
     "verify_signature",
     "worm_policy_sink",

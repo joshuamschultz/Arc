@@ -38,10 +38,24 @@ class HostedClaimService(Protocol):
     def claim(self, secret: str, password: str) -> ClaimedAccount: ...
 
 
+class HostedRekeyService(Protocol):
+    """New machine key held until an independently checked cloud endorsement."""
+
+    def signed_intent(self) -> dict[str, Any]: ...
+
+    def install_rekey(self, envelope: dict[str, Any]) -> None: ...
+
+
 def _service(request: Request) -> HostedClaimService | None:
     if not getattr(request.app.state, "hosted", False):
         return None
     return getattr(request.app.state, "hosted_claim", None)
+
+
+def _rekey_service(request: Request) -> HostedRekeyService | None:
+    if not getattr(request.app.state, "hosted", False):
+        return None
+    return getattr(request.app.state, "hosted_rekey", None)
 
 
 async def _bounded_call(
@@ -136,6 +150,35 @@ async def install_grant(request: Request) -> JSONResponse:
     return JSONResponse({"status": "accepted"}, status_code=202)
 
 
+async def rekey_intent(request: Request) -> JSONResponse:
+    """Present a new ephemeral key bound to the old unclaimed journal head."""
+    service = _rekey_service(request)
+    if service is None:
+        return JSONResponse({"error": "hosted rekey unavailable"}, status_code=503)
+    try:
+        evidence = await _bounded_call(request, service.signed_intent)
+    except Exception as exc:
+        logger.warning("hosted rekey intent refused class=%s", type(exc).__name__)
+        return JSONResponse({"error": "hosted rekey unavailable"}, status_code=503)
+    return JSONResponse(evidence, headers={"Cache-Control": "no-store"})
+
+
+async def install_rekey(request: Request) -> JSONResponse:
+    """Accept only the issuer's endorsement of the pending local rekey."""
+    service = _rekey_service(request)
+    if service is None:
+        return JSONResponse({"error": "hosted rekey unavailable"}, status_code=503)
+    envelope = await _body(request)
+    if envelope is None:
+        return JSONResponse({"error": "invalid rekey body"}, status_code=400)
+    try:
+        await _bounded_call(request, service.install_rekey, envelope)
+    except Exception as exc:
+        logger.warning("hosted rekey refused class=%s", type(exc).__name__)
+        return JSONResponse({"error": "hosted rekey refused"}, status_code=403)
+    return JSONResponse({"status": "accepted"}, status_code=202)
+
+
 async def claim(request: Request) -> JSONResponse:
     """Create the first account using only the separately issued browser proof."""
     service = _service(request)
@@ -172,6 +215,8 @@ async def claim(request: Request) -> JSONResponse:
 
 ROUTES = [
     ("/api/setup/challenge", challenge, ["GET"]),
+    ("/api/setup/rekey-intent", rekey_intent, ["GET"]),
+    ("/api/setup/rekey", install_rekey, ["POST"]),
     ("/api/setup/status", status, ["GET"]),
     ("/api/setup/grant", install_grant, ["POST"]),
     ("/api/setup/claim", claim, ["POST"]),

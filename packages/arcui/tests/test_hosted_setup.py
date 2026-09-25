@@ -85,6 +85,28 @@ def test_claim_is_absent_when_hosted_authority_is_not_supplied() -> None:
     ).status_code == 503
 
 
+def test_rekey_endpoint_requires_separate_service_and_bounds_delivery() -> None:
+    client, _claims = _client()
+    assert client.get("/api/setup/rekey-intent").status_code == 503
+    assert client.post("/api/setup/rekey", json={"facts": {}}).status_code == 503
+
+    class Rekey:
+        def __init__(self) -> None:
+            self.installed: list[dict[str, object]] = []
+
+        def signed_intent(self):
+            return {"facts": {"previous_head_digest": "d" * 64}, "signature": "new-key"}
+
+        def install_rekey(self, envelope):
+            self.installed.append(envelope)
+
+    rekey = Rekey()
+    client.app.state.hosted_rekey = rekey
+    assert client.get("/api/setup/rekey-intent").json()["facts"]["previous_head_digest"] == "d" * 64
+    assert client.post("/api/setup/rekey", json={"facts": {}, "signature": "issuer"}).status_code == 202
+    assert rekey.installed == [{"facts": {}, "signature": "issuer"}]
+
+
 @pytest.mark.asyncio
 async def test_cancelled_requests_keep_worker_slots_until_real_completion() -> None:
     app = create_app(

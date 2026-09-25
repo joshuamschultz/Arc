@@ -15,6 +15,8 @@ def test_base_trust_imports_when_hosted_files_are_absent(tmp_path: Path) -> None
     shutil.copytree(source, target)
     (target / "hosted_claim.py").unlink()
     (target / "hosted_journal.py").unlink()
+    (target / "machine_rekey.py").unlink()
+    (target / "hosted_rekey.py").unlink()
     env = {**os.environ, "PYTHONPATH": str(tmp_path)}
     run = subprocess.run(  # noqa: S603  -- fixed interpreter and script, no shell
         [sys.executable, "-c", "import arctrust; assert arctrust.__version__ == '0.12.0'"],
