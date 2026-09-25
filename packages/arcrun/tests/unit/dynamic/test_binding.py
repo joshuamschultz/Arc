@@ -407,6 +407,8 @@ _CHILD_OWNED_FIELDS = frozenset(
         "followup_queue",
         "completion_payload",
         "completion_tool",
+        "outcome_unknown",  # each child owns its unresolved tool intent
+        "emit_terminal",  # only the parent emits the run's terminal
         "transform_context",  # bound to the parent's transcript
         "on_checkpoint",  # bound to the parent's session resume point
     }

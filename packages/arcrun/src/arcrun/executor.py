@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Any
+from typing import Any, Literal
 
 import arcllm
 import jsonschema
@@ -20,7 +20,7 @@ from arcrun.ledger import (
 )
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
-from arcrun.types import ParentRunContext, ToolContext
+from arcrun.types import ParentRunContext, ToolContext, ToolOutcomeUnknown
 
 
 def _digest_and_size(value: Any) -> tuple[str | None, int | None]:
@@ -40,6 +40,46 @@ def _digest_and_size(value: Any) -> tuple[str | None, int | None]:
     return hashlib.sha256(raw).hexdigest(), len(raw)
 
 
+def _mark_outcome_unknown(
+    tc: Any,
+    state: RunState,
+    invocation_key: str,
+    *,
+    phase: Literal["execution_unconfirmed", "completion_unconfirmed", "reconciliation_required"],
+) -> None:
+    """Latch a durable ambiguity without recording tool data or exception text."""
+    unknown = ToolOutcomeUnknown(
+        run_id=state.run_id,
+        tool_call_id=tc.id,
+        tool_name=tc.name,
+        invocation_key=invocation_key,
+        turn_number=state.turn_count + 1,
+        phase=phase,
+    )
+    if phase != "reconciliation_required":
+        state.tool_calls_made += 1
+    state.outcome_unknown = unknown
+    state.event_bus.emit(
+        "tool.outcome_unknown",
+        {
+            "name": unknown.tool_name,
+            "tool_call_id": unknown.tool_call_id,
+            "turn_number": unknown.turn_number,
+            "invocation_key": unknown.invocation_key,
+            "phase": unknown.phase,
+        },
+    )
+    state.event_bus.emit(
+        "tool.error",
+        {
+            "name": unknown.tool_name,
+            "tool_call_id": unknown.tool_call_id,
+            "turn_number": unknown.turn_number,
+            "error": "ToolOutcomeUnknown",
+        },
+    )
+
+
 async def execute_tool_call(
     tc: Any,
     state: RunState,
@@ -52,6 +92,17 @@ async def execute_tool_call(
     """
     bus = state.event_bus
     turn_number = state.turn_count + 1
+    if state.outcome_unknown is not None:
+        bus.emit(
+            "tool.skipped",
+            {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "reason": "tool_outcome_unknown",
+            },
+        )
+        return tool_result(tc.id, "Tool call paused pending outcome reconciliation"), False
 
     # Digest the args once at source (C1) and reuse for start + error events.
     args_digest, args_size = _digest_and_size(tc.arguments)
@@ -208,15 +259,7 @@ async def execute_tool_call(
                     "invocation_key": invocation_key,
                 },
             )
-            bus.emit(
-                "tool.error",
-                {
-                    "name": tc.name,
-                    "tool_call_id": tc.id,
-                    "turn_number": turn_number,
-                    "error": "reconciliation_required",
-                },
-            )
+            _mark_outcome_unknown(tc, state, invocation_key, phase="reconciliation_required")
             return tool_result(tc.id, "Error: prior tool intent requires reconciliation"), False
 
     ctx = ToolContext(
@@ -246,6 +289,9 @@ async def execute_tool_call(
         else:
             result = await state.await_work(tool_def.execute(tc.arguments, ctx))
     except TimeoutError:
+        if invocation_key is not None:
+            _mark_outcome_unknown(tc, state, invocation_key, phase="execution_unconfirmed")
+            return tool_result(tc.id, "Tool outcome unknown; reconciliation required"), False
         bus.emit(
             "tool.error",
             {
@@ -260,6 +306,9 @@ async def execute_tool_call(
         )
         return tool_result(tc.id, f"Error: tool timed out after {timeout}s"), False
     except asyncio.CancelledError:
+        if invocation_key is not None:
+            _mark_outcome_unknown(tc, state, invocation_key, phase="execution_unconfirmed")
+            return tool_result(tc.id, "Tool outcome unknown; reconciliation required"), False
         bus.emit(
             "tool.error",
             {
@@ -271,6 +320,9 @@ async def execute_tool_call(
         )
         raise
     except Exception as exc:  # reason: best-effort — record + continue
+        if invocation_key is not None:
+            _mark_outcome_unknown(tc, state, invocation_key, phase="execution_unconfirmed")
+            return tool_result(tc.id, "Tool outcome unknown; reconciliation required"), False
         bus.emit(
             "tool.error",
             {
@@ -295,28 +347,11 @@ async def execute_tool_call(
                 )
             )
         except asyncio.CancelledError:
-            bus.emit(
-                "tool.error",
-                {
-                    "name": tc.name,
-                    "tool_call_id": tc.id,
-                    "turn_number": turn_number,
-                    "error": "CancelledError",
-                },
-            )
-            raise
-        except Exception as exc:
-            message = f"Error: tool outcome not durable: {type(exc).__name__}"
-            bus.emit(
-                "tool.error",
-                {
-                    "name": tc.name,
-                    "tool_call_id": tc.id,
-                    "turn_number": turn_number,
-                    "error": type(exc).__name__,
-                },
-            )
-            return tool_result(tc.id, message), False
+            _mark_outcome_unknown(tc, state, invocation_key, phase="completion_unconfirmed")
+            return tool_result(tc.id, "Tool outcome unknown; reconciliation required"), False
+        except Exception:
+            _mark_outcome_unknown(tc, state, invocation_key, phase="completion_unconfirmed")
+            return tool_result(tc.id, "Tool outcome unknown; reconciliation required"), False
     result_digest, result_size = _digest_and_size(result)
     end_data: dict[str, Any] = {
         "name": tc.name,

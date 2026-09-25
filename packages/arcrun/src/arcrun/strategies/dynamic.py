@@ -32,7 +32,7 @@ from arcrun.dynamic.validate import dry_run
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
-from arcrun.strategies.react import build_result, react_loop
+from arcrun.strategies.react import _halt_on_outcome_unknown, build_result, react_loop
 from arcrun.types import LoopResult
 
 # Authoring gets the first shot plus exactly one correction. A model that cannot
@@ -142,6 +142,9 @@ class DynamicStrategy(Strategy):
             journal=_open_journal(home, _bind(seal, source)),
             agent_call_budget=self._agent_call_budget,
         )
+        if state.outcome_unknown is not None:
+            bus.emit("dynamic.paused", {"reason": "tool_outcome_unknown"})
+            return _halt_on_outcome_unknown(state)
         return _result_from_outcome(state, outcome)
 
     async def _author(self, model: Any, state: RunState, feedback: str, attempt: int) -> str:

@@ -200,11 +200,17 @@ async def test_ledger_failure_emits_sanitized_terminal_error(
     )
 
     assert success is False
-    assert [event.type for event in state.event_bus.events] == ["tool.start", "tool.error"]
+    expected_events = (
+        ["tool.start", "tool.outcome_unknown", "tool.error"]
+        if phase == "complete"
+        else ["tool.start", "tool.error"]
+    )
+    assert [event.type for event in state.event_bus.events] == expected_events
     assert state.event_bus.events[-1].data == {
         "name": "write",
         "tool_call_id": "call-1",
         "turn_number": 1,
-        "error": "RuntimeError",
+        "error": "ToolOutcomeUnknown" if phase == "complete" else "RuntimeError",
     }
+    assert (state.outcome_unknown is not None) == (phase == "complete")
     assert side_effects == (1 if phase == "complete" else 0)

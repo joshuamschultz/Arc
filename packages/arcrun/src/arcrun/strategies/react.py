@@ -356,6 +356,9 @@ async def react_loop(
             response.tool_calls, state, sandbox
         )
         state.messages.extend(result_messages)
+        if state.outcome_unknown is not None:
+            _end_turn(state, bus)
+            return _halt_on_outcome_unknown(state)
         # No mid-turn injection: held messages are entered ONLY at the top of the
         # next turn (above), after this turn's tool_results are appended. That keeps
         # a user message from ever landing between an assistant tool_use and its
@@ -405,6 +408,28 @@ def _halt_on_cancel(state: RunState) -> LoopResult:
         {"caller_did": caller, "reason": reason, "turns": state.turn_count},
     )
     return build_result(state, state.completion_payload["summary"])
+
+
+def _halt_on_outcome_unknown(state: RunState) -> LoopResult:
+    """Pause a run until the caller reconciles an unconfirmed tool intent."""
+    unknown = state.outcome_unknown
+    if unknown is None:
+        raise ValueError("outcome unknown terminal requires a latched tool intent")
+    payload = {
+        "status": "paused",
+        "error": "tool_outcome_unknown",
+        "summary": "Tool outcome unknown; reconciliation required",
+        "run_id": unknown.run_id,
+        "tool_call_id": unknown.tool_call_id,
+        "tool_name": unknown.tool_name,
+        "invocation_key": unknown.invocation_key,
+        "turn_number": unknown.turn_number,
+        "phase": unknown.phase,
+    }
+    state.completion_payload = payload
+    if state.emit_terminal:
+        state.event_bus.emit("loop.outcome_unknown", dict(payload))
+    return build_result(state, "Tool outcome unknown; reconciliation required")
 
 
 def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:
@@ -531,16 +556,18 @@ def build_result(state: RunState, content: str | None) -> LoopResult:
     run no matter which strategy ran it — that is what makes the event the
     reliable end-of-run marker for the spool and the audit chain.
     """
-    state.event_bus.emit(
-        "loop.complete",
-        {
-            "content": content,
-            "turns": state.turn_count,
-            "tool_calls": state.tool_calls_made,
-            "tokens": state.tokens_used.copy(),
-            "cost": state.cost_usd,
-        },
-    )
+    if state.emit_terminal:
+        state.event_bus.emit(
+            "loop.complete",
+            {
+                "content": content,
+                "turns": state.turn_count,
+                "tool_calls": state.tool_calls_made,
+                "tokens": state.tokens_used.copy(),
+                "cost": state.cost_usd,
+                "outcome_unknown": state.outcome_unknown is not None,
+            },
+        )
     return LoopResult(
         content=content,
         turns=state.turn_count,
@@ -553,4 +580,5 @@ def build_result(state: RunState, content: str | None) -> LoopResult:
             dict(state.completion_payload) if state.completion_payload is not None else None
         ),
         completion_tool=state.completion_tool,
+        outcome_unknown=state.outcome_unknown,
     )

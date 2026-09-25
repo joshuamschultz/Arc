@@ -247,6 +247,8 @@ class RunHost:
         counters read here are the whole run's — without this the only bound on
         a script is ``agent_call_budget x child_max_turns`` (LLM10).
         """
+        if self._state.outcome_unknown is not None:
+            return HostFailure("tool outcome unknown; reconciliation required")
         if self._state.cancel_event.is_set():
             return Cancelled("run cancelled; no further child agents will start")
         breach = check_breaker(self._state)
@@ -299,7 +301,9 @@ class RunHost:
         turns = spec.max_turns or self._child_max_turns
         try:
             result = await react_loop(self._model, child, self._sandbox, turns)
-            if spec.output_schema is not None:
+            if result.outcome_unknown is not None:
+                self._state.outcome_unknown = result.outcome_unknown
+            elif spec.output_schema is not None:
                 result = await self._enforce_output_contract(child, spec, result, turns)
         finally:
             # A child that died partway still burned tokens; the parent's
@@ -368,6 +372,8 @@ class RunHost:
             followup_queue=asyncio.Queue(maxsize=parent.followup_queue.maxsize),
             completion_payload=None,
             completion_tool=None,
+            outcome_unknown=None,
+            emit_terminal=False,
             # Both hooks are bound to the parent's transcript and session: the
             # context hook would rewrite a list it was never written for, and a
             # child checkpoint would overwrite the session's resume point with a

@@ -105,7 +105,14 @@ from arcrun.streams import (
     run_stream,
     stream_llm_response,
 )
-from arcrun.types import LoopResult, ParentRunContext, SandboxConfig, Tool, ToolContext
+from arcrun.types import (
+    LoopResult,
+    ParentRunContext,
+    SandboxConfig,
+    Tool,
+    ToolContext,
+    ToolOutcomeUnknown,
+)
 
 __all__ = [
     "GENESIS_PREV_HASH",
@@ -175,6 +182,7 @@ __all__ = [
     "ToolExecutionLedger",
     "ToolExecutionOutcome",
     "ToolLedgerEntry",
+    "ToolOutcomeUnknown",
     "ToolRegistry",
     "ToolResultBlock",
     "ToolStartEvent",

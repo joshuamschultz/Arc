@@ -35,7 +35,7 @@ from arcrun.capabilities import CapabilityProvider
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import Event
 from arcrun.ledger import ToolExecutionLedger
-from arcrun.types import LoopResult, SandboxConfig, Tool
+from arcrun.types import LoopResult, SandboxConfig, Tool, ToolOutcomeUnknown
 
 if TYPE_CHECKING:
     from arcrun.loop import RunHandle
@@ -115,6 +115,7 @@ class TurnEndEvent(StreamEvent):
     tokens_used: dict[str, Any] = field(default_factory=dict)
     completion_payload: dict[str, Any] | None = None
     completion_tool: str | None = None
+    outcome_unknown: ToolOutcomeUnknown | None = None
 
 
 @dataclass
@@ -137,6 +138,7 @@ class RunResult:
     tokens_used: dict[str, Any] = field(default_factory=dict)
     completion_payload: dict[str, Any] | None = None
     completion_tool: str | None = None
+    outcome_unknown: ToolOutcomeUnknown | None = None
 
 
 async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
@@ -163,6 +165,7 @@ async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
             tokens_used=turn_end.tokens_used,
             completion_payload=turn_end.completion_payload,
             completion_tool=turn_end.completion_tool,
+            outcome_unknown=turn_end.outcome_unknown,
         )
     return RunResult(content="".join(token_text))
 
@@ -486,6 +489,7 @@ async def _stream_generator(
             tokens_used=dict(loop_result.tokens_used),
             completion_payload=loop_result.completion_payload,
             completion_tool=loop_result.completion_tool,
+            outcome_unknown=loop_result.outcome_unknown,
             sequence=sequence,
             run_id=stream_run_id,
         )
@@ -495,7 +499,7 @@ async def _stream_generator(
             action="stream.end",
             run_id=stream_run_id,
             target=f"stream:{stream_run_id[:8]}",
-            outcome="success",
+            outcome="paused" if loop_result.outcome_unknown is not None else "success",
             extra={"turns": loop_result.turns, "tool_calls_made": loop_result.tool_calls_made},
             sink=audit_sink,
         )
@@ -508,6 +512,7 @@ async def _stream_generator(
                 "turns": loop_result.turns,
                 "tool_calls_made": loop_result.tool_calls_made,
                 "cost_usd": loop_result.cost_usd,
+                "status": "paused" if loop_result.outcome_unknown is not None else "completed",
             },
         )
     finally:

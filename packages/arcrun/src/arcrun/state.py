@@ -20,6 +20,7 @@ from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
+from arcrun.types import ToolOutcomeUnknown
 
 #: How much of a held message's text rides its ``message.injected`` audit event.
 _HELD_PREVIEW_LEN = 120
@@ -105,6 +106,8 @@ class RunState:
     deadline: float | None = None
     active_work: set[asyncio.Future[Any]] = field(default_factory=set)
     tool_ledger: ToolExecutionLedger | None = None
+    outcome_unknown: ToolOutcomeUnknown | None = None
+    emit_terminal: bool = True
     steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[Injection] = field(
         default_factory=lambda: asyncio.Queue(maxsize=16)

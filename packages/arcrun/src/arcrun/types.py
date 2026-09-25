@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from arcrun.events import ChainVerificationResult, Event, EventBus
@@ -99,6 +99,18 @@ class SandboxConfig:
     check: Callable[[str, dict[str, Any]], Awaitable[tuple[bool, str]]] | None = None
 
 
+@dataclass(frozen=True)
+class ToolOutcomeUnknown:
+    """A tool intent whose external effect must be reconciled before any retry."""
+
+    run_id: str
+    tool_call_id: str
+    tool_name: str
+    invocation_key: str
+    turn_number: int
+    phase: Literal["execution_unconfirmed", "completion_unconfirmed", "reconciliation_required"]
+
+
 @dataclass
 class LoopResult:
     """Returned by run().
@@ -122,6 +134,7 @@ class LoopResult:
     events: list[Event] = field(default_factory=list)
     completion_payload: dict[str, Any] | None = None
     completion_tool: str | None = None
+    outcome_unknown: ToolOutcomeUnknown | None = None
 
     def verify_integrity(self) -> ChainVerificationResult:
         """Verify tamper-evidence of the event chain."""
