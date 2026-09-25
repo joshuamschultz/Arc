@@ -11,11 +11,21 @@ is indistinguishable, from the outside, from a runner making progress.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
+from arcstore.mutation_fence import (
+    RUNNER_LEASE_COLLECTION,
+    RUNNER_LEASE_KEY,
+    MutationFenceRejectedError,
+    RunnerFence,
+)
 
 from arcteam.workflow.narrator import RunNarrator
+from arcteam.workflow.runner import NodeDecisionError
+from arcteam.workflow.stores import WorkflowRunStore
 
 from .conftest import RUNNER_DID, Definition, Node, RecordingSender, RecordingSink
 from .test_runner_frontier import build
@@ -185,7 +195,7 @@ async def test_poisoned_run_is_terminalized_after_bounded_advance_failures(
     started = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
 
     async def poisoned(_: str) -> Any:
-        raise RuntimeError("corrupt companion state")
+        raise NodeDecisionError("only", "corrupt companion state")
 
     runner.advance = poisoned  # type: ignore[method-assign]
     await runner.tick()
@@ -198,3 +208,194 @@ async def test_poisoned_run_is_terminalized_after_bounded_advance_failures(
     failures = [event for event in sink.events if event.action == "workflow.run.advance_failed"]
     assert [event.outcome for event in failures] == ["retrying", "retrying", "terminalized"]
     assert failures[-1].extra["consecutive_failures"] == 3
+
+
+async def test_poisoned_run_failure_budget_survives_runner_restart(
+    stores: Any, registry: Any
+) -> None:
+    """Restarting the runner cannot grant a poisoned run endless new attempts."""
+    _, runs, _ = stores
+    first = build(stores, registry, WIRED, advance_failure_threshold=3)
+    poisoned = await first.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    healthy = await first.start_run("wired", input={}, initiator_did="did:arc:x/1")
+
+    async def fail_one(run_id: str) -> Any:
+        if run_id == poisoned.run_id:
+            raise NodeDecisionError("only", "corrupt companion state")
+        return await original(run_id)
+
+    for _ in range(3):
+        runner = build(stores, registry, WIRED, advance_failure_threshold=3)
+        original = runner.advance
+        runner.advance = fail_one  # type: ignore[method-assign]
+        await runner.tick()
+
+    assert (await runs.get(poisoned.run_id)).status == "failed"
+    assert (await runs.get(healthy.run_id)).status == "running"
+
+
+async def test_real_run_store_resets_failure_budget_only_after_progress() -> None:
+    backend = FakeBackend()
+    store = WorkflowRunStore(backend)
+    await store.create_run(
+        run_id="run-poison",
+        workflow_id="wired",
+        version=1,
+        content_hash="sha256:test",
+        initiator_did="did:arc:x/1",
+        channel=None,
+        input={},
+        budget_tokens=None,
+        budget_cost_usd=None,
+        budget_wall_clock_s=None,
+    )
+    assert await store.record_advance_failure("run-poison", actor_did=RUNNER_DID) == 1
+    assert await store.record_advance_failure("run-poison", actor_did=RUNNER_DID) == 2
+    restarted = WorkflowRunStore(backend)
+    assert await restarted.record_advance_failure("run-poison", actor_did=RUNNER_DID) == 3
+    await backend.mutable_merge(
+        "workflow_run_state", "run-poison", {"path_len": 1}, actor_did=RUNNER_DID
+    )
+    assert await restarted.record_advance_failure("run-poison", actor_did=RUNNER_DID) == 1
+
+
+async def test_stale_runner_fence_cannot_increment_durable_failure_count() -> None:
+    backend = FakeBackend()
+    store = WorkflowRunStore(backend)
+    await store.create_run(
+        run_id="run-fenced",
+        workflow_id="wired",
+        version=1,
+        content_hash="sha256:test",
+        initiator_did="did:arc:x/1",
+        channel=None,
+        input={},
+        budget_tokens=None,
+        budget_cost_usd=None,
+        budget_wall_clock_s=None,
+    )
+    expiry = datetime.now(UTC) + timedelta(minutes=1)
+    await backend.mutable_write(
+        RUNNER_LEASE_COLLECTION,
+        RUNNER_LEASE_KEY,
+        {"owner_id": "new-owner", "fencing_token": 2, "expires_at": expiry.isoformat()},
+        actor_did=RUNNER_DID,
+    )
+    with pytest.raises(MutationFenceRejectedError):
+        await store.record_advance_failure(
+            "run-fenced",
+            actor_did=RUNNER_DID,
+            fence=RunnerFence(owner_id="old-owner", token=1, expires_at=expiry),
+        )
+    assert (
+        await store.record_advance_failure(
+            "run-fenced",
+            actor_did=RUNNER_DID,
+            fence=RunnerFence(owner_id="new-owner", token=2, expires_at=expiry),
+        )
+        == 1
+    )
+
+
+async def test_uncertain_advance_errors_never_claim_known_terminal_failure(
+    stores: Any, registry: Any
+) -> None:
+    _, runs, _ = stores
+    sink = RecordingSink()
+    runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=2)
+    started = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+
+    async def unknown(_: str) -> Any:
+        raise RuntimeError("database response lost after task materialization")
+
+    runner.advance = unknown  # type: ignore[method-assign]
+    await runner.tick()
+    await runner.tick()
+    assert (await runs.get(started.run_id)).status == "running"
+    assert not any(
+        event.outcome == "terminalized"
+        for event in sink.events
+        if event.action == "workflow.run.advance_failed"
+    )
+
+
+async def test_tracking_error_on_poisoned_run_does_not_starve_peer(
+    stores: Any, registry: Any
+) -> None:
+    _, runs, _ = stores
+    sink = RecordingSink()
+    runner = build(stores, registry, WIRED, audit_sink=sink)
+    poisoned = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    healthy = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    original_advance = runner.advance
+    original_record = runs.record_advance_failure
+    seen: list[str] = []
+
+    async def advance(run_id: str) -> Any:
+        seen.append(run_id)
+        if run_id == poisoned.run_id:
+            raise NodeDecisionError("only", "missing companion state")
+        return await original_advance(run_id)
+
+    async def record(run_id: str, **kwargs: Any) -> int:
+        if run_id == poisoned.run_id:
+            raise RuntimeError("companion state missing")
+        return await original_record(run_id, **kwargs)
+
+    runner.advance = advance  # type: ignore[method-assign]
+    runs.record_advance_failure = record  # type: ignore[method-assign]
+    await runner.tick()
+    assert healthy.run_id in seen
+    assert any(event.action == "workflow.run.advance_tracking_failed" for event in sink.events)
+
+
+async def test_lost_materialization_response_restarts_without_duplicate_node(
+    stores: Any, registry: Any
+) -> None:
+    tasks, runs, _ = stores
+    first = build(stores, registry, WIRED)
+    started = await first.start_run("wired", input={}, initiator_did="did:arc:x/1", detached=True)
+    original_create = tasks.create_batch
+    lost = False
+
+    async def create_then_lose_response(*args: Any, **kwargs: Any) -> Any:
+        nonlocal lost
+        result = await original_create(*args, **kwargs)
+        if not lost:
+            lost = True
+            raise RuntimeError("task commit response lost")
+        return result
+
+    tasks.create_batch = create_then_lose_response  # type: ignore[method-assign]
+    await first.tick()
+    tasks.create_batch = original_create  # type: ignore[method-assign]
+    restarted = build(stores, registry, WIRED)
+    await restarted.tick()
+    rows = await tasks.query_by_flow_run(started.run_id)
+    assert len(rows) == 1
+    assert tasks.created_keys.count(rows[0].id) == 1
+    assert (await runs.get(started.run_id)).status == "running"
+
+
+async def test_real_missing_companion_state_does_not_starve_peer(
+    stores: Any, registry: Any
+) -> None:
+    tasks, _, task_store = stores
+    backend = tasks._backend
+    runs = WorkflowRunStore(backend)
+    runner = build((tasks, runs, task_store), registry, WIRED)
+    poisoned = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    healthy = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    await backend.mutable_delete("workflow_run_state", poisoned.run_id, actor_did=RUNNER_DID)
+    seen: list[str] = []
+    original = runner.advance
+
+    async def advance(run_id: str) -> Any:
+        seen.append(run_id)
+        if run_id == poisoned.run_id:
+            raise NodeDecisionError("only", "missing companion state")
+        return await original(run_id)
+
+    runner.advance = advance  # type: ignore[method-assign]
+    await runner.tick()
+    assert healthy.run_id in seen

@@ -131,6 +131,9 @@ class WorkflowRunStore:
                 "path": [],
                 "path_len": 0,
                 "resolution": None,
+                "advance_failure_count": 0,
+                "advance_failure_basis": "running:0",
+                "advance_failure_revision": 0,
             },
             actor_did=initiator_did,
             sink=self._sink,
@@ -197,6 +200,39 @@ class WorkflowRunStore:
     async def record(self, run_id: str) -> Run | None:
         """One canonical Run row, or None."""
         return await self._runs.get(run_id)
+
+    async def record_advance_failure(
+        self, run_id: str, *, actor_did: str, fence: RunnerFence | None = None
+    ) -> int:
+        """Count failures durably under the current runner fence and progress basis."""
+        for _ in range(_CAS_RETRIES):
+            run = await self._runs.get(run_id)
+            state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
+            if run is None or state is None or run.status in {"done", "failed", "cancelled"}:
+                raise RunStateMissingError(f"active run {run_id} is unavailable")
+            basis = f"{run.status}:{state['path_len']}"
+            count = (
+                int(state["advance_failure_count"]) + 1
+                if state["advance_failure_basis"] == basis
+                else 1
+            )
+            revision = int(state["advance_failure_revision"])
+            won = await self._backend.update_if(
+                _STATE_COLLECTION,
+                run_id,
+                {
+                    "advance_failure_count": count,
+                    "advance_failure_basis": basis,
+                    "advance_failure_revision": revision + 1,
+                },
+                where={"advance_failure_revision": revision, "path_len": state["path_len"]},
+                actor_did=actor_did,
+                sink=self._sink,
+                fence=fence,
+            )
+            if won:
+                return count
+        raise RuntimeError("workflow advance failure count CAS exhausted")
 
     async def set_status(
         self,

@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+import arcstore
 from arcstore.tasks import Task
 from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -62,6 +63,7 @@ from .runner_contracts import (
     WorkflowTaskStoreLike,
 )
 from .runner_state import NodeInstance, RunState
+from .stores import RunStateMissingError
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +198,6 @@ class WorkflowRunner:
         if advance_failure_threshold < 1:
             raise ValueError("advance_failure_threshold must be at least one")
         self._advance_failure_threshold = advance_failure_threshold
-        self._advance_failures: dict[str, int] = {}
         self._lease = lease
         # Ceiling on the run's carried trifecta legs (mirrors CarriedLegs'
         # default). A per-run security collection that grows without a bound is
@@ -395,9 +396,18 @@ class WorkflowRunner:
                     raise
                 except Exception as exc:  # reason: one poisoned run must not stall the rest
                     logger.exception("advancing run %s failed", run.run_id)
-                    await self._on_advance_failure(run, exc)
-                else:
-                    self._advance_failures.pop(run.run_id, None)
+                    try:
+                        await self._on_advance_failure(run, exc)
+                    except arcstore.MutationFenceRejectedError:
+                        raise
+                    except Exception as tracking_error:
+                        logger.exception("tracking failed for workflow run %s", run.run_id)
+                        self._audit(
+                            "workflow.run.advance_tracking_failed",
+                            target=run.run_id,
+                            outcome="degraded",
+                            extra={"error": type(tracking_error).__name__},
+                        )
                 advanced += 1
             return advanced
         finally:
@@ -450,10 +460,13 @@ class WorkflowRunner:
 
     async def _on_advance_failure(self, run: RunRecord, exc: Exception) -> None:
         """Bound a poisoned run's retries without degrading healthy neighbours."""
-        count = self._advance_failures.get(run.run_id, 0) + 1
-        self._advance_failures[run.run_id] = count
+        count = await self._runs.record_advance_failure(
+            run.run_id, actor_did=self._runner_did, fence=self._mutation_fence()
+        )
         error = str(exc)
-        terminalizing = count >= self._advance_failure_threshold
+        terminalizing = count >= self._advance_failure_threshold and isinstance(
+            exc, (NodeDecisionError, RunStateMissingError)
+        )
         self._audit(
             "workflow.run.advance_failed",
             target=run.run_id,
@@ -472,8 +485,6 @@ class WorkflowRunner:
             # The failure count and escalation audit are already durable when the
             # store is healthy. A broken terminalization path remains noisy.
             logger.exception("failed to terminalize poisoned workflow run %s", run.run_id)
-        else:
-            self._advance_failures.pop(run.run_id, None)
 
     async def _require_lease(self) -> None:
         """Renew the cross-process fence before advancing any workflow state."""

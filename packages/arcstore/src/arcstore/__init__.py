@@ -45,6 +45,7 @@ from arcstore.inbox import (
 from arcstore.inbox_projection import DurableInboxService, InboxDeliveryPort
 from arcstore.inbox_spool import InboxProjectionSpool, ProjectionEvent
 from arcstore.mail_outbox import MailOutbox, MailOutboxEntry, PostgresMailOutbox
+from arcstore.mutation_fence import MutationFenceRejectedError
 from arcstore.records import SpoolRecord
 from arcstore.source_sync import (
     ArcStoreSourceSyncStore,
@@ -74,6 +75,7 @@ __all__ = [
     "MailOutboxEntry",
     "Message",
     "MessagePage",
+    "MutationFenceRejectedError",
     "PageInfo",
     "Participant",
     "ParticipantRole",

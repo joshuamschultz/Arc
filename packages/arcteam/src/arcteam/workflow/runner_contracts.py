@@ -336,6 +336,12 @@ class RunStoreLike(Protocol):
 
     async def get(self, run_id: str) -> RunRecord | None: ...
 
+    async def record_advance_failure(
+        self, run_id: str, *, actor_did: str, fence: RunnerFence | None = None
+    ) -> int:
+        """Persist a fenced failure count, reset only when the run has progressed."""
+        ...
+
     async def set_status(
         self,
         run_id: str,

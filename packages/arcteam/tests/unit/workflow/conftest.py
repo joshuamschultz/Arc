@@ -249,6 +249,8 @@ class RunRow:
     cost_spent: float
     started_at: str | None = None
     resolution: str | None = None
+    advance_failure_count: int = 0
+    advance_failure_basis: str | None = None
 
 
 class FlowRunStore:
@@ -313,6 +315,29 @@ class FlowRunStore:
             return None
         raw.pop("updated_at", None)
         return RunRow(**raw)
+
+    async def record_advance_failure(
+        self, run_id: str, *, actor_did: str, fence: Any | None = None
+    ) -> int:
+        del fence
+        row = await self.get(run_id)
+        if row is None:
+            raise RuntimeError("run missing")
+        raw = await self._backend.mutable_read(self._COLLECTION, run_id)
+        assert raw is not None
+        basis = f"{row.status}:{len(row.path_taken)}"
+        count = (
+            int(raw.get("advance_failure_count", 0)) + 1
+            if raw.get("advance_failure_basis") == basis
+            else 1
+        )
+        await self._backend.mutable_merge(
+            self._COLLECTION,
+            run_id,
+            {"advance_failure_count": count, "advance_failure_basis": basis},
+            actor_did=actor_did,
+        )
+        return count
 
     async def count_runs_for_workflow(self, workflow_id: str) -> int:
         rows = await self._backend.mutable_query(
