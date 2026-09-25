@@ -20,9 +20,8 @@ from pydantic import BaseModel, ValidationError
 
 from arccli.commands.agent._common import render_agent_config
 
-# capability_import is a service package under modules/, not a configurable
-# module: it declares no config model and no [modules.*] table.
-_NOT_A_CONFIGURABLE_MODULE = {"capability_import"}
+# Service packages have no module lifecycle or operator settings.
+_NOT_A_CONFIGURABLE_MODULE = {"capability_import", "run_intents"}
 
 
 def _module_names() -> list[str]:
