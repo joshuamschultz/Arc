@@ -218,6 +218,8 @@ def _auth(args: argparse.Namespace) -> None:
 _SIGN_IN_LINE = {
     "signed_in": "SIGNED IN",
     "signed_out": "NOT signed in",
+    "expired": "RECONNECT NEEDED (the stored sign-in stopped working)",
+    "not_installed": "NOT installed on this host",
     "unknown": "sign-in not known (this bundle declares no way to check it)",
 }
 

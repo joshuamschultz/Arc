@@ -293,6 +293,7 @@ async def run_authorization_check(
     audit_sink: AuditSink,
     tier: Tier,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
     timeout: float = _CHECK_TIMEOUT_SECONDS,
 ) -> AuthorizationCheck:
     """Ask one host binary whether it is signed in, or say plainly that Arc cannot.
@@ -308,6 +309,8 @@ async def run_authorization_check(
             out" without them, so a check taken outside the placed environment
             reports a just-connected account as not connected. The values are
             handed to the child and appear in no verdict, log line, or audit event.
+        visible: Placed variables that carry no credential (an account address),
+            left readable in the detail line.
         timeout: Seconds before the check is killed and reported as unknown.
 
     Returns:
@@ -329,7 +332,9 @@ async def run_authorization_check(
             ),
         )
 
-    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="", env=env)
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
     if run.returncode is None:
         result = AuthorizationCheck(authorized=False, known=False, detail=run.text)
     else:
@@ -379,6 +384,7 @@ async def run_remote_login_begin(
     tier: Tier,
     instance: str,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
     timeout: float = _LOGIN_TIMEOUT_SECONDS,
 ) -> RemoteLoginStep:
     """Run step one of a remote sign-in and hand back the consent link it printed.
@@ -395,6 +401,8 @@ async def run_remote_login_begin(
         instance: The connection this sign-in is for — a coordinate on the record.
         env: The connection's ``[secrets.placement]`` entries, so the step acts as
             the same account and OAuth client the connection's verbs do.
+        visible: Placed variables that carry no credential, left readable in
+            what the binary prints.
         timeout: Seconds before the step is killed and reported as unfinished.
 
     Returns:
@@ -408,7 +416,9 @@ async def run_remote_login_begin(
             requirement, _BEGIN_ACTION, instance, caller_did, audit_sink, tier, refusal
         )
 
-    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="", env=env)
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
     if run.returncode != 0:
         step = RemoteLoginStep(
             completed=False,
@@ -449,6 +459,7 @@ async def run_remote_login_complete(
     tier: Tier,
     instance: str,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
     timeout: float = _LOGIN_TIMEOUT_SECONDS,
 ) -> RemoteLoginStep:
     """Run step two with the address the operator pasted, or refuse it unrun.
@@ -480,7 +491,9 @@ async def run_remote_login_complete(
             requirement, _COMPLETE_ACTION, instance, caller_did, audit_sink, tier, refusal_step
         )
 
-    run = await _capture(argv, stdin_data="", timeout=timeout, timeout_hint="", env=env)
+    run = await _capture(
+        argv, stdin_data="", timeout=timeout, timeout_hint="", env=env, visible=visible
+    )
     spoken = redact(run.text, (pasted, *_query_values(pasted)))
     step = RemoteLoginStep(
         completed=run.returncode == 0,
@@ -590,6 +603,7 @@ async def _capture(
     timeout: float,
     timeout_hint: str,
     env: Mapping[str, Secret] | None = None,
+    visible: frozenset[str] = frozenset(),
 ) -> _Run:
     """Run ``argv`` to completion, killing it if it does not end.
 
@@ -599,6 +613,11 @@ async def _capture(
     are unwrapped straight into the child. The raw output comes back untruncated,
     because a caller matching a declared pattern against it must see all of it;
     truncation belongs to the line an operator reads.
+
+    ``visible`` names placed variables whose values are NOT credentials (an
+    account address, a client name): those are left readable in the output, so
+    "authorized as X, expected Y" still names Y. Every other placed value is
+    redacted.
     """
     placed = env or {}
     try:
@@ -637,7 +656,8 @@ async def _capture(
     return _Run(
         returncode=process.returncode or 0,
         text=redact(
-            output.decode("utf-8", "replace"), (secret.reveal() for secret in placed.values())
+            output.decode("utf-8", "replace"),
+            (secret.reveal() for name, secret in placed.items() if name not in visible),
         ),
     )
 
