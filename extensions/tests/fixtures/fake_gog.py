@@ -12,6 +12,10 @@ against its source and the deployment:
   ``code-for:<email>``; like gog, a sign-in as a different address is refused
   ("authorized as X, expected Y").
 * ``gog auth list``
+* any other ``gmail`` / ``drive`` / ``calendar`` verb answers AS the account gog
+  would use (``--account`` wins over GOG_ACCOUNT, as in gog), echoing its argv,
+  account and client; ``messages search`` / ``get`` / ``attachment`` answer in
+  the shapes the sync adapter and the download path read.
 * ``gog gmail labels get INBOX ...`` — the sign-in check. Answers as GOG_ACCOUNT
   from the token bucket GOG_CLIENT selects: a working token prints ``id<TAB>INBOX``;
   none prints gog's "No auth for gmail"; one marked ``expired`` prints the
@@ -139,6 +143,61 @@ def _labels() -> None:
     sys.exit(0)
 
 
+def _working_account() -> str:
+    """The account this call acts as, like gog: --account wins, then GOG_ACCOUNT.
+
+    Fails like gog when that account has no token, or a revoked one.
+    """
+    flagged = [arg.split("=", 1)[1] for arg in ARGS if arg.startswith("--account=")]
+    account = flagged[-1] if flagged else ACCOUNT
+    tokens = _tokens()
+    if not account:
+        mine = [key for key in tokens if key.startswith(f"{CLIENT}:")]
+        if len(mine) != 1:
+            _fail("missing --account (or set GOG_ACCOUNT)")
+        account = mine[0].split(":", 1)[1]
+    token = tokens.get(f"{CLIENT}:{account}")
+    if token is None:
+        _fail(f"No auth for gmail {account}.")
+    if token == "expired":
+        _fail('refresh access token: oauth2: "invalid_grant" "Bad Request"')
+    return account
+
+
+def _api() -> None:
+    """Every Gmail/Drive/Calendar verb: answer AS the account, echoing what arrived."""
+    account = _working_account()
+    local = account.split("@", 1)[0]
+    positional = ARGS[ARGS.index("--") + 1 :] if "--" in ARGS else []
+    if ARGS[:3] == ["gmail", "messages", "search"]:
+        _say(json.dumps({"messages": [{"id": f"{local}-1", "threadId": f"{local}-t"}]}))
+        sys.exit(0)
+    if ARGS[:2] == ["gmail", "get"]:
+        message_id = positional[0]
+        _say(
+            json.dumps(
+                {
+                    "message": {
+                        "id": message_id,
+                        "threadId": f"{local}-t",
+                        "historyId": "7",
+                        "body": f"<untrusted>mail {message_id} for {account}</untrusted>",
+                    }
+                }
+            )
+        )
+        sys.exit(0)
+    if ARGS[:2] == ["gmail", "attachment"]:
+        out = next(arg.split("=", 1)[1] for arg in ARGS if arg.startswith("--out="))
+        size = int(os.environ.get("FAKE_GOG_ATTACHMENT_BYTES", "64"))
+        Path(out).write_bytes(b"a" * size)
+        _say(json.dumps({"path": out, "bytes": size}))
+        sys.exit(0)
+    pad = "x" * int(os.environ.get("FAKE_GOG_PAD", "0"))
+    _say(json.dumps({"argv": ARGS, "account": account, "client": CLIENT, "pad": pad}))
+    sys.exit(0)
+
+
 def main() -> None:
     _log()
     if (HOME / "hang").exists():
@@ -158,6 +217,8 @@ def main() -> None:
         sys.exit(0)
     if ARGS[:4] == ["gmail", "labels", "get", "INBOX"]:
         _labels()
+    if ARGS and ARGS[0] in ("gmail", "drive", "calendar"):
+        _api()
     _fail(f"fake gog: unknown command {ARGS!r}", 2)
 
 
