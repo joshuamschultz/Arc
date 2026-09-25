@@ -22,7 +22,9 @@ class Anchor:
     def latest(self) -> AnchorHead | None:
         return self.head
 
-    def compare_and_advance(self, expected: AnchorHead | None, digest: str, intent: str) -> AnchorHead:
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
         if self.head != expected:
             raise RuntimeError("stale")
         self.head = AnchorHead(
@@ -48,10 +50,16 @@ class Users:
 
     def claim_first_operator(self, email: str, password: str, *, org: str, claim_digest: str):
         assert password == "valid-password-value"
-        user = type("User", (), {
-            "email": email, "did": f"did:arc:{org}:user/first",
-            "roles": (OPERATOR,), "initial_claim_digest": claim_digest,
-        })()
+        user = type(
+            "User",
+            (),
+            {
+                "email": email,
+                "did": f"did:arc:{org}:user/first",
+                "roles": (OPERATOR,),
+                "initial_claim_digest": claim_digest,
+            },
+        )()
         self.records[email] = user
         if self.fail_after_write:
             raise RuntimeError("uncertain write")
@@ -84,23 +92,37 @@ def _service() -> tuple[HostedFirstClaim, Anchor, Users, dict[str, object], Audi
     issuer, machine = SigningKey.generate(), SigningKey.generate()
     secret = "customer-browser-secret-256-bits"
     challenge = DeploymentChallenge(
-        order_id="order_123456", server_id=123, domain="first.example.com",
-        release_id="arc-2026-09-25", arc_image_digest="a" * 64,
-        machine_public_key=bytes(machine.verify_key).hex(), nonce="n" * 32,
-        issued_at=1_790_000_000, expires_at=1_790_000_120,
+        order_id="order_123456",
+        server_id=123,
+        domain="first.example.com",
+        release_id="arc-2026-09-25",
+        arc_image_digest="a" * 64,
+        machine_public_key=bytes(machine.verify_key).hex(),
+        nonce="n" * 32,
+        issued_at=1_790_000_000,
+        expires_at=1_790_000_120,
     )
     grant = DeploymentGrant(
-        **challenge.model_dump(), customer_id="cus_123", subscription_id="sub_123",
-        customer_claim_id="claim_123456", customer_email="customer@example.com",
+        **challenge.model_dump(),
+        customer_id="cus_123",
+        subscription_id="sub_123",
+        customer_claim_id="claim_123456",
+        customer_email="customer@example.com",
         customer_claim_secret_sha256=hashlib.sha256(secret.encode()).hexdigest(),
         claim_expires_at=1_790_086_400,
-        epoch=1, purpose="initial-claim",
+        epoch=1,
+        purpose="initial-claim",
     )
     anchor, users, proof = Anchor(), Users(), object()
     audit = Audit()
     service = HostedFirstClaim(
-        challenge=challenge, expected_epoch=1, issuer_public_key=bytes(issuer.verify_key),
-        anchor=anchor, authority=Authority(users, proof), actor_proof=proof, tenant_id="acme",
+        challenge=challenge,
+        expected_epoch=1,
+        issuer_public_key=bytes(issuer.verify_key),
+        anchor=anchor,
+        authority=Authority(users, proof),
+        actor_proof=proof,
+        tenant_id="acme",
         audit_sink=audit,
         machine_signer=lambda data: machine.sign(data).signature,
     )
@@ -112,12 +134,16 @@ def _service() -> tuple[HostedFirstClaim, Anchor, Users, dict[str, object], Audi
 
 def test_claim_creates_operator_once_and_replay_is_refused() -> None:
     service, anchor, users, _, _audit = _service()
-    user = service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+    user = service.claim(
+        "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+    )
     assert user.email == "customer@example.com"
     assert user.roles == (OPERATOR,)
     assert anchor.latest().intent == "claimed:claim_123456"
     with pytest.raises(HostedClaimError):
-        service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+        service.claim(
+            "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+        )
     assert len(users.records) == 1
 
 
@@ -143,7 +169,9 @@ def test_uncertain_account_write_reconciles_exact_pending_grant() -> None:
     service, anchor, users, _, _audit = _service()
     users.fail_after_write = True
     with pytest.raises(RuntimeError):
-        service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+        service.claim(
+            "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+        )
     assert anchor.latest().intent == "pending:claim_123456"
     users.fail_after_write = False
     service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
@@ -154,12 +182,16 @@ def test_pending_account_from_wrong_tenant_is_refused() -> None:
     service, anchor, users, _, _audit = _service()
     users.fail_after_write = True
     with pytest.raises(RuntimeError):
-        service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+        service.claim(
+            "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+        )
     account = users.records["customer@example.com"]
     account.did = "did:arc:other:user/first"
     users.fail_after_write = False
     with pytest.raises(HostedClaimError, match="conflicts"):
-        service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+        service.claim(
+            "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+        )
     assert anchor.latest().intent == "pending:claim_123456"
 
 
@@ -174,6 +206,8 @@ def test_audit_failure_does_not_activate_grant_or_reserve_claim() -> None:
     service.install_grant(envelope, now=1_790_000_030)
     audit.fail = True
     with pytest.raises(RuntimeError, match="audit"):
-        service.claim("customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030)
+        service.claim(
+            "customer-browser-secret-256-bits", "valid-password-value", now=1_790_000_030
+        )
     assert anchor.latest().intent == "challenge"
     assert users.is_empty()

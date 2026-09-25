@@ -23,21 +23,33 @@ class Cipher:
         return base64.b64decode(sealed)
 
 
-def _new() -> tuple[HostedClaimJournal, HostedFirstClaim, SigningKey, SigningKey, Users, object, Audit]:
+def _new() -> tuple[
+    HostedClaimJournal, HostedFirstClaim, SigningKey, SigningKey, Users, object, Audit
+]:
     machine, issuer = SigningKey.generate(), SigningKey.generate()
     challenge = DeploymentChallenge(
-        order_id="order_123456", server_id=123, domain="first.example.com",
-        release_id="release-1", arc_image_digest="a" * 64,
-        machine_public_key=bytes(machine.verify_key).hex(), nonce="n" * 32,
-        issued_at=1_790_000_000, expires_at=1_790_000_120,
+        order_id="order_123456",
+        server_id=123,
+        domain="first.example.com",
+        release_id="release-1",
+        arc_image_digest="a" * 64,
+        machine_public_key=bytes(machine.verify_key).hex(),
+        nonce="n" * 32,
+        issued_at=1_790_000_000,
+        expires_at=1_790_000_120,
     )
     journal = HostedClaimJournal(Anchor(), Cipher())
     journal.initialize(challenge)
     users, proof, audit = Users(), object(), Audit()
     service = HostedFirstClaim(
-        challenge=challenge, expected_epoch=1, issuer_public_key=bytes(issuer.verify_key),
-        anchor=journal, authority=Authority(users, proof), actor_proof=proof,
-        tenant_id="acme", audit_sink=audit,
+        challenge=challenge,
+        expected_epoch=1,
+        issuer_public_key=bytes(issuer.verify_key),
+        anchor=journal,
+        authority=Authority(users, proof),
+        actor_proof=proof,
+        tenant_id="acme",
+        audit_sink=audit,
         machine_signer=lambda data: machine.sign(data).signature,
     )
     service.arm()
@@ -48,10 +60,15 @@ def test_restart_recovers_same_sealed_grant_and_completes_once() -> None:
     journal, first, machine, issuer, users, proof, audit = _new()
     challenge, epoch, _ = journal.current()
     grant = DeploymentGrant(
-        **challenge.model_dump(), customer_id="cus_123", subscription_id="sub_123",
-        customer_claim_id="claim_123456", customer_email="customer@example.com",
+        **challenge.model_dump(),
+        customer_id="cus_123",
+        subscription_id="sub_123",
+        customer_claim_id="claim_123456",
+        customer_email="customer@example.com",
         customer_claim_secret_sha256=hashlib.sha256(("s" * 43).encode()).hexdigest(),
-        claim_expires_at=1_790_086_400, epoch=epoch, purpose="initial-claim",
+        claim_expires_at=1_790_086_400,
+        epoch=epoch,
+        purpose="initial-claim",
     )
     first.install_grant(
         sign_deployment_grant(grant, lambda data: issuer.sign(data).signature),
@@ -61,9 +78,14 @@ def test_restart_recovers_same_sealed_grant_and_completes_once() -> None:
     assert isinstance(journal._anchor.latest(), AnchorHead)
     assert "customer@example.com" not in journal._anchor.latest().intent
     second = HostedFirstClaim(
-        challenge=challenge, expected_epoch=epoch, issuer_public_key=bytes(issuer.verify_key),
-        anchor=journal, authority=Authority(users, proof), actor_proof=proof,
-        tenant_id="acme", audit_sink=audit,
+        challenge=challenge,
+        expected_epoch=epoch,
+        issuer_public_key=bytes(issuer.verify_key),
+        anchor=journal,
+        authority=Authority(users, proof),
+        actor_proof=proof,
+        tenant_id="acme",
+        audit_sink=audit,
         machine_signer=lambda data: machine.sign(data).signature,
     )
     assert second.status() == "awaiting_setup"
@@ -78,9 +100,14 @@ def test_expired_unclaimed_challenge_rotates_nonce_and_epoch_after_restart() -> 
     journal, _first, machine, issuer, users, proof, audit = _new()
     challenge, epoch, _ = journal.current()
     restarted = HostedFirstClaim(
-        challenge=challenge, expected_epoch=epoch, issuer_public_key=bytes(issuer.verify_key),
-        anchor=journal, authority=Authority(users, proof), actor_proof=proof,
-        tenant_id="acme", audit_sink=audit,
+        challenge=challenge,
+        expected_epoch=epoch,
+        issuer_public_key=bytes(issuer.verify_key),
+        anchor=journal,
+        authority=Authority(users, proof),
+        actor_proof=proof,
+        tenant_id="acme",
+        audit_sink=audit,
         machine_signer=lambda data: machine.sign(data).signature,
     )
     signed = restarted.signed_challenge(now=1_790_000_600)
@@ -94,17 +121,25 @@ def test_expired_unclaimed_challenge_rotates_nonce_and_epoch_after_restart() -> 
 def test_journal_refuses_premature_rotation_and_claim_id_substitution() -> None:
     journal, first, _machine, issuer, _users, _proof, _audit = _new()
     challenge, epoch, _ = journal.current()
-    newer = challenge.model_copy(update={
-        "nonce": "x" * 32, "issued_at": 1_790_000_060,
-        "expires_at": 1_790_000_360,
-    })
+    newer = challenge.model_copy(
+        update={
+            "nonce": "x" * 32,
+            "issued_at": 1_790_000_060,
+            "expires_at": 1_790_000_360,
+        }
+    )
     with pytest.raises(HostedJournalError, match="not expired"):
         journal.rotate_challenge(newer, epoch=epoch, now=1_790_000_060)
     grant = DeploymentGrant(
-        **challenge.model_dump(), customer_id="cus_123", subscription_id="sub_123",
-        customer_claim_id="claim_123456", customer_email="customer@example.com",
+        **challenge.model_dump(),
+        customer_id="cus_123",
+        subscription_id="sub_123",
+        customer_claim_id="claim_123456",
+        customer_email="customer@example.com",
         customer_claim_secret_sha256=hashlib.sha256(("s" * 43).encode()).hexdigest(),
-        claim_expires_at=1_790_086_400, epoch=epoch, purpose="initial-claim",
+        claim_expires_at=1_790_086_400,
+        epoch=epoch,
+        purpose="initial-claim",
     )
     first.install_grant(
         sign_deployment_grant(grant, lambda data: issuer.sign(data).signature),
@@ -120,10 +155,15 @@ def test_expired_grant_rotates_epoch_and_old_grant_cannot_be_reinstalled() -> No
     journal, service, _machine, issuer, _users, _proof, _audit = _new()
     challenge, epoch, _ = journal.current()
     grant = DeploymentGrant(
-        **challenge.model_dump(), customer_id="cus_123", subscription_id="sub_123",
-        customer_claim_id="claim_123456", customer_email="customer@example.com",
+        **challenge.model_dump(),
+        customer_id="cus_123",
+        subscription_id="sub_123",
+        customer_claim_id="claim_123456",
+        customer_email="customer@example.com",
         customer_claim_secret_sha256=hashlib.sha256(("s" * 43).encode()).hexdigest(),
-        claim_expires_at=1_790_000_300, epoch=epoch, purpose="initial-claim",
+        claim_expires_at=1_790_000_300,
+        epoch=epoch,
+        purpose="initial-claim",
     )
     envelope = sign_deployment_grant(grant, lambda data: issuer.sign(data).signature)
     service.install_grant(envelope, now=1_790_000_030)

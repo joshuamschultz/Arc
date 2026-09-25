@@ -130,7 +130,11 @@ async def test_collected_result_roundtrips_real_run_fields() -> None:
     with pytest.raises(RunAdmissionRefusedError, match="admission refused"):
         await owner.execute(
             request.model_copy(
-                update={"parts": [{"kind": "image", "ref": "objects/b", "sha256": "sha256:" + "a" * 64}]}
+                update={
+                    "parts": [
+                        {"kind": "image", "ref": "objects/b", "sha256": "sha256:" + "a" * 64}
+                    ]
+                }
             ),
             deadline=_DEADLINE,
             signed_authorization=b"signed:request",

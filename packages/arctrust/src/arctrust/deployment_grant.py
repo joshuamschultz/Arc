@@ -117,7 +117,9 @@ def _verify(
         if (
             type(moment) is not int
             or facts != expected
-            or not facts.issued_at <= moment < (
+            or not facts.issued_at
+            <= moment
+            < (
                 facts.claim_expires_at
                 if claim_lifetime and isinstance(facts, DeploymentGrant)
                 else facts.expires_at

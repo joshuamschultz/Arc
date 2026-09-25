@@ -78,11 +78,14 @@ def test_claim_is_absent_when_hosted_authority_is_not_supplied() -> None:
         hosted=True,
     )
     client = TestClient(app)
-    assert client.post(
-        "/api/setup/claim",
-        headers={"Origin": "https://first.example.com"},
-        json={"customer_secret": "s" * 43, "password": "correct-horse-battery"},
-    ).status_code == 503
+    assert (
+        client.post(
+            "/api/setup/claim",
+            headers={"Origin": "https://first.example.com"},
+            json={"customer_secret": "s" * 43, "password": "correct-horse-battery"},
+        ).status_code
+        == 503
+    )
 
 
 def test_rekey_endpoint_requires_separate_service_and_bounds_delivery() -> None:
@@ -102,8 +105,13 @@ def test_rekey_endpoint_requires_separate_service_and_bounds_delivery() -> None:
 
     rekey = Rekey()
     client.app.state.hosted_rekey = rekey
-    assert client.get("/api/setup/rekey-intent").json()["facts"]["previous_head_digest"] == "d" * 64
-    assert client.post("/api/setup/rekey", json={"facts": {}, "signature": "issuer"}).status_code == 202
+    assert (
+        client.get("/api/setup/rekey-intent").json()["facts"]["previous_head_digest"] == "d" * 64
+    )
+    assert (
+        client.post("/api/setup/rekey", json={"facts": {}, "signature": "issuer"}).status_code
+        == 202
+    )
     assert rekey.installed == [{"facts": {}, "signature": "issuer"}]
 
 

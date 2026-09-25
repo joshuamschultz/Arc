@@ -87,7 +87,8 @@ def verify_rekey_intent(
             facts != expected
             or not facts.challenge.issued_at <= moment < facts.challenge.expires_at
             or not verify_signature(
-                ED25519, _INTENT_DOMAIN + facts.canonical_bytes(),
+                ED25519,
+                _INTENT_DOMAIN + facts.canonical_bytes(),
                 bytes.fromhex(envelope["signature"]),
                 bytes.fromhex(facts.challenge.machine_public_key),
             )
@@ -110,8 +111,11 @@ def sign_rekey_grant(
 
 
 def verify_rekey_grant(
-    envelope: Mapping[str, Any], *, issuer_public_key: bytes,
-    expected: MachineRekeyGrant, now: int | None = None,
+    envelope: Mapping[str, Any],
+    *,
+    issuer_public_key: bytes,
+    expected: MachineRekeyGrant,
+    now: int | None = None,
 ) -> None:
     """Require exact cloud and new-machine signatures over the current head."""
     try:
@@ -123,8 +127,10 @@ def verify_rekey_grant(
         intent = MachineRekeyIntent.model_validate(facts.intent["facts"])
         verify_rekey_intent(facts.intent, expected=intent, now=now)
         if not verify_signature(
-            ED25519, _GRANT_DOMAIN + facts.canonical_bytes(),
-            bytes.fromhex(envelope["signature"]), issuer_public_key,
+            ED25519,
+            _GRANT_DOMAIN + facts.canonical_bytes(),
+            bytes.fromhex(envelope["signature"]),
+            issuer_public_key,
         ):
             raise ValueError("rekey issuer signature mismatch")
     except (TypeError, ValueError, KeyError, AttributeError, MachineRekeyError) as exc:

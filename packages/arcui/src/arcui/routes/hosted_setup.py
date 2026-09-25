@@ -201,7 +201,8 @@ async def claim(request: Request) -> JSONResponse:
         return JSONResponse({"error": "setup is busy"}, status_code=429)
     except TimeoutError:
         return JSONResponse(
-            {"status": "claim_pending"}, status_code=202,
+            {"status": "claim_pending"},
+            status_code=202,
             headers={"Cache-Control": "no-store"},
         )
     except Exception as exc:

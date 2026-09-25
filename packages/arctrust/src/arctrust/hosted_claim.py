@@ -119,10 +119,13 @@ class HostedFirstClaim:
             return
         if not self._authority.user_store(self._actor_proof).is_empty():
             raise HostedClaimError("initial account already exists")
-        next_challenge = self._challenge.model_copy(update={
-            "nonce": secrets.token_urlsafe(32), "issued_at": moment,
-            "expires_at": moment + 300,
-        })
+        next_challenge = self._challenge.model_copy(
+            update={
+                "nonce": secrets.token_urlsafe(32),
+                "issued_at": moment,
+                "expires_at": moment + 300,
+            }
+        )
         self._audit("refresh", "attempt")
         next_epoch = self._expected_epoch + (1 if self._grant_envelope is not None else 0)
         journal.rotate_challenge(next_challenge, epoch=next_epoch, now=moment)
@@ -156,12 +159,10 @@ class HostedFirstClaim:
         if head is None or not (
             (head.intent == "challenge" and head.digest == challenge_digest)
             or (
-                head.intent == f"granted:{grant.customer_claim_id}"
-                and head.digest == grant_digest
+                head.intent == f"granted:{grant.customer_claim_id}" and head.digest == grant_digest
             )
             or (
-                head.intent == f"pending:{grant.customer_claim_id}"
-                and head.digest == grant_digest
+                head.intent == f"pending:{grant.customer_claim_id}" and head.digest == grant_digest
             )
         ):
             raise HostedClaimError("hosted grant cannot be installed at this revision")
@@ -204,12 +205,8 @@ class HostedFirstClaim:
         if head is None:
             raise HostedClaimError("hosted claim head is unavailable")
         pending = f"pending:{grant.customer_claim_id}"
-        if (
-            (head.intent == "challenge" and head.digest == challenge_digest)
-            or (
-                head.intent == f"granted:{grant.customer_claim_id}"
-                and head.digest == grant_digest
-            )
+        if (head.intent == "challenge" and head.digest == challenge_digest) or (
+            head.intent == f"granted:{grant.customer_claim_id}" and head.digest == grant_digest
         ):
             if not store.is_empty():
                 raise HostedClaimError("initial account already exists")
@@ -225,8 +222,10 @@ class HostedFirstClaim:
             if not store.is_empty():
                 raise HostedClaimError("another account owns the first claim")
             user = store.claim_first_operator(
-                grant.customer_email, password,
-                org=self._tenant_id, claim_digest=grant_digest,
+                grant.customer_email,
+                password,
+                org=self._tenant_id,
+                claim_digest=grant_digest,
             )
         elif (
             user.roles != (OPERATOR,)
@@ -247,7 +246,10 @@ class HostedFirstClaim:
         return user
 
     def _verified_grant(
-        self, envelope: dict[str, Any], *, now: int | None,
+        self,
+        envelope: dict[str, Any],
+        *,
+        now: int | None,
         claim_lifetime: bool = False,
     ) -> DeploymentGrant:
         try:

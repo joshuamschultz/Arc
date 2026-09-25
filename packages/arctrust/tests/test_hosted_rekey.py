@@ -17,14 +17,21 @@ def test_restarted_machine_rekeys_once_and_cloud_grant_is_exact() -> None:
     challenge, epoch, _ = journal.current()
     new_machine = SigningKey.generate()
     coordinator = HostedRekeyCoordinator(
-        journal=journal, machine_public_key=bytes(new_machine.verify_key),
+        journal=journal,
+        machine_public_key=bytes(new_machine.verify_key),
         machine_signer=lambda message: new_machine.sign(message).signature,
-        issuer_public_key=bytes(issuer.verify_key), tenant_id="acme", audit_sink=audit,
+        issuer_public_key=bytes(issuer.verify_key),
+        tenant_id="acme",
+        audit_sink=audit,
         first_claim_factory=lambda current, epoch: HostedFirstClaim(
-            challenge=current, expected_epoch=epoch,
-            issuer_public_key=bytes(issuer.verify_key), anchor=journal,
-            authority=Authority(users, proof), actor_proof=proof,
-            tenant_id="acme", audit_sink=audit,
+            challenge=current,
+            expected_epoch=epoch,
+            issuer_public_key=bytes(issuer.verify_key),
+            anchor=journal,
+            authority=Authority(users, proof),
+            actor_proof=proof,
+            tenant_id="acme",
+            audit_sink=audit,
             machine_signer=lambda message: new_machine.sign(message).signature,
         ),
     )
@@ -33,12 +40,12 @@ def test_restarted_machine_rekeys_once_and_cloud_grant_is_exact() -> None:
     assert coordinator.signed_intent(now=moment + 1) == intent
     assert intent["facts"]["current_epoch"] == epoch
     grant = MachineRekeyGrant(
-        intent=intent, customer_id="cus_123", subscription_id="sub_123",
+        intent=intent,
+        customer_id="cus_123",
+        subscription_id="sub_123",
         purpose="machine-rekey",
     )
-    envelope = sign_rekey_grant(
-        grant, lambda message: issuer.sign(message).signature, now=moment
-    )
+    envelope = sign_rekey_grant(grant, lambda message: issuer.sign(message).signature, now=moment)
     changed = {**envelope, "facts": {**envelope["facts"], "customer_id": "cus_other"}}
     with pytest.raises(HostedRekeyError):
         coordinator.install_rekey(changed, now=moment)

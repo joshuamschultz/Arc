@@ -67,11 +67,13 @@ class TestSigningOnSend:
         )
         digest = hashlib.sha256(b"answer").hexdigest()
         assert await svc.find_sent(
-            message_id=sent.id, target="channel://ops",
+            message_id=sent.id,
+            target="channel://ops",
             body_digest=digest,
         )
         assert not await svc.find_sent(
-            message_id=sent.id, target="channel://ops",
+            message_id=sent.id,
+            target="channel://ops",
             body_digest=hashlib.sha256(b"forged").hexdigest(),
         )
 
@@ -84,41 +86,56 @@ class TestSigningOnSend:
         records = await svc._backend.read_stream("messages/streams", "arc.channel.ops")
         records[0]["body"] = "tampered"
         assert not await svc.find_sent(
-            message_id=sent.id, target="channel://ops",
+            message_id=sent.id,
+            target="channel://ops",
             body_digest=digest,
         )
         records[0]["body"] = "answer"
         assert await svc.find_sent(
-            message_id=sent.id, target="channel://ops",
+            message_id=sent.id,
+            target="channel://ops",
             body_digest=digest,
         )
-        await svc._backend.append_auto_seq("messages/streams", "arc.channel.ops", records[0].copy())
+        await svc._backend.append_auto_seq(
+            "messages/streams", "arc.channel.ops", records[0].copy()
+        )
         assert not await svc.find_sent(
-            message_id=sent.id, target="channel://ops",
+            message_id=sent.id,
+            target="channel://ops",
             body_digest=digest,
         )
 
-    async def test_lookup_refuses_foreign_channel_and_forged_signer_before_history_read(self) -> None:
+    async def test_lookup_refuses_foreign_channel_and_forged_signer_before_history_read(
+        self,
+    ) -> None:
         svc, _, signer = await _service_with_signer()
         await svc.create_channel(Channel(name="private", members=["agent://a2"]))
         digest = hashlib.sha256(b"answer").hexdigest()
         with patch.object(svc._backend, "read_stream", side_effect=AssertionError("history read")):
             assert not await svc.find_sent(
-                message_id="reply_1", target="channel://private", body_digest=digest,
+                message_id="reply_1",
+                target="channel://private",
+                body_digest=digest,
             )
             svc._signer = MessageSigner(did=signer.did, private_key=bytes(range(32)))
             assert not await svc.find_sent(
-                message_id="reply_1", target="channel://ops", body_digest=digest,
+                message_id="reply_1",
+                target="channel://ops",
+                body_digest=digest,
             )
 
     async def test_lookup_fails_closed_before_history_read_when_audit_fails(self) -> None:
         svc, _, _ = await _service_with_signer()
         digest = hashlib.sha256(b"answer").hexdigest()
         with patch.object(svc._backend, "read_stream", side_effect=AssertionError("history read")):
-            with patch.object(svc._audit, "log", new=AsyncMock(side_effect=RuntimeError("audit down"))):
+            with patch.object(
+                svc._audit, "log", new=AsyncMock(side_effect=RuntimeError("audit down"))
+            ):
                 with pytest.raises(RuntimeError, match="audit down"):
                     await svc.find_sent(
-                        message_id="reply_1", target="channel://ops", body_digest=digest,
+                        message_id="reply_1",
+                        target="channel://ops",
+                        body_digest=digest,
                     )
 
 

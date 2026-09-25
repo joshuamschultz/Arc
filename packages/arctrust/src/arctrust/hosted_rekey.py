@@ -30,9 +30,14 @@ class HostedRekeyCoordinator:
     """Hold one ephemeral key only until cloud-endorsed journal rotation."""
 
     def __init__(
-        self, *, journal: HostedClaimJournal, machine_public_key: bytes,
-        machine_signer: Callable[[bytes], bytes], issuer_public_key: bytes,
-        tenant_id: str, audit_sink: DurableAuditSink,
+        self,
+        *,
+        journal: HostedClaimJournal,
+        machine_public_key: bytes,
+        machine_signer: Callable[[bytes], bytes],
+        issuer_public_key: bytes,
+        tenant_id: str,
+        audit_sink: DurableAuditSink,
         first_claim_factory: Callable[[DeploymentChallenge, int], HostedFirstClaim],
     ) -> None:
         if len(machine_public_key) != 32 or len(issuer_public_key) != 32:
@@ -93,16 +98,21 @@ class HostedRekeyCoordinator:
                 and moment < pending_facts.challenge.expires_at
             ):
                 return self._pending
-        next_challenge = challenge.model_copy(update={
-            "machine_public_key": self._machine_public_key.hex(),
-            "nonce": secrets.token_urlsafe(32), "issued_at": moment,
-            "expires_at": moment + 300,
-        })
+        next_challenge = challenge.model_copy(
+            update={
+                "machine_public_key": self._machine_public_key.hex(),
+                "nonce": secrets.token_urlsafe(32),
+                "issued_at": moment,
+                "expires_at": moment + 300,
+            }
+        )
         intent = MachineRekeyIntent(
-            previous_head_scope=head.scope, previous_head_version=head.version,
+            previous_head_scope=head.scope,
+            previous_head_version=head.version,
             previous_head_digest=head.digest,
             previous_challenge_digest=hashlib.sha256(challenge.canonical_bytes()).hexdigest(),
-            current_epoch=epoch, next_epoch=epoch + int(grant is not None),
+            current_epoch=epoch,
+            next_epoch=epoch + int(grant is not None),
             challenge=next_challenge,
         )
         self._pending = sign_rekey_intent(intent, self._machine_signer)
@@ -118,12 +128,17 @@ class HostedRekeyCoordinator:
             if grant.intent != pending:
                 raise HostedRekeyError("hosted rekey intent changed")
             verify_rekey_grant(
-                envelope, issuer_public_key=self._issuer_public_key,
-                expected=grant, now=now,
+                envelope,
+                issuer_public_key=self._issuer_public_key,
+                expected=grant,
+                now=now,
             )
             self._journal.rekey_challenge(
-                envelope, issuer_public_key=self._issuer_public_key,
-                tenant_id=self._tenant_id, audit_sink=self._audit_sink, now=now,
+                envelope,
+                issuer_public_key=self._issuer_public_key,
+                tenant_id=self._tenant_id,
+                audit_sink=self._audit_sink,
+                now=now,
             )
             self._pending = None
             self._claim_service = None

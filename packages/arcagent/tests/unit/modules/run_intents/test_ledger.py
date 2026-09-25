@@ -317,4 +317,3 @@ async def test_late_anchor_commit_is_drained_before_recovery() -> None:
     anchor.release.set()
     recovered = await ledger.recover()
     assert len(recovered) == 1 and recovered[0].status == "staging"
-

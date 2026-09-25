@@ -49,7 +49,9 @@ async def test_live_token_precedes_persisted_terminal_confirmation() -> None:
         if isinstance(event, arcrun.TokenEvent):
             return DeliveryTextEvent(run_id=event.run_id, sequence=event.sequence, text=event.text)
         if isinstance(event, arcrun.TurnEndEvent):
-            return DeliveryTerminalEvent(run_id=event.run_id, sequence=event.sequence, status="completed")
+            return DeliveryTerminalEvent(
+                run_id=event.run_id, sequence=event.sequence, status="completed"
+            )
         return None
 
     stream = stream_accepted_run(
@@ -77,14 +79,22 @@ async def test_live_token_precedes_persisted_terminal_confirmation() -> None:
 
 async def test_many_live_tokens_have_ordered_terminal_sequence() -> None:
     request = CanonicalRunRequest(
-        run_id="run-ordered", session_key="session-1", input_text="hello",
-        purpose="message", occurrence_id="message-1",
+        run_id="run-ordered",
+        session_key="session-1",
+        input_text="hello",
+        purpose="message",
+        occurrence_id="message-1",
     )
 
     class Owner:
         async def execute(
-            self, accepted: CanonicalRunRequest, *, signed_authorization: bytes,
-            deadline: datetime, max_result_bytes: int, invoke: RunInvoker,
+            self,
+            accepted: CanonicalRunRequest,
+            *,
+            signed_authorization: bytes,
+            deadline: datetime,
+            max_result_bytes: int,
+            invoke: RunInvoker,
         ) -> arcrun.RunResult:
             return await invoke(accepted)
 
@@ -99,10 +109,15 @@ async def test_many_live_tokens_have_ordered_terminal_sequence() -> None:
         return None
 
     events = [
-        event async for event in stream_accepted_run(
-            Owner(), request, signed_authorization=b"proof",
-            deadline=datetime(2030, 1, 1, tzinfo=UTC), max_result_bytes=100,
-            stream=source, project=project,
+        event
+        async for event in stream_accepted_run(
+            Owner(),
+            request,
+            signed_authorization=b"proof",
+            deadline=datetime(2030, 1, 1, tzinfo=UTC),
+            max_result_bytes=100,
+            stream=source,
+            project=project,
         )
     ]
     assert [event.sequence for event in events] == [1, 2, 3, 4, 5]
@@ -111,15 +126,23 @@ async def test_many_live_tokens_have_ordered_terminal_sequence() -> None:
 
 async def test_rejected_signature_emits_failed_terminal_without_effect() -> None:
     request = CanonicalRunRequest(
-        run_id="run-refused", session_key="session-1", input_text="hello",
-        purpose="message", occurrence_id="message-1",
+        run_id="run-refused",
+        session_key="session-1",
+        input_text="hello",
+        purpose="message",
+        occurrence_id="message-1",
     )
     invoked = False
 
     class Owner:
         async def execute(
-            self, accepted: CanonicalRunRequest, *, signed_authorization: bytes,
-            deadline: datetime, max_result_bytes: int, invoke: RunInvoker,
+            self,
+            accepted: CanonicalRunRequest,
+            *,
+            signed_authorization: bytes,
+            deadline: datetime,
+            max_result_bytes: int,
+            invoke: RunInvoker,
         ) -> arcrun.RunResult:
             raise RunAdmissionRefusedError("signature rejected")
 
@@ -129,10 +152,15 @@ async def test_rejected_signature_emits_failed_terminal_without_effect() -> None
         yield arcrun.TokenEvent(text="unsafe", run_id=request.run_id, sequence=1)
 
     events = [
-        event async for event in stream_accepted_run(
-            Owner(), request, signed_authorization=b"forged",
-            deadline=datetime(2030, 1, 1, tzinfo=UTC), max_result_bytes=100,
-            stream=source, project=lambda _event: None,
+        event
+        async for event in stream_accepted_run(
+            Owner(),
+            request,
+            signed_authorization=b"forged",
+            deadline=datetime(2030, 1, 1, tzinfo=UTC),
+            max_result_bytes=100,
+            stream=source,
+            project=lambda _event: None,
         )
     ]
     assert not invoked

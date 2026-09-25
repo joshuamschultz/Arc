@@ -211,7 +211,9 @@ async def test_scoped_operator_cancel_never_mutates_foreign_tenant_or_owner() ->
     assert (await coordinator.store.get(foreign.call_id)).state == "queued"
     assert (await coordinator.store.get(own.call_id)).state == "queued"
     assert (
-        await coordinator.cancel_scoped(own.call_id, scope=tenant_scope, expected_version=own.version)
+        await coordinator.cancel_scoped(
+            own.call_id, scope=tenant_scope, expected_version=own.version
+        )
     ).status == "confirmed"
 
 

@@ -476,8 +476,14 @@ class UserStore:
         org: str = "arc",
     ) -> User:
         return self._add_new(
-            email, password, handle=handle, display_name=display_name,
-            roles=roles, pairings=pairings, org=org, initial_claim_digest=None,
+            email,
+            password,
+            handle=handle,
+            display_name=display_name,
+            roles=roles,
+            pairings=pairings,
+            org=org,
+            initial_claim_digest=None,
         )
 
     @_synchronized
@@ -489,7 +495,10 @@ class UserStore:
         if self._users or not re.fullmatch(r"[0-9a-f]{64}", claim_digest):
             raise UserStoreError("first operator claim is unavailable")
         return self._add_new(
-            email, password, roles=(OPERATOR,), org=org,
+            email,
+            password,
+            roles=(OPERATOR,),
+            org=org,
             initial_claim_digest=claim_digest,
         )
 

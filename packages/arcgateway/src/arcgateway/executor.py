@@ -519,8 +519,12 @@ class AsyncioExecutor:
                     occurrence_id=event.occurrence_id,
                 )
                 yield Delta(
-                    kind="done", content="", is_final=True, turn_id=turn_id,
-                    status="failed", occurrence_id=event.occurrence_id,
+                    kind="done",
+                    content="",
+                    is_final=True,
+                    turn_id=turn_id,
+                    status="failed",
+                    occurrence_id=event.occurrence_id,
                 )
                 return
             yield Delta(kind="done", content="", is_final=True, turn_id=turn_id)

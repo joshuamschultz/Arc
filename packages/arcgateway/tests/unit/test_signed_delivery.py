@@ -40,10 +40,14 @@ class SignedAgent:
     async def stream_delivered_message(self, **kwargs: Any) -> Any:
         self.delivered.append(kwargs)
         yield arcagent.DeliveryTextEvent(run_id=kwargs["run_id"], sequence=1, text="hello")
-        yield arcagent.DeliveryTerminalEvent(run_id=kwargs["run_id"], sequence=2, status="completed")
+        yield arcagent.DeliveryTerminalEvent(
+            run_id=kwargs["run_id"], sequence=2, status="completed"
+        )
 
 
-def event(*, session: str = "session-1", occurrence: str | None = "2ac7c119-7a7e-4ad9-a735-65dcf8c8b507") -> InboundEvent:
+def event(
+    *, session: str = "session-1", occurrence: str | None = "2ac7c119-7a7e-4ad9-a735-65dcf8c8b507"
+) -> InboundEvent:
     return InboundEvent(
         platform="web",
         chat_id="chat-1",
@@ -85,6 +89,7 @@ async def test_signed_delivery_uses_exact_prepared_request_and_live_stream() -> 
 @pytest.mark.asyncio
 async def test_signed_delivery_refuses_missing_occurrence_or_issuer() -> None:
     agent = SignedAgent()
+
     async def factory(_did: str) -> SignedAgent:
         return agent
 
@@ -148,8 +153,10 @@ async def test_gateway_redelivery_uses_ledger_once_and_refuses_swapped_body() ->
         tenant_id="tenant",
         agent_did="did:arc:agent:bot",
         store=arcstore.AcceptedRunStore(
-            FakeBackend(), arctrust.RecordCipher(bytes(range(32))),
-            authorize=lambda _action, _tenant, _agent: True, audit_sink=Audit(),
+            FakeBackend(),
+            arctrust.RecordCipher(bytes(range(32))),
+            authorize=lambda _action, _tenant, _agent: True,
+            audit_sink=Audit(),
         ),
         anchor=Anchor(),
         verify_authorization=lambda evidence: issued[evidence],
@@ -175,16 +182,23 @@ async def test_gateway_redelivery_uses_ledger_once_and_refuses_swapped_body() ->
             async def invoke(_accepted: arcagent.CanonicalRunRequest) -> arcrun.RunResult:
                 self.effects += 1
                 return arcrun.RunResult(
-                    content="reply", turns=1, tool_calls_made=0, cost_usd=0,
+                    content="reply",
+                    turns=1,
+                    tool_calls_made=0,
+                    cost_usd=0,
                     tokens_used={"input": 1, "output": 1, "total": 2},
                 )
 
             result = await owner.execute(
-                request, signed_authorization=kwargs["signed_authorization"],
-                deadline=kwargs["authorization_deadline"], max_result_bytes=500,
+                request,
+                signed_authorization=kwargs["signed_authorization"],
+                deadline=kwargs["authorization_deadline"],
+                max_result_bytes=500,
                 invoke=invoke,
             )
-            yield arcagent.DeliveryTextEvent(run_id=request.run_id, sequence=1, text=result.content)
+            yield arcagent.DeliveryTextEvent(
+                run_id=request.run_id, sequence=1, text=result.content
+            )
             yield arcagent.DeliveryTerminalEvent(
                 run_id=request.run_id, sequence=2, status="completed"
             )
@@ -199,17 +213,26 @@ async def test_gateway_redelivery_uses_ledger_once_and_refuses_swapped_body() ->
     ) -> tuple[bytes, datetime]:
         evidence = request.digest().encode()
         issued[evidence] = arcagent.VerifiedRunAuthorization(
-            tenant_id="tenant", agent_did="did:arc:agent:bot", run_id=request.run_id,
-            session_id=request.session_key, owner_epoch=1,
-            request_digest=request.digest(), deadline=deadline, purpose="message",
-            occurrence_id=request.occurrence_id, nonce="nonce-1",
+            tenant_id="tenant",
+            agent_did="did:arc:agent:bot",
+            run_id=request.run_id,
+            session_id=request.session_key,
+            owner_epoch=1,
+            request_digest=request.digest(),
+            deadline=deadline,
+            purpose="message",
+            occurrence_id=request.occurrence_id,
+            nonce="nonce-1",
         )
         return evidence, deadline
 
     executor = AsyncioExecutor(agent_factory=factory, run_authorization_issuer=issue)
     first = [delta async for delta in await executor.run(event())]
     repeated = [delta async for delta in await executor.run(event())]
-    forged = [delta async for delta in await executor.run(event().model_copy(update={"message": "swapped"}))]
+    forged = [
+        delta
+        async for delta in await executor.run(event().model_copy(update={"message": "swapped"}))
+    ]
     assert first[-1].status == repeated[-1].status == "completed"
     assert first[-1].turn_id == repeated[-1].turn_id
     assert forged[-1].status == "failed"

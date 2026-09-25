@@ -78,8 +78,11 @@ class HostedClaimJournal:
         if head is None or state is None:
             return None
         return AnchorHead(
-            scope=head.scope, version=head.version, digest=state.digest,
-            previous_digest=state.previous_digest, intent=state.intent,
+            scope=head.scope,
+            version=head.version,
+            digest=state.digest,
+            previous_digest=state.previous_digest,
+            intent=state.intent,
         )
 
     def current(self) -> tuple[DeploymentChallenge, int, dict[str, Any] | None] | None:
@@ -104,10 +107,17 @@ class HostedClaimJournal:
             previous, state = self._read()
             if previous is None or state is None or state.intent != "challenge":
                 raise HostedJournalError("hosted grant cannot replace current state")
-            next_state = _State.model_validate({**state.model_dump(mode="json"), **{
-                "intent": f"granted:{claim_id}", "digest": digest,
-                "previous_digest": state.digest, "grant": envelope,
-            }})
+            next_state = _State.model_validate(
+                {
+                    **state.model_dump(mode="json"),
+                    **{
+                        "intent": f"granted:{claim_id}",
+                        "digest": digest,
+                        "previous_digest": state.digest,
+                        "grant": envelope,
+                    },
+                }
+            )
             return self._advance(previous, next_state)
 
     def rotate_challenge(
@@ -132,51 +142,73 @@ class HostedClaimJournal:
             if challenge.expires_at <= state.challenge.expires_at:
                 raise HostedJournalError("hosted challenge did not advance")
             immutable = (
-                "order_id", "server_id", "domain", "release_id",
-                "arc_image_digest", "machine_public_key",
+                "order_id",
+                "server_id",
+                "domain",
+                "release_id",
+                "arc_image_digest",
+                "machine_public_key",
             )
             if any(
-                getattr(challenge, name) != getattr(state.challenge, name)
-                for name in immutable
+                getattr(challenge, name) != getattr(state.challenge, name) for name in immutable
             ):
                 raise HostedJournalError("hosted machine identity changed")
             next_state = _State(
-                intent="challenge", digest=hashlib.sha256(challenge.canonical_bytes()).hexdigest(),
-                previous_digest=state.digest, challenge=challenge, epoch=epoch,
+                intent="challenge",
+                digest=hashlib.sha256(challenge.canonical_bytes()).hexdigest(),
+                previous_digest=state.digest,
+                challenge=challenge,
+                epoch=epoch,
             )
             return self._advance(previous, next_state)
 
     def rekey_challenge(
-        self, envelope: dict[str, Any], *, issuer_public_key: bytes,
-        tenant_id: str, audit_sink: DurableAuditSink, now: int | None = None,
+        self,
+        envelope: dict[str, Any],
+        *,
+        issuer_public_key: bytes,
+        tenant_id: str,
+        audit_sink: DurableAuditSink,
+        now: int | None = None,
     ) -> AnchorHead:
         """Replace a lost ephemeral boot key only on dual-signed cloud authority."""
         with self._lock:
             previous, state = self._read()
-            if previous is None or state is None or not (
-                state.intent == "challenge" or state.intent.startswith("granted:")
+            if (
+                previous is None
+                or state is None
+                or not (state.intent == "challenge" or state.intent.startswith("granted:"))
             ):
                 raise HostedJournalError("hosted rekey state is unavailable")
             actor_did = did_from_public_key(
                 bytes.fromhex(state.challenge.machine_public_key),
-                org=tenant_id, agent_type="machine",
+                org=tenant_id,
+                agent_type="machine",
             )
             try:
                 grant = MachineRekeyGrant.model_validate(envelope["facts"])
                 intent = MachineRekeyIntent.model_validate(grant.intent["facts"])
                 verify_rekey_grant(
-                    envelope, issuer_public_key=issuer_public_key,
-                    expected=grant, now=now,
+                    envelope,
+                    issuer_public_key=issuer_public_key,
+                    expected=grant,
+                    now=now,
                 )
                 old_challenge = state.challenge
                 next_challenge = intent.challenge
                 old_head = AnchorHead(
-                    scope=self.scope, version=previous.version,
-                    digest=state.digest, previous_digest=state.previous_digest,
+                    scope=self.scope,
+                    version=previous.version,
+                    digest=state.digest,
+                    previous_digest=state.previous_digest,
                     intent=state.intent,
                 )
                 immutable = (
-                    "order_id", "server_id", "domain", "release_id", "arc_image_digest",
+                    "order_id",
+                    "server_id",
+                    "domain",
+                    "release_id",
+                    "arc_image_digest",
                 )
                 if (
                     intent.previous_head_scope != old_head.scope
@@ -202,22 +234,31 @@ class HostedClaimJournal:
                         or grant.subscription_id != old_grant.subscription_id
                     ):
                         raise ValueError("machine rekey customer changed")
-                audit_sink.write_durable(AuditEvent(
-                    actor_did=actor_did,
-                    action="hosted.claim.rekey", target=self.scope, outcome="attempt",
-                ))
+                audit_sink.write_durable(
+                    AuditEvent(
+                        actor_did=actor_did,
+                        action="hosted.claim.rekey",
+                        target=self.scope,
+                        outcome="attempt",
+                    )
+                )
                 next_state = _State(
                     intent="challenge",
                     digest=hashlib.sha256(next_challenge.canonical_bytes()).hexdigest(),
-                    previous_digest=state.digest, challenge=next_challenge,
+                    previous_digest=state.digest,
+                    challenge=next_challenge,
                     epoch=intent.next_epoch,
                 )
                 return self._advance(previous, next_state)
             except (KeyError, TypeError, ValueError, MachineRekeyError, HostedJournalError) as exc:
-                audit_sink.write_durable(AuditEvent(
-                    actor_did=actor_did,
-                    action="hosted.claim.rekey", target=self.scope, outcome="deny",
-                ))
+                audit_sink.write_durable(
+                    AuditEvent(
+                        actor_did=actor_did,
+                        action="hosted.claim.rekey",
+                        target=self.scope,
+                        outcome="deny",
+                    )
+                )
                 raise HostedJournalError("hosted machine rekey refused") from exc
 
     def compare_and_advance(
@@ -230,15 +271,25 @@ class HostedClaimJournal:
                 raise HostedJournalError("hosted journal revision changed")
             claim_id = state.intent.partition(":")[2]
             if not (
-                (state.intent == f"granted:{claim_id}" and intent == f"pending:{claim_id}"
-                 and digest == state.digest)
+                (
+                    state.intent == f"granted:{claim_id}"
+                    and intent == f"pending:{claim_id}"
+                    and digest == state.digest
+                )
                 or (state.intent == f"pending:{claim_id}" and intent == f"claimed:{claim_id}")
             ):
                 raise HostedJournalError("hosted journal transition refused")
-            next_state = _State.model_validate({**state.model_dump(mode="json"), **{
-                "intent": intent, "digest": digest, "previous_digest": state.digest,
-                "grant": None if intent.startswith("claimed:") else state.grant,
-            }})
+            next_state = _State.model_validate(
+                {
+                    **state.model_dump(mode="json"),
+                    **{
+                        "intent": intent,
+                        "digest": digest,
+                        "previous_digest": state.digest,
+                        "grant": None if intent.startswith("claimed:") else state.grant,
+                    },
+                }
+            )
             return self._advance(previous, next_state)
 
     def _advance(self, expected: AnchorHead | None, state: _State) -> AnchorHead:
@@ -258,6 +309,9 @@ class HostedClaimJournal:
         ):
             raise HostedJournalError("hosted journal CAS returned conflicting evidence")
         return AnchorHead(
-            scope=self.scope, version=returned.version, digest=state.digest,
-            previous_digest=state.previous_digest, intent=state.intent,
+            scope=self.scope,
+            version=returned.version,
+            digest=state.digest,
+            previous_digest=state.previous_digest,
+            intent=state.intent,
         )
