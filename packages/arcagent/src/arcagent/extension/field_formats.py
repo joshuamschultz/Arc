@@ -54,7 +54,7 @@ from arcagent.core.errors import ExtensionError
 #: characters may be significant and which normalising would corrupt into a 401
 #: nobody can explain. A closed set on purpose: a shape nothing enforces is a
 #: control an operator believes is in force, so an unknown one is a manifest error.
-SuppliedFormat = Literal["", "https_url", "api_token", "email"]
+SuppliedFormat = Literal["", "https_url", "api_token", "email", "name"]
 
 #: Unicode categories carrying no visible mark: controls and format characters
 #: (where a browser's zero-width space and byte-order mark live) and every kind of
@@ -96,7 +96,27 @@ def normalize(supplied_format: str, field: str, value: str) -> str:
         return _visible(field, value)
     if supplied_format == "email":
         return _email(field, value)
+    if supplied_format == "name":
+        return _name(field, value)
     return value
+
+
+#: A short identifier a tool keys something by — an OAuth client profile, a
+#: bucket, a file name suffix. Lowercase letters, digits, ``-`` and ``_``, starting
+#: with a letter or digit, so it can never read as a flag or climb a directory.
+_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _name(field: str, value: str) -> str:
+    """A plain lowercase name: trimmed, lowercased, and nothing else accepted."""
+    typed = value.strip().lower()
+    if _NAME.fullmatch(typed) is None:
+        return _refuse(
+            field,
+            "it is not a plain name",
+            "use up to 64 lowercase letters, digits, - or _, starting with a letter or digit",
+        )
+    return typed
 
 
 def _visible(field: str, value: str) -> str:

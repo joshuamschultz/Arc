@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import shlex
 import tomllib
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -169,6 +170,56 @@ class ArtifactPin(_ManifestModel):
         return self.platforms.get(host) or self.platforms.get(ANY_PLATFORM)
 
 
+#: The one slot a remote login's complete step fills with what the operator
+#: pasted. Reserved: no ``[[secrets]]`` field may be called this, because the value
+#: is typed at sign-in time and never stored.
+REDIRECT_URL_SLOT = "redirect_url"
+
+#: A consent host is a bare DNS name: no scheme, no port, no path. Arc hands the
+#: operator a link only when it points at exactly this host.
+_CONSENT_HOST = r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+
+
+class RemoteLogin(_ManifestModel):
+    """``[host_requires.remote_login]`` — a two-step sign-in a browser can finish.
+
+    The shape a headless OAuth login has: ``begin`` prints a consent URL on
+    ``consent_host``; the person signs in there in their own browser, lands on a
+    loopback redirect that fails to load, and pastes that address; ``complete``
+    exchanges it. Nothing waits on a prompt, so unlike ``authorize_command`` Arc
+    can run both steps and report a sign-in only when the binary reports one.
+
+    ``complete`` carries the pasted address in the reserved ``{redirect_url}``
+    slot, as one whole argument. Every other slot names a non-sensitive field of
+    this bundle — the same argv rule every declared command obeys.
+    """
+
+    begin: str = Field(min_length=1)
+    complete: str = Field(min_length=1)
+    consent_host: str = Field(pattern=_CONSENT_HOST)
+
+    @model_validator(mode="after")
+    def _redirect_slot_is_complete_only(self) -> RemoteLogin:
+        """The pasted address goes to the exchange step, whole, and nowhere else."""
+        slot = "{" + REDIRECT_URL_SLOT + "}"
+        if REDIRECT_URL_SLOT in placeholders(self.begin):
+            raise ValueError("remote_login.begin may not name {redirect_url}")
+        if REDIRECT_URL_SLOT not in placeholders(self.complete):
+            raise ValueError("remote_login.complete must carry the pasted {redirect_url}")
+        try:
+            tokens = shlex.split(self.complete)
+        except ValueError as exc:
+            raise ValueError(f"remote_login.complete does not parse: {exc}") from exc
+        holders = [token for token in tokens if slot in token]
+        if holders != [slot]:
+            raise ValueError("remote_login.complete must pass {redirect_url} as its own argument")
+        return self
+
+    def commands(self) -> tuple[tuple[str, str], ...]:
+        """Both steps, labelled for a refusal that names which one is wrong."""
+        return (("remote_login.begin", self.begin), ("remote_login.complete", self.complete))
+
+
 class HostRequirement(_ManifestModel):
     """``[[host_requires]]`` — a prerequisite the operator installs on the host (REQ-262).
 
@@ -198,6 +249,15 @@ class HostRequirement(_ManifestModel):
     which every surface must render as unknown: never as signed in, which is the
     defect, and never as signed out, which sends an operator to redo a login they
     already completed.
+
+    ``verify_expired_pattern`` separates a FAILED check into "a credential is
+    stored and the provider no longer honours it" from "nothing is signed in".
+    Both are failures, but they send an operator to different places: an OAuth
+    refresh token the provider revoked (``invalid_grant``) is a *Reconnect*, and
+    rendering it as never-signed-in hides that the account was working last week.
+
+    ``remote_login`` is the two-step headless sign-in (:class:`RemoteLogin`) — the
+    kind a web page can drive, where ``authorize_command`` is only ever shown.
     """
 
     name: str
@@ -207,8 +267,10 @@ class HostRequirement(_ManifestModel):
     token_command: str = ""
     verify_command: str = ""
     verify_pattern: str = ""
+    verify_expired_pattern: str = ""
+    remote_login: RemoteLogin | None = None
 
-    @field_validator("verify_pattern")
+    @field_validator("verify_pattern", "verify_expired_pattern")
     @classmethod
     def _pattern_must_compile(cls, pattern: str) -> str:
         """A pattern that will not compile must not become a runtime verdict.
@@ -221,14 +283,28 @@ class HostRequirement(_ManifestModel):
             try:
                 re.compile(pattern)
             except re.error as exc:
-                raise ValueError(f"verify_pattern is not a valid regex: {exc}") from exc
+                raise ValueError(f"verify pattern is not a valid regex: {exc}") from exc
         return pattern
 
     @model_validator(mode="after")
     def _pattern_needs_a_command(self) -> HostRequirement:
         """A pattern nothing runs is a control an operator believes is in force."""
-        if self.verify_pattern and not self.verify_command:
-            raise ValueError("verify_pattern is set but no verify_command runs it")
+        if (self.verify_pattern or self.verify_expired_pattern) and not self.verify_command:
+            raise ValueError("a verify pattern is set but no verify_command runs it")
+        return self
+
+    @model_validator(mode="after")
+    def _remote_login_runs_this_binary(self) -> HostRequirement:
+        """Each step authorises this one program, never a program of the manifest's choosing."""
+        if self.remote_login is None:
+            return self
+        for label, command in self.remote_login.commands():
+            try:
+                first = shlex.split(command)[:1]
+            except ValueError as exc:
+                raise ValueError(f"{label} does not parse: {exc}") from exc
+            if first != [self.name]:
+                raise ValueError(f"{label} must invoke {self.name} and nothing else")
         return self
 
 
@@ -466,9 +542,16 @@ class ExtensionManifest(_ManifestModel):
         """
         visible = {declared.name for declared in self.secrets if not declared.sensitive}
         declared_names = {declared.name for declared in self.secrets}
+        if REDIRECT_URL_SLOT in declared_names:
+            raise ValueError(
+                f"[[secrets]] may not be named {REDIRECT_URL_SLOT!r}: that slot carries the "
+                f"address an operator pastes at sign-in, and it is never stored"
+            )
         for source, command in self._commands_naming_fields():
             for field in placeholders(command):
-                if field in visible:
+                if field in visible or (
+                    field == REDIRECT_URL_SLOT and source.endswith("remote_login.complete")
+                ):
                     continue
                 reason = (
                     "is a credential and may never reach argv"
@@ -490,6 +573,7 @@ class ExtensionManifest(_ManifestModel):
             field
             for _, command in self._commands_naming_fields()
             for field in placeholders(command)
+            if field != REDIRECT_URL_SLOT
         }
 
     def _commands_naming_fields(self) -> list[tuple[str, str]]:
@@ -497,6 +581,12 @@ class ExtensionManifest(_ManifestModel):
         sources = [
             (f"{required.name}'s token_command", required.token_command)
             for required in self.host_requires
+        ]
+        sources += [
+            (f"{required.name}'s {label}", command)
+            for required in self.host_requires
+            if required.remote_login is not None
+            for label, command in required.remote_login.commands()
         ]
         declared: Any = self.config.get("cli", {}).get("commands", [])
         for command in declared if isinstance(declared, list) else []:
@@ -546,6 +636,7 @@ def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
 
 
 __all__ = [
+    "REDIRECT_URL_SLOT",
     "ApprovalPolicy",
     "ArtifactPin",
     "CredentialPlacement",
@@ -555,6 +646,7 @@ __all__ = [
     "HostRequirement",
     "KnowledgeDeclaration",
     "PlatformArtifact",
+    "RemoteLogin",
     "SecretRequirement",
     "ToolPolicy",
     "fill_placeholders",
