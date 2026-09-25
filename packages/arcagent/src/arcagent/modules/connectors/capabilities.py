@@ -81,6 +81,7 @@ from arcagent.modules.connectors.install import (
     connector_env_file,
     resolve_secrets,
 )
+from arcagent.modules.connectors.routing import RoutedAttachment, RoutedMember
 from arcagent.modules.connectors.source_authorization import SourceAuthorizationBinding
 from arcagent.tools._decorator import capability
 
@@ -299,8 +300,18 @@ class Connectors:
             secrets=_secret_store(state, sink),
         )
         registered: list[str] = []
+        routed: dict[str, list[_Prepared]] = {}
         for instance, configured in sorted(granted.items()):
-            registered.extend(await _attach_one(context, instance, configured, registered))
+            prepared = await _prepare(context, instance, configured)
+            if prepared is None:
+                continue
+            _register_sources(context, prepared)
+            if prepared.loaded.manifest.tools.routing is not None:
+                routed.setdefault(prepared.loaded.name, []).append(prepared)
+                continue
+            registered.extend(_register_single(context, prepared, registered))
+        for group in routed.values():
+            registered.extend(_register_routed(context, group, registered))
         return tuple(registered)
 
 
@@ -344,16 +355,20 @@ class _AttachContext:
     secrets: SecretStore | None
 
 
-async def _attach_one(
-    ctx: _AttachContext, instance: str, configured: Connection, taken: list[str]
-) -> tuple[str, ...]:
-    """Attach one connection. Any failure denies this one and no other.
+@dataclass(frozen=True)
+class _Prepared:
+    """One granted connection, verified, credentialed, and reviewed — not yet registered."""
 
-    ``taken`` is the names earlier instances already registered. A second account
-    of the same extension serves the same verb names, and letting the later one
-    replace the earlier would silently route an operator's calls to a different
-    account than the tool catalog says.
-    """
+    instance: str
+    configured: Connection
+    loaded: LoadedExtension
+    secrets: dict[str, Any]
+    connection: ExtensionAttachment
+    served: list[ToolSpec]
+
+
+async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -> _Prepared | None:
+    """Load, credential and review one connection. Any failure denies this one only."""
     state = ctx.state
     try:
         loaded = await _load_bundle(ctx, configured.extension)
@@ -368,49 +383,173 @@ async def _attach_one(
         )
         # Built once and reused: the connection whose tools were described has to
         # be the connection the registered verbs then call, or a stateful
-        # attachment answers from a session nobody looked at.
+        # attachment answers from a session nobody looked at. A file a verb saves
+        # lands in this agent's own downloads folder for this connection.
         connection = build_attachment(
-            loaded.manifest, loaded.path, secrets, connection_id=instance
+            loaded.manifest,
+            loaded.path,
+            secrets,
+            connection_id=instance,
+            download_dir=state.workspace / "downloads" / loaded.name / instance,
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
-        specs = [spec for spec in served if spec.name not in taken]
-        for spec in served:
-            if spec.name in taken:
-                _logger.warning(
-                    "connectors: instance %r may not serve %r — an earlier instance "
-                    "registered that name and keeps it",
-                    instance,
-                    spec.name,
-                )
-        attachment = ApprovalBinding(
-            instance=instance,
-            agent_did=state.identity.did,
-            gate=state.human_gate,
-            mode=configured.approval,
-            audit_sink=ctx.sink,
-        ).bind(connection, specs)
     except ExtensionError as exc:
         _refused(ctx.sink, state, "attach_refused", exc.message, instance=instance)
-        return ()
+        return None
     except Exception as exc:  # reason: fail-closed — one bad bundle, one dead connection
         _refused(
             ctx.sink, state, "attach_error", f"{type(exc).__name__}: {exc}", instance=instance
         )
-        return ()
+        return None
+    return _Prepared(instance, configured, loaded, dict(secrets), connection, served)
 
+
+def _bound(ctx: _AttachContext, prepared: _Prepared, specs: list[ToolSpec]) -> ExtensionAttachment:
+    """The connection bound to ITS OWN approval mode, so a gate names the real account."""
+    return ApprovalBinding(
+        instance=prepared.instance,
+        agent_did=ctx.state.identity.did,
+        gate=ctx.state.human_gate,
+        mode=prepared.configured.approval,
+        audit_sink=ctx.sink,
+    ).bind(prepared.connection, specs)
+
+
+def _register_single(
+    ctx: _AttachContext, prepared: _Prepared, taken: list[str]
+) -> tuple[str, ...]:
+    """Register an unrouted connection's verbs under their own names.
+
+    ``taken`` is the names earlier instances already registered. A bundle that
+    declares no ``[tools.routing]`` has no way to say which account a call means,
+    so a second connection of it cannot share names; letting the later one replace
+    the earlier would silently route calls to a different account than the catalog
+    says. A bundle meant to be connected more than once declares routing instead.
+    """
+    specs = [spec for spec in prepared.served if spec.name not in taken]
+    for spec in prepared.served:
+        if spec.name in taken:
+            _logger.warning(
+                "connectors: instance %r may not serve %r — an earlier instance "
+                "registered that name and keeps it (declare [tools.routing] to route "
+                "one name to several accounts)",
+                prepared.instance,
+                spec.name,
+            )
+    try:
+        attachment = _bound(ctx, prepared, specs)
+    except ExtensionError as exc:
+        _refused(ctx.sink, ctx.state, "attach_refused", exc.message, instance=prepared.instance)
+        return ()
+    return _bridge(ctx, prepared.loaded, attachment, specs, label=prepared.instance)
+
+
+def _register_routed(
+    ctx: _AttachContext, group: list[_Prepared], taken: list[str]
+) -> tuple[str, ...]:
+    """Register ONE tool per name for every granted connection of a routed bundle."""
+    state = ctx.state
+    manifest = group[0].loaded.manifest
+    routing = manifest.tools.routing
+    if routing is None:  # unreachable: grouped by it
+        return ()
+    members: list[RoutedMember] = []
+    union: dict[str, ToolSpec] = {}
+    for prepared in group:
+        try:
+            attachment = _bound(ctx, prepared, prepared.served)
+        except ExtensionError as exc:
+            _refused(ctx.sink, state, "attach_refused", exc.message, instance=prepared.instance)
+            continue
+        members.append(
+            RoutedMember(
+                instance=prepared.instance,
+                attachment=attachment,
+                selector=_field_value(prepared, routing.field),
+                approved=frozenset(spec.name for spec in prepared.served),
+                read_only=_is_read_only(prepared),
+            )
+        )
+        for spec in prepared.served:
+            union.setdefault(spec.name, spec)
+    if not members:
+        return ()
+    specs = [spec for name, spec in union.items() if name not in taken]
+    router = RoutedAttachment(
+        extension=group[0].loaded.name,
+        routing=routing,
+        members=members,
+        specs=specs,
+        agent_did=state.identity.did,
+        tier=state.tier,
+        sink=ctx.sink,
+        grant_active=lambda instance: _source_grant_active(state, instance),
+    )
+    label = ",".join(member.instance for member in members)
+    return _bridge(ctx, group[0].loaded, router, specs, label=label)
+
+
+def _field_value(prepared: _Prepared, field: str) -> str:
+    """A connection's stored value for a visible field, or its declared default."""
+    stored = prepared.secrets.get(field)
+    value = stored.reveal() if stored is not None else ""
+    if value:
+        return str(value)
+    declared = next(
+        (secret for secret in prepared.loaded.manifest.secrets if secret.name == field), None
+    )
+    return declared.default if declared is not None else ""
+
+
+def _is_read_only(prepared: _Prepared) -> bool:
+    """Whether this connection was signed in read-only, by the manifest's own switch."""
+    mode = prepared.loaded.manifest.tools.read_only
+    return mode is not None and _field_value(prepared, mode.field) == mode.when
+
+
+def _bridge(
+    ctx: _AttachContext,
+    loaded: LoadedExtension,
+    attachment: ExtensionAttachment,
+    specs: list[ToolSpec],
+    *,
+    label: str,
+) -> tuple[str, ...]:
+    """Put ``specs`` in the registry through the one bridge, dispatching to ``attachment``."""
     report = CapabilityBridge(
         registry=cast(ToolRegistry, ctx.registry),
         attachment=attachment,
         transport=_transport(loaded.manifest.extension.attachment),
         source=f"extension:{loaded.name}",
         allow=loaded.manifest.tools.allow,
-    ).register(specs)
+    ).register(
+        # A router adds its selector to every schema; ask it for the specs it serves.
+        specs if not isinstance(attachment, RoutedAttachment) else _described(attachment)
+    )
     _logger.info(
-        "connectors: instance %r contributed %d tool(s) (%d excluded)",
-        instance,
+        "connectors: %r contributed %d tool(s) (%d excluded)",
+        label,
         len(report.registered),
         len(report.denied),
     )
+    return report.registered
+
+
+def _described(router: RoutedAttachment) -> list[ToolSpec]:
+    """The router's specs, selector included — synchronously, as they are static."""
+    return router.static_specs()
+
+
+def _register_sources(ctx: _AttachContext, prepared: _Prepared) -> None:
+    """Enrol each of this connection's own source adapters under its own identity.
+
+    Knowledge sync never goes through tool routing: each connection's adapter
+    reads through that connection's own attachment, with its own placed account
+    and client.
+    """
+    state = ctx.state
+    instance = prepared.instance
+    connection = prepared.connection
     adapters_factory = getattr(connection, "source_adapters", None)
     adapters = adapters_factory() if callable(adapters_factory) else {}
     if not adapters:
@@ -431,7 +570,6 @@ async def _attach_one(
                     grant_active=lambda: _source_grant_active(state, instance),
                     audit_sink=_audit_sink(state.telemetry),
                 )
-    return report.registered
 
 
 def _grant_signature(state: _runtime._State) -> str | None:

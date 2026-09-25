@@ -458,7 +458,7 @@ class DeclaredTool(_ManifestModel):
 class ToolRouting(_ManifestModel):
     """``[tools.routing]`` — one tool name serving every connection of this bundle.
 
-    A bundle connected more than once (two mailboxes, two Jira sites) would
+    A bundle connected more than once (two mailboxes, two sites of one service) would
     otherwise serve the same tool names twice, and only the first connection could
     register them. With this table the agent's registry holds ONE tool per name
     and each call is routed to a connection the calling agent is granted:
