@@ -305,10 +305,18 @@ def test_every_credential_a_spawning_bundle_declares_has_somewhere_to_go(
     if manifest.extension.attachment == "native":
         return
     delivered_by_a_command = manifest.fields_named_by_commands()
+    # An ``http`` MCP bundle may name the field whose value IS its endpoint
+    # (``[config.mcp].url_secret_field``, origin-pinned by ``url_origin``): the
+    # attachment connects to that URL, so the field is delivered by being the
+    # address — there is no program environment for it to be placed into.
+    mcp = manifest.config.get("mcp", {})
+    delivered_as_endpoint = {mcp.get("url_secret_field", "")} if isinstance(mcp, dict) else set()
     unplaced = [
         declared.name
         for declared in manifest.secrets
-        if declared.placement is None and declared.name not in delivered_by_a_command
+        if declared.placement is None
+        and declared.name not in delivered_by_a_command
+        and declared.name not in delivered_as_endpoint
     ]
     assert not unplaced, (
         f"{manifest.extension.name} attaches as {manifest.extension.attachment!r} and "
