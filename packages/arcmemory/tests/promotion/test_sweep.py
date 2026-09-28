@@ -5,8 +5,8 @@ not exist yet, so collection fails with ``ModuleNotFoundError`` — the feature 
 absent.
 
 Real objects: the insight / procedure / semantic stores on a tmp workspace, the
-signed ``PromotionLedger`` (real Ed25519 ``InProcessSigner``), the
-``ConsolidatedMemoryExporter``, ``render_candidate``, ``decide`` and the secret
+signed ``PromotionLedger`` (real Ed25519 ``InProcessSigner``),
+``render_candidate``, ``decide`` and the secret
 gate. Faked at the boundary only: the third-party classifier, the shared-store
 publisher and the audit sink (a durable-capable recorder with the arctrust
 ``AuditSink`` + ``DurableAuditSink`` shape, plus a failing-durable variant).
@@ -14,7 +14,7 @@ publisher and the audit sink (a durable-capable recorder with the arctrust
 Contract assumed (SDD COMP-018/020/022):
 
 - ``PromotionSweep(cfg=, tier=, stores=, ledger=, classifier=, publisher=,
-  exporter=, audit_sink=, clearance=)`` — keyword construction. ``stores`` is the
+  audit_sink=, clearance=)`` — keyword construction. ``stores`` is the
   ``ConsolidatedStores`` shape the exporter already takes (``.insights``,
   ``.procedures``, ``.entities``), enumerated via ``InsightStore.all_ids()``,
   ``ProceduralStore.slugs()`` and ``SemanticStore.slugs()``.
@@ -42,14 +42,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from arcprompt import StockPromptSource
 from arctrust.audit import AuditEvent
 from arctrust.signer import InProcessSigner
 
-from arcmemory.adapters.memory_export import ConsolidatedMemoryExporter
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.promotion.classifier import (
-    PROMOTION_QUESTION,
     ClassifierCallError,
     ClassifierInput,
     ClassifierVerdict,
@@ -58,6 +57,7 @@ from arcmemory.promotion.classifier import (
 from arcmemory.promotion.config import PromotionConfig
 from arcmemory.promotion.ledger import LedgerRow, PromotionLedger
 from arcmemory.promotion.publisher import PublisherUnavailableError, PublishOutcomeUnknownError
+from arcmemory.promotion.question import load_promotion_question
 from arcmemory.promotion.render import content_digest, render_candidate
 from arcmemory.promotion.sweep import PromotionSweep
 from arcmemory.stores.insight import InsightStore
@@ -65,11 +65,14 @@ from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Insight, Procedure, Scope, Step
 
+#: The packaged stock question (arcmemory/context/promotion_classify.md), parsed.
+PROMOTION_QUESTION = load_promotion_question(StockPromptSource())
+
 _DID = "did:arc:test-agent"
 _NIGHT_1 = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 _NIGHT_2 = _NIGHT_1 + timedelta(days=1)
 _NIGHT_3 = _NIGHT_2 + timedelta(days=1)
-_MODEL = "jev-1.13"
+_MODEL = "jev-1.13.0"
 _QV = question_version(PROMOTION_QUESTION)
 
 Timeline = list[tuple[str, str]]
@@ -111,6 +114,9 @@ class FakeClassifier:
         self._labels = labels or {}
         self._fail_on_call = fail_on_call
         self.inputs: list[Any] = []
+
+    async def ensure_available(self) -> None:
+        return None
 
     async def classify(self, item: ClassifierInput) -> ClassifierVerdict:
         self.inputs.append(item)
@@ -228,7 +234,6 @@ class Env:
     procedures: ProceduralStore
     entities: SemanticStore
     ledger: PromotionLedger
-    exporter: ConsolidatedMemoryExporter
     stores: Any
     store_reads: list[str]
     timeline: Timeline = field(default_factory=list)
@@ -249,7 +254,6 @@ class Env:
             ledger=self.ledger,
             classifier=FakeClassifier(self.timeline) if classifier == "default" else classifier,
             publisher=FakePublisher(self.timeline) if publisher == "default" else publisher,
-            exporter=self.exporter,
             audit_sink=sink if sink is not None else RecordingSink(self.timeline),
             clearance="unclassified",
         )
@@ -270,14 +274,12 @@ def env(workspace: Path, db: MemoryDB, scope: Scope) -> Env:
         procedures=CountingProxy(procedures, reads),
         entities=CountingProxy(entities, reads),
     )
-    real_stores = SimpleNamespace(insights=insights, procedures=procedures, entities=entities)
     return Env(
         workspace=workspace,
         insights=insights,
         procedures=procedures,
         entities=entities,
         ledger=PromotionLedger(workspace, InProcessSigner(b"\x01" * 32)),
-        exporter=ConsolidatedMemoryExporter(workspace, _DID, real_stores),
         stores=stores,
         store_reads=reads,
     )

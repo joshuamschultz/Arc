@@ -49,9 +49,9 @@ def _approx_tokens(text: str) -> int:
 
 
 def _is_strategy_tag(tag: str) -> bool:
-    """arcrun's strategy guidance lands as several sibling tags — ``strategy_react``,
-    ``strategy_selection``, ``code_exec_guidance``, ``spawn_guidance`` — rather than
-    one ``<strategies>`` blob. Group them under the one display section."""
+    """Guidance sections — ``spawn_guidance`` and any ``strategy*``-tagged section a
+    transcript carries — group under the one display section. (arcrun's per-run
+    strategy guidance is its own untagged system message, not an assembled tag.)"""
     return tag.startswith("strategy") or tag.endswith("_guidance")
 
 

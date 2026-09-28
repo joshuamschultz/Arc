@@ -30,7 +30,6 @@ from typing import Any
 
 import arcrun
 from arcokf import OKFValidationError, validate
-from arcprompt import load_stock
 
 from arcagent.core import turn_context
 from arcagent.modules.workpad import _runtime
@@ -267,7 +266,7 @@ async def perform_maintenance(
 
     result = await arcrun.run_oneshot(
         model,
-        system=load_stock("arcagent", "context_maintainer_system"),
+        system=st.prompt_source.resolve("arcagent", "context_maintainer_system"),
         user=_render_input(current, transcript_text, agent_notes=agent_notes),
         max_tokens=None,
     )

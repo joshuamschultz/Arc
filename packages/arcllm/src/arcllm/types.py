@@ -321,6 +321,16 @@ class LLMProvider(ABC):
     def model_name(self) -> str:
         """Resolved model identifier this provider instance targets. Read-only."""
 
+    @property
+    def max_output_tokens(self) -> int | None:
+        """Largest output cap this provider's model accepts; None when unknown.
+
+        A caller holding a *run* budget (e.g. arcrun's pinned ``oneshot``) clamps
+        the one output cap it sends to this, so a provider is never asked for
+        more output than its model can emit.
+        """
+        return None
+
     @abstractmethod
     async def invoke(
         self,

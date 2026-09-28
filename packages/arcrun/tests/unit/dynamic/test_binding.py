@@ -411,6 +411,7 @@ _CHILD_OWNED_FIELDS = frozenset(
         "emit_terminal",  # only the parent emits the run's terminal
         "transform_context",  # bound to the parent's transcript
         "on_checkpoint",  # bound to the parent's session resume point
+        "strategy_guidance",  # a child runs react, not the parent's orchestration
     }
 )
 

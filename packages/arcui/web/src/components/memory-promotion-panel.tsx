@@ -6,8 +6,10 @@ import { QueryState } from '@/components/states'
 import { ApiError } from '@/lib/api'
 import {
   useMemoryPromotion,
+  useRunMemoryPromotion,
   useSaveJevKey,
   useSaveMemoryPromotion,
+  type MemoryPromotionRunResult,
   type MemoryPromotionSettings,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -184,6 +186,71 @@ function JevKeyForm({ agentId, disabled }: { agentId: string; disabled: boolean 
   )
 }
 
+const RUN_COUNTS: [keyof MemoryPromotionRunResult, string][] = [
+  ['evaluated', 'Evaluated'],
+  ['promoted', 'Promoted'],
+  ['kept_private', 'Kept private'],
+  ['blocked_secret', 'Blocked (secret)'],
+  ['too_large', 'Too large'],
+  ['deferred', 'Deferred'],
+]
+
+function RunResult({ result }: { result: MemoryPromotionRunResult }) {
+  return (
+    <div className="space-y-1 text-sm" aria-live="polite">
+      <p className="text-foreground">
+        Last run: <span className="font-medium">{result.status}</span>
+      </p>
+      <dl className="grid grid-cols-3 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {RUN_COUNTS.map(([key, label]) => (
+          <div key={key} className="flex justify-between gap-2">
+            <dt>{label}</dt>
+            <dd className="tabular-nums text-foreground">{result[key]}</dd>{' '}
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+/**
+ * "Run now" (SPEC-083 COMP-029): promote this agent's existing memory once, now.
+ * Enabled only for an operator when sharing is on in the SAVED settings and the
+ * agent is not federal-locked; disabled while a run is in flight.
+ */
+function RunNow({ agentId, canRun }: { agentId: string; canRun: boolean }) {
+  const run = useRunMemoryPromotion(agentId)
+  const [error, setError] = useState<string | null>(null)
+
+  const start = () => {
+    setError(null)
+    run.mutate(undefined, { onError: (e) => setError(errorText(e, 'Run failed')) })
+  }
+
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <div className="flex items-center gap-3">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={start}
+          disabled={!canRun || run.isPending}
+          aria-busy={run.isPending}
+        >
+          Run now
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {run.isPending
+            ? 'Running…'
+            : 'Sends existing memory once; the nightly run then sends only new or changed items.'}
+        </span>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {run.data && !error && <RunResult result={run.data} />}
+    </div>
+  )
+}
+
 /**
  * "Memory sharing" — per-agent private -> shared promotion (SPEC-083 COMP-028).
  * Viewers see the settings read-only; federal-tier agents are locked with the
@@ -234,6 +301,7 @@ export function MemoryPromotionPanel({
                 operatorMode={operatorMode}
               />
               {operatorMode && <JevKeyForm agentId={agentId} disabled={locked} />}
+              <RunNow agentId={agentId} canRun={operatorMode && settings.enabled && !locked} />
             </div>
           )
         }}

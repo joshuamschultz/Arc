@@ -29,14 +29,17 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal.context import ContextManager
 from arcagent.modules.messaging import _runtime as messaging_runtime
 from arcagent.modules.messaging.capabilities import _build_roster, inject_messaging_sections
+from arcagent.modules.tasks import _runtime as tasks_runtime
 from arcagent.modules.tasks.capabilities import inject_team_handoff_section
 
 
 @pytest.fixture(autouse=True)
 def _reset_messaging_runtime() -> Any:
     messaging_runtime.reset()
+    tasks_runtime.reset()
     yield
     messaging_runtime.reset()
+    tasks_runtime.reset()
 
 
 def _configure_messaging(tmp_path: Path) -> None:
@@ -47,6 +50,13 @@ def _configure_messaging(tmp_path: Path) -> None:
         workspace=tmp_path,
         identity=ident,
         operator_signer=make_operator_signer(),
+    )
+
+
+def _configure_tasks(tmp_path: Path) -> None:
+    """Bootstrap the tasks runtime the way the loader does when the module is on."""
+    tasks_runtime.configure(
+        workspace=tmp_path, identity=AgentIdentity.generate(org="local", agent_type="agent")
     )
 
 
@@ -67,6 +77,7 @@ class TestArcteamGuidancePresent:
     async def test_both_modules_name_their_real_tools(self, tmp_path: Path) -> None:
         """messaging + tasks loaded → the prompt names every real team tool."""
         _configure_messaging(tmp_path)
+        _configure_tasks(tmp_path)
         bus = ModuleBus()
         bus.subscribe("agent:assemble_prompt", inject_messaging_sections, priority=50)
         bus.subscribe("agent:assemble_prompt", inject_team_handoff_section, priority=60)
@@ -152,6 +163,7 @@ class TestArcteamGuidanceGated:
 
     async def test_tasks_only_never_points_at_channels(self, tmp_path: Path) -> None:
         """Tasks without messaging: the agent has no channel:// surface."""
+        _configure_tasks(tmp_path)
         bus = ModuleBus()
         bus.subscribe("agent:assemble_prompt", inject_team_handoff_section, priority=60)
 

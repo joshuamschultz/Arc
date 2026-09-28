@@ -55,11 +55,12 @@ from arcagent.connections import (
     resolve_deployment,
     resolve_roots,
 )
-from arcagent.core.agent import ArcAgent
+from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
 from arcagent.core.errors import (
     ArcAgentError,
+    CapabilityUnavailableError,
     ConfigError,
     ContextError,
     IdentityError,
@@ -249,6 +250,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "MEMORY_PROMOTION_MAX_ITEMS",
     "NOT_INSTALLED",
     "SECURITY_CONFIG_KNOBS",
     "AnchoredSkillRevisionResolver",
@@ -270,6 +272,7 @@ __all__ = [
     "CapabilityImportStatus",
     "CapabilityLoader",
     "CapabilityRegistry",
+    "CapabilityUnavailableError",
     "CatalogEntry",
     "ClosableSink",
     "ConfigError",

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import arcrun
+from arcprompt import PromptSource, StockPromptSource
 from arctrust import (
     AgentIdentity,
     FileNotaryTransit,
@@ -56,7 +57,7 @@ from arcagent.core.agent_lifecycle import setup_capabilities
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.control_contract import ControlActionProofSource, ControlArtifactAuthority
-from arcagent.core.errors import ExtensionError
+from arcagent.core.errors import CapabilityUnavailableError, ExtensionError
 from arcagent.core.model_manager import (
     create_arcllm_bridge,
     create_arcrun_bridge,
@@ -110,6 +111,12 @@ _logger = logging.getLogger("arcagent.agent")
 _OPERATOR_KEY_REF = "operator"
 _SHUTDOWN_STEP_TIMEOUT_SECONDS = 5.0
 _DELIVERY_STREAM_QUEUE_MAXSIZE = 32
+#: The operation contract a module registers (``@capability(name=...)``) to serve
+#: :meth:`ArcAgent.run_memory_promotion`; an operation name, not a module name.
+_MEMORY_PROMOTION = "memory_promotion"
+#: Largest ``max_items`` a manual promotion run accepts; surfaces check it before
+#: calling, and the memory backend enforces it again.
+MEMORY_PROMOTION_MAX_ITEMS = 5000
 
 
 def _delivery_projection(event: arcrun.StreamEvent) -> DeliveryStreamEvent | None:
@@ -258,6 +265,9 @@ class ArcAgent:
         # Overlay-aware prompt resolver, built once at capability setup and pinned
         # to the operator key (editable-system-prompts COMP-006). None until setup.
         self._prompt_resolver: Any = None
+        # The same resolver as the agent's PromptSource (COMP-030) — what every
+        # agent-side prompt consumer reads through. Stock until setup builds it.
+        self._prompt_source: PromptSource = StockPromptSource()
         self._model: Any = None
         self._trace_store: Any = None
         self._queue_coordinator = queue_coordinator
@@ -356,6 +366,31 @@ class ArcAgent:
                 status="applied", detail="connector module exposes no live reconciler"
             )
         return await reconcile()
+
+    async def run_memory_promotion(self, *, max_items: int | None = None) -> Mapping[str, object]:
+        """Run memory promotion once now on this started agent (SPEC-083 REQ-512).
+
+        The in-process operator seam behind "Run now". Core names no module
+        (ADR-033): it asks for whichever active capability registered the
+        ``memory_promotion`` operation contract and hands it this agent's DID.
+        Returns the sweep's status and counts (never memory content).
+
+        Raises:
+            CapabilityUnavailableError: the agent is not started, or no active
+                capability provides ``memory_promotion``.
+            ValueError / TypeError: ``max_items`` is not an int in 1..5000.
+        """
+        entry = None
+        if self._started and self._capability_registry is not None:
+            entry = await self._capability_registry.get_capability(_MEMORY_PROMOTION)
+        run = getattr(entry.instance, "run", None) if entry and entry.setup_done else None
+        if run is None:
+            raise CapabilityUnavailableError(
+                code="MEMORY_PROMOTION_UNAVAILABLE",
+                message="memory promotion is not available on this agent",
+            )
+        result: Mapping[str, object] = await run(agent_did=self.did, max_items=max_items)
+        return result
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).
@@ -864,6 +899,7 @@ class ArcAgent:
                 telemetry=self._telemetry,
                 workspace=self._workspace,
                 context_manager=self._context,
+                prompt_source=self._prompt_source,
             )
             await manager.open_or_resume(key)
             self._sessions[key] = manager

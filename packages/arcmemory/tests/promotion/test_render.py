@@ -26,8 +26,8 @@ import hashlib
 from types import SimpleNamespace
 
 import pytest
-from arcmemory.promotion.render import PromotionText, render_candidate
 
+from arcmemory.promotion.render import PromotionText, render_candidate
 from arcmemory.types import DaySummary, Entity, Event, Fact, Insight, Procedure, Step
 
 

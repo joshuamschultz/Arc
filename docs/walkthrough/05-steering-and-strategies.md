@@ -136,7 +136,7 @@ registered lazily in `STRATEGIES`:
 
 | Strategy | What it is | Loop shape | Selected via `run()`? |
 |---|---|---|---|
-| `react` | Reason → Act → Observe → Repeat, one tool batch per turn | `react_loop` directly | Yes — the default |
+| `react` | Reason → Act → Observe → Repeat, one tool batch per turn | `react_loop` directly | Yes — the fallback, and the only strategy at federal |
 | `code` | Same loop, with the system prompt augmented to bias the model toward writing and running code instead of many small tool calls | Delegates straight to `react_loop` after prompt injection | Yes |
 | `dynamic` | One model call authors a short orchestration script; the engine interprets it deterministically instead of the model reasoning turn by turn | Author → dry-run → interpret, or fall back to `react_loop` | Yes |
 | `oneshot` | One bounded model call, no tools, no loop — for cheap gating decisions like "which agent should answer this?" | A single `invoke`, with an output ceiling and an optional deadline | **No** — `auto_selectable = False` |
@@ -249,12 +249,29 @@ See [9. The Workflows](09-workflows.md) for ArcFlow.
 
 ### Selecting a strategy
 
-`select_strategy` (`strategies/__init__.py:54-137`): `allowed=None` → always
-`react`. A single-element `allowed` list is used directly, no model call. A
-multi-element list asks the model itself to choose, via a dedicated
-`select_strategy` tool call against a short strategy-description prompt; a
-malformed or missing choice, or any exception, falls back to `react`
-(fail-open, logged as `strategy.selection.fallback`).
+`select_strategy` (`strategies/__init__.py`): `allowed=None` puts every
+**auto-selectable** strategy on the table (`react`, `code`, `dynamic`). A
+single-element `allowed` list is used directly, no model call. A multi-element
+list asks the model itself to choose, via a dedicated `select_strategy` tool
+call. That call's system text is the editable `arcrun/strategy_select` prompt
+plus one `arcrun/strategy_<name>_description` line per allowed strategy and the
+run's tool names; the task rides the user turn as data, never as instruction. A
+malformed or missing choice, or a provider error, falls back to `react`
+(fail-open, logged as `strategy.selection.fallback`). A tampered override of
+`strategy_select` is not a provider error: it ends the run.
+
+**Ordinary turns let the model choose.** An un-pinned turn on a personal or
+enterprise agent (any inbound message that does not name its strategies) is
+offered `react`, `code` and `dynamic`, within the operator ceiling
+(`arcrun.toml` `allowed_strategies`), and makes one selection call. The model
+picks the shape that fits the task, guided by `strategy_select` — which the
+operator can edit per agent in the ArcUI **Prompts** tab or with
+`arc prompt edit arcrun strategy_select --agent <dir>`, like any other prompt.
+`plan_execute` and `oneshot` are never auto-offered; a caller must pin them by
+name. A pinned turn (a workflow node) uses its request intersected with the
+ceiling. **Federal is react-only:** the ceiling is floored to `react`, cannot
+be widened by configuration, and makes no selection call
+(`arcagent/tools/approval_policy.py::narrowed_loop_controls`).
 
 ```mermaid
 flowchart LR
@@ -440,10 +457,12 @@ caching concern living in the loop.
 
 Two unrelated things live near each other here and are easy to conflate.
 **`arcrun/context/`** is just a directory of markdown prompt bodies
-(`strategy_react.md`, `code_exec_prefix.md`, etc.) loaded via
-`arcprompt.load_stock` and surfaced through `prompts.py`'s
-`get_strategy_prompts()` — model-facing *guidance text*, not context-window
-management.
+(`strategy_react.md`, `strategy_select.md`, `code_exec_prefix.md`, etc.) —
+model-facing *guidance text*, not context-window management. Each is resolved
+through the run's `PromptSource` (`RunState.prompt_source`): stock by default,
+or the agent's frozen, operator-editable snapshot when arcagent passes
+`prompt_source=` to `arcrun.run`. `strategy_guidance(name, source)` adds only
+the guidance of the strategy that actually runs.
 
 **`transform_context`** (a callable on `RunState`, supplied by the caller) is
 the real context-window control point, and it carries a hard contract:

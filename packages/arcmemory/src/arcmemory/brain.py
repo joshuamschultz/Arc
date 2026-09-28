@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcprompt import PromptSource
 from arcstore.approvals import ApprovalStore
 from arcstore.spool import current_request_id
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -36,7 +37,6 @@ from arctrust.policy import PolicyContext, PolicyPipeline, ToolCall, sign_call
 from arctrust.signer import Signer
 
 from arcmemory import ingest
-from arcmemory.adapters.memory_export import ConsolidatedMemoryExporter
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
@@ -49,10 +49,15 @@ from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
 from arcmemory.promotion.classifier import PromotionClassifier
-from arcmemory.promotion.config import PromotionConfig
+from arcmemory.promotion.config import PromotionConfig, is_federal_tier
 from arcmemory.promotion.ledger import PromotionLedger
 from arcmemory.promotion.publisher import PromotionPublisher
-from arcmemory.promotion.sweep import PromotionSweep
+from arcmemory.promotion.sweep import (
+    PromotionSweep,
+    PromotionSweepResult,
+    SweepStatus,
+    validate_max_items,
+)
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever, attributed_cards
 from arcmemory.security import render_recalls
@@ -166,6 +171,7 @@ class ArcMemoryBrain:
         promotion_classifier: PromotionClassifier | None = None,
         promotion_publisher: PromotionPublisher | None = None,
         promotion_signer: Signer | None = None,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         if not agent_did:
             raise ValueError("ArcMemoryBrain requires an agent_did (no memory without identity)")
@@ -185,6 +191,8 @@ class ArcMemoryBrain:
         self._policy = policy_pipeline
         self._react_loop = react_loop
         self._store_raw_bodies = store_raw_bodies
+        # Where the agentic consolidation engine reads its system prompt (None -> stock).
+        self._prompt_source = prompt_source
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
@@ -945,6 +953,27 @@ class ArcMemoryBrain:
         if self._promotion_sweep is not None:
             self._promotion_sweep.bind_publisher(publisher)
 
+    async def run_promotion(self, *, max_items: int | None = None) -> PromotionSweepResult:
+        """Run the promotion sweep once now — the operator's "Run now" (REQ-512).
+
+        The same sweep the nightly hygiene runs, over this agent's EXISTING cards
+        (a backfill); afterwards the nightly run sends only new or changed items,
+        because the signed ledger already holds every verdict. It shares the
+        sweep's per-agent lock with the nightly hook, so an overlapping run waits
+        and never sends an item twice.
+
+        ``max_items`` (1..5000) caps this run only and is never persisted; a bad
+        value raises before any classifier call. A manual run neither reads nor
+        writes the nightly hygiene stamp, so that night's hygiene still runs.
+        Federal -> ``tier_forbidden``; promotion not configured -> ``disabled``.
+        """
+        cap = validate_max_items(max_items)
+        if self._promotion_sweep is None:
+            federal = is_federal_tier(self._cfg.tier)
+            status: SweepStatus = "tier_forbidden" if federal else "disabled"
+            return PromotionSweepResult(status=status)
+        return await self._promotion_sweep.run(datetime.now(UTC), max_items=cap)
+
     # -- internals ---------------------------------------------------------
 
     def _compose_promotion(
@@ -981,7 +1010,6 @@ class ArcMemoryBrain:
             ledger=PromotionLedger(self._workspace, signer),
             classifier=classifier,
             publisher=publisher,
-            exporter=ConsolidatedMemoryExporter(self._workspace, self._agent_did, stores),
             audit_sink=self._audit,
             # The runtime identity's clearance — the same label the publisher's
             # KnowledgeAccess carries, so the sweep only sends what can be shared.
@@ -1035,6 +1063,7 @@ class ArcMemoryBrain:
                 react_loop=self._react_loop,
                 store_raw_bodies=self._store_raw_bodies,
                 promotion_sweep=self._promotion_sweep,
+                prompts=self._prompt_source,
             )
             if self._distiller is not None
             else None

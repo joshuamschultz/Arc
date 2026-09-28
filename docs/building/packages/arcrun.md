@@ -110,9 +110,9 @@ src/arcrun/
   ledger.py            # ToolExecutionLedger — exactly-once tool execution
   sandbox.py           # Sandbox — per-tool permission gate (allowlist + check callback)
   model.py             # re-export of the arcllm model facade
-  prompts.py           # get_strategy_prompts — model-facing strategy guidance
   _messages.py         # SystemPrompt alias + message-construction helpers
-  strategies/          # react (default) · code · dynamic · oneshot · plan_execute + selection
+  strategies/          # react (default) · code · dynamic · oneshot · plan_execute + selection;
+                       #   strategy_guidance / strategy_description resolve through the run's PromptSource
   dynamic/             # restricted-Python orchestration: grammar · host · interpreter · journal · seal
   builtins/            # execute_python / contained_execute_python / run_shell / task_complete
   backends/            # ExecutorBackend seam: local · docker · vm(firecracker) · loader · policy
@@ -783,7 +783,7 @@ hierarchy `SandboxError` → `SandboxOOMError` / `SandboxTimeoutError` /
 `load_model` and the re-exported arcllm model types (`Model`, `Message`,
 `ToolCall`, `Usage`, `LLMResponse`, …), `make_execute_tool` / `run_shell`
 (builtin code-exec tools), `provider_tools`, `detached_context`,
-`get_strategy_prompts`, `system_messages`, `available_strategies`,
+`system_messages`, `available_strategies`,
 `dispatch_ready`, `verify_chain`.
 
 ---

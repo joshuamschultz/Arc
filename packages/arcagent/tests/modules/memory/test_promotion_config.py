@@ -34,7 +34,7 @@ _EXPECTED_DEFAULTS = {
     "max_items_per_sweep": 200,
     "max_item_bytes": 16_384,
     "classifier": "jev",
-    "classifier_model": "jev-1.13",
+    "classifier_model": "jev-1.13.0",
     "request_timeout_seconds": 10.0,
     "api_key_env": "TYPESAFE_API_KEY",
     "vault_path": None,

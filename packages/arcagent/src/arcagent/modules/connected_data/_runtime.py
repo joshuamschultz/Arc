@@ -6,6 +6,8 @@ import contextvars
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.modules.connected_data.config import ConnectedDataConfig
 from arcagent.modules.connected_data.ingest import (
     ArcMemoryIngestAdapter,
@@ -43,6 +45,8 @@ class _State:
             )
         )
         self.service: ConnectedDataService | None = None
+        #: The agent's prompt lookup — the catalog preamble an operator may override.
+        self.prompt_source: PromptSource = kwargs.get("prompt_source") or StockPromptSource()
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -60,6 +64,7 @@ def configure(
     source_catalog: Any = None,
     telemetry: Any = None,
     ingest_port_factory: IngestPortFactory | None = None,
+    prompt_source: PromptSource | None = None,
     **kwargs: Any,
 ) -> None:
     del kwargs
@@ -78,6 +83,7 @@ def configure(
             source_catalog=source_catalog,
             telemetry=telemetry,
             ingest_port_factory=ingest_port_factory,
+            prompt_source=prompt_source,
         )
     )
 

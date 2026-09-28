@@ -128,7 +128,7 @@ def _publisher(
 
 async def _publish(publisher: Any, reference: str = _REF, digest: str = _DIGEST) -> str:
     result: str = await publisher.publish(
-        reference, content_sha256=digest, confidence=0.97, classifier_version="jev-1.13"
+        reference, content_sha256=digest, confidence=0.97, classifier_version="jev-1.13.0"
     )
     return result
 
@@ -147,7 +147,7 @@ async def test_publish_promotes_verified_source_with_classifier_decision(tmp_pat
     assert kwargs == {
         "decision": "classifier_promote",
         "confidence": 0.97,
-        "classifier_version": "jev-1.13",
+        "classifier_version": "jev-1.13.0",
     }
     assert source.digest == _DIGEST
     assert source.reference.scope == "personal"
@@ -318,7 +318,7 @@ async def test_real_service_publishes_attributed_to_the_runtime_did(tmp_path: Pa
     assert len(decisions) == 1
     assert decisions[0].actor_did == _DID_A
     assert decisions[0].extra["decision"] == "classifier_promote"
-    assert decisions[0].extra["classifier_version"] == "jev-1.13"
+    assert decisions[0].extra["classifier_version"] == "jev-1.13.0"
 
 
 async def test_real_service_refuses_a_key_not_matching_the_caller_did(tmp_path: Path) -> None:

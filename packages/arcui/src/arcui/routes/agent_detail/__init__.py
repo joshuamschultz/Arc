@@ -61,6 +61,7 @@ from arcui.routes.agent_detail.memory_promotion import (
     get_memory_promotion,
     put_memory_promotion,
 )
+from arcui.routes.agent_detail.memory_promotion_run import run_memory_promotion
 from arcui.routes.agent_detail.policy import (
     get_policy,
     get_policy_bullets,
@@ -170,6 +171,7 @@ routes = [
     Route("/api/agents/{id}/voice", get_voice_status, methods=["GET"]),
     Route("/api/agents/{id}/memory/promotion", get_memory_promotion, methods=["GET"]),
     Route("/api/agents/{id}/memory/promotion", put_memory_promotion, methods=["PUT"]),
+    Route("/api/agents/{id}/memory/promotion/run", run_memory_promotion, methods=["POST"]),
 ]
 
 __all__ = ["routes"]

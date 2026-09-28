@@ -21,8 +21,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource
+
 from arcagent.extension import ExtensionPoint, select_extension
-from arcagent.skilladapt.protocol import NullSkillAdapter, SkillAdapter
+from arcagent.skilladapt.protocol import LLMInvoker, NullSkillAdapter, SkillAdapter
 
 _logger = logging.getLogger("arcagent.skilladapt.select")
 
@@ -41,7 +43,7 @@ def _build_arcskill(module: Any, context: dict[str, Any]) -> SkillAdapter | None
         audit_sink=context["audit_sink"],
         agent_did=context["agent_did"],
         skill_path=context["skill_path"],
-        prompt_resolve=context["prompt_resolve"],
+        prompt_source=context["prompt_source"],
     )
     return adapter
 
@@ -61,7 +63,7 @@ def select_skill_adapter(
     workspace: Path,
     config: dict[str, Any] | None = None,
     tier: str = "personal",
-    llm: Any = None,
+    llm: LLMInvoker | None = None,
     signer: Any = None,
     approval_provider: Any = None,
     eval_runner: Any = None,
@@ -69,9 +71,15 @@ def select_skill_adapter(
     agent_did: str = "",
     skill_path: Callable[[str], Path | None] | None = None,
     adapter_allowlist: tuple[str, ...] = (),
-    prompt_resolve: Callable[[str, str], str] | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> SkillAdapter:
-    """Return the configured SkillAdapter (fail-safe: any degrade path yields Null)."""
+    """Return the configured SkillAdapter (fail-safe: any degrade path yields Null).
+
+    ``llm`` is a text-in/text-out :class:`LLMInvoker`, never a raw model handle — the
+    improver sends a single prompt string, which a provider rejects as ``messages``.
+    ``prompt_source`` is the agent's overlay-aware prompt lookup; ``None`` leaves the
+    adapter on its shipped stock prompts.
+    """
     context: dict[str, Any] = {
         "workspace": workspace,
         "config": config or {},
@@ -83,7 +91,7 @@ def select_skill_adapter(
         "audit_sink": audit_sink,
         "agent_did": agent_did,
         "skill_path": skill_path,
-        "prompt_resolve": prompt_resolve,
+        "prompt_source": prompt_source,
     }
     adapter: SkillAdapter = select_extension(
         _SKILLADAPT_POINT,

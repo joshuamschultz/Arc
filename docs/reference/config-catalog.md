@@ -62,7 +62,7 @@ list `[]`) · `max_tokens` (int > 0, `4096`) · `temperature` (float, `0.7`) ·
 `mcp_servers` (dict, `{}`; entry: `command` *req*, `args` `[]`, `env` `{}`,
 `timeout_seconds` `30`) · `http` (dict, `{}`; entry: `url` *req*, `method`
 `"POST"`, `headers` `{}`, `timeout_seconds` `30`) · `process` (dict, `{}`; entry:
-`command` *req*, `args` `[]`, `timeout_seconds` `30`) · `preamble` (str, `""`) ·
+`command` *req*, `args` `[]`, `timeout_seconds` `30`) ·
 `allowed_module_prefixes` (list, `["arcagent."]`) · `operate_in_launch_dir`
 (bool, `False`)
 

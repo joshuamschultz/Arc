@@ -33,8 +33,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from arcmemory.promotion.ledger import LedgerRow, PromotionLedger, is_current
 from arctrust.signer import InProcessSigner
+
+from arcmemory.promotion.ledger import LedgerRow, PromotionLedger, is_current
 
 _Q1 = "sha256:" + "1" * 64
 _HASH_A = "sha256:" + "a" * 64
@@ -67,7 +68,7 @@ def _row(**overrides: object) -> LedgerRow:
         "item_id": "acme-renewal",
         "content_sha256": _HASH_A,
         "classifier_id": "jev",
-        "classifier_version": "jev-1.13",
+        "classifier_version": "jev-1.13.0",
         "question_version": _Q1,
         "decision": "keep_private",
         "label": "personal",
@@ -288,7 +289,7 @@ def _current_args(
     content_sha256: str = _HASH_A,
     classifier_id: str = "jev",
     question_version: str = _Q1,
-    classifier_model: str = "jev-1.13",
+    classifier_model: str = "jev-1.13.0",
 ) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
     return (
         SimpleNamespace(content_sha256=content_sha256),

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcprompt import load_stock
+from arcprompt import PromptSource
 from pydantic import BaseModel, Field
 
 
@@ -43,9 +43,9 @@ class ReflectionGrounding(BaseModel):
         """True when there is nothing concrete to reflect on."""
         return not (self.episode_summary.strip() or self.step_results or self.failures)
 
-    def to_messages(self) -> list[dict[str, str]]:
+    def to_messages(self, prompt_source: PromptSource) -> list[dict[str, str]]:
         """Render the grounding as the synthetic transcript the Reflector reads."""
-        header = load_stock("arcagent", "reflection_grounding_header")
+        header = prompt_source.resolve("arcagent", "reflection_grounding_header")
         lines = [header, "", f"Episode: {self.episode_summary}".strip()]
         if self.step_results:
             lines.append("Results:")
@@ -74,7 +74,7 @@ async def reflect_and_curate(
     if grounding.is_empty or model is None:
         return False
     await engine.evaluate(
-        grounding.to_messages(),
+        grounding.to_messages(engine.prompt_source),
         model,
         session_id=session_id,
         stage=tier == "federal",

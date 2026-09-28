@@ -39,6 +39,8 @@ from arcagent.core.config import ContextConfig
 from arcagent.core.telemetry import AgentTelemetry
 
 if TYPE_CHECKING:
+    from arcprompt import PromptSource
+
     from arcagent.core.module_bus import ModuleBus
 
 _logger = logging.getLogger("arcagent.context_manager")
@@ -340,6 +342,7 @@ class ContextManager:
         extra_sections: dict[str, str] | None = None,
         *,
         query: str = "",
+        prompt_source: PromptSource | None = None,
     ) -> AssembledPrompt:
         """Build the tiered system prompt from workspace files.
 
@@ -372,6 +375,11 @@ class ContextManager:
                 ``agent:assemble_prompt`` payload so memory (and any other
                 subscriber) can do query-conditioned retrieval. Empty on the
                 resume path where no live turn text exists.
+            prompt_source: The run's frozen prompt set (a snapshot-backed
+                ``PromptSource``), threaded into the payload so every handler
+                that adds a prompt-backed section resolves it from the same
+                snapshot as the rest of the run (REQ-123). ``None`` outside a
+                run; a handler then uses its configured source.
         """
         sections: dict[str, str] = {}
         for filename in _CORE_PROMPT_FILES:
@@ -385,7 +393,12 @@ class ContextManager:
         if self._bus is not None:
             await self._bus.emit(
                 "agent:assemble_prompt",
-                {"sections": sections, "workspace": str(workspace), "query": query},
+                {
+                    "sections": sections,
+                    "workspace": str(workspace),
+                    "query": query,
+                    "prompt_source": prompt_source,
+                },
             )
 
         # Merge caller-supplied sections (strategy guidance, etc.)

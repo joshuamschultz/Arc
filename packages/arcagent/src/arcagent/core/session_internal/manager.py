@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import arcrun
-from arcprompt import load_stock
+from arcprompt import PromptSource, StockPromptSource
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.utils.io import format_messages
@@ -124,8 +124,11 @@ class SessionManager:
         telemetry: Any,
         workspace: Path,
         context_manager: ContextManager | None = None,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         self._config = config
+        # The agent's overlay-aware prompt lookup; stock when constructed standalone.
+        self._prompt_source = prompt_source or StockPromptSource()
         self._context_config = context_config
         self._telemetry = telemetry
         self._workspace = workspace
@@ -507,7 +510,7 @@ class SessionManager:
     ) -> str:
         """Summarize messages into the structured schema via the eval model."""
         msg_text = format_messages(messages, limit=0, type_filter="message")
-        summary_template = load_stock("arcagent", "summary_template")
+        summary_template = self._prompt_source.resolve("arcagent", "summary_template")
 
         try:
             result = await arcrun.run_oneshot(

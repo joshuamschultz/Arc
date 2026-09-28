@@ -43,18 +43,22 @@ from arcllm import (
     NoulResult,
     NoulSpec,
 )
-from arcmemory.promotion.arcllm_classifier import ArcllmPromotionClassifier
+from arcprompt import StockPromptSource
 
+from arcmemory.promotion.arcllm_classifier import ArcllmPromotionClassifier
 from arcmemory.promotion.classifier import (
-    PROMOTION_QUESTION,
     ClassifierCallError,
     ClassifierInput,
     ClassifierUnavailableError,
     ClassifierVerdict,
     question_version,
 )
+from arcmemory.promotion.question import load_promotion_question
 
-_MODEL = "jev-1.13"
+#: The packaged stock question (arcmemory/context/promotion_classify.md), parsed.
+PROMOTION_QUESTION = load_promotion_question(StockPromptSource())
+
+_MODEL = "jev-1.13.0"
 _CONTENT = "  Acme renewal closes at $42k/yr; procurement needs a signed PO.\n"
 _ITEM = ClassifierInput(item_kind="insight", item_id="acme-renewal-7f3", content=_CONTENT)
 _PROBS = {"company": 0.97, "personal": 0.01, "agent_only": 0.01, "unclear": 0.01}

@@ -14,7 +14,9 @@ either missing is INVALID (``PinnedJudgeError``) — that is what makes "strict
 improvement" a fact about a fixed judge, not the judge's mood (locked design §2).
 
 This module owns the case model, its validation, and the per-type comparison. It is
-provider-free: the judge enters through the injected :class:`~arcskill.improver.seams.LLMInvoker`.
+provider-free: the judge enters through the injected :class:`~arcskill.improver.seams.LLMInvoker`,
+and the judge instructions come from ``arcskill/context/curated_judge_prompt.md`` through the
+caller's :class:`~arcprompt.PromptSource` (an operator override wins; stock otherwise).
 """
 
 from __future__ import annotations
@@ -23,8 +25,10 @@ import hashlib
 import re
 from typing import Literal
 
+from arcprompt import PromptSource, StockPromptSource
 from pydantic import BaseModel, ConfigDict, Field
 
+from arcskill.context import load_prompt
 from arcskill.improver.seams import LLMInvoker
 
 GateType = Literal["exact_match", "assertions", "judge_rubric"]
@@ -142,6 +146,7 @@ async def evaluate_curated_case(
     candidate_output: str,
     *,
     judge: LLMInvoker | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> CaseVerdict:
     """Compare ``candidate_output`` against ``case`` PER its ``gate_type`` (H-041).
 
@@ -171,7 +176,8 @@ async def evaluate_curated_case(
         return CaseVerdict(
             case_id=case.case_id, passed=False, detail="no judge wired (fail-closed)"
         )
-    verdict = await judge.invoke(_judge_prompt(case, candidate_output))
+    prompts = prompt_source or StockPromptSource()
+    verdict = await judge.invoke(_judge_prompt(case, candidate_output, prompts))
     passed = verdict.strip().lower().split()[:1] == [_VERDICT_OK]
     return CaseVerdict(
         case_id=case.case_id,
@@ -180,13 +186,10 @@ async def evaluate_curated_case(
     )
 
 
-def _judge_prompt(case: CuratedGoldenCase, candidate_output: str) -> str:
-    """Render the pinned rubric + candidate into a strict PASS/FAIL judge prompt."""
-    return (
-        "You are a strict evaluator. Apply the rubric to the candidate output.\n"
-        "Answer with exactly one word on the first line: PASS or FAIL.\n\n"
-        f"RUBRIC:\n{case.rubric}\n\n"
-        f"CANDIDATE OUTPUT:\n{candidate_output}\n"
+def _judge_prompt(case: CuratedGoldenCase, candidate_output: str, prompts: PromptSource) -> str:
+    """Render the pinned rubric + candidate into the strict PASS/FAIL judge prompt."""
+    return load_prompt("curated_judge_prompt", prompts).format(
+        rubric=case.rubric, candidate_output=candidate_output
     )
 
 

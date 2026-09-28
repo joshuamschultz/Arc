@@ -13,7 +13,6 @@ from arcprompt.catalog import (
     DEFAULT_PROMPT_PACKAGES,
     PromptCatalog,
     PromptRef,
-    PromptResolve,
     load_stock,
     load_stock_document,
 )
@@ -31,6 +30,7 @@ from arcprompt.errors import (
 )
 from arcprompt.resolver import PromptResolver
 from arcprompt.snapshot import PromptSnapshot, snapshot
+from arcprompt.source import PromptSource, ResolverPromptSource, StockPromptSource
 from arcprompt.verifier import SignatureVerifier, TrustPosture
 
 __version__ = "0.1.0"
@@ -43,12 +43,14 @@ __all__ = [
     "PromptFrontmatter",
     "PromptMissing",
     "PromptRef",
-    "PromptResolve",
     "PromptResolver",
     "PromptSnapshot",
+    "PromptSource",
     "PromptUnparseable",
     "PromptUnsigned",
+    "ResolverPromptSource",
     "SignatureVerifier",
+    "StockPromptSource",
     "TrustPosture",
     "__version__",
     "load_stock",

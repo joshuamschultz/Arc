@@ -23,7 +23,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 import arcrun
-from arcprompt import load_stock
+from arcprompt import PromptSource, StockPromptSource
 from pydantic import BaseModel, Field, ValidationError
 
 from arcagent.modules.planning.models import (
@@ -120,6 +120,11 @@ def _validate_or_raise(plan: Plan) -> None:
         raise DecompositionError(str(exc)) from exc
 
 
+def _planner_system(prompt_source: PromptSource | None) -> str:
+    """The planner system prompt: the agent's override first, stock standalone."""
+    return (prompt_source or StockPromptSource()).resolve("arcagent", "planner_system")
+
+
 async def decompose(
     goal: str,
     *,
@@ -130,10 +135,11 @@ async def decompose(
     max_replans: int,
     known_tools: Iterable[str],
     plan_id: str | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> Plan:
     """Goal -> validated, grounded :class:`Plan` (ACTIVE) — never persisted here."""
     messages = [
-        arcrun.Message(role="system", content=load_stock("arcagent", "planner_system")),
+        arcrun.Message(role="system", content=_planner_system(prompt_source)),
         arcrun.Message(role="user", content=f"Goal: {goal}"),
     ]
     draft = await _invoke_for_draft(model, messages)
@@ -166,6 +172,7 @@ async def replan(
     *,
     model: Any,
     known_tools: Iterable[str],
+    prompt_source: PromptSource | None = None,
 ) -> Plan:
     """Revise the *remaining* plan around a failure (REQ-030/032).
 
@@ -175,7 +182,7 @@ async def replan(
     """
     succeeded = [s for s in plan.steps if s.status is StepStatus.SUCCEEDED]
     messages = [
-        arcrun.Message(role="system", content=load_stock("arcagent", "planner_system")),
+        arcrun.Message(role="system", content=_planner_system(prompt_source)),
         arcrun.Message(
             role="user",
             content=(

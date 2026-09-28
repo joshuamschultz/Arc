@@ -138,6 +138,12 @@ class JevClassifier(ClassifierProvider):
     def model_name(self) -> str:
         return self._model
 
+    def check_available(self) -> None:
+        """The SDK imports and a key resolves — the same steps ``classify`` takes
+        first — without building a client or sending anything."""
+        self._import_sdk()
+        self._resolve_key()
+
     async def classify(self, request: ClassificationRequest) -> ClassificationResult:
         sdk = self._import_sdk()
         client = self._client(sdk, self._resolve_key())

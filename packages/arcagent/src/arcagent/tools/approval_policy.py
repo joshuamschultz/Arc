@@ -11,8 +11,9 @@ ADR-019):
 * **federal** — every skill AND every tool (the full effecting-capability surface).
 
 The same split governs which execution strategies a run may use: personal and
-enterprise leave the set open so each run picks the shape that fits its task,
-while federal narrows to ``react`` alone and cannot be widened by config.
+enterprise offer every auto-selectable strategy so the model picks the shape that
+fits each task, while federal narrows to ``react`` alone and cannot be widened by
+config.
 
 The provider binds the pause to SPEC-035 ``HumanGate`` (operator-signed one-shot
 ``ApprovalGrant``). arcrun mints/verifies nothing (REQ-012).
@@ -64,10 +65,11 @@ def resolve_approval_set(
 
 
 def resolve_allowed_strategies(configured: list[str] | None, tier: str) -> list[str] | None:
-    """Resolve which execution strategies a run may use, by tier.
+    """Resolve the operator's strategy ceiling, by tier.
 
-    personal and enterprise leave the set open: ``None`` reaches arcrun meaning
-    every registered strategy, so each run picks the shape that fits its task.
+    personal and enterprise return the configured ceiling unchanged — ``None``
+    means no ceiling, and :func:`narrowed_loop_controls` then offers every
+    auto-selectable strategy so each run picks the shape that fits its task.
     federal narrows to ``react`` alone, because the other strategies let a model
     author its own control flow, and at that tier the sequence of work must be
     something an operator approved rather than something a model invented.
@@ -228,29 +230,32 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
 def narrowed_loop_controls(
     agent: ArcAgent, session: SessionManager, requested: list[str] | None
 ) -> dict[str, Any]:
-    """Loop-control kwargs, narrowed by a caller-requested strategy allowlist.
+    """Loop-control kwargs, narrowed to the strategies this turn may use.
 
-    A caller (a workflow node, SPEC-061 REQ-243) may pin which strategies its
-    turn may use, but it may never WIDEN what the operator allowed in
-    ``arcrun.toml``: the request is intersected with a configured allowlist, so
-    the tighter set always wins — the same rule the per-run token/cost budget
-    follows.
+    The operator ceiling (``arcrun.toml`` ``allowed_strategies``, already floored
+    to ``react`` at federal) bounds every turn; nothing below widens it.
 
-    An un-pinned turn (``requested is None`` — the ordinary inbound message)
-    takes ``react`` alone unless the operator widened the ceiling. With one
-    strategy allowed arcrun skips the per-run ``select_strategy`` model call
-    entirely, so a basic message runs one full-context react turn instead of
-    paying a stripped selection call that could route it onto a model-authored
-    ``code`` / ``dynamic`` path. Widening the ceiling is how an operator opts
-    basic turns back into model-selected control flow.
+    * **Un-pinned turn** (``requested is None`` — an ordinary inbound message):
+      every **auto-selectable** strategy within the ceiling (react, code and
+      dynamic by default). With more than one on the table arcrun makes one
+      selection call and the model picks the shape that fits the task; federal
+      leaves only ``react``, so it makes none. A manual-only strategy
+      (``plan_execute``, ``oneshot``) is never auto-offered, even when the
+      ceiling lists it. A ceiling that holds no auto-selectable strategy at all
+      is used as-is: the operator allowed only those.
+    * **Pinned turn** (a workflow node or run names its strategies, SPEC-061
+      REQ-243): the request intersected with the ceiling — the tighter set
+      always wins, the same rule the per-run token/cost budget follows.
     """
     controls = build_loop_controls(agent, session)
+    ceiling: list[str] | None = controls.get("allowed_strategies")
     if requested is None:
-        controls["allowed_strategies"] = controls.get("allowed_strategies") or [_REACT]
+        auto = [name for name, s in arcrun.available_strategies().items() if s.auto_selectable]
+        offered = auto if ceiling is None else [name for name in auto if name in ceiling]
+        controls["allowed_strategies"] = offered or ceiling
         return controls
-    configured = controls.get("allowed_strategies")
     controls["allowed_strategies"] = (
-        requested if not configured else [s for s in requested if s in configured]
+        requested if ceiling is None else [s for s in requested if s in ceiling]
     )
     return controls
 

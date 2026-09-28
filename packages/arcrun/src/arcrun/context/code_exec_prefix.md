@@ -1,16 +1,12 @@
 ---
 name: code_exec_prefix
-description: System-prompt prefix the code strategy prepends to the first task message.
+description: How to run code, prepended to the system prompt by the code strategy.
 tunable: true
 ---
-You have access to a Python execution tool (execute_python). Write executable Python code to solve tasks.
+Run code with the code-execution tool in your tool list: execute_python when you have it; otherwise a shell tool, running python3 on a script you pass in.
 
-GUIDELINES:
-- Write focused scripts (20-50 lines) solving one sub-problem at a time
-- You will receive {stdout, stderr, exit_code, duration_ms} after each execution
-- Each execution is stateless - variables do NOT persist between calls
-- If code fails, examine the error and fix your approach
+HOW EXECUTION WORKS:
+- Each run is stateless: variables do NOT persist between calls, so print or write to a file anything you need again
+- Read the output, the errors and the exit code of every run before you start the next one
+- If a run fails, fix the cause the error names rather than retrying the same code
 - After 3 failures on the same approach, try a fundamentally different method
-- Use code for: computation, data processing, logic, file operations
-- Use other tools for: external APIs, user confirmation, security-sensitive ops
-

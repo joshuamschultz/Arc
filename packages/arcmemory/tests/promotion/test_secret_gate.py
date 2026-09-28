@@ -26,8 +26,9 @@ import re
 from typing import cast
 
 import pytest
-from arcmemory.promotion.secret_gate import contains_secret
 from arctrust.secrets import SECRET_PATTERNS
+
+from arcmemory.promotion.secret_gate import contains_secret
 
 # --- keyword cases (moved from test_privacy_filter.py + the rest of the regex) ---
 

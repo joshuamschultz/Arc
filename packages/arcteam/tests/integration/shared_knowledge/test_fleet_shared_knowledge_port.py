@@ -25,7 +25,7 @@ from arcteam.shared_knowledge import (
 )
 from arcteam.team import Team
 
-_VERSION = "jev-1.13"
+_VERSION = "jev-1.13.0"
 
 
 @dataclass(frozen=True)

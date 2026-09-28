@@ -7,6 +7,7 @@ or manipulate system prompt through indirect means.
 from __future__ import annotations
 
 import pytest
+from arcprompt import load_stock
 from packages.arcrun.tests.security.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
@@ -47,7 +48,11 @@ class TestSteeringInjection:
         tool_msgs = [m for m in messages if m.role == "tool"]
         system_msgs = [m for m in messages if m.role == "system"]
         assert len(tool_msgs) >= 1
-        assert len(system_msgs) == 1  # Only the original system prompt
+        # Only the caller's system prompt and the chosen strategy's guidance.
+        assert [m.content for m in system_msgs] == [
+            "Be helpful.",
+            load_stock("arcrun", "strategy_react"),
+        ]
 
     @pytest.mark.asyncio
     async def test_crafted_tool_output_stays_in_context(self):

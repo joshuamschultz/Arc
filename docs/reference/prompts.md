@@ -10,7 +10,7 @@ There are **two independent context mechanisms** in Arc. Don't confuse them:
 
 | | Managed prompts (arcprompt) | Workspace files |
 |---|---|---|
-| **What** | The ~31 harness/system prompts that drive model behavior | The agent's own `identity.md` and `context.md` |
+| **What** | The 49 harness/system prompts that drive model behavior | The agent's own `identity.md` and `context.md` |
 | **Where (stock)** | `packages/<pkg>/src/<pkg>/context/<name>.md` (ships in the wheel) | authored per agent |
 | **Where (live)** | overlay `<agent_root>/context/<package>/<name>.md` (signed) | `<agent_root>/workspace/identity.md`, `.../context.md` |
 | **Edited via** | repo (stock) · arcui Prompts tab / `arc prompt` CLI (overlay) | repo/arcui file editor (identity.md); auto-written by workpad (context.md) |
@@ -35,7 +35,7 @@ resolve(package, name):
 - **Two layers, first match wins.** Overlay over stock. No third layer.
 - **Fail-loud.** A present-but-broken overlay (bad frontmatter, empty body, missing/invalid/wrong-key signature) raises — it is never silently replaced by stock, so a deliberate override can't vanish unnoticed.
 - **Overlays are signed with the deployment operator key** (arcui / `arc prompt` sign with it; the agent's resolver pins the operator public key). Editing stock in the repo needs no signature — the file *is* the trusted baseline.
-- **Frozen per run.** At run start the agent resolves the *whole set* once into an immutable `PromptSnapshot`; every turn of that run sees identical bytes, and one `prompt.snapshot` audit event records package/name/source/sha256/signer for each. The next run picks up any change.
+- **Frozen per run.** At run start the agent resolves the *whole set* once into an immutable `PromptSnapshot`; every turn of that run sees identical bytes, and one `prompt.snapshot` audit event records package/name/source/sha256/signer for each. The next run picks up any change. The snapshot travels as the run's `PromptSource` (`arcprompt.ResolverPromptSource(snapshot)`): to arcrun (strategy guidance, selection, code/dynamic prompts), on the `agent:assemble_prompt` payload (`prompt_source`) so every module section resolves from it, and to every `spawn_task` child. An override written mid-run therefore changes nothing in that run. A prompt missing from the snapshot raises `arcprompt.PromptMissing`, the same as a missing stock file.
 
 ## 3. Stock vs overlay — where you edit
 
@@ -59,8 +59,8 @@ flowchart TB
     subgraph ASSEMBLE["assemble_system_prompt — tiered by change rate: session segment · run segment · turn block"]
       BASE["base  ← arcagent:base_system (the harness preamble, overlay-editable)"]
       ID["identity  ← workspace/identity.md (NOT arcprompt)"]
-      BUS["bus-injected sections (agent:assemble_prompt):<br/>• capabilities manifest (tool/skill XML, wraps arcagent:tool_manifest_preamble)<br/>• skill_usage ← arcagent:skill_usage_instruction (only if skills present)<br/>• recall ← memory module (retrieved memory, not a prompt file)"]
-      STRAT["strategy_* / strategy_selection / code_exec_guidance / contained_exec_guidance<br/>← arcrun get_strategy_prompts (snapshot-resolved)"]
+      BUS["bus-injected sections (agent:assemble_prompt, resolved from payload prompt_source = the run snapshot):<br/>• capabilities manifest (generated tool/skill XML, not a prompt file)<br/>• connections / teams / handoffs ← arcagent:connected_data_catalog / messaging_team_section (+ messaging_unavailable_note) / team_handoffs (only if that module is on)<br/>• procedures / memory_status ← arcagent:memory_procedure_guidance / memory_disabled_note (memory module)<br/>• skill_usage ← arcagent:skill_usage_instruction (only if skills present)<br/>• recall ← memory module (retrieved memory, not a prompt file)"]
+      STRAT["strategy guidance ← arcrun, inside the run: one arcrun:strategy_&lt;name&gt; for the strategy that actually runs (resolved through the run PromptSource)"]
       SPAWN["spawn_guidance ← arcagent:spawn_guidance (only if spawn enabled)"]
       CTX["context  ← workspace/context.md (NOT arcprompt; maintained by workpad)"]
     end
@@ -79,7 +79,7 @@ assembly therefore returns three parts:
 
 | Tier | Contents | Changes when | Cached as |
 |------|----------|--------------|-----------|
-| **session** | `base`, `identity`, capabilities manifest, `skill_usage`, `policy`, strategy + spawn guidance | a tool/skill is added, or identity.md is edited | segment 1 |
+| **session** | `base`, `identity`, capabilities manifest, `skill_usage`, `policy`, spawn guidance | a tool/skill is added, or identity.md is edited | segment 1 |
 | **run** | `context` (workspace/context.md), plus any section the assembler does not recognize | the workpad rewrites context.md | segment 2 |
 | **turn** | `recall`, `planning`, `teams` | every turn | not in the system prompt at all — see below |
 
@@ -89,17 +89,25 @@ So the model sees, top to bottom:
 # cache segment 1 — session-stable
 <base>                      (harness preamble)                        [arcagent:base_system]
 <identity>                  (workspace/identity.md)
-<capabilities>              (tool/skill manifest; preamble = tool_manifest_preamble)
-<code_exec_guidance>        (if execute_python is available)          [arcrun]
+<capabilities>              (generated tool/skill manifest XML)
 <policy>                    (if the policy module is on)
 <skill_usage>               (if the agent has skills)                 [arcagent:skill_usage_instruction]
 <spawn_guidance>            (if spawn enabled)                        [arcagent:spawn_guidance]
-<strategy_react>            (per allowed strategy)                    [arcrun:strategy_react]
-<strategy_selection>        (only if >1 strategy; built from *_description) [arcrun]
 
 # cache segment 2 — run-stable
 <context>                   (workspace/context.md)
+
+# added by arcrun after the host's system segments
+strategy guidance           (the ONE strategy that runs)              [arcrun:strategy_<name>]
 ```
+
+Strategy guidance is not an assembled section. arcrun adds the guidance of the
+strategy that actually runs, as its own system message after the host's segments,
+so the cached prefix above is untouched. On an un-pinned turn the run first makes
+one **selection call**: its system text is `arcrun:strategy_select` plus one
+`arcrun:strategy_<name>_description` line per allowed strategy, and the model picks
+`react`, `code`, or `dynamic` (see
+[Steering and strategies](../walkthrough/05-steering-and-strategies.md)).
 
 Within a tier: fixed head (`base`, then `identity`), then alphabetical, then fixed
 tail (`context`).
@@ -128,11 +136,14 @@ An unrecognized section falls back to the **run** tier: a module the assembler c
 vouch for must never sit in front of the session-stable segment.
 
 Section keys are stable identifiers, not the prompt names 1:1 — e.g. the `capabilities`
-section is generated XML wrapping the `tool_manifest_preamble` prose; `strategy_selection`
-is *composed* from the per-strategy `*_description` prompts.
+section is generated XML (no prompt file), and `teams` is `messaging_team_section`
+plus `messaging_unavailable_note` when a configured fleet is not connected.
 
-One outlier: **`arcrun:code_exec_prefix` is NOT a section.** The code strategy prepends it
-to the *first task message* inside its own loop (`strategies/code.py`), not to the system prompt.
+**Strategy-owned prompts are not sections either.** The code strategy prepends
+`arcrun:code_exec_prefix` to the run's first system message (`strategies/code.py`). The
+dynamic strategy adds `arcrun:dynamic_authoring` (the script language) to its own
+authoring call, and every child a dynamic script starts gets the parent's system text,
+the react guidance, and `arcrun:dynamic_child_framing`.
 
 ## 5. The other five execution contexts (NOT the turn stack)
 
@@ -141,8 +152,12 @@ resolving through the same stock/overlay rails at its own call site:
 
 | Context | Prompts | Consumer |
 |---|---|---|
-| **Memory consolidation** (sleep pass) | `arcmemory:consolidate_agent` (the consolidation agent's system prompt) + `distill_fact` / `distill_insight` / `distill_procedure` / `distill_event` / `distill_day` / `distill_disambiguate` / `distill_merge_confirm` (per-extraction system prompts) | `arcmemory/agent_consolidate.py`, `arcmemory/arcllm_seam.py` |
-| **Skill improver** | `arcskill:judge_prompt` + `judge_rubric` (structured YAML) · `reflection_prompt` · `code_repair_prompt` · `suitegen_prompt` · `nudge_template` | `arcskill/improver/{evaluator,mutate,suitegen}.py`, `.../nudge/nudge_emitter.py` |
+| **Memory consolidation** (sleep pass) | `arcmemory:consolidate_agent` (the consolidation agent's system prompt) + `distill_fact` / `distill_insight` / `distill_procedure` / `distill_event` / `distill_day` / `distill_disambiguate` / `distill_merge_confirm` / `distill_find_contradictions` / `consolidate_steps` (per-extraction system prompts) | `arcmemory/agent_consolidate.py`, `arcmemory/arcllm_seam.py` |
+| **Memory promotion** (nightly sweep) | `arcmemory:promotion_classify` (the classifier question sent to the Jev classifier) | `arcmemory/promotion/question.py` |
+| **Skill improver** | `arcskill:judge_prompt` + `judge_rubric` (structured YAML) · `curated_judge_prompt` · `reflection_prompt` · `code_repair_prompt` · `merge_prompt` · `suitegen_prompt` | `arcskill/improver/{evaluator,goldencase,mutate,suitegen}.py` |
+| **Skill outcome labels** (turn end) | `arcagent:skill_outcome_classifier` | `arcagent/modules/skills/outcome.py` |
+| **Planning** | `arcagent:planner_system` | `arcagent/modules/planning/decomposer.py` |
+| **Channel router** (shared-channel tiebreak) | `arcagent:messaging_channel_router` | `arcagent/modules/messaging/activation.py` |
 | **Policy reflection** | `arcagent:reflection_prompt` + `reflection_grounding_header` | `arcagent/modules/policy/{policy_engine,reflection}.py` |
 | **Workpad** (rewrites `context.md`) | `arcagent:context_maintainer_system` | `arcagent/modules/workpad/capabilities.py` |
 | **Compaction / summary** | `arcagent:summary_template` | `arcagent/core/session_internal/manager.py` |
@@ -151,38 +166,55 @@ resolving through the same stock/overlay rails at its own call site:
 > ⚠️ **Name collision:** `reflection_prompt` exists in BOTH `arcagent` (policy reflection) and
 > `arcskill` (improver mutation). They are different prompts — always namespace by package.
 
-## 6. Full inventory (31 prompts)
+## 6. Full inventory (49 prompts)
 
-### arcrun (9) — model-facing loop/strategy guidance; overlay-aware via the run snapshot
-| name | used in turn? | purpose |
+The live list is always `arc prompt list --agent <dir>`; every entry below is also
+proven end to end (ArcUI edit reaches the model wire) by
+`tests/integration/test_prompt_edit_conformance.py`.
+
+### arcrun (14) — loop/strategy guidance; resolved through the run's PromptSource
+| name | where it reaches the model | purpose |
 |---|---|---|
-| `strategy_react` | ✅ section | React loop guidance |
-| `strategy_react_description` | ✅ (selection) | one-line React description |
-| `strategy_code` | ✅ section (if code strategy) | code-exec loop guidance |
-| `strategy_code_description` | ✅ (selection) | one-line code description |
-| `code_exec_guidance` | ✅ (if `execute_python`) | when to prefer sandboxed code |
-| `contained_exec_guidance` | ✅ (if `contained_execute_python`) | when to prefer container-isolated code |
-| `code_exec_prefix` | prepended to 1st message | code-first framing in the code strategy |
+| `strategy_select` | selection call (un-pinned turn) | how to choose react / code / dynamic for this task |
+| `strategy_react` | system message (react runs) | Reason-Act-Observe loop guidance |
+| `strategy_code` | system message (code runs) | code-exec loop guidance |
+| `strategy_dynamic` | system message (dynamic runs) | model-authored orchestration guidance |
+| `strategy_plan_execute` | system message (pinned plan_execute) | plan-then-execute guidance |
+| `strategy_oneshot` | system message (pinned oneshot) | single bounded call, no tools |
+| `strategy_<name>_description` (×5) | selection call | one-line description per strategy |
+| `code_exec_prefix` | prepended to the first system message | how to run code in the code strategy |
+| `dynamic_authoring` | dynamic authoring call | the restricted script language |
+| `dynamic_child_framing` | every dynamic child's system message | framing for a child started by `agent()` |
 
-### arcagent (9)
-| name | used in turn? | purpose |
+### arcagent (17)
+| name | where it reaches the model | purpose |
 |---|---|---|
-| `spawn_guidance` | ✅ section (if spawn on) | how/when to spawn sub-agent tasks |
-| `skill_usage_instruction` | ✅ section (if skills) | how to use skills |
-| `tool_manifest_preamble` | ✅ (wraps capabilities manifest) | prose intro to the tool/skill manifest |
-| `context_maintainer_system` | ❌ workpad | rewrite `context.md` as an open-loops cockpit |
-| `summary_template` | ❌ compaction | session-summary format |
-| `reflection_prompt` | ❌ policy | policy self-reflection |
-| `reflection_grounding_header` | ❌ policy | grounding header for reflection |
-| `authoring_guidance` | ❌ tool authoring | guidance for dynamically authored tools |
+| `base_system` | section `base` | the harness preamble |
+| `spawn_guidance` | section (if spawn on) | how/when to spawn sub-agent tasks |
+| `skill_usage_instruction` | section (if skills) | read a skill's SKILL.md before using it |
+| `connected_data_catalog` | section `connections` (if connected_data on + sources) | nudge to search connected sources |
+| `messaging_team_section` | section `teams` (if messaging on) | team messaging behaviour (`str.format`: `{entity_name}`, `{entity_id}`) |
+| `messaging_unavailable_note` | appended to `teams` | fleet configured but messaging not connected |
+| `team_handoffs` | section `handoffs` (if tasks on) | hand work to the owning teammate |
+| `memory_procedure_guidance` | section `procedures` (memory live) | consult recorded procedures |
+| `memory_disabled_note` | section `memory_status` (brain inactive) | durable memory is off |
+| `messaging_channel_router` | channel router call | pick the one teammate to answer (`str.format`: `{channel}`, `{candidates}`) |
+| `planner_system` | planning decomposer call | emit a DAG of concrete steps |
+| `context_maintainer_system` | workpad call | rewrite `context.md` as an open-loops cockpit |
+| `summary_template` | compaction call | session-summary format |
+| `reflection_prompt` | policy call | policy self-reflection |
+| `reflection_grounding_header` | policy call | grounding header for reflection |
+| `skill_outcome_classifier` | turn-end classifier call | label a skill use success/failure/partial |
+| `authoring_guidance` | tool result | guidance appended to tool-authoring rejections |
 
-### arcmemory (7) — all in the consolidation/sleep pass
-`consolidate_agent`, `distill_fact`, `distill_insight`, `distill_procedure`, `distill_event`, `distill_day`, `distill_disambiguate`, `distill_merge_confirm`.
+### arcmemory (11) — consolidation/sleep pass and promotion
+`consolidate_agent`, `consolidate_steps`, `distill_fact`, `distill_insight`, `distill_procedure`, `distill_event`, `distill_day`, `distill_disambiguate`, `distill_find_contradictions`, `distill_merge_confirm`, `promotion_classify` (the memory-promotion classifier question).
 
-### arcskill (6) — all in the improver
-`judge_prompt`, `judge_rubric` (structured YAML: per-dimension checklist + calibration), `reflection_prompt`, `code_repair_prompt`, `suitegen_prompt`, `nudge_template`.
-> arcskill never imports arcprompt — it loads its own files and is *handed* an overlay-aware
-> resolver by arcagent when present, so its prompts are still editable/overridable/effective.
+### arcskill (7) — all in the improver
+`judge_prompt`, `judge_rubric` (structured YAML: per-dimension checklist + calibration), `curated_judge_prompt` (strict PASS/FAIL for a curated golden case), `reflection_prompt`, `code_repair_prompt`, `merge_prompt`, `suitegen_prompt`.
+> arcskill never imports arcprompt's manager — it is *handed* the agent's `PromptSource`
+> by arcagent when present and reads its own stock files otherwise, so its prompts are
+> still editable/overridable/effective.
 
 ## 7. File format
 

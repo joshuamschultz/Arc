@@ -56,6 +56,7 @@ def select_brain(
     backend_config: dict[str, Any] | None = None,
     promotion_config: Mapping[str, Any] | None = None,
     promotion_publisher: object | None = None,
+    prompt_source: object | None = None,
 ) -> Brain:
     """Return the configured Brain (fail-safe: any degrade path yields NullBrain).
 
@@ -68,6 +69,10 @@ def select_brain(
     ``promotion_publisher`` (the backend's shared-write seam) are ``None`` unless the
     agent opted into private -> shared promotion (SPEC-083); the backend builds its
     own classifier from the config.
+
+    ``prompt_source`` is the agent's overlay-aware prompt lookup (an
+    ``arcprompt.PromptSource``), forwarded opaquely so the backend's model-bound
+    prompts honor the operator's edits; ``None`` lets the backend use stock.
     """
     context: dict[str, Any] = {
         "workspace": workspace,
@@ -83,6 +88,7 @@ def select_brain(
         "backend_config": backend_config or {},
         "promotion_config": promotion_config,
         "promotion_publisher": promotion_publisher,
+        "prompt_source": prompt_source,
     }
     brain: Brain = select_extension(
         _BRAIN_POINT,

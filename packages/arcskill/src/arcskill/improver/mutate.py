@@ -12,7 +12,9 @@ import logging
 import re
 from collections import Counter
 
-from arcskill.context import PromptResolve, load_prompt
+from arcprompt import PromptSource, StockPromptSource
+
+from arcskill.context import load_prompt
 from arcskill.improver._util import sanitize_text
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.models import BundlePatch, BundleView, DimensionScore, SkillTrace
@@ -28,11 +30,15 @@ class SkillReflector:
     """Propose constrained mutations to skill text based on failure analysis."""
 
     def __init__(
-        self, config: ImproverConfig, llm: LLMInvoker, *, resolve: PromptResolve | None = None
+        self,
+        config: ImproverConfig,
+        llm: LLMInvoker,
+        *,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         self._config = config
         self._llm = llm
-        self._resolve = resolve
+        self._prompts = prompt_source or StockPromptSource()
 
     def build_reflection_prompt(
         self,
@@ -49,7 +55,7 @@ class SkillReflector:
         )
         dims_text = ", ".join(weak_dimensions) if weak_dimensions else "general"
 
-        return load_prompt("reflection_prompt", resolve=self._resolve).format(
+        return load_prompt("reflection_prompt", self._prompts).format(
             dims_text=dims_text,
             token_budget=token_budget,
             current_text=current_text,
@@ -130,9 +136,9 @@ class LLMCodeMutator:
     (ASI05). Provider-free: the LLM enters through the injected :class:`LLMInvoker` seam.
     """
 
-    def __init__(self, llm: LLMInvoker, *, resolve: PromptResolve | None = None) -> None:
+    def __init__(self, llm: LLMInvoker, *, prompt_source: PromptSource | None = None) -> None:
         self._llm = llm
-        self._resolve = resolve
+        self._prompts = prompt_source or StockPromptSource()
 
     async def propose(
         self, *, kind: str, current: BundleView, failures: str, insight: str
@@ -153,7 +159,7 @@ class LLMCodeMutator:
             for rel, data in scripts.items()
         )
         insight_block = f"\nRECURRING-FAILURE INSIGHT:\n{insight}\n" if insight else ""
-        return load_prompt("code_repair_prompt", resolve=self._resolve).format(
+        return load_prompt("code_repair_prompt", self._prompts).format(
             failures=failures,
             insight_block=insight_block,
             files_text=files_text,
@@ -192,12 +198,12 @@ class LLMSkillMerger:
     other skill mutation — the Curator never hot-swaps a merge in directly.
     """
 
-    def __init__(self, llm: LLMInvoker, *, resolve: PromptResolve | None = None) -> None:
+    def __init__(self, llm: LLMInvoker, *, prompt_source: PromptSource | None = None) -> None:
         self._llm = llm
-        self._resolve = resolve
+        self._prompts = prompt_source or StockPromptSource()
 
     async def propose(self, *, a: BundleView, b: BundleView, insight: str) -> BundlePatch | None:
-        prompt = load_prompt("merge_prompt", resolve=self._resolve).format(
+        prompt = load_prompt("merge_prompt", self._prompts).format(
             skill_a_name=a.skill_name,
             skill_a_text=a.text,
             skill_b_name=b.skill_name,

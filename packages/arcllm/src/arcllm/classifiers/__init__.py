@@ -2,8 +2,9 @@
 
 A classifier is a removable drop-in: any module or folder directly under
 ``arcllm/classifiers/`` that exports ``CLASSIFIER`` (a ``ClassifierProvider``
-subclass constructible as ``CLASSIFIER(model)``) and, optionally,
-``API_KEY_ENV`` (the env var its key may come from). There is no central list
+subclass constructible as ``CLASSIFIER(model)``, which also accepts the
+keyword-only key coordinate ``api_key_env=`` / ``vault_path=``) and, optionally,
+``API_KEY_ENV`` (the env var its key comes from by default). There is no central list
 to edit. Delete a drop-in's folder and its name resolves to
 ``ArcLLMClassifierUnavailableError``; everything else keeps working.
 
@@ -42,8 +43,11 @@ def _import_drop_in(name: str) -> ModuleType:
     return importlib.import_module(f"{__name__}.{name}")
 
 
-def load_classifier(name: str, model: str) -> ClassifierProvider:
+def load_classifier(name: str, model: str, **key_coordinate: str) -> ClassifierProvider:
     """Construct drop-in ``name`` for ``model``.
+
+    ``key_coordinate`` (``api_key_env`` / ``vault_path``) is forwarded to the
+    drop-in so the operator's configured key location reaches it.
 
     Raises:
         ArcLLMConfigError: ``name`` is malformed, or the drop-in does not
@@ -63,9 +67,9 @@ def load_classifier(name: str, model: str) -> ClassifierProvider:
         raise ArcLLMConfigError(
             f"Classifier drop-in '{name}' does not export a ClassifierProvider as CLASSIFIER"
         )
-    # Drop-in contract (module docstring): CLASSIFIER(model) constructs it.
-    factory = cast("Callable[[str], ClassifierProvider]", cls)
-    return factory(model)
+    # Drop-in contract (module docstring): CLASSIFIER(model, **key_coordinate).
+    factory = cast("Callable[..., ClassifierProvider]", cls)
+    return factory(model, **key_coordinate)
 
 
 def list_classifier_keys() -> tuple[ProviderKey, ...]:

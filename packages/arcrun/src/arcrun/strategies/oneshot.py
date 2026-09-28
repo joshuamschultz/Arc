@@ -21,6 +21,22 @@ from arcrun.strategies import Strategy
 from arcrun.strategies.react import accumulate_usage, build_result
 from arcrun.types import LoopResult
 
+# Output cap used when the model reports no limit of its own. Bounded so a run
+# budget can never become the provider's output cap verbatim.
+DEFAULT_OUTPUT_CEILING = 8192
+
+
+def _output_cap(model: Any, requested: int) -> int:
+    """Clamp ``requested`` to the model's output limit (arcllm metadata) or the default.
+
+    ``state.max_tokens`` is the run's token budget on a pinned run, and a caller's
+    output ceiling on ``run_oneshot``; either way the call must not ask a provider
+    for more output than its model can emit.
+    """
+    limit = getattr(model, "max_output_tokens", None)
+    ceiling = limit if isinstance(limit, int) and limit > 0 else DEFAULT_OUTPUT_CEILING
+    return min(requested, ceiling)
+
 
 class OneShotStrategy(Strategy):
     """One model call against the state's messages, then done."""
@@ -49,7 +65,11 @@ class OneShotStrategy(Strategy):
         state.max_turns = 1
         # No ceiling means no kwarg: a caller who declined to cap the output must
         # not have one invented for it by a default further down the stack.
-        cap = {"max_tokens": state.max_tokens} if state.max_tokens is not None else {}
+        cap = (
+            {"max_tokens": _output_cap(model, state.max_tokens)}
+            if state.max_tokens is not None
+            else {}
+        )
         response = await model.invoke(state.messages, **cap)
         accumulate_usage(state, response)
         state.turn_count = 1

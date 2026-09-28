@@ -30,11 +30,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from arcmemory.adapters.memory_export import ConsolidatedMemoryExporter
-from arcmemory.promotion.render import render_candidate
 
+from arcmemory.adapters.memory_export import ConsolidatedMemoryExporter
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.promotion.render import render_candidate
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore

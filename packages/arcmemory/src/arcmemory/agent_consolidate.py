@@ -15,9 +15,10 @@ This module holds NO arcrun import — it drives the loop through the injectable
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
-from arcprompt import load_stock
+from arcprompt import PromptSource, StockPromptSource
 
 from arcmemory.config import MemoryConfig
 from arcmemory.react_adapter import ReactLoop, run_react_loop
@@ -55,19 +56,25 @@ async def run_agentic_consolidation(
     actor_did: str,
     react_loop: ReactLoop = run_react_loop,
     store_raw_bodies: bool = False,
+    prompts: PromptSource | None = None,
 ) -> AgenticResult:
     """Run one bounded agentic consolidation; never raise, degrade on breach/timeout.
 
     Caps are TIGHT (from ``config``): a bounded number of turns/tokens and a
     wall-clock timeout, all enforced by the adapter. Returns ``degraded=True`` when
     the loop could not complete cleanly so the caller can fall back.
+
+    The system prompt (``arcmemory/consolidate_agent``) is resolved through
+    ``prompts`` — the agent's overlay-aware source, or stock when standalone.
     """
     if not episodes:
         return AgenticResult()
+    source = prompts if prompts is not None else StockPromptSource()
+    system_prompt = await asyncio.to_thread(source.resolve, "arcmemory", "consolidate_agent")
     outcome = await react_loop(
         model=model,
         tools=tools,
-        system_prompt=load_stock("arcmemory", "consolidate_agent"),
+        system_prompt=system_prompt,
         task=_render_task(episodes),
         max_turns=config.consolidate_agent_max_turns,
         max_tokens=config.consolidate_agent_max_tokens,

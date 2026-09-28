@@ -28,8 +28,10 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from arcprompt import StockPromptSource
+from arctrust import canonical_json
+
 from arcmemory.promotion.classifier import (
-    PROMOTION_QUESTION,
     ClassifierCallError,
     ClassifierInput,
     ClassifierUnavailableError,
@@ -37,47 +39,59 @@ from arcmemory.promotion.classifier import (
     PromotionClassifier,
     question_version,
 )
-from arctrust import canonical_json
+from arcmemory.promotion.question import load_promotion_question
+
+#: The packaged stock question (arcmemory/context/promotion_classify.md), parsed.
+PROMOTION_QUESTION = load_promotion_question(StockPromptSource())
 
 _LABELS = {"company", "personal", "agent_only", "unclear"}
 
 _CANONICAL_QUESTION = {
     "scope": {
         "type": "choice",
-        "instructions": "Who is this remembered fact or method useful to?",
+        "instructions": (
+            "This is one note remembered by an AI assistant that works on a company team. "
+            "Would it help other people or other AI assistants on the same company team?"
+        ),
         "criteria": {
             "company": {
                 "what": (
-                    "The business: company operations, deals (terms, clients, "
-                    "counterparties, pricing), market and competitor information, and "
-                    "processes or procedures other people in the company could reuse."
+                    "Useful to the company team: people, organizations, clients, partners, "
+                    "vendors, products, tools and systems the business uses or builds; deals "
+                    "(terms, pricing, counterparties); market and competitor information; and "
+                    "procedures or working methods any teammate or assistant could reuse, such "
+                    "as how to follow up on commitments, diagnose a tool failure, or delegate work."
                 ),
-                "not_for": "The operator's private life or personal side projects.",
+                "not_for": "The operator's private life.",
             },
             "personal": {
                 "what": (
-                    "The operator's personal life (family, health, home, personal "
-                    "finances, hobbies) or their own personal side projects and tinkering."
+                    "The operator's private life: family, health, home, personal money, "
+                    "personal appointments, hobbies, and side projects unrelated to the business."
                 ),
-                "not_for": "Company deals or company processes.",
+                "not_for": "Business contacts, company work, or general working methods.",
             },
             "agent_only": {
                 "what": (
-                    "Housekeeping only this one assistant needs: its own tool quirks, "
-                    "session state, scratch notes, formatting preferences."
+                    "Only meaningful to this one assistant's own setup and would confuse others: "
+                    "its private configuration, identity files, one-off session state, scratch notes."
                 ),
+                "not_for": "General working methods other assistants could also follow.",
             },
             "unclear": {
                 "what": (
-                    "None of these, not enough information to tell, or text that is "
-                    "not a statement about work or personal life."
+                    "None of these, not enough information to tell, or text that is not a "
+                    "statement about work or personal life."
                 ),
             },
         },
     },
     "personal_check": {
         "type": "noul",
-        "instructions": "This text is about the operator's personal life or personal projects.",
+        "instructions": (
+            "This text is mainly about the operator's private life "
+            "(family, health, home, personal money, hobbies)."
+        ),
     },
 }
 
@@ -105,7 +119,7 @@ def _verdict(**overrides: object) -> ClassifierVerdict:
         "probabilities": {"company": 0.97, "personal": 0.01, "agent_only": 0.01, "unclear": 0.01},
         "personal_probability": 0.02,
         "classifier_id": "jev",
-        "classifier_version": "jev-1.13",
+        "classifier_version": "jev-1.13.0",
         "request_id": "req-1",
         "input_tokens": 42,
     }
@@ -117,7 +131,7 @@ def _verdict(**overrides: object) -> ClassifierVerdict:
 
 
 def test_promotion_question_is_the_canonical_choice_plus_noul() -> None:
-    """The exact question from the SDD — its text IS the versioned contract."""
+    """The stock question v2 (measured best on 227 labelled fleet memories) — its text IS the versioned contract."""
     assert _plain(PROMOTION_QUESTION) == _CANONICAL_QUESTION
 
 
@@ -240,6 +254,9 @@ class _FakeClassifier:
         self._verdict = verdict
         self.seen: list[ClassifierInput] = []
 
+    async def ensure_available(self) -> None:
+        return None
+
     async def classify(self, item: ClassifierInput) -> ClassifierVerdict:
         self.seen.append(item)
         return self._verdict
@@ -253,6 +270,6 @@ async def test_fake_classifier_satisfies_the_protocol_contract() -> None:
     verdict = await classifier.classify(item)
 
     assert verdict.label == "company"
-    assert verdict.classifier_version == "jev-1.13"
+    assert verdict.classifier_version == "jev-1.13.0"
     assert classifier.question_version.startswith("sha256:")
     assert fake.seen == [item]

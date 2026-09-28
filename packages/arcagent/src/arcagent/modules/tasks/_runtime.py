@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.modules.tasks.config import TasksConfig
 from arcagent.modules.tasks.store import open_store
 
@@ -47,6 +49,8 @@ class _State:
     telemetry: Any
     identity: AgentIdentity
     arcstore_opener: Any = None
+    # The agent's prompt lookup — the handoff section an operator may override.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
     # The config-resolved OPERATOR signer (audit authority) — signs the live
     # messenger's ``message.sent`` WORM audit chain (SEC-F1), never the agent
     # DID seed, never an ephemeral key. None only in test paths that inject a
@@ -138,6 +142,7 @@ def configure(
     bus: Any = None,
     tool_registry: Any = None,
     team_root: str = "",
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -165,6 +170,7 @@ def configure(
             bus=bus,
             tool_registry=tool_registry,
             team_root=team_root,
+            prompt_source=prompt_source or StockPromptSource(),
         )
     )
 

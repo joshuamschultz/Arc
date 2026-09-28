@@ -21,7 +21,7 @@ from arctrust.audit import AuditEvent
 
 from arcteam.shared_knowledge import FleetSharedKnowledgeService
 
-VERSION = "jev-1.13"
+VERSION = "jev-1.13.0"
 
 
 class _Access:

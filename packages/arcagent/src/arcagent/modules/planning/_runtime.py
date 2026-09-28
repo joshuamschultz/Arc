@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.modules.planning.config import PlanningConfig
 from arcagent.modules.planning.models import PlanBudget
 from arcagent.modules.planning.store import PlanStore
@@ -54,6 +56,8 @@ class _State:
     # Tool names known to the agent — grounds decomposition (REQ-005). Empty
     # until a live registry populates it; the protected-path gate still fires.
     known_tools: set[str] = field(default_factory=set)
+    # The agent's prompt lookup — the planner system prompt an operator may override.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
 
     @property
     def budget(self) -> PlanBudget:
@@ -82,6 +86,7 @@ def configure(
     agent_name: str = "",
     agent_did: str = "",
     operator_signer: Any = None,
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -114,6 +119,7 @@ def configure(
             llm_config=llm_config,
             eval_config=eval_config,
             eval_label=f"{agent_name}/eval" if agent_name else "eval",
+            prompt_source=prompt_source or StockPromptSource(),
         )
     )
 

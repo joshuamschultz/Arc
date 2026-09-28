@@ -6,7 +6,7 @@ impl (``NullSkillAdapter`` / ``arcskill`` / a signed BYO class path). Mirrors
 :mod:`arcagent.brain`. See :mod:`arcagent.skilladapt.protocol`.
 """
 
-from arcagent.skilladapt.protocol import NullSkillAdapter, SkillAdapter
+from arcagent.skilladapt.protocol import LLMInvoker, NullSkillAdapter, SkillAdapter
 from arcagent.skilladapt.select import select_skill_adapter
 
-__all__ = ["NullSkillAdapter", "SkillAdapter", "select_skill_adapter"]
+__all__ = ["LLMInvoker", "NullSkillAdapter", "SkillAdapter", "select_skill_adapter"]

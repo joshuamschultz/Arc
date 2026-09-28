@@ -30,13 +30,14 @@ from arcmemory.adapters import PersonalKnowledgeAdapter
 from arcmemory.consolidate import _HYGIENE_LAST_NAME
 from arcmemory.distill import EventExtraction, FactExtraction, InsightMint, ProcedureExtraction
 from arcmemory.promotion.classifier import (
-    PROMOTION_QUESTION,
     ClassifierInput,
     ClassifierVerdict,
     question_version,
 )
+from arcmemory.promotion.question import load_promotion_question
 from arcmemory.stores.insight import InsightStore
 from arcmemory.types import Event, Insight, Procedure
+from arcprompt import StockPromptSource
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.paths import identity_dir, module_root, operator_dir
 
@@ -56,6 +57,9 @@ from arcagent.knowledge import (
     KnowledgeAccess,
 )
 
+#: The packaged stock question (arcmemory/context/promotion_classify.md), parsed.
+PROMOTION_QUESTION = load_promotion_question(StockPromptSource())
+
 _SOURCE_CATALOG = Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
 _ISSUER = "did:arc:test-operator"
 _ISSUER_KEYPAIR = generate_keypair()
@@ -69,6 +73,9 @@ class _Classifier:
     def __init__(self) -> None:
         self.inputs: list[ClassifierInput] = []
 
+    async def ensure_available(self) -> None:
+        return None
+
     async def classify(self, item: ClassifierInput) -> ClassifierVerdict:
         self.inputs.append(item)
         return ClassifierVerdict(
@@ -77,7 +84,7 @@ class _Classifier:
             probabilities={"company": 0.97, "personal": 0.01, "agent_only": 0.01, "unclear": 0.01},
             personal_probability=0.02,
             classifier_id="jev",
-            classifier_version="jev-1.13",
+            classifier_version="jev-1.13.0",
             request_id=None,
             input_tokens=None,
         )
@@ -129,7 +136,7 @@ def classifier(monkeypatch: pytest.MonkeyPatch) -> _Classifier:
 
     fake = _Classifier()
     monkeypatch.setattr(
-        provider, "_promotion_classifier", lambda cfg: fake if cfg is not None else None
+        provider, "_promotion_classifier", lambda cfg, _prompts: fake if cfg is not None else None
     )
     monkeypatch.setattr(provider, "build_distiller", lambda *_a, **_k: _NullDistiller())
     return fake

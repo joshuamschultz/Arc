@@ -75,7 +75,7 @@ top_k = 9  # operator tuned
 [modules.memory.config.promotion]
 enabled = false
 confidence_threshold = 0.95
-classifier_model = "jev-1.13"
+classifier_model = "jev-1.13.0"
 max_items_per_sweep = 50  # unrelated promotion knob must survive
 
 [modules.connectors]
@@ -226,7 +226,7 @@ def test_show_prints_settings_tier_and_key_not_set(
     assert code == 0
     assert "enabled: false" in out.lower()
     assert "0.95" in out
-    assert "jev-1.13" in out
+    assert "jev-1.13.0" in out
     assert "personal" in out
     assert "key: not set" in out
 
@@ -260,7 +260,7 @@ def test_show_json_has_the_shared_settings_shape_and_no_value(
     assert payload == {
         "enabled": False,
         "confidence_threshold": 0.95,
-        "classifier_model": "jev-1.13",
+        "classifier_model": "jev-1.13.0",
         "tier": "federal",
         "federal_locked": True,
         "key_set": True,
@@ -281,7 +281,7 @@ def test_show_uses_defaults_when_the_agent_has_no_promotion_block(
     assert code == 0
     assert payload["enabled"] is False
     assert payload["confidence_threshold"] == 0.95
-    assert payload["classifier_model"] == "jev-1.13"
+    assert payload["classifier_model"] == "jev-1.13.0"
     assert payload["federal_locked"] is False
 
 
@@ -302,7 +302,7 @@ def test_show_on_a_directory_without_an_agent_config_exits_nonzero(
 def test_set_writes_the_promotion_block(personal_agent: Path, world: list[str]) -> None:
     code = _run(
         "promotion", "set", str(personal_agent),
-        "--enabled", "--threshold", "0.96", "--model", "jev-1.13",
+        "--enabled", "--threshold", "0.96", "--model", "jev-1.13.0",
         *world,
     )  # fmt: skip
 
@@ -310,7 +310,7 @@ def test_set_writes_the_promotion_block(personal_agent: Path, world: list[str]) 
     block = _promotion(personal_agent)
     assert block["enabled"] is True
     assert block["confidence_threshold"] == 0.96
-    assert block["classifier_model"] == "jev-1.13"
+    assert block["classifier_model"] == "jev-1.13.0"
 
 
 def test_set_preserves_every_other_setting_and_comment(
@@ -526,7 +526,7 @@ def test_each_change_is_its_own_event(
     changes = [e["extra"]["changes"] for e in _config_events(arc_dir, data_dir)]
     assert changes == [
         {"confidence_threshold": {"old": 0.95, "new": 0.96}},
-        {"classifier_model": {"old": "jev-1.13", "new": "jev-1.14"}},
+        {"classifier_model": {"old": "jev-1.13.0", "new": "jev-1.14"}},
     ]
 
 

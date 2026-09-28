@@ -51,7 +51,7 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def test_enabled_mapping_builds_config_classifier_publisher_and_signer(
     tmp_path: Path, recorded: dict[str, Any]
 ) -> None:
-    build_brain(_context(tmp_path, {"enabled": True, "classifier_model": "jev-1.13"}))
+    build_brain(_context(tmp_path, {"enabled": True, "classifier_model": "jev-1.13.0"}))
 
     assert recorded["promotion_config"] == PromotionConfig(enabled=True)
     classifier = recorded["promotion_classifier"]

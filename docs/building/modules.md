@@ -383,12 +383,13 @@ Modules are shared-nothing by design. The rules that keep them decoupled:
 - **Per-module facts are declared by the module's own `configure()` signature — core names
  no module.** `configure_module_runtimes` offers every module a fixed menu of framework
  values (`config`, `telemetry`, `workspace`, `bus`, `identity`, `policy_pipeline`,
- `egress_proxy`, `operator_signer`, …) and delivers only the ones the module's
- `configure()` actually declares as parameters:
+ `egress_proxy`, `operator_signer`, `prompt_source`, …) and
+ `RuntimeDependencies.select_for` delivers only the ones the module's `configure()`
+ actually declares as keyword parameters from the closed `DependencyKey` vocabulary
+ (ADR-033):
 
   ```python
-  sig = inspect.signature(configure_fn)
-  kwargs = {name: value for name, value in available.items() if name in sig.parameters}
+  kwargs = runtime_dependencies.select_for(configure_fn, module_config)
   configure_fn(**kwargs)
   ```
 
@@ -396,13 +397,42 @@ Modules are shared-nothing by design. The rules that keep them decoupled:
  naming that parameter — not something core special-cases. A generic module cannot harvest
  signing authority unless it explicitly asks for it (SPEC-037); the WORM-sink modules
  that do ask sign by reference under `vault_transit`, never the seed. `configure()` is
- fail-open: an exception is logged and the loop continues.
+ **fail-closed**: every enabled module is required, so a `configure()` exception aborts
+ agent startup with the cause chained (ADR-033). A half-configured agent would hide the
+ failure until some later tool silently no-ops.
+
+- **A module that sends a prompt names `prompt_source` (COMP-030).** It receives the
+ agent's `arcprompt.PromptSource`: the operator's ArcUI override for this agent first, the
+ packaged stock prompt otherwise. It is the live, overlay-aware resolver — it resolves on
+ every call, so an edit applies to the module's next model call outside a run (a
+ background pass, a router call). **Inside a run, use the run's frozen set:** an
+ `agent:assemble_prompt` handler resolves from the payload's `prompt_source` (the run's
+ snapshot) and falls back to its configured source —
+ `source = ctx.data.get("prompt_source") or st.prompt_source` — so an override written
+ mid-run never changes a section of that run and reaches the next one. Ship each
+ prompt as `<package>/context/<name>.md` and read it with
+ `source.resolve(package, name)` — never `arcprompt.load_stock`, which skips the
+ override, and never an inline string sent to the model. Default the parameter to
+ `arcprompt.StockPromptSource()` so the module still works standalone.
 
 - **Shared framework pieces live in `core/` and `utils/`, not in a module.** The
  `ModuleConfig` base (`core/module_config.py`), discovery (`core/module_discovery.py`),
  the module bus, and utilities like `utils/audit.safe_audit`, `utils/io.atomic_write_text`,
  and `utils/model_helpers` are the common ground. Three modules use a pattern before it is
  extracted to `utils/`. Core stays ignorant of any specific module.
+
+- **Operator actions reach a module through an operation contract, not its name.** When
+ a surface (ArcUI, via the serve process's `embedded_agent_cache`) must ask a RUNNING agent
+ to do a module-owned operation, `ArcAgent` exposes one public method and looks up the
+ `@capability(name=...)` registered under the *operation's* name, then calls it with the
+ agent's own DID. `ArcAgent.run_memory_promotion()` finds the `memory_promotion` capability
+ (shipped by the memory module, `MemoryPromotionRun`) and awaits
+ `run(agent_did=..., max_items=...)`; `reconcile_connectors()` does the same for
+ `connectors`. Any module may provide the contract; with none active the method raises
+ `arcagent.CapabilityUnavailableError` (the route maps it to `503`). The module resolves its
+ state by the named DID (`state_for`), never the ambient turn binding. The module bus is not
+ used for this: its handlers are fail-open and time-bounded at 30 s, which suits
+ notifications, not a long operator-requested operation whose result the caller needs.
 
 - **A module must survive its own absence.** Every module is removable with no loss of
  function to the package beyond that one capability. Nothing in core imports a module by

@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from arcprompt import StockPromptSource
 from arctrust.audit import AuditEvent
 from arctrust.signer import InProcessSigner
 
@@ -26,14 +27,17 @@ from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import _HYGIENE_LAST_NAME
 from arcmemory.distill import EventExtraction, FactExtraction, InsightMint, ProcedureExtraction
 from arcmemory.promotion.classifier import (
-    PROMOTION_QUESTION,
     ClassifierInput,
     ClassifierVerdict,
     question_version,
 )
 from arcmemory.promotion.config import PromotionConfig
+from arcmemory.promotion.question import load_promotion_question
 from arcmemory.stores.insight import InsightStore
 from arcmemory.types import Event, Insight, Procedure
+
+#: The packaged stock question (arcmemory/context/promotion_classify.md), parsed.
+PROMOTION_QUESTION = load_promotion_question(StockPromptSource())
 
 _DID = "did:arc:test-agent"
 
@@ -64,6 +68,9 @@ class _Classifier:
     def __init__(self) -> None:
         self.inputs: list[ClassifierInput] = []
 
+    async def ensure_available(self) -> None:
+        return None
+
     async def classify(self, item: ClassifierInput) -> ClassifierVerdict:
         self.inputs.append(item)
         return ClassifierVerdict(
@@ -72,7 +79,7 @@ class _Classifier:
             probabilities={"company": 0.97, "personal": 0.01, "agent_only": 0.01, "unclear": 0.01},
             personal_probability=0.02,
             classifier_id="jev",
-            classifier_version="jev-1.13",
+            classifier_version="jev-1.13.0",
             request_id=None,
             input_tokens=None,
         )

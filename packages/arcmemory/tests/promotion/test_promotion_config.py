@@ -10,7 +10,7 @@ Contract under test (SDD COMP-011, README decisions 4, 5, 7):
 - frozen ``PromotionConfig`` with ``enabled=False``, ``confidence_threshold=0.95``
   (``0.90 <= x <= 1.0``), ``max_personal_probability=0.10``,
   ``max_items_per_sweep=200``, ``max_item_bytes=16_384``, ``classifier="jev"``,
-  ``classifier_model="jev-1.13"`` (pinned; ``*-latest`` aliases rejected),
+  ``classifier_model="jev-1.13.0"`` (pinned; ``*-latest`` aliases rejected),
   ``request_timeout_seconds=10.0``. Band fields are gone.
 - ``PromotionConfig.for_tier(tier, **operator)`` raises
   ``PromotionForbiddenAtTierError`` when ``tier == "federal"`` and ``enabled``.
@@ -34,7 +34,7 @@ _EXPECTED_DEFAULTS = {
     "max_items_per_sweep": 200,
     "max_item_bytes": 16_384,
     "classifier": "jev",
-    "classifier_model": "jev-1.13",
+    "classifier_model": "jev-1.13.0",
     "request_timeout_seconds": 10.0,
     "api_key_env": "TYPESAFE_API_KEY",
     "vault_path": None,

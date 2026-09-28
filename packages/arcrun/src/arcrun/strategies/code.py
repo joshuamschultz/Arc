@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcprompt import load_stock
-
 from arcrun._messages import content_text, system_message
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
@@ -32,7 +30,7 @@ class CodeExecStrategy(Strategy):
         max_turns: int,
     ) -> LoopResult:
         original = content_text(state.messages[0].content)
-        prefix = load_stock("arcrun", "code_exec_prefix")
+        prefix = state.prompt_source.resolve("arcrun", "code_exec_prefix")
         state.messages[0] = system_message(prefix + "\n" + original)
 
         state.event_bus.emit(

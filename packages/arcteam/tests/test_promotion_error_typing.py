@@ -30,7 +30,7 @@ from arcteam.shared_knowledge import (
     SharedKnowledgeUnavailableError,
 )
 
-VERSION = "jev-1.13"
+VERSION = "jev-1.13.0"
 
 
 class _Access:

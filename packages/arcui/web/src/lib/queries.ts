@@ -1518,6 +1518,23 @@ export const useSaveMemoryPromotion = (agentId: string) => {
   })
 }
 
+// "Run now" (SPEC-083 COMP-029): one promotion sweep on the RUNNING agent.
+// The reply is status + counts only; the panel shows the last one.
+export type MemoryPromotionRunResult = {
+  status: string
+  evaluated: number
+  promoted: number
+  kept_private: number
+  blocked_secret: number
+  too_large: number
+  deferred: number
+}
+
+export const useRunMemoryPromotion = (agentId: string) =>
+  useMutation<MemoryPromotionRunResult, Error, void>({
+    mutationFn: () => apiPost(`${memoryPromotionPath(agentId)}/run`, {}),
+  })
+
 // Same write-only store as `useSetKey`; also refreshes this agent's `key_set`.
 export const useSaveJevKey = (agentId: string) => {
   const queryClient = useQueryClient()

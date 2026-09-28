@@ -91,7 +91,6 @@ from arcrun.model import (
     validate_model_modules,
 )
 from arcrun.parallel_dispatch import dispatch_ready
-from arcrun.prompts import get_strategy_prompts
 from arcrun.registry import ToolRegistry
 from arcrun.strategies import Strategy, available_strategies
 from arcrun.streams import (
@@ -201,7 +200,6 @@ __all__ = [
     "detached_context",
     "dispatch_ready",
     "embed_texts",
-    "get_strategy_prompts",
     "iter_model_modules",
     "load_model",
     "make_execute_tool",

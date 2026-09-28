@@ -42,6 +42,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+import arcllm
+from arcllm import ArcLLMClassifierError, ArcLLMClassifierUnavailableError, ArcLLMError
 from arcllm.classify import (
     ChoiceResult,
     ChoiceSpec,
@@ -53,13 +56,10 @@ from arcllm.classify import (
     classify,
     resolve_classifier,
 )
-
-import arcllm
-from arcllm import ArcLLMClassifierError, ArcLLMClassifierUnavailableError, ArcLLMError
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules.telemetry_budget import clear_budgets
 
-MODEL = "jev-1.13"
+MODEL = "jev-1.13.0"
 STATE_MARKER = "SENTINEL-STATE-7731"
 STATE = f"Acme renewal closes at $42k/yr, net-60. {STATE_MARKER}"
 

@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource, StockPromptSource
 from arcstore.spool import request_context
 
 from arcrun._messages import ContentBlock, SystemPrompt, system_messages, user_message
@@ -22,7 +23,12 @@ from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunDeadlineExceededError, RunState, RunWorkCancelledError
-from arcrun.strategies import STRATEGIES, available_strategies, select_strategy
+from arcrun.strategies import (
+    STRATEGIES,
+    available_strategies,
+    select_strategy,
+    use_strategy_guidance,
+)
 from arcrun.types import LoopResult, SandboxConfig
 
 _logger = logging.getLogger(__name__)
@@ -79,6 +85,7 @@ def _build_state(
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
     run_origin: str | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     # A caller (e.g. the task dispatcher) may pin the run id so it can link the
@@ -131,6 +138,7 @@ def _build_state(
         stream_event=stream_event,
         deadline=deadline,
         tool_ledger=tool_ledger,
+        prompt_source=prompt_source or StockPromptSource(),
     )
 
     # SPEC-043 REQ-003/004 — deterministic resume. The registry is rebuilt from
@@ -149,9 +157,10 @@ async def _select_and_emit(
     model: Any,
     state: RunState,
 ) -> Any:
-    """Select strategy, update state, emit event, return callable."""
+    """Select strategy, give its turns its guidance, emit event, return callable."""
     name = await select_strategy(allowed_strategies, model, state)
     state.strategy_name = name
+    use_strategy_guidance(state, name)
     state.event_bus.emit("strategy.selected", {"strategy": name})
     return STRATEGIES[name]
 
@@ -192,6 +201,7 @@ async def run(
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
     run_origin: str | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume.
 
@@ -199,6 +209,11 @@ async def run(
     before the result is awaited — the seam a streaming caller uses to expose the
     handle to an operator kill-switch (GAP-A) without giving up the blocking
     return contract. Inert when None.
+
+    ``prompt_source`` answers every arcrun prompt the run sends — strategy
+    selection, strategy descriptions and guidance, dynamic authoring. A host
+    passes its overlay-aware source so an operator's edit reaches the model;
+    ``None`` reads the shipped ``arcrun/context`` bodies.
     """
     handle = await run_async(
         model,
@@ -234,6 +249,7 @@ async def run(
         deadline=deadline,
         tool_ledger=tool_ledger,
         run_origin=run_origin,
+        prompt_source=prompt_source,
     )
     if on_handle is not None:
         on_handle(handle)
@@ -359,6 +375,7 @@ async def run_async(
     deadline: float | None = None,
     tool_ledger: ToolExecutionLedger | None = None,
     run_origin: str | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -392,6 +409,7 @@ async def run_async(
         deadline=deadline,
         tool_ledger=tool_ledger,
         run_origin=run_origin,
+        prompt_source=prompt_source,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

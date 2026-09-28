@@ -102,7 +102,13 @@ def _build_orchestrator(plan_id: str) -> PlanOrchestrator:
     st = _runtime.state()
 
     async def replan_fn(plan: Plan, reason: str) -> Plan:
-        return await replan(plan, reason, model=_runtime.get_model(), known_tools=st.known_tools)
+        return await replan(
+            plan,
+            reason,
+            model=_runtime.get_model(),
+            known_tools=st.known_tools,
+            prompt_source=st.prompt_source,
+        )
 
     executor: StepExecutor
     if st.config.concurrent:
@@ -172,6 +178,7 @@ async def plan_create(goal: str) -> str:
             budget=st.budget,
             max_replans=st.max_replans,
             known_tools=st.known_tools,
+            prompt_source=st.prompt_source,
         )
     except DecompositionError as exc:
         return json.dumps({"error": f"decomposition rejected: {exc}"})
@@ -216,7 +223,11 @@ async def plan_replan(reason: str) -> str:
         return json.dumps({"error": "replan budget exhausted"})
     orchestrator = _build_orchestrator(plan.plan_id)
     revised = await replan(
-        plan, reason or "manual replan", model=_runtime.get_model(), known_tools=st.known_tools
+        plan,
+        reason or "manual replan",
+        model=_runtime.get_model(),
+        known_tools=st.known_tools,
+        prompt_source=st.prompt_source,
     )
     st.store.save(
         revised,

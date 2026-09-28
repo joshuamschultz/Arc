@@ -20,7 +20,7 @@ the dev venv, so the plugin is exercised two ways:
 Assumed plugin constructor (keyword-only in these tests)::
 
     JevClassifier(
-        model: str,                               # pinned, e.g. "jev-1.13"
+        model: str,                               # pinned, e.g. "jev-1.13.0"
         *,
         vault_resolver: VaultResolver | None = None,  # None -> env-only VaultResolver
         vault_path: str | None = None,
@@ -52,6 +52,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from arcllm import ArcLLMClassifierError, ArcLLMClassifierUnavailableError
 from arcllm.classifiers.jev import JevClassifier
 from arcllm.classify import (
     ChoiceResult,
@@ -61,12 +63,10 @@ from arcllm.classify import (
     NoulSpec,
     classify,
 )
-
-from arcllm import ArcLLMClassifierError, ArcLLMClassifierUnavailableError
 from arcllm.modules.telemetry_budget import clear_budgets
 from arcllm.vault import VaultResolver
 
-MODEL = "jev-1.13"
+MODEL = "jev-1.13.0"
 API_KEY = "tsk_live_SENTINEL_KEY_9f8e7d6c"
 ENV_KEY = "tsk_env_SENTINEL_KEY_1a2b3c4d"
 STATE_MARKER = "SENTINEL-STATE-7731"

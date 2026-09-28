@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from arcprompt import PromptSource, StockPromptSource
 from arctrust import AgentIdentity, Signer
 
 from arcagent.core.config import EvalConfig, LLMConfig
@@ -57,6 +58,13 @@ class RuntimeDependencies:
     #: The agent's audit sink: telemetry for ordinary events, ``write_durable``
     #: into the operator-signed WORM chain for records that must not be lost.
     audit_sink: DurableTelemetryAuditSink | None = None
+    #: The agent's overlay-aware prompt lookup (COMP-030): an ArcUI override for
+    #: this agent first, the packaged stock prompt otherwise. Delivered at
+    #: configure time, so it resolves LIVE on every call — an operator edit
+    #: applies to the module's next model call. The run-frozen snapshot
+    #: (provenance-audited bytes) backs only the prompt the run assembles itself.
+    #: The stock default keeps a bare container (tests, tools) zero-config.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -114,6 +122,7 @@ class DependencyKey(Enum):
     TRIGGER_ISSUER = "trigger_issuer"
     PREPARE_COLLECTED_REQUEST = "prepare_collected_request"
     AUDIT_SINK = "audit_sink"
+    PROMPT_SOURCE = "prompt_source"
 
 
 class RuntimeModule(Protocol):

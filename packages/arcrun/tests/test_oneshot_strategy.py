@@ -136,3 +136,71 @@ class TestRunOneshot:
         result = await arcrun.run_oneshot(model, system="rules", user="question")
 
         assert [e.type for e in result.events][-1] == "loop.complete"
+
+
+class TestPinnedOneshotOutputCeiling:
+    """A pinned oneshot run carries the RUN's token budget on ``state.max_tokens``.
+
+    That budget bounds the whole run (react's breaker reads it); it is not an
+    output cap a provider will accept. Sent verbatim it asks a model for, say,
+    200k output tokens and the provider rejects the call. The one call a
+    oneshot makes is clamped to what the model can emit.
+    """
+
+    @staticmethod
+    def _provider() -> arcrun.StaticProvider:
+        async def _noop(args: dict[str, object], ctx: object) -> str:
+            return "ok"
+
+        tool = arcrun.Tool(
+            name="noop",
+            description="unused",
+            input_schema={"type": "object", "properties": {}},
+            execute=_noop,
+        )
+        return arcrun.StaticProvider([tool])
+
+    @pytest.mark.asyncio
+    async def test_the_run_budget_is_clamped_to_the_models_output_limit(self) -> None:
+        model = MockModel([LLMResponse(content="42", stop_reason="end_turn")])
+        model.max_output_tokens = 4096  # what arcllm reports from model metadata
+
+        await arcrun.run(
+            model,
+            self._provider(),
+            "rules",
+            "question",
+            allowed_strategies=["oneshot"],
+            max_tokens=200_000,
+        )
+
+        answer = [c for c in model.invoke_calls if not c["tools"]]
+        assert answer[-1]["kwargs"]["max_tokens"] == 4096
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_output_limit_falls_back_to_a_bounded_default(self) -> None:
+        from arcrun.strategies.oneshot import DEFAULT_OUTPUT_CEILING
+
+        model = MockModel([LLMResponse(content="42", stop_reason="end_turn")])
+
+        await arcrun.run(
+            model,
+            self._provider(),
+            "rules",
+            "question",
+            allowed_strategies=["oneshot"],
+            max_tokens=200_000,
+        )
+
+        answer = [c for c in model.invoke_calls if not c["tools"]]
+        assert answer[-1]["kwargs"]["max_tokens"] == DEFAULT_OUTPUT_CEILING
+        assert DEFAULT_OUTPUT_CEILING < 200_000
+
+    @pytest.mark.asyncio
+    async def test_a_cap_below_the_models_limit_is_kept(self) -> None:
+        model = MockModel([LLMResponse(content="YES", stop_reason="end_turn")])
+        model.max_output_tokens = 4096
+
+        await arcrun.run_oneshot(model, system="rules", user="question", max_tokens=8)
+
+        assert model.invoke_calls[0]["kwargs"]["max_tokens"] == 8

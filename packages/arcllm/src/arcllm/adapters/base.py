@@ -78,6 +78,12 @@ class BaseAdapter(LLMProvider):
     def model_name(self) -> str:
         return self._model_name
 
+    @property
+    def max_output_tokens(self) -> int:
+        """The model's declared output limit, else the operator's ``[defaults]`` cap."""
+        meta = self._model_meta
+        return meta.max_output_tokens if meta else _default_max_output_tokens()
+
     def _parse_arguments(self, raw: Any) -> dict[str, Any]:
         """Parse tool call arguments from provider response.
 

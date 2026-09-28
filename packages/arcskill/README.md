@@ -368,7 +368,7 @@ Federal tier additionally requires:
 - ✅ Sandboxed dry-run
 - ✅ Skill self-improvement (`arcskill.improver`, SPEC-044) — code-repair mutation, golden-task gate, bounded edits, Curator lifecycle
 - ✅ Eval harness for golden-task quality scoring (`arcskill.improver.evalgate`, sandboxed via `hub.dry_run`)
-- ✅ Eval bootstrap (SPEC-054) — golden-suite generation from a skill's own prose (`suitegen`), verified-trace promotion into replay anchors (`promote`), layered toggles (`toggles`), and turn-end nudge signals (`nudge`)
+- ✅ Eval bootstrap (SPEC-054) — golden-suite generation from a skill's own prose (`suitegen`), verified-trace promotion into replay anchors (`promote`), and layered toggles (`toggles`)
 
 **Wave-3 (deferred):**
 

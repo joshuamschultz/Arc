@@ -108,6 +108,9 @@ class AgentCapabilityProvider:
                 kind="tool",
                 signals_completion=tool.signals_completion,
                 timeout_seconds=tool.timeout_seconds,
+                # The agent's own read-only/state-modifying label, so arcrun can
+                # batch read-only calls and a read-only dynamic child keeps them.
+                classification=tool.classification,
             )
             for tool in self._tools.values()
         ]

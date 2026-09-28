@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import arcllm
+from arcprompt import PromptSource, StockPromptSource
 
 from arcrun._messages import content_text, user_message
 from arcrun.checkpoint import LoopCheckpoint
@@ -174,6 +175,16 @@ class RunState:
     # test/replay path that needs to pin the exact recorded value overrides it
     # here — arcrun never reaches up for either.
     clock: Callable[[], datetime] | None = None
+    # SPEC-083 COMP-030 — where every arcrun prompt this run sends comes from:
+    # the selection instructions, strategy descriptions and guidance, and the
+    # dynamic strategy's authoring and child framing. The host hands down its
+    # overlay-aware source so an operator's edit reaches the model; a
+    # standalone run reads the shipped ``arcrun/context`` bodies.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
+    # The guidance text of the strategy running this turn, as inserted into
+    # ``messages``. Recorded so a dynamic child can leave the parent's
+    # orchestration guidance behind and a fallback can swap it for react's.
+    strategy_guidance: str = ""
 
     def remaining_seconds(self) -> float | None:
         """Return remaining run budget or raise on expiry."""

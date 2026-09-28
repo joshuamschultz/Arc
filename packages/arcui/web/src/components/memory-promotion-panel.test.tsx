@@ -31,6 +31,16 @@ afterEach(() => {
 const SENTINEL = 'ts-zzz-panel-jev-key-sentinel-5150'
 const SETTINGS_PATH = '/api/agents/olivia/memory/promotion'
 const KEY_PATH = '/api/keys/TYPESAFE_API_KEY'
+const RUN_PATH = '/api/agents/olivia/memory/promotion/run'
+const RUN_RESULT = {
+  status: 'completed',
+  evaluated: 12,
+  promoted: 3,
+  kept_private: 7,
+  blocked_secret: 1,
+  too_large: 1,
+  deferred: 40,
+}
 
 type Call = { path: string; method: string; rawBody: string; body: unknown }
 
@@ -46,7 +56,7 @@ type Settings = {
 const personal = (over: Partial<Settings> = {}): Settings => ({
   enabled: false,
   confidence_threshold: 0.95,
-  classifier_model: 'jev-1.13',
+  classifier_model: 'jev-1.13.0',
   tier: 'personal',
   federal_locked: false,
   key_set: false,
@@ -57,7 +67,17 @@ function stubServer({
   settings = personal(),
   putStatus = 200,
   putError = 'confidence_threshold must be at least 0.90',
-}: { settings?: Settings; putStatus?: number; putError?: string } = {}) {
+  runStatus = 200,
+  runBody = RUN_RESULT as unknown,
+  runGate,
+}: {
+  settings?: Settings
+  putStatus?: number
+  putError?: string
+  runStatus?: number
+  runBody?: unknown
+  runGate?: Promise<void>
+} = {}) {
   const calls: Call[] = []
   let current = { ...settings }
   vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -68,6 +88,12 @@ function stubServer({
     const json = (status: number, body: unknown) =>
       new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
+    // T-1224 "Run now" — matched before SETTINGS_PATH, which is its prefix.
+    if (path.startsWith(RUN_PATH)) {
+      if (method !== 'POST') return json(405, { error: 'method not allowed' })
+      if (runGate) await runGate
+      return json(runStatus, runBody)
+    }
     if (path.startsWith(SETTINGS_PATH) && method === 'GET') return json(200, current)
     if (path.startsWith(SETTINGS_PATH) && method === 'PUT') {
       if (putStatus !== 200) return json(putStatus, { error: putError })
@@ -244,5 +270,124 @@ describe('MemoryPromotionPanel', () => {
     expect(saveSettings === null || isDisabled(saveSettings)).toBe(true)
     expect(screen.queryByLabelText(/jev api key/i)).toBeNull()
     expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0)
+  })
+})
+
+// SPEC-083 T-1224 (COMP-029, REQ-512) — "Run now" on the Memory sharing panel.
+//
+// Contract assumed:
+//   button /run now/i — POST /api/agents/{id}/memory/promotion/run  body {} (no cap from the panel)
+//     -> { status, evaluated, promoted, kept_private, blocked_secret, too_large, deferred }
+//   Enabled only for an operator, when sharing is ON in the SAVED settings and the
+//   agent is not federal-locked. Disabled while a run is in flight (no double-send).
+//   After a run the panel shows the last result: its status and counts.
+//   A refusal (e.g. 503 "agent is not running") is shown and the button re-enables.
+describe('MemoryPromotionPanel — Run now', () => {
+  const runNow = () => screen.getByRole('button', { name: /run now/i }) as HTMLButtonElement
+  const runCalls = (calls: Call[]) => calls.filter((c) => c.path.startsWith(RUN_PATH))
+  const text = () => document.body.textContent ?? ''
+
+  it('runs promotion on the running agent and shows the last result counts', async () => {
+    const calls = stubServer({ settings: personal({ enabled: true, key_set: true }) })
+    renderPanel()
+    await loaded()
+
+    expect(isDisabled(runNow())).toBe(false)
+    await userEvent.click(runNow())
+
+    await waitFor(() => expect(text()).toMatch(/evaluated\D{0,40}12\b/i))
+    expect(text()).toMatch(/promoted\D{0,40}3\b/i)
+    expect(text()).toMatch(/kept private\D{0,40}7\b/i)
+    expect(text()).toMatch(/deferred\D{0,40}40\b/i)
+    expect(text()).toMatch(/completed/i)
+
+    const runs = runCalls(calls)
+    expect(runs).toHaveLength(1)
+    expect(runs[0].method).toBe('POST')
+    expect(runs[0].body ?? {}).toEqual({})
+    // Running never writes settings or keys.
+    expect(calls.filter((c) => c.method !== 'GET' && !c.path.startsWith(RUN_PATH))).toHaveLength(0)
+  })
+
+  it('is disabled when sharing is off and cannot start a run', async () => {
+    const calls = stubServer({ settings: personal({ enabled: false }) })
+    renderPanel()
+    await loaded()
+
+    expect(isDisabled(runNow())).toBe(true)
+    await userEvent.click(runNow())
+    expect(runCalls(calls)).toHaveLength(0)
+  })
+
+  it('stays disabled when sharing is switched on but not yet saved', async () => {
+    const calls = stubServer({ settings: personal({ enabled: false }) })
+    renderPanel()
+    await loaded()
+
+    await userEvent.click(toggle())
+    expect(isOn(toggle())).toBe(true)
+
+    expect(isDisabled(runNow())).toBe(true)
+    await userEvent.click(runNow())
+    expect(runCalls(calls)).toHaveLength(0)
+  })
+
+  it('is disabled on a federal agent even if the file says enabled', async () => {
+    const calls = stubServer({
+      settings: personal({ enabled: true, tier: 'federal', federal_locked: true }),
+    })
+    renderPanel()
+    await loaded()
+
+    expect(isDisabled(runNow())).toBe(true)
+    await userEvent.click(runNow())
+    expect(runCalls(calls)).toHaveLength(0)
+  })
+
+  it('cannot be triggered by a viewer', async () => {
+    const calls = stubServer({ settings: personal({ enabled: true }) })
+    renderPanel(false)
+    await loaded()
+
+    const button = screen.queryByRole('button', { name: /run now/i })
+    expect(button === null || isDisabled(button)).toBe(true)
+    if (button) await userEvent.click(button)
+    expect(runCalls(calls)).toHaveLength(0)
+  })
+
+  it('sends one request while a run is in flight (no double-send)', async () => {
+    let release: () => void = () => {}
+    const runGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const calls = stubServer({ settings: personal({ enabled: true }), runGate })
+    renderPanel()
+    await loaded()
+
+    await userEvent.click(runNow())
+    await waitFor(() => expect(isDisabled(runNow())).toBe(true))
+    await userEvent.click(runNow())
+    expect(runCalls(calls)).toHaveLength(1)
+
+    release()
+    await waitFor(() => expect(text()).toMatch(/evaluated\D{0,40}12\b/i))
+    expect(runCalls(calls)).toHaveLength(1)
+    await waitFor(() => expect(isDisabled(runNow())).toBe(false))
+  })
+
+  it('shows the server refusal and re-enables the button', async () => {
+    stubServer({
+      settings: personal({ enabled: true }),
+      runStatus: 503,
+      runBody: { error: 'agent is not running' },
+    })
+    renderPanel()
+    await loaded()
+
+    await userEvent.click(runNow())
+
+    expect(await screen.findByText(/agent is not running/i)).toBeTruthy()
+    await waitFor(() => expect(isDisabled(runNow())).toBe(false))
+    expect(text()).not.toMatch(/evaluated\D{0,40}12\b/i)
   })
 })

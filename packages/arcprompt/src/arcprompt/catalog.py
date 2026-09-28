@@ -17,18 +17,13 @@ asked for by name is a packaging error, but that is the resolver's concern
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from arcprompt.document import PromptDocument, parse_prompt
 from arcprompt.errors import PromptMissing
-
-# The prompt-body resolver contract: ``(package, name) -> effective body``. The
-# shared type a consumer accepts to be handed overlay-aware resolution without
-# depending on the concrete PromptResolver (e.g. arcrun's get_strategy_prompts).
-PromptResolve = Callable[[str, str], str]
 
 CONTEXT_DIRNAME = "context"
 
@@ -143,7 +138,6 @@ __all__ = [
     "DEFAULT_PROMPT_PACKAGES",
     "PromptCatalog",
     "PromptRef",
-    "PromptResolve",
     "load_stock",
     "load_stock_document",
 ]

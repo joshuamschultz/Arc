@@ -49,6 +49,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.brain import Brain, NullBrain, select_brain
 from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort, SharedKnowledgePort
 from arcagent.modules.memory.config import MemoryConfig
@@ -95,6 +97,9 @@ class _State:
     # The runtime identity's access (DID + clearance). A promotion publisher built
     # for a later-attached port acts only as this, never as anything item content says.
     runtime_access: KnowledgeAccess | None = None
+    # The agent's prompt lookup (overlay first, then stock) for this module's own
+    # prompt sections; stock when the agent handed none down.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)
@@ -143,6 +148,8 @@ def configure(
     policy_pipeline: Any = None,
     audit_sink: Any = None,
     shared_knowledge: SharedKnowledgePort | None = None,
+    tier: str = "",
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Build this agent's Brain-backed state, register it, and bind its DID.
 
@@ -164,8 +171,22 @@ def configure(
     port already attached for this DID. When promotion is enabled the Brain
     receives the promotion settings as a plain mapping (it builds its own
     classifier) and a :class:`SharedKnowledgePublisher` when a port is present.
+
+    ``tier`` is the agent's runtime tier (``[security].tier``). When given, it IS
+    the memory tier: the brain's stringency settings and the federal promotion
+    lock both follow it, so a memory block that omits its tier still runs at the
+    agent's real tier. See :func:`_memory_config`.
+
+    ``prompt_source`` is the agent's overlay-aware prompt lookup (ADR-033). It is
+    handed to the Brain (every arcmemory prompt resolves through it) and kept for
+    this module's own prompt sections; ``None`` means stock prompts only.
+
+    Raises:
+        ValueError: the memory block names a tier that disagrees with ``tier``,
+            or the resulting config fails its own validation (e.g. promotion
+            enabled at federal).
     """
-    cfg = MemoryConfig(**(config or {}))
+    cfg = _memory_config(config or {}, tier)
     ws = Path(workspace).resolve()
     access = KnowledgeAccess(agent_did, _clearance_name(identity))
     prior = _registry.get(agent_did)
@@ -190,6 +211,7 @@ def configure(
         backend_config=dict(cfg.backend),
         promotion_config=promotion_config,
         promotion_publisher=publisher,
+        prompt_source=prompt_source,
     )
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
@@ -210,10 +232,36 @@ def configure(
         personal_knowledge=personal_knowledge,
         shared_knowledge=shared_knowledge,
         runtime_access=access,
+        prompt_source=prompt_source if prompt_source is not None else StockPromptSource(),
     )
     _registry[agent_did] = new_state
     _current_did.set(agent_did)
     _logger.info("memory module configured (brain=%s, active=%s)", cfg.brain, new_state.active)
+
+
+def _normalize_tier(tier: str) -> str:
+    return tier.strip().casefold()
+
+
+def _memory_config(config: dict[str, Any], agent_tier: str) -> MemoryConfig:
+    """The memory config, pinned to the agent's deployment tier.
+
+    With no agent tier (a bare module test harness) the block's own tier applies.
+    A block tier that disagrees with the agent tier is refused, never used: a
+    stale or copied block must not run a federal agent's memory at a looser tier.
+    The tier is case-folded so the backend never sees a spelling it would fold
+    to its personal default.
+    """
+    block_tier = config.get("tier")
+    if not agent_tier:
+        return MemoryConfig(**{**config, "tier": _normalize_tier(str(block_tier or "personal"))})
+    tier = _normalize_tier(agent_tier)
+    if block_tier is not None and _normalize_tier(str(block_tier)) != tier:
+        raise ValueError(
+            f"[modules.memory.config] tier {block_tier!r} disagrees with the agent's "
+            f"deployment tier {tier!r}; remove it or set it to {tier!r}"
+        )
+    return MemoryConfig(**{**config, "tier": tier})
 
 
 def _clearance_name(identity: Any) -> str:

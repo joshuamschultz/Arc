@@ -61,7 +61,7 @@ _PROMOTION_BLOCK = (
     "[modules.memory.config.promotion]\n"
     "enabled = false\n"
     "confidence_threshold = 0.95\n"
-    'classifier_model = "jev-1.13"\n'
+    'classifier_model = "jev-1.13.0"\n'
     "max_items_per_sweep = 50  # unrelated knob must survive\n"
 )
 
@@ -215,7 +215,7 @@ def test_get_returns_settings_tier_and_key_flag(h: Harness) -> None:
     assert resp.json() == {
         "enabled": False,
         "confidence_threshold": 0.95,
-        "classifier_model": "jev-1.13",
+        "classifier_model": "jev-1.13.0",
         "tier": "personal",
         "federal_locked": False,
         "key_set": False,
@@ -233,7 +233,7 @@ def test_get_uses_defaults_when_no_promotion_block_exists(
     body = resp.json()
     assert body["enabled"] is False
     assert body["confidence_threshold"] == 0.95
-    assert body["classifier_model"] == "jev-1.13"
+    assert body["classifier_model"] == "jev-1.13.0"
 
 
 def test_get_on_a_federal_agent_reports_federal_locked(fed: Harness) -> None:
@@ -361,7 +361,7 @@ def test_a_federal_agent_may_tune_a_disabled_block(fed: Harness) -> None:
     assert _promotion_on_disk(fed) == {
         "enabled": False,
         "confidence_threshold": 0.97,
-        "classifier_model": "jev-1.13",
+        "classifier_model": "jev-1.13.0",
         "max_items_per_sweep": 50,
     }
 
@@ -526,7 +526,7 @@ def test_each_accepted_put_is_its_own_record(h: Harness) -> None:
 
     changes = h.worm.config_changes()
     assert len(changes) == 2
-    assert "jev-1.13" in json.dumps(changes[1]["record"], default=str)
+    assert "jev-1.13.0" in json.dumps(changes[1]["record"], default=str)
     assert "jev-1.14" in json.dumps(changes[1]["record"], default=str)
 
 

@@ -8,8 +8,10 @@ enumerated (REQ-486).
 Phases, in order (each a named helper below):
 
 1. **gate** — federal tier → ``tier_forbidden``; disabled → ``disabled``; no
-   classifier → ``classifier_unavailable``; no publisher → ``publisher_unavailable``.
-   A gated sweep reads nothing and sends nothing.
+   classifier, or one whose network-free ``ensure_available`` preflight fails
+   (drop-in, SDK or key missing; bounded by ``request_timeout_seconds``) →
+   ``classifier_unavailable``; no publisher → ``publisher_unavailable``.
+   A gated sweep reads nothing, sends nothing and writes no egress record.
 2. **plan** — enumerate, render, skip items the signed ledger already judged,
    secret gate, size gate, clearance gate, count cap (oldest file first, so every
    item eventually runs; the overflow is ``deferred``).
@@ -17,8 +19,12 @@ Phases, in order (each a named helper below):
    first classifier call. No durable sink, or a failed write → zero calls.
 4. **classify** — sequential, one item at a time, each bounded by
    ``request_timeout_seconds``. Every verdict is decided, ledgered and audited as
-   it lands. The first error stops the sweep: ``classifier_error``, nothing
-   published that night; rows already recorded stay ``pending``.
+   it lands. The first failure stops the sweep and nothing is published that
+   night; rows already recorded stay ``pending``. A call failure is
+   ``classifier_error``. Availability lost after preflight (the item was not
+   sent) is ``classifier_unavailable`` plus a durable
+   ``memory.promotion.egress_aborted`` naming what was and was not sent, so the
+   egress "allow" is never the last word.
 5. **publish** — every ``pending`` row whose signature verifies and whose freshly
    re-rendered bytes still hash to the judged digest, including rows an earlier
    failed night left behind.
@@ -50,6 +56,7 @@ from arcmemory.promotion.classifier import (
     ClassifierUnavailableError,
     ClassifierVerdict,
     PromotionClassifier,
+    PromotionQuestionInvalidError,
 )
 from arcmemory.promotion.config import PromotionConfig, is_federal_tier
 from arcmemory.promotion.decide import decide
@@ -77,8 +84,26 @@ SweepStatus = Literal[
 #: Actor recorded on audit events when the integrator did not name the agent.
 _COMPONENT_ACTOR = "arcmemory.promotion"
 
-#: Classifier failures that stop the sweep with ``classifier_error``.
-_CLASSIFY_ERRORS = (ClassifierCallError, ClassifierUnavailableError, TimeoutError)
+#: Classifier call failures that stop the sweep with ``classifier_error``.
+_CALL_ERRORS = (ClassifierCallError, TimeoutError)
+
+#: Largest per-run cap an operator may ask a manual ("Run now") sweep for.
+MAX_ITEMS_CEILING = 5000
+
+
+def validate_max_items(max_items: object) -> int | None:
+    """Return a manual run's cap unchanged, or raise when it is not an int in 1..5000.
+
+    ``bool`` is refused explicitly (it is an ``int`` subclass). ``None`` means "use
+    the configured ``max_items_per_sweep``".
+    """
+    if max_items is None:
+        return None
+    if isinstance(max_items, bool) or not isinstance(max_items, int):
+        raise TypeError("max_items must be an integer")
+    if not 1 <= max_items <= MAX_ITEMS_CEILING:
+        raise ValueError(f"max_items must be between 1 and {MAX_ITEMS_CEILING}")
+    return max_items
 
 
 # -- store seams ---------------------------------------------------------------
@@ -145,7 +170,7 @@ class _Classified:
     evaluated: int = 0
     kept_private: int = 0
     pending: list[LedgerRow] = field(default_factory=list)
-    failed: bool = False
+    failure: SweepStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -169,15 +194,10 @@ class PromotionSweep:
         ledger: PromotionLedger,
         classifier: PromotionClassifier | None,
         publisher: PromotionPublisher | None,
-        exporter: object,
         audit_sink: AuditSink,
         clearance: str,
         agent_did: str | None = None,
     ) -> None:
-        # ``exporter`` is the byte authority the PUBLISHER pulls from (the shared
-        # side re-verifies the digest itself). The sweep re-renders through the
-        # stores for its own pre-publish digest check, so it holds no reference.
-        del exporter
         self._cfg = cfg
         self._tier = tier
         self._stores = stores
@@ -188,6 +208,11 @@ class PromotionSweep:
         # Parsed strictly up front: a bad clearance label is a wiring error.
         self._clearance = parse_classification(clearance, strict=True)
         self._actor = agent_did or _COMPONENT_ACTOR
+        # One sweep at a time for this agent: the nightly hook and a manual run
+        # share this lock, so an overlapping run waits and then plans against the
+        # ledger the first one wrote — no item is ever sent twice. One sweep object
+        # per agent, so the lock never blocks another agent.
+        self._lock = asyncio.Lock()
 
     def bind_publisher(self, publisher: PromotionPublisher | None) -> None:
         """Replace the publisher; ``None`` makes the next sweep ``publisher_unavailable``.
@@ -197,24 +222,35 @@ class PromotionSweep:
         """
         self._publisher = publisher
 
-    async def run(self, now: datetime) -> PromotionSweepResult:
-        """Run one sweep at ``now`` and audit its result (``memory.promotion.sweep``)."""
-        result = await self._run(now)
+    async def run(self, now: datetime, *, max_items: int | None = None) -> PromotionSweepResult:
+        """Run one sweep at ``now`` and audit its result (``memory.promotion.sweep``).
+
+        ``max_items`` caps THIS run only (a manual backfill); ``None`` uses the
+        configured ``max_items_per_sweep``. It is never stored. Waits for any sweep
+        of this agent already in progress.
+        """
+        cap = validate_max_items(max_items) or self._cfg.max_items_per_sweep
+        async with self._lock:
+            result = await self._run(now, cap)
         self._emit("memory.promotion.sweep", "memory", result.status, asdict(result))
         return result
 
-    async def _run(self, now: datetime) -> PromotionSweepResult:
+    async def _run(self, now: datetime, cap: int) -> PromotionSweepResult:
         gate = self._gate()
         if isinstance(gate, str):
             return PromotionSweepResult(status=gate)
         classifier, publisher = gate
-        plan = await asyncio.to_thread(self._plan, classifier)
+        if not await self._classifier_ready(classifier):
+            return PromotionSweepResult(status="classifier_unavailable")
+        plan = await asyncio.to_thread(self._plan, classifier, cap)
         await asyncio.to_thread(self._record_pre_egress, plan, now)
         if plan.batch and not self._write_egress_audit(classifier, plan.batch):
             return _result("classifier_error", plan, _Classified())
         classified = await self._classify_batch(classifier, plan.batch, now)
-        if classified.failed:
-            return _result("classifier_error", plan, classified)
+        if classified.failure == "classifier_unavailable":
+            self._write_egress_aborted(plan.batch, classified.evaluated)
+        if classified.failure is not None:
+            return _result(classified.failure, plan, classified)
         pending = plan.carried_pending + classified.pending
         promoted = await self._publish_pending(classifier, publisher, pending)
         return _result("completed", plan, classified, promoted=promoted)
@@ -234,9 +270,32 @@ class PromotionSweep:
             return "publisher_unavailable"
         return self._classifier, self._publisher
 
+    async def _classifier_ready(self, classifier: PromotionClassifier) -> bool:
+        """The bounded, network-free preflight; ``False`` means send nothing tonight."""
+        try:
+            await asyncio.wait_for(
+                classifier.ensure_available(), timeout=self._cfg.request_timeout_seconds
+            )
+        except PromotionQuestionInvalidError as exc:
+            # Fail closed and say which prompt broke — never fall back to stock.
+            _log.warning("promotion question %s invalid; sweep sends nothing", exc.prompt)
+            self._emit(
+                "memory.promotion.question_invalid",
+                exc.prompt,
+                "classifier_unavailable",
+                {"prompt": exc.prompt, "reason": str(exc)},
+            )
+            return False
+        except (ClassifierUnavailableError, TimeoutError) as exc:
+            _log.warning(
+                "promotion classifier unavailable (%s); sweep sends nothing", type(exc).__name__
+            )
+            return False
+        return True
+
     # -- phase 2: plan (worker thread) ---------------------------------------------
 
-    def _plan(self, classifier: PromotionClassifier) -> _Plan:
+    def _plan(self, classifier: PromotionClassifier, cap: int) -> _Plan:
         """Sort every unjudged card into blocked / oversize / batch / deferred."""
         plan = _Plan()
         eligible: list[_Candidate] = []
@@ -252,7 +311,6 @@ class PromotionSweep:
                 continue
             self._route(plan, eligible, candidate)
         eligible.sort(key=lambda c: (c.modified, c.text.item_kind, c.text.item_id))
-        cap = self._cfg.max_items_per_sweep
         plan.batch = [candidate.text for candidate in eligible[:cap]]
         plan.deferred = max(0, len(eligible) - cap)
         return plan
@@ -360,10 +418,6 @@ class PromotionSweep:
         self, classifier: PromotionClassifier, batch: list[PromotionText]
     ) -> bool:
         """Durably record what is about to leave the box; ``False`` means send nothing."""
-        write_durable = getattr(self._audit, "write_durable", None)
-        if write_durable is None:
-            _log.warning("promotion egress refused: audit sink cannot write durably")
-            return False
         event = self._event(
             "memory.promotion.egress",
             "classifier",
@@ -378,10 +432,33 @@ class PromotionSweep:
                 "question_version": classifier.question_version,
             },
         )
+        return self._write_durable(event)
+
+    def _write_egress_aborted(self, batch: list[PromotionText], sent: int) -> None:
+        """Durably record that egress stopped: which batch items were and were not sent."""
+        event = self._event(
+            "memory.promotion.egress_aborted",
+            "classifier",
+            "classifier_unavailable",
+            {
+                "sent_item_ids": [text.item_id for text in batch[:sent]],
+                "unsent_item_ids": [text.item_id for text in batch[sent:]],
+            },
+        )
+        self._write_durable(event)
+
+    def _write_durable(self, event: AuditEvent) -> bool:
+        """Write ``event`` to the durable audit; ``False`` when it could not be."""
+        write_durable = getattr(self._audit, "write_durable", None)
+        if write_durable is None:
+            _log.warning("%s not recorded: audit sink cannot write durably", event.action)
+            return False
         try:
             write_durable(event)
-        except Exception:  # reason: any durable-write failure must stop egress (fail closed)
-            _log.warning("promotion egress refused: durable egress audit failed", exc_info=True)
+        except Exception:  # reason: any durable-write failure is reported to the caller
+            _log.warning(
+                "%s not recorded: durable audit write failed", event.action, exc_info=True
+            )
             return False
         return True
 
@@ -390,13 +467,18 @@ class PromotionSweep:
     async def _classify_batch(
         self, classifier: PromotionClassifier, batch: list[PromotionText], now: datetime
     ) -> _Classified:
-        """Classify sequentially; record each verdict as it lands; stop at the first error."""
+        """Classify sequentially; record each verdict as it lands; stop at the first failure.
+
+        ``evaluated`` counts items that reached the classifier: an unavailable
+        classifier sent nothing, so that item is not counted.
+        """
         tally = _Classified()
         for text in batch:
-            tally.evaluated += 1
             verdict = await self._classify_one(classifier, text)
-            if verdict is None:
-                tally.failed = True
+            if verdict != "classifier_unavailable":
+                tally.evaluated += 1
+            if isinstance(verdict, str):
+                tally.failure = verdict
                 return tally
             row = await asyncio.to_thread(self._record_verdict, classifier, text, verdict, now)
             if row.publish_state == "pending":
@@ -407,8 +489,8 @@ class PromotionSweep:
 
     async def _classify_one(
         self, classifier: PromotionClassifier, text: PromotionText
-    ) -> ClassifierVerdict | None:
-        """One bounded classify call; ``None`` on any classifier failure."""
+    ) -> ClassifierVerdict | SweepStatus:
+        """One bounded classify call; the failure status when it did not answer."""
         item = ClassifierInput(
             item_kind=text.item_kind, item_id=text.item_id, content=text.content
         )
@@ -416,10 +498,13 @@ class PromotionSweep:
             return await asyncio.wait_for(
                 classifier.classify(item), timeout=self._cfg.request_timeout_seconds
             )
-        except _CLASSIFY_ERRORS as exc:
+        except ClassifierUnavailableError:
+            _log.warning("promotion classifier became unavailable; sweep stops")
+            return "classifier_unavailable"
+        except _CALL_ERRORS as exc:
             # Type only: a transport error message is not trusted to be content-free.
             _log.warning("promotion classifier failed (%s); sweep stops", type(exc).__name__)
-            return None
+            return "classifier_error"
 
     # -- phase 5: publish ----------------------------------------------------------
 
@@ -571,4 +656,11 @@ def _reference(row: LedgerRow) -> str:
     return f"{row.item_kind}:{row.item_id}"
 
 
-__all__ = ["PromotionStores", "PromotionSweep", "PromotionSweepResult", "SweepStatus"]
+__all__ = [
+    "MAX_ITEMS_CEILING",
+    "PromotionStores",
+    "PromotionSweep",
+    "PromotionSweepResult",
+    "SweepStatus",
+    "validate_max_items",
+]

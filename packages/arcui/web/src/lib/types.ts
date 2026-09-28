@@ -377,13 +377,16 @@ export interface FileDeleteResponse {
 
 // --- Prompts (COMP-010: editable system prompts) ---------------------------
 
-export type PromptStatus = 'stock' | 'overridden'
+// `rejected`: an override is present but fails the agent's signature check — the
+// agent refuses to run, so nothing is effective (`effective` is empty).
+export type PromptStatus = 'stock' | 'overridden' | 'rejected'
 
 export interface PromptListItem {
   package: string
   name: string
   description: string
   status: PromptStatus
+  rejection_reason?: string | null
 }
 
 export interface PromptListResponse {
@@ -395,6 +398,7 @@ export interface PromptDetail {
   name: string
   description: string
   status: PromptStatus
+  rejection_reason?: string | null
   stock: string
   effective: string
   diff: string // server-computed unified diff (stock -> effective)
@@ -426,6 +430,7 @@ export interface RubricResponse {
   package: string
   name: string
   status: PromptStatus
+  rejection_reason?: string | null
   dimensions: Record<string, RubricDimension>
 }
 

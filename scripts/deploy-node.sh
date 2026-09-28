@@ -136,7 +136,7 @@ BUILD_STAMP="$(
     \( -name .git -o -name .venv -o -name node_modules -o -name __pycache__ \
        -o -name 'team' -o -name 'modules' \) -prune -o \
     -type f \( -name '*.py' -o -name '*.toml' -o -name '*.sh' -o -name '*.service' \
-       -o -name '*.js' -o -name '*.css' -o -name '*.html' \) \
+       -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.md' \) \
     -print 2>/dev/null |
     LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | cut -c1-8
 )"
@@ -457,6 +457,20 @@ print(urlparse(sys.argv[1]).port or 5433)
   # shellcheck disable=SC1090
   . "$ARC_ENV"
   set +a
+fi
+
+# --- 5d. Memory promotion classifier (SPEC-083, ADR-038) -------------------
+# TypeSafe Jev ships as a removable arcllm drop-in behind the optional
+# `arcllm[jev]` extra, so the base `uv sync` never installs its SDK. Install it
+# into the ACTIVE runtime venv whenever the fleet-wide key is present (the key is
+# the operator's opt-in); without it promotion reports `classifier_unavailable`
+# and nothing egresses. Runs on every deploy, including a reused runtime. The pin
+# must match `packages/arcllm/pyproject.toml` [project.optional-dependencies].jev.
+if [ -f "$ARC_ENV" ] && grep -q '^TYPESAFE_API_KEY=' "$ARC_ENV"; then
+  log "Jev key present — installing the arcllm[jev] classifier SDK into the runtime venv..."
+  "$UV" pip install --python "$VENV_PY" 'typesafe-sdk==0.7.2' \
+    || fail "could not install typesafe-sdk (arcllm[jev]); memory promotion would be unavailable"
+  ok "Jev classifier SDK present (typesafe-sdk 0.7.2)"
 fi
 
 # --- 6. arc init -----------------------------------------------------------

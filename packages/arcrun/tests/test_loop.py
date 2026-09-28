@@ -1,6 +1,7 @@
 """Tests for run() and run_async() entry points."""
 
 import pytest
+from arcprompt import load_stock
 from packages.arcrun.tests.conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
@@ -139,12 +140,16 @@ class TestRunWithMessages:
             model, StaticProvider(_tools()), "Be helpful.", "Say hello", messages=None
         )
         assert result.content == "Hi!"
-        # Model received [system, user] (list is mutated after invoke, so check first two)
+        # Model received [system, react guidance, user] (list is mutated after
+        # invoke, so check the first three). The chosen strategy's guidance
+        # follows the caller's own system prompt (SPEC-083 T-1230).
         invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
-        assert invoke_msgs[1].role == "user"
-        assert invoke_msgs[1].content == "Say hello"
+        assert invoke_msgs[1].role == "system"
+        assert invoke_msgs[1].content == load_stock("arcrun", "strategy_react")
+        assert invoke_msgs[2].role == "user"
+        assert invoke_msgs[2].content == "Say hello"
 
     @pytest.mark.asyncio
     async def test_messages_provided_uses_history(self):
@@ -167,16 +172,18 @@ class TestRunWithMessages:
             messages=history,
         )
         assert result.content == "I'm good!"
-        # Model received: system + history (3 msgs) — check structure
+        # Model received: system + react guidance + history (3 msgs)
         invoke_msgs = model.task_calls[0]["messages"]
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
-        # History messages follow system prompt
-        assert invoke_msgs[1].role == "user"
-        assert invoke_msgs[1].content == "hello"
-        assert invoke_msgs[2].role == "assistant"
-        assert invoke_msgs[3].role == "user"
-        assert invoke_msgs[3].content == "how are you"
+        assert invoke_msgs[1].role == "system"
+        assert invoke_msgs[1].content == load_stock("arcrun", "strategy_react")
+        # History messages follow the system messages
+        assert invoke_msgs[2].role == "user"
+        assert invoke_msgs[2].content == "hello"
+        assert invoke_msgs[3].role == "assistant"
+        assert invoke_msgs[4].role == "user"
+        assert invoke_msgs[4].content == "how are you"
 
     @pytest.mark.asyncio
     async def test_messages_system_prompt_always_fresh(self):

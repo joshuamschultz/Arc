@@ -51,7 +51,9 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
     if signer is not None:
         verify_record(record, public_key=signer.public_key, algorithm=signer.algorithm)
 
-    _telemetry, bus, model, provider, prompt, bridge = await build_run_context(agent, "")
+    _telemetry, bus, model, provider, prompt, bridge, prompt_source = await build_run_context(
+        agent, ""
+    )
     transcript = wire_messages(session.get_messages(), workspace=agent._workspace)
     # apply_checkpoint (in arcrun) replaces the loop's message list with this one,
     # so the freshly-assembled system prompt must lead it — the transcript on disk
@@ -81,7 +83,8 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
             audit_sink=TelemetryAuditSink(_telemetry),
             resume_from=cp,
             on_handle=on_handle,
-            **narrowed_loop_controls(agent, session, None),
+            prompt_source=prompt_source,
+            **narrowed_loop_controls(agent, session, _resumed_strategy(cp)),
         )
         async for event in raw_stream:
             if isinstance(event, arcrun.TurnEndEvent):
@@ -103,6 +106,19 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
                 "automated": True,
             },
         )
+
+
+def _resumed_strategy(cp: arcrun.LoopCheckpoint) -> list[str] | None:
+    """The strategy the interrupted run was using, pinned for its resume.
+
+    A resume continues the run it restores; it never re-selects, which would
+    spend a model call and could switch the run's shape halfway through. The pin
+    goes through the same narrowing as any other request, so the operator
+    ceiling (and the federal react floor) still bounds it: a checkpoint cannot
+    widen what the operator allows. A record with no strategy takes the
+    un-pinned rule.
+    """
+    return [cp.strategy_name] if cp.strategy_name else None
 
 
 __all__ = ["resume_stream"]

@@ -143,9 +143,24 @@ class ClassifierProvider(ABC):
         """Answer ``request``. Raises ``ArcLLMClassifierUnavailableError`` when
         this backend cannot serve, ``ArcLLMClassifierError`` on call failure."""
 
+    def check_available(self) -> None:  # noqa: B027  # reason: optional hook; no-op default
+        """Network-free preflight: raise ``ArcLLMClassifierUnavailableError``
+        when this backend cannot serve (SDK or key missing). Sends nothing and
+        builds no client, so a caller can settle availability before it audits
+        an egress. The default has nothing local to check."""
 
-def resolve_classifier(name: str, model: str) -> ClassifierProvider:
+
+def resolve_classifier(
+    name: str,
+    model: str,
+    *,
+    api_key_env: str | None = None,
+    vault_path: str | None = None,
+) -> ClassifierProvider:
     """Construct the in-tree drop-in classifier registered as ``name``.
+
+    ``api_key_env`` / ``vault_path`` are the operator's key coordinate (never the
+    key); ``None`` leaves the drop-in's own default in place.
 
     Raises:
         ArcLLMConfigError: ``name`` is malformed (dotted, ``module:Class``, empty).
@@ -153,7 +168,12 @@ def resolve_classifier(name: str, model: str) -> ClassifierProvider:
     """
     from arcllm.classifiers import load_classifier  # drop-ins import this module
 
-    return load_classifier(name, model)
+    options = {
+        key: value
+        for key, value in (("api_key_env", api_key_env), ("vault_path", vault_path))
+        if value is not None
+    }
+    return load_classifier(name, model, **options)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +269,8 @@ async def classify(
     timeout: float = DEFAULT_CLASSIFY_TIMEOUT_SECONDS,
     telemetry: dict[str, Any] | None = None,
     on_event: Callable[[SpoolRecord], None] | None = None,
+    api_key_env: str | None = None,
+    vault_path: str | None = None,
 ) -> ClassificationResult:
     """Classify ``request`` — bounded, budget-routed and telemetered.
 
@@ -263,6 +285,9 @@ async def classify(
             ``per_call_max_usd``, ``cost_input_per_1m``, ``enforcement``,
             ``agent_did``, ``agent_label``, ``arcstore_enabled``).
         on_event: Optional callback fired with the ``SpoolRecord`` telemetry.
+        api_key_env: Env var holding the key for a NAMED drop-in (default: the
+            drop-in's own). Ignored when ``provider`` is an instance.
+        vault_path: Vault path tried before ``api_key_env`` for a named drop-in.
 
     Raises:
         ArcLLMClassifierUnavailableError: no classifier can serve.
@@ -273,7 +298,9 @@ async def classify(
     tel = telemetry or {}
     if isinstance(provider, str):
         provider_label = provider
-        classifier = resolve_classifier(provider, model)
+        classifier = resolve_classifier(
+            provider, model, api_key_env=api_key_env, vault_path=vault_path
+        )
     else:
         provider_label = "custom"
         classifier = provider

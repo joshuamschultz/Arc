@@ -39,6 +39,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
+from arcprompt import PromptSource
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.identity import AgentIdentity
 from arctrust.policy import PolicyPipeline
@@ -194,6 +195,7 @@ class Consolidator:
         react_loop: ReactLoop = run_react_loop,
         store_raw_bodies: bool = False,
         promotion_sweep: _PromotionRunner | None = None,
+        prompts: PromptSource | None = None,
     ) -> None:
         self._db = db
         self._workspace = Path(workspace)
@@ -215,6 +217,8 @@ class Consolidator:
         self._policy = policy_pipeline
         self._react_loop = react_loop
         self._store_raw_bodies = store_raw_bodies
+        # The agentic engine's system prompt source (agent overlay-aware, or stock).
+        self._prompts = prompts
         # SPEC-083: runs last in the nightly pass; absent -> no promotion at all.
         self._promotion_sweep = promotion_sweep
 
@@ -413,6 +417,7 @@ class Consolidator:
             actor_did=actor_did,
             react_loop=self._react_loop,
             store_raw_bodies=self._store_raw_bodies,
+            prompts=self._prompts,
         )
 
     async def _distill_pipeline(

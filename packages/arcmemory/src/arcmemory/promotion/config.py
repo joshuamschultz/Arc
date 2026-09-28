@@ -40,7 +40,7 @@ class PromotionConfig(BaseModel):
     max_items_per_sweep: int = Field(default=200, gt=0)
     max_item_bytes: int = Field(default=16_384, gt=0)
     classifier: str = Field(default="jev", min_length=1)
-    classifier_model: str = "jev-1.13"
+    classifier_model: str = "jev-1.13.0"
     request_timeout_seconds: float = Field(default=10.0, gt=0.0, allow_inf_nan=False)
     # Where the classifier key comes from — a coordinate, never the value (REQ-510).
     # One fleet-wide env var in the write-only key store (decision 12); an optional

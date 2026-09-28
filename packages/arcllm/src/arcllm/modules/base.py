@@ -129,6 +129,10 @@ class BaseModule(LLMProvider):
     def model_name(self) -> str:
         return self._inner.model_name
 
+    @property
+    def max_output_tokens(self) -> int | None:
+        return self._inner.max_output_tokens
+
     async def invoke(
         self,
         messages: list[Message],

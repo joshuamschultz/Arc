@@ -6,6 +6,7 @@ company knowledge into the fleet store; this verb is how an operator tunes it::
     arc agent promotion show <agent_dir> [--json]
     arc agent promotion set  <agent_dir> [--enabled|--disabled] [--threshold X] [--model M]
     arc agent promotion key set | remove
+    arc agent promotion run  <agent-dir-or-name> [--max-items N] --email E   (see promotion_run)
 
 Three properties shape it:
 
@@ -44,6 +45,7 @@ from arccli.commands._shared import err, print_json
 from arccli.commands._shared import write as _out
 from arccli.commands.agent._common import _resolve_agent_dir
 from arccli.commands.agent._config_sync import _set_dotted
+from arccli.commands.agent.promotion_run import add_run_parser, run_promotion
 from arccli.commands.keys import _actor_did, _arc_dir, _audit_sink, _audited, _data_dir
 from arccli.commands.module import _write_atomic
 
@@ -261,7 +263,7 @@ def _key(args: argparse.Namespace) -> None:
     _KEY_MAP[args.key_cmd](args)
 
 
-_PROMOTION_MAP = {"show": _show, "set": _set, "key": _key}
+_PROMOTION_MAP = {"show": _show, "set": _set, "key": _key, "run": run_promotion}
 
 
 def _promotion(args: argparse.Namespace) -> None:
@@ -307,3 +309,5 @@ def add_promotion_parser(subs: Any) -> None:
     # No --value: the key is read from piped stdin or a hidden prompt only.
     _add_world(key_verbs.add_parser("set", help="Store the key (stdin or hidden prompt)."))
     _add_world(key_verbs.add_parser("remove", help="Forget the stored key."))
+
+    add_run_parser(verbs)

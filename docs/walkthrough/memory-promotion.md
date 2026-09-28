@@ -109,7 +109,7 @@ It writes to the same store via `PUT /api/keys/TYPESAFE_API_KEY`.
 
 ```bash
 arc agent promotion show <agent_dir>
-arc agent promotion set  <agent_dir> --enabled [--threshold 0.96] [--model jev-1.13]
+arc agent promotion set  <agent_dir> --enabled [--threshold 0.96] [--model jev-1.13.0]
 arc agent promotion set  <agent_dir> --disabled
 ```
 
@@ -164,6 +164,41 @@ succeeds, without being re-sent to Jev. The nightly hygiene pass itself
 still completes and stamps its date even when the promotion sweep fails —
 one failing sweep never blocks the rest of consolidation.
 
+## Run now: backfill existing memory once
+
+Turning promotion on does not wait for tonight. **Run now** runs the same
+sweep once, immediately, over the memory the agent already holds (a
+backfill). After that, the nightly run sends only new or changed items —
+the signed ledger already holds a verdict for everything the backfill
+judged, so nothing is sent twice.
+
+```bash
+arc agent promotion run <agent-dir-or-name> --email you@example.com
+arc agent promotion run <agent-dir-or-name> --max-items 2000 --json --email you@example.com
+arc agent promotion run olivia --url https://arc.example.com --email you@example.com
+```
+
+- It asks the **running** agent, through the serve process (`arc ui` /
+  `arc.service`), over ArcUI's account-authenticated API — the same flow as
+  `arc queue`. The password comes from a hidden prompt; there is no password
+  or token flag. Only an operator account may run it. A remote `--url` must
+  be HTTPS; plain HTTP is accepted for loopback only.
+- `--max-items` (1–5000) caps this run only and is never saved; the nightly
+  run keeps using `max_items_per_sweep`. Items over the cap are reported as
+  `deferred` and go in a later run.
+- It prints the result status and the counts: evaluated, promoted, kept
+  private, blocked (secret), too large, deferred. `tier_forbidden` (federal)
+  and `disabled` are results, not errors.
+- A run that overlaps the nightly sweep waits for it, then runs — the two
+  never run in parallel, and no item is sent twice. It does not touch the
+  nightly hygiene stamp, so that night's hygiene still runs.
+
+In ArcUI, the **Memory sharing** panel has a **Run now** button. It is
+enabled for an operator when sharing is on in the saved settings and the
+agent is not federal; it shows the last run's status and counts. Both paths
+call `POST /api/agents/{id}/memory/promotion/run` (operator only, body `{}`
+or `{"max_items": N}`), which returns the status and six counts only.
+
 ## What egresses, and what is audited
 
 **What actually leaves the box**, per item sent to Jev: the item's rendered
@@ -178,6 +213,7 @@ text, and nothing else — no agent DID, no agent name, no workspace path.
 | `memory.promotion.sweep` | Once per sweep | result status and counts |
 | `knowledge.promotion_decision` / `knowledge.promotion_completed` | Once per publish, on the shared-store side | item id, confidence, classifier version, decision |
 | `memory.promotion.config_changed` | Any CLI/UI settings or key change | field, old → new (never the key value) |
+| `memory.promotion.manual_run` | Every Run now attempt (CLI or UI), including refused ones (`denied`) and crashes (`failed`) | actor role, agent, the cap, the result counts |
 
 ## Federal: impossible by design
 

@@ -1,16 +1,12 @@
-"""Prompt templates arcskill ships — loaded standalone, optionally arc-managed.
+"""Prompt templates arcskill ships, resolved through an ``arcprompt.PromptSource``.
 
-arcskill houses the improver prompts it ships (``context/<name>.md``) and reads
-them with this small dependency-free loader, so **the package works with no
-arcprompt installed** — the default path is a plain stock read.
-
-When the arc system IS present, the consumer (arcagent) passes a ``resolve``
-callable that routes through arcprompt's overlay-aware, signed resolution. arcskill
-never imports arcprompt: it merely *uses* the resolver it is handed. So a signed
-operator override authored through arcui/CLI takes effect here, while a bare
-arcskill still loads its shipped defaults. The ``.md`` format matches arcprompt's
-(YAML frontmatter + body, one trailing newline stripped) so arcprompt's catalog
-discovers, views, and versions these same files.
+arcskill houses the improver prompts it ships (``context/<name>.md``) but never
+reads them itself. Every consumer takes a :class:`~arcprompt.PromptSource`
+(COMP-030): the agent hands it an overlay-aware, signature-verified source so a
+signed operator override authored through ArcUI/CLI takes effect; a component
+constructed standalone uses :class:`~arcprompt.StockPromptSource`, which reads
+the shipped stock files. arcskill knows arcprompt's lookup contract, never
+arcagent and never an agent path.
 
 The judge rubric (``judge_rubric.md``) is a prompt whose *body is YAML* — the same
 sign/overlay/version rails as any prose prompt, parsed structured by
@@ -19,55 +15,25 @@ sign/overlay/version rails as any prose prompt, parsed structured by
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import yaml
+from arcprompt import PromptSource
 
-# (package, name) -> effective body. Supplied by arcagent (arcprompt-backed) so
-# overrides take effect; ``None`` means "no arc system present" → stock read.
-PromptResolve = Callable[[str, str], str]
-
-_FRONTMATTER_DELIM = "---\n"
+PACKAGE = "arcskill"
 
 
-class PromptMissingError(FileNotFoundError):
-    """Raised when a named prompt file is not packaged under ``context/``."""
+def load_prompt(name: str, source: PromptSource) -> str:
+    """Return the effective body of the arcskill prompt ``name`` from ``source``.
 
-
-def _stock_body(name: str) -> str:
-    """Read ``context/<name>.md`` from the installed package, frontmatter stripped."""
-    path = Path(__file__).parent / f"{name}.md"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise PromptMissingError(f"arcskill ships no prompt named {name!r}") from exc
-    if not text.startswith(_FRONTMATTER_DELIM):
-        raise ValueError(f"prompt {name!r} does not begin with a '---' frontmatter block")
-    rest = text[len(_FRONTMATTER_DELIM) :]
-    end = rest.find("\n" + _FRONTMATTER_DELIM)
-    if end == -1:
-        raise ValueError(f"prompt {name!r} frontmatter block is not terminated by a '---' line")
-    body = rest[end + len("\n" + _FRONTMATTER_DELIM) :]
-    if body.endswith("\n"):
-        body = body[:-1]
-    return body
-
-
-def load_prompt(name: str, *, resolve: PromptResolve | None = None) -> str:
-    """Return the effective body of an arcskill prompt.
-
-    With ``resolve`` (the arc system is present): route through arcprompt's
-    overlay-aware, signature-verified resolution — an operator override wins.
-    Without it (standalone): read the shipped stock file directly.
+    Raises whatever the source raises — :class:`~arcprompt.PromptMissing` for a
+    prompt arcskill does not ship, :class:`~arcprompt.PromptUnsigned` for a
+    tampered override. A broken override is never silently replaced by stock.
     """
-    if resolve is not None:
-        return resolve("arcskill", name)
-    return _stock_body(name)
+    return source.resolve(PACKAGE, name)
 
 
-def load_rubric(*, resolve: PromptResolve | None = None) -> dict[str, Any]:
+def load_rubric(source: PromptSource) -> dict[str, Any]:
     """Load the judge rubric (``judge_rubric.md``) and parse its YAML body.
 
     The rubric is a structured prompt: dimensions keyed to a ``checklist`` list
@@ -75,11 +41,10 @@ def load_rubric(*, resolve: PromptResolve | None = None) -> dict[str, Any]:
     sign/overlay rails as any prompt, then parsed here into the structure the
     evaluator consumes.
     """
-    body = load_prompt("judge_rubric", resolve=resolve)
-    data = yaml.safe_load(body)
+    data = yaml.safe_load(load_prompt("judge_rubric", source))
     if not isinstance(data, dict):
         raise ValueError("judge_rubric body must be a YAML mapping of dimension -> config")
     return data
 
 
-__all__ = ["PromptMissingError", "PromptResolve", "load_prompt", "load_rubric"]
+__all__ = ["PACKAGE", "load_prompt", "load_rubric"]

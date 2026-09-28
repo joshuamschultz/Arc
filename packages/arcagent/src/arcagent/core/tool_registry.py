@@ -28,10 +28,8 @@ from collections import OrderedDict
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from xml.sax.saxutils import escape as xml_escape
 
 import arcrun
-from arcprompt import load_stock
 from arctrust import AgentIdentity
 
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -171,8 +169,6 @@ class ToolRegistry:
         self._classification_strict = classification_strict
         self._tools: dict[str, RegisteredTool] = {}
         self._pending_outcomes: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
-        self._prompt_cache: str | None = None
-        self._preamble: str = config.preamble or load_stock("arcagent", "tool_manifest_preamble")
 
     def get_classification(self, tool_name: str) -> ToolClassification:
         """Return a tool's classification for dispatch planning.
@@ -204,47 +200,6 @@ class ToolRegistry:
         """
         return self._config.policy
 
-    @property
-    def is_prompt_cached(self) -> bool:
-        """Whether the prompt catalog is currently cached."""
-        return self._prompt_cache is not None
-
-    def format_for_prompt(self) -> str:
-        """XML-formatted tool catalog for system prompt injection.
-
-        Returns empty string if no tools are registered.
-        Cached — invalidated on register().
-        """
-        if self._prompt_cache is not None:
-            return self._prompt_cache
-
-        if not self._tools:
-            self._prompt_cache = ""
-            return ""
-
-        lines = ["<available-tools>"]
-        lines.append(f"  <preamble>{xml_escape(self._preamble)}</preamble>")
-
-        for tool in sorted(self._tools.values(), key=lambda t: t.name):
-            safe_name = xml_escape(tool.name, {'"': "&quot;"})
-            safe_desc = xml_escape(tool.description)
-            attrs = f'name="{safe_name}"'
-            if tool.category:
-                escaped_cat = xml_escape(tool.category, {'"': "&quot;"})
-                attrs += f' category="{escaped_cat}"'
-
-            lines.append(f"  <tool {attrs}>")
-            lines.append(f"    <description>{safe_desc}</description>")
-            if tool.when_to_use:
-                lines.append(f"    <when-to-use>{xml_escape(tool.when_to_use)}</when-to-use>")
-            if tool.example:
-                lines.append(f"    <example>{xml_escape(tool.example)}</example>")
-            lines.append("  </tool>")
-
-        lines.append("</available-tools>")
-        self._prompt_cache = "\n".join(lines)
-        return self._prompt_cache
-
     def register(self, tool: RegisteredTool) -> None:
         """Register a tool, filtered by allow/deny policy and the egress gate.
 
@@ -270,7 +225,6 @@ class ToolRegistry:
         egress = self._egress_verdict(tool)
         if self._policy_allows(tool.name) and egress.allowed:
             self._tools[tool.name] = tool
-            self._prompt_cache = None  # Invalidate cached catalog
             _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
             return
 
@@ -298,13 +252,11 @@ class ToolRegistry:
         """Remove a tool from the registry. Returns True if removed.
 
         Used by reload paths to drop stale capability-loaded tools
-        before re-registering the latest set. Cache is invalidated on
-        any removal.
+        before re-registering the latest set.
         """
         if tool_name not in self._tools:
             return False
         del self._tools[tool_name]
-        self._prompt_cache = None
         _logger.info("Unregistered tool: %s", tool_name)
         return True
 
@@ -317,11 +269,10 @@ class ToolRegistry:
 
         Registration and policy filtering are synchronous, so the event loop
         cannot interleave a dispatch between removal and completion. If a
-        registration unexpectedly raises, the exact previous mapping and
-        prompt cache are restored before the exception escapes.
+        registration unexpectedly raises, the exact previous mapping is
+        restored before the exception escapes.
         """
         previous_tools = dict(self._tools)
-        previous_cache = self._prompt_cache
         try:
             for name in owned_names:
                 self._tools.pop(name, None)
@@ -330,11 +281,9 @@ class ToolRegistry:
                 self.register(tool)
                 if tool.name in self._tools:
                     accepted.add(tool.name)
-            self._prompt_cache = None
             return accepted
         except Exception:
             self._tools = previous_tools
-            self._prompt_cache = previous_cache
             raise
 
     def _policy_allows(self, tool_name: str) -> bool:
@@ -707,5 +656,4 @@ class ToolRegistry:
         """Clean up all tool connections."""
         self._tools.clear()
         self._pending_outcomes.clear()
-        self._prompt_cache = None
         _logger.info("Tool registry shut down")

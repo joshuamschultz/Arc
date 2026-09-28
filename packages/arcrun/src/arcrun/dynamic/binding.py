@@ -46,6 +46,7 @@ from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
+from arcrun.strategies import strategy_guidance
 from arcrun.strategies.react import check_breaker, react_loop
 from arcrun.types import LoopResult, Tool
 
@@ -61,19 +62,6 @@ _JSON_FENCE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 # a run id. A run id is read back in events, logs and outcomes; separators and
 # newlines in one are a defect surface, not a feature.
 _ID_UNSAFE = re.compile(r"[^\w.-]+")
-
-_CHILD_FRAMING = (
-    "You are a subagent handling one focused task inside a larger run.\n"
-    "Complete only this task and state the result in your final message."
-)
-"""Framing appended to the parent's system text for every child.
-
-Constant on purpose. ``label`` and ``phase`` are written by a model-authored
-script — usually with an f-string over a previous child's output — and the
-system message is instruction position, the one place such a string must never
-land (LLM01/ASI06). They are display names, and they already ride the
-``dynamic.agent.start`` event, which is where display names belong.
-"""
 
 _Number = TypeVar("_Number", int, float)
 
@@ -168,6 +156,18 @@ class RunHost:
         agent_call_budget: How many child runs this script may start in total.
         child_max_turns: Turn ceiling for a child that names none itself.
         scratch_dir: Where ``scratch_write`` lands. ``None`` keeps it in memory.
+
+    Every child's system message is the parent's own system text (minus the
+    parent's orchestration guidance, which a child does not follow), react's
+    guidance (a child runs the react loop), and the ``dynamic_child_framing``
+    prompt. All of it comes from the parent's ``PromptSource``, resolved once
+    here so a rejected override fails the script before any child starts.
+
+    The framing is a fixed prompt on purpose. ``label`` and ``phase`` are written
+    by a model-authored script — usually with an f-string over a previous
+    child's output — and the system message is instruction position, the one
+    place such a string must never land (LLM01/ASI06). They are display names,
+    and they already ride the ``dynamic.agent.start`` event.
     """
 
     def __init__(
@@ -186,6 +186,16 @@ class RunHost:
         self._child_max_turns = child_max_turns
         self._ledger = _Ledger(total=agent_call_budget)
         self._scratch = _Scratch(directory=scratch_dir)
+        self._child_guidance = strategy_guidance("react", state.prompt_source)
+        self._child_system = "\n\n".join(
+            part
+            for part in (
+                self._parent_system_text(),
+                self._child_guidance,
+                state.prompt_source.resolve("arcrun", "dynamic_child_framing"),
+            )
+            if part
+        )
 
     # --- ScriptHost surface --------------------------------------------------
 
@@ -344,10 +354,8 @@ class RunHost:
         parent = self._state
         return replace(
             parent,
-            messages=[
-                system_message(f"{self._parent_system_text()}\n\n{_CHILD_FRAMING}"),
-                user_message(prompt),
-            ],
+            messages=[system_message(self._child_system), user_message(prompt)],
+            strategy_guidance=self._child_guidance,
             registry=self._child_registry(spec.capability_mode),
             run_id=agent_id,
             parent_run_id=parent.run_id,
@@ -383,12 +391,17 @@ class RunHost:
         )
 
     def _parent_system_text(self) -> str:
-        """The parent's system words, so a child inherits the same posture."""
-        return "\n\n".join(
+        """The parent's system words, so a child inherits the same posture.
+
+        The parent's own strategy guidance is left out: it tells the model to
+        orchestrate, and a child is the thing being orchestrated.
+        """
+        texts = (
             content_text(message.content)
             for message in self._state.messages
             if getattr(message, "role", "") == "system"
         )
+        return "\n\n".join(text for text in texts if text != self._state.strategy_guidance)
 
     def _child_registry(self, capability_mode: str) -> ToolRegistry:
         """A frozen subset of the parent's tools — narrowing only.

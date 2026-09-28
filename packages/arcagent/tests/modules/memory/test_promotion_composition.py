@@ -159,7 +159,7 @@ def test_enabled_non_federal_passes_promotion_config_and_publisher_to_the_brain(
     _configure(
         tmp_path,
         _identity(),
-        promotion={"enabled": True, "classifier_model": "jev-1.13"},
+        promotion={"enabled": True, "classifier_model": "jev-1.13.0"},
         tier=tier,
         shared_knowledge=_FakeSharedPort(),
     )
@@ -169,7 +169,7 @@ def test_enabled_non_federal_passes_promotion_config_and_publisher_to_the_brain(
     assert isinstance(config, Mapping)
     assert config["enabled"] is True
     assert config["classifier"] == "jev"
-    assert config["classifier_model"] == "jev-1.13"
+    assert config["classifier_model"] == "jev-1.13.0"
     assert isinstance(context["promotion_publisher"], SharedKnowledgePublisher)
 
 
@@ -268,7 +268,7 @@ async def test_composed_publisher_promotes_as_the_runtime_identity(
         "insight:acme-renewal",
         content_sha256=render_candidate(insight).content_sha256,
         confidence=0.97,
-        classifier_version="jev-1.13",
+        classifier_version="jev-1.13.0",
     )
 
     assert shared_ref == "shared-1"

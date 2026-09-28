@@ -13,7 +13,7 @@ ALL hold, otherwise keep_private:
 - probabilities well-formed: exactly the four labels, all finite, sum 1.0 +/- 0.01,
   ``probabilities["company"]`` is the max;
 - ``personal_probability is None`` or ``<= cfg.max_personal_probability`` (0.10);
-- ``classifier_version == cfg.classifier_model`` (pinned ``jev-1.13``).
+- ``classifier_version == cfg.classifier_model`` (pinned ``jev-1.13.0``).
 
 A forged/malformed verdict that bypasses model validation (``model_construct``)
 must still land on keep_private: the rule is the last gate before egress-derived
@@ -25,10 +25,10 @@ from __future__ import annotations
 import math
 
 import pytest
-from arcmemory.promotion.classifier import ClassifierVerdict
-from arcmemory.promotion.decide import decide
 
+from arcmemory.promotion.classifier import ClassifierVerdict
 from arcmemory.promotion.config import PromotionConfig
+from arcmemory.promotion.decide import decide
 
 _GOOD_PROBS = {"company": 0.97, "personal": 0.01, "agent_only": 0.01, "unclear": 0.01}
 
@@ -46,7 +46,7 @@ def _verdict(**overrides: object) -> ClassifierVerdict:
         "probabilities": dict(_GOOD_PROBS),
         "personal_probability": 0.02,
         "classifier_id": "jev",
-        "classifier_version": "jev-1.13",
+        "classifier_version": "jev-1.13.0",
         "request_id": "req-1",
         "input_tokens": 42,
     }
@@ -186,7 +186,7 @@ def test_pinned_model_from_cfg_is_the_version_that_counts() -> None:
     cfg = PromotionConfig(classifier_model="jev-1.14")
 
     assert decide(_verdict(classifier_version="jev-1.14"), cfg) == "promote"
-    assert decide(_verdict(classifier_version="jev-1.13"), cfg) == "keep_private"
+    assert decide(_verdict(classifier_version="jev-1.13.0"), cfg) == "keep_private"
 
 
 @pytest.mark.parametrize("confidence", [math.nan, math.inf, 1.5, -0.1])

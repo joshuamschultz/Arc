@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 
-from arcskill.context import PromptResolve, load_prompt, load_rubric
+from arcprompt import PromptSource, StockPromptSource
+
+from arcskill.context import load_prompt, load_rubric
 from arcskill.improver._util import extract_json
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.models import (
@@ -27,14 +29,18 @@ class SkillEvaluator:
     """Evaluate skill procedures against execution traces using LLM-as-judge."""
 
     def __init__(
-        self, config: ImproverConfig, llm: LLMInvoker, *, resolve: PromptResolve | None = None
+        self,
+        config: ImproverConfig,
+        llm: LLMInvoker,
+        *,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         self._config = config
         self._llm = llm
-        self._resolve = resolve
-        # Load the scoring rubric once per pass — overlay-aware when the arc system
-        # is present (an operator edit wins), stock otherwise. Frozen for the pass.
-        self._rubric = load_rubric(resolve=resolve)
+        self._prompts = prompt_source or StockPromptSource()
+        # Load the scoring rubric once per pass — the agent's override when one is
+        # signed, stock otherwise. Frozen for the pass.
+        self._rubric = load_rubric(self._prompts)
 
     def build_judge_prompt(
         self,
@@ -59,7 +65,7 @@ class SkillEvaluator:
             ", ".join(tc.error_type for tc in trace.tool_calls if tc.error_type) or "None"
         )
 
-        return load_prompt("judge_prompt", resolve=self._resolve).format(
+        return load_prompt("judge_prompt", self._prompts).format(
             dimension=dimension,
             anti_inflation=anti_inflation,
             checklist_text=checklist_text,

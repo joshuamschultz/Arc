@@ -1309,11 +1309,18 @@ function PromptsTab({ agentId }: { agentId: string }) {
                       <div className="flex items-center justify-between gap-2">
                         <FileText className="size-4 text-muted-foreground" />
                         <span
+                          title={
+                            p.status === 'rejected'
+                              ? `Agent will refuse to run: ${p.rejection_reason ?? 'override rejected'}`
+                              : undefined
+                          }
                           className={cn(
                             'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
-                            p.status === 'overridden'
-                              ? 'border-primary/40 bg-primary/10 text-primary'
-                              : 'border-border bg-muted/40 text-muted-foreground',
+                            p.status === 'rejected'
+                              ? 'border-destructive/50 bg-destructive/10 text-destructive'
+                              : p.status === 'overridden'
+                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                : 'border-border bg-muted/40 text-muted-foreground',
                           )}
                         >
                           {p.status}

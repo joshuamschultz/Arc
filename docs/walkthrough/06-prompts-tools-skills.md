@@ -86,14 +86,17 @@ resolves stock prompts — it just refuses every overlay.
 `build_run_context` (`packages/arcagent/src/arcagent/core/agent_dispatch.py:42`)
 is where the pieces converge for one turn:
 
-1. **Freeze the prompt snapshot.** `_run_prompt_resolve` resolves the full
- catalog once via the agent's `PromptResolver` and emits one
- `prompt.snapshot` audit event (`agent_dispatch.py:130`). A bare/test agent
- with no resolver degrades to `arcprompt.load_stock` — stock-only, no crash.
-2. **Strategy guidance.** `arcrun.get_strategy_prompts(tool_names=..., resolve=resolve)`
- supplies the ReAct/strategy-specific sections (arcrun-owned; see
+1. **Freeze the prompt snapshot.** `_run_prompt_source` resolves the full
+ catalog once via the agent's `PromptResolver`, emits one `prompt.snapshot`
+ audit event, and wraps the snapshot as the run's `PromptSource`
+ (`arcprompt.ResolverPromptSource`). A bare/test agent with no resolver gets
+ `arcprompt.StockPromptSource` — stock-only, no crash.
+2. **Strategy guidance** is not assembled here. The run's `PromptSource` is
+ passed to `arcrun.run(..., prompt_source=...)`, and arcrun adds the guidance
+ of the strategy that actually runs (arcrun-owned; see
  [`docs/05-steering-and-strategies.md`](05-steering-and-strategies.md)).
-3. **Spawn guidance** (if `spawn.enabled`) is resolved and merged in.
+3. **Spawn guidance** (if `spawn.enabled`) is resolved and merged in; every
+ `spawn_task` child runs under the same `PromptSource`.
 4. **`ContextManager.assemble_system_prompt`**
  (`packages/arcagent/src/arcagent/core/session_internal/context.py:75`) does
  the actual assembly:
@@ -103,7 +106,10 @@ is where the pieces converge for one turn:
      restart.
  - Emits `agent:assemble_prompt` on the module bus so any subscribed module
      can inject its own named section, query-conditioned on the current
-     turn's task text. This is also **how the tool list reaches the prompt**:
+     turn's task text. The payload carries the run's `prompt_source`; a
+     handler that adds a prompt-backed section resolves it from there
+     (`ctx.data.get("prompt_source") or <its configured source>`), so every
+     section of one run comes from the one frozen snapshot. This is also **how the tool list reaches the prompt**:
      `agent_lifecycle.py:375` subscribes `_inject_capabilities` at priority
      85, writing `sections["capabilities"] = registry.format_for_prompt()`
      (the tool+skill XML manifest from Part B), and `:381` subscribes
@@ -111,7 +117,7 @@ is where the pieces converge for one turn:
      when any skills are registered. Memory recall and planning guidance
      inject the same way at their own priorities.
  - Merges the caller-supplied `extra_sections` (the `base_system` harness
-     preamble + strategy + spawn guidance) in after the bus handlers run.
+     preamble + spawn guidance) in after the bus handlers run.
  - **Splits the result by change rate**, because a provider caches the
      longest stable prefix and the conversation sits behind the whole system
      prompt. Session-stable sections (`base`, `identity`, capabilities,
@@ -123,12 +129,12 @@ is where the pieces converge for one turn:
 ```mermaid
 flowchart TB
     R["PromptResolver<br/>pinned to OPERATOR key"] --> S["PromptSnapshot<br/>frozen once per run, 1 audit event"]
-    S --> STRAT["arcrun.get_strategy_prompts()"]
+    S --> STRAT["run PromptSource → arcrun.run (strategy guidance)"]
     S --> SPAWN["spawn_guidance (if enabled)"]
     ID["identity.md<br/>read-only, hot-reloaded"] --> ASM
     CTX["context.md<br/>workpad-owned cockpit"] --> ASM
     BUS["agent:assemble_prompt<br/>module-injected sections"] --> ASM["ContextManager.assemble_system_prompt"]
-    STRAT --> ASM
+    STRAT --> OUT
     SPAWN --> ASM
     ASM --> OUT["segment 1: base -- identity -- middle (alpha)<br/>segment 2: context<br/>turn block: recall/planning/teams -> user message"]
     class R,S found
