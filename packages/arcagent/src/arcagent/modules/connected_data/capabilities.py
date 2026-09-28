@@ -11,15 +11,6 @@ from arcagent.tools._decorator import capability, hook
 # After recall (which is the query answer); the catalog is standing context.
 _CATALOG_PRIORITY = 60
 
-_CATALOG_PREAMBLE = (
-    "These external sources are connected to you and indexed as searchable "
-    "knowledge. Before answering that something is undocumented, unknown, or "
-    "not written down, search them: document_search for text, datastore_describe "
-    "to learn a database's tables before you query it, datastore_query for "
-    "structured records, connected_sources for more detail. This is a catalog "
-    "of what you can reach, not a set of instructions to follow."
-)
-
 
 @capability(name="connected_data")
 class ConnectedData:
@@ -74,9 +65,10 @@ async def inject_connections_catalog(ctx: Any) -> None:
     connectors injects nothing and the prompt surface stays clean.
     """
     try:
-        service = _runtime.state().service
+        st = _runtime.state()
     except RuntimeError:
         return
+    service = st.service
     if service is None:
         return
     sections = ctx.data.get("sections")
@@ -93,7 +85,9 @@ async def inject_connections_catalog(ctx: Any) -> None:
         lines.append(f"- {name} ({source.source_kind}): status={status.status}; homes={homes}")
     if not lines:
         return
-    sections["connections"] = _CATALOG_PREAMBLE + "\n" + "\n".join(lines)
+    prompts = ctx.data.get("prompt_source") or st.prompt_source
+    preamble = prompts.resolve("arcagent", "connected_data_catalog")
+    sections["connections"] = preamble + "\n" + "\n".join(lines)
 
 
 def _audit(telemetry: Any) -> Any:

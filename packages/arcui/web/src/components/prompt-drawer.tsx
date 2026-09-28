@@ -9,7 +9,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { PromptStatusBadge } from '@/components/prompt-status-badge'
 import { CodeBlock } from '@/components/code-block'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { useAgentPromptDetail } from '@/lib/queries'
@@ -65,8 +65,10 @@ export function PromptDrawer({
       queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompts'] }),
     ])
 
+  // A rejected override has no effective body; editing starts from stock so the
+  // operator re-authors a correctly signed override.
   const startEdit = () => {
-    setDraft(data?.effective ?? '')
+    setDraft((data?.status === 'rejected' ? data?.stock : data?.effective) ?? '')
     setError(null)
     setNotice(null)
     setEditing(true)
@@ -117,9 +119,7 @@ export function PromptDrawer({
           </SheetTitle>
           {data && (
             <SheetDescription className="flex flex-wrap items-center gap-2">
-              <Badge variant={data.status === 'overridden' ? 'default' : 'secondary'}>
-                {data.status}
-              </Badge>
+              <PromptStatusBadge status={data.status} reason={data.rejection_reason} />
               <span className="text-xs text-muted-foreground">{data.description}</span>
             </SheetDescription>
           )}
@@ -150,7 +150,7 @@ export function PromptDrawer({
                 <Pencil className="size-3.5" /> Edit
               </Button>
             )}
-            {operatorMode && !editing && data?.status === 'overridden' && (
+            {operatorMode && !editing && data != null && data.status !== 'stock' && (
               <Button variant="ghost" size="sm" disabled={busy} onClick={reset}>
                 <RotateCcw className="size-3.5" /> Reset
               </Button>
@@ -192,6 +192,11 @@ export function PromptDrawer({
               wrap="soft"
               className="h-full min-h-[320px] w-full resize-none whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring/60"
             />
+          ) : view !== 'stock' && data?.status === 'rejected' ? (
+            <p className="text-xs text-destructive">
+              The override on disk is rejected, so the agent has no effective prompt and will
+              refuse to run. Edit to save a new signed override, or Reset to use stock.
+            </p>
           ) : view === 'diff' && !body ? (
             <p className="text-xs text-muted-foreground">
               No override — the effective prompt is identical to stock.

@@ -227,17 +227,21 @@ The wiring lives in arcagent's run-start prompt context module.
 - At run start, arcagent calls `snapshot_run_prompts(...)`, which resolves
   `PromptCatalog().catalog()` and emits the one provenance event through a small
   adapter onto the agent's telemetry audit sink.
-- The frozen snapshot then backs a `(package, name) -> body` closure
-  (`snapshot_resolver`) that is passed into arcrun's `get_strategy_prompts(...)`
-  and used for arcagent's own assembled sections. Every prompt in the assembled
-  system prompt therefore comes from the single run-frozen snapshot — the same
-  bytes the provenance event recorded.
+- The frozen snapshot then becomes the run's `PromptSource`
+  (`ResolverPromptSource(snapshot)`). arcagent hands it to `arcrun.run(...,
+  prompt_source=...)` (strategy guidance, the selection call, code and dynamic
+  prompts), puts it on the `agent:assemble_prompt` payload as `prompt_source` so
+  every module section resolves from it, and passes it to every `spawn_task`
+  child. Every prompt a run sends therefore comes from the single run-frozen
+  snapshot — the same bytes the provenance event recorded — and an override
+  written mid-run reaches only the next run.
 
-The seam between packages is the `PromptResolve` type — `Callable[[str, str], str]`,
-i.e. `(package, name) -> effective body`. `arcrun.get_strategy_prompts` accepts a
-`resolve: PromptResolve = load_stock` parameter: handed the snapshot closure it
-serves overlay-aware bytes; handed nothing it defaults to stock. This is how a
-consumer that never imports `arcprompt` still honors an operator override — it is
+The seam between packages is the `PromptSource` protocol —
+`resolve(package, name) -> str`, the effective body. `StockPromptSource` is the
+standalone default (stock only); `ResolverPromptSource` adapts a live
+`PromptResolver` or a frozen `PromptSnapshot`, and raises `PromptMissing` for a
+prompt it cannot answer. A package below the agent (arcrun, arcmemory, arcskill)
+accepts an optional `PromptSource` and never learns an agent folder exists: it is
 given the resolution, it does not reach for it.
 
 ---
@@ -312,8 +316,8 @@ An operator wants the memory consolidation prompt to add a house style rule.
    deliberate way back to stock.
 
 5. **A decoupled consumer sees it too.** If the overridden prompt belonged to
-   `arcskill`, arcskill would still never import `arcprompt`; arcagent hands it the
-   snapshot-backed `PromptResolve` closure, so the operator's edit reaches
+   `arcskill`, arcskill would still never import the resolver; arcagent hands it
+   the agent's `PromptSource`, so the operator's edit reaches
    arcskill's prompt while arcskill stays a clean leaf.
 
 ---
@@ -335,6 +339,9 @@ An operator wants the memory consolidation prompt to add a house style rule.
 | `PromptFrontmatter` | Validated frontmatter (`name`, `description`, `tunable`); an authored `version` is ignored. |
 | `PromptResolver` | Overlay-over-stock, first-match-wins resolution against a pinned key and held posture. |
 | `PromptSnapshot` | Immutable per-run mapping of `(package, name)` to its resolved document. |
+| `PromptSource` | Protocol: `resolve(package, name) -> str`, the effective body. The seam every package below the agent accepts. |
+| `StockPromptSource` | The standalone `PromptSource`: stock prompts only. |
+| `ResolverPromptSource` | Adapts a `PromptResolver` (fresh per call) or a frozen `PromptSnapshot` to `PromptSource`; missing → `PromptMissing`. |
 | `SignatureVerifier` | Verify an overlay's detached signature against a single pinned public key; unpinned fails closed. |
 | `TrustPosture` | `personal` / `enterprise` / `federal` — stringency carried for provenance, not a verification gate. |
 | `PromptError` | Base class for every arcprompt failure. |
@@ -351,7 +358,6 @@ An operator wants the memory consolidation prompt to add a house style rule.
 | `parse_prompt` | `(raw: bytes, *, source: Source, signer_did: str \| None = None) -> PromptDocument` |
 | `render_prompt` | `(body: str, *, name: str, description: str, tunable: bool = True) -> bytes` |
 | `snapshot` | `(resolver, refs, *, actor_did, sink, request_id=None) -> PromptSnapshot` |
-| `PromptResolve` | `Callable[[str, str], str]` — the `(package, name) -> body` seam a consumer accepts |
 | `DEFAULT_PROMPT_PACKAGES` | `("arcrun", "arcagent", "arcmemory", "arcskill")` |
 
 ---

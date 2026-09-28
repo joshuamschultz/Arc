@@ -1,7 +1,7 @@
 """Per-agent messaging module runtime context.
 
 The messaging module's hooks, tools, and background polling task share
-state (services, config, unread-count cache, agent run callback, etc.).
+state (services, config, agent run callback, etc.).
 Decorator-stamped functions can't carry that state in a closure, so it
 lives in a :class:`_State` instance bound to a
 :class:`contextvars.ContextVar`, configured by the agent at startup.
@@ -29,6 +29,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from arcprompt import PromptSource, StockPromptSource
 
 from arcagent.core.run_contract import TeamReplyPort
 from arcagent.modules.messaging.config import MessagingConfig
@@ -68,9 +70,6 @@ class _State:
     _live_backend_failed: bool = False
     live_backend: Any = None
     live_subscription: Any = None
-    # Latest unread counts per stream — updated by the poll loop and read
-    # by the assemble_prompt hook for context injection.
-    last_unread: dict[str, int] = field(default_factory=dict)
     # agent.run_collected() callback — bound via agent:ready event.
     agent_run_fn: Any = None
     requires_signed_runs: bool = False
@@ -91,6 +90,9 @@ class _State:
     # Channel delivery ("platform:chat_id", text) -> None from the embedded
     # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
     channel_deliver_fn: Any = None
+    # The agent's prompt lookup — the team section and channel-router prompt an
+    # operator may override. Stock when the runtime is configured standalone.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
     # Serialises message processing so only one inbox batch is in-flight.
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # TTL-cached team roster string; invalidated after roster_ttl_seconds.
@@ -141,6 +143,7 @@ def configure(
     identity: AgentIdentity | None = None,
     operator_signer: Any = None,
     arcstore_opener: Any = None,
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task and bootstrap arcteam services.
 
@@ -211,6 +214,7 @@ def configure(
             reply_port=svc,
             registry=registry,
             digests=DigestStore(backend),
+            prompt_source=prompt_source or StockPromptSource(),
         )
     )
 

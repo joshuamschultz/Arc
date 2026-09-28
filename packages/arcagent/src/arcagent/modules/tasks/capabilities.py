@@ -1280,21 +1280,8 @@ async def inject_team_handoff_section(ctx: Any) -> None:
     sections = ctx.data.get("sections") if hasattr(ctx, "data") else None
     if not isinstance(sections, dict):
         return
-    sections["handoffs"] = "\n".join(
-        [
-            "## Team Handoffs",
-            "",
-            "Hand work to the teammate who owns it. Do not do everything yourself.",
-            "",
-            "- Do it yourself when it is quick and clearly your job.",
-            "- Hand off when the job belongs to someone else or needs their skill.",
-            "- Give an at-rest task to a teammate: "
-            '`assign_task(id, to_handle="@handle")`. They pick it up and run it.',
-            '- Make new work owned by a teammate: `create_task(title=..., owner="@handle")`.',
-            "- Use the same `@handle` you would tag in a channel; it resolves to that agent.",
-            "- After you hand off, let them run it. Ask in the channel if you need a status.",
-        ]
-    )
+    source = ctx.data.get("prompt_source") or _runtime.state().prompt_source
+    sections["handoffs"] = source.resolve("arcagent", "team_handoffs")
 
 
 @hook(event="agent:assemble_prompt", priority=60)

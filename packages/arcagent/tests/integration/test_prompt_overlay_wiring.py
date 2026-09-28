@@ -13,14 +13,13 @@ from pathlib import Path
 from typing import Any
 
 import arctrust
-from arcprompt import render_prompt
+from arcprompt import ResolverPromptSource, render_prompt
 from arctrust.artifact import sign_artifact
 from arctrust.operator import OperatorKey
 from arctrust.policy import OperatorApprovalAuthority
 
 from arcagent.core.prompt_context import (
     build_prompt_resolver,
-    snapshot_resolver,
     snapshot_run_prompts,
 )
 
@@ -99,8 +98,8 @@ def test_snapshot_emits_one_provenance_event_with_overlay_signer(
     assert rows[("arcagent", "spawn_guidance")]["source"] == "stock"
     assert rows[("arcagent", "spawn_guidance")]["signer_did"] is None
 
-    # The snapshot resolver reads the frozen overlay body.
-    assert snapshot_resolver(snap)("arcrun", "strategy_react") == "OVERRIDDEN react"
+    # The run's PromptSource over the snapshot reads the frozen overlay body.
+    assert ResolverPromptSource(snap).resolve("arcrun", "strategy_react") == "OVERRIDDEN react"
 
 
 def test_deleting_overlay_restores_stock_next_snapshot(tmp_path: Path, monkeypatch: Any) -> None:

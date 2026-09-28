@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 import arcrun
+from arcprompt import PromptSource
 from arctrust import ChildIdentity, derive_child_identity
 from arctrust.classification import Classification
 
@@ -117,6 +118,7 @@ def make_spawn_tool(
     max_concurrent_spawns: int = _DEFAULT_MAX_CONCURRENT_SPAWNS,
     max_child_turns: int = _DEFAULT_MAX_CHILD_TURNS,
     root_token_budget: RootTokenBudget | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> arcrun.Tool:
     """Create a spawn_task tool that starts a child run().
 
@@ -129,6 +131,10 @@ def make_spawn_tool(
     is debited on completion; once the pool is exhausted, further spawns are
     refused. This is the cross-child cap that stops one run from silently
     spending several times its allocation.
+
+    ``prompt_source`` is the parent run's frozen prompt set; every child runs
+    under it, so an operator's edits reach a child exactly as they reach the
+    parent run.
     """
     # Semaphore limits concurrent child runs (ASI-08, LLM10)
     spawn_semaphore = asyncio.Semaphore(max_concurrent_spawns)
@@ -170,6 +176,7 @@ def make_spawn_tool(
                 wallclock_timeout_s=spawn_timeout_seconds,
                 sandbox=sandbox,
                 allowed_strategies=allowed_strategies,
+                prompt_source=prompt_source,
             )
         if root_token_budget is not None:
             await root_token_budget.record_actual(result.tokens.total)
@@ -299,6 +306,7 @@ async def spawn(
     sandbox: arcrun.SandboxConfig | None = None,
     allowed_strategies: list[str] | None = None,
     audit_sink: Any | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> SpawnResult:
     """Spawn a child run and return a structured SpawnResult.
 
@@ -320,6 +328,8 @@ async def spawn(
         token_budget: Optional token limit for the child run.
         wallclock_timeout_s: Wall-clock timeout in seconds.
         sandbox: Optional sandbox config.
+        prompt_source: The parent run's prompt set for every arcrun prompt the
+            child sends (strategy guidance, selection). ``None`` → stock prompts.
         audit_sink: Optional arctrust.AuditSink. AuditEvents for spawn lifecycle
             are emitted to this sink in addition to EventBus events. When None,
             falls back to logger-only (backwards compatible).
@@ -463,6 +473,7 @@ async def spawn(
                     actor_did=child_actor,
                     store_raw_bodies=parent_state.event_bus.store_raw_bodies,
                     max_tokens=token_budget,
+                    prompt_source=prompt_source,
                 ),
                 timeout=wallclock_timeout_s,
             )
@@ -597,6 +608,7 @@ async def spawn_many(
     *,
     max_concurrent: int = _DEFAULT_MAX_CONCURRENT_SPAWNS,
     fail_fast: bool = False,
+    prompt_source: PromptSource | None = None,
 ) -> list[SpawnResult]:
     """Spawn multiple children in parallel, respecting concurrency and budget limits.
 
@@ -605,6 +617,8 @@ async def spawn_many(
         max_concurrent: Maximum number of children running at once.
         fail_fast: If True, cancel remaining pending spawns on first error/timeout.
                    Completed results are preserved.
+        prompt_source: The parent run's prompt set, forwarded to every child
+            exactly as :func:`spawn` takes it. ``None`` → stock prompts.
 
     Returns:
         List of SpawnResult in the same order as specs.
@@ -677,6 +691,7 @@ async def spawn_many(
                 token_budget=spec.token_budget,
                 wallclock_timeout_s=spec.wallclock_timeout_s,
                 sandbox=spec.sandbox,
+                prompt_source=prompt_source,
             )
             results[idx] = result
             if fail_fast and result.status in ("error", "timeout"):

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from arcprompt import PromptSource, StockPromptSource
 from arcteam.digest import AgentDigest, DigestEntry
 from arcteam.types import Channel
 
@@ -115,6 +116,7 @@ class _State:
     telemetry: Any = None
     channel_last_woken: dict[str, float] = field(default_factory=dict)
     channel_breakers: dict[str, Any] = field(default_factory=dict)
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
 
 
 def _digest(handle: str, titles: list[str]) -> AgentDigest:

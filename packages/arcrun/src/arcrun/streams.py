@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcprompt import PromptSource
+
 from arcrun._messages import SystemPrompt
 from arcrun.capabilities import CapabilityProvider
 from arcrun.dynamic.seal import RunSeal
@@ -210,6 +212,7 @@ async def run_stream(
     deadline: float | None = None,
     delivery_queue_size: int = 128,
     tool_ledger: ToolExecutionLedger | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -263,6 +266,9 @@ async def run_stream(
             ``handle.cancel(caller_did, reason)`` routes through the SAME
             ``cancel_event`` + ``_halt_on_cancel`` terminator the tracked path
             uses. Inert when None — an uncancelled run behaves exactly as before.
+        prompt_source: Optional ``arcprompt.PromptSource`` for every arcrun
+            prompt the run sends (selection, strategy guidance, dynamic
+            authoring). ``None`` reads the shipped ``arcrun/context`` bodies.
 
     Returns:
         An async iterator of StreamEvent objects.
@@ -400,6 +406,7 @@ async def run_stream(
                 stream_event=_on_stream_event,
                 deadline=deadline,
                 tool_ledger=tool_ledger,
+                prompt_source=prompt_source,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: partial stream must have a typed terminal

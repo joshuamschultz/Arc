@@ -22,6 +22,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import arcrun
+from arcprompt import PromptSource
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -54,13 +55,17 @@ async def build_run_context(
     AgentCapabilityProvider,  # the unified capability surface for arcrun
     AssembledPrompt,  # tiered system prompt + this turn's context
     Callable[[arcrun.Event], None],  # bridge
+    PromptSource,  # this run's frozen, overlay-aware prompts, for arcrun
 ]:
     """Prepare shared run context for the streaming run.
 
     Assembles the agent's capabilities into an ``AgentCapabilityProvider``
     (ADR-023): policy-wrapped registry tools (invocable) + the agent's skills
     (lazily loaded) + spawn (dispatched with live context). Merges the harness
-    preamble, strategy, and orchestration guidance into the system prompt. Emits
+    preamble and orchestration guidance into the system prompt. Strategy
+    guidance is not assembled here: arcrun adds the guidance of the strategy it
+    actually runs, resolved through the returned ``PromptSource`` — the same
+    run-frozen snapshot every section here came from. Emits
     ``agent:pre_respond`` before returning.
     """
     from arcagent.core.model_manager import create_arcrun_bridge
@@ -71,19 +76,14 @@ async def build_run_context(
     invoke_tools = tool_registry.to_arcrun_tools()
 
     # Freeze the complete prompt set for this run and emit one provenance event
-    # (COMP-006 / REQ-123, REQ-132). The snapshot backs an overlay-aware resolver
+    # (COMP-006 / REQ-123, REQ-132). The snapshot backs an overlay-aware source
     # so an operator override reaches the model — and is attributable to exact
-    # bytes. Absent a resolver (bare/test agent), fall back to stock-only loading.
-    resolve = _run_prompt_resolve(agent, telemetry)
+    # bytes. Absent a resolver (bare/test agent), the shipped prompts are used.
+    prompt_source = _run_prompt_source(agent, telemetry)
 
-    # Strategy prompt guidance — arcrun-owned strategies and tools. ``base`` is
-    # the harness-level preamble that opens every agent's prompt, above its own
-    # identity; like every other prompt it is operator-overridable via arcprompt.
-    tool_names = [t.name for t in invoke_tools]
-    strategy_sections = {
-        "base": resolve("arcagent", "base_system"),
-        **arcrun.get_strategy_prompts(tool_names=tool_names, resolve=resolve),
-    }
+    # ``base`` is the harness-level preamble that opens every agent's prompt,
+    # above its own identity; like every other prompt it is operator-overridable.
+    harness_sections = {"base": prompt_source.resolve("arcagent", "base_system")}
 
     # Orchestration: spawn_task is context-dependent (reads depth/budget from the
     # loop's ToolContext), so it is dispatched directly, not routed through the
@@ -92,10 +92,11 @@ async def build_run_context(
     if agent._config.spawn.enabled:
         from arcagent.orchestration import RootTokenBudget, make_spawn_tool
 
-        spawn_guidance = resolve("arcagent", "spawn_guidance")
+        spawn_guidance = prompt_source.resolve("arcagent", "spawn_guidance")
         child_prompt = await context.assemble_system_prompt(
             agent._workspace,
-            extra_sections={**strategy_sections, "spawn_guidance": spawn_guidance},
+            extra_sections={**harness_sections, "spawn_guidance": spawn_guidance},
+            prompt_source=prompt_source,
         )
         child_system_prompt = child_prompt.as_text()
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
@@ -115,10 +116,11 @@ async def build_run_context(
             # mid-task, its max_turns breach then painted "Error" after real work.
             max_child_turns=agent._config.spawn.max_turns,
             root_token_budget=root_token_budget,
+            prompt_source=prompt_source,
         )
         child_tools.append(spawn_tool)
         ctx_tools = [spawn_tool]
-        strategy_sections = {**strategy_sections, "spawn_guidance": spawn_guidance}
+        harness_sections = {**harness_sections, "spawn_guidance": spawn_guidance}
 
     # SPEC-071 — announce candidate user-turn moments BEFORE the prompt is
     # assembled, so a proactive recall fired this turn lands in THIS turn's
@@ -137,7 +139,10 @@ async def build_run_context(
         await bus.emit("agent:moment", {"kind": "topic_shift", **moment_payload})
 
     prompt = await context.assemble_system_prompt(
-        agent._workspace, extra_sections=strategy_sections, query=task
+        agent._workspace,
+        extra_sections=harness_sections,
+        query=task,
+        prompt_source=prompt_source,
     )
     # The turn's origin channel is read HERE, in the dispatch task that bound it
     # a few lines earlier, and travels stamped on every progress event the bridge
@@ -166,26 +171,27 @@ async def build_run_context(
     )
 
     await bus.emit("agent:pre_respond", {"task": task})
-    return telemetry, bus, model, provider, prompt, bridge
+    return telemetry, bus, model, provider, prompt, bridge, prompt_source
 
 
-def _run_prompt_resolve(agent: ArcAgent, telemetry: AgentTelemetry) -> Callable[[str, str], str]:
-    """Build this run's overlay-aware prompt resolver + emit the provenance event.
+def _run_prompt_source(agent: ArcAgent, telemetry: AgentTelemetry) -> PromptSource:
+    """Build this run's overlay-aware prompt source + emit the provenance event.
 
     Freezes the complete prompt set once (REQ-123) and audits it once
-    (REQ-132). When the agent has no resolver (bare/test construction that
-    skipped capability setup) this degrades to stock-only ``load_stock`` so a
-    minimal agent still assembles its prompt.
+    (REQ-132); a rejected override raises here, before the run starts, so the
+    run fails closed. When the agent has no resolver (bare/test construction
+    that skipped capability setup) this is the stock source, so a minimal agent
+    still assembles its prompt.
     """
-    from arcprompt import load_stock
+    from arcprompt import ResolverPromptSource, StockPromptSource
 
     resolver = agent._prompt_resolver
     if resolver is None:
-        return load_stock
+        return StockPromptSource()
 
     from arcstore.spool import current_request_id
 
-    from arcagent.core.prompt_context import snapshot_resolver, snapshot_run_prompts
+    from arcagent.core.prompt_context import snapshot_run_prompts
 
     actor_did = agent._identity.did if agent._identity else "did:arc:unknown"
     snapshot = snapshot_run_prompts(
@@ -194,7 +200,7 @@ def _run_prompt_resolve(agent: ArcAgent, telemetry: AgentTelemetry) -> Callable[
         audit_event=telemetry.audit_event,
         request_id=current_request_id(),
     )
-    return snapshot_resolver(snapshot)
+    return ResolverPromptSource(snapshot)
 
 
 def _agent_skills(agent: ArcAgent) -> list[_Skill]:
@@ -433,7 +439,7 @@ async def _dispatch_stream_locked(
     with request_context(run_id):
         with agent._queue_run_context(session.session_id, run_id):
             run_ctx = await build_run_context(agent, input_text)
-        telemetry, bus, model, provider, prompt, bridge = run_ctx
+        telemetry, bus, model, provider, prompt, bridge, prompt_source = run_ctx
         await session.append_message(prompt.session_record(content or input_text))
         history = wire_messages(session.get_messages(), workspace=agent._workspace)
         transform = agent._context.transform_context if agent._context else None
@@ -478,6 +484,7 @@ async def _dispatch_stream_locked(
                         run_id=run_id,
                         audit_sink=TelemetryAuditSink(telemetry),
                         on_handle=on_handle,
+                        prompt_source=prompt_source,
                         **narrowed_loop_controls(agent, session, allowed_strategies),
                     )
                     async with contextlib.aclosing(
@@ -569,9 +576,15 @@ async def start_tracked_run(
             request_context(run_id),
             agent._queue_run_context(session.session_id, run_id),
         ):
-            _telemetry, _bus, model, provider, prompt, bridge = await build_run_context(
-                agent, input_text
-            )
+            (
+                _telemetry,
+                _bus,
+                model,
+                provider,
+                prompt,
+                bridge,
+                prompt_source,
+            ) = await build_run_context(agent, input_text)
             await session.append_message(prompt.session_record(content or input_text))
             history = wire_messages(session.get_messages(), workspace=agent._workspace)
             transform = agent._context.transform_context if agent._context else None
@@ -594,6 +607,7 @@ async def start_tracked_run(
                     max_tokens=max_tokens,
                     max_cost_usd=max_cost_usd,
                     run_id=run_id,
+                    prompt_source=prompt_source,
                     **narrowed_loop_controls(agent, session, None),
                 )
             finally:

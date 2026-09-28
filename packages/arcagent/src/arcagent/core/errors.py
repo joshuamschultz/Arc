@@ -107,3 +107,14 @@ class ExtensionError(ArcAgentError):
     """Extension load, sandbox violation, or factory error."""
 
     _component = "extensions"
+
+
+class CapabilityUnavailableError(ArcAgentError):
+    """A started agent has no active capability that can serve the operation asked of it.
+
+    Raised by the agent's in-process operator seams (e.g. a manual memory
+    promotion run) when the providing module is not installed, not enabled,
+    or its backend cannot do the operation. The message is safe to show.
+    """
+
+    _component = "capabilities"

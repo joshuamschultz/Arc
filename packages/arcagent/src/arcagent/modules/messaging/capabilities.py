@@ -341,57 +341,18 @@ async def inject_messaging_sections(ctx: Any) -> None:
         max_length=200,
     )
 
+    # The run's frozen prompt set when assembling inside a run (REQ-123).
+    source = ctx.data.get("prompt_source") or st.prompt_source
     lines = [
-        "## Team Messaging",
-        "",
-        f"You are **{entity_name}** (`{entity_id}`) on a team.",
-        "",
-        "### Autonomy Principle",
-        "",
-        "You are an autonomous agent. Work silently and efficiently.",
-        "**Do NOT narrate your actions or report routine status.**",
-        "Only contact the user (`notify_user`) when you have:",
-        "- A meaningful result or finding worth sharing",
-        "- A question that requires human judgment",
-        "- A blocker that needs human intervention",
-        "",
-        "If your inbox is empty or a routine check has no findings, "
-        "just move on. No notification needed.",
+        source.resolve("arcagent", "messaging_team_section").format(
+            entity_name=entity_name, entity_id=entity_id
+        )
     ]
-
-    if st.last_unread:
-        total = sum(st.last_unread.values())
-        lines.append("")
-        lines.append(f"You have {total} unread message(s). Check inbox and handle them.")
-        for stream, count in st.last_unread.items():
-            safe_stream = sanitize_text(stream, max_length=200)
-            lines.append(f"  - {safe_stream}: {count}")
-
-    lines.extend(
-        [
-            "",
-            "### Communication Rules",
-            "",
-            "- Talk to the team in the open channel so everyone can follow: "
-            '`messaging_send(to="channel://<name>", body=...)`.',
-            "- Need one teammate to act? Put `@their_handle` in the `body`. "
-            "The tag wakes that agent.",
-            '- Only direct-message (`to="agent://<handle>"`) something meant for '
-            "that one agent. Prefer the open channel.",
-            "- Reply in place: reuse the `thread_id` from the message you are "
-            "answering, so your reply lands in the same thread.",
-            "- Channel messages are FYI — only jump in when it fits your role.",
-            "- Reply to `action_required: true` messages promptly.",
-            "- Blocked? Say so in the channel and tag who can help. Never work in silence.",
-            "- `notify_user` is for the human only. Use `messaging_send` for "
-            "teammates and channels.",
-        ]
-    )
 
     roster = await _build_roster()
     if st.config.nats_url and not st.live_backend_ready:
         lines.append("")
-        lines.append("Team messaging is temporarily unavailable; retry later.")
+        lines.append(source.resolve("arcagent", "messaging_unavailable_note"))
     if roster:
         lines.append("")
         lines.append(roster)

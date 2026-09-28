@@ -3,14 +3,12 @@ name: strategy_code
 description: Code-exec strategy prompt guidance.
 tunable: true
 ---
-## Code Execution Strategy
-You can write and execute Python code to solve tasks. Prefer code when the problem involves computation, data processing, or logic that is more naturally expressed as a script than as tool calls.
+## Code-First Execution
+Solve this task by writing and running code, not by working it out in your head. Code is exact where reasoning drifts: counting, arithmetic, parsing, sorting, comparing, and anything repeated over many items.
 
 GUIDELINES:
-- Write focused scripts (20-50 lines) solving one sub-problem at a time
-- You receive {stdout, stderr, exit_code, duration_ms} after each execution
-- Each execution is stateless — variables do NOT persist between calls
-- If code fails, examine the error and fix your approach
-- After 3 failures on the same approach, try a fundamentally different method
-- Use code for: computation, data processing, logic, file operations
-- Use other tools for: external APIs, user confirmation, security-sensitive operations
+- Split the work into small scripts, one sub-problem each, and check each result before building on it
+- Put the numbers and records into the code itself; never retype a computed value by hand
+- If a result looks wrong, inspect the data with a smaller script before changing your approach
+- Use other tools, not code, for external APIs, user confirmation, and security-sensitive operations
+- Finish with a plain-language answer that states the result, not the code that produced it

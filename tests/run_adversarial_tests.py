@@ -34,6 +34,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_prompt_overlay_isolation.py",
         "packages/arcrun/tests/security/test_prompt_injection.py",
         "packages/arcrun/tests/security/test_steering_injection.py",
+        "packages/arcui/tests/test_prompt_overlay_status.py",
+        "tests/architecture/test_no_stock_prompt_bypass.py",
+        # Tampered override fails closed; an override written mid-run (after the
+        # run's snapshot froze) never changes that run — TOCTOU on the prompt set.
+        "tests/integration/test_prompt_edit_conformance.py",
     ),
     "log disclosure and audit tampering": (
         "packages/arcagent/tests/security/test_audit_at_rest.py",
@@ -96,10 +101,50 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_vault_record_cipher.py",
         "packages/arccli/tests/test_queue_runtime.py",
     ),
-    "memory promotion source and decision integrity": (
-        "packages/arcagent/tests/modules/memory/test_promotion_approval.py",
-        "packages/arcagent/tests/e2e/test_memory_promotion_e2e.py",
+    # SPEC-083 promotion: an automated promotion without a durable decision record,
+    # a malformed decision, or a failed chain append is refused before any shared
+    # write; a write that may have landed is never reported as a refusal (so it is
+    # never retried into a double share). Any module can emit on the shared bus, so
+    # a forged knowledge:shared_attached/_detached carrying a capturing port must
+    # change nothing and be audited; the core emitter cannot be claimed twice.
+    # T-1212 abuse battery: a secret never reaches the classifier; an OOD
+    # ``unclear``@0.99 or inconsistent verdict stays private; an outage mid-batch
+    # publishes nothing; federal cannot be enabled; a forged origin DID is refused
+    # by the exporter, publisher and shared backend; a stale/replayed/tampered/
+    # unsigned ledger row is never a ``promote`` verdict; a shared entity block
+    # copied to another entity or contributor slot is refused; a refused promote
+    # leaves no ``allow`` record; the classifier key never reaches audit, ledger
+    # or logs; item count/bytes and a hung classifier stay bounded. T-1213: the
+    # vendor SDK is confined to the removable Jev drop-in and its absence is a
+    # typed ``classifier_unavailable``. Covers LLM02/LLM03/LLM09/LLM10 and
+    # ASI02/ASI03/ASI04/ASI06/ASI07.
+    "memory promotion decision integrity and forged shared-knowledge ports": (
         "packages/arcteam/tests/test_promotion_audit_and_revoke.py",
+        "packages/arcteam/tests/test_promotion_error_typing.py",
+        "packages/arcagent/tests/unit/core/test_module_bus_core_emitter.py",
+        "packages/arcagent/tests/modules/memory/test_shared_knowledge_late_bind.py",
+        "packages/arcagent/tests/integration/test_promotion_fleet_journey.py",
+        "packages/arcmemory/tests/security/test_memory_promotion_abuse.py",
+        "packages/arcteam/tests/security/test_memory_promotion_abuse_shared.py",
+        "packages/arcagent/tests/modules/memory/test_promotion_bridge.py",
+        "packages/arcllm/tests/architecture/test_jev_import_confined.py",
+        "packages/arcmemory/tests/architecture/test_promotion_plugin_absent.py",
+        "packages/arcmemory/tests/promotion/test_sweep_classifier_preflight.py",
+        "packages/arcagent/tests/modules/memory/test_memory_runtime_tier.py",
+        # T-1227: an unsigned, tampered, attacker-signed or malformed override of
+        # the Jev question (arcmemory/promotion_classify) sends nothing, never
+        # falls back to stock, and is audited once as question_invalid.
+        "packages/arcmemory/tests/security/test_promotion_question_override_abuse.py",
+        # T-1225 "Run now": an overlapping or double-clicked manual run never
+        # re-sends an item (one per-agent lock with the nightly sweep); a bad or
+        # oversized cap is refused before egress; a viewer, a forged/unknown
+        # agent, a non-object or extra-field body is refused AND audited
+        # ``denied``; a crash leaks no content or path; the CLI refuses remote
+        # plain HTTP, credential flags and a path/query-injecting agent name
+        # before any request.
+        "packages/arcmemory/tests/promotion/test_manual_run.py",
+        "packages/arcui/tests/test_memory_promotion_run_route.py",
+        "packages/arccli/tests/test_agent_promotion_run.py",
     ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",

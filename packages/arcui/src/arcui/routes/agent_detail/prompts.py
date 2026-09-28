@@ -1,9 +1,11 @@
 """`/api/agents/{id}/prompts/*` — list / inspect / override / reset system prompts (COMP-010).
 
 The read side lists every stock prompt across every installed Arc package
-(``arcprompt.PromptCatalog``) and marks each ``stock`` or ``overridden`` by the
-presence of an overlay under ``<agent_root>/context/<package>/<name>.md``. The
-detail read returns the stock body, the effective body, and a server-computed
+(``arcprompt.PromptCatalog``) and marks each ``stock``, ``overridden`` or
+``rejected`` by resolving it through the agent's OWN resolver — pinned to the same
+operator key — so a tampered, unsigned or foreign-signed override is shown as the
+agent treats it: refused, never as the prompt in use (:mod:`arcui.prompt_overlay_status`).
+The detail read returns the stock body, the effective body, and a server-computed
 unified diff (stdlib ``difflib`` — no diff library ships to the browser).
 
 The write side is operator-gated and mirrors ``files_write.py``: the same secret
@@ -30,7 +32,6 @@ from arcprompt import (
     PromptCatalog,
     PromptMissing,
     load_stock_document,
-    parse_prompt,
     render_prompt,
 )
 from arctrust.policy import Decision, PolicyContext, ToolCall, read_agent_tier
@@ -40,6 +41,7 @@ from starlette.responses import JSONResponse
 
 from arcui import prompt_signing
 from arcui.audit import emit_mutation_audit
+from arcui.prompt_overlay_status import agent_prompt_resolver, overlay_state
 from arcui.routes.agent_detail._common import _agent_did, _agent_root, logger
 from arcui.routes.agent_detail.files_write import _SIDECAR_SUFFIX, _confine, _find_secret
 from arcui.schemas import (
@@ -74,20 +76,6 @@ def _store_unreadable(exc: Exception) -> JSONResponse:
     """Surface a catalog/overlay read failure verbatim, distinct from empty (200)."""
     logger.warning("prompts route: catalog unreadable: %s", exc)
     return _error(str(exc), 503)
-
-
-def _overlay_path(agent_root: Path, package: str, name: str) -> Path:
-    return agent_root / _OVERLAY_DIRNAME / package / f"{name}.md"
-
-
-def _overlay_body_or_stock(overlay: Path, stock_body: str) -> str:
-    """Effective body: the overlay's when present and parseable, else stock."""
-    if not overlay.is_file():
-        return stock_body
-    try:
-        return parse_prompt(overlay.read_bytes(), source="overlay").body
-    except Exception:  # reason: a broken overlay falls back to stock for DISPLAY only
-        return stock_body
 
 
 def _unified_diff(stock_body: str, effective_body: str) -> str:
@@ -145,17 +133,20 @@ async def get_prompts(request: Request) -> JSONResponse:
         refs = PromptCatalog().catalog()
     except Exception as exc:  # reason: 503-unreadable vs 200-empty (skill_versions convention)
         return _store_unreadable(exc)
-    items = [
-        PromptListItem(
-            package=ref.package,
-            name=ref.name,
-            description=ref.description,
-            status="overridden"
-            if _overlay_path(agent_root, ref.package, ref.name).is_file()
-            else "stock",
+    resolver = agent_prompt_resolver(agent_root)
+    items = []
+    for ref in refs:
+        # Stock body is irrelevant to a list row's status; only the verdict is shown.
+        state = overlay_state(resolver, ref.package, ref.name, stock_body="")
+        items.append(
+            PromptListItem(
+                package=ref.package,
+                name=ref.name,
+                description=ref.description,
+                status=state.status,
+                rejection_reason=state.reason or None,
+            )
         )
-        for ref in refs
-    ]
     return JSONResponse(PromptListResponse(items=items).model_dump(mode="json"))
 
 
@@ -174,17 +165,17 @@ async def get_prompt_detail(request: Request) -> JSONResponse:
     except Exception as exc:  # reason: 503-unreadable vs 200-empty
         return _store_unreadable(exc)
 
-    overlay = _overlay_path(agent_root, package, name)
     stock_body = stock_doc.body
-    effective_body = _overlay_body_or_stock(overlay, stock_body)
+    state = overlay_state(agent_prompt_resolver(agent_root), package, name, stock_body)
     payload = PromptDetailResponse(
         package=package,
         name=name,
         description=stock_doc.description,
-        status="overridden" if overlay.is_file() else "stock",
+        status=state.status,
+        rejection_reason=state.reason or None,
         stock=stock_body,
-        effective=effective_body,
-        diff=_unified_diff(stock_body, effective_body),
+        effective=state.effective,
+        diff=_unified_diff(stock_body, state.effective) if state.status != "rejected" else "",
     )
     return JSONResponse(payload.model_dump(mode="json"))
 
@@ -446,8 +437,10 @@ async def get_rubric(request: Request) -> JSONResponse:
     except Exception as exc:  # reason: 503-unreadable vs 200-empty (list convention)
         return _store_unreadable(exc)
 
-    overlay = _overlay_path(agent_root, package, name)
-    body = _overlay_body_or_stock(overlay, stock_doc.body)
+    state = overlay_state(agent_prompt_resolver(agent_root), package, name, stock_doc.body)
+    # A rejected override has no effective rubric; the form seeds from stock so the
+    # operator can author a fresh, correctly signed override over it.
+    body = stock_doc.body if state.status == "rejected" else state.effective
     try:
         dimensions = _parse_rubric(body)
     except _RubricError as exc:  # reason: an unparseable rubric is unreadable, not empty
@@ -456,7 +449,8 @@ async def get_rubric(request: Request) -> JSONResponse:
     payload = RubricResponse(
         package=package,
         name=name,
-        status="overridden" if overlay.is_file() else "stock",
+        status=state.status,
+        rejection_reason=state.reason or None,
         dimensions=dimensions,
     )
     return JSONResponse(payload.model_dump(mode="json"))

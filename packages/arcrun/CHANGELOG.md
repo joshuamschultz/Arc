@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `run` / `run_async` / `run_stream` take `prompt_source` (an `arcprompt.PromptSource`,
+  default `StockPromptSource`). Every arcrun prompt a run sends resolves through it.
+- Strategy selection sends `strategy_select` (new, editable) plus each allowed strategy's
+  `strategy_<name>_description`; the task stays in the user message. The inline
+  selection text is gone.
+- The chosen strategy's `strategy_<name>` guidance is added to the run's system messages
+  after selection; guidance for strategies that did not run is never sent. A dynamic
+  child gets react's guidance plus `dynamic_child_framing` (moved out of Python).
+- A rejected prompt override fails the run closed; only a missing prompt falls back.
+- Pinned `plan_execute` through `run()` runs its task as one gated loop and returns its
+  answer (it returned no content before). A completed dynamic script's `complete(value)`
+  is now the run's answer, not a count of phases.
+- `CapabilitySpec.classification` is carried onto the loop's `Tool`.
+- Removed: `get_strategy_prompts` and the `code_exec_guidance` / `contained_exec_guidance`
+  prompts (no production consumer).
+
 ## [0.11.0] - 2026-08-22
 
 - ReAct consumes the typed ArcLLM stream, accumulates tool fragments once, emits

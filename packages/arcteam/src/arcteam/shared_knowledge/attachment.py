@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from arcteam.shared_knowledge.service import (
     FleetSharedKnowledgeService,
+    SharedKnowledgePromotionOutcomeUnknownError,
     SharedKnowledgeUnavailableError,
 )
 
@@ -122,7 +123,10 @@ class SharedKnowledgeAttachment:
                     outcome=arcagent.ToolOutcome.ERROR,
                     content="unknown shared tool",
                 )
-        except SharedKnowledgeUnavailableError as error:
+        except (
+            SharedKnowledgeUnavailableError,
+            SharedKnowledgePromotionOutcomeUnknownError,
+        ) as error:
             return arcagent.ToolResult(
                 tool=tool, outcome=arcagent.ToolOutcome.ERROR, content=str(error)
             )

@@ -55,11 +55,12 @@ from arcagent.connections import (
     resolve_deployment,
     resolve_roots,
 )
-from arcagent.core.agent import ArcAgent
+from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
 from arcagent.core.errors import (
     ArcAgentError,
+    CapabilityUnavailableError,
     ConfigError,
     ContextError,
     IdentityError,
@@ -223,6 +224,11 @@ def __getattr__(name: str) -> Any:
         from arcagent.core import control_contract
 
         return getattr(control_contract, name)
+    if name in {"MemoryConfig", "MemoryPromotionConfig"}:
+        # The memory module is removable; importing arcagent must never pull it.
+        from arcagent.modules.memory import config as memory_config
+
+        return getattr(memory_config, name)
     if name == "register_schedule_revision":
         from arcagent.modules.scheduler.registration import register_schedule_revision
 
@@ -244,6 +250,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "MEMORY_PROMOTION_MAX_ITEMS",
     "NOT_INSTALLED",
     "SECURITY_CONFIG_KNOBS",
     "AnchoredSkillRevisionResolver",
@@ -265,6 +272,7 @@ __all__ = [
     "CapabilityImportStatus",
     "CapabilityLoader",
     "CapabilityRegistry",
+    "CapabilityUnavailableError",
     "CatalogEntry",
     "ClosableSink",
     "ConfigError",
@@ -301,6 +309,8 @@ __all__ = [
     "KnowledgeRef",
     "LedgerRunOwner",
     "LiveSkillRevisionResolver",
+    "MemoryConfig",
+    "MemoryPromotionConfig",
     "ModuleBusError",
     "PersonalKnowledgePort",
     "ProbeResult",

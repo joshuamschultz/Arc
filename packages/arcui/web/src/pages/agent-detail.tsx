@@ -74,6 +74,7 @@ import { ApprovalRequest } from '@/components/hitl'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
 import { MemoryBrowser } from '@/components/knowledge-memories'
+import { MemoryPromotionPanel } from '@/components/memory-promotion-panel'
 import { ChunkBrowser } from '@/components/knowledge-chunks'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
@@ -1308,11 +1309,18 @@ function PromptsTab({ agentId }: { agentId: string }) {
                       <div className="flex items-center justify-between gap-2">
                         <FileText className="size-4 text-muted-foreground" />
                         <span
+                          title={
+                            p.status === 'rejected'
+                              ? `Agent will refuse to run: ${p.rejection_reason ?? 'override rejected'}`
+                              : undefined
+                          }
                           className={cn(
                             'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
-                            p.status === 'overridden'
-                              ? 'border-primary/40 bg-primary/10 text-primary'
-                              : 'border-border bg-muted/40 text-muted-foreground',
+                            p.status === 'rejected'
+                              ? 'border-destructive/50 bg-destructive/10 text-destructive'
+                              : p.status === 'overridden'
+                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                : 'border-border bg-muted/40 text-muted-foreground',
                           )}
                         >
                           {p.status}
@@ -1740,6 +1748,7 @@ const KNOWLEDGE_TABS = [
 /** GAP-1: the full Knowledge surface, scoped to this agent (reuses the browsers). */
 function KnowledgeTab({ agentId }: { agentId: string }) {
   const query = useKnowledge(agentId)
+  const [operatorMode] = useOperatorMode()
   const [selectedEntitySlug, setSelectedEntitySlug] = useState<string | null>(null)
   const [tab, setTab] = useState('overview')
   const focusEntity = (slug: string) => {
@@ -1755,7 +1764,10 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
           </TabsTrigger>
         ))}
       </TabsList>
-      <TabsContent value="overview">
+      <TabsContent value="overview" className="space-y-4">
+        <div className="max-w-xl">
+          <MemoryPromotionPanel agentId={agentId} operatorMode={operatorMode} />
+        </div>
         <QueryState query={query} isEmpty={() => !query.data}>
           {(data) => <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />}
         </QueryState>

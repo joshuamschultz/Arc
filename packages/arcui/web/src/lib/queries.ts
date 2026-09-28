@@ -1481,6 +1481,73 @@ export const useClearKey = () => {
   })
 }
 
+// --- Memory sharing (SPEC-083 COMP-028) ------------------------------------
+//
+// Per-agent promotion settings. The Jev key is NOT part of this resource: it is
+// written only through `/api/keys/TYPESAFE_API_KEY`, and the settings response
+// reports `key_set` and nothing more.
+
+export type MemoryPromotionSettings = {
+  enabled: boolean
+  confidence_threshold: number
+  classifier_model: string
+  tier: string
+  federal_locked: boolean
+  key_set: boolean
+}
+
+export type MemoryPromotionUpdate = Pick<
+  MemoryPromotionSettings,
+  'enabled' | 'confidence_threshold' | 'classifier_model'
+>
+
+export const JEV_KEY_ENV = 'TYPESAFE_API_KEY'
+
+const memoryPromotionKey = (agentId: string) => ['agent', agentId, 'memory-promotion']
+const memoryPromotionPath = (agentId: string) =>
+  `/api/agents/${encodeURIComponent(agentId)}/memory/promotion`
+
+export const useMemoryPromotion = (agentId: string) =>
+  useApiQuery<MemoryPromotionSettings>(memoryPromotionKey(agentId), memoryPromotionPath(agentId))
+
+export const useSaveMemoryPromotion = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<MemoryPromotionSettings, Error, MemoryPromotionUpdate>({
+    mutationFn: (update) => apiPut(memoryPromotionPath(agentId), update),
+    onSuccess: (saved) => queryClient.setQueryData(memoryPromotionKey(agentId), saved),
+  })
+}
+
+// "Run now" (SPEC-083 COMP-029): one promotion sweep on the RUNNING agent.
+// The reply is status + counts only; the panel shows the last one.
+export type MemoryPromotionRunResult = {
+  status: string
+  evaluated: number
+  promoted: number
+  kept_private: number
+  blocked_secret: number
+  too_large: number
+  deferred: number
+}
+
+export const useRunMemoryPromotion = (agentId: string) =>
+  useMutation<MemoryPromotionRunResult, Error, void>({
+    mutationFn: () => apiPost(`${memoryPromotionPath(agentId)}/run`, {}),
+  })
+
+// Same write-only store as `useSetKey`; also refreshes this agent's `key_set`.
+export const useSaveJevKey = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<KeyWriteResponse, Error, string>({
+    mutationFn: (value) => apiPut(`/api/keys/${JEV_KEY_ENV}`, { value }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
+        queryClient.invalidateQueries({ queryKey: memoryPromotionKey(agentId) }),
+      ]),
+  })
+}
+
 // --- Connections and grants (SPEC-064) -------------------------------------
 //
 // Two scopes, and the keys say which. A CONNECTION belongs to the deployment —

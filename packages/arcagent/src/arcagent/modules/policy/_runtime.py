@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource
+
 from arcagent.core.config import EvalConfig
 from arcagent.modules.policy._tool_activity import ToolActivity
 from arcagent.modules.policy.config import PolicyConfig
@@ -106,6 +108,7 @@ def configure(
     workspace: Path = Path("."),
     llm_config: Any = None,
     agent_name: str = "",
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     cfg = PolicyConfig(**(config or {}))
@@ -123,6 +126,7 @@ def configure(
             workspace=ws,
             telemetry=telemetry,
             max_input_tokens=ec.max_input_tokens,
+            prompt_source=prompt_source,
         ),
         eval_label=f"{agent_name}/eval" if agent_name else "eval",
         semaphore=asyncio.Semaphore(ec.max_concurrent),

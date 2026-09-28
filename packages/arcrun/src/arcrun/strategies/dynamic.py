@@ -14,15 +14,15 @@ a completion.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import arcllm
-from arcprompt import load_stock
 
-from arcrun._messages import content_text, system_message, user_message
+from arcrun._messages import content_text, system_messages, user_message
 from arcrun.dynamic.binding import RunHost
 from arcrun.dynamic.host import DEFAULT_AGENT_CALLS, ScriptOutcome
 from arcrun.dynamic.interpreter import execute_script
@@ -31,7 +31,7 @@ from arcrun.dynamic.seal import RunSeal
 from arcrun.dynamic.validate import dry_run
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
-from arcrun.strategies import Strategy
+from arcrun.strategies import Strategy, use_strategy_guidance
 from arcrun.strategies.react import _halt_on_outcome_unknown, build_result, react_loop
 from arcrun.types import LoopResult
 
@@ -90,6 +90,9 @@ class DynamicStrategy(Strategy):
         # empty mapping would reject every script that reads its own input.
         args = {"task": _task_text(state)}
         home = _run_home(state)
+        # Resolved up front, outside every fail-open path: a rejected operator
+        # override ends the run instead of degrading to the fallback loop.
+        authoring = state.prompt_source.resolve("arcrun", "dynamic_authoring")
 
         seal = _run_seal(state)
         source = _stored_script(home, seal)
@@ -110,19 +113,19 @@ class DynamicStrategy(Strategy):
             if rejection:
                 bus.emit("dynamic.pin_rejected", {"error": rejection})
                 _discard_script(home)
-                return await react_loop(model, state, sandbox, max_turns)
+                return await _react_fallback(model, state, sandbox, max_turns)
             bus.emit("dynamic.resumed", {"bytes": len(source)})
         else:
             feedback = ""
             for attempt in range(1, _AUTHOR_ATTEMPTS + 1):
-                source = await self._author(model, state, feedback, attempt)
+                source = await self._author(model, state, authoring, feedback, attempt)
                 feedback = await _rejection_reason(source, args)
                 if not feedback:
                     break
                 bus.emit("dynamic.rejected", {"attempt": attempt, "error": feedback})
             else:
                 bus.emit("dynamic.fallback", {"reason": feedback, "attempts": _AUTHOR_ATTEMPTS})
-                return await react_loop(model, state, sandbox, max_turns)
+                return await _react_fallback(model, state, sandbox, max_turns)
 
             bus.emit("dynamic.validated", {"bytes": len(source)})
             _store_script(home, source, seal)
@@ -147,16 +150,19 @@ class DynamicStrategy(Strategy):
             return _halt_on_outcome_unknown(state)
         return _result_from_outcome(state, outcome)
 
-    async def _author(self, model: Any, state: RunState, feedback: str, attempt: int) -> str:
+    async def _author(
+        self, model: Any, state: RunState, authoring: str, feedback: str, attempt: int
+    ) -> str:
         """One forced ``emit_script`` call; empty string when nothing usable came back.
 
-        A provider error here is treated exactly like an unusable script: the
-        caller's next step is the fallback either way, so there is no second
-        failure mode to distinguish.
+        The call carries this strategy's guidance and the ``authoring`` language
+        reference, both from the run's ``PromptSource``. A provider error here is
+        treated exactly like an unusable script: the caller's next step is the
+        fallback either way, so there is no second failure mode to distinguish.
         """
         bus = state.event_bus
         messages = [
-            system_message(load_stock("arcrun", "dynamic_authoring")),
+            *system_messages([state.strategy_guidance, authoring]),
             user_message(_task_text(state)),
         ]
         if feedback:
@@ -186,6 +192,14 @@ class DynamicStrategy(Strategy):
             },
         )
         return source
+
+
+async def _react_fallback(
+    model: Any, state: RunState, sandbox: Sandbox, max_turns: int
+) -> LoopResult:
+    """Run the ordinary loop instead, steered by react's guidance, not this one's."""
+    use_strategy_guidance(state, "react")
+    return await react_loop(model, state, sandbox, max_turns)
 
 
 def _run_seal(state: RunState) -> RunSeal | None:
@@ -342,6 +356,15 @@ def _result_from_outcome(state: RunState, outcome: ScriptOutcome) -> LoopResult:
     return build_result(state, payload["summary"])
 
 
+def _answer_text(result: Any) -> str:
+    """A completed script's value as the words a caller shows the user."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result.strip()
+    return json.dumps(result, indent=2, sort_keys=True, default=str)
+
+
 def _completion_status(outcome: ScriptOutcome) -> str:
     """The ``task_complete`` vocabulary for a script's ending."""
     if outcome.status == "completed":
@@ -350,9 +373,15 @@ def _completion_status(outcome: ScriptOutcome) -> str:
 
 
 def _summary(outcome: ScriptOutcome) -> str:
-    """One human-readable line naming what the script actually did."""
+    """The run's answer when the script completed; otherwise what stopped it."""
     phases = len(outcome.phases_seen)
     if outcome.status == "completed":
+        # The script's ``complete(value)`` IS the run's answer — it is what the
+        # user asked for, so it is what the run returns. The phase and agent
+        # counts already ride the ``dynamic.completed`` event.
+        answer = _answer_text(outcome.result)
+        if answer:
+            return answer
         return (
             f"Dynamic script completed across {phases} phase(s) "
             f"and {outcome.agent_calls} agent call(s)."

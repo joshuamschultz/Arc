@@ -25,6 +25,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -32,9 +34,16 @@ from typing import Any
 import arcrun
 
 from arcagent.core import midloop_recall, turn_context
-from arcagent.knowledge import KnowledgeAccess, KnowledgeDraft, KnowledgePort
+from arcagent.core.errors import CapabilityUnavailableError
+from arcagent.knowledge import (
+    SHARED_KNOWLEDGE_ATTACHED,
+    SHARED_KNOWLEDGE_DETACHED,
+    KnowledgeAccess,
+    KnowledgeDraft,
+    KnowledgePort,
+)
 from arcagent.modules.memory import _runtime
-from arcagent.tools._decorator import background_task, hook, tool
+from arcagent.tools._decorator import background_task, capability, hook, tool
 from arcagent.utils.audit import safe_audit
 from arcagent.utils.trace import spool_auto_tool
 
@@ -44,17 +53,23 @@ _RECALL_PRIORITY = 50
 _CAPTURE_PRIORITY = 100
 _CONSOLIDATE_POLL_INTERVAL = 300.0
 
+
 # Told to "remember X" with a NullBrain active, the model will happily reply
 # "saved to memory" while nothing persists (ASI09 trust exploitation). There is
 # no save-tool to make truthful — capture is an automatic hook that silently
 # no-ops — so the honest fix is to tell the model, in the prompt, that durable
 # memory is off whenever the brain is inactive.
-_MEMORY_DISABLED_NOTE = (
-    "Durable memory is DISABLED for this agent. Nothing you are told to "
-    "'remember', 'save', or 'note for later' persists beyond this session. Do "
-    "not claim anything was saved to memory; say plainly that persistent memory "
-    "is off."
-)
+async def _module_prompt(ctx: Any, st: Any, name: str) -> str:
+    """This module's prompt ``arcagent/<name>``: the agent override, else stock.
+
+    Resolved from the run's frozen prompt set carried on the assemble payload, so
+    an operator's ArcUI edit reaches the model on the next run and never shifts a
+    section mid-run; the module's configured source answers outside a run (file
+    read + verify off the loop).
+    """
+    source = ctx.data.get("prompt_source") or st.prompt_source
+    text: str = await asyncio.to_thread(source.resolve, "arcagent", name)
+    return text
 
 
 # -- ACL gating ----------------------------------------------------------
@@ -228,6 +243,68 @@ def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
     st.recall_cache[key] = text
 
 
+# -- Manual promotion run: "Run now" (SPEC-083 REQ-512) -------------------
+
+
+@capability(name="memory_promotion")
+class MemoryPromotionRun:
+    """Serves ``ArcAgent.run_memory_promotion`` — the operator's "Run now".
+
+    Registered under the ``memory_promotion`` operation contract so the agent core
+    reaches it without naming this module (ADR-033). Holds no state: every call
+    resolves the NAMED agent's Brain (:func:`_runtime.state_for`, fail closed) and
+    runs its promotion sweep once. The Brain owns the per-agent lock shared with
+    the nightly sweep, the ``max_items`` bounds and every gate.
+    """
+
+    async def setup(self, ctx: Any) -> None:
+        del ctx
+
+    async def teardown(self) -> None:
+        return None
+
+    async def run(self, *, agent_did: str, max_items: int | None = None) -> Mapping[str, object]:
+        """Run the named agent's promotion sweep once; its status and counts."""
+        brain = _runtime.state_for(agent_did).brain
+        run_promotion = getattr(brain, "run_promotion", None)
+        if run_promotion is None:
+            raise CapabilityUnavailableError(
+                code="MEMORY_PROMOTION_UNAVAILABLE",
+                message="this agent's memory backend cannot run promotion",
+            )
+        result = await run_promotion(max_items=max_items)
+        if is_dataclass(result) and not isinstance(result, type):
+            return asdict(result)
+        return dict(result)
+
+
+# -- Fleet shared-knowledge port (SPEC-083) -------------------------------
+
+
+@hook(event=SHARED_KNOWLEDGE_ATTACHED)
+async def on_shared_knowledge_attached(ctx: Any) -> None:
+    """Hold the fleet's shared-knowledge port the agent core published on its bus.
+
+    Accepted only when the bus certifies the agent core emitted it: every module
+    shares the bus, and a forged port would capture each promoted card. A forged
+    event is ignored and audited. Resolved by the event's agent DID (never
+    ambient), so a port bound for one agent can never land on another's state.
+    """
+    if not getattr(ctx, "core_certified", False):
+        _runtime.refuse_uncertified_shared_knowledge(ctx.agent_did, ctx.event)
+        return
+    _runtime.attach_shared_knowledge(ctx.agent_did, ctx.data.get("port"))
+
+
+@hook(event=SHARED_KNOWLEDGE_DETACHED)
+async def on_shared_knowledge_detached(ctx: Any) -> None:
+    """Drop the fleet's port when the agent core withdraws it (certified events only)."""
+    if not getattr(ctx, "core_certified", False):
+        _runtime.refuse_uncertified_shared_knowledge(ctx.agent_did, ctx.event)
+        return
+    _runtime.attach_shared_knowledge(ctx.agent_did, None)
+
+
 # -- Proactive detected-moment subscriber --------------------------------
 
 
@@ -299,7 +376,7 @@ async def inject_memory_disabled_note(ctx: Any) -> None:
         return
     sections = ctx.data.get("sections")
     if isinstance(sections, dict):
-        sections["memory_status"] = _MEMORY_DISABLED_NOTE
+        sections["memory_status"] = await _module_prompt(ctx, st, "memory_disabled_note")
 
 
 @hook(event="agent:pre_respond", priority=100)
@@ -885,23 +962,6 @@ def _render_datastore_result(result: object) -> str:
     return _frame_untrusted([("datastore", str(row)) for row in rows])
 
 
-#: Told once per session, not per turn — the guidance is identical on every turn,
-#: so it belongs in the cached prefix rather than being re-billed each time.
-_PROCEDURE_GUIDANCE = (
-    "Procedures are the operator's own recorded ways of doing things, and they take "
-    "precedence over your default approach.\n"
-    "- Before carrying out a task that could recur, call `procedure_list` to see "
-    "whether one already covers it, then `procedure_get` to follow its steps.\n"
-    "- Before recording a new procedure, call `procedure_list` first and update the "
-    "existing card instead of creating a duplicate — a split playbook means neither "
-    "half is the method.\n"
-    "- After doing the work, `procedure_get` is also how you check every step was "
-    "actually done.\n"
-    "The listing carries only each procedure's trigger, never its steps, so it is "
-    "cheap to consult."
-)
-
-
 @hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
 async def inject_procedure_guidance(ctx: Any) -> None:
     """Point the agent at its procedures — having the tools is not the same as using them.
@@ -917,7 +977,8 @@ async def inject_procedure_guidance(ctx: Any) -> None:
         return
     sections = ctx.data.get("sections")
     if isinstance(sections, dict):
-        sections["procedures"] = _PROCEDURE_GUIDANCE
+        # Identical on every turn, so it sits in the cached prefix, not re-billed per turn.
+        sections["procedures"] = await _module_prompt(ctx, st, "memory_procedure_guidance")
 
 
 # -- procedure tools ------------------------------------------------------
@@ -1070,14 +1131,11 @@ async def consolidate_poll_once(*, now_local: datetime | None = None) -> bool:
                 "episode_summary": str(result.get("episode_summary", "")),
                 "insights_minted": result.get("insights_minted", 0),
                 "facts_updated": result.get("facts_updated", 0),
+                # The nightly promotion sweep's typed status (SPEC-083); None when
+                # the brain ran no sweep.
+                "promotion_status": result.get("promotion_status"),
             },
             agent_did=st.agent_did,
-        )
-    if st.config.promotion.enabled:
-        from arcagent.modules.memory.promotion import MemoryPromotionUnavailableError
-
-        raise MemoryPromotionUnavailableError(
-            "trusted score and source authority is not attached to nightly memory"
         )
     return True
 
@@ -1098,5 +1156,7 @@ __all__ = [
     "memory_consolidate_loop",
     "memory_search",
     "on_agent_moment",
+    "on_shared_knowledge_attached",
+    "on_shared_knowledge_detached",
     "profile_context",
 ]

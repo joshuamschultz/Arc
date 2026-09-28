@@ -16,6 +16,9 @@ The context dict is arcagent-owned and names nothing arcmemory-specific at the t
         "identity": AgentIdentity,   # signer for the sleep-pass agent's tool writes
         "policy_pipeline": ...,      # authorizer for the sleep-pass agent's tool writes
         "backend_config": {...},     # opaque, backend-defined (parsed below)
+        "promotion_config": {...} | None,   # SPEC-083 settings (plain mapping) or None
+        "promotion_publisher": ... | None,  # the integrator's PromotionPublisher or None
+        "prompt_source": PromptSource | None,  # agent overlay-aware prompts; None -> stock
     }
 
 ``backend_config`` is arcmemory's own passthrough surface, forwarded verbatim from the
@@ -26,15 +29,18 @@ never learns an arcmemory field name.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import arcllm
+from arcprompt import PromptSource, StockPromptSource
 
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig, Tier
 from arcmemory.isolation import enforce_brain_isolation
+from arcmemory.promotion.arcllm_classifier import ArcllmPromotionClassifier
+from arcmemory.promotion.config import PromotionConfig
 
 # API key for a remote ``provider`` embedding endpoint. Environment only —
 # credentials never touch the agent TOML (ADR-019, LLM07).
@@ -49,7 +55,13 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     and consolidation insight-minting are live. ``embed_backend == "none"`` or an empty
     ``distill_provider`` leaves the respective seam unwired (recall degrades to BM25 +
     graph; consolidation is a no-op) — never a crash.
+
+    ``prompt_source`` is the one lookup every arcmemory prompt goes through (the
+    distiller's, the agentic consolidation engine's and the promotion question):
+    the agent's overlay-aware source, or :class:`~arcprompt.StockPromptSource` when
+    absent (standalone). Anything else fails closed with ``TypeError``.
     """
+    prompts = _prompt_source(context.get("prompt_source"))
     backend = context.get("backend_config") or {}
     tier: Tier = _safe_tier(context.get("tier", "personal"))
     config = MemoryConfig.for_tier(tier)
@@ -89,13 +101,18 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     # data). Set `[modules.memory.config.backend] capture_tool_io = true|false`
     # to override either tier explicitly.
     capture_tool_io = bool(backend.get("capture_tool_io", tier == "personal"))
+    # The RAW tier label for the federal lock: ``_safe_tier`` folds unknown spellings
+    # (" Federal ") to personal, which must never unlock promotion.
+    promotion = _promotion_config(context.get("promotion_config"), str(context.get("tier", "")))
 
     return ArcMemoryBrain(
         workspace,
         agent_did,
         config=config,
         embedder=build_embedder(agent_did, embed_backend, embed_model, base_url=embed_base_url),
-        distiller=build_distiller(distill_provider, distill_model, agent_did, agent_name),
+        distiller=build_distiller(
+            distill_provider, distill_model, agent_did, agent_name, prompts=prompts
+        ),
         audit_sink=context.get("audit_sink"),
         model_factory=_build_loop_model_factory(
             distill_provider, distill_model, agent_did, agent_name
@@ -103,6 +120,55 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         identity=identity,
         policy_pipeline=context.get("policy_pipeline"),
         store_raw_bodies=capture_tool_io,
+        promotion_config=promotion,
+        promotion_classifier=_promotion_classifier(promotion, prompts),
+        promotion_publisher=context.get("promotion_publisher") if promotion else None,
+        promotion_signer=identity if promotion else None,
+        prompt_source=prompts,
+    )
+
+
+def _prompt_source(raw: object) -> PromptSource:
+    """The integrator's ``PromptSource``, or stock when none was handed down."""
+    if raw is None:
+        return StockPromptSource()
+    if not isinstance(raw, PromptSource):
+        raise TypeError("prompt_source must implement arcprompt.PromptSource")
+    return raw
+
+
+def _promotion_config(raw: object, tier: str) -> PromotionConfig | None:
+    """Validate the integrator's promotion mapping; ``None`` unless enabled.
+
+    ``PromotionConfig.for_tier`` re-applies every field validator and the federal
+    lock here, so arcmemory never trusts the integrator's own validation.
+    """
+    if not raw:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("promotion_config must be a mapping of settings")
+    config = PromotionConfig.for_tier(tier, **dict(raw))
+    return config if config.enabled else None
+
+
+def _promotion_classifier(
+    config: PromotionConfig | None, prompts: PromptSource
+) -> ArcllmPromotionClassifier | None:
+    """The arcllm-backed classifier arcmemory builds from config (never handed an object).
+
+    Construction resolves nothing and reads no key; a missing drop-in, SDK or key
+    surfaces at the sweep's network-free preflight as ``classifier_unavailable``,
+    before any egress is audited or sent.
+    """
+    if config is None:
+        return None
+    return ArcllmPromotionClassifier(
+        provider=config.classifier,
+        model=config.classifier_model,
+        timeout=config.request_timeout_seconds,
+        api_key_env=config.api_key_env,
+        vault_path=config.vault_path,
+        prompts=prompts,
     )
 
 
@@ -168,7 +234,12 @@ def build_embedder(
 
 
 def build_distiller(
-    provider: str, model: str, agent_did: str, agent_name: str = ""
+    provider: str,
+    model: str,
+    agent_did: str,
+    agent_name: str = "",
+    *,
+    prompts: PromptSource | None = None,
 ) -> ArcLLMDistiller | None:
     """arcllm-backed distiller (fresh provider per consolidation), or ``None`` when off.
 
@@ -185,7 +256,7 @@ def build_distiller(
     def factory() -> Any:
         return arcllm.load_model(provider, model or None, agent_label=label, telemetry=telemetry)
 
-    return ArcLLMDistiller(factory, model=model or None)
+    return ArcLLMDistiller(factory, model=model or None, prompts=prompts)
 
 
 __all__ = ["build_brain", "build_distiller", "build_embedder"]

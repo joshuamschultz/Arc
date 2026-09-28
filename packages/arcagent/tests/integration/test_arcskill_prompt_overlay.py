@@ -1,11 +1,11 @@
 """Integration: an operator's signed overlay for an arcskill improver prompt takes
-effect at runtime through the ``agent_prompt_resolve`` closure (editable-system-prompts).
+effect at runtime through the agent's ``PromptSource`` (editable-system-prompts, COMP-030).
 
-arcskill never imports arcprompt; arcagent HANDS it a ``(package, name) -> body``
-resolver. This proves the whole seam end-to-end: a signed operator overlay under
+arcagent builds the overlay-aware resolver and HANDS arcskill a ``PromptSource`` over it.
+This proves the whole seam end-to-end: a signed operator overlay under
 ``<agent_root>/context/arcskill/<name>.md`` (+ ``.arcsig``) overrides the stock prompt
-when an arcskill improver component is handed the closure, and the same component falls
-back to shipped stock when handed ``resolve=None``.
+when an arcskill improver component is handed the agent's source, and the same component
+falls back to shipped stock when handed ``prompt_source=None``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import arctrust
-from arcprompt import render_prompt
+from arcprompt import PromptSource, ResolverPromptSource, render_prompt
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.models import SkillTrace
@@ -24,7 +24,7 @@ from arctrust.artifact import sign_artifact
 from arctrust.operator import OperatorKey
 from arctrust.policy import OperatorApprovalAuthority
 
-from arcagent.core.prompt_context import agent_prompt_resolve
+from arcagent.core.prompt_context import build_prompt_resolver
 
 
 class _DummyLLM:
@@ -55,6 +55,11 @@ def _sign_overlay(agent_root: Path, name: str, body: str, op: OperatorKey, did: 
     (overlay_dir / f"{name}.md.arcsig").write_text(manifest.to_json(), encoding="utf-8")
 
 
+def _agent_source(agent_root: Path, tier: str) -> PromptSource:
+    """The source the agent hands arcskill: its resolver rooted at the agent folder."""
+    return ResolverPromptSource(build_prompt_resolver(agent_root / "arcagent.toml", tier))
+
+
 def _agent_root(tmp_path: Path) -> Path:
     agent_root = tmp_path / "team" / "an_agent"
     (agent_root / "workspace").mkdir(parents=True)
@@ -67,13 +72,13 @@ def test_reflection_prompt_overlay_overrides_stock(tmp_path: Path, monkeypatch: 
     agent_root = _agent_root(tmp_path)
     _sign_overlay(agent_root, "reflection_prompt", "OVERRIDDEN REFLECT {dims_text}", op, did)
 
-    resolve = agent_prompt_resolve(agent_root, "federal")
-    overlaid = SkillReflector(ImproverConfig(), _DummyLLM(), resolve=resolve)
+    source = _agent_source(agent_root, "federal")
+    overlaid = SkillReflector(ImproverConfig(), _DummyLLM(), prompt_source=source)
     prompt = overlaid.build_reflection_prompt("current skill", ["accuracy"], [], 1000)
     assert prompt == "OVERRIDDEN REFLECT accuracy"
 
-    # resolve=None -> shipped stock, no override.
-    stock = SkillReflector(ImproverConfig(), _DummyLLM(), resolve=None)
+    # prompt_source=None -> shipped stock, no override.
+    stock = SkillReflector(ImproverConfig(), _DummyLLM(), prompt_source=None)
     stock_prompt = stock.build_reflection_prompt("current skill", ["accuracy"], [], 1000)
     assert "OVERRIDDEN REFLECT" not in stock_prompt
     assert "You are improving a skill procedure document." in stock_prompt
@@ -93,12 +98,12 @@ def test_judge_prompt_overlay_overrides_stock(tmp_path: Path, monkeypatch: Any) 
         turn_number=1,
         started_at=datetime.now(UTC),
     )
-    resolve = agent_prompt_resolve(agent_root, "federal")
-    overlaid = SkillEvaluator(ImproverConfig(), _DummyLLM(), resolve=resolve)
+    source = _agent_source(agent_root, "federal")
+    overlaid = SkillEvaluator(ImproverConfig(), _DummyLLM(), prompt_source=source)
     prompt = overlaid.build_judge_prompt("SKILLBODY", trace, "accuracy")
     assert prompt == "OVERRIDDEN JUDGE accuracy SKILLBODY"
 
-    # resolve=None -> shipped stock, no override.
-    stock = SkillEvaluator(ImproverConfig(), _DummyLLM(), resolve=None)
+    # prompt_source=None -> shipped stock, no override.
+    stock = SkillEvaluator(ImproverConfig(), _DummyLLM(), prompt_source=None)
     stock_prompt = stock.build_judge_prompt("SKILLBODY", trace, "accuracy")
     assert "OVERRIDDEN JUDGE" not in stock_prompt

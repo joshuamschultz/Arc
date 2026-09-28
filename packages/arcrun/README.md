@@ -217,7 +217,6 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 |---|---|
 | `Strategy` | ABC for a pluggable execution style. Required: `name`, `__call__`. Optional: `auto_selectable` (default `True`); `description` / `prompt_guidance` default to markdown (below) |
 | `available_strategies()` | Read-only view of the registered strategies (triggers discovery on first use) |
-| `get_strategy_prompts(*, allowed_strategies=None, tool_names=None, resolve=load_stock)` | Prompt fragments for the system prompt, keyed by section |
 | `run_oneshot(model, *, user, ...)` | One bounded model call, no tools — the cheapest run |
 | `run_structured(model, messages, *, tool, ...)` | One **forced tool call**; returns the tool arguments. Raises `StructuredCallError` if the model skips the tool |
 
@@ -226,6 +225,12 @@ Built-in strategies: `react` (Reason + Act; the fallback), `code` (code-first ge
 model call, no loop), `plan_execute` (runs a flat list of independent items concurrently).
 When `allowed_strategies=None`, the model picks among the **auto-selectable** strategies per
 run; passing a one-item list pins the run to that strategy with no selection call.
+
+Every prompt a run sends comes from its `prompt_source` (`run(..., prompt_source=...)`, an
+`arcprompt.PromptSource`; default `StockPromptSource`): the selection call's system message is
+`strategy_select` plus each allowed strategy's `strategy_<name>_description`, and after
+selection the chosen strategy's `strategy_<name>` guidance is added to the run's system
+messages. Only the strategy that runs steers the run.
 
 #### Writing a custom strategy
 

@@ -58,7 +58,7 @@ async def create_tool(name: str, source: str) -> str:
     try:
         AstValidator(policy=policy).validate(source)
     except ASTValidationError as exc:
-        return format_authoring_rejection(exc, policy)
+        return format_authoring_rejection(exc, policy, _runtime.prompt_source())
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding="utf-8")
     message = f"Created tool {name!r} at {target.relative_to(workspace)}"

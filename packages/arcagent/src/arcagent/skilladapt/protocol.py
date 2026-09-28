@@ -18,6 +18,19 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 
+class LLMInvoker(Protocol):
+    """The text-in/text-out model seam a skill adapter drives (judge, mutator, merger).
+
+    Structurally identical to ``arcskill.improver.seams.LLMInvoker``. A raw model
+    handle does NOT satisfy it — its ``invoke`` takes ``list[Message]`` and returns a
+    response object — so the wiring must bridge the handle first (the skills module's
+    ``OneShotInvoker``). Typing the adapter seam with this Protocol is what lets
+    mypy reject a raw model handed straight to an adapter.
+    """
+
+    async def invoke(self, prompt: str) -> str: ...
+
+
 @runtime_checkable
 class SkillAdapter(Protocol):
     """The pluggable skill-self-improvement contract arcagent talks to (structural).
@@ -124,4 +137,4 @@ class NullSkillAdapter:
         return frozenset()
 
 
-__all__ = ["NullSkillAdapter", "SkillAdapter"]
+__all__ = ["LLMInvoker", "NullSkillAdapter", "SkillAdapter"]

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import arcrun
-from arcprompt import load_stock
+from arcprompt import PromptSource, StockPromptSource
 
 from arcagent.modules.policy._bullet_parse import parse_bullets
 from arcagent.modules.policy.config import PolicyConfig
@@ -113,8 +113,12 @@ class PolicyEngine:
         telemetry: Any,
         *,
         max_input_tokens: int = 100000,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         self._config = config
+        # The agent's prompt lookup: the Reflector prompt and the grounding header
+        # an operator may override. Stock when the engine is built standalone.
+        self._prompt_source = prompt_source or StockPromptSource()
         self._workspace = workspace
         self._telemetry = telemetry
         # Approximate per-request input budget (0 = unlimited). Over-budget eval
@@ -125,6 +129,11 @@ class PolicyEngine:
         # identity.md — the engine has no code path to the immutable goal file.
         self._pending_path = workspace / "policy.pending"
         self._next_bullet_id: int = 0
+
+    @property
+    def prompt_source(self) -> PromptSource:
+        """The prompt lookup this engine's Reflector reads through."""
+        return self._prompt_source
 
     async def evaluate(
         self,
@@ -205,7 +214,7 @@ class PolicyEngine:
         self, chunk_text: str, model: Any, current_policy: str
     ) -> PolicyDelta | None:
         """Run one eval request over a single (in-budget) slice of the transcript."""
-        prompt = load_stock("arcagent", "reflection_prompt").format(
+        prompt = self._prompt_source.resolve("arcagent", "reflection_prompt").format(
             current_policy=current_policy or "(empty)",
             messages=chunk_text,
         )
@@ -255,7 +264,8 @@ class PolicyEngine:
         """
         if self._max_input_tokens <= 0:
             return [msg_text]
-        overhead = len(load_stock("arcagent", "reflection_prompt")) + len(current_policy)
+        reflector = self._prompt_source.resolve("arcagent", "reflection_prompt")
+        overhead = len(reflector) + len(current_policy)
         avail = max(1, self._max_input_tokens * 4 - overhead)
         if len(msg_text) <= avail:
             return [msg_text]

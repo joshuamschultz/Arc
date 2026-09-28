@@ -25,12 +25,13 @@ crash (REQ-041).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any
 
 import arcllm
-from arcprompt import load_stock
+from arcprompt import PromptSource, StockPromptSource
 
 from arcmemory.distill import (
     DaySummaryDraft,
@@ -157,23 +158,38 @@ class ArcLLMDistiller:
     minting, procedure + life-event extraction, day summary. A fresh provider is
     loaded per call via ``provider_factory`` and invoked directly
     (``await provider.invoke(...)``) — the arcllm model is not an async context manager.
+
+    Every system prompt is resolved through ``prompts`` at call time — the agent's
+    overlay-aware source (an operator's ArcUI edit takes effect on the next call),
+    or stock when the distiller is built standalone.
     """
 
-    def __init__(self, provider_factory: ProviderFactory, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        provider_factory: ProviderFactory,
+        *,
+        model: str | None = None,
+        prompts: PromptSource | None = None,
+    ) -> None:
         self._provider_factory = provider_factory
         self._model = model
+        self._prompts: PromptSource = prompts if prompts is not None else StockPromptSource()
+
+    async def _prompt(self, name: str) -> str:
+        """The effective ``arcmemory/<name>`` body (file read + verify off the loop)."""
+        return await asyncio.to_thread(self._prompts.resolve, "arcmemory", name)
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         """One structured completion → additive semantic facts (REQ-031/032/033)."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_fact"), self._render_events(events), "facts"
+            await self._prompt("distill_fact"), self._render_events(events), "facts"
         )
         return FactExtraction.model_validate(data)
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint:
         """One structured completion → minted abstractions, the centerpiece (REQ-050)."""
         user = f"{self._render_events(events)}\n\nKnown facts:\n{self._render_facts(facts)}"
-        data = await self._complete(load_stock("arcmemory", "distill_insight"), user, "insights")
+        data = await self._complete(await self._prompt("distill_insight"), user, "insights")
         return InsightMint.model_validate(data)
 
     async def extract_procedures(
@@ -189,22 +205,20 @@ class ArcLLMDistiller:
             f"{self._render_events(events)}\n\n"
             f"Existing procedure cards:\n{self._render_procedures(existing)}"
         )
-        data = await self._complete(
-            load_stock("arcmemory", "distill_procedure"), user, "procedures"
-        )
+        data = await self._complete(await self._prompt("distill_procedure"), user, "procedures")
         return ProcedureExtraction.model_validate(data)
 
     async def extract_events(self, episodes: list[Event]) -> EventExtraction:
         """One structured completion → things that happened in the USER's life."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_event"), self._render_events(episodes), "events"
+            await self._prompt("distill_event"), self._render_events(episodes), "events"
         )
         return EventExtraction.model_validate(data)
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         """One structured completion → meeting-minutes daily notes (chronological)."""
         data = await self._complete(
-            load_stock("arcmemory", "distill_day"), self._render_events(events), "timeline"
+            await self._prompt("distill_day"), self._render_events(events), "timeline"
         )
         return DaySummaryDraft.model_validate(data)
 
@@ -214,7 +228,7 @@ class ArcLLMDistiller:
         """One bounded call → the existing slug this candidate IS, or None (new)."""
         listing = "\n".join(f"- {slug}" for slug in candidates)
         user = f"New candidate: {name} (type: {entity_type})\nExisting cards:\n{listing}"
-        data = await self._complete(load_stock("arcmemory", "distill_disambiguate"), user, "slug")
+        data = await self._complete(await self._prompt("distill_disambiguate"), user, "slug")
         chosen = data.get("slug")
         if not isinstance(chosen, str) or not chosen.strip():
             return None
@@ -235,9 +249,7 @@ class ArcLLMDistiller:
         if len(steps) < 2:
             return []
         numbered = "\n".join(f"{i}. {text}" for i, text in enumerate(steps, start=1))
-        data = await self._complete(
-            load_stock("arcmemory", "consolidate_steps"), numbered, "steps"
-        )
+        data = await self._complete(await self._prompt("consolidate_steps"), numbered, "steps")
         out: list[tuple[str, list[int]]] = []
         for item in data.get("steps", []):
             if not isinstance(item, dict):
@@ -264,7 +276,7 @@ class ArcLLMDistiller:
             return []
         slugs = {ref.slug for ref in group}
         data = await self._complete(
-            load_stock("arcmemory", "distill_find_contradictions"),
+            await self._prompt("distill_find_contradictions"),
             self._render_cards(group),
             "contradicting",
         )
@@ -282,15 +294,12 @@ class ArcLLMDistiller:
         so a hallucinated or singleton answer can never trigger a merge.
         """
         confirmed: list[list[str]] = []
+        system = await self._prompt("distill_merge_confirm")
         for group in groups:
             if len(group) < 2:
                 continue
             slugs = {ref.slug for ref in group}
-            data = await self._complete(
-                load_stock("arcmemory", "distill_merge_confirm"),
-                self._render_cards(group),
-                "merge",
-            )
+            data = await self._complete(system, self._render_cards(group), "merge")
             for sub in data.get("merge", []):
                 if not isinstance(sub, list):
                     continue

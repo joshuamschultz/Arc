@@ -24,11 +24,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from arcprompt import load_stock
+from arcprompt import ResolverPromptSource
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
+from arcagent.core.errors import ExtensionError
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
@@ -38,7 +39,7 @@ from arcagent.core.runtime_dependencies import (
     RuntimeModule,
     RuntimeTeardownable,
 )
-from arcagent.core.telemetry import TelemetryAuditSink
+from arcagent.core.telemetry import DurableTelemetryAuditSink, TelemetryAuditSink
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
 from arcagent.utils.source_module import exec_source_module
@@ -135,6 +136,18 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         raise RuntimeError(msg)
     agent._runtime_bindings.clear()
     audit_sink = TelemetryAuditSink(telemetry)
+
+    # Build the overlay-aware prompt resolver once (COMP-006), pinned to the
+    # operator key that arcui signs overlays with. Overlay root is the agent
+    # config root's context/ dir — outside the workspace tool sandbox (COMP-007).
+    # Built BEFORE any runtime is configured: every module and builtin that
+    # sends a prompt receives it as the agent's PromptSource (COMP-030).
+    from arcagent.core.prompt_context import build_prompt_resolver
+
+    agent._prompt_resolver = build_prompt_resolver(
+        agent._config_path, str(agent._config.security.tier)
+    )
+    agent._prompt_source = ResolverPromptSource(agent._prompt_resolver)
 
     agent._capability_registry = CapabilityRegistry(
         bus=bus,
@@ -260,6 +273,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         egress_proxy=egress_proxy,
         tier=agent._config.security.tier,
         import_policy=posture.import_policy,
+        prompt_source=agent._prompt_source,
     )
     # Task 27 follow-up (hotfix) — this is the FINAL builtin_runtime.configure()
     # call, so its snapshot is the one every turn must rebind.
@@ -278,14 +292,17 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     setup_capability_prompt_injection(agent)
     await agent._capability_loader.start_lifecycles()
 
-    # Build the overlay-aware prompt resolver once (COMP-006), pinned to the
-    # operator key that arcui signs overlays with. Overlay root is the agent
-    # config root's context/ dir — outside the workspace tool sandbox (COMP-007).
-    from arcagent.core.prompt_context import build_prompt_resolver
 
-    agent._prompt_resolver = build_prompt_resolver(
-        agent._config_path, str(agent._config.security.tier)
-    )
+def _agent_audit_sink(agent: ArcAgent) -> DurableTelemetryAuditSink | None:
+    """The agent's durable audit sink, or ``None`` when its chain is not built yet.
+
+    Module configuration normally runs after the WORM chain exists; ``None`` only
+    reaches a partially built agent, and a durable write then fails closed downstream.
+    """
+    try:
+        return agent.audit_sink
+    except ExtensionError:
+        return None
 
 
 def configure_module_runtimes(
@@ -326,6 +343,8 @@ def configure_module_runtimes(
         control_actor_proof_source=agent._control_actor_proof_source,
         trigger_issuer=agent._trigger_issuer,
         prepare_collected_request=agent.prepare_collected_request,
+        audit_sink=_agent_audit_sink(agent),
+        prompt_source=agent._prompt_source,
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).
@@ -623,7 +642,8 @@ def setup_capability_prompt_injection(agent: ArcAgent) -> None:
         sections = ctx.data.get("sections")
         if not isinstance(sections, dict) or not registry.has_skills():
             return
-        sections["skill_usage"] = load_stock("arcagent", "skill_usage_instruction")
+        source = ctx.data.get("prompt_source") or agent._prompt_source
+        sections["skill_usage"] = source.resolve("arcagent", "skill_usage_instruction")
 
     bus.subscribe(
         event="agent:assemble_prompt",

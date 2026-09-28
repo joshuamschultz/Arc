@@ -5,9 +5,9 @@ the DEPLOYMENT OPERATOR's public key, because overlays are authored and signed b
 the operator through arcui, not by the agent's own DID. At run start the agent
 freezes a :class:`~arcprompt.PromptSnapshot` of the complete prompt set and emits
 one provenance audit event enumerating every prompt with its source, digest, and
-overlay signer (REQ-123, REQ-132). The snapshot then backs the overlay-aware
-resolver passed into ``get_strategy_prompts`` and the agent's own assembled
-sections, so an operator override takes effect on the next run and is attributable
+overlay signer (REQ-123, REQ-132). The snapshot then backs the run's
+``ResolverPromptSource`` handed to arcrun, module prompt sections, and spawned
+children, so an operator override takes effect on the next run and is attributable
 to exact bytes — never silently, never per-turn-shifting.
 """
 
@@ -19,7 +19,6 @@ from typing import Any
 
 from arcprompt import (
     PromptCatalog,
-    PromptMissing,
     PromptResolver,
     PromptSnapshot,
     TrustPosture,
@@ -68,23 +67,6 @@ def build_prompt_resolver(config_path: Path, tier: str) -> PromptResolver:
     return _resolver_for_root(config_path.parent, tier)
 
 
-def agent_prompt_resolve(agent_root: Path, tier: str) -> Callable[[str, str], str]:
-    """Return a ``(package, name) -> effective body`` closure for a consumer to use.
-
-    This is how a decoupled consumer (e.g. arcskill, which never imports arcprompt)
-    is *handed* overlay-aware, signature-verified resolution: arcagent builds the
-    resolver and passes this closure in. An operator override authored through
-    arcui/CLI therefore takes effect in that consumer's prompts, while the consumer
-    still runs on stock when handed no resolver at all.
-    """
-    resolver = _resolver_for_root(agent_root, tier)
-
-    def _resolve(package: str, name: str) -> str:
-        return resolver.resolve(package, name).body
-
-    return _resolve
-
-
 class _TelemetryAuditSink:
     """Adapt the agent's ``telemetry.audit_event`` to arctrust's ``AuditSink.write``."""
 
@@ -120,27 +102,8 @@ def snapshot_run_prompts(
     )
 
 
-def snapshot_resolver(snapshot: PromptSnapshot) -> Callable[[str, str], str]:
-    """A resolver closure reading bodies from a frozen snapshot (KeyError → PromptMissing).
-
-    Passed to ``get_strategy_prompts`` and used for the agent's own assembled
-    sections so every prompt in the assembled system prompt comes from the single
-    run-frozen snapshot (REQ-123) — the same bytes the provenance event recorded.
-    """
-
-    def _resolve(package: str, name: str) -> str:
-        try:
-            return snapshot.get(package, name).body
-        except KeyError as exc:
-            raise PromptMissing(package, name) from exc
-
-    return _resolve
-
-
 __all__ = [
     "AuditEmit",
-    "agent_prompt_resolve",
     "build_prompt_resolver",
-    "snapshot_resolver",
     "snapshot_run_prompts",
 ]

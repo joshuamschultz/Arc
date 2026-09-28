@@ -7,7 +7,7 @@ This is the current product acceptance register for the reliability and self-ser
 - Close a row only with a customer-path test against the actual composition, relevant failure and abuse cases, audit/state evidence, and exact source revision. Record command, environment/dependencies, result, and limits in the execution ledger.
 - A passing helper or package suite is supporting evidence, not product acceptance. An `unavailable` result is safe behavior but means the capability remains open.
 - Local completion, deployment, and sustained-operation evidence are separate states. No HTTP 200, local test, or build status implies that a hosted customer can complete the journey.
-- Preserve the package boundaries and fail-closed behavior in [AGENTS.md](../../AGENTS.md). Do not use memory fallbacks, unsigned artifacts, unbounded queues, or silent success to mask absent dependencies.
+- Preserve the package boundaries and fail-closed behavior in the repo-root `AGENTS.md`. Do not use memory fallbacks, unsigned artifacts, unbounded queues, or silent success to mask absent dependencies.
 
 Latest root-reported scoped evidence: 107 Python and 161 web queue/setup/help tests passed; hosted rekey commit `0a06bcef` has 16 reported passing tests. The broad run is not green (35 failed, 2,211 passed, 5 skipped, 44 errors); reported errors include loopback sandbox restrictions and real-trust/skill-fixture policy mismatches assigned to Sol. Do not treat scoped passes as full-gate completion.
 

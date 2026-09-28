@@ -27,12 +27,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcprompt import PromptSource
 from arcstore.approvals import ApprovalStore
 from arcstore.spool import current_request_id
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.classification import dominates, parse_classification
 from arctrust.identity import AgentIdentity
 from arctrust.policy import PolicyContext, PolicyPipeline, ToolCall, sign_call
+from arctrust.signer import Signer
 
 from arcmemory import ingest
 from arcmemory.capture import FastCapture
@@ -46,11 +48,22 @@ from arcmemory.doc_index import DocHit, DocIndex
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
+from arcmemory.promotion.classifier import PromotionClassifier
+from arcmemory.promotion.config import PromotionConfig, is_federal_tier
+from arcmemory.promotion.ledger import PromotionLedger
+from arcmemory.promotion.publisher import PromotionPublisher
+from arcmemory.promotion.sweep import (
+    PromotionSweep,
+    PromotionSweepResult,
+    SweepStatus,
+    validate_max_items,
+)
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever, attributed_cards
 from arcmemory.security import render_recalls
 from arcmemory.semantic_layer import describe as describe_layer
 from arcmemory.semantic_layer import layer_for, overlay
+from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
@@ -105,6 +118,15 @@ def _entity_fact(entity: Entity, predicate: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _PromotionStores:
+    """The three consolidated stores the promotion sweep and exporter read."""
+
+    insights: InsightStore
+    procedures: ProceduralStore
+    entities: SemanticStore
+
+
 class _ScopeBundle:
     """The per-scope capture/retrieve/consolidate helpers, built once and reused."""
 
@@ -145,6 +167,11 @@ class ArcMemoryBrain:
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
         store_raw_bodies: bool = False,
+        promotion_config: PromotionConfig | None = None,
+        promotion_classifier: PromotionClassifier | None = None,
+        promotion_publisher: PromotionPublisher | None = None,
+        promotion_signer: Signer | None = None,
+        prompt_source: PromptSource | None = None,
     ) -> None:
         if not agent_did:
             raise ValueError("ArcMemoryBrain requires an agent_did (no memory without identity)")
@@ -164,6 +191,8 @@ class ArcMemoryBrain:
         self._policy = policy_pipeline
         self._react_loop = react_loop
         self._store_raw_bodies = store_raw_bodies
+        # Where the agentic consolidation engine reads its system prompt (None -> stock).
+        self._prompt_source = prompt_source
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
@@ -192,6 +221,12 @@ class ArcMemoryBrain:
         # detectors key off conversation context absent from the latest message.
         self._working_set = WorkingSet(
             self._cfg.working_set_max, self._cfg.working_set_decay_turns
+        )
+        # SPEC-083: the nightly promotion sweep, composed once per agent (it reads
+        # the agent-wide card stores, not a session scope). None -> promotion is not
+        # configured. The publisher may be bound later (bind_promotion_publisher).
+        self._promotion_sweep = self._compose_promotion(
+            promotion_config, promotion_classifier, promotion_publisher, promotion_signer
         )
 
     # -- Brain Protocol ----------------------------------------------------
@@ -907,7 +942,83 @@ class ArcMemoryBrain:
             return False
         return dominates(clr, resource)
 
+    def bind_promotion_publisher(self, publisher: PromotionPublisher | None) -> None:
+        """Bind (or, with ``None``, unbind) where the promotion sweep publishes.
+
+        Called when the fleet attaches or withdraws its shared-knowledge port after
+        this brain was built. The next sweep uses it; with ``None`` the next sweep
+        reports ``publisher_unavailable`` and sends nothing to the classifier. A
+        brain with promotion not configured has no sweep, so binding is inert.
+        """
+        if self._promotion_sweep is not None:
+            self._promotion_sweep.bind_publisher(publisher)
+
+    async def run_promotion(self, *, max_items: int | None = None) -> PromotionSweepResult:
+        """Run the promotion sweep once now — the operator's "Run now" (REQ-512).
+
+        The same sweep the nightly hygiene runs, over this agent's EXISTING cards
+        (a backfill); afterwards the nightly run sends only new or changed items,
+        because the signed ledger already holds every verdict. It shares the
+        sweep's per-agent lock with the nightly hook, so an overlapping run waits
+        and never sends an item twice.
+
+        ``max_items`` (1..5000) caps this run only and is never persisted; a bad
+        value raises before any classifier call. A manual run neither reads nor
+        writes the nightly hygiene stamp, so that night's hygiene still runs.
+        Federal -> ``tier_forbidden``; promotion not configured -> ``disabled``.
+        """
+        cap = validate_max_items(max_items)
+        if self._promotion_sweep is None:
+            federal = is_federal_tier(self._cfg.tier)
+            status: SweepStatus = "tier_forbidden" if federal else "disabled"
+            return PromotionSweepResult(status=status)
+        return await self._promotion_sweep.run(datetime.now(UTC), max_items=cap)
+
     # -- internals ---------------------------------------------------------
+
+    def _compose_promotion(
+        self,
+        cfg: PromotionConfig | None,
+        classifier: PromotionClassifier | None,
+        publisher: PromotionPublisher | None,
+        signer: Signer | None,
+    ) -> PromotionSweep | None:
+        """Build the sweep whenever promotion is configured, publisher or not.
+
+        The publisher usually arrives later (the fleet attaches its port after the
+        agent started) through :meth:`bind_promotion_publisher`; until then the sweep
+        reports ``publisher_unavailable`` before any classifier call. The tier is this
+        brain's own ``MemoryConfig.tier`` (the sweep re-checks it, so a hand-built
+        enabled config still cannot promote at federal) and the audit sink is this
+        brain's sink. A missing classifier still composes, so the sweep reports
+        ``classifier_unavailable`` instead of going silent.
+        """
+        if cfg is None:
+            return None
+        if signer is None:
+            raise ValueError("memory promotion requires a signer for its evaluation ledger")
+        scope = self._scope(None)
+        stores = _PromotionStores(
+            insights=InsightStore(self._workspace),
+            procedures=ProceduralStore(self._workspace),
+            entities=SemanticStore(self._workspace, self._graph, scope=scope.key),
+        )
+        return PromotionSweep(
+            cfg=cfg,
+            tier=self._cfg.tier,
+            stores=stores,
+            ledger=PromotionLedger(self._workspace, signer),
+            classifier=classifier,
+            publisher=publisher,
+            audit_sink=self._audit,
+            # The runtime identity's clearance — the same label the publisher's
+            # KnowledgeAccess carries, so the sweep only sends what can be shared.
+            # Without an identity the floor (unclassified) sends the least.
+            clearance=(
+                self._identity.clearance.name if self._identity is not None else "unclassified"
+            ),
+            agent_did=self._agent_did,
+        )
 
     def _scope(self, session_id: str | None) -> Scope:
         return Scope(agent_did=self._agent_did, session_id=session_id)
@@ -951,6 +1062,8 @@ class ArcMemoryBrain:
                 policy_pipeline=self._policy,
                 react_loop=self._react_loop,
                 store_raw_bodies=self._store_raw_bodies,
+                promotion_sweep=self._promotion_sweep,
+                prompts=self._prompt_source,
             )
             if self._distiller is not None
             else None

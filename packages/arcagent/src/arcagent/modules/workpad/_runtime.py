@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.core.config import EvalConfig
 from arcagent.modules.workpad.config import WorkpadConfig
 from arcagent.utils.io import atomic_write_text
@@ -83,6 +85,8 @@ class _State:
     transcript: list[str] = field(default_factory=list)
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
     semaphore: asyncio.Semaphore | None = None
+    # The agent's prompt lookup — the maintainer prompt an operator may override.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
 
     def persist(self) -> None:
         """Atomically write the cadence counters so a restart resumes mid-cadence."""
@@ -128,6 +132,7 @@ def configure(
     llm_config: Any = None,
     agent_name: str = "",
     agent_did: str = "",
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Build this agent's workpad state, register it, and bind its DID.
 
@@ -151,6 +156,7 @@ def configure(
         last_maintenance_ts=float(persisted.get("last_maintenance_ts", time.time())),
         runs_at_last_maintenance=int(persisted.get("runs_at_last_maintenance", 0)),
         last_activity_ts=float(persisted.get("last_activity_ts", time.time())),
+        prompt_source=prompt_source or StockPromptSource(),
     )
     _registry[agent_did] = new_state
     _current_did.set(agent_did)

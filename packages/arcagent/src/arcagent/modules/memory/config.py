@@ -18,26 +18,48 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arcagent.core.module_config import ModuleConfig
 
+_FEDERAL_TIER = "federal"
+
 
 class MemoryPromotionConfig(BaseModel):
-    """Private -> shared promotion bands, tunable per agent (SPEC-083 COMP-009).
+    """Private -> shared promotion settings, tunable per agent (SPEC-083 COMP-011).
 
     Module-local by design: the memory module must load under ``NullBrain`` with
     ``arcmemory`` absent, so this mirrors ``arcmemory.promotion.config.PromotionConfig``
-    rather than importing it (that leaf lives below this layer and is an optional
-    extra). ``enabled`` is OFF by default — promotion is opt-in per REQ-447.
-    ``auto_max`` reserves the automatic band, which remains unavailable without a
-    trusted score grant. Scores up to ``approve_max`` may be queued after personal
-    export and signed operator review; anything higher stays private.
+    (same fields, defaults and validators) rather than importing it. ``enabled`` is
+    OFF by default — promotion is opt-in per REQ-447. The threshold floor is 0.90
+    and ``classifier_model`` must be a pinned version, never a ``*-latest`` alias.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     enabled: bool = False
-    auto_max: int = 4
-    approve_max: int = 7
+    confidence_threshold: float = Field(default=0.95, ge=0.90, le=1.0, allow_inf_nan=False)
+    max_personal_probability: float = Field(default=0.10, ge=0.0, le=1.0, allow_inf_nan=False)
+    max_items_per_sweep: int = Field(default=200, gt=0)
+    max_item_bytes: int = Field(default=16_384, gt=0)
+    classifier: str = Field(default="jev", min_length=1)
+    classifier_model: str = "jev-1.13.0"
+    request_timeout_seconds: float = Field(default=10.0, gt=0.0, allow_inf_nan=False)
+    # Where the classifier key comes from — a coordinate, never the value (REQ-510).
+    # One fleet-wide env var in the write-only key store (decision 12); an optional
+    # vault path is tried first by the classifier's VaultResolver.
+    api_key_env: str = Field(default="TYPESAFE_API_KEY", min_length=1)
+    vault_path: str | None = None
+
+    @field_validator("classifier_model")
+    @classmethod
+    def _require_pinned_model(cls, value: str) -> str:
+        folded = value.strip().casefold()
+        if not folded:
+            raise ValueError("classifier_model must name a pinned model version")
+        if folded == "latest" or folded.endswith("-latest"):
+            raise ValueError("classifier_model must be pinned; '*-latest' aliases are refused")
+        return value
 
 
 class MemoryConfig(ModuleConfig):
@@ -46,9 +68,9 @@ class MemoryConfig(ModuleConfig):
     brain: str = "none"
     tier: str = "personal"
 
-    # Private -> shared promotion bands (SPEC-083). Off by default; a nested
-    # module-local model so [modules.memory.config.promotion] parses without
-    # pulling in the optional arcmemory extra.
+    # Private -> shared promotion (SPEC-083). Off by default; a nested module-local
+    # model so [modules.memory.config.promotion] parses without pulling in the
+    # optional arcmemory extra. Federal can never enable it (validator below).
     promotion: MemoryPromotionConfig = Field(default_factory=MemoryPromotionConfig)
 
     # Explicit curated documents are independent of the Brain selector. They
@@ -112,6 +134,14 @@ class MemoryConfig(ModuleConfig):
     distill_provider: str = ""
     distill_model: str = ""
     dynamics: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _forbid_federal_promotion(self) -> MemoryConfig:
+        # Decision 7: federal never promotes, enforced by config validation. The
+        # tier is case-folded so "Federal" cannot slip past the lock.
+        if self.promotion.enabled and self.tier.strip().casefold() == _FEDERAL_TIER:
+            raise ValueError("memory promotion cannot be enabled at the federal tier")
+        return self
 
     @model_validator(mode="after")
     def _fold_backend_settings(self) -> MemoryConfig:

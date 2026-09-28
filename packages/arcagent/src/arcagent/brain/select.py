@@ -22,6 +22,7 @@ declares the point and assembles the generic context the backend's ``build_brain
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,9 @@ def select_brain(
     identity: Any = None,
     policy_pipeline: Any = None,
     backend_config: dict[str, Any] | None = None,
+    promotion_config: Mapping[str, Any] | None = None,
+    promotion_publisher: object | None = None,
+    prompt_source: object | None = None,
 ) -> Brain:
     """Return the configured Brain (fail-safe: any degrade path yields NullBrain).
 
@@ -60,6 +64,15 @@ def select_brain(
     backend so its own writes can be signed and policy-authorized. ``backend_config`` is
     an opaque, backend-defined dict forwarded verbatim from the agent TOML — arcagent does
     not read or name its keys; the selected backend validates them in ``build_brain``.
+
+    ``promotion_config`` (a plain mapping — settings, never a client object) and
+    ``promotion_publisher`` (the backend's shared-write seam) are ``None`` unless the
+    agent opted into private -> shared promotion (SPEC-083); the backend builds its
+    own classifier from the config.
+
+    ``prompt_source`` is the agent's overlay-aware prompt lookup (an
+    ``arcprompt.PromptSource``), forwarded opaquely so the backend's model-bound
+    prompts honor the operator's edits; ``None`` lets the backend use stock.
     """
     context: dict[str, Any] = {
         "workspace": workspace,
@@ -73,6 +86,9 @@ def select_brain(
         "identity": identity,
         "policy_pipeline": policy_pipeline,
         "backend_config": backend_config or {},
+        "promotion_config": promotion_config,
+        "promotion_publisher": promotion_publisher,
+        "prompt_source": prompt_source,
     }
     brain: Brain = select_extension(
         _BRAIN_POINT,

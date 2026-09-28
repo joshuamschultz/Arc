@@ -138,14 +138,20 @@ class FileDeleteResponse(BaseModel):
 
 
 class PromptListItem(BaseModel):
-    """One row in the prompts list — a stock prompt, marked stock or overridden."""
+    """One row in the prompts list — a stock prompt, marked stock, overridden or rejected.
+
+    ``rejected`` means an override is present but the agent refuses it (missing,
+    unreadable, edited-after-signing or foreign-key signature) and will not run;
+    ``rejection_reason`` says which.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     package: str
     name: str
     description: str
-    status: str  # "stock" | "overridden"
+    status: Literal["stock", "overridden", "rejected"]
+    rejection_reason: str | None = None
 
 
 class PromptListResponse(BaseModel):
@@ -159,9 +165,12 @@ class PromptListResponse(BaseModel):
 class PromptDetailResponse(BaseModel):
     """Body of ``GET /api/agents/{id}/prompts/{package}/{name}``.
 
-    ``stock`` is the packaged body; ``effective`` is the overlay body when one is
-    present and parseable, else stock; ``diff`` is a server-computed unified diff
-    (stock → effective) so the browser ships no diff library.
+    ``stock`` is the packaged body; ``effective`` is what the agent sends to the
+    model — the verified override, or stock when there is none. A ``rejected``
+    override has NO effective body (``""``): the agent refuses to run rather than
+    fall back to stock, so its text is never shown as the prompt in use. ``diff`` is
+    a server-computed unified diff (stock → effective) so the browser ships no diff
+    library; empty when rejected.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -169,7 +178,8 @@ class PromptDetailResponse(BaseModel):
     package: str
     name: str
     description: str
-    status: str  # "stock" | "overridden"
+    status: Literal["stock", "overridden", "rejected"]
+    rejection_reason: str | None = None
     stock: str
     effective: str
     diff: str
@@ -258,15 +268,17 @@ class RubricUpdate(BaseModel):
 class RubricResponse(BaseModel):
     """Body of ``GET .../prompts/{package}/{name}/rubric`` — the parsed rubric.
 
-    ``status`` is ``stock`` or ``overridden`` (same convention as the prompt
-    detail); ``dimensions`` is the server-parsed YAML body as structured JSON.
+    ``status`` follows the prompt-detail convention (``stock`` / ``overridden`` /
+    ``rejected``); ``dimensions`` is the server-parsed YAML body as structured JSON —
+    the stock rubric when the override is rejected, so the operator can re-author it.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     package: str
     name: str
-    status: str  # "stock" | "overridden"
+    status: Literal["stock", "overridden", "rejected"]
+    rejection_reason: str | None = None
     dimensions: dict[str, RubricDimension]
 
 

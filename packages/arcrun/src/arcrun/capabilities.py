@@ -44,6 +44,10 @@ class CapabilitySpec:
     kind: str = "tool"
     signals_completion: bool = False
     timeout_seconds: float | None = None
+    # Carried onto the loop's ``Tool``: ``read_only`` tools batch in parallel and
+    # are what a dynamic child in ``read_only`` mode keeps. The default is the
+    # safe reading — an unlabelled capability is treated as state-modifying.
+    classification: str = "state_modifying"
 
 
 @dataclass
@@ -205,6 +209,7 @@ def _invoke_tool(spec: CapabilitySpec, provider: CapabilityProvider, *, caller_d
         execute=_execute,
         timeout_seconds=spec.timeout_seconds,
         signals_completion=spec.signals_completion,
+        classification=spec.classification,
     )
 
 

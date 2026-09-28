@@ -8,6 +8,23 @@ from typing import Any
 from dotenv import find_dotenv, load_dotenv
 
 from arcllm.capabilities import supports_tools, tool_capable_models
+
+# Eager on purpose: binding the ``classify`` function here keeps
+# ``arcllm.classify`` the function even after ``import arcllm.classify`` (the
+# submodule import would otherwise shadow it). Its imports are already loaded.
+from arcllm.classify import (
+    ArcLLMClassifierError,
+    ArcLLMClassifierUnavailableError,
+    ChoiceResult,
+    ChoiceSpec,
+    ClassificationRequest,
+    ClassificationResult,
+    ClassifierProvider,
+    NoulResult,
+    NoulSpec,
+    classify,
+    resolve_classifier,
+)
 from arcllm.config import (
     DefaultsConfig,
     EndpointConfig,
@@ -140,6 +157,9 @@ _LAZY_IMPORTS: dict[str, str] = {
     "clear_embedder_cache": "arcllm.embeddings",
     "embed": "arcllm.embeddings",
     "resolve_embedder": "arcllm.embeddings",
+    # Classifier drop-ins (SPEC-083) — scanning imports each drop-in module.
+    "classifier_key_envs": "arcllm.classifiers",
+    "list_classifier_keys": "arcllm.classifiers",
 }
 
 
@@ -157,6 +177,8 @@ __all__ = [
     "MODULE_NAMES",
     "AnthropicAdapter",
     "ArcLLMAPIError",
+    "ArcLLMClassifierError",
+    "ArcLLMClassifierUnavailableError",
     "ArcLLMConfigError",
     "ArcLLMEmbeddingUnavailableError",
     "ArcLLMError",
@@ -175,7 +197,12 @@ __all__ = [
     "CallQueueContext",
     "CallQueueCoordinator",
     "CallQueueStore",
+    "ChoiceResult",
+    "ChoiceSpec",
     "CircuitBreakerModule",
+    "ClassificationRequest",
+    "ClassificationResult",
+    "ClassifierProvider",
     "CohereAdapter",
     "ContentBlock",
     "DeepseekAdapter",
@@ -208,6 +235,8 @@ __all__ = [
     "ModuleConfig",
     "MoonshotAdapter",
     "NoneEmbedder",
+    "NoulResult",
+    "NoulSpec",
     "OllamaAdapter",
     "OpenaiAdapter",
     "OtelModule",
@@ -258,10 +287,13 @@ __all__ = [
     "XaiAdapter",
     "__version__",
     "agent_identity",
+    "classifier_key_envs",
+    "classify",
     "clear_cache",
     "clear_embedder_cache",
     "configured_redactor",
     "embed",
+    "list_classifier_keys",
     "list_provider_keys",
     "load_for_replay",
     "load_global_config",
@@ -269,6 +301,7 @@ __all__ = [
     "load_provider_config",
     "load_telemetry_retention_config",
     "model_config_path",
+    "resolve_classifier",
     "resolve_embedder",
     "supports_tools",
     "tool_capable_models",

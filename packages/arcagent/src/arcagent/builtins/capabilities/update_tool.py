@@ -92,7 +92,7 @@ async def update_tool(
     try:
         AstValidator(policy=policy).validate(new_source)
     except ASTValidationError as exc:
-        return format_authoring_rejection(exc, policy)
+        return format_authoring_rejection(exc, policy, _runtime.prompt_source())
     target.write_text(new_source, encoding="utf-8")
     message = f"Updated tool {name!r} {match.group(1)} → {new_version}"
     if not _runtime.sign_artifact_file(target, new_source.encode("utf-8")):

@@ -9,13 +9,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from arcprompt import PromptSource, StockPromptSource
 from arctrust import AgentIdentity, Signer
 
 from arcagent.core.config import EvalConfig, LLMConfig
 from arcagent.core.control_contract import ControlActionProofSource, ControlArtifactAuthority
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
-from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.telemetry import AgentTelemetry, DurableTelemetryAuditSink
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.extension.source_catalog import SourceCatalog
 from arcagent.tools._egress import EgressProxy
@@ -54,6 +55,16 @@ class RuntimeDependencies:
     trigger_issuer: RunTriggerIssuer | None = None
     prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None
     source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
+    #: The agent's audit sink: telemetry for ordinary events, ``write_durable``
+    #: into the operator-signed WORM chain for records that must not be lost.
+    audit_sink: DurableTelemetryAuditSink | None = None
+    #: The agent's overlay-aware prompt lookup (COMP-030): an ArcUI override for
+    #: this agent first, the packaged stock prompt otherwise. Delivered at
+    #: configure time, so it resolves LIVE on every call — an operator edit
+    #: applies to the module's next model call. The run-frozen snapshot
+    #: (provenance-audited bytes) backs only the prompt the run assembles itself.
+    #: The stock default keeps a bare container (tests, tools) zero-config.
+    prompt_source: PromptSource = field(default_factory=StockPromptSource)
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -110,6 +121,8 @@ class DependencyKey(Enum):
     CONTROL_ACTOR_PROOF_SOURCE = "control_actor_proof_source"
     TRIGGER_ISSUER = "trigger_issuer"
     PREPARE_COLLECTED_REQUEST = "prepare_collected_request"
+    AUDIT_SINK = "audit_sink"
+    PROMPT_SOURCE = "prompt_source"
 
 
 class RuntimeModule(Protocol):

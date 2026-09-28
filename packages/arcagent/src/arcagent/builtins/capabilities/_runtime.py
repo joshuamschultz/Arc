@@ -59,6 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcprompt import PromptSource, StockPromptSource
+
 from arcagent.tools._dynamic_loader import DEFAULT_IMPORT_POLICY, ImportPolicy
 
 if TYPE_CHECKING:
@@ -108,6 +110,10 @@ _tier_var: contextvars.ContextVar[str] = contextvars.ContextVar(
 _import_policy_var: contextvars.ContextVar[ImportPolicy] = contextvars.ContextVar(
     "arcagent_builtin_import_policy", default=DEFAULT_IMPORT_POLICY
 )
+# The agent's overlay-aware prompt lookup (COMP-030); None → stock (unconfigured).
+_prompt_source_var: contextvars.ContextVar[PromptSource | None] = contextvars.ContextVar(
+    "arcagent_builtin_prompt_source", default=None
+)
 
 
 def configure(
@@ -123,6 +129,7 @@ def configure(
     egress_proxy: Any = None,
     tier: str | None = None,
     import_policy: ImportPolicy | None = None,
+    prompt_source: PromptSource | None = None,
 ) -> None:
     """Bind per-agent runtime state for the CURRENT asyncio task.
 
@@ -147,11 +154,13 @@ def configure(
         _tier_var.set(tier)
     if import_policy is not None:
         _import_policy_var.set(import_policy)
+    if prompt_source is not None:
+        _prompt_source_var.set(prompt_source)
 
 
 @dataclass(frozen=True)
 class RuntimeSnapshot:
-    """Immutable capture of all ten builtin-runtime ContextVars.
+    """Immutable capture of every builtin-runtime ContextVar.
 
     Built once via :func:`snapshot` after startup's two :func:`configure`
     calls have both run; re-applied via :func:`bind` at the top of every
@@ -170,6 +179,7 @@ class RuntimeSnapshot:
     egress_proxy: Any
     tier: str
     import_policy: ImportPolicy
+    prompt_source: PromptSource | None
 
 
 def snapshot() -> RuntimeSnapshot:
@@ -192,13 +202,14 @@ def snapshot() -> RuntimeSnapshot:
         egress_proxy=_egress_proxy_var.get(),
         tier=_tier_var.get(),
         import_policy=_import_policy_var.get(),
+        prompt_source=_prompt_source_var.get(),
     )
 
 
 def bind(snap: RuntimeSnapshot) -> None:
     """Idempotently bind a previously-built snapshot into the CURRENT task.
 
-    Cheap — nine ``.set()`` calls, no construction, no I/O. Called at the
+    Cheap — one ``.set()`` per ContextVar, no construction, no I/O. Called at the
     top of every turn-dispatch entry point so a turn running in a fresh
     sibling ``asyncio.Task`` (not a descendant of the task that ran
     :func:`configure`) still sees this agent's state.
@@ -214,6 +225,7 @@ def bind(snap: RuntimeSnapshot) -> None:
     _egress_proxy_var.set(snap.egress_proxy)
     _tier_var.set(snap.tier)
     _import_policy_var.set(snap.import_policy)
+    _prompt_source_var.set(snap.prompt_source)
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> bool:
@@ -371,6 +383,11 @@ def import_policy() -> ImportPolicy:
     one the loader would run. Unconfigured → the fail-closed enterprise default.
     """
     return _import_policy_var.get()
+
+
+def prompt_source() -> PromptSource:
+    """Return the agent's prompt lookup (override first); stock when unconfigured."""
+    return _prompt_source_var.get() or StockPromptSource()
 
 
 class _ArcRunAuditAdapter:
@@ -609,6 +626,7 @@ def reset() -> None:
     _egress_proxy_var.set(None)
     _tier_var.set("personal")
     _import_policy_var.set(DEFAULT_IMPORT_POLICY)
+    _prompt_source_var.set(None)
 
 
 __all__ = [
@@ -625,6 +643,7 @@ __all__ = [
     "get_secret",
     "import_policy",
     "loader",
+    "prompt_source",
     "protected_paths",
     "reset",
     "resign_if_previously_signed",

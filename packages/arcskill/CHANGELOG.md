@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Improver prompts resolve through an `arcprompt.PromptSource` (`prompt_source=`) instead
+  of a `(package, name) -> str` callable (`resolve=` / `PromptResolve`). Standalone
+  components default to `StockPromptSource`. arcskill now depends on `arcprompt`.
+- The curated golden-case judge prompt moved from inline code to
+  `context/curated_judge_prompt.md`, so an operator override reaches the judge.
+
+### Removed
+- `improver.nudge` (`NudgeEmitter`, signals, dedup) and `context/nudge_template.md`: no
+  production path constructed the emitter, nothing produced its input signals, and
+  nothing consumed its `system_message_nudge` event.
+
 ## [0.3.0] - 2026-08-19
 
 SPEC-054 eval bootstrap — the improver stops waiting for a hand-written golden suite and

@@ -220,7 +220,7 @@ class TestMissingCredentialWithholdsTheTool:
 
         assert "web_search" not in registry.tools
         assert "web_extract" in registry.tools
-        assert "web_search" not in registry.format_for_prompt()
+        assert "web_search" not in {tool.name for tool in registry.to_arcrun_tools()}
 
 
 # --- Keyless extraction through the browser seam -------------------------------

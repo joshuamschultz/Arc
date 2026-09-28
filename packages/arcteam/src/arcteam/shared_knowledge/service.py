@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -10,6 +11,9 @@ from typing import Any, Protocol
 from arctrust.audit import AuditEvent, emit
 
 from arcteam.shared_knowledge.backend import FleetSharedKnowledgeBackend
+
+_CLASSIFIER_DECISION = "classifier_promote"
+_MIN_CONFIDENCE = 0.90
 
 
 class _Access(Protocol):
@@ -68,6 +72,23 @@ class _Draft:
 
 class SharedKnowledgeUnavailableError(RuntimeError):
     """The optional ArcMemory collection mechanics are not installed."""
+
+
+class SharedKnowledgePromotionRefusedError(PermissionError, ValueError):
+    """A promotion was refused before any shared write; nothing was shared.
+
+    A ``PermissionError`` because that is the shared-knowledge seam's contract for
+    "refused, nothing written" (``arcagent.knowledge.SharedKnowledgePort.promote``),
+    so a caller that must not import arcteam still tells it apart. Also a
+    ``ValueError`` so callers that validated the decision shape keep catching it.
+    """
+
+
+class SharedKnowledgePromotionOutcomeUnknownError(RuntimeError):
+    """The shared write was attempted and may or may not have landed.
+
+    Never retry automatically: a retry could share the same item twice.
+    """
 
 
 class FleetSharedKnowledgeService:
@@ -131,56 +152,51 @@ class FleetSharedKnowledgeService:
         *,
         audit_sink: Any = None,
         decision: str | None = None,
-        effective_score: int | None = None,
+        confidence: float | None = None,
+        classifier_version: str | None = None,
     ) -> object:
-        """Promote one owned personal export through the fleet's authorization gate."""
-        if decision is not None or effective_score is not None:
-            if (
-                decision not in {"auto", "approved"}
-                or type(effective_score) is not int
-                or not 1 <= effective_score <= 10
-                or audit_sink is None
-            ):
-                raise ValueError("invalid promotion decision or missing audit sink")
-        source: Any = await personal.export_for_promotion(reference, access)
-        self._validate_promotion(source)
-        self._enforce_promotable_type(source)
-        if source.document_type == "entity":
-            raise SharedKnowledgeUnavailableError(
-                "canonical multi-contributor entity promotion is unavailable"
-            )
-        if decision is not None:
-            write_durable = getattr(audit_sink, "write_durable", None)
-            if not callable(write_durable):
-                raise ValueError("promotion decision requires a durable audit sink")
-            write_durable(
-                AuditEvent(
-                    actor_did=access.caller_did,
-                    action="knowledge.promotion_decision",
-                    target=reference,
-                    outcome="allow",
-                    classification=source.classification,
-                    extra={
-                        "item_id": reference,
-                        "effective_score": effective_score,
-                        "decision": decision,
-                    },
-                )
-            )
-        collection = self._collection(access.caller_did, signer, audit_sink)
-        result = await collection.save(
-            _Draft(
-                title=source.title,
-                content=source.content.strip(),
-                classification=source.classification,
-                tags=source.tags,
-                document_type=source.document_type,
-            ),
-            access,
+        """Promote one owned personal export through the fleet's authorization gate.
+
+        A classifier-driven promotion passes ``decision="classifier_promote"`` with
+        the classifier's ``confidence`` and ``classifier_version``; that decision is
+        written durably BEFORE the shared write so an automated promotion can never
+        land without its audit record, and only AFTER the write's owner, clearance,
+        signer and pin checks pass, so a refused promotion records no decision.
+        Entities merge into the shared canonical entity as this contributor's
+        signed provenance block.
+
+        Raises:
+            SharedKnowledgePromotionRefusedError: any failure before the shared
+                save — nothing was written.
+            SharedKnowledgePromotionOutcomeUnknownError: the save failed or returned
+                a reference to other bytes — the write may have landed.
+        """
+        classified = (
+            decision is not None or confidence is not None or classifier_version is not None
         )
+        decision_extra = {
+            "item_id": reference,
+            "confidence": confidence,
+            "classifier_version": classifier_version,
+            "decision": decision,
+        }
+        try:
+            source, collection, draft = await self._authorize_promotion(
+                personal, reference, access, signer, audit_sink, classified, decision_extra
+            )
+        except Exception as error:  # reason: nothing is written before the save — a refusal
+            raise SharedKnowledgePromotionRefusedError(str(error)) from error
+        try:
+            result = await collection.save(draft, access)
+        except Exception as error:  # reason: the write may have landed; never report a refusal
+            raise SharedKnowledgePromotionOutcomeUnknownError(
+                f"shared write outcome unknown ({type(error).__name__})"
+            ) from error
         if result.scope != "shared" or result.digest != source.digest:
-            raise ValueError("fleet shared backend returned an invalid reference")
-        if decision is not None:
+            raise SharedKnowledgePromotionOutcomeUnknownError(
+                "fleet shared backend returned an invalid reference"
+            )
+        if classified:
             emit(
                 AuditEvent(
                     actor_did=access.caller_did,
@@ -188,15 +204,60 @@ class FleetSharedKnowledgeService:
                     target=result.identifier,
                     outcome="allow",
                     classification=source.classification,
-                    extra={
-                        "item_id": reference,
-                        "effective_score": effective_score,
-                        "decision": decision,
-                    },
+                    extra=decision_extra,
                 ),
                 audit_sink,
             )
         return result
+
+    async def _authorize_promotion(
+        self,
+        personal: Any,
+        reference: str,
+        access: _Access,
+        signer: _Signer,
+        audit_sink: Any,
+        classified: bool,
+        decision_extra: dict[str, Any],
+    ) -> tuple[Any, Any, _Draft]:
+        """Every pre-write step: decision shape, export, validation, authorize, decision audit.
+
+        Returns the verified source, the collection and the draft to save.
+        """
+        if classified:
+            _require_classifier_decision(
+                decision_extra["decision"],
+                decision_extra["confidence"],
+                decision_extra["classifier_version"],
+                audit_sink,
+            )
+        source: Any = await personal.export_for_promotion(reference, access)
+        self._validate_promotion(source)
+        self._enforce_promotable_type(source)
+        collection = self._collection(access.caller_did, signer, audit_sink)
+        draft = _Draft(
+            title=source.title,
+            content=source.content.strip(),
+            classification=source.classification,
+            tags=source.tags,
+            document_type=source.document_type,
+        )
+        # Owner, clearance, signer-vs-DID and TOFU pin are checked BEFORE the
+        # decision is recorded, so a refused promotion never leaves an "allow"
+        # decision behind. The save re-checks everything (no trust across the gap).
+        await collection.authorize_save(draft, access)
+        if classified:
+            audit_sink.write_durable(
+                AuditEvent(
+                    actor_did=access.caller_did,
+                    action="knowledge.promotion_decision",
+                    target=reference,
+                    outcome="allow",
+                    classification=source.classification,
+                    extra=decision_extra,
+                )
+            )
+        return source, collection, draft
 
     async def read(self, reference: str, access: _Access) -> Any:
         return await self._backend.read(reference, access)
@@ -246,4 +307,35 @@ class FleetSharedKnowledgeService:
             raise ValueError("knowledge promotion digest mismatch")
 
 
-__all__ = ["FleetSharedKnowledgeService", "SharedKnowledgeUnavailableError"]
+def _require_classifier_decision(
+    decision: str | None,
+    confidence: float | None,
+    classifier_version: str | None,
+    audit_sink: Any,
+) -> None:
+    """Refuse any automated promotion decision outside the classifier contract.
+
+    ``confidence`` must be a real finite float (``bool``/``int``/``str`` refused)
+    at or above the 0.90 promotion floor, and the decision must be recordable
+    durably — an unauditable automated promotion fails closed.
+    """
+    if decision != _CLASSIFIER_DECISION:
+        raise ValueError("unknown promotion decision")
+    if (
+        not isinstance(confidence, float)
+        or not math.isfinite(confidence)
+        or not _MIN_CONFIDENCE <= confidence <= 1.0
+    ):
+        raise ValueError("classifier confidence must be a finite float in [0.90, 1.0]")
+    if not isinstance(classifier_version, str) or not classifier_version.strip():
+        raise ValueError("classifier promotion requires a classifier version")
+    if not callable(getattr(audit_sink, "write_durable", None)):
+        raise ValueError("promotion decision requires a durable audit sink")
+
+
+__all__ = [
+    "FleetSharedKnowledgeService",
+    "SharedKnowledgePromotionOutcomeUnknownError",
+    "SharedKnowledgePromotionRefusedError",
+    "SharedKnowledgeUnavailableError",
+]

@@ -83,9 +83,12 @@ async def test_live_path_collects_traces_via_hooks(tmp_path: Path) -> None:
 
     await skills_ready(_Ctx(skill_registry=await _registry(("my-skill", skill_file))))
     # Read the skill (opens the span), then two tool calls, then close the turn.
-    await skills_post_tool(_Ctx(tool="read", args={"file_path": str(skill_file)}))
-    await skills_post_tool(_Ctx(tool="bash", result="ok"))
-    await skills_post_tool(_Ctx(tool="grep", result="ok"))
+    # Every real tool outcome carries a call_id; the hook drops one without it.
+    await skills_post_tool(
+        _Ctx(tool="read", args={"file_path": str(skill_file)}, call_id="c-read")
+    )
+    await skills_post_tool(_Ctx(tool="bash", result="ok", call_id="c-bash"))
+    await skills_post_tool(_Ctx(tool="grep", result="ok", call_id="c-grep"))
     await skills_post_plan(_Ctx(task_outcome="success", turn_number=1))
 
     traces_dir = tmp_path / "skill_traces" / "my-skill"

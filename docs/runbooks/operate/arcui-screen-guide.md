@@ -1,6 +1,6 @@
 # ArcUI screen guide
 
-Open a screen from the left navigation. An empty list can mean there is no data yet; a loading or error state means the screen could not retrieve it. Retry only after checking the relevant service, and check Activity or Audit before repeating an operation whose result is uncertain. Field-level help is authored in [`screen-help.json`](../../../packages/arcui/web/src/content/screen-help.json); Settings matches exact serialized paths first, then `*` patterns covering one path segment. The catalog currently has 672 help entries across 18 routes (529 Settings entries); the count does not mean every field is rendered in every installation. Some help IDs are contextual labels rather than config paths; see the [field-help inventory](../../design/arcui-field-help-inventory.md).
+Open a screen from the left navigation. An empty list can mean there is no data yet; a loading or error state means the screen could not retrieve it. Retry only after checking the relevant service, and check Activity or Audit before repeating an operation whose result is uncertain. Field-level help is authored in `packages/arcui/web/src/content/screen-help.json`; Settings matches exact serialized paths first, then `*` patterns covering one path segment. The catalog currently has 672 help entries across 18 routes (529 Settings entries); the count does not mean every field is rendered in every installation. Some help IDs are contextual labels rather than config paths; see the [field-help inventory](../../design/arcui-field-help-inventory.md).
 
 ## Work
 

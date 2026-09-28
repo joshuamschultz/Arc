@@ -21,6 +21,7 @@ from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
+from arcrun.strategies.react import react_loop
 from arcrun.types import LoopResult
 
 # A runner turns one opaque ready item into its outcome (an awaitable). The item
@@ -72,22 +73,15 @@ class PlanExecuteStrategy(Strategy):
     async def __call__(
         self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int
     ) -> LoopResult:
-        """Not driven through the react ``run()`` entry.
+        """A pinned run's task is the one ready item: run it as a gated loop.
 
-        plan_execute is invoked by the plan owner via :meth:`run_ready` with an
-        explicit item batch + runner — it has no single-task loop. Selecting it
-        through the generic run entry yields an empty result rather than
-        crashing (a plan with no ready frontier is a no-op, not an error).
+        The generic run entry hands this strategy a single task, not a batch. A
+        single task is a frontier of one independent item, so it runs the way
+        every item does — one bounded, fully gated loop — carrying this
+        strategy's guidance, and returns that loop's answer. A plan owner with a
+        real batch calls :meth:`run_ready` instead.
         """
-        return LoopResult(
-            content=None,
-            turns=state.turn_count,
-            tool_calls_made=state.tool_calls_made,
-            tokens_used=state.tokens_used.copy(),
-            strategy_used="plan_execute",
-            cost_usd=state.cost_usd,
-            events=state.event_bus.events,
-        )
+        return await react_loop(model, state, sandbox, max_turns)
 
 
 __all__ = ["ItemRunner", "PlanExecuteStrategy"]

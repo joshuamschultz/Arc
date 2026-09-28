@@ -21,19 +21,13 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from pydantic import BaseModel
 
 from arcllm.exceptions import ArcLLMConfigError, ArcLLMEmbeddingUnavailableError
-from arcllm.modules.base import resolve_enforcement
-from arcllm.modules.telemetry_budget import (
-    BudgetAccumulator,
-    get_or_create_accumulator,
-    validate_budget_scope,
-)
+from arcllm.modules.call_budget import budget_pre_check, count_tokens, emit_telemetry, parse_budget
 from arcllm.modules.telemetry_cost import calculate_cost
 from arcllm.types import Usage
 
@@ -45,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_EMBED_MODEL = "all-MiniLM-L6-v2"
 _MINILM_DIMS = 384
-_UNKNOWN_DID = "did:arc:unknown"
 
 
 class EmbeddingResponse(BaseModel):
@@ -70,15 +63,6 @@ class EmbeddingProvider(ABC):
     async def embed(self, texts: list[str]) -> EmbeddingResponse:
         """Embed ``texts`` into vectors. Raises ArcLLMEmbeddingUnavailableError
         when this backend cannot serve (the 'none' signal)."""
-
-
-def _count_tokens(texts: list[str]) -> int:
-    """Cheap, deterministic input-token estimate for budget accounting.
-
-    Whitespace-word count (at least 1 per non-empty text). No tokenizer
-    download — the estimate only feeds cost arithmetic, not the model.
-    """
-    return sum(max(1, len(t.split())) for t in texts)
 
 
 # Cap embed trace bodies: a single embed can batch many memory lines at once
@@ -168,7 +152,7 @@ class LocalEmbedder(EmbeddingProvider):
         )
         vectors = [[float(x) for x in row] for row in raw]
         dims = len(vectors[0]) if vectors else _MINILM_DIMS
-        tokens = _count_tokens(texts)
+        tokens = count_tokens(texts)
         return EmbeddingResponse(
             vectors=vectors,
             dims=dims,
@@ -239,7 +223,7 @@ class ProviderEmbedder(EmbeddingProvider):
         vectors = [[float(x) for x in item["embedding"]] for item in data["data"]]
         dims = len(vectors[0]) if vectors else 0
         usage_raw = data.get("usage") or {}
-        tokens = int(usage_raw.get("prompt_tokens", _count_tokens(texts)))
+        tokens = int(usage_raw.get("prompt_tokens", count_tokens(texts)))
         return EmbeddingResponse(
             vectors=vectors,
             dims=dims,
@@ -295,134 +279,6 @@ def resolve_embedder(
 
 
 # ---------------------------------------------------------------------------
-# Budget — reuse of the SPEC-038 accumulator + standard breach (T-011)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _BudgetPlan:
-    scope: str
-    accumulator: BudgetAccumulator
-    monthly_limit: float | None
-    daily_limit: float | None
-    per_call_max: float | None
-    enforcement: str
-
-
-def _parse_budget(telemetry: dict[str, Any]) -> _BudgetPlan | None:
-    """Build a budget plan from the telemetry config, or ``None`` when no scope
-    is set. Spend is tracked whenever a ``budget_scope`` is present (embed spend
-    aggregates onto the agent's shared budget); limits enforce only when set."""
-    scope = telemetry.get("budget_scope")
-    if not scope:
-        return None
-    validate_budget_scope(scope)
-    return _BudgetPlan(
-        scope=scope,
-        accumulator=get_or_create_accumulator(scope),
-        monthly_limit=telemetry.get("monthly_limit_usd"),
-        daily_limit=telemetry.get("daily_limit_usd"),
-        per_call_max=telemetry.get("per_call_max_usd"),
-        enforcement=resolve_enforcement(telemetry, default="block"),
-    )
-
-
-def _breach(
-    plan: _BudgetPlan,
-    limit_type: str,
-    limit_usd: float,
-    current: float,
-    estimated: float | None,
-) -> None:
-    """Enforce one limit: raise the standard breach (block) or warn."""
-    if plan.enforcement == "block":
-        from arcllm.exceptions import ArcLLMBudgetError
-
-        raise ArcLLMBudgetError(
-            scope=plan.scope,
-            limit_type=limit_type,
-            limit_usd=limit_usd,
-            current_usd=current,
-            estimated_usd=estimated,
-        )
-    logger.warning(
-        "embed budget %s limit exceeded for '%s' (warn mode): limit=$%.6f",
-        limit_type,
-        plan.scope,
-        limit_usd,
-    )
-
-
-def _budget_pre_check(plan: _BudgetPlan, pre_tokens: int, cost_input_per_1m: float) -> None:
-    """Pre-flight per-call estimate + cumulative check, before the embed call."""
-    if plan.per_call_max is not None:
-        estimated = pre_tokens * cost_input_per_1m / 1_000_000
-        if estimated > plan.per_call_max:
-            _breach(plan, "per_call", plan.per_call_max, plan.accumulator.monthly_spend, estimated)
-
-    monthly = plan.monthly_limit if plan.monthly_limit is not None else float("inf")
-    daily = plan.daily_limit if plan.daily_limit is not None else float("inf")
-    exceeded = plan.accumulator.check_limits(monthly, daily)
-    if exceeded == "monthly" and plan.monthly_limit is not None:
-        _breach(plan, "monthly", plan.monthly_limit, plan.accumulator.monthly_spend, None)
-    elif exceeded == "daily" and plan.daily_limit is not None:
-        _breach(plan, "daily", plan.daily_limit, plan.accumulator.daily_spend, None)
-
-
-# ---------------------------------------------------------------------------
-# Telemetry — one llm_call record per embed (reuses the arcstore spool)
-# ---------------------------------------------------------------------------
-
-
-def _emit_telemetry(
-    telemetry: dict[str, Any],
-    on_event: Callable[[SpoolRecord], None] | None,
-    *,
-    provider_label: str,
-    model: str,
-    usage: Usage,
-    cost: float,
-    latency_ms: float,
-    operation: str,
-    request_body: dict[str, Any] | None = None,
-    response_body: dict[str, Any] | None = None,
-) -> None:
-    """Emit an ``llm_call`` telemetry record for one embed (T-011, AU-2).
-
-    Request/response bodies ride ``extra`` so the trace UI shows the actual
-    embed (input text + vector shape), not ``null`` — mirroring the completion
-    path's ``_record_spool``. ``operation`` is stamped as a first-class
-    ``extra`` key so the trace can be filtered by what the embed was for
-    (embed vs retrieve; consolidate / ingest / recall / …).
-    """
-    from arcstore.records import SpoolRecord
-    from arcstore.spool import record as spool_record
-
-    extra: dict[str, Any] = {"operation": operation}
-    if request_body is not None:
-        extra["request_body"] = request_body
-    if response_body is not None:
-        extra["response_body"] = response_body
-    event = SpoolRecord(
-        kind="llm_call",
-        actor_did=telemetry.get("agent_did") or _UNKNOWN_DID,
-        model=model,
-        provider=provider_label,
-        agent_label=telemetry.get("agent_label"),
-        prompt_tokens=usage.input_tokens,
-        completion_tokens=0,
-        cost_usd=cost,
-        latency_ms=latency_ms,
-        outcome="ok",
-        extra=extra,
-    )
-    if on_event is not None:
-        on_event(event)
-    if telemetry.get("arcstore_enabled", True):
-        spool_record(event)
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -469,9 +325,9 @@ async def embed(
     provider_label = "custom" if provider is not None else backend
     cost_input_per_1m = tel.get("cost_input_per_1m", 0.0)
 
-    plan = _parse_budget(tel)
+    plan = parse_budget(tel)
     if plan is not None:
-        _budget_pre_check(plan, _count_tokens(texts), cost_input_per_1m)
+        budget_pre_check(plan, count_tokens(texts), cost_input_per_1m, call_kind="embed")
 
     tracer = trace.get_tracer("arcllm")
     with tracer.start_as_current_span("arcllm.embed") as span:
@@ -487,7 +343,7 @@ async def embed(
         span.set_attribute("arcllm.embed.cost_usd", cost)
         span.set_attribute("arcllm.embed.dims", response.dims)
 
-    _emit_telemetry(
+    emit_telemetry(
         tel,
         on_event,
         provider_label=provider_label,

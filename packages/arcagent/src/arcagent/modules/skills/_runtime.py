@@ -2,7 +2,8 @@
 
 Mirrors :mod:`arcagent.modules.memory._runtime`. ``configure`` builds the injected
 seams (agent-DID :class:`Signer`, operator-key WORM :class:`~arctrust.AuditSink`, the eval
-LLM, and the operator-approval provider bound to the shared :class:`HumanGate`) and selects
+LLM bridged to a text-in/text-out invoker, the agent's :class:`~arcprompt.PromptSource`, and
+the operator-approval provider bound to the shared :class:`HumanGate`) and selects
 the :class:`~arcagent.skilladapt.SkillAdapter`. With a :class:`NullSkillAdapter`, ``active``
 is ``False`` and every hook short-circuits — a silent no-op that writes nothing (AC-1).
 
@@ -30,10 +31,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arcprompt import PromptSource
+
 from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
 from arcagent.modules.skills.outcome import OneShotInvoker, OutcomeClassifier
-from arcagent.skilladapt import NullSkillAdapter, SkillAdapter, select_skill_adapter
+from arcagent.skilladapt import LLMInvoker, NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
 _logger = logging.getLogger("arcagent.modules.skills._runtime")
@@ -142,8 +145,15 @@ def configure(
     identity: Any = None,
     operator_signer: Any = None,
     human_gate: Any = None,
+    prompt_source: PromptSource | None = None,
 ) -> None:
-    """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
+
+    ``prompt_source`` is the agent's overlay-aware prompt lookup (ADR-033 dependency
+    key), handed to the improver and the outcome classifier so an operator's signed
+    prompt edit reaches the model. ``None`` (module configured outside an agent) leaves
+    both on their shipped stock prompts.
+    """
     from arcagent.modules.skills.approval import build_skill_approval_provider
     from arcagent.modules.skills.config import SkillsConfig
 
@@ -158,22 +168,7 @@ def configure(
     approval_provider = (
         build_skill_approval_provider(human_gate, agent_did) if human_gate is not None else None
     )
-    llm = get_eval_model(
-        cached_model=None,
-        eval_config=eval_config or EvalConfig(),
-        llm_config=llm_config,
-        logger=_logger,
-        agent_label=f"{agent_name}/skills" if agent_name else "skills",
-    )
-    # Overlay-aware prompt resolver so an operator's signed edit to an arcskill improver
-    # prompt takes effect. The agent root is <agent_root>/workspace -> ws.parent.
-    prompt_resolve = None
-    try:
-        from arcagent.core.prompt_context import agent_prompt_resolve
-
-        prompt_resolve = agent_prompt_resolve(ws.parent, cfg.tier)
-    except Exception:  # reason: prompt overlays are best-effort; never block skills startup
-        prompt_resolve = None
+    llm = _eval_invoker(eval_config, llm_config, agent_name)
     adapter = select_skill_adapter(
         cfg.adapter,
         workspace=ws,
@@ -186,7 +181,7 @@ def configure(
         agent_did=agent_did,
         skill_path=_skill_path,
         adapter_allowlist=tuple(cfg.adapter_allowlist),
-        prompt_resolve=prompt_resolve,
+        prompt_source=prompt_source,
     )
     new_state = _State(
         adapter=adapter,
@@ -197,13 +192,33 @@ def configure(
         # Built even when the eval LLM is unavailable — classify() abstains without one,
         # keeping the flag's behavior fail-open instead of silently off.
         outcome_classifier=(
-            OutcomeClassifier(llm=OneShotInvoker(llm) if llm is not None else None)
+            OutcomeClassifier(llm=llm, prompt_source=prompt_source)
             if cfg.classify_outcomes
             else None
         ),
     )
     _state_var.set(new_state)
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)
+
+
+def _eval_invoker(
+    eval_config: EvalConfig | None, llm_config: Any, agent_name: str
+) -> LLMInvoker | None:
+    """The eval model bridged to the prompt-in/text-out seam, or ``None`` when unavailable.
+
+    The improver and the outcome classifier send one prompt string and read text back;
+    a model handle takes ``list[Message]`` and returns a response object. The handle is
+    typed ``object`` here so mypy refuses it anywhere an :class:`LLMInvoker` is
+    expected — only the :class:`OneShotInvoker` bridge satisfies the seam.
+    """
+    model: object | None = get_eval_model(
+        cached_model=None,
+        eval_config=eval_config or EvalConfig(),
+        llm_config=llm_config,
+        logger=_logger,
+        agent_label=f"{agent_name}/skills" if agent_name else "skills",
+    )
+    return OneShotInvoker(model) if model is not None else None
 
 
 def _build_signer(identity: Any) -> _SidecarSigner | None:

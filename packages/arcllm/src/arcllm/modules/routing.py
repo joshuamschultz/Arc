@@ -418,6 +418,11 @@ class RoutingModule(LLMProvider):
         return route.model or route.provider
 
     @property
+    def max_output_tokens(self) -> int | None:
+        """Output limit of the default route's model (same lane as ``model_name``)."""
+        return self.adapter_for(self._default).max_output_tokens
+
+    @property
     def routes(self) -> tuple[str, ...]:
         """Declared route names, in declaration order."""
         return tuple(self._routes)

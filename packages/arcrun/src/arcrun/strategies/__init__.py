@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
+
+from arcprompt import PromptMissing, PromptSource, StockPromptSource
 
 if TYPE_CHECKING:
     from arcrun.sandbox import Sandbox
@@ -22,24 +24,26 @@ class Strategy(ABC):
 
     @property
     def description(self) -> str:
-        """One-line summary the selector shows the model.
+        """One-line summary the selector shows the model, from the shipped files.
 
-        Defaults to the stock ``strategy_<name>_description`` markdown, so a
-        strategy's copy lives in the prompt folder like every other prompt in
-        the system rather than inline in Python. Override only to compute it.
+        A run never reads this for a built-in strategy: it resolves
+        ``strategy_<name>_description`` through the run's ``PromptSource`` so an
+        operator's edit wins (see :func:`strategy_description`). This is the
+        fallback for a strategy that ships no such prompt, and the plain listing
+        a caller with no run (``arc agent strategies``) prints.
         """
-        return _stock(f"strategy_{self.name}_description")
+        return _shipped(f"strategy_{self.name}_description")
 
     @property
     def prompt_guidance(self) -> str:
-        """Model-facing guidance injected into the system prompt.
+        """Model-facing guidance for this strategy's turns, from the shipped files.
 
-        Defaults to the stock ``strategy_<name>`` markdown (same convention as
-        :attr:`description`). The text teaches the LLM when this strategy applies
-        and what the loop will do; override only to compute it. Empty when a
-        strategy ships no such file, so a bare strategy still loads.
+        Same convention as :attr:`description`: a run resolves ``strategy_<name>``
+        through its ``PromptSource`` (see :func:`strategy_guidance`) and falls
+        back to this only when no such prompt ships. Empty for a bare strategy,
+        so it still loads.
         """
-        return _stock(f"strategy_{self.name}")
+        return _shipped(f"strategy_{self.name}")
 
     @property
     def auto_selectable(self) -> bool:
@@ -61,19 +65,63 @@ class Strategy(ABC):
 STRATEGIES: dict[str, Strategy] = {}
 
 
-def _stock(prompt_name: str) -> str:
-    """A stock prompt body, or "" when a strategy ships none.
+def _shipped(prompt_name: str) -> str:
+    """The shipped ``arcrun/context/<prompt_name>`` body, or "" when none ships."""
+    return _optional(StockPromptSource(), prompt_name, lambda: "")
 
-    Strategy copy lives as markdown under ``arcrun/context/`` and is resolved
-    through arcprompt, so an operator overlay is honored at prompt-assembly time
-    the same as any other stock prompt.
+
+def _optional(source: PromptSource, prompt_name: str, fallback: Callable[[], str]) -> str:
+    """``arcrun/<prompt_name>`` through ``source``; ``fallback()`` only when none ships.
+
+    Only :class:`~arcprompt.PromptMissing` falls back. A rejected override
+    (unsigned, tampered, unparseable) propagates, so the run fails closed rather
+    than quietly sending stock in its place.
     """
-    from arcprompt import PromptMissing, load_stock
-
     try:
-        return load_stock("arcrun", prompt_name)
+        return source.resolve("arcrun", prompt_name)
     except PromptMissing:
-        return ""
+        return fallback()
+
+
+def strategy_description(name: str, source: PromptSource) -> str:
+    """What the selector shows the model about strategy ``name`` — editable via ``source``."""
+    return _optional(
+        source, f"strategy_{name}_description", lambda: available_strategies()[name].description
+    )
+
+
+def strategy_guidance(name: str, source: PromptSource) -> str:
+    """The guidance strategy ``name``'s turns carry — editable via ``source``."""
+    return _optional(
+        source, f"strategy_{name}", lambda: available_strategies()[name].prompt_guidance
+    )
+
+
+def use_strategy_guidance(state: RunState, name: str) -> None:
+    """Make ``name``'s guidance the one strategy guidance in the run's system messages.
+
+    Only the strategy that actually runs steers the run: a guidance message left
+    over from another strategy (a dynamic run falling back to react, or a
+    resumed transcript that already carries one) is removed first. The message
+    goes after the host's own system segments so their byte-stable prefix, and
+    the provider cache built on it, is untouched.
+    """
+    from arcrun._messages import content_text, system_message
+
+    guidance = strategy_guidance(name, state.prompt_source)
+    stale = {state.strategy_guidance, guidance} - {""}
+    kept = [
+        m
+        for m in state.messages
+        if not (getattr(m, "role", "") == "system" and content_text(m.content) in stale)
+    ]
+    if guidance:
+        leading = next(
+            (i for i, m in enumerate(kept) if getattr(m, "role", "") != "system"), len(kept)
+        )
+        kept.insert(leading, system_message(guidance))
+    state.messages[:] = kept
+    state.strategy_guidance = guidance
 
 
 def available_strategies() -> MappingProxyType[str, Strategy]:
@@ -179,6 +227,10 @@ async def select_strategy(
     # Model-based selection via tool calling
     from arcrun._messages import content_text, system_message, user_message
 
+    # Resolved before the fail-open block below: a rejected operator override
+    # of the selection prompt must end the run, never degrade to a silent react.
+    selection_system = _selection_system_text(allowed, state)
+
     bus = state.event_bus
     bus.emit(
         "strategy.selection.start",
@@ -203,18 +255,10 @@ async def select_strategy(
         },
     )
 
-    strategy_descriptions = "\n".join(
-        f"- {name}: {STRATEGIES[name].description}" for name in allowed
-    )
-    tool_names = state.registry.names()
-
+    # The task is untrusted content: it rides the user turn, never the
+    # instruction channel (LLM01).
     selection_messages = [
-        system_message(
-            f"Select the best execution strategy for the task below.\n\n"
-            f"Available strategies:\n{strategy_descriptions}\n\n"
-            f"Available tools: {', '.join(tool_names)}\n\n"
-            f"Call select_strategy with your choice."
-        ),
+        system_message(selection_system),
         user_message(content_text(state.messages[-1].content) if state.messages else ""),
     ]
 
@@ -256,3 +300,19 @@ async def select_strategy(
         },
     )
     return "react"
+
+
+def _selection_system_text(allowed: list[str], state: RunState) -> str:
+    """The selection call's instructions: ``strategy_select`` plus what is on the table.
+
+    Every word comes through the run's ``PromptSource`` — the operator-editable
+    ``arcrun/strategy_select`` body and each allowed strategy's
+    ``strategy_<name>_description``. The tool names are listed so the model can
+    rule out a strategy whose tools this run does not have.
+    """
+    source = state.prompt_source
+    listing = "\n".join(f"- {name}: {strategy_description(name, source)}" for name in allowed)
+    tools = ", ".join(state.registry.names()) or "none"
+    parts = [source.resolve("arcrun", "strategy_select"), f"Strategies:\n{listing}"]
+    parts.append(f"Tools: {tools}")
+    return "\n\n".join(parts)

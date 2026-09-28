@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from arcprompt import load_stock
+from arcprompt import PromptSource
 
 from arcagent.core.errors import ArcAgentError, ToolError
 
@@ -202,14 +202,18 @@ class ASTValidationError(ArcAgentError):
         self.category = category
 
 
-def format_authoring_rejection(exc: ASTValidationError, policy: ImportPolicy) -> str:
+def format_authoring_rejection(
+    exc: ASTValidationError, policy: ImportPolicy, prompt_source: PromptSource
+) -> str:
     """Build a self-documenting rejection string for create_tool/update_tool.
 
     Names the resolved tier, the specific violation, the effective policy
     (via :meth:`ImportPolicy.describe`), and the authoring guidance — the agent
     cannot read policy files outside its workspace, so the rule is taught inline.
+    The guidance comes from the agent's ``prompt_source``, so an operator override
+    of ``authoring_guidance`` is what the model is taught.
     """
-    guidance = load_stock("arcagent", "authoring_guidance")
+    guidance = prompt_source.resolve("arcagent", "authoring_guidance")
     return (
         f"Error: AST validation rejected source — {exc}. "
         f"Tier {policy.tier}: {policy.describe()}. {guidance}"

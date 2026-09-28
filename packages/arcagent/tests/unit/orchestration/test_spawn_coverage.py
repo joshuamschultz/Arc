@@ -11,6 +11,7 @@ These tests cover branches that are not exercised by the integration tests:
 from __future__ import annotations
 
 import asyncio
+import importlib
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
@@ -397,3 +398,47 @@ class TestRootBudgetSettlement:
 
         assert budget.used == 12
         assert budget.remaining == 88
+
+
+# ---------------------------------------------------------------------------
+# spawn_many() forwards the parent run's prompt set like spawn()
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnManyPromptSource:
+    @pytest.mark.asyncio
+    async def test_prompt_source_reaches_every_child_spawn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arcprompt import StockPromptSource
+
+        # The package re-exports the ``spawn`` function under the submodule's name.
+        spawn_module = importlib.import_module("arcagent.orchestration.spawn")
+
+        seen: list[object] = []
+        real_spawn = spawn_module.spawn
+
+        async def recording_spawn(**kwargs: object) -> object:
+            seen.append(kwargs.get("prompt_source"))
+            return await real_spawn(**kwargs)  # type: ignore[arg-type]  # reason: pass-through
+
+        monkeypatch.setattr(spawn_module, "spawn", recording_spawn)
+        parent = _make_state(depth=0, max_depth=3)
+        source = StockPromptSource()
+        specs = [
+            SpawnSpec(
+                task=f"task-{n}",
+                tools=[ECHO_TOOL],
+                system_prompt="sys",
+                parent_state=parent,
+                child_did=_identity(200 + n).did,
+                child_sk_bytes=_identity(200 + n).sk_bytes,
+                wallclock_timeout_s=30,
+                model=MockModel([LLMResponse(content="ok", stop_reason="end_turn")]),
+            )
+            for n in range(2)
+        ]
+
+        await spawn_many(specs, max_concurrent=2, prompt_source=source)
+
+        assert seen == [source, source]

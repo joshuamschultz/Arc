@@ -9,7 +9,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { PromptStatusBadge } from '@/components/prompt-status-badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { ErrorState, LoadingRows } from '@/components/states'
@@ -144,9 +144,7 @@ export function RubricEditor({
           </SheetTitle>
           {data && (
             <SheetDescription className="flex flex-wrap items-center gap-2">
-              <Badge variant={data.status === 'overridden' ? 'default' : 'secondary'}>
-                {data.status}
-              </Badge>
+              <PromptStatusBadge status={data.status} reason={data.rejection_reason} />
               <span className="text-xs text-muted-foreground">Judge scoring rubric</span>
             </SheetDescription>
           )}
@@ -158,7 +156,7 @@ export function RubricEditor({
               <Pencil className="size-3.5" /> Edit
             </Button>
           )}
-          {operatorMode && !editing && data?.status === 'overridden' && (
+          {operatorMode && !editing && data != null && data.status !== 'stock' && (
             <Button variant="ghost" size="sm" disabled={busy} onClick={reset}>
               <RotateCcw className="size-3.5" /> Reset
             </Button>

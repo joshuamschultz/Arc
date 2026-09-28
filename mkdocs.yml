@@ -113,6 +113,7 @@ nav:
       - Data flows: walkthrough/data-flows.md
       - Audit and the WORM chain: walkthrough/audit-and-the-worm-chain.md
       - The MCP door: walkthrough/mcp-door.md
+      - Memory promotion: walkthrough/memory-promotion.md
       - "Flow: connected-source sync": walkthrough/flow-connected-source.md
       - "Flow: an approval": walkthrough/flow-approval.md
       - "Flow: LLM routing": walkthrough/flow-llm-routing.md
