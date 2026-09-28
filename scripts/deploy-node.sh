@@ -131,14 +131,16 @@ PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.to
 # extension-only connector fix reused the running runtime), then without
 # evaluations/. So it walks the tree and prunes exactly what the rsync excludes,
 # and a directory added tomorrow is covered without anyone remembering.
+# NUL-separated: a shipped file name with a space broke `xargs shasum` (exit
+# 123 under pipefail) and aborted the deploy silently (2026-09-27, *.md added).
 BUILD_STAMP="$(
   find "$REPO_ROOT" \
     \( -name .git -o -name .venv -o -name node_modules -o -name __pycache__ \
        -o -name 'team' -o -name 'modules' \) -prune -o \
     -type f \( -name '*.py' -o -name '*.toml' -o -name '*.sh' -o -name '*.service' \
        -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.md' \) \
-    -print 2>/dev/null |
-    LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | cut -c1-8
+    -print0 2>/dev/null |
+    LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -c1-8
 )"
 [ -n "$BUILD_STAMP" ] || fail "could not fingerprint the source tree at $REPO_ROOT"
 RUNTIME_VERSION="${ARC_RUNTIME_VERSION:-$PROJECT_VERSION-$BUILD_STAMP}"
