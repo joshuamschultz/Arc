@@ -24,6 +24,7 @@ from arctrust.identity import did_matches_pubkey
 from arctrust.paths import arc_team
 
 _IDENTIFIER_RE = re.compile(r"^[a-f0-9]{16}$")
+_ENTITY_TYPE = "entity"
 
 
 class _Access(Protocol):
@@ -74,12 +75,22 @@ class SharedKnowledgeReference:
 
 
 @dataclass(frozen=True)
+class SharedKnowledgeContribution:
+    """One contributor's signed provenance block inside a canonical shared entity."""
+
+    contributor_did: str
+    source_digest: str
+    content: str
+
+
+@dataclass(frozen=True)
 class SharedKnowledgeDocument:
     reference: SharedKnowledgeReference
     title: str
     content: str
     classification: str
     tags: tuple[str, ...]
+    contributions: tuple[SharedKnowledgeContribution, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +118,7 @@ class FleetSharedKnowledgeBackend:
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
         self._documents = self._root / "documents"
+        self._entities = self._root / "entities"
         self._revocations = self._root / "revocations"
         self._audit = self._root / "audit"
         self._trust = self._root / "trusted-signers.json"
@@ -123,6 +135,17 @@ class FleetSharedKnowledgeBackend:
     async def save(self, draft: _Draft, access: _Access) -> SharedKnowledgeReference:
         return await asyncio.to_thread(self._save, draft, access)
 
+    async def authorize_save(self, draft: _Draft, access: _Access) -> None:
+        """Run every check :meth:`save` runs before writing, and write nothing.
+
+        Owner == caller, clearance / no-write-down, digest + signature, signer bound
+        to the owner DID, and the TOFU pin (read-only: a first key is not pinned
+        here). Lets a caller record a decision only once the write would be
+        accepted; :meth:`save` re-runs the same checks, so nothing is trusted
+        across the gap.
+        """
+        await asyncio.to_thread(self._authorize_save, draft, access)
+
     async def read(self, reference: str, access: _Access) -> SharedKnowledgeDocument:
         return await asyncio.to_thread(self._read, reference, access)
 
@@ -135,43 +158,118 @@ class FleetSharedKnowledgeBackend:
     async def revoke(self, reference: str, access: _Access) -> None:
         await asyncio.to_thread(self._revoke, reference, access)
 
+    def _authorize_save(self, draft: _Draft, access: _Access) -> None:
+        self._authorize_write(draft, access)
+        self._verify_signature(draft)
+        pinned = self._load_trusted_signers().get(draft.owner_did)
+        if pinned is not None and pinned != draft.public_key:
+            raise PermissionError("shared knowledge TOFU signer key changed")
+
     def _save(self, draft: _Draft, access: _Access) -> SharedKnowledgeReference:
         self._authorize_write(draft, access)
         self._verify_signature(draft)
         self._pin_signer(draft.owner_did, draft.public_key)
+        if draft.document_type == _ENTITY_TYPE:
+            return self._save_entity_block(draft, access)
         identifier = self._identifier(draft)
-        metadata = {
-            "type": draft.document_type,
-            "title": draft.title,
-            "tags": list(draft.tags),
-            "arc_classification": draft.classification,
-            "arc_owner_did": draft.owner_did,
-            "arc_content_sha256": draft.digest,
-            "arc_signature": draft.signature,
-            "arc_public_key": draft.public_key,
-            "arc_signature_algorithm": draft.algorithm,
-        }
-        try:
-            encoded = render(Document(metadata, draft.content))
-            parse(encoded)
-        except OKFValidationError as error:
-            raise ValueError("invalid shared OKF knowledge document") from error
-        _atomic_write_text(self._document_path(identifier), encoded + "\n")
+        encoded = _encode(draft)
+        _atomic_write_text(self._document_path(identifier), encoded)
+        self._audit_event("knowledge.saved", identifier, access.caller_did, draft.digest)
+        return SharedKnowledgeReference("shared", identifier, draft.digest)
+
+    def _save_entity_block(self, draft: _Draft, access: _Access) -> SharedKnowledgeReference:
+        """Merge this contributor's signed block into the canonical entity.
+
+        Each contributor owns one block file under the entity, so concurrent
+        contributors never read-modify-write a shared file (no lost block) and a
+        contributor's update or revoke touches only its own bytes. Identical
+        re-promotion leaves the store byte-identical.
+        """
+        identifier = _entity_identifier(draft.title, draft.classification)
+        path = self._entity_block_path(identifier, draft.owner_did)
+        encoded = _encode(draft)
+        if path.exists() and path.read_text(encoding="utf-8") == encoded:
+            return SharedKnowledgeReference("shared", identifier, draft.digest)
+        _atomic_write_text(path, encoded)
         self._audit_event("knowledge.saved", identifier, access.caller_did, draft.digest)
         return SharedKnowledgeReference("shared", identifier, draft.digest)
 
     def _read(self, reference: str, access: _Access) -> SharedKnowledgeDocument:
         identifier = self._validated_identifier(reference)
+        if self._entity_dir(identifier).is_dir():
+            return self._read_entity(identifier, access)
+        return self._read_document(identifier, access)
+
+    def _read_entity(self, identifier: str, access: _Access) -> SharedKnowledgeDocument:
+        """Assemble the canonical entity from every verified contributor block.
+
+        Fails closed: one block whose signature, pinned signer, digest, or
+        entity/contributor binding does not verify refuses the whole read, so a
+        forged value is never served beside genuine ones.
+        """
+        blocks = [
+            self._verified_block(identifier, path) for path in self._entity_blocks(identifier)
+        ]
+        if not blocks:
+            raise FileNotFoundError("shared knowledge document is revoked")
+        self._require_clearance(access, blocks[0].classification)
+        contributions = tuple(
+            SharedKnowledgeContribution(block.owner_did, block.digest, block.content)
+            for block in blocks
+        )
+        content = "\n\n".join(
+            f"[contributor {block.owner_did}]\n{block.content}" for block in blocks
+        )
+        tags = tuple(dict.fromkeys(tag for block in blocks for tag in block.tags))
+        digest = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+        return SharedKnowledgeDocument(
+            SharedKnowledgeReference("shared", identifier, digest),
+            blocks[0].title,
+            content,
+            blocks[0].classification,
+            tags,
+            contributions,
+        )
+
+    def _verified_block(self, identifier: str, path: Path) -> _StoredDraft:
+        block = self._load_stored(path)
+        self._verify_signature(block)
+        self._require_pinned_signer(block.owner_did, block.public_key)
+        # Bind the block to the entity AND the contributor slot it sits in, so a
+        # validly signed block copied into another entity or another contributor's
+        # slot is refused rather than re-attributed.
+        if (
+            block.document_type != _ENTITY_TYPE
+            or _entity_identifier(block.title, block.classification) != identifier
+            or path != self._entity_block_path(identifier, block.owner_did)
+        ):
+            raise PermissionError("shared entity block is not bound to its entity and contributor")
+        return block
+
+    def _read_document(self, identifier: str, access: _Access) -> SharedKnowledgeDocument:
         if self._revocation_path(identifier).exists():
             raise FileNotFoundError("shared knowledge document is revoked")
-        path = self._document_path(identifier)
+        draft = self._load_stored(self._document_path(identifier))
+        self._verify_signature(draft)
+        self._require_pinned_signer(draft.owner_did, draft.public_key)
+        self._require_clearance(access, draft.classification)
+        return SharedKnowledgeDocument(
+            SharedKnowledgeReference("shared", identifier, draft.digest),
+            draft.title,
+            draft.content,
+            draft.classification,
+            draft.tags,
+        )
+
+    @staticmethod
+    def _load_stored(path: Path) -> _StoredDraft:
         try:
             document = parse(path.read_bytes(), path=path.as_posix())
         except (OSError, OKFValidationError) as error:
             raise FileNotFoundError("shared knowledge document is unavailable") from error
         metadata = document.metadata
         try:
-            draft = _StoredDraft(
+            return _StoredDraft(
                 title=str(metadata["title"]),
                 content=document.body.strip(),
                 classification=str(metadata["arc_classification"]),
@@ -185,28 +283,22 @@ class FleetSharedKnowledgeBackend:
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("malformed shared knowledge frontmatter") from error
-        self._verify_signature(draft)
-        self._require_pinned_signer(draft.owner_did, draft.public_key)
+
+    @staticmethod
+    def _require_clearance(access: _Access, classification: str) -> None:
         if not dominates(
             parse_classification(access.clearance, strict=True),
-            parse_classification(draft.classification, strict=True),
+            parse_classification(classification, strict=True),
         ):
             raise PermissionError("knowledge classification exceeds caller clearance")
-        return SharedKnowledgeDocument(
-            SharedKnowledgeReference("shared", identifier, draft.digest),
-            draft.title,
-            draft.content,
-            draft.classification,
-            draft.tags,
-        )
 
     def _search(self, query: str, access: _Access) -> list[SharedKnowledgeHit]:
-        if not query.strip() or not self._documents.exists():
+        if not query.strip():
             return []
         matches: list[SharedKnowledgeHit] = []
-        for path in sorted(self._documents.glob("*.md")):
+        for identifier in self._identifiers():
             try:
-                document = self._read(path.stem, access)
+                document = self._read(identifier, access)
             except (FileNotFoundError, PermissionError, ValueError):
                 continue
             if query.casefold() in f"{document.title}\n{document.content}".casefold():
@@ -220,30 +312,51 @@ class FleetSharedKnowledgeBackend:
 
         Reuses ``_read`` per document, so a doc the caller may not read (no-read-up)
         or a revoked doc is skipped exactly as ``_search`` skips it. Attributes each
-        surviving document to its owner DID so the operator sees who promoted what.
+        surviving document to its owner DID so the operator sees who promoted what;
+        a canonical entity is attributed to every live contributor.
         """
-        if not self._documents.exists():
-            return []
         summaries: list[SharedKnowledgeSummary] = []
-        for path in sorted(self._documents.glob("*.md")):
+        for identifier in self._identifiers():
             try:
-                document = self._read(path.stem, access)
+                document = self._read(identifier, access)
             except (FileNotFoundError, PermissionError, ValueError):
                 continue
+            owner = (
+                ", ".join(block.contributor_did for block in document.contributions)
+                if document.contributions
+                else self._owner(identifier)
+            )
             summaries.append(
                 SharedKnowledgeSummary(
                     document.reference,
                     document.title,
                     document.classification,
                     document.tags,
-                    self._owner(document.reference.identifier),
+                    owner,
                     document.content[:160],
                 )
             )
         return summaries
 
+    def _identifiers(self) -> list[str]:
+        """Every stored document and canonical-entity identifier, in stable order."""
+        documents = (
+            [path.stem for path in self._documents.glob("*.md")]
+            if self._documents.exists()
+            else []
+        )
+        entities = (
+            [path.name for path in self._entities.iterdir() if path.is_dir()]
+            if self._entities.exists()
+            else []
+        )
+        return sorted({*documents, *entities})
+
     def _revoke(self, reference: str, access: _Access) -> None:
         document = self._read(reference, access)
+        if document.contributions:
+            self._revoke_entity_block(document, access)
+            return
         if access.caller_did != self._owner(document.reference.identifier):
             raise PermissionError("only the shared knowledge owner can revoke it")
         payload = {
@@ -261,6 +374,22 @@ class FleetSharedKnowledgeBackend:
             access.caller_did,
             document.reference.digest,
         )
+
+    def _revoke_entity_block(self, document: SharedKnowledgeDocument, access: _Access) -> None:
+        """Remove only the caller's provenance block; other contributors stay live.
+
+        The empty entity directory is left in place (it reads as revoked) so a
+        concurrent contributor's save never races a directory removal.
+        """
+        block = next(
+            (b for b in document.contributions if b.contributor_did == access.caller_did),
+            None,
+        )
+        if block is None:
+            raise PermissionError("only a contributor can revoke its shared entity block")
+        identifier = document.reference.identifier
+        self._entity_block_path(identifier, access.caller_did).unlink()
+        self._audit_event("knowledge.revoked", identifier, access.caller_did, block.source_digest)
 
     def _owner(self, identifier: str) -> str:
         parsed = parse(self._document_path(identifier).read_bytes())
@@ -353,6 +482,16 @@ class FleetSharedKnowledgeBackend:
     def _document_path(self, identifier: str) -> Path:
         return self._documents / f"{self._validated_identifier(identifier)}.md"
 
+    def _entity_dir(self, identifier: str) -> Path:
+        return self._entities / self._validated_identifier(identifier)
+
+    def _entity_blocks(self, identifier: str) -> list[Path]:
+        return sorted(self._entity_dir(identifier).glob("*.md"))
+
+    def _entity_block_path(self, identifier: str, contributor_did: str) -> Path:
+        slot = hashlib.sha256(contributor_did.encode()).hexdigest()[:16]
+        return self._entity_dir(identifier) / f"{slot}.md"
+
     def _revocation_path(self, identifier: str) -> Path:
         return self._revocations / f"{self._validated_identifier(identifier)}.json"
 
@@ -377,6 +516,37 @@ class _StoredDraft:
     algorithm: str
 
 
+def _entity_identifier(title: str, classification: str) -> str:
+    """One shared identifier per real-world entity (title slug) per classification label.
+
+    The label is part of the key so contributors at different clearances never
+    share (or learn of) one canonical entity — each label has its own.
+    """
+    slug = " ".join(title.split()).casefold()
+    basis = f"{_ENTITY_TYPE}\0{slug}\0{classification}".encode()
+    return hashlib.sha256(basis).hexdigest()[:16]
+
+
+def _encode(draft: _Draft) -> str:
+    metadata = {
+        "type": draft.document_type,
+        "title": draft.title,
+        "tags": list(draft.tags),
+        "arc_classification": draft.classification,
+        "arc_owner_did": draft.owner_did,
+        "arc_content_sha256": draft.digest,
+        "arc_signature": draft.signature,
+        "arc_public_key": draft.public_key,
+        "arc_signature_algorithm": draft.algorithm,
+    }
+    try:
+        encoded = render(Document(metadata, draft.content))
+        parse(encoded)
+    except OKFValidationError as error:
+        raise ValueError("invalid shared OKF knowledge document") from error
+    return encoded + "\n"
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
@@ -391,6 +561,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 __all__ = [
     "FleetSharedKnowledgeBackend",
+    "SharedKnowledgeContribution",
     "SharedKnowledgeDocument",
     "SharedKnowledgeHit",
     "SharedKnowledgeReference",

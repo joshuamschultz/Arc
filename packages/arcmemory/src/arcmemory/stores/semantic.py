@@ -29,7 +29,6 @@ from arcmemory.types import (
     Fact,
     confidence_from_hits,
     hits_from_confidence,
-    parse_personal_score,
     utc_today,
 )
 
@@ -247,7 +246,6 @@ class SemanticStore:
             links_to=[str(x) for x in fm.get("links_to", [])],
             tags=[str(x) for x in fm.get("tags", [])],
             aliases=[str(x) for x in fm.get("aliases", [])],
-            personal_score=parse_personal_score(fm.get("personal_score")),
         )
 
     def write_fact(
@@ -260,14 +258,8 @@ class SemanticStore:
         name: str | None = None,
         entity_type: str = "unknown",
         classification: str = "unclassified",
-        personal_score: int | None = None,
     ) -> Entity:
-        """Add/update a fact for an entity, folding a contradiction into a ``was:`` trail.
-
-        A ``None`` ``personal_score`` keeps any score the stored card already carries —
-        a mint that was not asked to score never wipes a prior promotion score
-        (SPEC-083 COMP-002).
-        """
+        """Add/update a fact for an entity, folding a contradiction into a ``was:`` trail."""
         slug = canonical_slug(slug)
         predicate = predicate[:_MAX_FACT_TEXT]
         value = value[:_MAX_FACT_TEXT]
@@ -286,9 +278,6 @@ class SemanticStore:
                 entity.name = name
             if entity_type != "unknown":
                 entity.entity_type = entity_type
-        if personal_score is not None:
-            entity.personal_score = personal_score
-
         # A write is an assertion about NOW, so a different value always leads and the
         # one it replaces becomes the ``was:`` trail — that is how a fact changes. What
         # was missing is the other half: restating the SAME value is corroboration, and
@@ -447,10 +436,6 @@ class SemanticStore:
             "tags": entity.tags,
             "aliases": entity.aliases,
         }
-        # Only rendered when scored: an absent key round-trips as ``None`` (the
-        # fail-closed default), so unscored cards carry no promotion metadata.
-        if entity.personal_score is not None:
-            frontmatter["personal_score"] = entity.personal_score
         fact_lines = "\n".join(format_fact(f) for f in entity.facts)
         body = f"# {entity.name}\n\n## Facts\n{fact_lines}"
         path = self.path_for(entity.slug)

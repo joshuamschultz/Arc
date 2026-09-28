@@ -19,6 +19,7 @@ Subcommand modules
 - ``tools``      — list tools available to an agent.
 - ``config``     — show TOML config (text or JSON).
 - ``reload``     — hot-reload extensions + skills.
+- ``promotion``  — memory promotion settings + classifier key (SPEC-083).
 - ``strategies`` — list arcrun strategies.
 - ``events``     — list event types.
 - ``run``        — one-shot non-interactive task execution.

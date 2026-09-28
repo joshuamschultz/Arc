@@ -29,6 +29,7 @@ from arcprompt import load_stock
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
+from arcagent.core.errors import ExtensionError
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
 from arcagent.core.runtime_dependencies import (
@@ -38,7 +39,7 @@ from arcagent.core.runtime_dependencies import (
     RuntimeModule,
     RuntimeTeardownable,
 )
-from arcagent.core.telemetry import TelemetryAuditSink
+from arcagent.core.telemetry import DurableTelemetryAuditSink, TelemetryAuditSink
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
 from arcagent.utils.source_module import exec_source_module
@@ -288,6 +289,18 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     )
 
 
+def _agent_audit_sink(agent: ArcAgent) -> DurableTelemetryAuditSink | None:
+    """The agent's durable audit sink, or ``None`` when its chain is not built yet.
+
+    Module configuration normally runs after the WORM chain exists; ``None`` only
+    reaches a partially built agent, and a durable write then fails closed downstream.
+    """
+    try:
+        return agent.audit_sink
+    except ExtensionError:
+        return None
+
+
 def configure_module_runtimes(
     agent: ArcAgent, workspace: Path, *, egress_proxy: Any = None
 ) -> None:
@@ -326,6 +339,7 @@ def configure_module_runtimes(
         control_actor_proof_source=agent._control_actor_proof_source,
         trigger_issuer=agent._trigger_issuer,
         prepare_collected_request=agent.prepare_collected_request,
+        audit_sink=_agent_audit_sink(agent),
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).

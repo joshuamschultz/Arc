@@ -60,6 +60,13 @@ local = [
     # `arcllm[local]`, never on sentence-transformers directly.
     "sentence-transformers>=3.0",
 ]
+jev = [
+    # TypeSafe Jev classifier drop-in (SPEC-083, ADR-038) — the one scoped
+    # exception to arcllm's httpx-only rule, confined to
+    # src/arcllm/classifiers/jev/. Pinned exactly: new supply-chain dependency.
+    # Not part of any default install set.
+    "typesafe-sdk==0.7.2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcllm"]

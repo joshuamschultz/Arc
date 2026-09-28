@@ -74,6 +74,7 @@ import { ApprovalRequest } from '@/components/hitl'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
 import { MemoryBrowser } from '@/components/knowledge-memories'
+import { MemoryPromotionPanel } from '@/components/memory-promotion-panel'
 import { ChunkBrowser } from '@/components/knowledge-chunks'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
@@ -1740,6 +1741,7 @@ const KNOWLEDGE_TABS = [
 /** GAP-1: the full Knowledge surface, scoped to this agent (reuses the browsers). */
 function KnowledgeTab({ agentId }: { agentId: string }) {
   const query = useKnowledge(agentId)
+  const [operatorMode] = useOperatorMode()
   const [selectedEntitySlug, setSelectedEntitySlug] = useState<string | null>(null)
   const [tab, setTab] = useState('overview')
   const focusEntity = (slug: string) => {
@@ -1755,7 +1757,10 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
           </TabsTrigger>
         ))}
       </TabsList>
-      <TabsContent value="overview">
+      <TabsContent value="overview" className="space-y-4">
+        <div className="max-w-xl">
+          <MemoryPromotionPanel agentId={agentId} operatorMode={operatorMode} />
+        </div>
         <QueryState query={query} isEmpty={() => !query.data}>
           {(data) => <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />}
         </QueryState>

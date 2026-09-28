@@ -47,7 +47,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from arcagent.brain import Brain, NullBrain, select_brain
 from arcagent.knowledge import KnowledgeAccess, PersonalKnowledgePort, SharedKnowledgePort
@@ -90,8 +90,11 @@ class _State:
     # Explicit curated knowledge remains local to this agent's workspace.
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
-    # Optional fleet port; its presence alone does not grant score authority.
+    # Fleet shared-knowledge port, attached by the fleet after start (or None).
     shared_knowledge: SharedKnowledgePort | None = None
+    # The runtime identity's access (DID + clearance). A promotion publisher built
+    # for a later-attached port acts only as this, never as anything item content says.
+    runtime_access: KnowledgeAccess | None = None
     # Once-per-turn recall cache: query-hash -> injectable text (bounds the
     # spawn double-assembly to a single retrieve).
     recall_cache: dict[int, str] = field(default_factory=dict)
@@ -138,6 +141,8 @@ def configure(
     agent_name: str = "",
     identity: Any = None,
     policy_pipeline: Any = None,
+    audit_sink: Any = None,
+    shared_knowledge: SharedKnowledgePort | None = None,
 ) -> None:
     """Build this agent's Brain-backed state, register it, and bind its DID.
 
@@ -147,28 +152,51 @@ def configure(
     ``identity`` (the agent's signer) and ``policy_pipeline`` are threaded to the
     Brain so the agentic consolidation engine's memory-tool writes are signed +
     policy-authorized.
+
+    ``audit_sink`` is the agent's audit sink (telemetry plus ``write_durable`` into
+    its signed WORM chain); the Brain audits through it, so the promotion egress
+    record is durable.
+
+    ``shared_knowledge`` is not a core dependency key, so core never supplies it;
+    the fleet attaches its port after start through
+    :meth:`~arcagent.core.agent.ArcAgent.attach_shared_knowledge`, which reaches
+    :func:`attach_shared_knowledge` below. A reconfigure (module reload) keeps the
+    port already attached for this DID. When promotion is enabled the Brain
+    receives the promotion settings as a plain mapping (it builds its own
+    classifier) and a :class:`SharedKnowledgePublisher` when a port is present.
     """
     cfg = MemoryConfig(**(config or {}))
     ws = Path(workspace).resolve()
+    access = KnowledgeAccess(agent_did, _clearance_name(identity))
+    prior = _registry.get(agent_did)
+    if shared_knowledge is None and prior is not None:
+        shared_knowledge = prior.shared_knowledge
+    promotion_config = cfg.promotion.model_dump() if cfg.promotion.enabled else None
+    publisher = (
+        _promotion_publisher(ws, access, shared_knowledge)
+        if promotion_config is not None and shared_knowledge is not None
+        else None
+    )
     brain = select_brain(
         cfg.brain,
         workspace=ws,
         agent_did=agent_did,
         agent_name=agent_name,  # labels background memory jobs in the run list
         tier=cfg.tier,
+        audit_sink=audit_sink,
         brain_allowlist=tuple(cfg.brain_allowlist),
         identity=identity,
         policy_pipeline=policy_pipeline,
         backend_config=dict(cfg.backend),
+        promotion_config=promotion_config,
+        promotion_publisher=publisher,
     )
     knowledge_access: KnowledgeAccess | None = None
     personal_knowledge: PersonalKnowledgePort | None = None
     if cfg.curated_knowledge_enabled:
-        clearance = getattr(identity, "clearance", "UNCLASSIFIED")
-        clearance_name = getattr(clearance, "name", str(clearance))
         from arcmemory.adapters import PersonalKnowledgeAdapter
 
-        knowledge_access = KnowledgeAccess(agent_did, str(clearance_name))
+        knowledge_access = access
         personal_knowledge = cast(PersonalKnowledgePort, PersonalKnowledgeAdapter(ws, agent_did))
     new_state = _State(
         config=cfg,
@@ -180,10 +208,88 @@ def configure(
         active=not isinstance(brain, NullBrain),
         knowledge_access=knowledge_access,
         personal_knowledge=personal_knowledge,
+        shared_knowledge=shared_knowledge,
+        runtime_access=access,
     )
     _registry[agent_did] = new_state
     _current_did.set(agent_did)
     _logger.info("memory module configured (brain=%s, active=%s)", cfg.brain, new_state.active)
+
+
+def _clearance_name(identity: Any) -> str:
+    """The runtime identity's clearance label (``UNCLASSIFIED`` when it names none)."""
+    clearance = getattr(identity, "clearance", "UNCLASSIFIED")
+    return str(getattr(clearance, "name", clearance))
+
+
+def _promotion_publisher(
+    workspace: Path,
+    access: KnowledgeAccess,
+    port: SharedKnowledgePort,
+) -> Any:
+    """The shared-write publisher, acting only as this agent's runtime identity.
+
+    Imported lazily: the publisher needs ``arcmemory``, which a NullBrain agent
+    may not have installed.
+    """
+    from arcmemory.adapters.memory_export import ConsolidatedMemoryExporter
+
+    from arcagent.modules.memory.promotion import SharedKnowledgePublisher
+
+    exporter = ConsolidatedMemoryExporter.for_workspace(workspace, access.caller_did)
+    return SharedKnowledgePublisher(
+        port=port,
+        exporter=cast(Any, exporter),
+        access_factory=lambda: access,
+    )
+
+
+@runtime_checkable
+class _PromotionBindable(Protocol):
+    """A Brain whose promotion sweep can take a publisher after it was built."""
+
+    def bind_promotion_publisher(self, publisher: object | None) -> None: ...
+
+
+def attach_shared_knowledge(agent_did: str, port: SharedKnowledgePort | None) -> None:
+    """Hold (or, with ``None``, drop) the fleet shared-knowledge port for one agent.
+
+    Resolved by the NAMED DID (:func:`state_for`), so an attach delivered for one
+    agent can never land on another agent's state; an unregistered DID fails closed.
+    With promotion enabled, the live Brain's sweep is re-bound to a publisher over
+    the new port (``None`` on detach, so the next sweep sends nothing). The Brain
+    is never rebuilt.
+    """
+    st = state_for(agent_did)
+    st.shared_knowledge = port
+    if not st.config.promotion.enabled:
+        return
+    if not isinstance(st.brain, _PromotionBindable):
+        _logger.warning("memory promotion enabled but the brain cannot take a publisher")
+        return
+    access = st.runtime_access
+    publisher = (
+        _promotion_publisher(st.workspace, access, port)
+        if port is not None and access is not None
+        else None
+    )
+    st.brain.bind_promotion_publisher(publisher)
+
+
+def refuse_uncertified_shared_knowledge(agent_did: str, event: str) -> None:
+    """Ignore and audit a shared-knowledge event the agent core did not emit.
+
+    Any module can emit on the shared bus; only the core may hand memory a port
+    (a forged port would capture every promoted card). The refusal is recorded on
+    the named agent's telemetry when it is registered, else on any live sink.
+    """
+    _logger.warning("ignored %s not emitted by the agent core (agent=%r)", event, agent_did)
+    detail = {"agent_did": agent_did, "event": event, "outcome": "deny"}
+    st = _registry.get(agent_did)
+    if st is not None and st.telemetry is not None:
+        st.telemetry.audit_event("memory.shared_knowledge_forged", detail)
+        return
+    _emit_any_audit("memory.shared_knowledge_forged", detail)
 
 
 def state() -> _State:
@@ -299,35 +405,45 @@ def _fail_closed(reason: str, *, current_did: str, resolved_did: str = "") -> No
         current_did,
         resolved_did,
     )
-    _emit_isolation_audit(
+    _emit_any_audit(
+        "memory.isolation_fault",
         {
             "reason": reason,
             "current_did": current_did,
             "resolved_did": resolved_did,
             "registered_dids": sorted(_registry),
-        }
+        },
     )
     raise MemoryIsolationError(reason)
 
 
-def _emit_isolation_audit(detail: dict[str, Any]) -> None:
-    """Emit the isolation-fault audit via any registered agent's telemetry sink.
+def _emit_any_audit(action: str, detail: dict[str, Any]) -> None:
+    """Emit a security audit event via any registered agent's telemetry sink.
 
-    A fail-closed read may have no resolvable state, so there is no single
-    obvious sink; the fleet's agents share the same tamper-evident audit
-    backend, so recording the fault through any live sink is what matters. The
-    raise still happens even if no sink is available (the ``_logger.error`` in
-    :func:`_fail_closed` is always emitted).
+    A fail-closed read (or a forged event for an unknown DID) may have no
+    resolvable state, so there is no single obvious sink; the fleet's agents
+    share the same tamper-evident audit backend, so recording the fault through
+    any live sink is what matters. The caller's own ``_logger`` line is always
+    emitted, so the event is never lost when no sink is available.
     """
     for st in _registry.values():
         telemetry = st.telemetry
         if telemetry is None:
             continue
         try:
-            telemetry.audit_event("memory.isolation_fault", detail)
-        except Exception:  # reason: audit failure must never mask the fail-closed raise
-            _logger.warning("failed to emit memory isolation audit", exc_info=True)
+            telemetry.audit_event(action, detail)
+        except Exception:  # reason: audit failure must never mask the fail-closed refusal
+            _logger.warning("failed to emit memory audit %s", action, exc_info=True)
         return
 
 
-__all__ = ["MemoryIsolationError", "bind", "configure", "reset", "state", "state_for"]
+__all__ = [
+    "MemoryIsolationError",
+    "attach_shared_knowledge",
+    "bind",
+    "configure",
+    "refuse_uncertified_shared_knowledge",
+    "reset",
+    "state",
+    "state_for",
+]

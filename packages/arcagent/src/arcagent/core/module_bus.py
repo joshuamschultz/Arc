@@ -35,10 +35,20 @@ class EventContext:
     trace_id: str
     _vetoed: bool = field(default=False, repr=False)
     _veto_reason: str = field(default="", repr=False)
+    _core_certified: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         # Snapshot data to prevent caller mutation after emit()
         object.__setattr__(self, "data", dict(self.data))
+
+    @property
+    def core_certified(self) -> bool:
+        """Whether the agent core emitted this event through its :class:`CoreEmitter`.
+
+        Set by the bus, read-only to handlers. Every module holds the same bus, so
+        a plain :meth:`ModuleBus.emit` never certifies an event.
+        """
+        return self._core_certified
 
     def veto(self, reason: str) -> None:
         """Veto this event. First veto wins. All handlers still run."""
@@ -75,6 +85,23 @@ class SubscriptionToken:
     value: int
 
 
+class CoreEmitter:
+    """The agent core's one capability to emit ``core_certified`` events.
+
+    Obtained once, by the agent, through :meth:`ModuleBus.claim_core_emitter`
+    before any module is configured. Modules receive the bus, never this.
+    """
+
+    def __init__(self, bus: ModuleBus) -> None:
+        self._bus = bus
+
+    async def emit(self, event: str, data: dict[str, Any], *, agent_did: str) -> EventContext:
+        """Dispatch ``event`` exactly as :meth:`ModuleBus.emit`, certified as core."""
+        ctx = EventContext(event=event, data=data, agent_did=agent_did, trace_id="")
+        ctx._core_certified = True
+        return await self._bus._dispatch(ctx)
+
+
 class ModuleBus:
     """Async event bus with priority dispatch and veto."""
 
@@ -83,6 +110,18 @@ class ModuleBus:
         self._next_token = 1
         self._ordered_tails: dict[str, asyncio.Task[EventContext]] = {}
         self._ordered_pending: dict[str, int] = defaultdict(int)
+        self._core_emitter_claimed = False
+
+    def claim_core_emitter(self) -> CoreEmitter:
+        """Hand out the bus's single :class:`CoreEmitter`; any later claim is refused.
+
+        The agent claims it right after building the bus, so a module that later
+        asks for it (to forge a core event) gets ``RuntimeError`` instead.
+        """
+        if self._core_emitter_claimed:
+            raise RuntimeError("module bus core emitter already claimed")
+        self._core_emitter_claimed = True
+        return CoreEmitter(self)
 
     def publish_ordered(
         self,
@@ -237,8 +276,10 @@ class ModuleBus:
             agent_did=agent_did,
             trace_id=trace_id,
         )
+        return await self._dispatch(ctx)
 
-        handlers = self._handlers.get(event, [])
+    async def _dispatch(self, ctx: EventContext) -> EventContext:
+        handlers = self._handlers.get(ctx.event, [])
         if not handlers:
             return ctx
 

@@ -85,9 +85,6 @@ class FactCandidate(BaseModel):
     name: str | None = None
     entity_type: str = "unknown"
     classification: str = "unclassified"
-    #: Promotion privacy score (1-10) the distiller assigns in the same mint call;
-    #: ``None`` = unscored (SPEC-083 COMP-002). Persisted only when present.
-    personal_score: int | None = None
 
 
 class FactExtraction(BaseModel):
@@ -105,9 +102,6 @@ class InsightCandidate(BaseModel):
     cues: list[str] = Field(default_factory=list)
     instances: list[str] = Field(default_factory=list)
     hits: int = 1
-    #: Promotion privacy score (1-10) the distiller assigns in the same mint call;
-    #: ``None`` = unscored (SPEC-083 COMP-002). Persisted only when present.
-    personal_score: int | None = None
 
 
 class InsightMint(BaseModel):
@@ -146,9 +140,6 @@ class ProcedureCandidate(BaseModel):
     when_to_use: str = ""
     steps: _StrList = Field(default_factory=list)
     dropped_steps: _StrList = Field(default_factory=list)
-    #: Promotion privacy score (1-10) the distiller assigns in the same mint call;
-    #: ``None`` = unscored (SPEC-083 COMP-002). Persisted only when present.
-    personal_score: int | None = None
 
 
 class ProcedureExtraction(BaseModel):
@@ -411,7 +402,6 @@ async def extract_facts(
                 name=cand.name,
                 entity_type=cand.entity_type,
                 classification=cand.classification,
-                personal_score=getattr(cand, "personal_score", None),
             )
             fact = next(f for f in entity.facts if f.predicate == cand.predicate)
             applied.append((resolved, fact))
@@ -465,7 +455,6 @@ async def extract_procedures(
                 when_to_use=cand.when_to_use,
                 steps=cand.steps,
                 dropped=cand.dropped_steps,
-                personal_score=getattr(cand, "personal_score", None),
             )
             for target in procedure_link_targets(procedure):
                 graph.link(scope.key, procedure.slug, target, kind="link")
@@ -577,11 +566,6 @@ def _apply_insight(
         salience=existing.salience if existing else 0.0,
         status=status,
         hits=hits,
-        # The rubric score rides the same mint payload (no extra LLM pass). Whether
-        # the distiller was ASKED to score is gated one layer up in the Consolidator
-        # (promotion.enabled); here we only persist what the candidate carries, and
-        # stay ``None`` (fail-closed) when it carries nothing (SPEC-083 COMP-002).
-        personal_score=getattr(cand, "personal_score", None),
     )
 
 

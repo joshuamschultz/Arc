@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Any, Literal
 import arcrun
 from arctrust import (
     AgentIdentity,
-    AuditSink,
     FileNotaryTransit,
     OperatorKey,
     RecordCipher,
@@ -63,7 +62,7 @@ from arcagent.core.model_manager import (
     create_arcrun_bridge,
     ensure_model,
 )
-from arcagent.core.module_bus import ModuleBus
+from arcagent.core.module_bus import CoreEmitter, ModuleBus
 from arcagent.core.run_contract import (
     AcceptedReplyOwner,
     AcceptedRunOwner,
@@ -79,12 +78,17 @@ from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
     SessionCapabilityLedger,
 )
-from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
+from arcagent.core.telemetry import AgentTelemetry, DurableTelemetryAuditSink
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 from arcagent.extension import ExtensionAttachment
 from arcagent.extension.bridge import BridgeReport, CapabilityBridge
+from arcagent.knowledge import (
+    SHARED_KNOWLEDGE_ATTACHED,
+    SHARED_KNOWLEDGE_DETACHED,
+    SharedKnowledgePort,
+)
 from arcagent.streaming import (
     DeliveryStreamEvent,
     DeliveryTerminalEvent,
@@ -233,6 +237,7 @@ class ArcAgent:
         # at personal/enterprise (tier = stringency: federal only ADDS this).
         self._witness: WitnessAnchor | None = None
         self._bus: ModuleBus | None = None
+        self._core_emitter: CoreEmitter | None = None
         self._tool_registry: ToolRegistry | None = None
         self._attached_extension_tools: dict[str, set[str]] = {}
         self._context: ContextManager | None = None
@@ -546,6 +551,8 @@ class ArcAgent:
 
         # 4. Module Bus
         self._bus = ModuleBus()
+        # Claimed before any module sees the bus: only core can certify an event.
+        self._core_emitter = self._bus.claim_core_emitter()
 
         # 5. Tool Registry (with policy pipeline)
         # The agent admits its own identity: its DID -> pubkey seeds the
@@ -1602,21 +1609,24 @@ class ArcAgent:
         return _ExtensionSigner(self._identity)
 
     @property
-    def audit_sink(self) -> AuditSink:
-        """This agent's audit sink — routes typed arctrust events to its telemetry.
+    def audit_sink(self) -> DurableTelemetryAuditSink:
+        """This agent's audit sink — telemetry, plus ``write_durable`` into its WORM chain.
 
         Read-only accessor for out-of-process wiring (e.g. the fleet
         shared-knowledge composition) so a promotion an agent performs is
         audited through the SAME telemetry boundary as its own operations,
-        never a silent side channel. Raises before startup, when there is no
-        telemetry to route to.
+        never a silent side channel. ``write_durable`` appends to the agent's
+        operator-signed WORM chain (the compliance system of record) and raises
+        when it cannot, so a caller that requires a durable record fails closed.
+        Raises before startup, when there is no telemetry or chain to route to.
         """
-        if self._telemetry is None:
+        telemetry, chain = self._telemetry, self._policy_worm
+        if telemetry is None or chain is None:
             raise ExtensionError(
                 code="AGENT_NOT_STARTED",
                 message="the audit sink requires a started agent",
             )
-        return TelemetryAuditSink(self._telemetry)
+        return DurableTelemetryAuditSink(telemetry, chain)
 
     @property
     def workspace(self) -> Path:
@@ -1678,6 +1688,36 @@ class ArcAgent:
                 return ()
             registry.replace_owned(names, [])
             return tuple(sorted(names))
+
+    async def attach_shared_knowledge(self, port: SharedKnowledgePort) -> None:
+        """Offer the fleet's shared-knowledge port to this started agent's modules.
+
+        The seam is the module bus, not a core dependency key: core publishes
+        :data:`~arcagent.knowledge.SHARED_KNOWLEDGE_ATTACHED` with ``{"port": port}``
+        and names no consumer. A module that wants the port (e.g. memory promotion)
+        subscribes; an agent with no subscriber is unaffected. The port is scoped by
+        the fleet to this agent's DID, access and signer, and the event is stamped
+        with this agent's DID and emitted through the core emitter, so subscribers
+        can refuse a module forging it. Re-attaching replaces the previous port. Audited.
+        """
+        await self._publish_shared_knowledge(SHARED_KNOWLEDGE_ATTACHED, {"port": port})
+
+    async def detach_shared_knowledge(self) -> None:
+        """Withdraw the fleet's shared-knowledge port (publishes ``..._DETACHED``). Audited."""
+        await self._publish_shared_knowledge(SHARED_KNOWLEDGE_DETACHED, {})
+
+    async def _publish_shared_knowledge(self, event: str, data: dict[str, Any]) -> None:
+        """Emit through the core emitter, so subscribers can tell it from a module forgery."""
+        async with self._lifecycle_lock:
+            emitter = self._core_emitter
+            if self._lifecycle_state is not _LifecycleState.STARTED or emitter is None:
+                raise ExtensionError(
+                    code="AGENT_NOT_STARTED",
+                    message="shared knowledge can only bind to a started agent",
+                )
+            if self._telemetry is not None:
+                self._telemetry.audit_event(event, {"agent_did": self.did})
+            await emitter.emit(event, data, agent_did=self.did)
 
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.

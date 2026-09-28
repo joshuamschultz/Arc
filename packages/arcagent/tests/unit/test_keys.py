@@ -57,13 +57,14 @@ def _status(statuses: tuple[KeyStatus, ...], provider: str) -> KeyStatus:
 # ---------------------------------------------------------------------------
 
 
-async def test_list_covers_every_provider_arcllm_declares(store: KeyStore) -> None:
-    from arcllm import list_provider_keys
+async def test_list_covers_every_provider_and_classifier_arcllm_declares(
+    store: KeyStore,
+) -> None:
+    from arcllm import list_classifier_keys, list_provider_keys
 
     statuses = await store.list(caller_did=CALLER)
-    assert {status.provider for status in statuses} == {
-        key.provider for key in list_provider_keys()
-    }
+    declared = [*list_provider_keys(), *list_classifier_keys()]
+    assert {status.provider for status in statuses} == {key.provider for key in declared}
 
 
 async def test_list_reports_presence_for_a_set_and_an_unset_key(store: KeyStore) -> None:

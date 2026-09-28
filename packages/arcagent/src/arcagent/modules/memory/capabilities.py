@@ -32,7 +32,13 @@ from typing import Any
 import arcrun
 
 from arcagent.core import midloop_recall, turn_context
-from arcagent.knowledge import KnowledgeAccess, KnowledgeDraft, KnowledgePort
+from arcagent.knowledge import (
+    SHARED_KNOWLEDGE_ATTACHED,
+    SHARED_KNOWLEDGE_DETACHED,
+    KnowledgeAccess,
+    KnowledgeDraft,
+    KnowledgePort,
+)
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.audit import safe_audit
@@ -226,6 +232,33 @@ def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
     if len(st.recall_cache) >= _runtime._RECALL_CACHE_CAP:
         st.recall_cache.pop(next(iter(st.recall_cache)))
     st.recall_cache[key] = text
+
+
+# -- Fleet shared-knowledge port (SPEC-083) -------------------------------
+
+
+@hook(event=SHARED_KNOWLEDGE_ATTACHED)
+async def on_shared_knowledge_attached(ctx: Any) -> None:
+    """Hold the fleet's shared-knowledge port the agent core published on its bus.
+
+    Accepted only when the bus certifies the agent core emitted it: every module
+    shares the bus, and a forged port would capture each promoted card. A forged
+    event is ignored and audited. Resolved by the event's agent DID (never
+    ambient), so a port bound for one agent can never land on another's state.
+    """
+    if not getattr(ctx, "core_certified", False):
+        _runtime.refuse_uncertified_shared_knowledge(ctx.agent_did, ctx.event)
+        return
+    _runtime.attach_shared_knowledge(ctx.agent_did, ctx.data.get("port"))
+
+
+@hook(event=SHARED_KNOWLEDGE_DETACHED)
+async def on_shared_knowledge_detached(ctx: Any) -> None:
+    """Drop the fleet's port when the agent core withdraws it (certified events only)."""
+    if not getattr(ctx, "core_certified", False):
+        _runtime.refuse_uncertified_shared_knowledge(ctx.agent_did, ctx.event)
+        return
+    _runtime.attach_shared_knowledge(ctx.agent_did, None)
 
 
 # -- Proactive detected-moment subscriber --------------------------------
@@ -1070,14 +1103,11 @@ async def consolidate_poll_once(*, now_local: datetime | None = None) -> bool:
                 "episode_summary": str(result.get("episode_summary", "")),
                 "insights_minted": result.get("insights_minted", 0),
                 "facts_updated": result.get("facts_updated", 0),
+                # The nightly promotion sweep's typed status (SPEC-083); None when
+                # the brain ran no sweep.
+                "promotion_status": result.get("promotion_status"),
             },
             agent_did=st.agent_did,
-        )
-    if st.config.promotion.enabled:
-        from arcagent.modules.memory.promotion import MemoryPromotionUnavailableError
-
-        raise MemoryPromotionUnavailableError(
-            "trusted score and source authority is not attached to nightly memory"
         )
     return True
 
@@ -1098,5 +1128,7 @@ __all__ = [
     "memory_consolidate_loop",
     "memory_search",
     "on_agent_moment",
+    "on_shared_knowledge_attached",
+    "on_shared_knowledge_detached",
     "profile_context",
 ]

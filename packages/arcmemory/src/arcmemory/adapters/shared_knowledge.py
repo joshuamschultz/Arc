@@ -72,6 +72,10 @@ class SharedKnowledgeBackend(Protocol):
 
     async def save(self, draft: SharedKnowledgeDraft, access: _Access) -> Any: ...
 
+    async def authorize_save(self, draft: SharedKnowledgeDraft, access: _Access) -> None:
+        """Raise exactly as :meth:`save` would before writing; write nothing."""
+        ...
+
     async def read(self, reference: str, access: _Access) -> Any: ...
 
     async def search(self, query: str, access: _Access) -> list[Any]: ...
@@ -115,6 +119,20 @@ class SharedKnowledgeAdapter:
             payload_hash=prepared.digest.removeprefix("sha256:"),
         )
         return cast(_Reference, result)
+
+    async def authorize_save(self, draft: _Draft, access: _Access) -> None:
+        """Ask the backend whether :meth:`save` would accept ``draft``; write nothing.
+
+        For a caller that must record a durable decision only once the write would
+        pass (owner, clearance, signer, pin). A refusal is audited exactly as a
+        refused :meth:`save` is, then re-raised.
+        """
+        prepared = self._prepare(draft)
+        try:
+            await self._backend.authorize_save(prepared, access)
+        except (PermissionError, ValueError) as error:
+            self._emit(access, "knowledge.collection_saved", draft.title, "deny", error=error)
+            raise
 
     async def read(self, reference: str, access: _Access) -> Any:
         """Delegate retrieval; the application backend authorizes the operation."""

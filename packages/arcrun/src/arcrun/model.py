@@ -164,8 +164,14 @@ def create_queue_journal(
 
 
 def model_provider_keys() -> tuple[ProviderKey, ...]:
-    """Return the canonical, immutable catalog of packaged provider keys."""
-    return arcllm.list_provider_keys()
+    """Return the canonical, immutable catalog of every key arcllm declares.
+
+    LLM providers first, then installed classifier drop-ins (SPEC-083 COMP-026),
+    so a key store above this facade allowlists both without importing arcllm.
+    """
+    # Lazy arcllm export (scanning imports each drop-in), so it types as Any.
+    classifier_keys: tuple[ProviderKey, ...] = arcllm.list_classifier_keys()
+    return arcllm.list_provider_keys() + classifier_keys
 
 
 def model_config_path() -> Path:

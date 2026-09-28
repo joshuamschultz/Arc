@@ -37,7 +37,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.identity import AgentIdentity
@@ -52,6 +52,7 @@ from arcmemory.hygiene import dedup_workspace, repair_backlinks
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
+from arcmemory.promotion.sweep import PromotionSweepResult
 from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
@@ -99,6 +100,33 @@ _ENTITY_REF_MAX_FACTS = 5
 # Steps at or below this need no rewrite — a short card is already followable, and
 # rewriting it would churn the operator's own wording for no gain.
 _STEP_CONSOLIDATION_FLOOR = 10
+
+
+class _PromotionRunner(Protocol):
+    """The nightly promotion sweep as the consolidator sees it (SPEC-083 COMP-018)."""
+
+    async def run(self, now: datetime) -> PromotionSweepResult: ...
+
+
+def _with_promotion(
+    total: ConsolidationResult, sweep: PromotionSweepResult | None, *, failed: bool
+) -> ConsolidationResult:
+    """Fold the sweep's outcome into the nightly result."""
+    if failed:
+        return total.model_copy(update={"promotion_status": "error"})
+    if sweep is None:
+        return total
+    return total.model_copy(
+        update={
+            "promotion_status": sweep.status,
+            "promotion_evaluated": sweep.evaluated,
+            "promotion_promoted": sweep.promoted,
+            "promotion_kept_private": sweep.kept_private,
+            "promotion_blocked_secret": sweep.blocked_secret,
+            "promotion_too_large": sweep.too_large,
+            "promotion_deferred": sweep.deferred,
+        }
+    )
 
 
 def _add_results(a: ConsolidationResult, b: ConsolidationResult) -> ConsolidationResult:
@@ -165,6 +193,7 @@ class Consolidator:
         policy_pipeline: PolicyPipeline | None = None,
         react_loop: ReactLoop = run_react_loop,
         store_raw_bodies: bool = False,
+        promotion_sweep: _PromotionRunner | None = None,
     ) -> None:
         self._db = db
         self._workspace = Path(workspace)
@@ -186,6 +215,8 @@ class Consolidator:
         self._policy = policy_pipeline
         self._react_loop = react_loop
         self._store_raw_bodies = store_raw_bodies
+        # SPEC-083: runs last in the nightly pass; absent -> no promotion at all.
+        self._promotion_sweep = promotion_sweep
 
         self._graph = WeightedGraph(db, self._cfg)
         self._semantic = SemanticStore(
@@ -442,7 +473,9 @@ class Consolidator:
         pathological stream can't run forever in one night) so the agent catches up in
         one night rather than one batch per night. Then the idempotent, file-driven
         hygiene — merge + backlink repair + dedup — reconciles the glass-box files.
-        Stamps the hygiene date last so a same-day re-entry stays a light pass.
+        The promotion sweep runs after the files are reconciled, so it judges the
+        merged cards. Stamps the hygiene date last so a same-day re-entry stays a
+        light pass.
         """
         now = now or datetime.now(UTC)
         total = ConsolidationResult()
@@ -460,8 +493,25 @@ class Consolidator:
         self._merge_entities_deterministic()
         self._repair_backlinks()
         self._dedup_workspace()
+        result = await self._run_promotion(total, now)
         self._stamp_hygiene(now)
-        return total
+        return result
+
+    async def _run_promotion(
+        self, total: ConsolidationResult, now: datetime
+    ) -> ConsolidationResult:
+        """Run the promotion sweep, if composed; a sweep failure never aborts hygiene."""
+        if self._promotion_sweep is None:
+            return _with_promotion(total, None, failed=False)
+        try:
+            sweep = await self._promotion_sweep.run(now)
+        except Exception as exc:  # reason: SDD COMP-018 — a sweep crash must not abort hygiene
+            _log.warning("arcmemory promotion sweep failed", exc_info=True)
+            self._emit(
+                "memory.promotion.sweep_failed", "memory", extra={"error": type(exc).__name__}
+            )
+            return _with_promotion(total, None, failed=True)
+        return _with_promotion(total, sweep, failed=False)
 
     def _merge_entities_deterministic(self) -> None:
         """Fold alias-related duplicate cards WITHOUT an embedder (closes the re-dup loop).

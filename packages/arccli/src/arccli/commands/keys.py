@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
 import arcagent
-import arcllm
+import arcrun
 from arctrust.paths import operator_root
 
 from arccli.commands._shared import dispatch, err
@@ -114,10 +114,14 @@ def _actor_did(arc_dir: Path) -> str:
 
 
 def _env_var_for(provider: str) -> str:
-    """Which variable this provider reads, per arcllm. Exits naming the provider if none."""
-    declared = {key.provider: key.api_key_env for key in arcllm.list_provider_keys()}
+    """Which variable this provider reads, per arcllm. Exits naming the provider if none.
+
+    Reads the same catalog the store allowlists (LLM providers plus classifier
+    drop-ins), so every row ``list`` shows is one ``set`` accepts.
+    """
+    declared = {key.provider: key.api_key_env for key in arcrun.model_provider_keys()}
     if provider not in declared:
-        _fail(f"unknown provider {provider!r} — arcllm packages: {', '.join(declared)}")
+        _fail(f"unknown provider {provider!r} — arcllm declares: {', '.join(declared)}")
     return declared[provider]
 
 

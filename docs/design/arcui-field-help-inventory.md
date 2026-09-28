@@ -1,6 +1,6 @@
 # ArcUI field-help inventory
 
-This inventory describes controls present in ArcUI today. The stable help IDs live in [`screen-help.json`](../../packages/arcui/web/src/content/screen-help.json); the UI attaches them to fields and page headers. A help entry is copy, not a promise that a control exists. Conditional controls appear only when their selected tab, workflow node, connector schema, or returned data provides them.
+This inventory describes controls present in ArcUI today. The stable help IDs live in `packages/arcui/web/src/content/screen-help.json`; the UI attaches them to fields and page headers. A help entry is copy, not a promise that a control exists. Conditional controls appear only when their selected tab, workflow node, connector schema, or returned data provides them.
 
 ## Coverage and exceptions
 

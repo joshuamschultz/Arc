@@ -96,10 +96,19 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_vault_record_cipher.py",
         "packages/arccli/tests/test_queue_runtime.py",
     ),
-    "memory promotion source and decision integrity": (
-        "packages/arcagent/tests/modules/memory/test_promotion_approval.py",
-        "packages/arcagent/tests/e2e/test_memory_promotion_e2e.py",
+    # SPEC-083 promotion: an automated promotion without a durable decision record,
+    # a malformed decision, or a failed chain append is refused before any shared
+    # write; a write that may have landed is never reported as a refusal (so it is
+    # never retried into a double share). Any module can emit on the shared bus, so
+    # a forged knowledge:shared_attached/_detached carrying a capturing port must
+    # change nothing and be audited; the core emitter cannot be claimed twice.
+    # Covers LLM02/ASI02/ASI03/ASI07.
+    "memory promotion decision integrity and forged shared-knowledge ports": (
         "packages/arcteam/tests/test_promotion_audit_and_revoke.py",
+        "packages/arcteam/tests/test_promotion_error_typing.py",
+        "packages/arcagent/tests/unit/core/test_module_bus_core_emitter.py",
+        "packages/arcagent/tests/modules/memory/test_shared_knowledge_late_bind.py",
+        "packages/arcagent/tests/integration/test_promotion_fleet_journey.py",
     ),
     "standalone runtime and resource-containment boundaries": (
         "tests/architecture/test_no_arcrun_imports_arcagent.py",

@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
-from arctrust.audit import AuditEvent
+from arctrust.audit import AuditEvent, DurableAuditSink
 from opentelemetry import trace
 from opentelemetry.trace import NonRecordingSpan, Span
 
@@ -58,6 +58,26 @@ class TelemetryAuditSink:
 
     def emit(self, event: AuditEvent) -> None:
         """Support capability lifecycle objects that call their sink ``emit`` method."""
+        self.write(event)
+
+
+class DurableTelemetryAuditSink(TelemetryAuditSink):
+    """Telemetry audit plus a durable path into the agent's signed WORM chain.
+
+    Ordinary ``write`` events stay on the telemetry boundary. ``write_durable`` is
+    for records an operation must not proceed without (an automated promotion
+    decision, the promotion egress record): it appends to the operator-signed
+    chain FIRST and lets a failed append raise, so the caller fails closed; only
+    then is the event mirrored to telemetry for live observability.
+    """
+
+    def __init__(self, telemetry: _AuditTelemetry, chain: DurableAuditSink) -> None:
+        super().__init__(telemetry)
+        self._chain = chain
+
+    def write_durable(self, event: AuditEvent) -> None:
+        """Append ``event`` to the signed chain (raising on failure), then mirror it."""
+        self._chain.write_durable(event)
         self.write(event)
 
 

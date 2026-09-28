@@ -22,6 +22,7 @@ from arccli.commands.agent.create import _create
 from arccli.commands.agent.events import _events
 from arccli.commands.agent.extensions import _extensions
 from arccli.commands.agent.memory import _memory
+from arccli.commands.agent.promotion import _promotion, add_promotion_parser
 from arccli.commands.agent.reload import _reload
 from arccli.commands.agent.run import _run
 from arccli.commands.agent.serve import _serve
@@ -138,6 +139,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20, help="Rows per section (default: 20).")
     p.add_argument("--json", dest="json", action="store_true", help="Output as JSON.")
 
+    # promotion (SPEC-083 COMP-027)
+    add_promotion_parser(subs)
+
     # reload
     p = subs.add_parser("reload", help="Hot-reload extensions and skills.")
     p.add_argument("path", nargs="?", default=".", help="Agent directory (default: .)")
@@ -205,6 +209,7 @@ _SUBCOMMAND_MAP = {
     "tools": _tools,
     "config": _config,
     "memory": _memory,
+    "promotion": _promotion,
     "reload": _reload,
     "strategies": _strategies,
     "events": _events,

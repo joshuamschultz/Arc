@@ -223,6 +223,11 @@ def __getattr__(name: str) -> Any:
         from arcagent.core import control_contract
 
         return getattr(control_contract, name)
+    if name in {"MemoryConfig", "MemoryPromotionConfig"}:
+        # The memory module is removable; importing arcagent must never pull it.
+        from arcagent.modules.memory import config as memory_config
+
+        return getattr(memory_config, name)
     if name == "register_schedule_revision":
         from arcagent.modules.scheduler.registration import register_schedule_revision
 
@@ -301,6 +306,8 @@ __all__ = [
     "KnowledgeRef",
     "LedgerRunOwner",
     "LiveSkillRevisionResolver",
+    "MemoryConfig",
+    "MemoryPromotionConfig",
     "ModuleBusError",
     "PersonalKnowledgePort",
     "ProbeResult",
