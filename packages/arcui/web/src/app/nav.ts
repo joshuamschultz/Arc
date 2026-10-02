@@ -61,7 +61,6 @@ export const NAV_ITEMS: NavItem[] = [
   { path: 'security', label: 'Audit', icon: Shield, group: 'govern' },
 
   { path: 'arcrun', label: 'Activity', icon: Workflow, group: 'watch' },
-  { path: 'queue', label: 'Call queue', icon: ListFilter, group: 'watch' },
   { path: 'workflows', label: 'Workflows', icon: GitBranch, group: 'watch' },
   { path: 'knowledge', label: 'Knowledge', icon: BookOpen, group: 'watch' },
   { path: 'shared-knowledge', label: 'Shared knowledge', icon: Share2, group: 'watch' },
@@ -69,6 +68,7 @@ export const NAV_ITEMS: NavItem[] = [
   { path: 'arcllm', label: 'Model usage', icon: Cpu, group: 'advanced' },
   { path: 'tools-skills', label: 'Tools & Skills', icon: Wrench, group: 'advanced' },
   { path: 'connections', label: 'Connections', icon: Plug, group: 'advanced' },
+  { path: 'queue', label: 'Call queue', icon: ListFilter, group: 'advanced' },
 
   { path: 'settings', label: 'Settings', icon: Settings, group: 'system' },
 ]

@@ -55,6 +55,7 @@ import {
   useWorkflowRuns,
   useWriteWorkflowFile,
 } from '@/lib/queries'
+import { NodeDetail, RunError } from '@/components/workflows-view/node-detail'
 import { ApiError } from '@/lib/api'
 import { fmtTime, shortId } from '@/lib/format'
 import { asWorkflowFieldErrors } from '@/lib/types'
@@ -800,6 +801,8 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
         />
       </div>
 
+      {run.data && <RunError status={run.data.status} lastError={run.data.last_error} />}
+
       <div className="space-y-1.5">
         <div className="flex items-center justify-between px-0.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -824,8 +827,8 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
             const dur = fmtDuration(rec?.started_at, rec?.completed_at)
             const canOpen = Boolean(rec?.task_run_id)
             return (
+              <div key={id}>
               <div
-                key={id}
                 className={`flex items-center gap-3 px-2.5 py-2 text-sm ${
                   canOpen ? 'cursor-pointer hover:bg-muted/40' : ''
                 }`}
@@ -857,6 +860,8 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
                   {dur ? ` · ${dur}` : ''}
                 </span>
                 {canOpen && <span className="shrink-0 text-[11px] text-primary">trace →</span>}
+              </div>
+              {rec && <NodeDetail node={rec} />}
               </div>
             )
           })}
