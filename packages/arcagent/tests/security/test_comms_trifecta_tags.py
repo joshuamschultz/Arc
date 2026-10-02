@@ -46,11 +46,13 @@ class TestCommsTags:
     def test_messaging_inbox_emits_untrusted_input(self) -> None:
         from arcagent.modules.messaging.capabilities import (
             messaging_check_inbox,
+            messaging_read_channel,
             messaging_read_thread,
         )
 
         assert UNTRUSTED_INPUT in _legs(messaging_check_inbox)
         assert UNTRUSTED_INPUT in _legs(messaging_read_thread)
+        assert UNTRUSTED_INPUT in _legs(messaging_read_channel)
 
     def test_notify_user_emits_external_comms(self) -> None:
         from arcagent.modules.messaging.capabilities import notify_user
