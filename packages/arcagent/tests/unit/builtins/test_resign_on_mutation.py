@@ -1,4 +1,13 @@
-"""Task #28 — a mutated signed artifact must not carry a stale signature.
+"""Task #28 / J4 B5 — generic write/edit never sign; signed skills are out of reach.
+
+J4 B5 replaced the Task #28 fix: the generic ``write``/``edit`` tools used to
+RE-SIGN any file with a sidecar using the AGENT key, which let a model rewrite an
+operator-approved skill and launder it with its own signature. Now the agent key
+never re-signs on a generic write, skill bundles are protected paths, and a
+write over any other signed file reports (and audits) the now-stale signature.
+The dedicated self-authoring tools (create/update skill/tool) still sign.
+
+Original Task #28 notes follow.
 
 Root-cause investigation: create_skill/create_tool/update_skill/update_tool
 ALL already call ``_runtime.sign_artifact_file`` after writing (SPEC-033,
@@ -76,42 +85,49 @@ class TestGenericEditInvalidatesSignature:
         skill_md.write_text(mutated, encoding="utf-8")
         assert artifact_signing.verify_file(skill_md, mutated.encode("utf-8")) is False
 
-    async def test_edit_tool_resigns_previously_signed_skill(
+    async def test_edit_tool_cannot_touch_a_signed_skill(
         self, workspace: Path, identity: AgentIdentity
     ) -> None:
+        """J4 B5: generic edit never reaches a skill bundle, so it can never
+        re-sign one with the agent key (agent-key laundering)."""
         from arcagent.builtins.capabilities.edit import edit
+        from arcagent.core.errors import ToolError
 
         skill_md = workspace / "capabilities" / "skills" / "browserbase" / "SKILL.md"
         skill_md.parent.mkdir(parents=True)
         original = "---\nname: browserbase\nversion: 1.0.0\n---\n\nbody v1\n"
         skill_md.write_text(original, encoding="utf-8")
         _runtime.sign_artifact_file(skill_md, original.encode("utf-8"))
-        assert artifact_signing.verify_file(skill_md, original.encode("utf-8")) is True
+        sidecar_before = artifact_signing.sidecar_path(skill_md).read_bytes()
 
-        await edit(
-            file_path="capabilities/skills/browserbase/SKILL.md",
-            old_string="body v1",
-            new_string="body v2 (edited via generic tool)",
-        )
+        with pytest.raises(ToolError):
+            await edit(
+                file_path="capabilities/skills/browserbase/SKILL.md",
+                old_string="body v1",
+                new_string="body v2 (edited via generic tool)",
+            )
 
-        current = skill_md.read_text(encoding="utf-8").encode("utf-8")
-        assert artifact_signing.verify_file(skill_md, current) is True
+        assert skill_md.read_text(encoding="utf-8") == original
+        assert artifact_signing.sidecar_path(skill_md).read_bytes() == sidecar_before
 
-    async def test_write_tool_resigns_previously_signed_capability(
+    async def test_write_tool_never_resigns_a_signed_capability(
         self, workspace: Path, identity: AgentIdentity
     ) -> None:
+        """The agent key never re-signs on a generic write: the old signature goes
+        stale, the result says so, and the next load refuses the file."""
         from arcagent.builtins.capabilities.write import write
 
         target = workspace / "capabilities" / "hello.py"
         original = "async def fn(): return 1\n"
         target.write_text(original, encoding="utf-8")
         _runtime.sign_artifact_file(target, original.encode("utf-8"))
-        assert artifact_signing.verify_file(target, original.encode("utf-8")) is True
 
-        await write(file_path="capabilities/hello.py", content="async def fn(): return 2\n")
+        result = await write(
+            file_path="capabilities/hello.py", content="async def fn(): return 2\n"
+        )
 
-        current = target.read_bytes()
-        assert artifact_signing.verify_file(target, current) is True
+        assert artifact_signing.verify_file(target, target.read_bytes()) is False
+        assert "UNSIGNED" in result
 
     async def test_write_never_signs_a_previously_unsigned_file(self, workspace: Path) -> None:
         """write/edit must NOT start signing ordinary workspace files."""
@@ -259,7 +275,7 @@ class TestFailHonestOnSigningFailure:
         assert "'b'" in target.read_text()
         assert events and events[-1][0] == "tool.artifact_unsigned"
 
-    async def test_write_reports_unsigned_when_resign_fails(
+    async def test_write_over_a_signed_file_reports_and_audits_unsigned(
         self, workspace: Path, identity: AgentIdentity
     ) -> None:
         from arcagent.builtins.capabilities.write import write
@@ -270,7 +286,11 @@ class TestFailHonestOnSigningFailure:
         _runtime.sign_artifact_file(target, original.encode("utf-8"))
 
         events: list[tuple[str, dict[str, object]]] = []
-        _runtime.configure(workspace=workspace, audit_sink=lambda et, d: events.append((et, d)))
+        _runtime.configure(
+            workspace=workspace,
+            identity=identity,
+            audit_sink=lambda et, d: events.append((et, d)),
+        )
 
         result = await write(
             file_path="capabilities/hello.py", content="async def fn(): return 2\n"
@@ -280,7 +300,7 @@ class TestFailHonestOnSigningFailure:
         assert "UNSIGNED" in result
         assert events and events[-1][0] == "tool.artifact_unsigned"
 
-    async def test_edit_reports_unsigned_when_resign_fails(
+    async def test_edit_over_a_signed_file_reports_and_audits_unsigned(
         self, workspace: Path, identity: AgentIdentity
     ) -> None:
         from arcagent.builtins.capabilities.edit import edit
@@ -291,7 +311,11 @@ class TestFailHonestOnSigningFailure:
         _runtime.sign_artifact_file(target, original.encode("utf-8"))
 
         events: list[tuple[str, dict[str, object]]] = []
-        _runtime.configure(workspace=workspace, audit_sink=lambda et, d: events.append((et, d)))
+        _runtime.configure(
+            workspace=workspace,
+            identity=identity,
+            audit_sink=lambda et, d: events.append((et, d)),
+        )
 
         result = await edit(
             file_path="capabilities/hello.py", old_string="return 1", new_string="return 2"
@@ -299,6 +323,7 @@ class TestFailHonestOnSigningFailure:
 
         assert "Replaced" in result
         assert "UNSIGNED" in result
+        assert artifact_signing.verify_file(target, target.read_bytes()) is False
         assert events and events[-1][0] == "tool.artifact_unsigned"
 
     async def test_successful_signing_never_appends_warning(

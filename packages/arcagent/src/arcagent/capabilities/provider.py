@@ -12,7 +12,10 @@ its existing capability subsystem:
 - **invoke** — dispatches the named tool's policy-wrapped ``execute``; the core
   registry's pipeline (schema → first-DENY-wins policy → veto → audit) runs
   inside, so a denied capability fails closed (AC-4.4).
-- **load** — reads the skill's ``SKILL.md`` body on demand (AC-4.2).
+- **load** — reads the skill's ``SKILL.md`` body on demand (AC-4.2) and returns
+  it as an :class:`arcrun.SkillDocument` with the skill's file inventory, so the
+  model can reach ``references/`` and ``scripts/`` through the jailed,
+  signature-verified ``read_skill_file`` / ``run_skill_script`` tools (J4 B4).
 
 Federal tier gates whether **workspace-authored** capabilities are callable at
 all: in federal they are neither advertised nor loadable (AC-6.1 / ADR-023 §3).
@@ -27,6 +30,8 @@ from pathlib import Path
 from typing import Any
 
 import arcrun
+
+from arcagent.capabilities.skill_files import SkillFileError, SkillFiles
 
 _logger = logging.getLogger("arcagent.capability_provider")
 
@@ -48,6 +53,7 @@ class _Skill:
     location: Path
     scan_root: str
     read_current: Callable[[], str | None] | None = None
+    bundle_folder: Path | None = None
 
 
 class AgentCapabilityProvider:
@@ -69,6 +75,7 @@ class AgentCapabilityProvider:
         workspace_authored: frozenset[str] = frozenset(),
         requires_skill: dict[str, str] | None = None,
         audit: AuditSink | None = None,
+        skill_files: SkillFiles | None = None,
     ) -> None:
         federal = tier == "federal"
 
@@ -90,6 +97,8 @@ class AgentCapabilityProvider:
         # model had to honour voluntarily via ``use_skill``.
         self._requires_skill: dict[str, str] = dict(requires_skill or {})
         self._audit = audit
+        # Lists each skill's bundled files for the use_skill result (None: body only).
+        self._skill_files = skill_files
         # Skills already pulled this run — activation is idempotent (load the
         # body once, not on every call to the requiring tool).
         self._activated: set[str] = set()
@@ -125,8 +134,8 @@ class AgentCapabilityProvider:
         )
         return specs
 
-    async def load(self, name: str, *, caller_did: str) -> str | None:
-        """Read a skill's full body on demand. None for unknown/gated names."""
+    async def load(self, name: str, *, caller_did: str) -> arcrun.SkillDocument | None:
+        """Read a skill's full body + file inventory on demand. None for unknown/gated."""
         skill = self._skills.get(name)
         if skill is None:
             self._emit_skill_load(name, "denied", "unavailable")
@@ -146,7 +155,19 @@ class AgentCapabilityProvider:
             "allowed" if content is not None else "denied",
             "" if content is not None else "unavailable",
         )
-        return content
+        if content is None:
+            return None
+        return arcrun.SkillDocument(name=name, body=content, files=self._inventory(skill))
+
+    def _inventory(self, skill: _Skill) -> tuple[str, ...]:
+        """The skill's bundled files; empty when unlisted (body still loads)."""
+        if self._skill_files is None:
+            return ()
+        try:
+            return self._skill_files.inventory(skill)
+        except (OSError, SkillFileError) as exc:
+            _logger.warning("Skill inventory unavailable for %s: %s", skill.name, exc)
+            return ()
 
     def _emit_skill_load(self, name: str, outcome: str, reason: str) -> None:
         if self._audit is not None:
@@ -161,7 +182,12 @@ class AgentCapabilityProvider:
             )
 
     async def invoke(
-        self, name: str, args: dict[str, Any], *, caller_did: str
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        caller_did: str,
+        context: arcrun.ToolContext | None = None,
     ) -> arcrun.CapabilityResult:
         """Dispatch a tool call through its policy-wrapped execute (fail-closed).
 
@@ -172,7 +198,9 @@ class AgentCapabilityProvider:
         if tool is None:
             return arcrun.CapabilityResult(content=f"unknown capability '{name}'", is_error=True)
         try:
-            out = str(await tool.execute(dict(args), arcrun.detached_context()))
+            # The loop's live context carries the run state the policy pipeline
+            # meters (SPEC-038 provider budget); detached only outside a loop.
+            out = str(await tool.execute(dict(args), context or arcrun.detached_context()))
             is_error = False
         except Exception as exc:  # reason: surface as an error result, never crash the loop
             _logger.exception("Capability '%s' raised during invoke", name)
@@ -198,7 +226,8 @@ class AgentCapabilityProvider:
         if required is None:
             return out, None
         already = required in self._activated
-        body = None if already else await self.load(required, caller_did=caller_did)
+        document = None if already else await self.load(required, caller_did=caller_did)
+        body = document.render() if document is not None else None
         if body is not None:
             self._activated.add(required)
         activated = already or body is not None

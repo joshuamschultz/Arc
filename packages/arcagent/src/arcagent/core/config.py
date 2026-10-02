@@ -659,6 +659,15 @@ class CapabilitiesConfig(BaseModel):
             "subtracted from the blocklist; at federal they are the allowlist itself."
         ),
     )
+    strict_skill_sections: bool = Field(
+        default=False,
+        description=(
+            "Refuse a skill whose SKILL.md lacks the recommended Arc sections "
+            "(Contract, Knowledge, Steps, ...). Honored at federal only; below "
+            "federal a missing section is always a review finding, never a refusal. "
+            "A skill always needs frontmatter name + description."
+        ),
+    )
     isolation_relax: str | None = Field(
         default=None,
         description=(

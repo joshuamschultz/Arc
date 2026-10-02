@@ -8,8 +8,9 @@ extension forwards (observe → on_turn_end → maybe_improve), the improver:
 2. proposes a code patch (the LLM is the one injected seam — a real fix, deterministic);
 3. runs the golden suite in the **REAL Docker sandbox** (HubEvalRunner, not injected);
 4. accepts only on strict improvement (buggy fails → fixed passes);
-5. writes the patch, **re-signs every file with a real agent-DID key (arctrust)**;
-6. **re-verifies** the signature (fail-closed) before reload;
+5. commits the patch ONLY through the operator-anchored revision writer (the
+   improver holds no signer; arcagent's writer signs with the operator key);
+6. writes no sidecar of its own before reload;
 7. reloads; the previously-failing golden case now passes when re-run in the sandbox;
 8. emits a mutation audit event on the WORM sink.
 
@@ -24,9 +25,9 @@ import pytest
 from arcskill.improver import ArcSkillImprover, ImproverConfig
 from arcskill.improver.models import BundlePatch, BundleView
 from arcskill.improver.sandbox_runner import HubEvalRunner, docker_available
-from arctrust import sign_artifact, verify_artifact
-from arctrust.artifact import ArtifactSignature
 from arctrust.identity import AgentIdentity
+
+from packages.arcskill.tests.conftest import DirRevisionWriter
 
 pytestmark = pytest.mark.skipif(not docker_available(), reason="docker CLI not available")
 
@@ -46,17 +47,6 @@ class _FixMutator:
     async def propose(self, *, kind: str, current: BundleView, failures: str, insight: str):
         assert kind == "code" and "scripts/calc.py" in current.scripts
         return BundlePatch(files={"scripts/calc.py": _FIXED}, summary="add sums, not subtracts")
-
-
-class _AgentSigner:
-    """Real agent-DID sidecar signer (the shape arcagent injects), arctrust-backed."""
-
-    def __init__(self, did: str, key: bytes) -> None:
-        self._did, self._key = did, key
-
-    def sign(self, path: Path, content: bytes) -> None:
-        manifest = sign_artifact(content, signer_did=self._did, private_key=self._key)
-        path.with_name(path.name + ".arcsig").write_text(manifest.to_json(), encoding="utf-8")
 
 
 class _CaptureSink:
@@ -94,7 +84,7 @@ async def test_ac2_seeded_bug_repaired_through_real_path(tmp_path: Path) -> None
         config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1),
         tier="enterprise",  # real Docker sandbox; NOT injecting eval_runner
         mutator=_FixMutator(),
-        signer=_AgentSigner(ident.did, ident.signing_seed),
+        writer=(writer := DirRevisionWriter(lambda _name: skill_md.parent)),
         approval_provider=_auto_approve,  # enterprise code mutation requires operator approval
         audit_sink=sink,
         agent_did=ident.did,
@@ -111,13 +101,13 @@ async def test_ac2_seeded_bug_repaired_through_real_path(tmp_path: Path) -> None
     await imp.aclose()
 
     calc = skill_md.parent / "scripts" / "calc.py"
-    sidecar = skill_md.parent / "scripts" / "calc.py.arcsig"
 
-    # 5+6: patch written, re-signed by the agent DID, signature re-verifies.
+    # 5+6: the patch was committed through the writer; the improver signed nothing.
+    assert [(name, files) for name, files, _ in writer.commits] == [
+        ("calc-skill", {"scripts/calc.py": _FIXED})
+    ]
     assert calc.read_bytes() == _FIXED
-    manifest = ArtifactSignature.from_json(sidecar.read_text(encoding="utf-8"))
-    assert manifest.signer_did == ident.did
-    assert verify_artifact(_FIXED, manifest) is True
+    assert not (skill_md.parent / "scripts" / "calc.py.arcsig").exists()
 
     # 7: reloaded, and the previously-failing golden suite now passes in the REAL sandbox.
     assert reloaded == [True]

@@ -26,6 +26,8 @@ from arcskill.improver import ArcSkillImprover, ImproverConfig
 from arcskill.improver.config import SuiteConfig
 from arcskill.improver.models import BundleView, EvalCase, EvalOutcome
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 _SK_SAMPLE = "sk-abc123def456ghi789jkl012"
 
 SEED_TEXT = """\
@@ -111,6 +113,7 @@ async def test_default_suite_trigger_constructed_from_llm_and_generates(tmp_path
         tier="personal",
         llm=llm,
         eval_runner=_CascadeRunner(),
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
     await _use(imp, "s")
@@ -132,6 +135,7 @@ async def test_no_default_trigger_without_llm(tmp_path: Path) -> None:
         config=_cfg(),
         tier="personal",
         eval_runner=_CascadeRunner(),
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
     await _use(imp, "s")
@@ -152,6 +156,7 @@ async def test_injected_suite_generator_wins_over_default(tmp_path: Path) -> Non
         llm=_SuiteLLM(),
         eval_runner=_CascadeRunner(),
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
     await _use(imp, "s")

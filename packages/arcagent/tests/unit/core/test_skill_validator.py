@@ -1,8 +1,6 @@
 """SPEC-021 Task 2.8 — skill folder validator tests.
 
 Verifies frontmatter, section, filler, and tool-dependency checks.
-Also verifies the auto-generated ``## Resources`` section reflects
-folder contents (R-013).
 """
 
 from __future__ import annotations
@@ -119,19 +117,63 @@ class TestFrontmatterValidation:
 
 
 class TestSectionValidation:
-    def test_missing_section_rejected(self, tmp_path: Path) -> None:
+    """Only frontmatter ``name`` + ``description`` are required (J4 B1, Q36).
+
+    The Arc section groups are review findings (warnings) by default so a
+    third-party pack (Anthropic / skills.sh / skill-creator) loads; strict mode
+    turns them back into errors and is an operator opt-in.
+    """
+
+    _MISSING_STEPS = (
+        "## Resources\n## Contract\n## Knowledge\n"
+        # Missing ## Steps
+        "## Anti Patterns\n## Examples\n## Validation\n"
+    )
+
+    def test_missing_section_is_a_warning_by_default(self, tmp_path: Path) -> None:
         from arcagent.capabilities.skill_validator import validate_skill_folder
 
-        bad_body = (
-            "## Resources\n## Contract\n## Knowledge\n"
-            # Missing ## Steps
-            "## Anti Patterns\n## Examples\n## Validation\n"
-        )
-        _write_skill(tmp_path / "skill", body=bad_body)
-        result = validate_skill_folder(tmp_path / "skill", "builtins")
+        _write_skill(tmp_path / "skill", body=self._MISSING_STEPS)
+        result = validate_skill_folder(tmp_path / "skill", "import")
+        assert result.ok
+        assert result.entry is not None
+        warning = next(w for w in result.warnings if w.code == "missing_section")
+        assert "Steps" in warning.detail
+
+    def test_missing_section_rejected_in_strict_mode(self, tmp_path: Path) -> None:
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        _write_skill(tmp_path / "skill", body=self._MISSING_STEPS)
+        result = validate_skill_folder(tmp_path / "skill", "import", strict_sections=True)
         assert any(e.code == "missing_section" for e in result.errors)
         assert "Steps" in result.errors[0].detail
 
+    def test_frontmatter_only_third_party_skill_is_valid(self, tmp_path: Path) -> None:
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        folder = tmp_path / "pdf"
+        folder.mkdir()
+        (folder / "SKILL.md").write_text(
+            "---\nname: pdf\ndescription: Work with PDF files.\nlicense: see LICENSE.txt\n---\n"
+            "# PDF processing\n\nFree-form body. See references/advanced.md.\n"
+        )
+        result = validate_skill_folder(folder, "import")
+        assert result.ok, result.errors
+        assert result.entry is not None and result.entry.name == "pdf"
+        assert {w.code for w in result.warnings} == {"missing_section"}
+
+
+class TestStrictSectionsForTier:
+    def test_strict_only_at_federal_and_only_by_config(self) -> None:
+        from arcagent.capabilities.skill_validator import strict_sections_for
+
+        assert strict_sections_for("federal", configured=True) is True
+        assert strict_sections_for("federal", configured=False) is False
+        assert strict_sections_for("enterprise", configured=True) is False
+        assert strict_sections_for("personal", configured=True) is False
+
+
+class TestCompleteSkill:
     def test_complete_skill_ok(self, tmp_path: Path) -> None:
         from arcagent.capabilities.skill_validator import validate_skill_folder
 
@@ -205,29 +247,3 @@ class TestShippedBuiltinsStillValidate:
         for folder in folders:
             result = validate_skill_folder(folder, "builtins")
             assert result.ok, f"{folder.name}: {[e.detail for e in result.errors]}"
-
-
-class TestRenderResourcesSection:
-    def test_empty_folder(self, tmp_path: Path) -> None:
-        from arcagent.capabilities.skill_validator import render_resources_section
-
-        folder = tmp_path / "empty"
-        folder.mkdir()
-        rendered = render_resources_section(folder)
-        assert rendered.startswith("## Resources")
-        assert "(no resources)" in rendered
-
-    def test_full_folder_listing(self, tmp_path: Path) -> None:
-        from arcagent.capabilities.skill_validator import render_resources_section
-
-        folder = tmp_path / "skill"
-        folder.mkdir()
-        (folder / "references").mkdir()
-        (folder / "references/decorator-fields.md").write_text("x")
-        (folder / "scripts").mkdir()
-        (folder / "scripts/validate.py").write_text("x")
-        rendered = render_resources_section(folder)
-        assert "**references/**" in rendered
-        assert "decorator-fields.md" in rendered
-        assert "**scripts/**" in rendered
-        assert "validate.py" in rendered

@@ -1,10 +1,16 @@
-"""Skill folder validator — one contract for both skill vocabularies.
+"""Skill folder validator — one contract for every skill vocabulary.
 
-Parses ``SKILL.md``, validates frontmatter and section structure, and
-auto-generates the ``## Resources`` section from folder contents
-(R-013). Returns a :class:`SkillValidationResult` with parsed entry +
-errors + warnings; the caller (loader) decides how to react per
-deployment tier.
+Parses ``SKILL.md`` and validates frontmatter and section structure. Returns a
+:class:`SkillValidationResult` with parsed entry + errors + warnings; the
+caller (loader, import review) decides how to react.
+
+**Only identity is required (J4 B1, decision Q36).** A skill needs frontmatter
+``name`` and ``description`` and nothing else, so a third-party pack
+(Anthropic ``skills/``, skills.sh, skill-creator) with a free-form body loads.
+The Arc section groups below are *recommended*: a missing group is a
+``missing_section`` warning (an import review finding). Strict mode turns it
+back into an error; it is an operator opt-in honored only at federal tier
+(:func:`strict_sections_for`).
 
 **Reconciled contract.** Arc's original SPEC-021 format and the
 skill-creator *v2* authoring template disagreed on field and section
@@ -15,7 +21,7 @@ vocabulary loads in the agent:
   ``triggers``, and ``tools`` are **optional** — they render as prompt
   hints when present (``capability_registry`` already guards their
   absence) and v2 folds trigger phrasings into the description instead.
-- Required sections are checked as **alias groups** (see
+- Recommended sections are checked as **alias groups** (see
   ``REQUIRED_SECTION_GROUPS``) by **presence, not order**: e.g. the
   router slot is satisfied by ``## Files`` *or* ``## Resources``; the
   anti-patterns slot by ``## Red Flags & Rationalizations`` *or*
@@ -41,7 +47,8 @@ from arcagent.capabilities.capability_registry import SkillEntry
 # the runtime treats them as hints and works fine without them.
 REQUIRED_FRONTMATTER: tuple[str, ...] = ("name", "description")
 
-# Each tuple is one required section SLOT; any alias in the tuple satisfies it.
+# Each tuple is one recommended section SLOT (required only in strict mode); any
+# alias in the tuple satisfies it.
 # Presence is checked, not order (Arc and v2 order Examples/Validation and
 # Output differently). ``## Output`` is intentionally absent — accepted when
 # present, never required, so Arc's older builtins keep validating.
@@ -66,15 +73,6 @@ REQUIRED_SECTIONS: tuple[str, ...] = tuple(group[0] for group in REQUIRED_SECTIO
 
 # Router-slot headers are auto-generated / thin routers — filler there is fine.
 _ROUTER_SECTIONS: frozenset[str] = frozenset({"## Files", "## Resources"})
-
-# Sub-folders walked when generating ``## Resources``. Order matters —
-# this is the order they appear in the rendered list.
-_RESOURCE_FOLDERS: tuple[str, ...] = (
-    "references",
-    "scripts",
-    "templates",
-    "assets",
-)
 
 _FILLER_TOKENS: frozenset[str] = frozenset({"n/a", "none", "tbd", ""})
 
@@ -111,8 +109,12 @@ def validate_skill_folder(
     *,
     known_tools: set[str] | None = None,
     verified_content: str | None = None,
+    strict_sections: bool = False,
 ) -> SkillValidationResult:
     """Parse ``folder/SKILL.md`` and validate. Returns entry + diagnostics.
+
+    ``strict_sections`` makes a missing recommended section an error instead of
+    a warning (federal opt-in; see :func:`strict_sections_for`).
 
     On any error, ``result.entry`` may be ``None`` (parse failure) or
     a partial :class:`SkillEntry` (semantic failures). The caller
@@ -136,7 +138,7 @@ def validate_skill_folder(
         return result
 
     _check_required_fields(fm, result)
-    _check_required_sections(body, result)
+    _check_recommended_sections(body, result, strict=strict_sections)
     _check_filler_sections(body, result)
     if known_tools is not None:
         _check_tool_dependencies(fm.get("tools", []), known_tools, result)
@@ -157,29 +159,14 @@ def validate_skill_folder(
     return result
 
 
-def render_resources_section(folder: Path) -> str:
-    """Generate ``## Resources`` body from folder contents (R-013).
+def strict_sections_for(tier: str, *, configured: bool) -> bool:
+    """Whether missing Arc sections are errors for this deployment.
 
-    Walks the four standard sub-folders and lists their files as a
-    bulleted markdown block. The loader writes this back into
-    ``SKILL.md`` so the LLM always sees an accurate inventory.
+    Below federal they are always warnings (decision Q36). Federal may opt in
+    by config (``capabilities.strict_skill_sections``); the default is lenient
+    at every tier so a standard third-party pack is never refused for its body.
     """
-    lines: list[str] = ["## Resources", ""]
-    any_content = False
-    for sub in _RESOURCE_FOLDERS:
-        sub_path = folder / sub
-        if not sub_path.is_dir():
-            continue
-        files = sorted(p.name for p in sub_path.iterdir() if p.is_file())
-        if not files:
-            continue
-        lines.append(f"- **{sub}/**")
-        for fname in files:
-            lines.append(f"  - {fname}")
-        any_content = True
-    if not any_content:
-        lines.append("(no resources)")
-    return "\n".join(lines) + "\n"
+    return tier == "federal" and configured
 
 
 # --- Internals -------------------------------------------------------------
@@ -216,18 +203,27 @@ def _check_required_fields(fm: dict[str, Any], result: SkillValidationResult) ->
         )
 
 
-def _check_required_sections(body: str, result: SkillValidationResult) -> None:
+def _check_recommended_sections(body: str, result: SkillValidationResult, *, strict: bool) -> None:
     found_sections = {header.strip() for header in _SECTION_RE.findall(body)}
     missing = [
         group[0] for group in REQUIRED_SECTION_GROUPS if not found_sections.intersection(group)
     ]
-    if missing:
+    if not missing:
+        return
+    if strict:
         result.errors.append(
             SkillValidationError(
                 code="missing_section",
                 detail=f"missing required sections: {missing}",
             )
         )
+        return
+    result.warnings.append(
+        SkillValidationWarning(
+            code="missing_section",
+            detail=f"missing recommended sections: {missing}",
+        )
+    )
 
 
 def _check_filler_sections(body: str, result: SkillValidationResult) -> None:
@@ -286,6 +282,6 @@ __all__ = [
     "SkillValidationError",
     "SkillValidationResult",
     "SkillValidationWarning",
-    "render_resources_section",
+    "strict_sections_for",
     "validate_skill_folder",
 ]

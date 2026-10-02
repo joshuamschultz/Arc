@@ -31,6 +31,7 @@ from arcokf import OKFValidationError, render_collection_index, validate
 from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import commented_module_surface
+from arccli.commands._serve import AgentAuditForwarder, build_skill_revision_anchor_factory
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import print_table as _print_table
 
@@ -690,6 +691,20 @@ def _load_arcagent(
     return arc_agent, config, config_path
 
 
+def load_cli_agent(agent_dir: Path) -> tuple[Any, Any, Path]:
+    """Load an ArcAgent for ``arc agent run/serve/chat`` (and ``arc mcp``).
+
+    Builds the deployment's skill revision anchor WITH an audit sink bound to the
+    agent it loads, so revision-anchor events reach that agent's audit chain.
+    """
+    audit = AgentAuditForwarder()
+    loaded = _load_arcagent(
+        agent_dir, skill_revision_anchor_factory=build_skill_revision_anchor_factory(audit)
+    )
+    audit.bind(loaded[0])
+    return loaded
+
+
 def _print_result_json(result: Any) -> None:
     """Serialize a ``RunResult`` (from ``collect``) to JSON and write to stdout."""
     data = {
@@ -728,5 +743,6 @@ __all__ = [
     "_resolve_agent_dir",
     "_scaffold_workspace",
     "asyncio",
+    "load_cli_agent",
     "render_agent_config",
 ]

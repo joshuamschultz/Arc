@@ -83,6 +83,4 @@ async def edit(
     except OSError:
         return f"Error: File could not be written safely: {file_path}"
     message = f"Replaced {replaced} occurrence(s) in {file_path}"
-    if _runtime.resign_if_previously_signed(resolved, encoded) is False:
-        message += _runtime.audit_unsigned_artifact(resolved, tool_name="edit")
-    return message
+    return message + _runtime.warn_if_signature_invalidated(resolved, tool_name="edit")

@@ -232,6 +232,24 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_integrity_spec081.py",
         "packages/arcagent/tests/security/capabilities/test_skill_script_runner_skillname_jail_spec081.py",
     ),
+    # J4 B3-B5: an operator-approved skill pack must cover what the model reads
+    # and runs. A reference or script changed after signing, re-signed with the
+    # agent key, reached by ../ or through a symlink, or swapped between the
+    # check and the run is refused; generic write/edit/bash never touch a bundle.
+    "skill-pack tamper, agent-key laundering and script swap (J4)": (
+        "packages/arcagent/tests/unit/capabilities/test_skill_files_j4.py",
+        "packages/arcagent/tests/unit/builtins/test_skill_file_tools_j4.py",
+        "packages/arcagent/tests/unit/tools/test_skill_tree_protection_j4.py",
+        "packages/arcagent/tests/unit/builtins/test_resign_on_mutation.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_import_archive_shapes_j4.py",
+        "packages/arcui/tests/test_trust_route.py",
+        "tests/journeys/test_j4_skill_packs.py",
+        # One signing authority: revisions (scripts included) and every improver
+        # write are operator-anchored; tamper/symlink/traversal refused per file.
+        "packages/arcagent/tests/unit/capabilities/test_skill_revision_chain_w0.py",
+        "packages/arcagent/tests/integration/test_improver_operator_revisions_w0.py",
+        "tests/journeys/test_j4_update_then_rollback.py",
+    ),
     "skill outcome bridge replay, cancellation and credential isolation": (
         "packages/arcagent/tests/integration/test_skill_tool_outcome_bridge.py",
         "packages/arcagent/tests/unit/modules/skills/test_sweep_and_args_wiring.py",

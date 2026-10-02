@@ -29,6 +29,8 @@ from arcskill.improver import ArcSkillImprover, ImproverConfig
 from arcskill.improver.config import SuiteConfig
 from arcskill.improver.models import BundleView, EvalCase, EvalOutcome
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 SEED_TEXT = """\
 ## SKILL INTENT [IMMUTABLE]
 Test skill intent.
@@ -228,6 +230,7 @@ async def test_lazy_trigger_generates_before_gate_decision(tmp_path: Path) -> No
         llm=_ImprovingLLM(),
         eval_runner=runner,
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
     await _use(imp, "s", times=2)
@@ -250,6 +253,7 @@ async def test_lazy_trigger_disabled_when_autogen_off(tmp_path: Path) -> None:
         tier="personal",
         llm=_ImprovingLLM(),
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
     await _use(imp, "s", times=2)
@@ -279,6 +283,7 @@ async def test_generation_and_optimization_serialize_for_one_skill(tmp_path: Pat
         tier="personal",
         llm=llm,
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
         max_concurrent=4,
     )
@@ -317,6 +322,7 @@ async def test_two_skills_are_not_serialized_against_each_other(tmp_path: Path) 
         tier="personal",
         llm=llm,
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda n: paths[n].parent),
         skill_path=lambda name: paths.get(name),
         max_concurrent=4,
     )
@@ -356,6 +362,7 @@ async def test_applied_prose_candidate_schedules_add_only_extension(tmp_path: Pa
         llm=_ImprovingLLM(),
         eval_runner=_OrderingRunner(events),
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
         reload=lambda: reloaded.append(True),
     )
@@ -383,6 +390,7 @@ async def test_sweep_generates_for_suiteless_skills_most_used_first(tmp_path: Pa
         config=_cfg(optimize_after_uses=100),
         tier="personal",
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda n: paths[n].parent),
         skill_path=lambda name: paths.get(name),
     )
     await _use(imp, "a", times=3)
@@ -404,6 +412,7 @@ async def test_sweep_early_exits_when_every_skill_has_a_suite(tmp_path: Path) ->
         config=_cfg(optimize_after_uses=100),
         tier="personal",
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda n: paths[n].parent),
         skill_path=lambda name: paths.get(name),
     )
     await _use(imp, "a", times=1)
@@ -427,6 +436,7 @@ async def test_sweep_does_not_double_claim_inflight_generation(tmp_path: Path) -
         tier="personal",
         llm=_ImprovingLLM(),
         suite_generator=gen,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
         max_concurrent=4,
     )

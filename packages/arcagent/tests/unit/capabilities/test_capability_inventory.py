@@ -45,11 +45,10 @@ _INVALID_SKILL = (
     "---\n"
     "name: {name}\n"
     "version: 1.0.0\n"
-    "description: broken {name}\n"
     "triggers: [{name}]\n"
     "tools: [reload]\n"
     "---\n"
-    "\nno required sections here\n"
+    "\nno description in the frontmatter\n"
 )
 
 _TOOL = (

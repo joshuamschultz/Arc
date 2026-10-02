@@ -118,6 +118,9 @@ async def bash(command: str, timeout: int = 120) -> str:
     host bash with the advisory goal-lock guard.
     """
     timeout_seconds = _validated_timeout(timeout)
+    # Every tier: bundled scripts run only through run_skill_script (signature
+    # verified at exec), and a signed skill is never rewritten by a shell (J4 B5).
+    _runtime.check_shell_skill_trees(command, tool_name="bash")
     if _runtime.tier() in ("enterprise", "federal"):
         return await _runtime.run_sandboxed_bash(command, timeout=timeout)
     _runtime.check_shell_command(command, tool_name="bash")

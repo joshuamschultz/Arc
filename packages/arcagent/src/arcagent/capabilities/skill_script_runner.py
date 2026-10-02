@@ -83,7 +83,7 @@ class SkillScriptRunner:
     def __post_init__(self) -> None:
         # Frozen dataclass: object.__setattr__ is the sanctioned way to set a
         # derived field once at construction.
-        object.__setattr__(self, "_skills_root", Path(self.capabilities_root) / "skills")
+        object.__setattr__(self, "_skills_root", Path(self.capabilities_root).resolve() / "skills")
 
     async def run(
         self,

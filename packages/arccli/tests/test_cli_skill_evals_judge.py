@@ -48,6 +48,7 @@ def _skill_with_judge_case(tmp_path: Path) -> Path:
             judge_model_id="anthropic:claude-haiku",
             rubric_sha256=rubric_digest(_RUBRIC),
         ),
+        writer=skill_evals._WorkingCopyWriter(skill_dir),
     )
     return skill_dir
 

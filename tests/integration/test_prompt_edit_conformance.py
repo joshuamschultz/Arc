@@ -621,8 +621,22 @@ async def _suitegen(h: Harness) -> None:
     skill_dir = h.agent.workspace / "skills" / "demo"
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text("---\nname: demo\n---\n# demo\nDo the thing.\n")
-    trigger = _improver(h)._suite_generator  # production-constructed _SuiteGeneratorTrigger
-    await trigger.generate(skill_name="demo", skill_dir=skill_dir, kind="create")
+    from arcskill.improver.codepatch import build_bundle_view
+    from arcskill.improver.suitegen import SuiteGenerator
+
+    # The improver builds its suite trigger only when an operator-anchored revision
+    # writer exists (adopted anchors are signed revisions). This harness agent has
+    # no revision anchor, so drive the production SuiteGenerator with the
+    # improver's own LLM seam and prompt source — the prompt path under test.
+    improver = _improver(h)
+    generator = SuiteGenerator(
+        llm=improver._llm,
+        runner=improver._eval_runner,
+        config=improver._config.suite,
+        prompt_source=improver._prompts,
+    )
+    view = build_bundle_view("demo", skill_dir / "SKILL.md")
+    await generator.generate("demo", view)
 
 
 async def _curated_judge(h: Harness) -> None:

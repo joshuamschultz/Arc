@@ -50,6 +50,7 @@ from arcagent.capabilities.capability_registry import (
     CapabilityRegistry,
     HookEntry,
     LifecycleEntry,
+    SkillEntry,
     ToolEntry,
 )
 from arcagent.capabilities.isolated_tool import (
@@ -247,11 +248,19 @@ ScanRoot = tuple[str, Path]
 
 
 class SkillArtifactResolver(Protocol):
-    """Optional revision authority for skill bundles outside the core loader."""
+    """Optional revision authority for skill bundles outside the core loader.
+
+    ``active_folder`` / ``read_verified_file`` are the bundle-file seam the
+    jailed skill file reader uses for an anchored skill (J4 B4/B5).
+    """
 
     def resolve(self, folder: Path, scan_root: str) -> Path | None: ...
 
     def read_current(self, folder: Path, path: Path) -> str | None: ...
+
+    def active_folder(self, folder: Path) -> Path | None: ...
+
+    def read_verified_file(self, folder: Path, relpath: str) -> bytes: ...
 
 
 class DirectSkillArtifactResolver:
@@ -262,6 +271,12 @@ class DirectSkillArtifactResolver:
 
     def read_current(self, folder: Path, path: Path) -> str | None:
         return None
+
+    def active_folder(self, folder: Path) -> Path | None:
+        return None
+
+    def read_verified_file(self, folder: Path, relpath: str) -> bytes:
+        raise ValueError("no revision authority is attached")
 
 
 class CapabilityLoader:
@@ -290,8 +305,13 @@ class CapabilityLoader:
         isolated_runner: IsolatedRunner | None = None,
         ignored_python_paths: frozenset[Path] = frozenset(),
         skill_artifact_resolver: SkillArtifactResolver | None = None,
+        strict_skill_sections: bool = False,
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
+        # Missing recommended Arc sections refuse a skill only when the operator
+        # opted in at federal (``strict_sections_for``); otherwise they warn —
+        # the same rule the import review applies (J4 B1).
+        self._strict_skill_sections = strict_skill_sections
         self._registry = registry
         self._bus = bus
         self._audit_sink = audit_sink
@@ -374,6 +394,14 @@ class CapabilityLoader:
         }
         return delta
 
+    def offered_skill(self, name: str) -> SkillEntry | None:
+        """The registered, offered (non-suppressed) skill named ``name``, if any.
+
+        The skill-file tools resolve a model-supplied NAME through this, never a
+        path, so they can only reach a bundle the loader verified and offers.
+        """
+        return next((e for e in self._registry.skill_entries() if e.name == name), None)
+
     async def reload(self) -> str:
         """Run :meth:`scan_and_register`; return R-005 diff string."""
         delta = await self.scan_and_register()
@@ -396,6 +424,7 @@ class CapabilityLoader:
             isolated_runner=self._isolated_runner,
             ignored_python_paths=self._ignored_python_paths,
             skill_artifact_resolver=self._skill_artifact_resolver,
+            strict_skill_sections=self._strict_skill_sections,
         )
         prior_tools = dict(self._known_tools)
         prior_skills = dict(self._known_skills)
@@ -841,7 +870,10 @@ class CapabilityLoader:
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
         validation = validate_skill_folder(
-            active_folder, root_name, verified_content=candidate_content
+            active_folder,
+            root_name,
+            verified_content=candidate_content,
+            strict_sections=self._strict_skill_sections,
         )
         if not validation.ok or validation.entry is None:
             detail = "; ".join(f"{e.code}: {e.detail}" for e in validation.errors)
@@ -860,7 +892,7 @@ class CapabilityLoader:
             )
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
-        entry = validation.entry
+        entry = replace(validation.entry, bundle_folder=folder)
         # COMP-003 anti-shadow guard (REQ-402): a SKILL.md is injected into the
         # agent prompt (LLM01/ASI06). A skill from a NON-TRUSTED root (UNTRUSTED
         # or VERIFIED) whose frontmatter name is already owned by a TRUSTED

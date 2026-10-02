@@ -165,6 +165,9 @@ class CapabilityImportService:
         skills = payload.get("skills")
         if not isinstance(tools, (list, tuple)) or not isinstance(skills, (list, tuple)):
             raise ValueError("review capabilities must be sequences")
+        findings = payload.get("findings", ())
+        if not isinstance(findings, (list, tuple)):
+            raise ValueError("review findings must be a sequence")
         normalized = {
             "import_id": payload.get("import_id"),
             "status": status,
@@ -174,6 +177,7 @@ class CapabilityImportService:
             "files": [item.__dict__ if hasattr(item, "__dict__") else item for item in files],
             "tools": list(tools),
             "skills": list(skills),
+            "findings": list(findings),
             "supplier_sbom_sha256": payload.get("supplier_sbom_sha256"),
             "supplier_metadata_keys": list(supplier),
             "activation": "review_only",

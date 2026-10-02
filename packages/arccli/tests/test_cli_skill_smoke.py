@@ -179,11 +179,21 @@ class TestSkillValidate:
         """arc skill validate fails when required frontmatter fields are missing."""
         skill_dir = tmp_path / "bad-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            '---\nname: bad\ndescription: "incomplete"\n---\n\n# bad\n'
-        )
+        (skill_dir / "SKILL.md").write_text("---\nname: bad\n---\n\n# bad\n")
         result = _arc("skill", "validate", str(skill_dir))
         assert result.returncode != 0
+        assert "missing_frontmatter_field" in result.stdout + result.stderr
+
+    def test_validate_frontmatter_only_skill_passes_with_warnings(self, tmp_path: Path) -> None:
+        """J4 B1: name + description are enough; missing Arc sections only warn."""
+        skill_dir = tmp_path / "pdf"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\nname: pdf\ndescription: "Work with PDFs"\n---\n\n# pdf\n'
+        )
+        result = _arc("skill", "validate", str(skill_dir))
+        assert result.returncode == 0, result.stderr
+        assert "[WARN] missing_section" in result.stdout
 
     def test_validate_nonexistent_fails(self) -> None:
         """arc skill validate fails on a nonexistent path."""

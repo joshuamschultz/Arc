@@ -329,6 +329,30 @@ def _skill_failures(skill_md: Path) -> str:
     return "; ".join(f"{e.code}: {e.detail}" for e in result.errors)
 
 
+def _sign_item(
+    kind: str,
+    path: Path,
+    approver: str,
+    signer: Signer,
+    config_path: Path,
+    audit_sink: Any,
+) -> int:
+    """Sign one capability; a skill is signed as its whole folder. Returns the file count."""
+    if kind == "skill":
+        signed = arcagent.sign_skill_folder(
+            path,
+            signer_did=approver,
+            signer=signer,
+            config_path=config_path,
+            audit_sink=audit_sink,
+        )
+        return len(signed)
+    arcagent.sign_capability(
+        path, signer_did=approver, signer=signer, config_path=config_path, audit_sink=audit_sink
+    )
+    return 1
+
+
 async def approve(request: Request) -> JSONResponse:
     """POST /api/trust/approve — sign a capability (operator).
 
@@ -358,7 +382,8 @@ async def approve(request: Request) -> JSONResponse:
     agent_root, label = resolved
 
     try:
-        signer = operator_signer_for_request(request)
+        # A vault/transit resolution can block; keep it off the event loop (J4 M1).
+        signer = await asyncio.to_thread(operator_signer_for_request, request)
     except (OSError, RuntimeError, ValueError) as exc:
         # ``SignerError`` (a RuntimeError) covers an unresolvable transit; OSError
         # a missing/unreadable key file. Both are "no authority here" — refuse
@@ -415,14 +440,26 @@ async def approve(request: Request) -> JSONResponse:
         # capability-level ``capability.signed`` record (REQ-323) lands beside
         # the HTTP-level mutation record below rather than opening a second one.
         # Signing (and a vault transit call) blocks; keep it off the event loop.
-        await asyncio.to_thread(
-            arcagent.sign_capability,
+        # A skill is approved as one pack: every file in its folder is signed
+        # and pinned, so references and scripts never keep a stale signature.
+        signed_files = await asyncio.to_thread(
+            _sign_item,
+            item.kind,
             Path(item.path),
-            signer_did=approver,
-            signer=signer,
-            config_path=agent_root / "arcagent.toml",
-            audit_sink=operator_audit_sink(request),
+            approver,
+            signer,
+            agent_root / "arcagent.toml",
+            operator_audit_sink(request),
         )
+    except arcagent.SkillPackError as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="trust.approve",
+            outcome="denied",
+            detail="unsafe skill pack",
+        )
+        return JSONResponse({"error": "skill_pack_unsafe", "detail": str(exc)}, status_code=422)
     except (OSError, ValueError) as exc:
         # A half-applied signing is a capability the operator believes is
         # trusted and is not — so it is audited, never silently 500'd.
@@ -446,7 +483,9 @@ async def approve(request: Request) -> JSONResponse:
         outcome="applied",
         detail="re-signed" if resigned else "signed",
     )
-    return JSONResponse({**_row(resolved_item), "resigned": resigned})
+    return JSONResponse(
+        {**_row(resolved_item), "resigned": resigned, "signed_files": signed_files}
+    )
 
 
 async def disapprove(request: Request) -> JSONResponse:

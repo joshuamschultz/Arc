@@ -75,8 +75,9 @@ async def test_load_fetches_skill_body_on_demand(tmp_path: Path) -> None:
         tier="personal",
         caller_did="did:arc:agent",
     )
-    body = await provider.load("deploy", caller_did="did:arc:agent")
-    assert body == "STEP 1: drain. STEP 2: ship."
+    document = await provider.load("deploy", caller_did="did:arc:agent")
+    assert document is not None
+    assert document.body == "STEP 1: drain. STEP 2: ship."
     assert await provider.load("nonexistent", caller_did="did:arc:agent") is None
 
 

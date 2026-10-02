@@ -295,13 +295,21 @@ async def test_failing_candidate_quarantined_as_improvement_target_never_written
     assert quarantined.nodeid.endswith("test_wrong_expectation")
     assert "improvement" in quarantined.reason.lower()
     assert view.skill_dir is not None
-    generated = view.skill_dir / "evals" / "test_golden_generated.py"
-    text = generated.read_text(encoding="utf-8")
+    # The generator writes nothing; it returns the files the writer commits.
+    assert not (view.skill_dir / "evals" / "test_golden_generated.py").exists()
+    text = result.files["evals/test_golden_generated.py"].decode("utf-8")
     assert "test_add_contract" in text
     assert "test_wrong_expectation" not in text
 
 
-# -- adoption write: marker + manifest provenance, add-only (REQ-102/109) --------
+# -- adoption files: marker + manifest provenance, add-only (REQ-102/109) --------
+
+
+def _commit(skill_dir: Path, files: dict[str, bytes]) -> None:
+    """What the operator-anchored writer does with the returned files (test double)."""
+    for relative, content in files.items():
+        (skill_dir / relative).parent.mkdir(parents=True, exist_ok=True)
+        (skill_dir / relative).write_bytes(content)
 
 
 @pytest.mark.asyncio
@@ -315,6 +323,7 @@ async def test_adoption_writes_generated_file_with_marker_and_manifest(
     result = await _generator(llm, _RecordingRunner(view), min_cases=3).generate("calc", view)
 
     assert view.skill_dir is not None
+    _commit(view.skill_dir, result.files)
     evals = view.skill_dir / "evals"
     generated = evals / "test_golden_generated.py"
     tree = ast.parse(generated.read_text(encoding="utf-8"))
@@ -341,7 +350,9 @@ async def test_existing_human_eval_files_untouched_add_only(tmp_path: Path) -> N
     names = ["test_a", "test_b", "test_c"]
     llm = _ScriptedLLM(_module(*[_candidate(n) for n in names]))
 
-    await _generator(llm, _RecordingRunner(view), min_cases=3).generate("calc", view)
+    result = await _generator(llm, _RecordingRunner(view), min_cases=3).generate("calc", view)
+    assert set(result.files) == {"evals/test_golden_generated.py", "evals/.manifest.json"}
+    _commit(view.skill_dir, result.files)
 
     assert human.read_text(encoding="utf-8") == human_body
     # add-only, atomic: exactly the human file, the generated file, and the manifest —

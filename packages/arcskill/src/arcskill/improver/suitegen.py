@@ -11,11 +11,13 @@ quarantine as improvement targets (REQ-103) and never enter the suite. Generatio
 at ``min_cases`` adopted anchors and never examines more than ``candidate_budget``
 candidates (LLM10).
 
-Adoption writes ``evals/test_golden_generated.py`` (module docstring carries the
-``@generated`` marker) plus the harness manifest entry in ``evals/.manifest.json`` —
-both atomically via temp-file + ``os.replace``, add-only beside human eval files, so
+Adoption returns ``evals/test_golden_generated.py`` (module docstring carries the
+``@generated`` marker) plus the harness manifest entry in ``evals/.manifest.json`` as
+:attr:`GenerationResult.files`, add-only beside human eval files, so
 :func:`~arcskill.improver.evalgate.load_suite` classifies the anchors machine-authored
-(REQ-109).
+(REQ-109). The generator writes nothing: the caller commits ``files`` as one
+operator-signed skill revision through the
+:class:`~arcskill.improver.seams.SkillRevisionWriter`.
 """
 
 from __future__ import annotations
@@ -23,9 +25,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import os
-import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +60,8 @@ class GenerationResult:
     adopted: list[EvalCase]
     quarantined: list[QuarantinedCase]
     discarded: int
+    #: Skill-root-relative files to commit for the adopted anchors (empty: none).
+    files: dict[str, bytes] = field(default_factory=dict)
 
 
 class SuiteGenerator:
@@ -100,9 +102,14 @@ class SuiteGenerator:
                 adopted_sources.append(candidate)
             else:
                 quarantined.append(QuarantinedCase(nodeid=nodeid, reason=reason))
-        if adopted and view.skill_dir is not None:
-            _write_adopted(view.skill_dir, adopted_sources)
-        return GenerationResult(adopted=adopted, quarantined=quarantined, discarded=discarded)
+        files = (
+            _adopted_files(view.skill_dir, adopted_sources)
+            if adopted and view.skill_dir is not None
+            else {}
+        )
+        return GenerationResult(
+            adopted=adopted, quarantined=quarantined, discarded=discarded, files=files
+        )
 
     def _prompt(self, skill_name: str, view: BundleView) -> str:
         return load_prompt("suitegen_prompt", self._prompts).format(
@@ -179,16 +186,16 @@ def _mutated(view: BundleView) -> BundleView:
     return replace(view, text=view.text + _MUTANT_POISON.decode("utf-8"))
 
 
-def _write_adopted(skill_dir: Path, sources: list[str]) -> None:
-    """Write the generated suite + manifest hash of the FINAL bytes, atomically, add-only."""
-    evals_dir = skill_dir / "evals"
-    evals_dir.mkdir(parents=True, exist_ok=True)
+def _adopted_files(skill_dir: Path, sources: list[str]) -> dict[str, bytes]:
+    """The generated suite + its manifest hash of the FINAL bytes, add-only."""
     body = "\n\n".join(source.rstrip("\n") for source in sources)
     content = f"{_GENERATED_DOCSTRING}\n\n{body}\n".encode()
-    _atomic_write(evals_dir / _GENERATED_NAME, content)
-    manifest = _read_manifest(evals_dir)
+    manifest = _read_manifest(skill_dir / "evals")
     manifest["files"][_GENERATED_NAME] = {"sha256": hashlib.sha256(content).hexdigest()}
-    _atomic_write(evals_dir / ".manifest.json", json.dumps(manifest, indent=2).encode("utf-8"))
+    return {
+        f"evals/{_GENERATED_NAME}": content,
+        "evals/.manifest.json": json.dumps(manifest, indent=2).encode("utf-8"),
+    }
 
 
 def _read_manifest(evals_dir: Path) -> dict[str, Any]:
@@ -200,20 +207,6 @@ def _read_manifest(evals_dir: Path) -> dict[str, Any]:
     if isinstance(raw, dict) and isinstance(raw.get("files"), dict):
         return raw
     return {"files": {}}
-
-
-def _atomic_write(target: Path, data: bytes) -> None:
-    """Temp-file + ``os.replace`` (lock.py pattern) so a crash never leaves a partial
-    file, and the temp never lingers beside human eval files."""
-    fd, tmp_path = tempfile.mkstemp(dir=target.parent, prefix=".suitegen-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp_path, target)
-    finally:
-        # After a successful replace the temp path is already gone; on any failure
-        # this removes the residue the add-only invariant forbids.
-        Path(tmp_path).unlink(missing_ok=True)
 
 
 __all__ = ["GenerationResult", "QuarantinedCase", "SuiteGenerator"]

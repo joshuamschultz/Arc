@@ -12,7 +12,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcskill.improver._util import atomic_write_text
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.evaluator import SkillEvaluator
@@ -25,7 +24,11 @@ from arcskill.improver.models import (
 )
 from arcskill.improver.mutate import SkillReflector
 from arcskill.improver.pareto import ParetoFrontier
-from arcskill.improver.seams import Signer
+from arcskill.improver.seams import (
+    SkillRevisionRefusedError,
+    SkillRevisionWriter,
+    SkillWriterUnavailableError,
+)
 
 _logger = logging.getLogger("arcskill.improver.engine")
 
@@ -41,17 +44,16 @@ class SkillOptimizer:
         guardrails: Guardrails,
         store: CandidateStore,
         *,
-        signer: Signer | None = None,
+        writer: SkillRevisionWriter | None = None,
     ) -> None:
         self._config = config
         self._evaluator = evaluator
         self._reflector = reflector
         self._guardrails = guardrails
         self._store = store
-        # SPEC-033 D3/REQ-021 — the injected agent-DID ``Signer`` seam signs the
-        # mutated skill on write so the hub re-verifies it on reload, identically
-        # to create_skill output. None → no signature (personal, relaxable).
-        self._signer = signer
+        # The one write path (W0-skill): an applied candidate becomes an
+        # operator-signed anchored revision. None → apply refuses (fail closed).
+        self._writer = writer
 
     def split_traces(
         self,
@@ -223,16 +225,29 @@ class SkillOptimizer:
         skill_path: Path,
         seed_scores: dict[str, float],
         trace_ids: list[str],
-    ) -> None:
-        """Apply optimization result: write file, save candidate, audit log."""
+    ) -> str:
+        """Commit the candidate as a new skill revision, save it, and audit-log it.
+
+        Returns the revision digest. Raises :class:`SkillWriterUnavailableError` when no
+        writer is wired and :class:`SkillRevisionRefusedError` when the writer refuses;
+        nothing is activated in either case.
+        """
+        if self._writer is None:
+            raise SkillWriterUnavailableError("no operator-anchored revision writer is wired")
         # Read current text for audit
         previous_text = skill_path.read_text(encoding="utf-8") if skill_path.exists() else ""
         previous_hash = Candidate(id="", text=previous_text).fingerprint
 
-        # Atomic write to skill file, then sign the mutation (SPEC-033 D3).
-        atomic_write_text(skill_path, candidate.text)
-        if self._signer is not None:
-            self._signer.sign(skill_path, candidate.text.encode("utf-8"))
+        try:
+            revision = self._writer.commit(
+                skill_name,
+                {"SKILL.md": candidate.text.encode("utf-8")},
+                reason=(
+                    f"improver prose candidate {candidate.id} (generation {candidate.generation})"
+                ),
+            )
+        except ValueError as exc:
+            raise SkillRevisionRefusedError(str(exc)) from exc
 
         # Save candidate to store
         self._store.save(skill_name, candidate, active=True, frontier=True)
@@ -261,3 +276,4 @@ class SkillOptimizer:
             candidate.generation,
             improvement,
         )
+        return revision

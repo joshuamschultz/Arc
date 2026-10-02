@@ -77,6 +77,10 @@ class SkillEntry:
     scan_root: str
     model_hint: str | None = None
     read_current: Callable[[], str | None] | None = None
+    #: The installed skill folder the loader registered (``<root>/skills/<name>``).
+    #: For an anchored skill ``location`` is inside the active revision instead;
+    #: the bundle file verifier needs the installed folder to ask the authority.
+    bundle_folder: Path | None = None
 
 
 @dataclass(frozen=True)

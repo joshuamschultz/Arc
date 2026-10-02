@@ -102,6 +102,7 @@ from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfi
 
 if TYPE_CHECKING:
     from arcagent.capabilities.capability_loader import SkillArtifactResolver
+    from arcagent.capabilities.skill_files import SkillFiles
     from arcagent.core.tool_policy import PolicyPipeline
 
 
@@ -283,6 +284,8 @@ class ArcAgent:
         self._require_durable_runs = require_durable_runs
         self._queue_owner_epoch = queue_owner_epoch or uuid.uuid4().hex
         self._skill_artifact_resolver = skill_artifact_resolver
+        # Verified, jailed reader of skill bundle files; built with the loader (J4 B4).
+        self._skill_files: SkillFiles | None = None
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
         # exists only while it executes; a teammate message arriving mid-run is
         # injected into it (steer/follow_up) instead of starting a new one.

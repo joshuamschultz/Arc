@@ -40,6 +40,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -236,6 +237,24 @@ def _suite_count_after(evals_dir: Path, target: Path, target_after: int) -> int:
     return total
 
 
+class _WorkingCopyWriter:
+    """Lay committed files into the operator's working copy of a skill folder.
+
+    Unsigned operator authoring: nothing here signs, and the files load only after
+    the operator signs the folder (``arc trust``) or imports it as a reviewed pack.
+    """
+
+    def __init__(self, skill_dir: Path) -> None:
+        self._skill_dir = skill_dir
+
+    def commit(self, skill_name: str, files: Mapping[str, bytes], *, reason: str) -> str:
+        for relative, content in files.items():
+            target = self._skill_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _commit(target, content)
+        return ""
+
+
 def _commit(target: Path, edited: bytes) -> None:
     """Atomic write: temp file beside the target + os.replace, no residue."""
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".arc-commit-")
@@ -294,10 +313,17 @@ def _promote(skill_dir: Path, spec_path: Path) -> None:
     except (ValueError, OSError) as exc:
         err(f"Error: invalid curation spec: {exc}")
         sys.exit(1)
+    if ".skill-revisions" in skill_dir.resolve().parts:
+        err(
+            "Error: an active skill revision is immutable and operator-signed; promote the "
+            "golden through arcui (Skills > Evals > Promote), which commits a new revision."
+        )
+        sys.exit(1)
     try:
-        # Same operation the arcui "promote to golden" surface wraps. The CLI path is
-        # personal-tier (no agent signer in scope); federal signing rides the agent.
-        emitted = emit_golden_case(skill_dir, case)
+        # Same operation the arcui "promote to golden" surface wraps. Here the operator
+        # authors into their own working copy of a skill folder; arcui commits the same
+        # files as an operator-signed anchored revision instead.
+        emitted = emit_golden_case(skill_dir, case, writer=_WorkingCopyWriter(skill_dir))
     except CurationError as exc:
         err(f"Error: {exc}")
         sys.exit(1)

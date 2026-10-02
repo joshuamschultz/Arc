@@ -1,22 +1,22 @@
 """SPEC-044 Phase 7 — audit authority split + reversibility (AC-6, REQ-050/052).
 
-AC-6: an applied code mutation is signed two ways by two authorities — the bundle
-sidecar by the AGENT DID (provenance), the WORM audit chain by the OPERATOR key
-(who-did-what). The keys are distinct and each attestation verifies ONLY under its own
-authority. Plus: rollback cools off + emits an operator audit; the eval/patch paths
+AC-6 (W0-skill, one signing authority): an applied code mutation is committed through
+the operator-anchored revision writer (the improver holds no signer and writes no
+sidecar), and the WORM audit chain is signed by the OPERATOR key (who-did-what), never
+the agent's. Plus: rollback cools off + emits an operator audit; the eval/patch paths
 never touch operator/.audit locations.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from arcskill.improver import ArcSkillImprover, ImproverConfig
 from arcskill.improver.codepatch import apply_bundle_patch
 from arcskill.improver.models import BundlePatch, BundleView, Candidate, EvalCase, EvalOutcome
-from arctrust import OperatorKey, WormSink, sign_artifact, verify_chain
-from arctrust.artifact import ArtifactSignature
+from arctrust import OperatorKey, WormSink, verify_chain
 from arctrust.identity import AgentIdentity
 
 _BUGGY = b"def add(a, b):\n    return a - b\n"
@@ -34,15 +34,6 @@ class _Runner:
         return [EvalOutcome(case_id=c.id, passed=fixed) for c in cases]
 
 
-class _AgentSigner:
-    def __init__(self, did: str, key: bytes) -> None:
-        self._did, self._key = did, key
-
-    def sign(self, path: Path, content: bytes) -> None:
-        manifest = sign_artifact(content, signer_did=self._did, private_key=self._key)
-        path.with_name(path.name + ".arcsig").write_text(manifest.to_json(), encoding="utf-8")
-
-
 async def _auto_approve(action: str, skill_name: str, detail: str) -> bool:
     return True
 
@@ -58,12 +49,15 @@ def _skill(root: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_ac6_operator_audit_vs_agent_did_artifact(tmp_path: Path) -> None:
+async def test_ac6_operator_audit_and_writer_only_artifact(
+    tmp_path: Path, dir_writer: Any
+) -> None:
     skill_md = _skill(tmp_path)
     agent = AgentIdentity.generate(org="arc", agent_type="exec")
     operator = OperatorKey.generate()
     assert operator.public_key != agent.public_key
 
+    writer = dir_writer(lambda _name: tmp_path / "committed")
     chain = tmp_path / ".audit" / "skills.worm"
     sink = WormSink(chain, operator.into_signer())
     imp = ArcSkillImprover(
@@ -74,7 +68,7 @@ async def test_ac6_operator_audit_vs_agent_did_artifact(tmp_path: Path) -> None:
         tier="enterprise",
         mutator=_FixMutator(),
         eval_runner=_Runner(),
-        signer=_AgentSigner(agent.did, agent.signing_seed),
+        writer=writer,
         approval_provider=_auto_approve,  # enterprise code mutation requires approval (D-10)
         audit_sink=sink,
         agent_did=agent.did,
@@ -86,10 +80,12 @@ async def test_ac6_operator_audit_vs_agent_did_artifact(tmp_path: Path) -> None:
     await imp.aclose()
     sink.close()
 
-    # Artifact sidecar → AGENT DID.
-    sidecar = skill_md.parent / "scripts" / "calc.py.arcsig"
-    manifest = ArtifactSignature.from_json(sidecar.read_text(encoding="utf-8"))
-    assert manifest.signer_did == agent.did
+    # The patch reached the skill only through the writer; the improver signed nothing.
+    assert [(name, files) for name, files, _ in writer.commits] == [
+        ("s", {"scripts/calc.py": _FIXED})
+    ]
+    assert (skill_md.parent / "scripts" / "calc.py").read_bytes() == _BUGGY
+    assert not list(tmp_path.rglob("*.arcsig"))
 
     # Audit chain → OPERATOR key only. The audited subject cannot forge its own trail.
     assert verify_chain(chain, operator.public_key) is True
@@ -120,11 +116,11 @@ def test_rollback_cools_off_and_audits(tmp_path: Path) -> None:
     assert rolled and getattr(rolled[0], "tier", None) == "federal"
 
 
-def test_patch_write_confined_to_skill_bundle(tmp_path: Path) -> None:
+def test_patch_write_confined_to_skill_bundle(tmp_path: Path, dir_writer: Any) -> None:
     """A traversal path in a patch is rejected — no write outside the skill bundle (T7.3)."""
-    skill_dir = tmp_path / "s"
-    skill_dir.mkdir()
+    writer = dir_writer(lambda _name: tmp_path / "s")
     patch = BundlePatch(files={"../../.audit/forged.worm": b"evil\n"})
     with pytest.raises(ValueError, match="escape"):
-        apply_bundle_patch(skill_dir, patch, signer=None)
+        apply_bundle_patch("s", patch, writer=writer)
+    assert writer.commits == []
     assert not (tmp_path / ".audit").exists()

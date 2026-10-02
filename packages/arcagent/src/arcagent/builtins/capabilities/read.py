@@ -30,6 +30,8 @@ async def read(file_path: str, offset: int = 1, limit: int = 0) -> str:
     failure to the LLM without bubbling exceptions.
     """
     resolved = _runtime.resolve_workspace_path(file_path, tool_name="read")
+    # Skill bundles are read only through read_skill_file, which verifies (J4 B5).
+    _runtime.check_outside_skill_trees(resolved, file_path, tool_name="read")
     try:
         data, _identity = read_regular_file(
             resolved, _runtime.authorized_roots(), max_bytes=_MAX_FILE_SIZE

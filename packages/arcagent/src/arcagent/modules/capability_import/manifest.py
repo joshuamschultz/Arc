@@ -27,12 +27,19 @@ def build_manifest(
     archive_sha256: str,
     limits: CapabilityImportLimits,
     reserved_skill_names: frozenset[str] = frozenset(),
+    strict_sections: bool = False,
 ) -> CapabilityImportManifest:
-    """Validate staged bytes without execution and return their review manifest."""
+    """Validate staged bytes without execution and return their review manifest.
+
+    Only frontmatter ``name`` + ``description`` are required of a skill; each
+    validator warning (e.g. a missing recommended Arc section) becomes a review
+    finding so the operator sees it before promote. ``strict_sections`` (federal
+    opt-in) refuses those instead. Every refusal names the file and the rule.
+    """
     files = _files(staging_dir)
     tools = _validate_tools(staging_dir)
-    skills = _validate_skills(staging_dir)
-    findings = _collision_findings(skills, reserved_skill_names)
+    skills, warnings = _validate_skills(staging_dir, strict_sections=strict_sections)
+    findings = _collision_findings(skills, reserved_skill_names) + warnings
     metadata = _supplier_metadata(staging_dir)
     supplier_sbom = _supplier_sbom_digest(staging_dir)
     payload = _payload(
@@ -153,23 +160,33 @@ def _validate_tools(staging_dir: Path) -> tuple[str, ...]:
     root = staging_dir / "tools"
     paths = sorted(root.glob("*.py")) if root.is_dir() else []
     for path in paths:
+        relative = path.relative_to(staging_dir).as_posix()
         try:
             validator.validate(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            raise CapabilityImportLayoutError("tool failed static validation") from exc
+            raise CapabilityImportLayoutError(
+                f"tool failed static validation: {relative}: {exc}"
+            ) from exc
         names.append(path.stem)
     return tuple(names)
 
 
-def _validate_skills(staging_dir: Path) -> tuple[str, ...]:
+def _validate_skills(
+    staging_dir: Path, *, strict_sections: bool
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return staged skill names plus their warnings as ``code: file: detail`` findings."""
     root = staging_dir / "skills"
     names: list[str] = []
+    findings: list[str] = []
     for folder in sorted(root.iterdir()) if root.is_dir() else []:
-        result = validate_skill_folder(folder, "import")
+        skill_md = (folder / "SKILL.md").relative_to(staging_dir).as_posix()
+        result = validate_skill_folder(folder, "import", strict_sections=strict_sections)
         if not result.ok or result.entry is None:
-            raise CapabilityImportLayoutError("skill failed validation")
+            reasons = "; ".join(f"{error.code}: {error.detail}" for error in result.errors)
+            raise CapabilityImportLayoutError(f"skill failed validation: {skill_md}: {reasons}")
         names.append(result.entry.name)
-    return tuple(names)
+        findings.extend(f"{w.code}: {skill_md}: {w.detail}" for w in result.warnings)
+    return tuple(names), tuple(findings)
 
 
 def _collision_findings(

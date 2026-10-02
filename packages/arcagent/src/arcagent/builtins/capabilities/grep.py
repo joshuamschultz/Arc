@@ -12,6 +12,7 @@ import stat as stat_module
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
+from arcagent.tools._validation import protected_tree_containing
 
 _MAX_FILE_SIZE = 5 * 1024 * 1024
 _BINARY_CHECK_SIZE = 8192
@@ -56,8 +57,13 @@ async def grep(
     else:
         file_iter = search_root.rglob("*")
 
+    # Signed skill bundles are read only through read_skill_file, which
+    # verifies; grep never returns their unverified lines (J4 B5).
+    skill_trees = _runtime.protected_trees()
     matches: list[str] = []
     for file_path in file_iter:
+        if protected_tree_containing(file_path, skill_trees) is not None:
+            continue
         try:
             st = file_path.stat()
         except OSError:

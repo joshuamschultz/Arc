@@ -23,9 +23,9 @@ import difflib
 import hashlib
 from functools import lru_cache
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
+import arcagent
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.evalgate import load_suite
 from arctrust.policy import OperatorApprovalAuthority
@@ -220,32 +220,18 @@ async def post_skill_promote_golden(request: Request) -> JSONResponse:
         operator_did = OperatorApprovalAuthority(signer).did
 
         def stage_and_activate() -> str:
-            current = resolver.read_bundle(folder)
-            with TemporaryDirectory() as temp:
-                stage = Path(temp)
-                for relative, data in current.items():
-                    if relative in {"manifest.json", "manifest.json.arcsig"}:
-                        continue
-                    target_path = stage / relative
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    target_path.write_bytes(data)
-                emitted = emit_golden_case(stage, case)
-                updates = {
-                    path.relative_to(stage).as_posix(): path.read_bytes()
-                    for path in (stage / "evals").rglob("*")
-                    if path.is_file()
-                    and not path.name.endswith(".arcsig")
-                    and current.get(path.relative_to(stage).as_posix()) != path.read_bytes()
-                }
-                resolver.revise(
-                    folder,
-                    current["SKILL.md"],
-                    expected_sha256=hashlib.sha256(current["SKILL.md"]).hexdigest(),
-                    signer=signer,
-                    operator_did=operator_did,
-                    resource_updates=updates,
-                )
-                return emitted.nodeid
+            # The same operator-anchored write path the improver commits through.
+            writer = arcagent.OperatorSkillRevisionWriter(
+                authority=lambda: resolver,
+                signer=signer,
+                operator_did=operator_did,
+                folder_of=lambda _name: folder,
+            )
+            active = resolver.active_folder(folder)
+            if active is None:
+                raise RuntimeError("skill has no active revision")
+            emitted = emit_golden_case(active, case, writer=writer)
+            return emitted.nodeid
 
         nodeid = await asyncio.to_thread(stage_and_activate)
         await live_agent.reload_or_raise()

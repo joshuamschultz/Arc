@@ -39,8 +39,8 @@ _VALID_SKILL = (
 )
 
 _INVALID_SKILL = (
-    "---\nname: {name}\nversion: 1.0.0\ndescription: broken\n"
-    "triggers: [{name}]\ntools: [reload]\n---\n\nno sections\n"
+    "---\nname: {name}\nversion: 1.0.0\n"
+    "triggers: [{name}]\ntools: [reload]\n---\n\nno description\n"
 )
 
 
