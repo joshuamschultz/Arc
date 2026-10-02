@@ -21,10 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.modules.connectors.install import connector_env_file
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
-from arctrust.paths import arc_team, extensions_dir
+from arctrust.paths import arc_team
+from packages.arcui.tests.credential_custody import new_backend, raw_custody_rows
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -87,13 +87,13 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 class AcmeFieldsAttachment:
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context["credential"]
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        if not await self._credential.maybe_field("api_token"):
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(reachable=True, tools=await self.describe_tools(), detail="ok")
 
@@ -113,7 +113,7 @@ def build_native_attachment(context: dict[str, Any]) -> AcmeFieldsAttachment:
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundle_root"))
     return tmp_path
 
 
@@ -127,11 +127,7 @@ def _arc_dir(world: Path) -> Path:
 
 
 def _bundles(world: Path) -> Path:
-    return extensions_dir(_arc_dir(world))
-
-
-def _env_file(world: Path) -> Path:
-    return connector_env_file(_arc_dir(world))
+    return world / "bundle_root"
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
@@ -153,6 +149,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
     app = Starlette(routes=connector_routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
+    app.state.arcstore_backend = new_backend()
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
@@ -321,7 +318,9 @@ def test_a_plaintext_address_is_refused_in_words_the_operator_can_act_on(world: 
     assert "base_url" in error
     assert "https://" in error
     assert "Request URL" not in error, "that phrasing is httpx's, not ours"
-    assert not _env_file(world).exists(), "a refused install must write nothing"
+    assert raw_custody_rows(client.app.state.arcstore_backend) == "[]", (
+        "a refused install must write nothing"
+    )
 
 
 def test_rotating_the_token_does_not_have_to_retype_the_address(world: Path) -> None:
