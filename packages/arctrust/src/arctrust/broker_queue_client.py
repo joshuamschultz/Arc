@@ -247,38 +247,42 @@ class QueueBrokerAnchor:
                 field: value,
             }
             payload = canonical_json(body)
-            sequence = self._lease.next_sequence
-            operation = self._operation(
-                f"record.{action}", "POST", path, hashlib.sha256(payload).hexdigest(), sequence
-            )
-            try:
-                status, raw = self._request(
-                    "POST",
-                    path,
-                    content=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Arc-Machine-Operation": operation,
-                    },
-                    response_limit=1_500_000,
+            for attempt in range(2):
+                sequence = self._lease.next_sequence
+                operation = self._operation(
+                    f"record.{action}", "POST", path, hashlib.sha256(payload).hexdigest(), sequence
                 )
-            except httpx.HTTPError as exc:
-                raise QueueBrokerError("queue record outcome uncertain") from exc
-            if status != 200:
-                raise QueueBrokerError("queue record refused or uncertain")
-            try:
-                parsed = json.loads(raw)
-                result = (
-                    _SealedRecord.model_validate(parsed)
-                    if action == "seal"
-                    else _OpenedRecord.model_validate(parsed)
-                )
-            except (ValidationError, ValueError, TypeError) as exc:
-                raise QueueBrokerError("queue record response invalid") from exc
-            self._accept_lease(result.lease)
-            if self._lease.next_sequence != sequence + 1:
-                raise QueueBrokerError("queue record sequence did not advance")
-            return result.model_dump(mode="json")
+                try:
+                    status, raw = self._request(
+                        "POST",
+                        path,
+                        content=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Arc-Machine-Operation": operation,
+                        },
+                        response_limit=1_500_000,
+                    )
+                except httpx.HTTPError:
+                    status, raw = 503, b""
+                if status == 200:
+                    try:
+                        parsed = json.loads(raw)
+                        result = (
+                            _SealedRecord.model_validate(parsed)
+                            if action == "seal"
+                            else _OpenedRecord.model_validate(parsed)
+                        )
+                    except (ValidationError, ValueError, TypeError) as exc:
+                        raise QueueBrokerError("queue record response invalid") from exc
+                    self._accept_lease(result.lease)
+                    if self._lease.next_sequence != sequence + 1:
+                        raise QueueBrokerError("queue record sequence did not advance")
+                    return result.model_dump(mode="json")
+                if status not in {409, 503} or attempt:
+                    raise QueueBrokerError("queue record refused or uncertain")
+                self._read_head()
+            raise QueueBrokerError("queue record outcome uncertain")
 
     def seal_record(self, payload: bytes) -> str:
         """Seal bounded bytes under the same lease sequence as queue root CAS."""
