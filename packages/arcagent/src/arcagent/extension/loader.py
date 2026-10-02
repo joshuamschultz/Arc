@@ -211,10 +211,14 @@ class ExtensionLoader:
         ]
         if not unverified:
             return
-        if required:
+        # A bundle somebody signed is signed as a whole. At personal tier a bundle
+        # that was NEVER signed still loads on an audited warning, but one that
+        # carries any signature and then fails to verify — a byte edited, a file
+        # added — has been tampered with, and no tier loads that.
+        if required or _carries_signature(bundle):
             self._refuse(
                 name,
-                reason="unsigned",
+                reason="unsigned" if required else "tampered",
                 message=f"{len(unverified)} file(s) in {name!r} are unsigned or fail verification",
             )
         self._audit("extension.unverified", name, "allow", reason="unsigned")
@@ -312,6 +316,11 @@ class ExtensionLoader:
             ),
             self._sink,
         )
+
+
+def _carries_signature(bundle: Path) -> bool:
+    """Whether any file in the bundle has a signature sidecar."""
+    return any(bundle.rglob(f"*{artifact_signing.SIDECAR_SUFFIX}"))
 
 
 def _signable_files(bundle: Path) -> list[Path]:

@@ -1235,6 +1235,51 @@ export interface ConnectorInstallResponse {
   agents: string[]
 }
 
+/** One tool an MCP server advertised. The description is the server's own, untrusted text. */
+export interface McpToolView {
+  name: string
+  description: string
+  usable: boolean
+  reason: string
+}
+
+/** What an MCP server offers (`POST /api/mcp-servers/preview`). Nothing was written. */
+export interface McpPreviewResponse {
+  tools: McpToolView[]
+  suggested_tags: string[]
+}
+
+/** The operator's choice for one tool they are exposing. */
+export interface McpToolChoice {
+  classification: 'read_only' | 'state_modifying'
+  capability_tags: string[]
+  description?: string
+}
+
+/** How to reach an MCP server. Secrets are values typed here, never echoed back. */
+export interface McpServerForm {
+  name: string
+  display?: string
+  description?: string
+  transport: 'http' | 'stdio'
+  url?: string
+  auth_header?: string
+  auth_scheme?: string
+  argv?: string[]
+  env_refs?: Record<string, string>
+  secrets: Record<string, string>
+}
+
+/** `POST /api/mcp-servers` result: names and a digest, never a credential. */
+export interface McpServerAddedResponse {
+  instance: string
+  extension: string
+  tools: string[]
+  detail: string
+  agents: string[]
+  spec_sha256: string
+}
+
 /** Rotation result — field names only, never values. */
 /** How one connected instance is authorised. `credentials` is the same field list
  *  the catalog carries, except that a non-sensitive field arrives with the value

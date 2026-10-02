@@ -2394,16 +2394,6 @@
         "description": "Model identifier allowed for this named route; the default model remains configured separately."
       },
       {
-        "key": "settings.arcagent.tools.mcp_servers.*.command",
-        "label": "MCP command",
-        "description": "Executable used to start this named MCP server. Review its provenance and operator authorization before changing it."
-      },
-      {
-        "key": "settings.arcagent.tools.mcp_servers.*.timeout_seconds",
-        "label": "MCP timeout",
-        "description": "Maximum wait for this named MCP server operation, in seconds."
-      },
-      {
         "key": "settings.arcagent.tools.http.*.url",
         "label": "HTTP tool URL",
         "description": "Endpoint called by this named HTTP tool. Restrict destinations through the egress policy."

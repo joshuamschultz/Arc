@@ -157,3 +157,20 @@ describe('ConnectionCard health row', () => {
     expect(await within(card).findByText(/Google stopped accepting the saved sign-in/)).toBeTruthy()
   })
 })
+
+describe('Add MCP server', () => {
+  it('puts the button in the page header, not on a card, for an operator', async () => {
+    const { card } = await renderCard([row()])
+    const button = screen.getByRole('button', { name: /Add MCP server/ })
+    expect(card.contains(button)).toBe(false)
+    await userEvent.click(button)
+    expect(await screen.findByLabelText('Server URL')).toBeTruthy()
+  })
+
+  it('is absent without operator controls', async () => {
+    stubApi([row()])
+    wrap(<ConnectionsPage />)
+    await screen.findByText('gmail-olivia', { selector: '[data-connection-card] span' })
+    expect(screen.queryByRole('button', { name: /Add MCP server/ })).toBeNull()
+  })
+})

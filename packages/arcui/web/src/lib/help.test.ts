@@ -33,7 +33,7 @@ describe('configuration field help', () => {
 
   it.each([
     ['arcllm', ['providers', 'openai', 'provider', 'base_url'], 'settings.arcllm.providers.*.provider.base_url'],
-    ['arcagent', ['tools', 'mcp_servers', 'lookup', 'command'], 'settings.arcagent.tools.mcp_servers.*.command'],
+    ['arcagent', ['tools', 'http', 'lookup', 'url'], 'settings.arcagent.tools.http.*.url'],
     ['arcagent', ['modules', 'memory', 'enabled'], 'settings.arcagent.modules.*.enabled'],
     ['arcllm', ['providers', 'openai', 'models', 'gpt-5', 'context_window'], 'settings.arcllm.providers.*.models.*.context_window'],
   ])('matches named entries for %s path %j', (file, path, key) => {
@@ -49,7 +49,7 @@ describe('configuration field help', () => {
     expect(configHelpKey('arcllm', ['unrelated', 'llm', 'model'])).toBe('settings.config_value')
     expect(configHelpKey('arcllm', ['providers', 'one', 'nested', 'provider', 'base_url']))
       .toBe('settings.unknown_extension_field')
-    expect(configHelpKey('arcagent', ['tools', 'mcp_servers', 'one', 'nested', 'command']))
+    expect(configHelpKey('arcagent', ['tools', 'http', 'one', 'nested', 'url']))
       .toBe('settings.config_value')
   })
 

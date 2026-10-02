@@ -125,7 +125,7 @@ class TestRegisteredTool:
 
     def test_tool_transport_enum(self) -> None:
         assert ToolTransport.NATIVE.value == "native"
-        assert ToolTransport.MCP.value == "mcp"
+        assert not hasattr(ToolTransport, "MCP")
         assert ToolTransport.HTTP.value == "http"
         assert ToolTransport.PROCESS.value == "process"
 

@@ -94,16 +94,16 @@ it('shows authored help for named entries in read and guided modes', async () =>
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
         <ConfigSection endpoint="/api/agents/example/config/arcagent" queryKey={['config']} sectionKey="tools" file="arcagent"
-          value={{ mcp_servers: { lookup: { command: 'lookup' } } }} editable />
+          value={{ http: { lookup: { url: 'https://lookup.example/' } } }} editable />
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  await userEvent.click(screen.getByRole('button', { name: 'Help for MCP command' }))
-  expect(screen.getByText(/Executable used to start this named MCP server/)).toBeTruthy()
+  await userEvent.click(screen.getByRole('button', { name: 'Help for HTTP tool URL' }))
+  expect(screen.getByText(/Endpoint called by this named HTTP tool/)).toBeTruthy()
   await userEvent.keyboard('{Escape}')
   await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
-  await userEvent.click(screen.getByRole('button', { name: 'Help for MCP command' }))
-  expect(screen.getByText(/Executable used to start this named MCP server/)).toBeTruthy()
+  await userEvent.click(screen.getByRole('button', { name: 'Help for HTTP tool URL' }))
+  expect(screen.getByText(/Endpoint called by this named HTTP tool/)).toBeTruthy()
 })
 
 it('shows authored help on a top-level ArcRun scalar section', async () => {

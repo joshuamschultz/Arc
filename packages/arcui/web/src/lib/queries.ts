@@ -9,6 +9,10 @@ import type {
   ConnectorSignInStartResponse,
   ConnectorAuthorizationResponse,
   ConnectorCatalogResponse,
+  McpPreviewResponse,
+  McpServerAddedResponse,
+  McpServerForm,
+  McpToolChoice,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
   ConnectorMutationResponse,
@@ -1640,6 +1644,26 @@ export const useInstallConnector = () => {
     }
   >({
     mutationFn: (body) => apiPost('/api/connections', body),
+    onSuccess: invalidate,
+  })
+}
+
+// Ask an MCP server what it offers. Writes nothing; the secrets ride in the request and
+// are dropped by the route, so the response and the cache never hold one.
+export const usePreviewMcpServer = () =>
+  useMutation<McpPreviewResponse, Error, McpServerForm>({
+    mutationFn: (body) => apiPost('/api/mcp-servers/preview', body),
+  })
+
+// Generate, sign, install and grant an operator's MCP server.
+export const useAddMcpServer = () => {
+  const invalidate = useGrantInvalidator()
+  return useMutation<
+    McpServerAddedResponse,
+    Error,
+    McpServerForm & { tools: Record<string, McpToolChoice>; agents: string[] }
+  >({
+    mutationFn: (body) => apiPost('/api/mcp-servers', body),
     onSuccess: invalidate,
   })
 }
