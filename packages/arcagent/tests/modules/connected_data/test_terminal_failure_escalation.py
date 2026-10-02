@@ -236,16 +236,17 @@ async def test_a_dead_credential_is_rechecked_and_resumes_once_it_works_again() 
     )
 
 
-def test_a_recheck_that_fails_again_backs_off_again_without_a_second_notice() -> None:
+def test_a_recheck_that_fails_again_backs_off_again() -> None:
+    """The tracker only backs off; telling the operator is the health record's job."""
     from arcagent.modules.connected_data.health import ConnectionHealthTracker
 
     now = [0.0]
     tracker = ConnectionHealthTracker(recheck_after=60.0, clock=lambda: now[0])
-    assert tracker.note_terminal_failure("mail") is True
+    tracker.note_terminal_failure("mail")
     assert tracker.is_backed_off("mail")
     now[0] = 61.0
     assert not tracker.is_backed_off("mail"), "the recheck window passed"
-    assert tracker.note_terminal_failure("mail") is False, "one notice per outage"
+    tracker.note_terminal_failure("mail")
     assert tracker.is_backed_off("mail")
     tracker.clear("mail")
     assert not tracker.is_backed_off("mail")

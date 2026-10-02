@@ -410,28 +410,45 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     _logger.info("Bound agent run/deliver callbacks for message processing")
 
 
-@hook(event="connected_data:operator_attention", priority=100)
-async def deliver_connection_attention(ctx: Any) -> None:
-    """Tell the operator a connected source needs them, on the channel they last used.
+#: How many delivered notice keys one agent remembers to refuse a redelivery.
+_NOTICE_KEY_LIMIT = 256
 
-    Answers the connected-data module's event: a dead credential has no turn to
-    report itself in. Sets ``delivered`` only when a channel actually took the
-    notice, so the audit trail never claims an operator was told when nobody was.
+
+@hook(event="agent:operator_notice", priority=100)
+async def deliver_operator_notice(ctx: Any) -> None:
+    """Put one operator notice on the channel the operator last used.
+
+    The delivery half of :meth:`ArcAgent.notify_operator`. The text arrives
+    complete and is sent verbatim: the sender owns the wording, this hook owns the
+    channel. ``delivered`` and ``channel`` are set only when a channel actually
+    took it, so no audit row can claim an operator was told when nobody was. A key
+    this agent already delivered is answered as delivered without sending again.
     """
     st = _runtime.state()
-    target = _notify_target(st)
-    if not target:
+    key = str(ctx.data.get("idempotency_key", ""))
+    seen = st.delivered_notice_keys
+    if key and key in seen:
+        ctx.data["delivered"] = True
+        ctx.data["channel"] = seen[key]
         return
-    connection = str(ctx.data.get("connection_id", ""))
-    reason = str(ctx.data.get("reason", ""))
-    message = (
-        f"Connection '{connection}' needs you: {reason}. "
-        "Open Connections in ArcUI to reconnect it."
-    )
+    target = _notify_target(st)
+    text = str(ctx.data.get("text", ""))
+    if not target or not text:
+        return
     try:
-        ctx.data["delivered"] = await _deliver_to_user(st, target, message)
-    except Exception:  # reason: an undeliverable notice must not break the sync loop
-        _logger.warning("operator notice for connection %s failed", connection)
+        delivered = await _deliver_to_user(st, target, text)
+    except Exception:  # reason: an undeliverable notice must not break the caller's loop
+        _logger.warning("operator notice %s could not be delivered", key or "(unkeyed)")
+        return
+    if not delivered:
+        return
+    channel = target.split(":", 1)[0]
+    ctx.data["delivered"] = True
+    ctx.data["channel"] = channel
+    if key:
+        seen[key] = channel
+        while len(seen) > _NOTICE_KEY_LIMIT:
+            seen.popitem(last=False)
 
 
 # Only these capture kinds describe something the agent was *given*. Tool output
@@ -1190,7 +1207,7 @@ async def messaging_sweep_loop(_ctx: Any) -> None:
 
 
 __all__ = [
-    "deliver_connection_attention",
+    "deliver_operator_notice",
     "deliver_origin_reply",
     "inject_messaging_sections",
     "list_team_files",

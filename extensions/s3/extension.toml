@@ -38,6 +38,11 @@ prompt = "For MinIO, copy its HTTPS server address from the administrator or Con
 sensitive = false
 format = "https_url"
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Listing the bucket proves the credentials.
+[health]
+probe = "attachment"
+
 [tools]
 allow = ["s3_list", "s3_read"]
 

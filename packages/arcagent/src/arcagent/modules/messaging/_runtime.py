@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -87,6 +88,10 @@ class _State:
     # restart may re-sweep a still-unanswered message once — which is the right
     # way round for a backstop whose failure to act is invisible.
     swept: set[str] = field(default_factory=set)
+    # Operator notices already put on a channel, by idempotency key -> channel kind.
+    # Bounded, in-process: it stops a notice redelivered after a crash from being
+    # sent twice by the same agent, nothing more (the durable claim is the owner's).
+    delivered_notice_keys: OrderedDict[str, str] = field(default_factory=OrderedDict)
     # Channel delivery ("platform:chat_id", text) -> None from the embedded
     # gateway — bound at agent:ready. Powers ``notify_user`` (agent -> human).
     channel_deliver_fn: Any = None

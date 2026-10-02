@@ -45,6 +45,11 @@ required = false
 prompt = "OPTIONAL. The machine holding that file, as user@hostname, if it is not this one — the same thing you would type after `ssh`. Arc copies the file here over your existing ssh key and queries the copy. Leave EMPTY when the file is on this machine."
 sensitive = false
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Opening the file proves the connection.
+[health]
+probe = "attachment"
+
 [tools]
 allow = ["sqlite_schema", "sqlite_get", "sqlite_find", "sqlite_list"]
 

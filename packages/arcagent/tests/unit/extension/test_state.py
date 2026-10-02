@@ -262,7 +262,8 @@ async def test_create_then_get_round_trips(store: ConnectionStateStore) -> None:
 
     assert fetched is not None
     assert fetched.connection == _CONNECTION
-    assert fetched.health == "unknown"
+    assert fetched.status == "unknown"
+    assert fetched.revision == 0
     assert created.created_at is not None
 
 
@@ -282,29 +283,63 @@ async def test_get_returns_none_for_unknown_connection(store: ConnectionStateSto
     assert await store.get("never_installed") is None
 
 
-async def test_mark_healthy_records_health_and_last_successful_use(
+async def test_cas_update_applies_the_patch_and_bumps_revision(
     store: ConnectionStateStore,
 ) -> None:
     await _create(store)
 
-    assert await store.mark_healthy(_CONNECTION, actor_did=_ACTOR) is True
+    result = await store.cas_update(
+        _CONNECTION,
+        lambda record: (
+            {"status": "healthy", "last_success_at": "2026-10-02T00:00:00+00:00"},
+            "ok",
+        ),
+        actor_did=_ACTOR,
+    )
     fetched = await store.get(_CONNECTION)
 
+    assert result == "ok"
     assert fetched is not None
-    assert fetched.health == "healthy"
-    assert fetched.last_success_at is not None
+    assert (fetched.status, fetched.revision) == ("healthy", 1)
+    assert fetched.last_success_at == "2026-10-02T00:00:00+00:00"
 
 
-async def test_set_health_marks_a_connection_needing_attention(
+async def test_cas_update_declined_by_the_decider_writes_nothing(
     store: ConnectionStateStore,
 ) -> None:
     await _create(store)
 
-    await store.set_health(_CONNECTION, "needs_attention", actor_did=_ACTOR)
+    assert await store.cas_update(_CONNECTION, lambda record: None, actor_did=_ACTOR) is None
     fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
-    assert fetched.health == "needs_attention"
+    assert fetched.revision == 0
+
+
+async def test_list_filters_by_status(store: ConnectionStateStore) -> None:
+    await _create(store, connection="jira_primary")
+    await _create(store, connection="gmail_primary")
+    await store.cas_update(
+        "gmail_primary", lambda record: ({"status": "needs_you"}, None), actor_did=_ACTOR
+    )
+
+    names = [record.connection for record in await store.list(status="needs_you")]
+
+    assert names == ["gmail_primary"]
+    assert await store.statuses() == {"gmail_primary": "needs_you", "jira_primary": "unknown"}
+
+
+async def test_set_custody_records_who_holds_the_credential(
+    store: ConnectionStateStore,
+) -> None:
+    await _create(store)
+
+    assert await store.set_custody(_CONNECTION, "host", actor_did=_ACTOR) is True
+    fetched = await store.get(_CONNECTION)
+
+    assert fetched is not None
+    assert fetched.custody == "host"
+    assert fetched.revision == 0, "custody is not a CAS'd field and must not move the token"
 
 
 async def test_credential_metadata_records_coordinates_not_the_value(
@@ -352,7 +387,7 @@ async def test_last_refresh_survives_unrelated_activity(store: ConnectionStateSt
         _CONNECTION, last_refresh_at="2026-08-04T09:00:00+00:00", actor_did=_ACTOR
     )
 
-    await store.mark_healthy(_CONNECTION, actor_did=_ACTOR)
+    await store.schedule_check(_CONNECTION, "2026-10-02T00:00:00+00:00", actor_did=_ACTOR)
     fetched = await store.get(_CONNECTION)
 
     assert fetched is not None
@@ -376,7 +411,13 @@ async def test_list_reports_every_connection_in_the_deployment(
 async def test_updating_a_missing_connection_creates_nothing(
     store: ConnectionStateStore,
 ) -> None:
-    assert await store.mark_healthy("never_installed", actor_did=_ACTOR) is False
+    assert (
+        await store.cas_update(
+            "never_installed", lambda record: ({"status": "healthy"}, True), actor_did=_ACTOR
+        )
+        is None
+    )
+    assert await store.set_custody("never_installed", "arc", actor_did=_ACTOR) is False
     assert await store.get("never_installed") is None
 
 
@@ -460,8 +501,8 @@ async def test_every_mutation_is_a_single_backend_call(backend: FakeBackend) -> 
     await _create(store)
 
     operations: tuple[Callable[[], Awaitable[bool]], ...] = (
-        lambda: store.mark_healthy(_CONNECTION, actor_did=_ACTOR),
-        lambda: store.set_health(_CONNECTION, "degraded", actor_did=_ACTOR),
+        lambda: store.set_custody(_CONNECTION, "host", actor_did=_ACTOR),
+        lambda: store.schedule_check(_CONNECTION, "2026-10-02T00:00:00+00:00", actor_did=_ACTOR),
         lambda: store.approve_tool_contract(
             _CONNECTION, "create_issue", "sha256:aaa", actor_did=_ACTOR
         ),
@@ -526,7 +567,7 @@ async def test_list_survives_one_unreadable_row_and_logs_it(
     await backend.mutable_write(
         CONNECTION_COLLECTION,
         "poisoned",
-        {"connection": "poisoned", "health": "on fire"},
+        {"connection": "poisoned", "status": "on fire"},
         actor_did=_ACTOR,
     )
 

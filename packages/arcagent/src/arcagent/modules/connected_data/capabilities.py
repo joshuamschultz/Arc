@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.modules.connected_data import _runtime
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.tools._decorator import capability, hook
@@ -42,7 +43,7 @@ class ConnectedData:
             restart_backoff_max_seconds=state.config.restart_backoff_max_seconds,
             stall_grace_seconds=state.config.stall_grace_seconds,
             failure_ceiling=state.config.consecutive_failure_ceiling,
-            operator_notifier=_operator_notifier(state),
+            health=_health_reporter(state),
         )
         await state.service.start()
         self._service = state.service
@@ -90,33 +91,18 @@ async def inject_connections_catalog(ctx: Any) -> None:
     sections["connections"] = preamble + "\n" + "\n".join(lines)
 
 
-#: Emitted when a connection needs a human. The module that owns the operator's
-#: channel answers it and sets ``delivered``; this module names no channel.
-OPERATOR_ATTENTION_EVENT = "connected_data:operator_attention"
+def _health_reporter(state: Any) -> StoreHealthReporter | None:
+    """Report sync outcomes to the shared connection-health record.
 
-
-def _operator_notifier(state: Any) -> Any:
-    """Ask the module bus to tell the operator, once, that a connection needs them.
-
-    A source dies in the background with no turn behind it, so nothing else would
-    ever say so. This module owns no channel (and may not import the core that
-    knows them): it emits an event, and whichever module delivers to the operator
-    answers it. Never the agent's own chat. Nobody answering (a standalone agent,
-    no known channel) returns False, which the service audits as undeliverable
-    instead of pretending somebody was told.
+    The deployment's health authority decides what a report means and tells the
+    operator once per outage; this module names no channel and sends nothing. No
+    arcstore (a standalone agent) means no shared record, so no reporter: the
+    local backoff still protects a dead credential.
     """
-
-    async def notify(connection_id: str, reason: str) -> bool:
-        bus = state.bus
-        if bus is None:
-            return False
-        event = await bus.emit(
-            OPERATOR_ATTENTION_EVENT,
-            {"connection_id": connection_id, "reason": reason, "delivered": False},
-        )
-        return bool(event.data.get("delivered"))
-
-    return notify
+    if state.arcstore_opener is None:
+        return None
+    sink = getattr(state.telemetry, "audit_sink", None)
+    return StoreHealthReporter(state.arcstore_opener, sink=sink)
 
 
 def _audit(telemetry: Any) -> Any:
@@ -130,7 +116,6 @@ def _audit(telemetry: Any) -> Any:
 
 
 __all__ = [
-    "OPERATOR_ATTENTION_EVENT",
     "ConnectedData",
     "inject_connections_catalog",
 ]

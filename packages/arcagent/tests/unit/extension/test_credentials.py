@@ -3,7 +3,7 @@
 Covers REQ-287 (renew before expiry rather than waiting for a call to fail),
 REQ-288 (at most one renewal in flight per connected account, persisted
 atomically) and REQ-289 (terminal failure stops retrying, marks the connection,
-and escalates through the operator path rather than agent chat).
+and reports it to the connection health authority rather than agent chat).
 
 The file's centre of gravity is ``test_only_one_renewal_is_ever_in_flight``.
 Atlassian rotates its refresh token on every use, so a second renewal that
@@ -39,6 +39,7 @@ import pytest
 from arctrust.audit import AuditEvent
 
 from arcagent.core.errors import ExtensionError
+from arcagent.extension.connection_health import HealthSignal
 from arcagent.extension.credentials import (
     TERMINAL_ERROR_CODES,
     ConnectedAccount,
@@ -48,7 +49,7 @@ from arcagent.extension.credentials import (
     RenewedCredential,
 )
 from arcagent.extension.secrets import LocalFileSecretBackend, Secret, SecretStore
-from arcagent.extension.state import ConnectionStateStore
+from arcagent.extension.state import ConnectionStateStore, ConnectionStatus
 
 if TYPE_CHECKING:
     from arcagent.extension.secrets import SecretRef
@@ -75,7 +76,6 @@ class FakeStateStore:
             "credential_expires_at": expires_at.isoformat() if expires_at else None,
             "credential_issuer": "https://auth.atlassian.com",
             "credential_audience": "api.atlassian.com",
-            "health": "healthy",
         }
         self.patches: list[dict[str, Any]] = []
         self.metadata_write_fails = False
@@ -108,12 +108,6 @@ class FakeStateStore:
             self.record["credential_expires_at"] = expires_at
         return True
 
-    async def set_health(self, connection: str, health: str, *, actor_did: str) -> bool:
-        await asyncio.sleep(0)
-        self.patches.append({"health": health})
-        self.record["health"] = health
-        return True
-
 
 class _StateView:
     """Read side of a connection record — credential coordinates only."""
@@ -135,17 +129,18 @@ class _StateView:
         return str(self._record["credential_audience"])
 
 
-class FakeEscalation:
-    """The operator approval path — never agent chat."""
+class FakeHealth:
+    """The health authority's front door — what the lifecycle reports, never agent chat."""
 
     def __init__(self) -> None:
-        self.calls: list[dict[str, str]] = []
+        self.signals: list[tuple[str, HealthSignal]] = []
 
-    async def request_operator_attention(
-        self, *, connection: str, reason: str, detail: str
-    ) -> None:
+    async def report(self, connection: str, signal: HealthSignal) -> None:
         await asyncio.sleep(0)
-        self.calls.append({"connection": connection, "reason": reason, "detail": detail})
+        self.signals.append((connection, signal))
+
+    async def statuses(self) -> dict[str, ConnectionStatus]:
+        return {}
 
 
 class RecordingSink:
@@ -200,7 +195,7 @@ def secrets(tmp_path: Path) -> SecretStore:
 def _lifecycle(
     secrets: SecretStore,
     state: FakeStateStore,
-    escalation: FakeEscalation,
+    health: FakeHealth,
     *,
     now: datetime = NOW,
     sink: RecordingSink | None = None,
@@ -214,7 +209,7 @@ def _lifecycle(
     return CredentialLifecycle(
         secrets=secrets,
         state=state,
-        escalation=escalation,
+        health=health,
         sink=sink,
         clock=lambda: now,
         sleep=record_sleep,
@@ -235,9 +230,9 @@ async def test_only_one_renewal_is_ever_in_flight(
 ) -> None:
     """Two concurrent renewals against a rotating single-use token (REQ-288)."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    escalation = FakeEscalation()
+    health = FakeHealth()
     server = RotatingTokenServer()
-    lifecycle = _lifecycle(secrets, state, escalation)
+    lifecycle = _lifecycle(secrets, state, health)
     await _seed(secrets, account.secret_ref, server.accepted)
 
     entered = asyncio.Event()
@@ -266,7 +261,7 @@ async def test_only_one_renewal_is_ever_in_flight(
     assert sorted(outcomes) == [False, True], "exactly one task should have renewed"
     assert len(presented) == 1, "the waiting task renewed again instead of re-reading state"
     assert server.rejections == [], "a consumed refresh token was presented"
-    assert escalation.calls == []
+    assert health.signals == []
     stored = await secrets.get(account.secret_ref, caller_did=CALLER)
     assert stored is not None
     assert stored.reveal() == server.accepted, "the persisted token is not the accepted one"
@@ -282,7 +277,7 @@ async def test_a_renewal_that_fails_to_record_metadata_still_keeps_the_new_token
     """
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
     server = RotatingTokenServer()
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, server.accepted)
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -303,7 +298,7 @@ async def test_the_state_store_never_receives_a_credential_value(
     """Metadata only: expiry, issuer, audience — never the token (REQ-265)."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
     server = RotatingTokenServer()
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, server.accepted)
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -323,7 +318,7 @@ async def test_a_renewal_records_when_it_happened(
     """Last-refresh is a record of the renewal, stamped from the same clock."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
     server = RotatingTokenServer()
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, server.accepted)
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -350,7 +345,7 @@ async def test_renewal_is_due_at_three_quarters_of_lifetime(
     """Renewal is a function of elapsed lifetime, not of a call having failed."""
     issued = NOW - LIFETIME * elapsed_fraction
     state = FakeStateStore(expires_at=issued + LIFETIME)
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     renewed: list[str] = []
@@ -369,7 +364,7 @@ async def test_renewal_happens_strictly_before_expiry(
     """A credential is never allowed to reach its expiry unrenewed (REQ-287)."""
     issued = NOW - LIFETIME * 0.8
     state = FakeStateStore(expires_at=issued + LIFETIME)
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -384,7 +379,7 @@ async def test_an_account_with_no_known_expiry_is_left_alone(
 ) -> None:
     """A static API key has no lifetime; renewal must not invent one."""
     state = FakeStateStore(expires_at=None)
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, "static-key")
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -398,8 +393,8 @@ async def test_a_connection_that_was_never_authorized_escalates_rather_than_cras
 ) -> None:
     """There is nothing to renew and nothing an agent can do — ask the operator."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    escalation = FakeEscalation()
-    lifecycle = _lifecycle(secrets, state, escalation)
+    health = FakeHealth()
+    lifecycle = _lifecycle(secrets, state, health)
 
     async def renew(current: Secret) -> RenewedCredential:
         raise AssertionError("renewal must not run without a stored credential")
@@ -408,8 +403,13 @@ async def test_a_connection_that_was_never_authorized_escalates_rather_than_cras
         await lifecycle.ensure_fresh(account, renew=renew, caller_did=CALLER)
 
     assert excinfo.value.code == "CREDENTIAL_MISSING"
-    assert state.record["health"] == "needs_attention"
-    assert len(escalation.calls) == 1
+    assert len(health.signals) == 1
+    connection, signal = health.signals[0]
+    assert (connection, signal.reason_code, signal.source) == (
+        "atlassian_work",
+        "credential_missing",
+        "credential",
+    )
 
 
 def test_there_is_no_failure_triggered_renewal_entry_point() -> None:
@@ -420,7 +420,7 @@ def test_there_is_no_failure_triggered_renewal_entry_point() -> None:
 
 
 # ---------------------------------------------------------------------------
-# REQ-289 — terminal versus transient, and the operator path
+# REQ-289 — terminal versus transient, and the health path
 # ---------------------------------------------------------------------------
 
 
@@ -430,9 +430,9 @@ async def test_terminal_failure_stops_marks_and_escalates(
 ) -> None:
     """Re-consent is a human act: stop retrying, mark it, escalate (REQ-289)."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    escalation = FakeEscalation()
+    health = FakeHealth()
     sleeps: list[float] = []
-    lifecycle = _lifecycle(secrets, state, escalation, sleeps=sleeps)
+    lifecycle = _lifecycle(secrets, state, health, sleeps=sleeps)
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     attempts: list[str] = []
@@ -446,10 +446,14 @@ async def test_terminal_failure_stops_marks_and_escalates(
 
     assert len(attempts) == 1, "a terminal failure was retried"
     assert sleeps == [], "a terminal failure backed off instead of stopping"
-    assert state.record["health"] == "needs_attention"
-    assert len(escalation.calls) == 1
-    assert escalation.calls[0]["connection"] == "atlassian_work"
-    assert code in escalation.calls[0]["reason"]
+    assert len(health.signals) == 1
+    connection, signal = health.signals[0]
+    assert connection == "atlassian_work"
+    assert signal.ok is False
+    assert signal.source == "credential"
+    assert signal.reason_code == (
+        "invalid_grant" if code == "invalid_grant" else "consent_required"
+    )
 
 
 async def test_a_transient_failure_retries_with_backoff_then_succeeds(
@@ -457,9 +461,9 @@ async def test_a_transient_failure_retries_with_backoff_then_succeeds(
 ) -> None:
     """A blip is not a re-consent — retry, and do not bother the operator."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    escalation = FakeEscalation()
+    health = FakeHealth()
     sleeps: list[float] = []
-    lifecycle = _lifecycle(secrets, state, escalation, sleeps=sleeps)
+    lifecycle = _lifecycle(secrets, state, health, sleeps=sleeps)
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     attempts: list[str] = []
@@ -475,7 +479,7 @@ async def test_a_transient_failure_retries_with_backoff_then_succeeds(
     assert await lifecycle.ensure_fresh(account, renew=renew, caller_did=CALLER) is True
     assert len(attempts) == 3
     assert sleeps == sorted(sleeps) and len(sleeps) == 2, f"backoff was not increasing: {sleeps}"
-    assert escalation.calls == []
+    assert health.signals == []
     stored = await secrets.get(account.secret_ref, caller_did=CALLER)
     assert stored is not None
     assert stored.reveal() == "refresh-1"
@@ -486,9 +490,9 @@ async def test_exhausted_transient_retries_degrade_without_escalating(
 ) -> None:
     """An outage is not a consent problem: mark it degraded, do not page a human."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    escalation = FakeEscalation()
+    health = FakeHealth()
     sleeps: list[float] = []
-    lifecycle = _lifecycle(secrets, state, escalation, sleeps=sleeps)
+    lifecycle = _lifecycle(secrets, state, health, sleeps=sleeps)
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     attempts: list[str] = []
@@ -502,8 +506,9 @@ async def test_exhausted_transient_retries_degrade_without_escalating(
 
     assert len(attempts) > 1, "a transient failure was not retried"
     assert len(attempts) == len(sleeps) + 1, "retries and backoffs do not line up"
-    assert state.record["health"] == "degraded"
-    assert escalation.calls == []
+    assert len(health.signals) == 1
+    _, signal = health.signals[0]
+    assert signal.reason_code == "provider_unavailable"  # counted: an outage, not a re-consent
 
 
 async def test_a_failed_renewal_never_overwrites_the_working_credential(
@@ -511,7 +516,7 @@ async def test_a_failed_renewal_never_overwrites_the_working_credential(
 ) -> None:
     """The stored token still works; nothing rejected is allowed to replace it."""
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -530,7 +535,7 @@ async def test_renewal_is_audited_without_the_token(
 ) -> None:
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
     sink = RecordingSink()
-    lifecycle = _lifecycle(secrets, state, FakeEscalation(), sink=sink)
+    lifecycle = _lifecycle(secrets, state, FakeHealth(), sink=sink)
     await _seed(secrets, account.secret_ref, "refresh-0")
 
     async def renew(current: Secret) -> RenewedCredential:
@@ -550,7 +555,7 @@ async def test_separate_accounts_renew_independently(secrets: SecretStore) -> No
     work = ConnectedAccount(connection="atlassian_work")
     personal = ConnectedAccount(connection="atlassian_personal")
     state = FakeStateStore(expires_at=NOW + timedelta(minutes=5))
-    lifecycle = _lifecycle(secrets, state, FakeEscalation())
+    lifecycle = _lifecycle(secrets, state, FakeHealth())
     await _seed(secrets, work.secret_ref, "refresh-work")
     await _seed(secrets, personal.secret_ref, "refresh-personal")
 

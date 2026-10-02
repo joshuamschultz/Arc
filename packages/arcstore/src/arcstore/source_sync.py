@@ -46,6 +46,24 @@ class SourceSyncState(BaseModel):
     budget_reached: bool = False
 
 
+class SourceSyncRow(SourceSyncState):
+    """A state row plus its live lease deadline, for a read-only status listing.
+
+    A run is *live* only while ``lease_expires_at`` is in the future: a crashed
+    run leaves ``status == running`` behind forever, and a card that believed it
+    showed "Syncing" for nine days.
+    """
+
+    lease_expires_at: datetime | None = None
+
+    def is_live(self, now: datetime) -> bool:
+        return (
+            self.status is SourceSyncStatus.RUNNING
+            and self.lease_expires_at is not None
+            and self.lease_expires_at > now
+        )
+
+
 class SourceSyncLease(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -73,6 +91,12 @@ class SourceSyncBackend(Protocol):
     ) -> bool: ...
     async def source_sync_reset(self, agent_did: str, source_id: str) -> bool: ...
     async def source_sync_purge(self, agent_did: str, source_id: str) -> bool: ...
+    async def source_sync_list_for_connection(self, connection: str) -> list[dict[str, Any]]: ...
+
+
+def source_belongs_to(source_id: str, connection: str) -> bool:
+    """True for the connection itself or one of its ``<connection>:<suffix>`` sources."""
+    return source_id == connection or source_id.startswith(f"{connection}:")
 
 
 class InMemorySourceSyncStore:
@@ -93,6 +117,23 @@ class InMemorySourceSyncStore:
                     SourceSyncState(agent_did=agent_did, source_id=source_id),
                 )
             )
+
+    async def list_for_connection(self, connection: str) -> list[SourceSyncRow]:
+        async with self._lock:
+            rows = []
+            for (agent_did, source_id), state in self._states.items():
+                if not source_belongs_to(source_id, connection):
+                    continue
+                lease = self._leases.get((agent_did, source_id))
+                rows.append(
+                    SourceSyncRow.model_validate(
+                        {
+                            **state.model_dump(),
+                            "lease_expires_at": lease.expires_at if lease else None,
+                        }
+                    )
+                )
+            return rows
 
     async def acquire_lease(
         self, agent_did: str, source_id: str, owner_id: str, *, ttl_seconds: float
@@ -310,6 +351,16 @@ class ArcStoreSourceSyncStore:
     async def purge(self, agent_did: str, source_id: str) -> bool:
         return await self._backend.source_sync_purge(agent_did, source_id)
 
+    async def list_for_connection(self, connection: str) -> list[SourceSyncRow]:
+        """Every agent's sync row for one connection, with live-lease deadlines.
+
+        A multi-source bundle registers ``<instance>:<suffix>`` ids, so the match
+        is the instance itself or that prefix. The rows are read-only status for
+        a surface; no lease is touched.
+        """
+        rows = await self._backend.source_sync_list_for_connection(connection)
+        return [SourceSyncRow.model_validate(row) for row in rows]
+
 
 __all__ = [
     "SOURCE_SYNC_COLLECTION",
@@ -317,6 +368,8 @@ __all__ = [
     "InMemorySourceSyncStore",
     "SourceSyncBackend",
     "SourceSyncLease",
+    "SourceSyncRow",
     "SourceSyncState",
     "SourceSyncStatus",
+    "source_belongs_to",
 ]

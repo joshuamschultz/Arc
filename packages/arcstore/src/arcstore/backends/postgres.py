@@ -242,6 +242,14 @@ class PostgresBackend(SourceSyncBackend):
             }
         return dict(row)
 
+    async def source_sync_list_for_connection(self, connection: str) -> list[dict[str, Any]]:
+        rows = await self._require_pool().fetch(
+            "SELECT agent_did, source_id, cursor, status, pages, bytes_processed, fencing_token, generation, error_code, last_synced_at, budget_reached, lease_expires_at "  # noqa: E501
+            "FROM connected_source_sync WHERE source_id = $1 OR left(source_id, length($1) + 1) = $1 || ':'",  # noqa: E501
+            connection,
+        )
+        return [dict(row) for row in rows]
+
     async def source_sync_acquire_lease(
         self, agent_did: str, source_id: str, owner_id: str, ttl_seconds: float
     ) -> dict[str, Any] | None:

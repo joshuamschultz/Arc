@@ -74,6 +74,11 @@ prompt = "Your Confluence web address, exactly as it appears in the browser bar 
 sensitive = false
 format = "https_url"
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Reads one space with the saved bearer token.
+[health]
+probe = "attachment"
+
 [tools]
 allow = [
   "confluence_search_pages",

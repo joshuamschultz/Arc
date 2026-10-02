@@ -3,9 +3,9 @@
 A terminal failure — a revoked or expired credential — is not a transient blip a
 retry clears: retrying just hammers a dead credential every monitor tick, floods
 the audit log, and never tells the operator. This module records which
-connections need a human before they are synced again, backs them off the timer,
-and reports whether a needs-attention notification has already been sent so the
-operator is told exactly once per outage.
+connections that need a human before they are synced again and backs them off the
+timer. Telling the operator is not this module's job: the shared health record
+owns the one notice per outage, so a restart or five agents cannot send five.
 
 Backed off is not latched. A credential can come back without anyone acting
 inside Arc — a CLI connector's binary holds its own token, and re-signing it in
@@ -13,7 +13,8 @@ changes nothing Arc can see — so a backed-off source is allowed ONE recheck ru
 per ``recheck_after`` seconds. A recheck that fails again re-backs it off without
 notifying again; one that succeeds clears it. That is one call an hour against a
 dead credential, not one per tick (REQ-427), and it is what stops a reconnected
-account from staying silent forever.
+account from staying silent forever. A reconnect the shared record knows about
+ends the backoff at once, without waiting out the window.
 
 The record is in-memory, but the fact is durable elsewhere: the coordinator
 persists the terminal ``error_code`` into ``arcstore``'s ``SourceSyncState``, and
@@ -56,7 +57,6 @@ class ConnectionHealthTracker:
         self, *, recheck_after: float = 3600.0, clock: Callable[[], float] = time.monotonic
     ) -> None:
         self._backed_off: dict[str, float] = {}
-        self._notified: set[str] = set()
         self._recheck_after = recheck_after
         self._clock = clock
 
@@ -66,18 +66,13 @@ class ConnectionHealthTracker:
         since = self._backed_off.get(connection_id)
         return since is not None and self._clock() - since < self._recheck_after
 
-    def note_terminal_failure(self, connection_id: str) -> bool:
-        """Back the source off from now; return True the first time (so notify once)."""
+    def note_terminal_failure(self, connection_id: str) -> None:
+        """Back the source off from now."""
         self._backed_off[connection_id] = self._clock()
-        if connection_id in self._notified:
-            return False
-        self._notified.add(connection_id)
-        return True
 
     def clear(self, connection_id: str) -> None:
         """An operator acted or a sync succeeded — allow syncing again."""
         self._backed_off.pop(connection_id, None)
-        self._notified.discard(connection_id)
 
 
 __all__ = [

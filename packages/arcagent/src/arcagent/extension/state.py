@@ -24,9 +24,9 @@ Two invariants earn their own code:
   secret; ``extra="forbid"`` means a caller trying to stash one raises instead
   of quietly persisting it (REQ-265, REQ-277). Values live in COMP-010.
 * **Never a half-written record.** Every mutation is a single atomic backend
-  statement — a merge patch, not a read-modify-write — so a crash can only
-  leave the prior row or the new one, and two writers touching different fields
-  cannot lose each other's update. A row that is nonetheless unreadable is
+  statement — a merge patch, or a compare-and-set on ``revision`` for the
+  health fields — so a crash can only leave the prior row or the new one, and
+  two writers cannot lose each other's update. A row that is nonetheless unreadable is
   loud and *local*: :meth:`get` raises naming the connection, and :meth:`list`
   skips it with a logged error rather than letting one bad row take every
   other connection's status down with it.
@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -46,13 +46,69 @@ from arcagent.core.errors import ExtensionError
 
 CONNECTION_COLLECTION = "connections"
 
-ConnectionHealth = Literal["unknown", "healthy", "degraded", "needs_attention"]
+#: What the operator needs to know about one connection. ``syncing`` is
+#: deliberately absent: it is derived at read time from live sync leases, because
+#: a stored value needs a write at run start and run end and a crash leaves it
+#: stuck forever.
+ConnectionStatus = Literal["unknown", "healthy", "needs_you", "error"]
+ConnectionAction = Literal["none", "reconnect", "approve", "install_host", "wait"]
+CredentialCustody = Literal["arc", "host", "none"]
+ReasonCode = Literal[
+    "auth_required",
+    "invalid_grant",
+    "consent_required",
+    "token_revoked",
+    "credential_missing",
+    "credential_unreadable",
+    "scope_missing",
+    "account_mismatch",
+    "token_expiring",
+    "contract_changed",
+    "host_missing",
+    "renewer_unavailable",
+    "provider_unavailable",
+    "rate_limited",
+    "sync_failed",
+    "repeated_failures",
+]
+
+_T = TypeVar("_T")
 
 _logger = logging.getLogger(__name__)
+
+_CAS_ATTEMPTS = 8
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+class NoticeClaim(BaseModel):
+    """A lease on the right to deliver one operator notice.
+
+    ``seq`` names the notice the lease is for and ``attempt`` counts the delivery
+    tries made for it, durably: a crash must not reset the count and let a dead
+    channel be retried forever.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner: str
+    expires_at: str
+    seq: int = 0
+    attempt: int = 1
+
+
+class LastNotice(BaseModel):
+    """The last notice that was finished, delivered or given up."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seq: int
+    kind: Literal["needs_you", "error", "recovered"]
+    delivered: bool
+    channel: str
+    at: str
 
 
 class ConnectionRecord(BaseModel):
@@ -62,13 +118,35 @@ class ConnectionRecord(BaseModel):
     patches the durable row; nothing holds a live record and edits it in place.
     ``extra="forbid"`` is load-bearing rather than tidiness: it is what stops a
     caller from smuggling a token into this store under an unmodeled key.
+
+    The health fields are written only through the health authority, every write
+    a compare-and-set on ``revision``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     connection: str
-    health: ConnectionHealth = "unknown"
+    # --- health (P18-1) ---------------------------------------------------
+    status: ConnectionStatus = "unknown"
+    reason_code: ReasonCode | None = None
+    reason_text: str | None = None
+    action: ConnectionAction = "none"
+    last_checked_at: str | None = None
     last_success_at: str | None = None
+    failing_since: str | None = None
+    consecutive_failures: int = 0
+    checked_by: str | None = None
+    next_check_at: str | None = None
+    custody: CredentialCustody = "none"
+    credential_generation: int | None = None
+    revision: int = 0
+    transition_seq: int = 0
+    notice_seq: int = 0
+    notified_seq: int = 0
+    notice_claim: NoticeClaim | None = None
+    last_notice: LastNotice | None = None
+    notice_window_start: str | None = None
+    notice_window_count: int = 0
     # Credential *coordinates* only — REQ-277 records the store, item, field,
     # caller, and outcome of a credential read, and never the value.
     credential_expires_at: str | None = None
@@ -171,15 +249,15 @@ class ConnectionStateStore:
         raw = await self._backend.mutable_read(self._COLLECTION, connection)
         return self._load(connection, raw) if raw is not None else None
 
-    async def list(self, *, health: ConnectionHealth | None = None) -> list[ConnectionRecord]:
+    async def list(self, *, status: ConnectionStatus | None = None) -> list[ConnectionRecord]:
         """Return every readable connection, optionally filtered.
 
         An unreadable row is logged with its key and skipped: a corrupt record
         for one connection must not blank out the status of every other one.
         """
         where: dict[str, Any] = {}
-        if health is not None:
-            where["health"] = health
+        if status is not None:
+            where["status"] = status
         rows = await self._backend.mutable_query(self._COLLECTION, where=where)
         records: list[ConnectionRecord] = []
         for row in rows:
@@ -190,18 +268,81 @@ class ConnectionStateStore:
                 _logger.error("skipping unreadable connection state row: %s", exc.message)
         return records
 
-    async def mark_healthy(self, connection: str, *, actor_did: str) -> bool:
-        """Record a successful use — health plus the time it happened (REQ-295)."""
-        now = _now()
-        return await self._patch(
-            connection, {"health": "healthy", "last_success_at": now}, actor_did=actor_did
+    async def statuses(self) -> dict[str, ConnectionStatus]:
+        """Every readable connection's stored status, for a cheap bulk check."""
+        return {record.connection: record.status for record in await self.list()}
+
+    async def cas_update(
+        self,
+        connection: str,
+        decide: Callable[[ConnectionRecord], tuple[dict[str, Any], _T] | None],
+        *,
+        actor_did: str,
+    ) -> _T | None:
+        """Compare-and-set one connection's row on ``revision``.
+
+        ``decide`` sees the row as it is and returns the patch to write plus a
+        result, or ``None`` to write nothing. The write is one atomic statement
+        that only lands if ``revision`` is unchanged since the read; a loser
+        re-reads and decides again, so two writers in different processes can
+        never lose each other's count or double a transition. ``revision`` is
+        bumped here unless the patch already sets it.
+
+        Returns ``None`` when the connection does not exist (an update never
+        conjures a half-populated record, matching :meth:`_patch`) or ``decide``
+        declined.
+
+        Raises:
+            ExtensionError: Eight consecutive races were lost
+                (``CONNECTION_STATE_BUSY``).
+        """
+        for _ in range(_CAS_ATTEMPTS):
+            raw = await self._backend.mutable_read(self._COLLECTION, connection)
+            if raw is None:
+                return None
+            record = self._load(connection, raw)
+            decision = decide(record)
+            if decision is None:
+                return None
+            patch, result = decision
+            patch = {"revision": record.revision + 1, "updated_at": _now(), **patch}
+            if await self._backend.update_if(
+                self._COLLECTION,
+                connection,
+                patch,
+                {"revision": record.revision},
+                actor_did=actor_did,
+                sink=self._sink,
+            ):
+                return result
+        raise ExtensionError(
+            code="CONNECTION_STATE_BUSY",
+            message=f"connection state changed while updating {connection!r}",
+            details={"connection": connection},
         )
 
-    async def set_health(
-        self, connection: str, health: ConnectionHealth, *, actor_did: str
+    async def compare_and_set(
+        self, connection: str, patch: dict[str, Any], revision: int, *, actor_did: str
     ) -> bool:
-        """Set health without claiming a successful use (REQ-295, REQ-289)."""
-        return await self._patch(connection, {"health": health}, actor_did=actor_did)
+        """One CAS on a ``revision`` the caller already read; False means it lost."""
+        return await self._backend.update_if(
+            self._COLLECTION,
+            connection,
+            patch,
+            {"revision": revision},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+
+    async def set_custody(
+        self, connection: str, custody: CredentialCustody, *, actor_did: str
+    ) -> bool:
+        """Record who holds this connection's credential. Not a CAS'd field."""
+        return await self._patch(connection, {"custody": custody}, actor_did=actor_did)
+
+    async def schedule_check(self, connection: str, next_check_at: str, *, actor_did: str) -> bool:
+        """Set when the probe loop next looks at this connection. Not a CAS'd field."""
+        return await self._patch(connection, {"next_check_at": next_check_at}, actor_did=actor_did)
 
     async def record_credential_metadata(
         self,
@@ -338,9 +479,14 @@ async def open_connection_state(
 
 __all__ = [
     "CONNECTION_COLLECTION",
-    "ConnectionHealth",
+    "ConnectionAction",
     "ConnectionRecord",
     "ConnectionStateStore",
+    "ConnectionStatus",
+    "CredentialCustody",
+    "LastNotice",
     "MutableConnectionBackend",
+    "NoticeClaim",
+    "ReasonCode",
     "open_connection_state",
 ]

@@ -146,6 +146,11 @@ token goes to that command's standard input and is never written to a file, put
 on a command line, or stored by Arc.
 """
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Listing projects proves the signed-in site works.
+[health]
+probe = "tool:jira_list_projects"
+
 [tools]
 allow = [
   "jira_search_issues",
