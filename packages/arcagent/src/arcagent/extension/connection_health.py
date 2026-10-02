@@ -498,6 +498,9 @@ def next_check_time(
 
 # --- notices ---------------------------------------------------------------
 
+#: ``last_notice.channel`` when every try ended with no agent able to reach the operator.
+UNDELIVERABLE_CHANNEL = "undeliverable"
+
 
 @dataclass(frozen=True)
 class PendingNotice:
@@ -513,7 +516,12 @@ class PendingNotice:
 
     @property
     def idempotency_key(self) -> str:
-        return f"connection-health:{self.connection}:{self.seq}"
+        return notice_key(self.connection, self.seq)
+
+
+def notice_key(connection: str, seq: int) -> str:
+    """The stable key one notice is delivered, and remembered as delivered, under."""
+    return f"connection-health:{connection}:{seq}"
 
 
 def notice_text(pending: PendingNotice, *, ui_base: str = "") -> str:
@@ -772,6 +780,7 @@ class ConnectionHealthAuthority:
                     "delivered": delivered,
                     "channel": channel,
                     "at": now.isoformat(),
+                    "idempotency_key": notice_key(connection, seq) if delivered else None,
                 },
             }
             # The operator was told it broke while it was already mending. They
@@ -787,6 +796,39 @@ class ConnectionHealthAuthority:
             return patch, True
 
         return bool(await self._store.cas_update(connection, decide, actor_did=PROBE_DID))
+
+    async def record_delivery(self, pending: PendingNotice, channel: str, now: datetime) -> None:
+        """Persist, the moment a channel took the notice, that this key was delivered.
+
+        Not owner-gated: the process that sent it must be able to say so even when
+        its lease lapsed mid-send. Whoever claims the notice next reads this before
+        sending and finishes it instead, which closes the cross-process duplicate
+        window to the instant between the send and this write.
+        """
+
+        def decide(record: ConnectionRecord) -> tuple[dict[str, Any], bool] | None:
+            if record.notified_seq >= pending.seq:
+                return None
+            return {
+                "last_notice": {
+                    "seq": pending.seq,
+                    "kind": pending.kind,
+                    "delivered": True,
+                    "channel": channel,
+                    "at": now.isoformat(),
+                    "idempotency_key": pending.idempotency_key,
+                }
+            }, True
+
+        await self._store.cas_update(pending.connection, decide, actor_did=PROBE_DID)
+
+    async def delivered_channel(self, pending: PendingNotice) -> str | None:
+        """The channel this notice already reached the operator on, if any."""
+        record = await self._store.get(pending.connection)
+        last = record.last_notice if record is not None else None
+        if last is not None and last.delivered and last.idempotency_key == pending.idempotency_key:
+            return last.channel
+        return None
 
     async def defer_notice(
         self, connection: str, owner: str, seq: int, retry_at: datetime
@@ -829,12 +871,14 @@ class ConnectionHealthAuthority:
     async def _settle(
         self, pending: PendingNotice, deliver: NoticeDeliverer, now: datetime, ui_base: str
     ) -> None:
-        channel: str | None = None
-        if pending.attempt <= NOTICE_MAX_ATTEMPTS:
+        channel = await self.delivered_channel(pending)
+        if channel is None and pending.attempt <= NOTICE_MAX_ATTEMPTS:
             try:
                 channel = await deliver(pending, notice_text(pending, ui_base=ui_base))
             except Exception:  # reason: a failing channel must not stop other notices
                 _logger.warning("operator notice delivery failed for %s", pending.connection)
+            if channel is not None:
+                await self.record_delivery(pending, channel, now)
         delivered = channel is not None
         if delivered or pending.attempt >= NOTICE_MAX_ATTEMPTS:
             await self.finish_notice(
@@ -842,7 +886,7 @@ class ConnectionHealthAuthority:
                 pending.owner,
                 pending.seq,
                 delivered=delivered,
-                channel=channel or "",
+                channel=channel or UNDELIVERABLE_CHANNEL,
                 kind=pending.kind,
                 now=now,
             )
@@ -854,7 +898,7 @@ class ConnectionHealthAuthority:
                     "seq": pending.seq,
                     "kind": pending.kind,
                     "delivered": delivered,
-                    "channel": channel or "",
+                    "channel": channel or UNDELIVERABLE_CHANNEL,
                     "attempt": pending.attempt,
                 },
             )
@@ -940,6 +984,7 @@ __all__ = [
     "NOTICE_MAX_ATTEMPTS",
     "PROBE_DID",
     "REASONS",
+    "UNDELIVERABLE_CHANNEL",
     "ConnectionHealthAuthority",
     "HealthReporter",
     "HealthSignal",
@@ -956,6 +1001,7 @@ __all__ = [
     "effective_probe",
     "next_check_time",
     "next_health",
+    "notice_key",
     "notice_text",
     "parse_time",
     "probe_interval",

@@ -17,7 +17,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from arctrust.paths import ui_token_file
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
@@ -300,6 +300,7 @@ def _start(args: argparse.Namespace) -> None:
         # Personal/enterprise operators may put URLs/emails in task text (e.g.
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
+        public_base_url=_public_base_url(gateway_config),
         skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
         # The schedule/pulse authority shared by the dashboard and every agent it
         # serves (item 52). None at federal: schedule writes stay closed (503).
@@ -455,6 +456,13 @@ def _deployment_tier(gateway_config: Any | None) -> str:
     if gateway_config is None:
         return "personal"
     return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal"))
+
+
+def _public_base_url(gateway_config: Any | None) -> str | None:
+    """The validated ``[ui] public_base_url`` from the gateway config, if any."""
+    if gateway_config is None:
+        return None
+    return cast("str | None", gateway_config.ui.public_base_url)
 
 
 def _fleet_enabled(gateway_config: Any | None) -> bool:

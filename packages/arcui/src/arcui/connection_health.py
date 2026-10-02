@@ -46,6 +46,7 @@ DEFAULT_INITIAL_DELAY_SECONDS = 5.0
 
 ConnectionsFactory = Callable[[], arcagent.Connections]
 AgentsResolver = Callable[[str], Sequence[Any]]
+FallbackAgents = Callable[[], Sequence[Any]]
 
 
 class ConnectionHealthMonitor:
@@ -57,6 +58,7 @@ class ConnectionHealthMonitor:
         *,
         store_opener: Callable[[], Awaitable[Any]],
         agents_resolver: AgentsResolver,
+        fallback_agents: FallbackAgents = lambda: [],
         sink: Any | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         rng: Callable[[], float] = random.random,
@@ -68,6 +70,7 @@ class ConnectionHealthMonitor:
         self._connections_factory = connections_factory
         self._store_opener = store_opener
         self._agents_resolver = agents_resolver
+        self._fallback_agents = fallback_agents
         self._sink = sink
         self._clock = clock
         self._rng = rng
@@ -142,8 +145,15 @@ class ConnectionHealthMonitor:
                 await authority.reschedule(instance, self._clock())
 
     async def _deliver(self, pending: arcagent.PendingNotice, text: str) -> str | None:
-        """Hand the notice to the first granted agent that can reach the operator."""
-        for agent in self._agents_resolver(pending.connection):
+        """Hand the notice to the first agent that can reach the operator.
+
+        Granted agents go first; when none of them can, ANY embedded agent may
+        carry it, because the notice is addressed to the deployment's operator,
+        not to the connection's grantees. ``None`` when nobody could.
+        """
+        granted = list(self._agents_resolver(pending.connection))
+        others = [a for a in self._fallback_agents() if not any(a is g for g in granted)]
+        for agent in (*granted, *others):
             try:
                 channel = await agent.notify_operator(
                     text, idempotency_key=pending.idempotency_key
@@ -171,8 +181,8 @@ def granted_embedded_agents(
 
     Resolved by DID off the roster exactly as the connector routes do: no
     filesystem reach and no arcagent internal import. An agent that is granted but
-    not loaded in this process is simply absent; if none is loaded the notice is
-    undeliverable and the card says so.
+    not loaded in this process is simply absent; the monitor then falls back to any
+    embedded agent, and only if none is loaded is the notice undeliverable.
     """
     provider = getattr(app.state, "roster_provider", None)
     cache = getattr(app.state, "embedded_agent_cache", None)
@@ -192,6 +202,12 @@ def granted_embedded_agents(
     return agents
 
 
+def embedded_agents(app: Any) -> list[Any]:
+    """Every live embedded agent in this process, whatever it is granted."""
+    cache = getattr(app.state, "embedded_agent_cache", None)
+    return list(cache.values()) if cache is not None else []
+
+
 def build_connection_health_monitor(
     app: Any, *, initial_delay_seconds: float = DEFAULT_INITIAL_DELAY_SECONDS
 ) -> ConnectionHealthMonitor | None:
@@ -206,6 +222,7 @@ def build_connection_health_monitor(
         return None
     worm = getattr(app.state, "audit_worm", None)
     sink = worm.sink if worm is not None else NullSink()
+    ui_base = str(getattr(app.state, "public_base_url", "") or "")
 
     async def open_backend() -> Any:
         return backend
@@ -223,13 +240,16 @@ def build_connection_health_monitor(
         connections_factory,
         store_opener=open_backend,
         agents_resolver=agents_resolver,
+        fallback_agents=lambda: embedded_agents(app),
         sink=sink,
         initial_delay_seconds=initial_delay_seconds,
+        ui_base=ui_base,
     )
 
 
 __all__ = [
     "ConnectionHealthMonitor",
     "build_connection_health_monitor",
+    "embedded_agents",
     "granted_embedded_agents",
 ]

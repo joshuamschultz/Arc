@@ -176,7 +176,9 @@ function statusLine(inst: ConnectorInstance): string {
 function noticeLine(notice: ConnectionNotice): string {
   return notice.delivered
     ? `Told you on ${notice.channel} at ${fmtTime(notice.at)}`
-    : 'Could not notify you'
+    : notice.channel === 'undeliverable'
+      ? 'Could not notify you: no agent is running'
+      : 'Could not notify you'
 }
 
 function ConnectionStatusChip({ status }: { status: ConnectionDisplayStatus }) {

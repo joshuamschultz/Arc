@@ -274,6 +274,7 @@ def create_app(
     hosted: bool = False,
     hosted_claim: HostedClaimService | None = None,
     hosted_origin: str | None = None,
+    public_base_url: str | None = None,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -331,6 +332,9 @@ def create_app(
         workspace_dir: Agent workspace root for the Observe ingest's arcskill
             candidate-store + skills-WORM scan (SPEC-054 REQ-120). ``None``
             keeps the mirror on spool + audit WORM only.
+        public_base_url: The operator-configured public origin of this dashboard
+            (``[ui] public_base_url``, already validated). Notices carry deep
+            links built from it; it is never derived from a request's Host header.
         allow_external_task_refs: Ingest policy for operator-authored task text
             (ADR-019 tier = stringency). Federal → False (default): URLs/emails
             in a task title/description are rejected as an external-comms
@@ -792,6 +796,7 @@ def create_app(
     app.state.hosted = hosted
     app.state.hosted_claim = hosted_claim
     app.state.hosted_origin = hosted_origin
+    app.state.public_base_url = public_base_url
     app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
     app.state.hosted_claim_pending = set()
     app.state.hosted_claim_executor = (

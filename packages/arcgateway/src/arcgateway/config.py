@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from arctrust.paths import config_file, gateway_pairing_db, gateway_runtime_dir
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -71,6 +72,35 @@ class GatewaySection(BaseModel):
     def _expand_paths(self) -> GatewaySection:
         self.runtime_dir = Path(str(self.runtime_dir)).expanduser().resolve()
         return self
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def validate_public_base_url(url: str, tier: str) -> str:
+    """The canonical public ArcUI origin, or ``ValueError``.
+
+    Operator notices carry deep links built from this, so it is a statement by the
+    operator and never derived from a request's ``Host`` header (which an attacker
+    controls). ``https`` is required; ``http`` is allowed only for a loopback host
+    at the personal tier. No credentials, query or fragment may ride in it: the
+    link lands in chat history.
+    """
+    parts = urlsplit(url.strip())
+    host = parts.hostname or ""
+    if parts.scheme not in ("http", "https") or not host:
+        raise ValueError("public_base_url must be an absolute http(s) URL")
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise ValueError("public_base_url must not carry credentials, a query or a fragment")
+    if parts.scheme == "http" and not (host in _LOOPBACK_HOSTS and tier == "personal"):
+        raise ValueError("public_base_url must be https (http is loopback-only at personal tier)")
+    return url.strip().rstrip("/")
+
+
+class UiSection(BaseModel):
+    """[ui] section: how the dashboard is reached from outside this machine."""
+
+    public_base_url: str | None = None
 
 
 class SecuritySection(BaseModel):
@@ -161,6 +191,15 @@ class GatewayConfig(BaseModel):
     security: SecuritySection = Field(default_factory=SecuritySection)
     platforms: PlatformsSection = Field(default_factory=PlatformsSection)
     pairing: PairingSection = Field(default_factory=PairingSection)
+    ui: UiSection = Field(default_factory=UiSection)
+
+    @model_validator(mode="after")
+    def _validate_public_base_url(self) -> GatewayConfig:
+        if self.ui.public_base_url is not None:
+            self.ui.public_base_url = validate_public_base_url(
+                self.ui.public_base_url, self.gateway.tier
+            )
+        return self
 
     @classmethod
     def load(cls) -> GatewayConfig:

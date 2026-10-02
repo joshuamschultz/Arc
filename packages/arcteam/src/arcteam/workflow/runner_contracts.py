@@ -34,10 +34,12 @@ Initiator = Literal["operator", "agent", "scheduler", "chat"]
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
 
-OperatorNotifier = Callable[[str, str], Awaitable[str | None]]
-"""``(text, idempotency_key) -> channel``: put one notice in front of the operator.
+OperatorNotifier = Callable[[str, str, str | None], Awaitable[str | None]]
+"""``(text, idempotency_key, link_path) -> channel``: put one notice in front of the operator.
 
-The runner owns the wording and the key; the host decides how it is delivered
+The runner owns the wording and the key; ``link_path`` is the UI path of the page
+about the notice (the run), which the host prefixes with the operator-configured
+public base URL, or drops when there is none. The host decides how it is delivered
 (``ArcAgent.notify_operator``). ``None`` means nobody was told, and the runner
 audits exactly that."""
 
