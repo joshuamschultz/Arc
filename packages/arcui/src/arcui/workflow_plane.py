@@ -473,10 +473,27 @@ class DashboardWorkflowPlane:
         notes: str,
         actor: OperatorActor,
     ) -> ControlPlaneResult:
-        """Relay the reviewer's choice. The plane decides what it means (REQ-246)."""
-        result = await self._plane.resolve_gate(
-            task_id, decision=decision, notes=notes, actor_did=actor.did
-        )
+        """Relay the reviewer's choice. The plane decides what it means (REQ-246).
+
+        Only an operator session reaches this (the route gates on the operator
+        role), so the decider carries the operator role — the one authority that
+        decides every gate.
+        """
+        from arcteam.workflow.control_plane import OPERATOR_ROLE
+        from arcteam.workflow.errors import GateNotAuthorizedError
+
+        try:
+            result = await self._plane.resolve_gate(
+                task_id,
+                decision=decision,
+                notes=notes,
+                actor_did=actor.did,
+                actor_roles=frozenset({OPERATOR_ROLE}),
+            )
+        except GateNotAuthorizedError as exc:
+            return ControlPlaneResult(
+                errors=[WorkflowFieldError(node_id="", field="actor", error=str(exc))]
+            )
         if not result.ok:
             return _errors(result)
         return ControlPlaneResult(value={} if result.run is None else _run_summary(result.run))

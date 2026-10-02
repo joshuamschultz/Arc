@@ -244,3 +244,40 @@ async def test_run_detail_path_names_what_ran_not_what_was_skipped(tmp_path: Pat
 
     assert detail is not None
     assert detail["path_taken"] == ["collect"]
+
+
+async def test_the_dashboard_decides_a_gate_as_the_operator() -> None:
+    """Only an operator session reaches the gate route; it carries the operator role."""
+    from unittest.mock import AsyncMock
+
+    from arcteam.workflow.control_plane import OPERATOR_ROLE, ControlPlaneResult
+
+    team = AsyncMock()
+    team.resolve_gate = AsyncMock(return_value=ControlPlaneResult(ok=True))
+    plane = DashboardWorkflowPlane(plane=team, definitions=None, runs=None, tasks=None)
+
+    result = await plane.resolve_gate(
+        "wf/run-1/review/0",
+        decision="approve",
+        notes="",
+        actor=OperatorActor(did="did:arc:ui:operator", session_id="s1"),
+    )
+
+    assert result.errors is None
+    assert team.resolve_gate.await_args.kwargs["actor_roles"] == frozenset({OPERATOR_ROLE})
+
+
+async def test_a_gate_denial_is_reported_not_raised() -> None:
+    from unittest.mock import AsyncMock
+
+    from arcteam.workflow.errors import GateNotAuthorizedError
+
+    team = AsyncMock()
+    team.resolve_gate = AsyncMock(side_effect=GateNotAuthorizedError("t", "did:x:y"))
+    plane = DashboardWorkflowPlane(plane=team, definitions=None, runs=None, tasks=None)
+
+    result = await plane.resolve_gate(
+        "t", decision="approve", notes="", actor=OperatorActor(did="did:x:y", session_id="s")
+    )
+
+    assert result.errors is not None and result.errors[0].field == "actor"

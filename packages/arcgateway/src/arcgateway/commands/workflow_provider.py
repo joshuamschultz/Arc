@@ -68,8 +68,10 @@ class GatewayWorkflowProvider:
         """Resolve a waiting gate as the paired human; return the reply line.
 
         Goes through the one ``resolve_gate`` the dashboard and CLI use, naming
-        ``actor_did`` as the decider. Never raises: a chat turn must survive a
-        missing runner or a refused decision.
+        ``actor_did`` as the decider. The decider's roles are read from the team
+        registry for that authenticated DID — never from the message, and pairing
+        alone confers none — so only a gate's listed approvers get through. Never
+        raises: a chat turn must survive a missing runner or a refused decision.
         """
         try:
             return await self._resolve_gate(task_id, decision, notes, actor_did)
@@ -79,13 +81,22 @@ class GatewayWorkflowProvider:
 
     async def _resolve_gate(self, task_id: str, decision: str, notes: str, actor_did: str) -> str:
         from arcteam.workflow.control_plane import GATE_WORDS
+        from arcteam.workflow.errors import GateNotAuthorizedError
 
         plane = self._control_plane()
         if plane is None:
             return "Workflows aren't running on this deployment yet."
-        result = await plane.resolve_gate(
-            task_id, decision=GATE_WORDS[decision], notes=notes, actor_did=actor_did
-        )
+        roles = await plane.runner.member_roles(actor_did)
+        try:
+            result = await plane.resolve_gate(
+                task_id,
+                decision=GATE_WORDS[decision],
+                notes=notes,
+                actor_did=actor_did,
+                actor_roles=roles,
+            )
+        except GateNotAuthorizedError:
+            return f"You aren't an approver for gate {task_id}."
         if not result.ok:
             return f"Couldn't resolve that gate: {result.errors[0].error}"
         return f"Gate {task_id} {_DECISION_PAST[decision]}."
