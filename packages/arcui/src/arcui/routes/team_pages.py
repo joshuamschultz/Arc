@@ -417,12 +417,16 @@ async def get_tools_skills(request: Request) -> JSONResponse:
                     "name": tool,
                     "agents": [],
                     "classification": row.get("classification") or _BUILTIN_CLASS.get(tool, ""),
-                    "source": row.get("source") or "",
+                    "source": row.get("source") or "agent",
                     "version": row.get("version") or "",
                     "loader_status": row.get("loader_status") or "",
                     "loader_detail": row.get("loader_detail") or "",
                 },
             )
+            # "Available on" means callable: a policy-denied tool is not on
+            # that agent, or the Agent filter could never narrow the matrix.
+            if row.get("status") == "deny":
+                continue
             if entry.agent_id not in existing["agents"]:
                 existing["agents"].append(entry.agent_id)
 

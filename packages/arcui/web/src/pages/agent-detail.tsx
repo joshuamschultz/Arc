@@ -1,3 +1,4 @@
+import { OperatorAvatarMenu } from '@/components/shell/operator-avatar-menu'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -2373,6 +2374,7 @@ export function AgentDetailPage() {
           className="min-w-0 flex-1"
         />
         <StatusDot online={Boolean(a.online)} />
+        <OperatorAvatarMenu />
       </div>
 
       <Tabs

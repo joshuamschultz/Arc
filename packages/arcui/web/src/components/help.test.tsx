@@ -14,7 +14,7 @@ describe('contextual help', () => {
   for (const [route, entry] of Object.entries(content)) {
     const path = route.replace(':id', 'example')
     it(`opens ${route} guidance from the page header`, async () => {
-      render(<MemoryRouter initialEntries={[`/${path}`]}><PageHeader title={entry.title} /></MemoryRouter>)
+      render(<MemoryRouter initialEntries={[`/${path}`]}><QueryClientProvider client={new QueryClient()}><PageHeader title={entry.title} /></QueryClientProvider></MemoryRouter>)
       await userEvent.click(screen.getByRole('button', { name: `Help for ${entry.title}` }))
       expect(screen.getByText(entry.summary)).toBeTruthy()
       await userEvent.keyboard('{Escape}')

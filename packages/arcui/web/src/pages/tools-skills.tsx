@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select'
 import { useRoster, useTeamToolsSkills } from '@/lib/queries'
 import { cn } from '@/lib/utils'
+import { SOURCE_FILTERS, filterCapabilities, type SourceFilter, type TypeFilter } from '@/lib/capability-filters'
 import type { Agent, CapabilityInventoryItem, Dict } from '@/lib/types'
 
 interface FleetSkillRow extends CapabilityInventoryItem {
@@ -32,12 +33,6 @@ interface ToolRow extends Dict {
   classification?: string
   source?: string
 }
-
-// H-031: the four fixed source buckets every tool/skill row resolves to
-// (builtin / agent / extension / module) — the same set SourceBadge renders.
-const SOURCE_FILTERS = ['builtin', 'agent', 'extension', 'module'] as const
-type SourceFilter = (typeof SOURCE_FILTERS)[number]
-type TypeFilter = 'all' | 'tools' | 'skills'
 
 /** An agent's filter-menu label — the H-007 resolved identity name first,
  *  falling through to whatever the roster row carries, never a raw agent_id
@@ -97,45 +92,31 @@ export function ToolsSkillsPage() {
 
   const [agentFilter, setAgentFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-  const [sourceFilter, setSourceFilter] = useState<Set<SourceFilter>>(new Set(SOURCE_FILTERS))
+  const [sourceFilter, setSourceFilter] = useState<Set<SourceFilter>>(new Set())
 
+  // Chips select: none selected = no source filter; each click adds/removes
+  // that source from the kept set.
   const toggleSource = (source: SourceFilter) => {
     setSourceFilter((current) => {
       const next = new Set(current)
       if (next.has(source)) next.delete(source)
       else next.add(source)
-      // Every source cleared reads the same as every source kept — an empty
-      // set is not "show nothing", it is "no source filter applied".
-      return next.size === 0 ? new Set(SOURCE_FILTERS) : next
+      return next
     })
   }
 
   const allTools = useMemo(() => (query.data?.tools ?? []) as ToolRow[], [query.data])
   const allSkills = useMemo(() => (query.data?.skills ?? []) as unknown as FleetSkillRow[], [query.data])
 
-  const tools = useMemo(
-    () =>
-      allTools.filter(
-        (t) =>
-          (agentFilter === 'all' || (t.agents ?? []).includes(agentFilter)) &&
-          sourceFilter.has((t.source as SourceFilter) ?? 'agent'),
-      ),
-    [allTools, agentFilter, sourceFilter],
-  )
-  const skills = useMemo(
-    () =>
-      allSkills.filter(
-        (s) =>
-          (agentFilter === 'all' || s.agent_id === agentFilter) &&
-          sourceFilter.has((s.source as SourceFilter) ?? 'agent'),
-      ),
-    [allSkills, agentFilter, sourceFilter],
+  const { tools, skills } = useMemo(
+    () => filterCapabilities(allTools, allSkills, { agent: agentFilter, type: typeFilter, sources: sourceFilter }),
+    [allTools, allSkills, agentFilter, typeFilter, sourceFilter],
   )
 
   const showTools = typeFilter !== 'skills'
   const showSkills = typeFilter !== 'tools'
   const filtersActive =
-    agentFilter !== 'all' || typeFilter !== 'all' || sourceFilter.size !== SOURCE_FILTERS.length
+    agentFilter !== 'all' || typeFilter !== 'all' || sourceFilter.size > 0
 
   return (
     <div className="flex h-full flex-col">
@@ -194,7 +175,7 @@ export function ToolsSkillsPage() {
                 key={source}
                 type="button"
                 onClick={() => toggleSource(source)}
-                className={cn('rounded-md transition-opacity', !sourceFilter.has(source) && 'opacity-30')}
+                className={cn('rounded-md transition-opacity', sourceFilter.size > 0 && !sourceFilter.has(source) && 'opacity-30')}
                 aria-pressed={sourceFilter.has(source)}
               >
                 <SourceBadge value={source} />
@@ -210,7 +191,7 @@ export function ToolsSkillsPage() {
               onClick={() => {
                 setAgentFilter('all')
                 setTypeFilter('all')
-                setSourceFilter(new Set(SOURCE_FILTERS))
+                setSourceFilter(new Set())
               }}
             >
               Clear filters

@@ -16,8 +16,9 @@ import { initials } from '@/lib/format'
 
 /**
  * H-035: operator identity + the view/operator-mode toggle live behind this
- * avatar, fixed at the top-right of every screen — not as a row buried in
- * the sidebar's SYSTEM section. The toggle still owns no privilege itself
+ * avatar, rendered inside each screen header's action cluster (beside Help,
+ * never as a fixed overlay on top of it) — not as a row buried in the
+ * sidebar's SYSTEM section. The toggle still owns no privilege itself
  * (see `useOperatorMode`); every mutation is still enforced server-side.
  */
 export function OperatorAvatarMenu() {
@@ -40,7 +41,7 @@ export function OperatorAvatarMenu() {
   }
 
   return (
-    <div className="fixed right-4 top-4 z-40">
+    <div className="shrink-0">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
