@@ -50,6 +50,9 @@ def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # arctrust.arc_home() (operator-key resolution) and load_config's base both
     # follow ARC_CONFIG_DIR — pin it at the test tmp so nothing touches ~/.arc.
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    # The fleet root follows ARC_TEAM_ROOT when set (the adversarial battery sets
+    # it); every test here passes its own team root, so the env must not leak in.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
 
 
 def _bootstrap_operator_key(tmp_path: Path) -> None:
