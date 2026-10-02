@@ -20,8 +20,10 @@ import logging
 import time
 from typing import Any
 
+from arcagent.core.prompt_context import PINNED_POLICY_DOC, signed_workspace_text
 from arcagent.modules.policy import _runtime
 from arcagent.modules.policy.reflection import ReflectionGrounding, reflect_and_curate
+from arcagent.modules.policy.render import render_policy_section
 from arcagent.tools._decorator import hook
 from arcagent.utils.model_helpers import get_eval_model, spawn_background
 
@@ -45,16 +47,22 @@ def _eval_model() -> Any:
 
 @hook(event="agent:assemble_prompt", priority=60)
 async def inject_policy_md(ctx: Any) -> None:
-    """Inject ``policy.md`` content into the prompt's sections dict."""
+    """Inject the policy section: signed pinned rules plus the budgeted learned bullets.
+
+    The pinned operator rules come through the run's verified prompt snapshot; the
+    learned ``policy.md`` playbook is the agent's own state and is read directly,
+    rendered without its curation metadata (J2 F2/F5/F6).
+    """
     sections = ctx.data.get("sections")
     if sections is None or not isinstance(sections, dict):
         return
     st = _runtime.state()
+    pinned = signed_workspace_text(ctx.data.get("prompt_source"), st.workspace, PINNED_POLICY_DOC)
     policy_path = st.workspace / "policy.md"
-    if policy_path.exists():
-        content = policy_path.read_text(encoding="utf-8").strip()
-        if content:
-            sections["policy"] = content
+    learned = policy_path.read_text(encoding="utf-8") if policy_path.exists() else ""
+    content = render_policy_section(pinned, learned, max_tokens=st.config.max_prompt_tokens)
+    if content:
+        sections["policy"] = content
 
 
 @hook(event="agent:pre_tool", priority=110)

@@ -1,5 +1,5 @@
 import { Activity } from 'lucide-react'
-import { useAgentTimeseries } from '@/lib/queries'
+import { useAgentPromptHealth, useAgentTimeseries } from '@/lib/queries'
 import { fmtNumber, initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Agent } from '@/lib/types'
@@ -88,6 +88,26 @@ function HarnessBadge({ harness }: { harness?: string }) {
 }
 
 /**
+ * J2 F7: shown when a prompt override or signed document fails verification. The
+ * agent fails closed and refuses every run until it is fixed, so say so on the card.
+ */
+function PromptRejectedBadge({ agentId }: { agentId: string }) {
+  const health = useAgentPromptHealth(agentId)
+  const rejected = health.data?.rejected ?? []
+  if (rejected.length === 0) return null
+  const detail = rejected.map((r) => `${r.package}/${r.name}: ${r.reason}`).join('\n')
+  return (
+    <span
+      role="alert"
+      title={`The agent will refuse to run until this is fixed.\n${detail}`}
+      className="inline-flex shrink-0 items-center rounded-full border border-status-error/40 bg-status-error/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-status-error"
+    >
+      Prompt rejected
+    </span>
+  )
+}
+
+/**
  * Agent card, mockup-faithful: who the agent is, what it's doing right now, and
  * a calm proof-of-work footer — how many LLM calls it has made today, with a
  * 24h token-activity sparkline. The whole card opens the agent's detail.
@@ -120,6 +140,7 @@ export function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void 
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <HarnessBadge harness={a.harness} />
+          {a.agent_id && <PromptRejectedBadge agentId={a.agent_id} />}
           <ActivityBadge activity={a.activity} online={a.online} />
         </div>
       </div>

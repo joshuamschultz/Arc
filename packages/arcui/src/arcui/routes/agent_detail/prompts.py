@@ -34,23 +34,24 @@ from arcprompt import (
     load_stock_document,
     render_prompt,
 )
-from arctrust.policy import Decision, PolicyContext, ToolCall, read_agent_tier
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from arcui import prompt_signing
 from arcui.audit import emit_mutation_audit
-from arcui.prompt_overlay_status import agent_prompt_resolver, overlay_state
+from arcui.prompt_overlay_status import agent_prompt_resolver, overlay_state, rejected_prompts
 from arcui.routes.agent_detail._common import _agent_did, _agent_root, logger
 from arcui.routes.agent_detail.files_write import _SIDECAR_SUFFIX, _confine, _find_secret
+from arcui.routes.agent_detail.signed_write import sign_and_write
 from arcui.schemas import (
     ErrorResponse,
     PromptDetailResponse,
+    PromptHealthResponse,
     PromptListItem,
     PromptListResponse,
     PromptResetResponse,
     PromptWriteResponse,
+    RejectedPromptItem,
     RubricDimension,
     RubricResponse,
     RubricUpdate,
@@ -89,35 +90,6 @@ def _unified_diff(stock_body: str, effective_body: str) -> str:
     )
 
 
-async def _evaluate_policy(
-    request: Request, *, agent_root: Path, agent_did: str, package: str, name: str
-) -> Decision | None:
-    """Route a ``prompt:write`` action through the optional injected policy pipeline.
-
-    Returns the pipeline's :class:`Decision`, or ``None`` when no pipeline is
-    configured (configured-gate convention: no rule → allow). arcui holds no
-    tier-conditional logic — the pipeline it is handed decides.
-    """
-    pipeline = getattr(request.app.state, "prompt_policy", None)
-    if pipeline is None:
-        return None
-    session_id = getattr(request.state, "session_id", None) or "unknown"
-    call = ToolCall(
-        tool_name="prompt:write",
-        arguments={"package": package, "name": name},
-        agent_did=agent_did,
-        session_id=session_id,
-        classification="unclassified",
-    )
-    ctx = PolicyContext(
-        tier=read_agent_tier(agent_root),
-        policy_version="",
-        bundle_age_seconds=0.0,
-    )
-    decision: Decision = await pipeline.evaluate(call, ctx)
-    return decision
-
-
 # ---------------------------------------------------------------------------
 # Reads
 # ---------------------------------------------------------------------------
@@ -148,6 +120,19 @@ async def get_prompts(request: Request) -> JSONResponse:
             )
         )
     return JSONResponse(PromptListResponse(items=items).model_dump(mode="json"))
+
+
+async def get_prompt_health(request: Request) -> JSONResponse:
+    """GET .../prompts/health — what the agent would refuse at run start, and why."""
+    agent_root = _agent_root(request, request.path_params["id"])
+    if agent_root is None:
+        return _error("Agent not found", 404)
+    try:
+        rejected = rejected_prompts(agent_root)
+    except Exception as exc:  # reason: 503-unreadable vs 200-healthy
+        return _store_unreadable(exc)
+    items = [RejectedPromptItem(package=r.package, name=r.name, reason=r.reason) for r in rejected]
+    return JSONResponse(PromptHealthResponse(rejected=items).model_dump(mode="json"))
 
 
 async def get_prompt_detail(request: Request) -> JSONResponse:
@@ -263,16 +248,6 @@ async def _author_signed_overlay(
             400,
         )
 
-    decision = await _evaluate_policy(
-        request, agent_root=agent_root, agent_did=agent_did, package=package, name=name
-    )
-    if decision is not None and decision.is_deny():
-        detail = f"policy_denied:{decision.layer}:{decision.rule_id}"
-        emit_mutation_audit(
-            request, target=target, operation="prompt.write", outcome="denied", detail=detail
-        )
-        return _error(f"prompt override denied by policy: {decision.reason}", 403)
-
     overlay_root = agent_root / _OVERLAY_DIRNAME
     canonical = _confine(overlay_root, f"{package}/{name}.md")
     if canonical is None:
@@ -285,39 +260,28 @@ async def _author_signed_overlay(
         )
         return _error(f"invalid prompt path: {package}/{name}", 400)
 
-    try:
-        identity = prompt_signing.signer_for(request)
-    except prompt_signing.SigningUnavailableError as exc:
-        emit_mutation_audit(
-            request, target=target, operation="prompt.write", outcome="error", detail=str(exc)
-        )
-        return _error(f"cannot sign override: {exc}", 500)
-
     overlay_bytes = render_prompt(content, name=name, description=description)
-    signature = prompt_signing.sign(overlay_bytes, identity)
-    try:
-        canonical.parent.mkdir(parents=True, exist_ok=True)
-        canonical.write_bytes(overlay_bytes)
-        Path(f"{canonical}{_SIDECAR_SUFFIX}").write_text(signature.to_json(), encoding="utf-8")
-    except OSError as exc:
-        emit_mutation_audit(
-            request, target=target, operation="prompt.write", outcome="error", detail=str(exc)
-        )
-        return _error(f"could not write override: {exc}", 400)
-
-    emit_mutation_audit(
+    written = await sign_and_write(
         request,
+        agent_root=agent_root,
+        agent_did=agent_did,
+        package=package,
+        name=name,
         target=target,
         operation="prompt.write",
-        outcome="applied",
-        detail=f"signer={identity.did} sha256={signature.artifact_sha256}",
+        path=canonical,
+        data=overlay_bytes,
+        sidecar=Path(f"{canonical}{_SIDECAR_SUFFIX}"),
     )
+    if isinstance(written, JSONResponse):
+        return written
+
     return JSONResponse(
         PromptWriteResponse(
             package=package,
             name=name,
-            signer_did=identity.did,
-            sha256=signature.artifact_sha256,
+            signer_did=written.signer_did,
+            sha256=written.sha256,
             message="Override saved and signed. It takes effect on the agent's next run.",
         ).model_dump(mode="json")
     )
@@ -510,6 +474,7 @@ async def put_rubric(request: Request) -> JSONResponse:
 __all__ = [
     "delete_prompt",
     "get_prompt_detail",
+    "get_prompt_health",
     "get_prompts",
     "get_rubric",
     "put_prompt",

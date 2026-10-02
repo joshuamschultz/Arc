@@ -70,7 +70,7 @@ from arcagent.core.errors import (
 )
 from arcagent.core.module_config import validate_module_configs
 from arcagent.core.module_discovery import discover_modules, module_root
-from arcagent.core.prompt_context import build_prompt_resolver
+from arcagent.core.prompt_context import build_prompt_resolver, signed_workspace_files
 from arcagent.core.tool_policy import (
     ToolPolicyState,
     ToolPolicySummary,
@@ -392,6 +392,7 @@ __all__ = [
     "set_workflow_runner",
     "sidecar_path",
     "sign_capability",
+    "signed_workspace_files",
     "skill_revision_scope",
     "stream_token_text",
     "stricter_tier",

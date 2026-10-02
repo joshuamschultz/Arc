@@ -1132,6 +1132,18 @@ export const useAgentInboxSearch = (agentId: string, query: string) =>
 export const useAgentPrompts = (agentId: string) =>
   useApiQuery<PromptListResponse>(['agent', agentId, 'prompts'], `/api/agents/${agentId}/prompts`)
 
+/** J2 F7: prompts/documents the agent refuses to run with. A bad signature stops
+ *  every run of the agent, so the fleet card must show it before the silent failure. */
+export interface PromptHealth {
+  rejected: { package: string; name: string; reason: string }[]
+}
+
+export const useAgentPromptHealth = (agentId: string) =>
+  useApiQuery<PromptHealth>(
+    ['agent', agentId, 'prompts', 'health'],
+    `/api/agents/${agentId}/prompts/health`,
+  )
+
 export const useAgentPromptDetail = (
   agentId: string,
   prompt: { package: string; name: string } | null,

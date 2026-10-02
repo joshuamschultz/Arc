@@ -162,6 +162,24 @@ class PromptListResponse(BaseModel):
     items: list[PromptListItem]
 
 
+class RejectedPromptItem(BaseModel):
+    """One prompt or signed document the agent refuses to run with."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    reason: str
+
+
+class PromptHealthResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/prompts/health`` — empty when the agent can run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rejected: list[RejectedPromptItem]
+
+
 class PromptDetailResponse(BaseModel):
     """Body of ``GET /api/agents/{id}/prompts/{package}/{name}``.
 

@@ -7,6 +7,8 @@ Validated internally by the module on construction.
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from arcagent.core.module_config import ModuleConfig
 
 
@@ -27,6 +29,11 @@ class PolicyConfig(ModuleConfig):
     daily_notes_every_turns: int = 20
     max_bullets: int = 200
     max_bullet_text_length: int = 500
+
+    # Token budget for the whole ``<policy>`` prompt section (~4 chars/token). Learned
+    # bullets are sent highest-score first until it is spent; pinned operator rules
+    # always render in full. Bounds the fixed per-call cost of a long-lived playbook.
+    max_prompt_tokens: int = Field(default=4000, gt=0)
 
     # Idle-flush backstop: once this many wall-clock seconds have elapsed since the
     # last policy eval AND the turn counter has advanced, evaluate on the next turn

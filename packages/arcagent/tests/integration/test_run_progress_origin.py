@@ -32,12 +32,15 @@ from arcagent.core.config import (
 )
 from arcagent.core.module_bus import EventContext
 
+from ._signed_documents import sign_workspace_documents
+
 
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "workspace"
     ws.mkdir()
     (ws / "identity.md").write_text("Agent: progress-agent")
+    sign_workspace_documents(ws, tmp_path / "arcagent.toml")
     return ws
 
 
@@ -55,7 +58,7 @@ def agent_config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
 
 @patch("arcagent.core.model_manager.load_eval_model")
 async def test_the_turns_own_origin_reaches_the_progress_stream(
-    mock_load_model: MagicMock, agent_config: ArcAgentConfig
+    mock_load_model: MagicMock, agent_config: ArcAgentConfig, tmp_path: Path
 ) -> None:
     mock_load_model.return_value = MagicMock()
     bridges: list[Any] = []
@@ -68,7 +71,7 @@ async def test_the_turns_own_origin_reaches_the_progress_stream(
 
         return _gen()
 
-    agent = ArcAgent(config=agent_config)
+    agent = ArcAgent(config=agent_config, config_path=tmp_path / "arcagent.toml")
     await agent.startup()
 
     progress: list[dict[str, Any]] = []

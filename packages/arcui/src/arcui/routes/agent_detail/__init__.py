@@ -71,6 +71,7 @@ from arcui.routes.agent_detail.policy import (
 from arcui.routes.agent_detail.prompts import (
     delete_prompt,
     get_prompt_detail,
+    get_prompt_health,
     get_prompts,
     get_rubric,
     put_prompt,
@@ -148,6 +149,7 @@ routes = [
         methods=["POST"],
     ),
     Route("/api/agents/{id}/prompts", get_prompts, methods=["GET"]),
+    Route("/api/agents/{id}/prompts/health", get_prompt_health, methods=["GET"]),
     Route("/api/agents/{id}/prompts/{package}/{name}/rubric", get_rubric, methods=["GET"]),
     Route("/api/agents/{id}/prompts/{package}/{name}/rubric", put_rubric, methods=["PUT"]),
     Route("/api/agents/{id}/prompts/{package}/{name}", get_prompt_detail, methods=["GET"]),

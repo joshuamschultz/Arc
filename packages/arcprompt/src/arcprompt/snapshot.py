@@ -15,6 +15,7 @@ hardcoded tier or default signer (the SPEC-017 audit-lies regression).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
@@ -68,13 +69,23 @@ def snapshot(
     actor_did: str,
     sink: AuditSink,
     request_id: str | None = None,
+    signed_files: Mapping[tuple[str, str], Path] | None = None,
 ) -> PromptSnapshot:
     """Resolve and freeze every prompt in ``refs``; emit one provenance event.
+
+    ``signed_files`` maps ``(package, name)`` to a workspace document (identity,
+    pinned policy) that must verify like an overlay; a present-but-unverifiable
+    one raises, so the run never starts on tampered control-plane text. Absent
+    files are simply not part of the snapshot.
 
     The event's ``tier`` is the resolver's held posture and each row's
     ``signer_did`` is the overlay's real signer — both resolved, never defaulted.
     """
     entries = {(ref.package, ref.name): resolver.resolve(ref.package, ref.name) for ref in refs}
+    for (package, name), path in (signed_files or {}).items():
+        document = resolver.resolve_signed_file(package, name, path)
+        if document is not None:
+            entries[(package, name)] = document
     snap = PromptSnapshot(entries)
     emit(
         AuditEvent(

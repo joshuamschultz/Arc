@@ -79,11 +79,15 @@ class TestInjectPolicyMd:
     async def test_writes_section_when_file_present(self, configured: Path) -> None:
         from arcagent.modules.policy.capabilities import inject_policy_md
 
-        (configured / "policy.md").write_text("learned lessons here")
+        (configured / "policy.md").write_text(
+            "# Policy\n\n- [P01] learned lessons here "
+            "{score:5, uses:0, reviewed:2026-01-01, created:2026-01-01, source:s}\n"
+        )
         sections: dict[str, str] = {}
         ctx = SimpleNamespace(data={"sections": sections})
         await inject_policy_md(ctx)
-        assert sections["policy"] == "learned lessons here"
+        assert "- learned lessons here" in sections["policy"]
+        assert "score:" not in sections["policy"]
 
     async def test_skips_when_file_absent(self, configured: Path) -> None:
         from arcagent.modules.policy.capabilities import inject_policy_md

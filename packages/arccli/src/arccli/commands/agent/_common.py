@@ -514,6 +514,21 @@ No checks are defined yet.
 """
 
 
+def _sign_new_identity(agent_dir: Path) -> None:
+    """Operator-sign the identity.md the scaffold just wrote, when an operator key exists.
+
+    An unsigned ``identity.md`` is refused at every run start (J2 F2). With no operator
+    key yet (``arc init`` creates it) the file stays unsigned and the agent's run error
+    says so; ``arc prompt sign-workspace`` signs it afterwards.
+    """
+    from arccli.blueprints_materialize import operator_signer_pair
+    from arccli.workspace_signing import sign_workspace_documents
+
+    signer = operator_signer_pair()
+    if signer is not None:
+        sign_workspace_documents(agent_dir, signer)
+
+
 def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     """Create the agent + workspace directory structure (SPEC-021 layout)."""
     workspace = agent_dir / "workspace"
@@ -522,6 +537,7 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     identity_path = workspace / "identity.md"
     if not identity_path.exists():
         identity_path.write_text(_DEFAULT_IDENTITY)
+        _sign_new_identity(agent_dir)
 
     policy_path = workspace / "policy.md"
     if not policy_path.exists():

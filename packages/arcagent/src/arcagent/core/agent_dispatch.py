@@ -199,6 +199,7 @@ def _run_prompt_source(agent: ArcAgent, telemetry: AgentTelemetry) -> PromptSour
         actor_did=actor_did,
         audit_event=telemetry.audit_event,
         request_id=current_request_id(),
+        workspace=agent._workspace,
     )
     return ResolverPromptSource(snapshot)
 

@@ -33,6 +33,8 @@ from arcagent.core.config import (
 from arcagent.core.module_bus import EventContext
 from arcagent.core.session_internal.context import TURN_CONTEXT_KEY
 
+from ._signed_documents import sign_workspace_documents
+
 
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
@@ -40,6 +42,7 @@ def workspace(tmp_path: Path) -> Path:
     ws.mkdir()
     (ws / "identity.md").write_text("Agent: cache-agent")
     (ws / "context.md").write_text("Open loops: none.")
+    sign_workspace_documents(ws, tmp_path / "arcagent.toml")
     return ws
 
 
@@ -58,7 +61,7 @@ def agent_config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
 
 @patch("arcagent.core.model_manager.load_eval_model")
 async def test_second_turn_reuses_the_first_turns_prefix(
-    mock_load_model: MagicMock, agent_config: ArcAgentConfig
+    mock_load_model: MagicMock, agent_config: ArcAgentConfig, tmp_path: Path
 ) -> None:
     mock_load_model.return_value = MagicMock()
     calls: list[dict[str, Any]] = []
@@ -71,7 +74,7 @@ async def test_second_turn_reuses_the_first_turns_prefix(
 
         return _gen()
 
-    agent = ArcAgent(config=agent_config)
+    agent = ArcAgent(config=agent_config, config_path=tmp_path / "arcagent.toml")
     await agent.startup()
 
     # A module that injects fresh per-turn material, as memory recall does.
