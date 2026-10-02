@@ -11,9 +11,11 @@ walk once means the two callers cannot drift on it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from arcokf import OKFValidationError
 from pydantic import BaseModel
@@ -36,6 +38,26 @@ _SOURCE_SUBDIRS = ("entities", "insights", "procedures", "events", "daily-log")
 #: what one changed window costs to re-embed. Window 0 keeps the plain ``file:``/
 #: ``event:`` id — a small file is the one-window case, so existing ids never move.
 MAX_CHUNK_BYTES = 60_000
+
+#: Longest text handed to the EMBEDDER per chunk. FTS keeps the full (≤60 KB)
+#: window; an embedding model only reads its first few hundred to few thousand
+#: tokens, so sending more is wasted spend (and some providers reject it).
+#: ~2,000 tokens of English covers every embedding model Arc wires today.
+EMBED_TEXT_MAX_CHARS = 8_000
+
+#: Entity types that are connector bookkeeping, not knowledge: connected-source
+#: routing (``mapping``), source registrations (``source``), blob folder
+#: inventories and DB table schemas. Their only readers are the operator/ingest
+#: code via ``store.read`` — they carry no recall value and must never be
+#: searchable or embedded. The ONE list both the incremental index and the
+#: deterministic rebuild filter on (both walk ``iter_source_chunks``).
+BOOKKEEPING_ENTITY_TYPES = frozenset({"mapping", "source", "blob_folder", "db_table"})
+
+_DIGEST_RE = re.compile(r" — sha256:[0-9a-f]+")
+_LINK_TARGET_RE = re.compile(r"\]\(([^)]+)\)")
+
+# Human-readable frontmatter fields worth embedding alongside the body.
+_HEADER_FIELDS = ("name", "aliases", "summary", "description", "tags")
 
 
 class SourceChunk(BaseModel):
@@ -73,26 +95,7 @@ def iter_source_chunks(
     ``IndexRebuilder``) preserves the full, unconditional walk exactly as
     before.
     """
-    # ``index.md`` is a derived routing artifact, never part of the inventory it
-    # describes.  A reader may use it only after the owning collection service has
-    # produced a canonical, digest-verified file; tampering therefore degrades to
-    # ordinary document recall instead of becoming trusted instructions.
-    collection_index = memory_collection(mem_dir)
-    if collection_index.verify():
-        index_path = collection_index.index_path
-        rel = index_path.relative_to(workspace).as_posix()
-        # Keep the machine comments on disk for verification, but index the compact
-        # human routing lines only. A large inventory's routing lines can STILL run
-        # to megabytes, though (a fleet with thousands of memory files), so this too
-        # goes through the size bound — one collection index must never become a
-        # single chunk that overflows the Postgres tsvector limit.
-        yield from bounded_chunks(
-            f"file:{rel}",
-            rel,
-            routing_text(index_path.read_text(encoding="utf-8")),
-            "",
-            index_path.stat().st_mtime,
-        )
+    excluded: set[str] = set()
     for subdir in _SOURCE_SUBDIRS:
         directory = mem_dir / subdir
         if not directory.exists():
@@ -113,11 +116,17 @@ def iter_source_chunks(
             # as fail-closed (federal) / default (personal), and still window it so
             # the content stays searchable. Same blast-radius rule as the size split.
             try:
-                fm, _ = parse_document(text)
-                classification = str(fm.get("classification") or "")
+                fm, body = parse_document(text)
             except OKFValidationError:
                 classification = ""
+            else:
+                if fm.get("entity_type") in BOOKKEEPING_ENTITY_TYPES:
+                    excluded.add(path.relative_to(mem_dir).as_posix())
+                    continue
+                classification = str(fm.get("classification") or "")
+                text = render_index_text(fm, body)
             yield from bounded_chunks(chunk_id, rel, text, classification, mtime)
+    yield from _routing_chunks(mem_dir, workspace, excluded)
     for event in events:
         yield from bounded_chunks(
             f"event:{event.event_id}",
@@ -128,6 +137,65 @@ def iter_source_chunks(
             event.classification,
             _iso_epoch(event.ts),
         )
+
+
+def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Iterator[SourceChunk]:
+    """The collection ``index.md`` routing lines, minus bookkeeping and digests.
+
+    ``index.md`` is a derived routing artifact, never part of the inventory it
+    describes. A reader may use it only after the owning collection service has
+    produced a canonical, digest-verified file; tampering therefore degrades to
+    ordinary document recall instead of becoming trusted instructions.
+
+    Lines that link a bookkeeping card (``excluded``: collected by the file walk,
+    which never skips those — they are never stored) are dropped, and the
+    machine ``sha256:`` digest on each line is stripped so a content-only change
+    elsewhere does not re-embed the routing text. A large inventory's routing
+    lines can STILL run to megabytes, so this goes through the size bound too —
+    one collection index must never become a single chunk that overflows the
+    Postgres tsvector limit.
+    """
+    collection_index = memory_collection(mem_dir)
+    if not collection_index.verify():
+        return
+    index_path = collection_index.index_path
+    rel = index_path.relative_to(workspace).as_posix()
+    lines = [
+        _DIGEST_RE.sub("", line)
+        for line in routing_text(index_path.read_text(encoding="utf-8")).splitlines()
+        if not _links_excluded(line, excluded)
+    ]
+    yield from bounded_chunks(f"file:{rel}", rel, "\n".join(lines), "", index_path.stat().st_mtime)
+
+
+def _links_excluded(line: str, excluded: set[str]) -> bool:
+    match = _LINK_TARGET_RE.search(line)
+    return match is not None and match.group(1) in excluded
+
+
+def render_index_text(frontmatter: dict[str, Any], body: str) -> str:
+    """The text a card contributes to the index: one human-field header + the body.
+
+    Machine fields (``last_updated``, ``links_to``, ``entity_type``, ids, hashes,
+    confidence) are dropped, so they are never embedded and a write that only
+    bumps ``last_updated`` leaves the text — and therefore ``content_hash`` — the
+    same. Only ``name``/``aliases``/``summary``/``description``/``tags`` survive.
+    """
+    parts: list[str] = []
+    for key in _HEADER_FIELDS:
+        value = frontmatter.get(key)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value)
+        if value:
+            parts.append(f"{key}: {value}")
+    header = " | ".join(parts)
+    body = body.strip()
+    return f"{header}\n\n{body}" if header and body else header or body
+
+
+def embed_text(text: str) -> str:
+    """``text`` capped at the embedder window; FTS keeps the full chunk text."""
+    return text[:EMBED_TEXT_MAX_CHARS]
 
 
 def bounded_chunks(
@@ -163,7 +231,7 @@ def _split_windows(text: str) -> list[str]:
     units: list[str] = []
     for para in text.split("\n\n"):
         if len(para.encode("utf-8")) > MAX_CHUNK_BYTES:
-            units.extend(_hard_split(para))
+            units.extend(hard_split(para))
         else:
             units.append(para)
     windows: list[str] = []
@@ -182,14 +250,14 @@ def _split_windows(text: str) -> list[str]:
     return windows or [""]
 
 
-def _hard_split(unit: str) -> list[str]:
-    """Split one over-budget paragraph into byte-bounded pieces, char-aligned."""
+def hard_split(unit: str, *, max_bytes: int = MAX_CHUNK_BYTES) -> list[str]:
+    """Split one over-budget paragraph into ``max_bytes`` pieces, char-aligned."""
     pieces: list[str] = []
     current = ""
     current_bytes = 0
     for ch in unit:
         ch_bytes = len(ch.encode("utf-8"))
-        if current and current_bytes + ch_bytes > MAX_CHUNK_BYTES:
+        if current and current_bytes + ch_bytes > max_bytes:
             pieces.append(current)
             current, current_bytes = "", 0
         current += ch
@@ -207,4 +275,14 @@ def _iso_epoch(ts: str) -> float:
         return 0.0
 
 
-__all__ = ["MAX_CHUNK_BYTES", "SourceChunk", "bounded_chunks", "iter_source_chunks"]
+__all__ = [
+    "BOOKKEEPING_ENTITY_TYPES",
+    "EMBED_TEXT_MAX_CHARS",
+    "MAX_CHUNK_BYTES",
+    "SourceChunk",
+    "bounded_chunks",
+    "embed_text",
+    "hard_split",
+    "iter_source_chunks",
+    "render_index_text",
+]

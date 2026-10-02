@@ -24,7 +24,7 @@ from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.degrade import warn_once
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.source import iter_source_chunks
+from arcmemory.index.source import embed_text, iter_source_chunks
 from arcmemory.mdfile import parse_document
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
@@ -244,7 +244,9 @@ class IndexRebuilder:
         hashes = [content_hash(sc.text) for sc in chunks]
         # Embed ONLY the chunks whose content we don't already hold a vector for.
         to_embed = [i for i, h in enumerate(hashes) if h not in reuse]
-        fresh = await self._embed([chunks[i].text for i in to_embed]) if to_embed else None
+        fresh = (
+            await self._embed([embed_text(chunks[i].text) for i in to_embed]) if to_embed else None
+        )
         fresh_by_idx = dict(zip(to_embed, fresh, strict=True)) if fresh is not None else {}
         for i, sc in enumerate(chunks):
             fts_rowid = conn.execute(
