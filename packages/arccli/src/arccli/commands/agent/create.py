@@ -120,15 +120,13 @@ def _mint_agent_identity(agent_dir: Path) -> Any:
 
 
 def _sign_scaffolded_capabilities(agent_dir: Path) -> Any | None:
-    """Sign every scaffolded capability under this DID (SPEC-033).
+    """Operator-sign the scaffolded capabilities (SPEC-033).
 
-    TofuLayer at personal tier denies any agent-writable capability that
-    isn't signed by the agent's own pinned identity key, unless the operator
-    globally opts in via auto_run_agent_code — without a signature, the
-    scaffolded calculator.py is dead on arrival. Returns the minted identity
-    (or None on failure — fail-open: an unsigned scaffold still creates
-    successfully, it just needs a manual `arc trust` step or
-    auto_run_agent_code=true to load).
+    The agent can write ``capabilities/``, so the agent key never signs there:
+    the deployment operator signer does (signature + pinned key + TOFU pin, via
+    ``arcagent.sign_capability``). Returns the minted agent identity for team
+    registration (or None on failure). An unsigned scaffold still creates
+    successfully; it stays gated until ``arc trust approve``.
     """
     try:
         identity = _mint_agent_identity(agent_dir)
@@ -140,16 +138,21 @@ def _sign_scaffolded_capabilities(agent_dir: Path) -> Any | None:
         return identity
 
     import arcagent
+    from arctrust import SignerError
+
+    from arccli.commands.operator import operator_signer_and_did
 
     calc_path = agent_dir / "capabilities" / "calculator.py"
     try:
-        arcagent.write_signature(
+        operator_did, signer = operator_signer_and_did()
+        arcagent.sign_capability(
             calc_path,
-            calc_path.read_bytes(),
-            signer_did=identity.did,
-            private_key=identity.signing_seed,
+            signer_did=operator_did,
+            signer=signer,
+            config_path=agent_dir / "arcagent.toml",
         )
-    except Exception as exc:  # reason: fail-open — scaffold still succeeds unsigned
+    except (OSError, ValueError, RuntimeError, SignerError) as exc:
+        # Fail closed: an unsigned scaffold is simply gated until `arc trust approve`.
         sys.stdout.write(f"Warning: could not sign {calc_path.name}: {exc}\n")
     return identity
 

@@ -271,8 +271,8 @@ def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
     """Resolve + materialize a blueprint's full surface into an existing agent home."""
     from arccli.blueprints import resolve_blueprint
     from arccli.blueprints_materialize import (
-        agent_signer_pair,
         materialize_blueprint,
+        operator_capability_signer,
         operator_signer_pair,
     )
     from arccli.commands.operator import operator_public_key
@@ -287,7 +287,7 @@ def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
             agent_dir,
             deployment_tier=deployment_tier,
             operator_signer=operator_signer_pair(),
-            agent_signer=agent_signer_pair(agent_dir),
+            capability_signer=operator_capability_signer(),
         )
     except (FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"Error: {exc}\n")
@@ -324,23 +324,12 @@ def _sign(args: argparse.Namespace) -> None:
 
     import arcagent
 
-    from arccli.commands.operator import load_operator_key
+    from arccli.commands.operator import operator_signer_and_did
 
     arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
-    operator = load_operator_key(arc_dir)
-    # DC-4 known limitation: write_signature needs the raw seed; a vault_transit
-    # (federal) operator key has no in-process seed and must sign out-of-band.
-    seed = getattr(operator, "seed", None)
-    if not seed:
-        sys.stderr.write(
-            "Error: the operator key has no in-process seed (vault_transit custody). "
-            "`arc blueprint sign` needs an in-process operator/author key; a vault-held "
-            "federal key must sign out-of-band.\n"
-        )
-        sys.exit(1)
-    signer_did = f"operator:{operator.public_key.hex()[:16]}"
-    sidecar = arcagent.write_signature(
-        path, path.read_bytes(), signer_did=signer_did, private_key=seed
+    signer_did, signer = operator_signer_and_did(arc_dir)
+    sidecar = arcagent.write_signature_with_signer(
+        path, path.read_bytes(), signer_did=signer_did, signer=signer
     )
     _write(f"Signed {path.name} -> {sidecar.name}")
 

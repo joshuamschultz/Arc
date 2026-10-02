@@ -12,6 +12,7 @@ from arcagent.capabilities.artifact_signing import (
     sidecar_path,
     verify_file,
     write_signature,
+    write_signature_with_signer,
 )
 from arcagent.capabilities.capability_loader import CapabilityLoader, SkillArtifactResolver
 from arcagent.capabilities.capability_registry import CapabilityRegistry
@@ -409,6 +410,7 @@ __all__ = [
     "validate_skill_folder",
     "verify_file",
     "write_signature",
+    "write_signature_with_signer",
 ]
 
 try:
