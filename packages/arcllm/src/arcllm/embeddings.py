@@ -114,6 +114,14 @@ def _load_sentence_transformer(model: str) -> Any:
     return SentenceTransformer(model, local_files_only=True)
 
 
+# One lock for every local torch encode in the process. A shared
+# SentenceTransformer is not thread-safe: concurrent ``encode`` calls from
+# ``asyncio.to_thread`` workers race inside transformers/torch native code and
+# intermittently SIGSEGV the interpreter. Model load is guarded by the same lock
+# so two first-callers never construct (and race on) two copies.
+_encode_lock = threading.Lock()
+
+
 class LocalEmbedder(EmbeddingProvider):
     """Offline ``sentence-transformers`` backend (default all-MiniLM-L6-v2).
 
@@ -143,13 +151,16 @@ class LocalEmbedder(EmbeddingProvider):
                 ) from e
         return self._st
 
+    def _encode_serialized(self, texts: list[str]) -> Any:
+        """Load (once) and encode under the process-wide lock; runs in a worker thread."""
+        with _encode_lock:
+            model = self._ensure_model()
+            # normalize_embeddings -> unit vectors, so downstream cosine == dot.
+            return model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+
     async def embed(self, texts: list[str]) -> EmbeddingResponse:
-        model = self._ensure_model()
-        # Offload the CPU-bound encode so the event loop is never blocked.
-        # normalize_embeddings -> unit vectors, so downstream cosine == dot.
-        raw = await asyncio.to_thread(
-            model.encode, texts, convert_to_numpy=True, normalize_embeddings=True
-        )
+        # Offload the CPU-bound load + encode so the event loop is never blocked.
+        raw = await asyncio.to_thread(self._encode_serialized, texts)
         vectors = [[float(x) for x in row] for row in raw]
         dims = len(vectors[0]) if vectors else _MINILM_DIMS
         tokens = count_tokens(texts)
