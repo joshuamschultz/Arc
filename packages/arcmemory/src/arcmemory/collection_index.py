@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import threading
+import time
 import weakref
 from collections.abc import Callable
 from dataclasses import replace
@@ -79,6 +80,11 @@ DEBOUNCE_S = 3.0
 
 _JOURNAL = ".dirty"
 
+#: The dirty journal is read whole on every maintainer construction and drain, so
+#: it is capped. A journal past the cap (or one that stopped growing because it
+#: reached it) is dropped and replaced by one full self-heal pass.
+JOURNAL_MAX_BYTES = 64 * 1024
+
 #: The files a maintainer derives at a collection root: they hold no memory data.
 DERIVED_INDEX_FILES = frozenset({INDEX_NAME, DIGEST_NAME, _JOURNAL, LOG_NAME, LOG_DIGEST_NAME})
 
@@ -124,6 +130,7 @@ class OkfIndexMaintainer:
         self._debounce_s = DEBOUNCE_S if debounce_s is None else debounce_s
         self._today = today or (lambda: datetime.now(UTC).date())
         self._events: list[LogEntry] = []
+        self._resync = False
         self._lock = threading.Lock()
         self._drain_lock = threading.Lock()
         self._dirty: set[str] = set()
@@ -158,12 +165,35 @@ class OkfIndexMaintainer:
             rel = folder.relative_to(self._root).as_posix()
         except ValueError:
             return None
-        parts = [] if rel == "." else rel.split("/")
-        if not all(listable_dir(part) for part in parts):
+        rel = "" if rel == "." else rel
+        return rel if self._valid_rel(rel) else None
+
+    def _valid_rel(self, rel: str) -> bool:
+        """Whether ``rel`` names a folder this maintainer may index.
+
+        A journal line is untrusted input: it must be a plain relative path of
+        listable folder names. An absolute path, an empty part or a backslash
+        would otherwise let a poisoned journal point a write outside the root.
+        """
+        if not rel:
+            return True
+        if rel.startswith("/") or "\\" in rel or "\0" in rel:
+            return False
+        parts = rel.split("/")
+        if not all(part and listable_dir(part) for part in parts):
+            return False
+        return not (len(parts) >= 2 and parts[0] in self._nested)
+
+    def _contained_folder(self, rel: str) -> Path | None:
+        """The folder for ``rel`` if it stays under the root with no symlink on the way."""
+        folder = self._root
+        for part in rel.split("/") if rel else []:
+            folder = folder / part
+            if folder.is_symlink():
+                return None
+        if not folder.resolve().is_relative_to(self._root.resolve()):
             return None
-        if len(parts) >= 2 and parts[0] in self._nested:
-            return None
-        return "/".join(parts)
+        return folder
 
     def _mark(self, rel: str) -> None:
         with self._lock:
@@ -187,7 +217,10 @@ class OkfIndexMaintainer:
         """Debounce, then drain dirty folders off the loop until none remain."""
         await asyncio.sleep(self._debounce_s)
         while self._pending():
-            await self.drain()
+            try:
+                await self.drain()
+            except Exception:  # a failed pass must not end the maintainer task
+                _logger.warning("okf index drain failed", exc_info=True)
             if self._pending():
                 await asyncio.sleep(self._debounce_s)
 
@@ -205,32 +238,48 @@ class OkfIndexMaintainer:
         """
         with self._drain_lock:
             self._merge_journal()
+            if self._resync:
+                self._resync = False
+                with self._lock:
+                    self._dirty.update(self._walk())
             written = 0
             failed: set[str] = set()
-            while True:
+            try:
+                while True:
+                    with self._lock:
+                        batch = sorted(
+                            self._dirty - failed, key=lambda rel: (-rel.count("/"), rel)
+                        )
+                        if not batch:
+                            break
+                        self._dirty.difference_update(batch)
+                    for rel in batch:
+                        written += self._regenerate_or_fail(rel, failed, force, log)
+                    self._flush_log()
+            finally:
                 with self._lock:
-                    batch = sorted(self._dirty - failed, key=lambda rel: (-rel.count("/"), rel))
-                    if not batch:
-                        break
-                    self._dirty.difference_update(batch)
-                for rel in batch:
-                    try:
-                        written += self._regenerate(rel, reuse=not force, log=log)
-                    except OSError:
-                        _logger.warning("okf index regeneration failed for %r", rel, exc_info=True)
-                        failed.add(rel)
-                self._flush_log()
-            with self._lock:
-                self._dirty |= failed
-                self._compact_journal()
+                    self._dirty |= failed
+                    self._compact_journal()
             return written
+
+    def _regenerate_or_fail(self, rel: str, failed: set[str], force: bool, log: bool) -> int:
+        """Regenerate one folder; any failure leaves it journaled, never aborts the pass."""
+        try:
+            return self._regenerate(rel, reuse=not force, log=log)
+        except Exception:  # one bad folder (or a racing writer) must not stop the rest
+            _logger.warning("okf index regeneration failed for %r", rel, exc_info=True)
+            failed.add(rel)
+            return 0
 
     def _pending(self) -> bool:
         with self._lock:
             return bool(self._dirty)
 
     def _regenerate(self, rel: str, *, reuse: bool = True, log: bool = True) -> int:
-        folder = self._root / rel if rel else self._root
+        folder = self._contained_folder(rel) if self._valid_rel(rel) else None
+        if folder is None:
+            _logger.warning("okf index refused folder outside the collection: %r", rel)
+            return 0
         parent = rel.rpartition("/")[0] if "/" in rel else ""
         if not folder.is_dir():
             self._cache.pop(str(folder), None)
@@ -300,12 +349,17 @@ class OkfIndexMaintainer:
         digest = read_folder_digest(folder)
         if not validation.valid or digest is None:
             return {}, 0, False
+        index_mtime = (folder / INDEX_NAME).stat().st_mtime_ns
+        if index_mtime > time.time_ns() + _MTIME_SLACK_NS:
+            # A future timestamp would make every document look older than the
+            # index, so a forged index could be reused indefinitely.
+            return {}, 0, False
         entries = {
             entry.path: replace(entry, digest=digest.docs[entry.path])
             for entry in validation.entries
-            if not entry.is_folder
+            if not entry.is_folder and entry.path in digest.docs
         }
-        return entries, (folder / INDEX_NAME).stat().st_mtime_ns, True
+        return entries, index_mtime, True
 
     # -- change log ---------------------------------------------------------
 
@@ -420,6 +474,8 @@ class OkfIndexMaintainer:
         if not self.validate(folder).valid:
             return True
         index_mtime = index.stat().st_mtime_ns
+        if index_mtime > time.time_ns() + _MTIME_SLACK_NS:
+            return True  # an index dated in the future is never trusted
         docs: set[str] = set()
         folders: dict[str, int] = {}
         with os.scandir(folder) as scan:
@@ -455,6 +511,8 @@ class OkfIndexMaintainer:
     def _append_journal(self, rel: str) -> None:
         try:
             self._root.mkdir(parents=True, exist_ok=True)
+            if self._journal.exists() and self._journal.stat().st_size >= JOURNAL_MAX_BYTES:
+                return  # the in-memory set stays authoritative; sync_all heals a crash
             with self._journal.open("a", encoding="utf-8") as handle:
                 handle.write(rel + "\n")
         except OSError:
@@ -463,14 +521,17 @@ class OkfIndexMaintainer:
     def _merge_journal(self) -> None:
         """Adopt folders journaled by a crashed run or another process."""
         try:
-            lines = self._journal.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeError):
+            with self._journal.open("rb") as handle:
+                raw = handle.read(JOURNAL_MAX_BYTES + 1)
+        except OSError:
             return
-        for line in lines:
-            parts = [] if not line else line.split("/")
-            if all(listable_dir(part) for part in parts) and not (
-                len(parts) >= 2 and parts[0] in self._nested
-            ):
+        if len(raw) > JOURNAL_MAX_BYTES:
+            # Too big to trust or replay: drop it and heal everything once instead.
+            self._journal.unlink(missing_ok=True)
+            self._resync = True
+            return
+        for line in raw.decode("utf-8", errors="ignore").splitlines():
+            if self._valid_rel(line):
                 with self._lock:
                     self._dirty.add(line)
 
@@ -542,6 +603,7 @@ def routing_text(index_text: str) -> str:
 __all__ = [
     "DEBOUNCE_S",
     "DERIVED_INDEX_FILES",
+    "JOURNAL_MAX_BYTES",
     "LOG_KEEP_ENTRIES",
     "LOG_MAX_ENTRIES",
     "MEMORY_NESTED_COLLECTIONS",

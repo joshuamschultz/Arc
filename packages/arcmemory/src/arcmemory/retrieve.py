@@ -150,6 +150,7 @@ class Retriever:
             tier=self._cfg.tier,
             top_folders=self._cfg.okf_walk_top_folders,
             top_docs=self._cfg.okf_walk_top_docs,
+            audit_sink=self._audit,
         )
         try:
             return await asyncio.to_thread(walker.walk, text)

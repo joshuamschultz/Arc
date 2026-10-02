@@ -120,9 +120,13 @@ def target_path(
             relative = mirror_relpath(locator, object_id)
         except LocatorRefusedError:
             refused = True
-    path = contained(root, relative or flat_name(object_id))
+    flat = root / flat_name(object_id)
+    try:
+        path = contained(root, relative) if relative is not None else flat
+    except LocatorRefusedError:  # a planted symlink aliases the path out of the root
+        path, refused = flat, True
     if relative is not None and path != current and _owned_by_another(path, object_id):
-        path = contained(root, flat_name(object_id))
+        path = flat
     return path, refused
 
 

@@ -13,10 +13,12 @@ Trust and scope, in order:
 * a document is opened only through a verified folder, must resolve inside
   ``memory/`` without a symlink, and must still match the digest the sidecar
   committed for it;
-* connected sources are never entered: they live behind per-source grants;
+* the walk starts only at the surface index's own source folders, never follows
+  a symlinked folder, and refuses anything that resolves under ``connected/`` at
+  any depth: connected sources live behind per-source grants;
 * bookkeeping cards are never returned (same list the surface index uses);
 * every recall passes the no-read-up gate for the caller's clearance before it
-  is returned.
+  is returned, and a recall the gate drops is audited like any other.
 """
 
 from __future__ import annotations
@@ -30,11 +32,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from arcokf import IndexEntry, OKFValidationError, read_folder_digest
-from arctrust.audit import NullSink
+from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification
 
 from arcmemory.collection_index import MEMORY_NESTED_COLLECTIONS, memory_maintainer
-from arcmemory.index.source import BOOKKEEPING_ENTITY_TYPES, render_index_text
+from arcmemory.index.source import (
+    BOOKKEEPING_ENTITY_TYPES,
+    SOURCE_SUBDIRS,
+    render_index_text,
+)
 from arcmemory.mdfile import parse_document
 from arcmemory.security import gate_no_read_up
 from arcmemory.types import Recall
@@ -93,6 +99,7 @@ class OkfWalker:
         tier: str,
         top_folders: int = 3,
         top_docs: int = 10,
+        audit_sink: AuditSink | None = None,
     ) -> None:
         self._mem_dir = Path(mem_dir)
         self._workspace = Path(workspace)
@@ -100,6 +107,7 @@ class OkfWalker:
         self._strict = strict
         self._actor_did = actor_did
         self._tier = tier
+        self._audit = audit_sink if audit_sink is not None else NullSink()
         self._top_folders = top_folders
         self._top_docs = top_docs
         self._maintainer = memory_maintainer(self._mem_dir)
@@ -120,10 +128,35 @@ class OkfWalker:
             strict=self._strict,
             actor_did=self._actor_did,
             tier=self._tier,
-            audit_sink=NullSink(),
+            audit_sink=self._audit,
         )
 
+    def _within_scope(self, path: Path) -> bool:
+        """Whether ``path`` is inside ``memory/``, off ``connected/`` and symlink-free.
+
+        Checked on the real path at every depth: a symlinked folder can alias a
+        grant-gated connected source into an allowed folder, so the link itself
+        is refused, and so is anything that resolves under ``connected/``.
+        """
+        try:
+            relative = path.relative_to(self._mem_dir)
+        except ValueError:
+            return False
+        walked = self._mem_dir
+        for part in relative.parts:
+            walked = walked / part
+            if walked.is_symlink():
+                return False
+        resolved = path.resolve()
+        mem = self._mem_dir.resolve()
+        if not resolved.is_relative_to(mem):
+            return False
+        return not any(resolved.is_relative_to(mem / name) for name in _NESTED)
+
     def _entries(self, folder: Path) -> tuple[IndexEntry, ...]:
+        if not self._within_scope(folder):
+            _logger.warning("okf walk refused folder outside its scope: %s", folder)
+            return ()
         validation = self._maintainer.validate(folder)
         if not validation.valid:
             _logger.warning("okf walk skipped unverified index %s: %s", folder, validation.error)
@@ -139,7 +172,7 @@ class OkfWalker:
                 for entry in self._entries(folder):
                     if not entry.is_folder:
                         documents.append((folder, entry))
-                    elif not (folder == self._mem_dir and _nested(entry)):
+                    elif folder != self._mem_dir or _allowed_root(entry):
                         folders.append((folder, entry))
             frontier = self._choose_folders(terms, folders)
             if not frontier:
@@ -170,7 +203,7 @@ class OkfWalker:
         path = folder / entry.path
         digest = read_folder_digest(folder)
         try:
-            if path.is_symlink() or not path.resolve().is_relative_to(self._mem_dir.resolve()):
+            if not self._within_scope(path):
                 return None
             raw = path.read_bytes()
             if digest is None or hashlib.sha256(raw).hexdigest() != digest.docs.get(entry.path):
@@ -190,8 +223,12 @@ class OkfWalker:
         )
 
 
-def _nested(entry: IndexEntry) -> bool:
-    return entry.path.split("/", 1)[0] in MEMORY_NESTED_COLLECTIONS
+_NESTED = tuple(sorted(MEMORY_NESTED_COLLECTIONS))
+
+
+def _allowed_root(entry: IndexEntry) -> bool:
+    """Only the surface index's own source folders are walked from the root."""
+    return entry.path.split("/", 1)[0] in SOURCE_SUBDIRS
 
 
 __all__ = ["OkfWalker"]

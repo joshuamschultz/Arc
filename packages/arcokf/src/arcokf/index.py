@@ -136,6 +136,8 @@ def folder_entry(path: Path) -> IndexEntry | None:
         (str(metadata[key]) for key in ("title", "name") if metadata.get(key)),
         heading or path.stem,
     )
+    if not _one_line(title, _MAX_TITLE):
+        title = path.stem  # a blank title must not make the whole folder unindexable
     description = next(
         (
             str(metadata[key])

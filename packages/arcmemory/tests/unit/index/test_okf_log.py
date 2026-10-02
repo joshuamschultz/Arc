@@ -9,7 +9,9 @@ import pytest
 from arcokf import (
     LOG_DIGEST_NAME,
     LOG_NAME,
+    LogEntry,
     parse_change_log,
+    read_log_digest,
     read_verified_log,
     validate,
 )
@@ -146,3 +148,31 @@ def test_forged_log_is_discarded_not_merged(
     assert entries is not None
     assert {e.path for e in entries} == {"y.md"}
     assert "evil" not in log.read_text(encoding="utf-8")
+
+
+def test_forged_archive_is_discarded_not_rolled_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collection_index, "LOG_MAX_ENTRIES", 4)
+    monkeypatch.setattr(collection_index, "LOG_KEEP_ENTRIES", 2)
+    clock = _Clock("2025-12-30")
+    maintainer = _maintainer(tmp_path, clock)
+    for day in ("2025-12-30", "2025-12-31", "2026-01-01"):
+        clock.day = day
+        _touch(maintainer, *(_doc(tmp_path, f"{day}_{k}.md", title=f"D{k}") for k in range(2)))
+    archive = tmp_path / "log.2025.md"
+    assert archive.is_file() and read_verified_log(tmp_path, "log.2025.md") is not None
+    archive.write_text(
+        archive.read_text(encoding="utf-8") + "- 2025-01-01 **Creation** [evil](../../x.md)\n",
+        encoding="utf-8",
+    )
+    assert read_verified_log(tmp_path, "log.2025.md") is None
+
+    # The next rollover into the same year must start from the verified history, not
+    # from the forged file.
+    digest = read_log_digest(tmp_path)
+    assert digest is not None
+    maintainer._archive(
+        [LogEntry("2025-06-01", "Creation", "older.md", "Older")], dict(digest.archives)
+    )
+    assert "evil" not in archive.read_text(encoding="utf-8")

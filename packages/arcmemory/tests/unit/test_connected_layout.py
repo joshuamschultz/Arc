@@ -353,3 +353,23 @@ async def test_relayout_logs_nothing_and_log_is_stable(
     await service.finish_sync(_source())  # the next sync heals routing, still no new entries
     assert (root / "log.md").read_bytes() == before
     assert os.path.getsize(root / "log.md") > 0
+
+
+@pytest.mark.asyncio
+async def test_a_planted_symlinked_folder_never_aliases_another_source(tmp_path: Path) -> None:
+    service, mapping = await _granted(tmp_path)
+    root = _root(tmp_path, mapping)
+    other = tmp_path / "other-source"
+    other.mkdir()
+    (other / "stolen.md").write_text(
+        "---\ntype: ConnectedDocument\nexternal_id: x\nsource: s\nversion: '1'\n---\nbody\n",
+        "utf-8",
+    )
+    root.mkdir(parents=True)
+    os.symlink(other, root / "Projects")
+
+    await _ingest(service, mapping, "q4", "/Projects/Q4/plan.txt")
+
+    assert not list(other.rglob("plan-*.md")), "a symlinked folder must not receive documents"
+    assert [d.object_id for d in await service.list_documents(_source())] == ["q4"]
+    assert (root / flat_name("q4")).is_file()

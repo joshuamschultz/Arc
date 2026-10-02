@@ -1166,7 +1166,14 @@ class ConnectedDataService:
     def _is_document_file(root: Path, path: Path) -> bool:
         """A concept document of the pool: not a reserved file, not in a hidden folder."""
         parts = path.relative_to(root).parts
-        return listable_file(parts[-1]) and all(listable_dir(part) for part in parts[:-1])
+        if not (listable_file(parts[-1]) and all(listable_dir(part) for part in parts[:-1])):
+            return False
+        walked = root
+        for part in parts:  # a planted symlink must never alias another folder into the pool
+            walked = walked / part
+            if walked.is_symlink():
+                return False
+        return True
 
     def _document_root(self, source_id: str) -> Path:
         """Canonical extracted-document root for one source instance."""
