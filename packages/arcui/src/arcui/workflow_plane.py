@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from arcstore.runs import NodeState
 from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
@@ -84,6 +85,35 @@ def _node_io(task: Any) -> dict[str, Any]:
     detail["input"] = _bounded({"args": meta.get("args"), "upstream": meta.get("upstream") or {}})
     detail["output"] = _bounded(task.output) if task.output is not None else None
     return detail
+
+
+#: The durable node-snapshot vocabulary as the dashboard's per-node vocabulary.
+_SNAPSHOT_STATUS: dict[str, str] = {
+    "materialized": "pending",
+    "in_progress": "running",
+    "review": "waiting_gate",
+    "done": "done",
+    "failed": "failed",
+    "skipped": "skipped",
+    "cancelled": "cancelled",
+    # A router that chose is resolved; the route it took rides alongside.
+    "routed": "done",
+}
+
+
+def _snapshot_fields(state: NodeState) -> dict[str, Any]:
+    """The run view fields one durable node state supplies."""
+    return {
+        "status": _SNAPSHOT_STATUS[state.status],
+        "iteration": state.iteration,
+        "attempts": state.attempts,
+        "max_attempts": state.max_attempts,
+        "last_error": sanitize_error_text(state.last_error or "", limit=500) or None,
+        "started_at": state.started_at,
+        "completed_at": state.finished_at,
+        "route": state.route,
+        "reason": state.reason,
+    }
 
 
 def slugify(name: str) -> str:
@@ -179,6 +209,11 @@ class DashboardWorkflowPlane:
         # the row id a gate is resolved by, and the per-node run id that opens
         # the existing execution timeline. The Run's trace adds what has no row
         # at all: a branch that was considered and not taken.
+        # The run's durable node snapshot wins where it names a node: it carries
+        # what no row can (a skip's reason, a route, a cancellation). The row
+        # join stays for what only a row has, and for a run written before the
+        # snapshot existed.
+        snapshot = run.node_states
         nodes: dict[str, dict[str, Any]] = {}
         for task in await self._tasks.query_by_flow_run(run_id):
             node_id = str(task.metadata.get("node_id", ""))
@@ -199,6 +234,11 @@ class DashboardWorkflowPlane:
                 "completed_at": task.completed_at,
                 **_node_io(task),
             }
+            if node_id in snapshot:
+                nodes[node_id].update(_snapshot_fields(snapshot[node_id]))
+        for node_id, state in snapshot.items():
+            if node_id not in nodes:
+                nodes[node_id] = {"node_id": node_id, **_snapshot_fields(state)}
         # A rules router (and any node the runner evaluates inline) never becomes
         # a task row, so it is absent from the loop above. Its outcome lives only
         # in the path: "skipped" means a branch not taken; anything else means the

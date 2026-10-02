@@ -156,6 +156,27 @@ Every `arc workflow` verb takes `--dir` to point at a config directory other tha
 the default. Validation runs inside `create`/`edit`, so there's no separate
 `validate` verb.
 
+### What survives a crash
+
+The runner keeps no progress in memory, so a process can stop at any point and
+the next one carries on.
+
+- **Each node runs exactly once per attempt.** An attempt has a key: run, node,
+  iteration and attempt number. A second dispatch of the same attempt runs no
+  tool, script or agent turn again. A retry is a new attempt with a new key, so
+  a node may run more than once across attempts. A tool that takes a dedupe
+  token gets the attempt key as its `idempotency_key`.
+- **Restart picks up where it stopped.** On start the runner reclaims any
+  attempt whose process died, repairs each run's node state from the task rows,
+  and continues from the frontier. A node that finished is never run again, and
+  no node gets a second row.
+- **Each node's state is on the run.** The run view reads it: status, attempts,
+  last error, route taken, and why a node was skipped.
+- **A broken connection never fails a run.** A bus timeout, a store error or a
+  lost runner lease is retried every tick. A run stuck for 20 ticks in a row
+  sends the operator one mail. A broken definition still fails the run, with the
+  reason.
+
 > **A workflow that reaches out to an external system on a schedule** will trip
 > the trifecta gate — and no human is awake to approve it. That's exactly what a
 > **scenario grant** is for: pre-approve the recurring composition, keyed by the

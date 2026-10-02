@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol
 
 from arcstore.mutation_fence import RunnerFence
+from arcstore.runs import NodeState
 from arcstore.tasks import Task
 
 Tier = Literal["personal", "enterprise", "federal"]
@@ -319,6 +320,10 @@ class RunRecord(Protocol):
     def resolution(self) -> str | None: ...
     @property
     def last_error(self) -> str | None: ...
+    @property
+    def node_states(self) -> Mapping[str, NodeState]: ...
+    @property
+    def revision(self) -> int: ...
 
 
 class RunStoreLike(Protocol):
@@ -361,6 +366,18 @@ class RunStoreLike(Protocol):
         fence: RunnerFence | None = None,
     ) -> bool:
         """Conditional transition. ``False`` means another writer won the race."""
+        ...
+
+    async def set_node_states(
+        self,
+        run_id: str,
+        updates: Mapping[str, NodeState],
+        *,
+        actor_did: str,
+        expected_revision: int,
+        fence: RunnerFence | None = None,
+    ) -> tuple[RunRecord | None, str]:
+        """Merge node states under the revision CAS: ``applied | conflict | not_found``."""
         ...
 
     async def append_path(
@@ -439,6 +456,17 @@ class WorkflowTaskStoreLike(Protocol):
     ) -> Task | None: ...
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None: ...
+
+    async def reclaim_expired(
+        self,
+        flow_run_id: str,
+        *,
+        stale_after_s: float,
+        actor_did: str,
+        fence: RunnerFence | None = None,
+    ) -> Sequence[Task]:
+        """Return the run's abandoned in-flight attempts to the pool; the rows moved."""
+        ...
 
 
 class OwnerResolver(Protocol):

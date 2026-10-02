@@ -346,6 +346,14 @@ class MutableTaskBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
+def _attempt_where(expected_attempts: int | None) -> dict[str, Any]:
+    """The WHERE for an in-flight attempt, pinned to one attempt when named."""
+    where: dict[str, Any] = {"status": "in_progress"}
+    if expected_attempts is not None:
+        where["attempts"] = expected_attempts
+    return where
+
+
 def _is_chain_relative(active: Task, target: Task) -> bool:
     """True if ``target`` is a dependency-chain relative of ``active`` (FR-5).
 
@@ -686,7 +694,12 @@ class TaskStore:
         )
 
     async def start_task(
-        self, task_id: str, agent_did: str, *, run_id: str | None = None
+        self,
+        task_id: str,
+        agent_did: str,
+        *,
+        run_id: str | None = None,
+        attempt_key: str | None = None,
     ) -> tuple[Task | None, str]:
         active_rows = await self._backend.mutable_query(
             self._COLLECTION, where={"owner_did": agent_did, "status": "in_progress"}
@@ -708,9 +721,11 @@ class TaskStore:
         # (assign() set the owner but left it at rest) — both adopt to
         # in_progress. Snapshotting owner+status into the WHERE keeps it atomic
         # and refuses adopting a terminal or already-active task.
-        target = await self.get(task_id)
+        raw = await self._backend.mutable_read(self._COLLECTION, task_id)
+        target = self._load(raw) if raw is not None else None
         if (
-            target is None
+            raw is None
+            or target is None
             or target.owner_did not in (None, agent_did)
             or target.status not in ("backlog", "todo")
         ):
@@ -732,11 +747,26 @@ class TaskStore:
         }
         if run_id is not None:
             claim["run_id"] = run_id
+        if attempt_key is not None:
+            # The attempt identity travels with the single winning claim. The
+            # patch is a top-level merge, so the node block is carried whole.
+            claim["metadata"] = {
+                **target.metadata,
+                "attempt_key": attempt_key,
+                "attempt_started_at": claim["started_at"],
+            }
+        # ``attempts`` is in the WHERE so a claim computed from a snapshot that
+        # another claim + requeue has since passed cannot land the SAME attempt
+        # number twice: an attempt number names exactly one claim. (A row
+        # written before the counter existed has no key a WHERE could match.)
+        where: dict[str, Any] = {"owner_did": target.owner_did, "status": target.status}
+        if "attempts" in raw:
+            where["attempts"] = target.attempts
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
             claim,
-            where={"owner_did": target.owner_did, "status": target.status},
+            where=where,
             actor_did=agent_did,
             sink=self._sink,
             absent_where=(
@@ -781,8 +811,58 @@ class TaskStore:
             patch["last_error"] = last_error
         return await self.update(task_id, patch, actor_did=actor_did)
 
+    async def complete_attempt(
+        self,
+        task_id: str,
+        *,
+        attempt_key: str,
+        attempts: int,
+        resolution: str,
+        output: dict[str, Any] | None,
+        actor_did: str,
+    ) -> Task | None:
+        """Record one attempt's result — only while that attempt still holds the row.
+
+        Conditional on ``status == in_progress`` AND the attempt number the
+        executor claimed. An executor whose claim was reclaimed (and possibly
+        re-claimed as a later attempt) gets ``None`` and writes nothing, so a
+        stale or forged attempt can never overwrite the live attempt's row.
+        ``metadata.attempt_result_key`` records which attempt the result
+        belongs to: an executor reached twice for the same attempt reads it and
+        runs no side effect the second time (exactly once per attempt key).
+        """
+        current = await self.get(task_id)
+        if current is None or current.status != "in_progress" or current.attempts != attempts:
+            return None
+        now = _now()
+        patch: dict[str, Any] = {
+            "status": "done",
+            "resolution": resolution,
+            "completed_at": now,
+            "duration_seconds": _duration_seconds(current.started_at, now),
+            "metadata": {**current.metadata, "attempt_result_key": attempt_key},
+        }
+        if output is not None:
+            patch["output"] = output
+        where: dict[str, Any] = {"status": "in_progress", "attempts": attempts}
+        if current.metadata.get("attempt_key") is not None:
+            # The claim stamped the key: a caller naming any other key is not
+            # the executor that won this claim.
+            where["metadata.attempt_key"] = attempt_key
+        won = await self._backend.update_if(
+            self._COLLECTION, task_id, patch, where=where, actor_did=actor_did, sink=self._sink
+        )
+        return await self.get(task_id) if won else None
+
     async def requeue(
-        self, task_id: str, *, actor_did: str, last_error: str, next_attempt_at: str
+        self,
+        task_id: str,
+        *,
+        actor_did: str,
+        last_error: str,
+        next_attempt_at: str,
+        expected_attempts: int | None = None,
+        fence: RunnerFence | None = None,
     ) -> Task | None:
         """Return a failed in_progress attempt to the ready pool for retry (P1).
 
@@ -792,6 +872,9 @@ class TaskStore:
         increments it) and ``run_id`` (the last run stays linked until re-
         dispatch mints a new one); ``next_attempt_at`` gates re-dispatch until
         the backoff elapses. Returns the task on success, None if it raced out.
+
+        ``expected_attempts`` pins the requeue to one attempt: a reclaimer that
+        read attempt N cannot requeue attempt N+1 that started since.
         """
         won = await self._backend.update_if(
             self._COLLECTION,
@@ -802,14 +885,22 @@ class TaskStore:
                 "next_attempt_at": next_attempt_at,
                 "started_at": None,
             },
-            where={"status": "in_progress"},
+            where=_attempt_where(expected_attempts),
             actor_did=actor_did,
             sink=self._sink,
+            fence=fence,
         )
         return await self.get(task_id) if won else None
 
     async def dead_letter(
-        self, task_id: str, *, actor_did: str, resolution: str, last_error: str
+        self,
+        task_id: str,
+        *,
+        actor_did: str,
+        resolution: str,
+        last_error: str,
+        expected_attempts: int | None = None,
+        fence: RunnerFence | None = None,
     ) -> Task | None:
         """Terminally fail an in_progress task (retries exhausted or cancelled).
 
@@ -832,9 +923,10 @@ class TaskStore:
                 "duration_seconds": _duration_seconds(current.started_at, now),
                 "cancel_requested": False,
             },
-            where={"status": "in_progress"},
+            where=_attempt_where(expected_attempts),
             actor_did=actor_did,
             sink=self._sink,
+            fence=fence,
         )
         return await self.get(task_id) if won else None
 

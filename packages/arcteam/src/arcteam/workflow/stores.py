@@ -29,10 +29,11 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from arcstore.mutation_fence import RunnerFence
-from arcstore.runs import PathEntry, Run, RunStore
+from arcstore.runs import NodeState, PathEntry, Run, RunStore
 from arcstore.tasks import Task, TaskStore, _validate_free_text
 from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
@@ -76,6 +77,8 @@ class FlowRun:
     started_at: str | None
     resolution: str | None = None
     last_error: str | None = None
+    node_states: Mapping[str, NodeState] = field(default_factory=dict)
+    revision: int = 0
 
 
 @dataclass
@@ -196,6 +199,8 @@ class WorkflowRunStore:
             started_at=run.created_at,
             resolution=state.get("resolution"),
             last_error=run.last_error,
+            node_states=dict(run.node_states),
+            revision=run.revision,
         )
 
     async def active_runs(self) -> Sequence[FlowRun]:
@@ -299,6 +304,27 @@ class WorkflowRunStore:
                 fence=fence,
             )
         return True
+
+    async def set_node_states(
+        self,
+        run_id: str,
+        updates: Mapping[str, NodeState],
+        *,
+        actor_did: str,
+        expected_revision: int,
+        fence: RunnerFence | None = None,
+    ) -> tuple[FlowRun | None, str]:
+        """Write node states under the Run's revision CAS; ``(run, outcome)``."""
+        _, outcome = await self._runs.set_node_states(
+            run_id,
+            updates,
+            actor_did=actor_did,
+            expected_revision=expected_revision,
+            fence=fence,
+        )
+        if outcome != "applied":
+            return None, outcome
+        return await self.get(run_id), outcome
 
     async def append_path(
         self,
@@ -463,6 +489,56 @@ class WorkflowTaskStore:
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:
         return await self._tasks.request_cancel(task_id, actor_did=actor_did)
 
+    async def reclaim_expired(
+        self,
+        flow_run_id: str,
+        *,
+        stale_after_s: float,
+        actor_did: str,
+        fence: RunnerFence | None = None,
+    ) -> Sequence[Task]:
+        """Return this run's dead in-flight attempts to the pool (crash resume).
+
+        A row ``in_progress`` past both its own timeout and ``stale_after_s``
+        has no live run behind it: the process that claimed it died. It goes
+        through the tasks reliability engine's own transitions — ``requeue``
+        while attempts remain, ``dead_letter`` once they are spent — each pinned
+        to the attempt read here, so an attempt that started since is never
+        touched. ``attempts`` is left as is: the next claim increments it, which
+        is what gives that claim a new attempt key.
+        """
+        now = datetime.now(UTC)
+        reclaimed: list[Task] = []
+        for row in await self.query_by_flow_run(flow_run_id):
+            if row.status != "in_progress" or not _attempt_expired(row, now, stale_after_s):
+                continue
+            moved = await self._reclaim_one(row, now=now, actor_did=actor_did, fence=fence)
+            if moved is not None:
+                reclaimed.append(moved)
+        return reclaimed
+
+    async def _reclaim_one(
+        self, row: Task, *, now: datetime, actor_did: str, fence: RunnerFence | None
+    ) -> Task | None:
+        reason = "attempt abandoned: its process stopped mid-run (reclaimed on resume)"
+        if row.attempts >= row.max_attempts:
+            return await self._tasks.dead_letter(
+                row.id,
+                actor_did=actor_did,
+                resolution=f"failed after {row.attempts} attempt(s) — last attempt abandoned",
+                last_error=reason,
+                expected_attempts=row.attempts,
+                fence=fence,
+            )
+        return await self._tasks.requeue(
+            row.id,
+            actor_did=actor_did,
+            last_error=reason,
+            next_attempt_at=now.isoformat(),
+            expected_attempts=row.attempts,
+            fence=fence,
+        )
+
 
 class RegistryOwnerResolver:
     """``OwnerResolver`` over the arcteam entity registry."""
@@ -572,6 +648,22 @@ def _storable_error(reason: str | None) -> str | None:
     except ValueError:
         return "error detail withheld: rejected by the stored-text policy"
     return cleaned
+
+
+def _attempt_expired(row: Task, now: datetime, stale_after_s: float) -> bool:
+    """Whether an in-flight attempt is past every bound a live run could still be inside.
+
+    An unreadable or missing start time is expired: an attempt that cannot be
+    bounded must not pin its node forever.
+    """
+    try:
+        started = datetime.fromisoformat(row.started_at or "")
+    except ValueError:
+        return True
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    allowance = max(float(row.timeout_seconds or 0.0), stale_after_s)
+    return (now - started).total_seconds() >= allowance
 
 
 def _same_mapping(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:

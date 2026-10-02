@@ -41,6 +41,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 import arcstore
+from arcstore.runs import NodeState
 from arcstore.tasks import Task
 from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -65,7 +66,7 @@ from .runner_contracts import (
     WorkflowSpec,
     WorkflowTaskStoreLike,
 )
-from .runner_state import NodeInstance, RunState
+from .runner_state import NodeInstance, RunState, derive_node_states
 from .stores import RunStateMissingError
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,41 @@ class NodeDecisionError(WorkflowRunError):
 
 class WorkflowRunnerLeaseUnavailableError(WorkflowRunError):
     """Another process currently owns the fenced ArcFlow runner lease."""
+
+
+class NodeStateConflict(WorkflowRunError):  # noqa: N818 — named in the P14-B contract
+    """The per-node snapshot lost its revision CAS repeatedly. Infrastructure, never fatal."""
+
+
+# Failures that say nothing about the workflow: the store, the bus, the lease.
+# Retried every tick, forever; they never terminate a run (P14-B step 3).
+_INFRA_ERRORS: tuple[type[BaseException], ...] = (
+    TimeoutError,
+    ConnectionError,
+    OSError,
+    arcstore.MutationFenceRejectedError,
+    WorkflowRunnerLeaseUnavailableError,
+    NodeStateConflict,
+)
+# Client libraries whose every error is a transport failure.
+_INFRA_MODULES = frozenset({"nats", "asyncpg"})
+# Failures that recur identically on every tick: retrying cannot fix them, so
+# the run fails with the reason once they have repeated ``threshold`` times.
+_DETERMINISTIC_ERRORS: tuple[type[BaseException], ...] = (
+    NodeDecisionError,
+    RunStateMissingError,
+    ValueError,
+    KeyError,
+)
+# A run that cannot advance this many ticks in a row mails the operator once.
+STUCK_RUN_MAIL_AFTER = 20
+_LEASE_BACKOFF_CAP_S = 60
+
+
+def _is_infra_error(exc: BaseException) -> bool:
+    if isinstance(exc, _INFRA_ERRORS):
+        return True
+    return type(exc).__module__.split(".", 1)[0] in _INFRA_MODULES
 
 
 # A node's inherited outputs ride on its task row, so one huge upstream result
@@ -216,9 +252,11 @@ class WorkflowRunner:
         run_workspace_root: Path | None = None,
         on_close: Callable[[], Awaitable[None]] | None = None,
         tick_failure_threshold: int = 3,
-        advance_failure_threshold: int = 3,
+        advance_failure_threshold: int = STUCK_RUN_MAIL_AFTER,
         max_capability_legs: int = 16,
         lease: WorkflowRunnerLease | None = None,
+        reclaim_after_s: float = 900.0,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -248,6 +286,14 @@ class WorkflowRunner:
         # the SPEC-009 lesson; truncation is audited, never silent.
         self._max_capability_legs = max_capability_legs
         self._consecutive_tick_failures = 0
+        # How long an in-flight attempt may run before resume treats it as
+        # abandoned by a dead process (never less than the row's own timeout).
+        self._reclaim_after_s = reclaim_after_s
+        self._sleep = sleep or asyncio.sleep
+        self._lease_backoff = 0
+        # Set when resume() could not run (no lease yet, or a run failed it);
+        # the first tick that holds the lease finishes it.
+        self._resume_pending = False
         self._last_known_channels: list[str] = []
         self._state_condition = asyncio.Condition()
         self._state_version = 0
@@ -399,11 +445,66 @@ class WorkflowRunner:
         )
 
     async def advance(self, run_id: str) -> RunRecord:
-        """One deterministic tick: settle, decide, materialize, roll up."""
+        """One deterministic tick: settle, decide, materialize, roll up.
+
+        The per-node snapshot is reconciled on the way in (a crash may have left
+        it behind the rows) and on the way out, on every exit path, so after any
+        ``advance`` it equals the state the rows and journal imply.
+        """
         await self._require_lease()
-        run = await self._require_run(run_id)
+        run = await self._reconcile_node_states(await self._require_run(run_id))
         if run.status in TERMINAL_RUN_STATUSES:
             return run
+        return await self._reconcile_node_states(await self._advance_live(run))
+
+    async def resume(self) -> int:
+        """Pick up after a restart: reclaim abandoned attempts and repair snapshots.
+
+        For every active run, an in-flight attempt whose process died goes back
+        to the pool (a new claim, so a new attempt key), and the node snapshot
+        is reconciled from the rows. Nothing is re-materialized here: rows are
+        created idempotently by ``node_task_id`` and the next tick continues
+        from the frontier. Without the lease this defers to the first tick that
+        holds it; a run that fails to resume is retried on the next tick too.
+        Returns how many runs were resumed.
+        """
+        try:
+            await self._require_lease()
+        except WorkflowRunnerLeaseUnavailableError:
+            self._resume_pending = True
+            return 0
+        self._resume_pending = False
+        resumed = 0
+        for active in await self._runs.active_runs():
+            try:
+                await self._resume_run(active)
+            except arcstore.MutationFenceRejectedError:
+                raise
+            except Exception:  # reason: one run must not block resuming the rest
+                logger.exception("resuming workflow run %s failed", active.run_id)
+                self._resume_pending = True
+                continue
+            resumed += 1
+        return resumed
+
+    async def _resume_run(self, run: RunRecord) -> None:
+        reclaimed = await self._tasks.reclaim_expired(
+            run.run_id,
+            stale_after_s=self._reclaim_after_s,
+            actor_did=self._runner_did,
+            fence=self._mutation_fence(),
+        )
+        for task in reclaimed:
+            self._audit(
+                "workflow.node.reclaimed",
+                target=f"{run.workflow_id}/{task.metadata.get('node_id', '')}",
+                outcome="reclaimed" if task.status == "todo" else "dead_lettered",
+                extra={"run_id": run.run_id, "task_id": task.id, "attempts": task.attempts},
+            )
+        await self._reconcile_node_states(await self._require_run(run.run_id))
+
+    async def _advance_live(self, run: RunRecord) -> RunRecord:
+        run_id = run.run_id
         # Dispatch re-reads through the integrity + tier gate on every tick, but
         # NOT the archived refusal: archiving a workflow must not break the runs
         # already moving through it.
@@ -469,9 +570,20 @@ class WorkflowRunner:
             await asyncio.sleep(interval)
 
     async def tick(self) -> int:
-        """Advance every active run once. Returns how many were advanced."""
+        """Advance every active run once. Returns how many were advanced.
+
+        Losing the lease is not a failure of any run: the tick backs off
+        (1, 2, 4 … 60 s) and touches nothing until the lease is held again.
+        """
         try:
-            await self._require_lease()
+            try:
+                await self._require_lease()
+            except WorkflowRunnerLeaseUnavailableError:
+                await self._back_off_lease()
+                return 0
+            self._lease_backoff = 0
+            if self._resume_pending:
+                await self.resume()
             advanced = 0
             runs = await self._runs.active_runs()
             self._last_known_channels = sorted({r.channel for r in runs if r.channel is not None})
@@ -479,7 +591,8 @@ class WorkflowRunner:
                 try:
                     await self.advance(run.run_id)
                 except WorkflowRunnerLeaseUnavailableError:
-                    raise
+                    await self._back_off_lease()
+                    return advanced
                 except Exception as exc:  # reason: one poisoned run must not stall the rest
                     logger.exception("advancing run %s failed", run.run_id)
                     try:
@@ -500,6 +613,18 @@ class WorkflowRunner:
             async with self._state_condition:
                 self._state_version += 1
                 self._state_condition.notify_all()
+
+    async def _back_off_lease(self) -> None:
+        """Wait out another owner's lease, doubling up to the cap. Audited, never fatal."""
+        delay = min(2**self._lease_backoff, _LEASE_BACKOFF_CAP_S)
+        self._lease_backoff = min(self._lease_backoff + 1, 6)
+        self._audit(
+            "workflow.runner.lease_unavailable",
+            target=f"runner/{self._runner_did}",
+            outcome="backing_off",
+            extra={"delay_s": delay},
+        )
+        await self._sleep(delay)
 
     async def wait_for_terminal(self, run_id: str) -> RunRecord:
         """Wait for the service-owned tick loop to settle one run.
@@ -545,21 +670,43 @@ class WorkflowRunner:
             )
 
     async def _on_advance_failure(self, run: RunRecord, exc: Exception) -> None:
-        """Bound a poisoned run's retries without degrading healthy neighbours."""
+        """Bound a poisoned run's retries without degrading healthy neighbours.
+
+        Three classes, decided by the exception and nothing else:
+
+        * infrastructure (``_INFRA_ERRORS``, any ``nats``/``asyncpg`` error) —
+          retried every tick, never terminates the run;
+        * deterministic (``_DETERMINISTIC_ERRORS``) — fails identically each
+          time, so the run fails with the reason at the threshold;
+        * anything else — uncertain, so retried like infrastructure.
+
+        A run still not advancing after ``STUCK_RUN_MAIL_AFTER`` consecutive
+        failures mails the operator exactly once; the durable counter only
+        passes that number again after the run has made progress.
+        """
         count = await self._runs.record_advance_failure(
             run.run_id, actor_did=self._runner_did, fence=self._mutation_fence()
         )
         error = str(exc)
-        terminalizing = count >= self._advance_failure_threshold and isinstance(
-            exc, (NodeDecisionError, RunStateMissingError)
+        terminalizing = (
+            count >= self._advance_failure_threshold
+            and not _is_infra_error(exc)
+            and isinstance(exc, _DETERMINISTIC_ERRORS)
         )
         self._audit(
             "workflow.run.advance_failed",
             target=run.run_id,
             outcome="terminalized" if terminalizing else "retrying",
-            extra={"consecutive_failures": count, "last_error": error},
+            extra={
+                "consecutive_failures": count,
+                "last_error": error,
+                "error_class": type(exc).__name__,
+                "infrastructure": _is_infra_error(exc),
+            },
         )
         if not terminalizing:
+            if count == STUCK_RUN_MAIL_AFTER:
+                await self._notify_operator_of_stuck_run(run, exc, count)
             return
         try:
             await self._terminate(
@@ -571,6 +718,30 @@ class WorkflowRunner:
             # The failure count and escalation audit are already durable when the
             # store is healthy. A broken terminalization path remains noisy.
             logger.exception("failed to terminalize poisoned workflow run %s", run.run_id)
+
+    async def _notify_operator_of_stuck_run(
+        self, run: RunRecord, exc: BaseException, count: int
+    ) -> None:
+        """One mail: this run has not advanced for ``count`` ticks, and why."""
+        delivered = False
+        if self._narrator is not None:
+            delivered = await self._narrator.operator_stuck_notice(
+                run_id=run.run_id,
+                workflow_id=run.workflow_id,
+                error_class=type(exc).__name__,
+                consecutive_failures=count,
+            )
+        self._audit(
+            "workflow.run.operator_notified",
+            target=f"{run.workflow_id}/{run.run_id}",
+            outcome="delivered" if delivered else "undelivered",
+            extra={
+                "run_id": run.run_id,
+                "reason": "cannot advance",
+                "error_class": type(exc).__name__,
+                "consecutive_failures": count,
+            },
+        )
 
     async def _require_lease(self) -> None:
         """Renew the cross-process fence before advancing any workflow state."""
@@ -957,6 +1128,43 @@ class WorkflowRunner:
                     channel=run.channel, run_id=run.run_id, node_id=node_id, owner=task.owner_did
                 )
         return True
+
+    async def _reconcile_node_states(self, run: RunRecord) -> RunRecord:
+        """Bring ``node_states`` level with the rows and journal; write only the diff.
+
+        The single writer of the snapshot. It never feeds a decision — the next
+        step is always decided from the derived ``RunState`` — so a snapshot a
+        crash left behind is repaired here, never acted on.
+        """
+        rows = await self._tasks.query_by_flow_run(run.run_id)
+        desired = derive_node_states(rows, run.path_taken)
+        diffs = {
+            node_id: state
+            for node_id, state in desired.items()
+            if run.node_states.get(node_id) != state
+        }
+        if not diffs:
+            return run
+        return await self._write_node_states(run, diffs)
+
+    async def _write_node_states(
+        self, run: RunRecord, updates: Mapping[str, NodeState]
+    ) -> RunRecord:
+        """CAS the snapshot on the run's revision; on conflict re-read and retry."""
+        for _ in range(3):
+            updated, outcome = await self._runs.set_node_states(
+                run.run_id,
+                updates,
+                actor_did=self._runner_did,
+                expected_revision=run.revision,
+                fence=self._mutation_fence(),
+            )
+            if outcome == "applied" and updated is not None:
+                return updated
+            if outcome == "not_found":
+                raise WorkflowRunNotFoundError(run.run_id)
+            run = await self._require_run(run.run_id)
+        raise NodeStateConflict(f"run {run.run_id}: node state revision kept moving")
 
     async def _reconcile_materializations(self, run: RunRecord, state: RunState) -> bool:
         """Journal rows that exist but were never recorded (a crash mid-write)."""
@@ -1658,7 +1866,9 @@ class _NoRegistry:
 
 
 __all__ = [
+    "STUCK_RUN_MAIL_AFTER",
     "NodeDecisionError",
+    "NodeStateConflict",
     "UnsignedWorkflowRefusedError",
     "WorkflowRunError",
     "WorkflowRunNotFoundError",

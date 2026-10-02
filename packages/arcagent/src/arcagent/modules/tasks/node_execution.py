@@ -33,7 +33,9 @@ doing so would execute a hybrid of two versions the moment a file drifted.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -97,6 +99,9 @@ class WorkflowNode(BaseModel):
     # The runner's deterministic row id, which IS the per-attempt idempotency
     # anchor (``node_task_id``). Derived locally only when absent.
     idempotency_key: str = ""
+    # The claimed attempt's key (``run:node:iteration:attempts``), stamped on
+    # the row by the claim. Empty until the row has been claimed with one.
+    attempt_key: str = ""
     # Validated outputs of the upstream nodes this one needs, keyed by node id.
     upstream: dict[str, Any] = Field(default_factory=dict)
     # The run's accumulated lethal-trifecta legs at the moment this node was
@@ -156,11 +161,33 @@ def idempotency_key() -> str | None:
     node = _current_node.get()
     if node is None:
         return None
+    if node.attempt_key:
+        # The claimed attempt: exactly once per attempt, a retry is a new key.
+        return node.attempt_key
     if node.idempotency_key:
         # The runner's derived row id, preferred: two runners deciding the same
         # frontier compute the same key, and a locally-derived one would not.
         return node.idempotency_key
     return NodeAttempt(node.run_id, node.node_id, node.attempt).idempotency_key
+
+
+def attempt_key_for(node: WorkflowNode, attempts: int) -> str:
+    """The key of one attempt at one node instance: run + node + iteration + attempt.
+
+    Exactly once per key, at least once per node across attempts: a retry is a
+    new attempt number and so a new key, which is allowed to run again. The
+    executor computes it at claim time from the attempt the claim will create.
+    """
+    return f"{node.run_id}:{node.node_id}:{node.attempt}:{attempts}"
+
+
+def pinned_run_id(attempt_key: str) -> str:
+    """The agent run id for one attempt — derived, so a replayed dispatch is one run.
+
+    A UUID string (the shape every run-id consumer already accepts) built from
+    the key's digest rather than drawn at random.
+    """
+    return str(uuid.UUID(hex=hashlib.sha256(attempt_key.encode()).hexdigest()[:32]))
 
 
 def node_from_task(task: Any) -> WorkflowNode | None:
@@ -201,6 +228,7 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             accumulated_legs=list(metadata.get("accumulated_legs") or ()),
             bundle_root=str(metadata.get("bundle_root") or ""),
             idempotency_key=str(metadata.get("idempotency_key") or ""),
+            attempt_key=str(metadata.get("attempt_key") or ""),
         )
     except (TypeError, ValueError):
         # A malformed row is a corrupt row, not a node: treat it as an ordinary
@@ -418,12 +446,14 @@ __all__ = [
     "allowed_strategies",
     "artifact_escape_failure",
     "artifact_failure",
+    "attempt_key_for",
     "bind_node",
     "current_node",
     "escaping_artifacts",
     "idempotency_key",
     "missing_artifacts",
     "node_from_task",
+    "pinned_run_id",
     "render_node_section",
     "reset_node",
     "validate_output",

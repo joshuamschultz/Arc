@@ -130,6 +130,7 @@ from datetime import UTC, datetime
 
 import pytest
 from arcstore.backends.memory import FakeBackend
+from arcstore.runs import NodeState
 from arcstore.tasks import Task, TaskStore
 
 from arcteam.workflow.runner import node_task_id
@@ -252,6 +253,8 @@ class RunRow:
     last_error: str | None = None
     advance_failure_count: int = 0
     advance_failure_basis: str | None = None
+    node_states: dict[str, Any] = field(default_factory=dict)
+    revision: int = 0
 
 
 class FlowRunStore:
@@ -308,6 +311,7 @@ class FlowRunStore:
         for raw in rows:
             raw.pop("updated_at", None)
             run = RunRow(**raw)
+            run.node_states = {k: NodeState.model_validate(v) for k, v in run.node_states.items()}
             if run.status not in ("done", "failed", "cancelled"):
                 runs.append(run)
         return runs
@@ -317,7 +321,36 @@ class FlowRunStore:
         if raw is None:
             return None
         raw.pop("updated_at", None)
-        return RunRow(**raw)
+        row = RunRow(**raw)
+        row.node_states = {k: NodeState.model_validate(v) for k, v in row.node_states.items()}
+        return row
+
+    async def set_node_states(
+        self,
+        run_id: str,
+        updates: Mapping[str, NodeState],
+        *,
+        actor_did: str,
+        expected_revision: int,
+        fence: Any | None = None,
+    ) -> tuple[RunRow | None, str]:
+        current = await self.get(run_id)
+        if current is None:
+            return None, "not_found"
+        merged = {**current.node_states, **updates}
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            run_id,
+            {
+                "node_states": {k: v.model_dump(mode="json") for k, v in merged.items()},
+                "revision": expected_revision + 1,
+            },
+            where={"revision": expected_revision},
+            actor_did=actor_did,
+        )
+        if not won:
+            return None, "conflict"
+        return await self.get(run_id), "applied"
 
     async def record_advance_failure(
         self, run_id: str, *, actor_did: str, fence: Any | None = None

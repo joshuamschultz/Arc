@@ -53,6 +53,10 @@ class WorkflowRunnerProtocol(Protocol):
     tick (``arcagent.modules.tasks`` reliability watcher).
     """
 
+    async def resume(self) -> int:
+        """Pick up after a (re)start: reclaim abandoned attempts, repair snapshots."""
+        ...
+
     async def run_forever(self) -> None:
         """Tick until cancelled: materialize the frontier, advance runs, narrate."""
         ...
@@ -160,6 +164,10 @@ class RunnerHost:
                     continue
                 started_at = asyncio.get_running_loop().time()
                 try:
+                    # Every start and every rebuild re-enters through resume():
+                    # the previous runner may have died mid-attempt. A failure
+                    # here takes the same close-and-rebuild backoff as a crash.
+                    await runner.resume()
                     await runner.run_forever()
                     _logger.error("workflow runner returned unexpectedly")
                 except asyncio.CancelledError:
