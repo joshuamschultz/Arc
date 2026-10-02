@@ -978,10 +978,17 @@ export interface WorkflowRunNodeStatus {
   owner_did?: string | null
   started_at?: string | null
   completed_at?: string | null
+  last_error?: string | null
+  attempts?: number | null
+  max_attempts?: number | null
+  /** Bounded value, a `{truncated, size_bytes, preview}` marker, or `{withheld}`. */
+  input?: unknown
+  output?: unknown
 }
 
 export interface WorkflowRunDetail {
   [key: string]: unknown
+  last_error?: string | null
   run_id: string
   workflow_id: string
   version: number
