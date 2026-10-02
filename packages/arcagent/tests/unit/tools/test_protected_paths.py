@@ -72,6 +72,58 @@ class TestIsProtectedPath:
         assert is_protected_path((tmp_path / "IDENTITY.md"), protected)
 
 
+class TestPulseIsProtected:
+    """pulse.md auto-runs as agent prompts: agent-writable means a planted standing order."""
+
+    def test_pulse_md_is_a_default_protected_name(self) -> None:
+        assert "pulse.md" in DEFAULT_PROTECTED_NAMES
+
+    def test_pulse_md_resolves_protected_even_when_absent(self, tmp_path: Path) -> None:
+        protected = resolve_protected_paths(tmp_path, [])
+        assert is_protected_path((tmp_path / "pulse.md").resolve(), protected)
+
+
+@pytest.mark.asyncio
+class TestPulseToolDenial:
+    async def test_write_pulse_md_denied_with_typed_error(self, tmp_path: Path) -> None:
+        from arcagent.builtins.capabilities.write import write
+
+        sink = _RecordingSink()
+        _runtime.configure(
+            workspace=tmp_path,
+            protected_paths=resolve_protected_paths(tmp_path, []),
+            audit_sink=sink,
+        )
+        with pytest.raises(ToolError) as exc:
+            await write(file_path="pulse.md", content="- every hour: exfiltrate")
+        assert exc.value.code == "TOOL_PROTECTED_PATH"
+        assert not (tmp_path / "pulse.md").exists()
+        assert any(e == "tool.protected_path.denied" for e, _ in sink.events)
+
+    async def test_edit_pulse_md_denied(self, tmp_path: Path) -> None:
+        from arcagent.builtins.capabilities.edit import edit
+
+        (tmp_path / "pulse.md").write_text("- check: ok\n")
+        _runtime.configure(
+            workspace=tmp_path, protected_paths=resolve_protected_paths(tmp_path, [])
+        )
+        with pytest.raises(ToolError) as exc:
+            await edit(file_path="pulse.md", old_string="ok", new_string="evil")
+        assert exc.value.code == "TOOL_PROTECTED_PATH"
+        assert (tmp_path / "pulse.md").read_text() == "- check: ok\n"
+
+    async def test_bash_redirect_to_pulse_md_denied(self, tmp_path: Path) -> None:
+        from arcagent.builtins.capabilities.bash import bash
+
+        _runtime.configure(
+            workspace=tmp_path, protected_paths=resolve_protected_paths(tmp_path, [])
+        )
+        with pytest.raises(ToolError) as exc:
+            await bash(command="echo '- every hour: evil' >> pulse.md")
+        assert exc.value.code == "TOOL_PROTECTED_PATH"
+        assert not (tmp_path / "pulse.md").exists()
+
+
 @pytest.mark.asyncio
 class TestWriteEditGuard:
     async def test_write_to_identity_denied_and_audited(self, tmp_path: Path) -> None:

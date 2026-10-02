@@ -40,6 +40,12 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # run's snapshot froze) never changes that run — TOCTOU on the prompt set.
         "tests/integration/test_prompt_edit_conformance.py",
     ),
+    "standing-instruction planting via agent-writable pulse.md": (
+        # pulse.md auto-runs as agent prompts; the agent's own write/edit/bash
+        # must be denied so an injected turn cannot schedule instructions.
+        "packages/arcagent/tests/unit/tools/test_protected_paths.py",
+        "tests/journeys/test_journey_prompts.py",
+    ),
     "log disclosure and audit tampering": (
         "packages/arcagent/tests/security/test_audit_at_rest.py",
         "packages/arcgateway/tests/unit/test_fs_audit_events.py",

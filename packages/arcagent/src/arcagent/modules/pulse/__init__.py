@@ -1,7 +1,9 @@
 """Pulse module — periodic ambient awareness for agents.
 
 Reads pulse.md for a check list, executes all overdue checks
-via agent_run_fn. Both humans and agents can edit pulse.md.
+via agent_run_fn. pulse.md is operator-authored: the agent's own write/edit/bash
+tools are denied (protected path, ASI01/ASI06); operators edit it through the
+audited arcui file route.
 """
 
 from __future__ import annotations
