@@ -103,6 +103,30 @@ async def test_audit_and_skill_tables_round_trip_structured_rows(
     assert (await arcstore_backend.query(SKILL_BODIES_TABLE))[0]["body"] == "body text"
 
 
+async def test_merge_rows_updates_in_place_and_count_filters(
+    arcstore_backend: ArcStoreBackend,
+) -> None:
+    """Item 20 reverify: a mirrored row's verdict is UPDATEd, never frozen by DO NOTHING."""
+    await arcstore_backend.upsert_many(
+        AUDIT_TABLE,
+        [
+            ("a", {"seq": 0, "verified": False, "action": "x"}),
+            ("b", {"seq": 1, "verified": False, "action": "y"}),
+        ],
+    )
+    updated = await arcstore_backend.merge_rows(
+        AUDIT_TABLE, [("a", {"verified": True, "signer": "s"}), ("missing", {"verified": True})]
+    )
+    assert updated == 1
+    rows = {r["record_id"]: r for r in await arcstore_backend.query(AUDIT_TABLE)}
+    assert rows["a"]["verified"] is True and rows["a"]["signer"] == "s"
+    assert rows["a"]["action"] == "x"
+    assert "missing" not in rows
+    assert await arcstore_backend.count(AUDIT_TABLE) == 2
+    assert await arcstore_backend.count(AUDIT_TABLE, where={"verified": True}) == 1
+    assert await arcstore_backend.count(AUDIT_TABLE, where={"verified": False}) == 1
+
+
 async def test_cursor_is_durable_and_monotonic_by_name(
     arcstore_backend: ArcStoreBackend,
 ) -> None:

@@ -160,17 +160,11 @@ class PostgresBackend(SourceSyncBackend):
         ordering = "ts ASC" if order_by == "ts" else (order_by or "ts DESC")
         if ordering not in _ORDER_BY:
             raise ValueError(f"unsupported order_by: {order_by!r}")
-        clauses: list[str] = []
         params: list[Any] = []
+        clauses = _payload_where(where, params)
         if ts_gte is not None:
             params.append(_timestamp(ts_gte))
             clauses.append(f"ts >= ${len(params)}")
-        for field, value in (where or {}).items():
-            params.extend([field, None if value is None else str(value)])
-            if value is None:
-                clauses.append(f"payload -> ${len(params) - 1} = 'null'::jsonb")
-            else:
-                clauses.append(f"payload ->> ${len(params) - 1} = ${len(params)}")
         statement = f"SELECT payload FROM {table}"  # noqa: S608
         if clauses:
             statement += " WHERE " + " AND ".join(clauses)
@@ -181,6 +175,33 @@ class PostgresBackend(SourceSyncBackend):
         async with self._require_pool().acquire() as connection:
             rows = await connection.fetch(statement, *params)
         return [_as_dict(row["payload"]) for row in rows]
+
+    async def merge_rows(self, table: str, rows: list[tuple[str, dict[str, Any]]]) -> int:
+        self._require_table(table)
+        if not rows:
+            return 0
+        statement = (
+            f"UPDATE {table} SET payload = payload || $2::jsonb "  # noqa: S608
+            "WHERE record_key = $1"
+        )
+        updated = 0
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                for key, patch in rows:
+                    status = await connection.execute(statement, key, _json(patch))
+                    updated += int(str(status).rsplit(" ", 1)[-1])
+        return updated
+
+    async def count(self, table: str, *, where: dict[str, Any] | None = None) -> int:
+        self._require_table(table)
+        params: list[Any] = []
+        clauses = _payload_where(where, params)
+        statement = f"SELECT count(*) FROM {table}"  # noqa: S608
+        if clauses:
+            statement += " WHERE " + " AND ".join(clauses)
+        async with self._require_pool().acquire() as connection:
+            value = await connection.fetchval(statement, *params)
+        return int(value or 0)
 
     async def get_cursor(self, name: str) -> int:
         async with self._require_pool().acquire() as connection:
@@ -1195,6 +1216,24 @@ def _where_clauses(
             f"{value_column} #> ${len(params) - 1}::text[] "
             f"IS NOT DISTINCT FROM ${len(params)}::jsonb"
         )
+    return clauses
+
+
+def _payload_where(where: dict[str, Any] | None, params: list[Any]) -> list[str]:
+    """Top-level payload equality clauses, appending their bind params in order.
+
+    Text comparison via ``->>``: a JSON boolean reads back as ``true``/``false``,
+    so a Python ``bool`` is rendered the same way (``str(True)`` would never match).
+    """
+    clauses: list[str] = []
+    for field, value in (where or {}).items():
+        if value is None:
+            params.append(field)
+            clauses.append(f"payload -> ${len(params)} = 'null'::jsonb")
+            continue
+        text = ("true" if value else "false") if isinstance(value, bool) else str(value)
+        params.extend([field, text])
+        clauses.append(f"payload ->> ${len(params) - 1} = ${len(params)}")
     return clauses
 
 

@@ -17,6 +17,7 @@ from arcstore.backends.base import (
     StorageBackend,
     table_for_kind,
 )
+from arcstore.ingest import CHAIN_BROKEN_ACTION
 
 _DEFAULT_LIMIT = 100
 
@@ -82,3 +83,17 @@ async def skill_candidate_body(
         return None
     rows = await backend.query(SKILL_BODIES_TABLE, where={"record_id": body_hash}, limit=1)
     return str(rows[0]["body"]) if rows else None
+
+
+async def audit_totals(backend: StorageBackend) -> dict[str, int]:
+    """Ledger-wide counts for the audit summary — the whole mirror, not one page.
+
+    ``total`` counts mirrored records (chain-break markers excluded), ``verified``
+    those whose chain link verified on ingest, ``broken`` the chain breaks found.
+    """
+    broken = await backend.count(AUDIT_TABLE, where={"action": CHAIN_BROKEN_ACTION})
+    return {
+        "total": await backend.count(AUDIT_TABLE) - broken,
+        "verified": await backend.count(AUDIT_TABLE, where={"verified": True}),
+        "broken": broken,
+    }

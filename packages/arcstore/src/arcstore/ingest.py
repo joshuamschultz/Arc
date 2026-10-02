@@ -9,8 +9,17 @@ Crash-safety mirrors ``SessionIndex``: a per-file byte cursor is persisted in
 the backend; on restart the scan resumes from the last cursor rather than
 re-reading. Replay is harmless because every row is keyed by a content-derived
 id (``INSERT OR IGNORE``), so at-least-once ingest never duplicates rows
-(AC-3.3). The WORM is verified on ingest (``arctrust.verify_chain``) and each
-mirrored row carries the ``verified`` result.
+(AC-3.3).
+
+The WORM is verified incrementally per chain (item 20): a
+:class:`~arctrust.audit.ChainVerifier` holds each chain's ``{seq, tip}`` beside
+the byte cursor and checks exactly the records being mirrored, so every row
+carries its OWN verdict, a break marks that row and every later one and adds an
+``audit.chain.broken`` row, and a tick costs O(new records), not O(chain).
+Rotated segments are one chain: a file's cursor is keyed by the chain and the
+seq its first record carries, so a segment renamed out of the active file keeps
+its position. :meth:`StoreIngest.reverify` re-verifies every chain from genesis
+and UPDATEs rows already mirrored.
 """
 
 from __future__ import annotations
@@ -20,11 +29,12 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from arctrust.audit import verify_chain
+from arctrust.audit import ChainVerifier, chain_files
 
 from arcstore.backends.base import (
     AUDIT_TABLE,
@@ -33,12 +43,35 @@ from arcstore.backends.base import (
     StorageBackend,
     table_for_kind,
 )
-from arcstore.spool import read_complete_segments, read_from_offset
+from arcstore.spool import read_from_offset
 
 _logger = logging.getLogger("arcstore.ingest")
 
 WORM_ACTIVE_FILENAME = "audit-chain.jsonl"
 """Filename of the active (non-rotated) WORM chain — single source for arccli + arcstore."""
+
+UI_WORM_FILENAME = "audit-chain-arcui.jsonl"
+"""arcui's mutation chain — single source for arcui + the control-plane filter."""
+
+_CONTROL_CHAINS = frozenset({Path(WORM_ACTIVE_FILENAME).stem, Path(UI_WORM_FILENAME).stem})
+"""Chains written by operator surfaces (the ``arc`` CLI and arcui)."""
+
+_CONTROL_INITIATORS = frozenset({"operator", "ui_session"})
+_DENIAL_OUTCOMES = frozenset({"deny", "denied", "blocked"})
+_CAUSAL_COLUMNS = (
+    "initiator",
+    "initiator_id",
+    "on_behalf_of",
+    "run_id",
+    "tool_call_id",
+    "llm_call_id",
+    "workflow_run_id",
+    "node_id",
+    "task_id",
+    "connection_id",
+)
+CHAIN_BROKEN_ACTION = "audit.chain.broken"
+_INGEST_ACTOR = "did:arc:arcstore:ingest"
 
 SKILLS_WORM_RELPATH = Path("..") / ".audit" / "skills.worm"
 """Skills WORM chain relative to the agent workspace (written by arcagent skills runtime)."""
@@ -71,6 +104,12 @@ class StoreIngest:
         self._workspace_dir = Path(workspace_dir) if workspace_dir is not None else None
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
+        # Per-chain verifier state, keyed by the chain's active file. Absent
+        # until the first scan primes it from genesis (once per process).
+        self._chains: dict[Path, _ChainState] = {}
+        # Serializes WORM scans: the tail loop and an on-demand refresh must
+        # never advance one chain's verifier concurrently.
+        self._worm_lock = asyncio.Lock()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -135,36 +174,81 @@ class StoreIngest:
                 await self._backend.set_cursor(cursor, new_offset)
 
     def _worm_chains(self) -> list[Path]:
-        """Every WORM chain to mirror: the audit-chain segments + the skills chain."""
-        chains: list[Path] = []
-        # Glob every audit-chain segment unconditionally — a fleet writes
-        # per-agent chains (``audit-chain-<agent>.jsonl``) and the bare
-        # ``audit-chain.jsonl`` may never exist, so gating on it skipped them all.
+        """The active file of every WORM chain to mirror (segments join their chain)."""
+        chains: set[Path] = set()
+        # Glob every audit-chain file unconditionally — a fleet writes per-agent
+        # chains (``audit-chain-<agent>.jsonl``) and the bare ``audit-chain.jsonl``
+        # may never exist, so gating on it skipped them all.
         if self._worm_dir.exists():
-            chains.extend(sorted(self._worm_dir.glob("audit-chain*.jsonl")))
+            chains.update(_active_of(p) for p in self._worm_dir.glob("audit-chain*.jsonl"))
         if self._workspace_dir is not None:
             skills_chain = self._workspace_dir / SKILLS_WORM_RELPATH
             if skills_chain.exists():
-                chains.append(skills_chain)
-        return chains
+                chains.add(skills_chain)
+        return sorted(chains)
 
     async def _scan_worm(self) -> None:
-        for path in self._worm_chains():
-            # Verify each segment independently so the `verified` flag reflects
-            # that segment's own integrity, not just the active file's verdict.
-            seg_verified = (
-                verify_chain(path, self._worm_public_key)
-                if self._worm_public_key is not None
-                else False
-            )
-            cursor = f"worm:{path.name}"
+        async with self._worm_lock:
+            for active in self._worm_chains():
+                state = self._chains.get(active)
+                primed = state is not None
+                if state is None:
+                    state = self._new_state()
+                await self._mirror_chain(active, state, primed=primed)
+                self._chains[active] = state
+
+    def _new_state(self) -> _ChainState:
+        key = self._worm_public_key
+        return _ChainState(verifier=ChainVerifier(key) if key is not None else None)
+
+    async def _mirror_chain(self, active: Path, state: _ChainState, *, primed: bool) -> None:
+        """Verify and mirror one chain's new records, file by file in seq order.
+
+        An unprimed state re-reads each file from byte 0 so the verifier walks
+        the chain from genesis, but only records past the stored cursor are
+        written — the prefix is verified, not re-mirrored.
+        """
+        for path in chain_files(active):
+            first_seq = await asyncio.to_thread(_first_seq, path)
+            if first_seq is None:
+                continue
+            cursor = f"worm:{active.name}@{first_seq}"
             offset = await self._backend.get_cursor(cursor)
-            records, new_offset = _read_worm_from_offset(path, offset)
-            if records:
-                rows = [(_worm_key(r), _worm_row(r, seg_verified)) for r in records]
+            start = offset if primed else 0
+            rows, new_offset = await asyncio.to_thread(
+                _verify_file, state, path, start, offset, active
+            )
+            if rows:
                 await self._backend.upsert_many(AUDIT_TABLE, rows)
             if new_offset != offset:
                 await self._backend.set_cursor(cursor, new_offset)
+
+    async def reverify(self) -> dict[str, int]:
+        """Re-verify every chain from genesis and UPDATE every mirrored row's verdict.
+
+        The one-shot repair for rows frozen ``verified=false`` (mirrored before
+        the key was passed, or before a tamper was found). Rows are re-projected
+        in full, so older rows also gain ``signer``/causal columns. Missing rows
+        are inserted. Returns ``{events, verified, broken}`` for what it walked.
+        """
+        summary = {"events": 0, "verified": 0, "broken": 0}
+        async with self._worm_lock:
+            for active in self._worm_chains():
+                state = self._new_state()
+                rows: list[tuple[str, dict[str, Any]]] = []
+                for path in chain_files(active):
+                    file_rows, _ = await asyncio.to_thread(
+                        _verify_file, state, path, 0, -1, active
+                    )
+                    rows.extend(file_rows)
+                await self._backend.upsert_many(AUDIT_TABLE, rows)
+                await self._backend.merge_rows(AUDIT_TABLE, rows)
+                self._chains[active] = state
+                events = [r for _, r in rows if r.get("action") != CHAIN_BROKEN_ACTION]
+                summary["events"] += len(events)
+                summary["verified"] += sum(1 for r in events if r["verified"])
+                summary["broken"] += len(rows) - len(events)
+        return summary
 
     # -- skill candidate store (SPEC-054 REQ-120) ---------------------------
 
@@ -328,16 +412,115 @@ def _candidate_key(row: dict[str, Any], mtime_ns: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _read_worm_from_offset(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
-    """Read complete WORM records from ``offset``; leave a torn tail unconsumed."""
-    chunks, new_offset = read_complete_segments(path, offset)
-    records: list[dict[str, Any]] = []
-    for chunk in chunks:
+@dataclass
+class _ChainState:
+    """One chain's running verification; a ``None`` verifier (no key) verifies nothing."""
+
+    verifier: ChainVerifier | None
+    reported_break: bool = False
+
+    def check(self, record: dict[str, Any] | None) -> bool:
+        if self.verifier is None:
+            return False
+        # An unparseable line is a break in the chain, not a record to skip.
+        return self.verifier.check(record if record is not None else {})
+
+    def new_break(self) -> int | None:
+        """The seq the chain broke at, reported once."""
+        if self.verifier is None or self.verifier.broken_at is None or self.reported_break:
+            return None
+        self.reported_break = True
+        return self.verifier.broken_at
+
+
+def _active_of(path: Path) -> Path:
+    """``x.000000000123.jsonl`` -> ``x.jsonl``; an active file maps to itself."""
+    stem, dot, tail = path.stem.rpartition(".")
+    if dot and tail.isdigit():
+        return path.with_name(f"{stem}{path.suffix}")
+    return path
+
+
+def _first_seq(path: Path) -> int | None:
+    """The seq of a chain file's first record — its stable identity across rotation."""
+    try:
+        with path.open("rb") as fh:
+            line = fh.readline()
+    except OSError:
+        return None
+    if not line.endswith(b"\n"):
+        return None  # empty, or a first record still being written
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    seq = parsed.get("seq") if isinstance(parsed, dict) else None
+    return seq if isinstance(seq, int) else None
+
+
+def _verify_file(
+    state: _ChainState, path: Path, start: int, mirrored_to: int, active: Path
+) -> tuple[list[tuple[str, dict[str, Any]]], int]:
+    """Verify complete records from ``start``; return rows ending past ``mirrored_to``.
+
+    Runs in a worker thread: it reads the file and checks signatures, both of
+    which would otherwise block the event loop. ``mirrored_to=-1`` returns every
+    record (reverify).
+    """
+    chain = active.stem
+    rows: list[tuple[str, dict[str, Any]]] = []
+    lines, new_offset = _read_worm_lines(path, start)
+    for end, record in lines:
+        verified = state.check(record)
+        if record is not None and end > mirrored_to:
+            rows.append((_worm_key(record), _worm_row(record, verified, chain)))
+        broken_at = state.new_break()
+        if broken_at is not None:
+            rows.append(_broken_row(chain, broken_at))
+    return rows, max(new_offset, mirrored_to)
+
+
+def _read_worm_lines(
+    path: Path, start: int
+) -> tuple[list[tuple[int, dict[str, Any] | None]], int]:
+    """Complete records from ``start`` with each one's end offset; torn tail unconsumed."""
+    if not path.exists():
+        return [], start
+    with path.open("rb") as fh:
+        fh.seek(start)
+        data = fh.read()
+    out: list[tuple[int, dict[str, Any] | None]] = []
+    position = start
+    *complete, _torn = data.split(b"\n")
+    for chunk in complete:
+        position += len(chunk) + 1
+        if not chunk:
+            continue
         try:
-            records.append(json.loads(chunk))
+            parsed = json.loads(chunk)
         except json.JSONDecodeError:
-            _logger.warning("StoreIngest skipping corrupt WORM line in %s", path)
-    return records, new_offset
+            _logger.warning("StoreIngest: corrupt WORM line in %s", path)
+            parsed = None
+        out.append((position, parsed if isinstance(parsed, dict) else None))
+    return out, position
+
+
+def _broken_row(chain: str, seq: int) -> tuple[str, dict[str, Any]]:
+    return (
+        f"{CHAIN_BROKEN_ACTION}:{chain}:{seq}",
+        {
+            "seq": seq,
+            "ts": datetime.now(UTC).isoformat(),
+            "chain": chain,
+            "actor_did": _INGEST_ACTOR,
+            "action": CHAIN_BROKEN_ACTION,
+            "target": chain,
+            "outcome": "broken",
+            "verified": False,
+            "is_denial": False,
+            "is_control": False,
+        },
+    )
 
 
 def _worm_key(record: dict[str, Any]) -> str:
@@ -345,11 +528,15 @@ def _worm_key(record: dict[str, Any]) -> str:
     return str(record.get("event_hash", ""))
 
 
-def _worm_row(record: dict[str, Any], verified: bool) -> dict[str, Any]:
-    event = record.get("event", {})
+def _worm_row(record: dict[str, Any], verified: bool, chain: str) -> dict[str, Any]:
+    event = record.get("event")
+    event = event if isinstance(event, dict) else {}
+    causal = event.get("causal")
+    causal = causal if isinstance(causal, dict) else {}
     return {
         "seq": record.get("seq"),
         "ts": event.get("ts"),
+        "chain": chain,
         "actor_did": event.get("actor_did"),
         "action": event.get("action"),
         "target": event.get("target"),
@@ -357,9 +544,15 @@ def _worm_row(record: dict[str, Any], verified: bool) -> dict[str, Any]:
         "event_hash": record.get("event_hash"),
         "prev_hash": record.get("prev_hash"),
         "signature": record.get("signature"),
+        "signer": record.get("signer"),
         "verified": verified,
         # SPEC-073 Phase D2 — run correlation (request_id) + attribution payload
         # (extra.cards/trigger) for memory.recall_attributed events.
         "request_id": event.get("request_id"),
         "extra": event.get("extra"),
+        # Item 20 — the causal chain, whole and as filterable top-level columns.
+        "causal": causal or None,
+        **{column: causal.get(column) for column in _CAUSAL_COLUMNS},
+        "is_denial": str(event.get("outcome") or "").lower() in _DENIAL_OUTCOMES,
+        "is_control": chain in _CONTROL_CHAINS or causal.get("initiator") in _CONTROL_INITIATORS,
     }

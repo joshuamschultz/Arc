@@ -13,7 +13,7 @@ from packages.arcstore.tests.inbox_conformance import (
 )
 
 from arcstore.approvals import ApprovalStore, PendingApproval
-from arcstore.backends.base import ArcStoreBackend
+from arcstore.backends.base import AUDIT_TABLE, ArcStoreBackend
 from arcstore.backends.postgres import PostgresBackend
 from arcstore.backends.postgres_inbox import PostgresInboxRepository
 from arcstore.inbox import ParticipantRole
@@ -502,3 +502,23 @@ async def test_postgres_v3_indexes_cover_inbox_foreign_keys_and_queries(
     assert "(thread_id, created_at, message_id)" in definitions["inbox_messages"]
     assert "(thread_id, created_at, handoff_id)" in definitions["inbox_handoffs"]
     assert "(approval_id)" in definitions["approval_outbox"]
+
+
+async def test_postgres_merge_rows_and_count_match_the_contract(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """Item 20 reverify UPDATEs the jsonb payload; booleans filter as JSON booleans."""
+    key = f"merge-{uuid4().hex}"
+    marker = uuid4().hex
+    await postgres_backend.upsert_many(
+        AUDIT_TABLE, [(key, {"verified": False, "marker": marker, "ts": "2026-10-02T00:00:00Z"})]
+    )
+    assert await postgres_backend.merge_rows(AUDIT_TABLE, [(key, {"verified": True})]) == 1
+    rows = await postgres_backend.query(AUDIT_TABLE, where={"marker": marker})
+    assert rows[0]["verified"] is True
+    assert (
+        await postgres_backend.count(AUDIT_TABLE, where={"marker": marker, "verified": True}) == 1
+    )
+    assert (
+        await postgres_backend.count(AUDIT_TABLE, where={"marker": marker, "verified": False}) == 0
+    )

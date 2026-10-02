@@ -48,10 +48,11 @@ from typing import Any, Protocol, runtime_checkable
 if sys.platform != "win32":
     import fcntl
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arctrust.audit_cipher import RecordCipher
 from arctrust.canonical import canonical_json
+from arctrust.causal import CausalContext, current
 from arctrust.signer import ED25519, Signer, verify_signature
 
 _logger = logging.getLogger("arctrust.audit")
@@ -105,6 +106,14 @@ class AuditEvent(BaseModel):
     """ISO 8601 UTC timestamp. Auto-populated if omitted."""
 
     extra: dict[str, Any] = {}
+
+    causal: CausalContext | None = Field(default_factory=current)
+    """Who caused this act and inside what (run, tool call, workflow node, ...).
+
+    Stamped from the bound :mod:`arctrust.causal` context at CONSTRUCTION, so
+    producers that call ``sink.write`` directly are covered too. ``actor_did``
+    is the initiator; the key that signs the record is the WORM ``signer``.
+    """
 
     @model_validator(mode="after")
     def _set_ts(self) -> AuditEvent:
@@ -164,18 +173,28 @@ class NullSink:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_event_hash(*, seq: int, prev_hash: str, event: dict[str, Any]) -> str:
-    """Deterministic SHA-256 over (seq, prev_hash, event).
+def signer_fingerprint(public_key: bytes) -> str:
+    """Stable identity of a signing key, recorded on every WORM record as ``signer``."""
+    return "sha256:" + hashlib.sha256(public_key).hexdigest()
+
+
+def _canonical_event_hash(
+    *, seq: int, prev_hash: str, event: dict[str, Any], signer: str | None = None
+) -> str:
+    """Deterministic SHA-256 over (seq, prev_hash, event[, signer]).
 
     Serialized by :func:`arctrust.canonical.canonical_json` — the same byte form
     every other signature in the stack commits to, so the chain cannot drift from
     the rest of arctrust on separators or ``ensure_ascii``. The hash commits the
     link (prev_hash), the position (seq), and the content (event), so any of the
-    three changing is detectable.
+    three changing is detectable. ``signer`` is committed when the record names
+    one, so a forged or stripped signer breaks the hash; records written before
+    the field existed carry none and hash exactly as they always did.
     """
-    return hashlib.sha256(
-        canonical_json({"seq": seq, "prev_hash": prev_hash, "event": event})
-    ).hexdigest()
+    body: dict[str, Any] = {"seq": seq, "prev_hash": prev_hash, "event": event}
+    if signer is not None:
+        body["signer"] = signer
+    return hashlib.sha256(canonical_json(body)).hexdigest()
 
 
 class WormSink:
@@ -238,6 +257,7 @@ class WormSink:
         self._signer = signer
         self._cipher = cipher
         self._public_key = signer.public_key
+        self._signer_id = signer_fingerprint(signer.public_key)
         self._algorithm = signer.algorithm
         self._genesis_tip = genesis_tip
         self._max_records = max_records
@@ -272,6 +292,11 @@ class WormSink:
             # explicitly through the normal append path so it gets the next seq.
             self._append(self._recovery_event(self._pending_recovery))
             self._pending_recovery = None
+
+    @property
+    def public_key(self) -> bytes:
+        """The public half of the key that signs this chain (what verifies it)."""
+        return self._public_key
 
     @property
     def chain_tip(self) -> str:
@@ -350,7 +375,9 @@ class WormSink:
             # Seal BEFORE hashing so the chain commits to the ciphertext (D-577):
             # integrity stays provable by a verifier who holds no sealing key.
             event_dump = self._cipher.seal(event_dump)
-        event_hash = _canonical_event_hash(seq=seq, prev_hash=prev_hash, event=event_dump)
+        event_hash = _canonical_event_hash(
+            seq=seq, prev_hash=prev_hash, event=event_dump, signer=self._signer_id
+        )
         signature = self._signer.sign(event_hash.encode("utf-8")).hex()
         record = {
             "seq": seq,
@@ -358,6 +385,7 @@ class WormSink:
             "prev_hash": prev_hash,
             "event_hash": event_hash,
             "algorithm": self._algorithm,
+            "signer": self._signer_id,
             "signature": signature,
         }
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
@@ -441,7 +469,7 @@ class WormSink:
         return verify_chain(self._path, pub, genesis_tip=self._genesis_tip)
 
     def _chain_files(self) -> list[Path]:
-        return _segment_files(self._path)
+        return chain_files(self._path)
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +477,7 @@ class WormSink:
 # ---------------------------------------------------------------------------
 
 
-def _segment_files(path: Path) -> list[Path]:
+def chain_files(path: Path) -> list[Path]:
     """Rotated segments (seq-ordered) followed by the active file."""
     segments = sorted(
         path.parent.glob(f"{path.stem}.*{path.suffix}"),
@@ -473,6 +501,53 @@ def _iter_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+class ChainVerifier:
+    """Incremental WORM verifier: feed records in chain order, get a verdict each.
+
+    Holds only ``{next_seq, tip}`` so a mirror can verify exactly the records it
+    ingests instead of re-reading the whole chain on every tick. A record passes
+    when its ``event_hash`` recomputes from ``(seq, prev_hash, event, signer)``,
+    it links to the previous record's hash, its ``seq`` is the next one, its
+    ``signer`` (when present) names ``public_key``, and its signature verifies.
+    The first failure sets :attr:`broken_at`; every later record fails too,
+    because nothing after a break can be anchored to the genesis.
+    """
+
+    def __init__(self, public_key: bytes, *, genesis_tip: str = GENESIS_PREV_HASH) -> None:
+        self._public_key = public_key
+        self._signer_id = signer_fingerprint(public_key)
+        self.next_seq = 0
+        self.tip = genesis_tip
+        self.broken_at: int | None = None
+
+    def check(self, record: dict[str, Any]) -> bool:
+        """Verify one record against the running tip; advance on success."""
+        if self.broken_at is None and self._valid(record):
+            self.tip = str(record["event_hash"])
+            self.next_seq += 1
+            return True
+        if self.broken_at is None:
+            self.broken_at = self.next_seq
+        return False
+
+    def _valid(self, record: dict[str, Any]) -> bool:
+        try:
+            seq = int(record["seq"])
+            signer = record.get("signer")
+            event_hash = _canonical_event_hash(
+                seq=seq, prev_hash=record["prev_hash"], event=record["event"], signer=signer
+            )
+            sig = bytes.fromhex(record.get("signature", ""))
+        except (KeyError, TypeError, ValueError):
+            return False
+        if record.get("event_hash") != event_hash or record["prev_hash"] != self.tip:
+            return False
+        if seq != self.next_seq or (signer is not None and signer != self._signer_id):
+            return False
+        algorithm = record.get("algorithm", ED25519)
+        return verify_signature(algorithm, event_hash.encode("utf-8"), sig, self._public_key)
+
+
 def verify_chain(
     path: Path,
     public_key: bytes,
@@ -481,42 +556,18 @@ def verify_chain(
 ) -> bool:
     """Validate a durable WORM chain on disk — no write lock required.
 
-    Streams records across all rotated segments + the active file (no
-    all-in-RAM list), checking for each record:
-    - ``event_hash`` recomputes from ``(seq, prev_hash, event)`` (AU-9 links),
-    - the ``signature`` verifies against ``public_key`` under the record's
-      ``algorithm`` (Ed25519 or ECDSA-P256; AU-10 non-repudiation),
-    - ``seq`` is contiguous from 0 (no gap / mid-deletion),
-    - ``prev_hash`` chains to the previous record's ``event_hash``,
-    - the first record's ``prev_hash`` equals the expected genesis tip.
-
-    Returns False on any violation. This is the read path used by
-    ``arc store verify`` and by store-ingest tamper flagging. Records written
-    before SPEC-037 carry no ``algorithm`` field and are Ed25519 by definition,
-    so the field defaults to ``ed25519`` (existing chains verify unchanged).
+    Streams records across all rotated segments + the active file through one
+    :class:`ChainVerifier` (hash links, seq contiguity from 0, genesis anchor,
+    signer binding, Ed25519/ECDSA-P256 signature — AU-9/AU-10). Returns False
+    on any violation. Records written before SPEC-037 carry no ``algorithm``
+    and are Ed25519 by definition; records written before item 20 carry no
+    ``signer`` and verify unchanged.
     """
-    prev_hash = genesis_tip
-    expected_seq = 0
-    for segment in _segment_files(Path(path)):
+    verifier = ChainVerifier(public_key, genesis_tip=genesis_tip)
+    for segment in chain_files(Path(path)):
         for record in _iter_records(segment):
-            event_hash = _canonical_event_hash(
-                seq=record["seq"], prev_hash=record["prev_hash"], event=record["event"]
-            )
-            if record.get("event_hash") != event_hash:
+            if not verifier.check(record):
                 return False
-            if record.get("prev_hash") != prev_hash:
-                return False
-            if int(record.get("seq", -1)) != expected_seq:
-                return False
-            try:
-                sig = bytes.fromhex(record.get("signature", ""))
-            except ValueError:
-                return False
-            algorithm = record.get("algorithm", ED25519)
-            if not verify_signature(algorithm, event_hash.encode("utf-8"), sig, public_key):
-                return False
-            prev_hash = event_hash
-            expected_seq += 1
     return True
 
 
@@ -551,7 +602,7 @@ def read_verified_anchor(
     if not verify_chain(chain_path, public_key, genesis_tip=genesis_tip):
         return None
     latest: dict[str, Any] | None = None
-    for segment in _segment_files(Path(chain_path)):
+    for segment in chain_files(Path(chain_path)):
         for record in _iter_records(segment):
             event = record.get("event", {})
             if event.get("action") != action:
@@ -636,10 +687,13 @@ __all__ = [
     "GENESIS_PREV_HASH",
     "AuditEvent",
     "AuditSink",
+    "ChainVerifier",
     "NullSink",
     "WormSink",
+    "chain_files",
     "emit",
     "read_verified_anchor",
+    "signer_fingerprint",
     "verify_chain",
     "worm_policy_sink",
 ]
