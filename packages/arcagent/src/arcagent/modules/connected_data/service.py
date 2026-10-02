@@ -500,6 +500,35 @@ class ConnectedDataService:
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
+    async def relayout(self, connection_id: str) -> SourceOperationResult:
+        """Move a source's stored documents to their mirrored folders, no re-embedding.
+
+        Sync is held off while files move and put back exactly as it was found.
+        """
+        registration = await self._find(connection_id)
+        if registration is None:
+            return SourceOperationResult(connection_id, "not_found")
+        was_paused = connection_id in self._paused
+        self._paused.add(connection_id)
+        await self._cancel(connection_id)
+        ingest, description = await self._ingest_for(registration)
+        relayout = getattr(ingest, "relayout_source", None)
+        if ingest is None or description is None or not callable(relayout):
+            if not was_paused:
+                self._paused.discard(connection_id)
+            return SourceOperationResult(connection_id, "refused", "relayout_unavailable")
+        try:
+            counts = await relayout(description)
+        except Exception:
+            _logger.exception("connected-data relayout failed: %s", connection_id)
+            return SourceOperationResult(connection_id, "refused", "relayout_failed")
+        finally:
+            await _release(ingest)
+            if not was_paused:
+                self._paused.discard(connection_id)
+        detail = " ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+        return SourceOperationResult(connection_id, "relayout_done", detail)
+
     async def stage_mapping(
         self, connection_id: str, *, homes: tuple[KnowledgeHome | str, ...]
     ) -> MappingProposalStatus | None:

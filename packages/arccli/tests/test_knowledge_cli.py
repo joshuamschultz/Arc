@@ -98,6 +98,10 @@ def server(monkeypatch: pytest.MonkeyPatch) -> _Server:
             "POST /api/approvals/appr-9/approve": (200, {"status": "approved"}),
             f"POST {K}/sync/gmail-1/sync": (200, {"status": "scheduled"}),
             f"POST {K}/sync/gmail-1/reindex": (200, {"status": "scheduled"}),
+            f"POST {K}/sync/gmail-1/relayout": (
+                200,
+                {"status": "relayout_done", "detail": "moved=3 repathed=3"},
+            ),
             f"POST {K}/sync/gmail-1/revoke": (200, {"status": "revoked"}),
             f"POST {K}/connected-data/activate": (200, {"status": "activated", "detail": "ok"}),
         }
@@ -190,7 +194,7 @@ def test_approve_with_nothing_staged_fails(server: _Server) -> None:
     assert "POST /api/approvals/appr-9/approve" not in server.calls()
 
 
-@pytest.mark.parametrize("action", ["sync", "reindex"])
+@pytest.mark.parametrize("action", ["sync", "reindex", "relayout"])
 def test_lifecycle_actions_post_to_the_sync_route(server: _Server, action: str) -> None:
     assert _arc(action, "gmail-1", *_AUTH) == 0
     assert server.calls() == [f"POST {K}/sync/gmail-1/{action}"]

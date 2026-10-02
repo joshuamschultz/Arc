@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from arcokf import listable_dir, listable_file
 from arcstore.approvals import ApprovalStore
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.classification import parse_classification
@@ -18,7 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arcmemory.blob_ontology import BlobObject, walk_blob_source
 from arcmemory.chunk import RecursiveChunker
+from arcmemory.collection_index import source_maintainer
 from arcmemory.config import MemoryConfig
+from arcmemory.connected_layout import flat_name, prune_empty_dirs, target_path
 from arcmemory.db import MemoryDB
 from arcmemory.doc_index import DocHit, DocIndex, object_key
 from arcmemory.extract import ExtractionUnavailable, get_extractor
@@ -134,6 +138,27 @@ class ConnectedDocument(BaseModel):
     status: DocumentStatus = DocumentStatus.INDEXED
 
 
+class RelayoutReport(BaseModel):
+    """What one ``relayout_source`` pass changed; all zeros means nothing was left to do."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scanned: int = 0
+    moved: int = 0
+    repathed: int = 0
+    state_updated: int = 0
+    refused: int = 0
+
+
+class _Move(BaseModel):
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    object_id: str
+    current: Path
+    target: Path
+    refused: bool = False
+
+
 class ConnectedObjectStatePort(Protocol):
     """Narrow object-state seam; production may implement it in ArcStore."""
 
@@ -227,11 +252,19 @@ def _citation_metadata(source: ConnectedSource, source_object: ConnectedObject) 
     return {key: value for key, value in citation.items() if value}
 
 
-def _write_document(path: Path, metadata: dict[str, str], text: str, stale: str) -> None:
+def _write_document(
+    path: Path, metadata: dict[str, str], text: str, stale: str, root: Path
+) -> None:
     """Render and atomically write one extracted document; drop a moved predecessor."""
     atomic_write_text(path, render_document(metadata, text))
     if stale:
-        Path(stale).unlink(missing_ok=True)
+        _remove_document_file(Path(stale), root)
+
+
+def _remove_document_file(path: Path, root: Path) -> None:
+    """Delete one document file and the folders its removal leaves empty."""
+    path.unlink(missing_ok=True)
+    prune_empty_dirs(path.parent, root)
 
 
 class _HeldAudit:
@@ -459,7 +492,7 @@ class ConnectedDataService:
             # an operator can legitimately remap a source between syncs. The
             # source's routing index catches up once, in ``finish_sync``.
             await index.delete_object(source_id, self._agent_did, source_object.object_id)
-            await asyncio.to_thread(self._remove_file, prior)
+            await asyncio.to_thread(self._remove_file, source_id, prior)
             EpisodicStore(self._db, self._workspace).delete(
                 Scope(agent_did=self._agent_did).key,
                 deterministic_event_id(source_id, source_object.object_id),
@@ -521,14 +554,14 @@ class ConnectedDataService:
         )
         profile_candidate = self._profile_candidate(source_object, mapping.homes)
         digest = content_hash(clean)
-        path = self._document_path(source_id, source_object.object_id)
+        path = self._document_target(source_id, source_object, prior)
         if MemoryHome.DOCUMENT in mapping.homes:
             await self._write_and_index_document(
                 index, source_id, source, source_object, clean, digest, path, prior
             )
         else:
             await index.delete_object(source_id, self._agent_did, source_object.object_id)
-            await asyncio.to_thread(self._remove_file, prior)
+            await asyncio.to_thread(self._remove_file, source_id, prior)
         if MemoryHome.MEMORY in mapping.homes:
             ingest_batch(
                 self._db,
@@ -748,7 +781,9 @@ class ConnectedDataService:
             **_citation_metadata(source, source_object),
         }
         stale = prior.path if prior is not None and prior.path != path.as_posix() else ""
-        await asyncio.to_thread(_write_document, path, metadata, text, stale)
+        await asyncio.to_thread(
+            _write_document, path, metadata, text, stale, self._document_root(source_id)
+        )
         chunks = await self._document_chunks(source_id, source_object, text, path)
         await index.delete_object(source_id, self._agent_did, source_object.object_id)
         await index.index_source(source_id, self._agent_did, chunks)
@@ -837,7 +872,9 @@ class ConnectedDataService:
         if not root.is_dir():
             return []
         documents: list[ConnectedDocument] = []
-        for path in sorted(root.glob("*.md")):
+        for path in sorted(root.rglob("*.md")):
+            if not self._is_document_file(root, path):
+                continue
             try:
                 metadata = read_frontmatter(path)
             except ValueError:
@@ -883,7 +920,11 @@ class ConnectedDataService:
         document = await self.get_document(source, object_id)
         await self._doc_index().delete_object(source_id, self._agent_did, object_id)
         if document is not None:
-            await asyncio.to_thread((self._workspace / document.path).unlink, missing_ok=True)
+            await asyncio.to_thread(
+                _remove_document_file,
+                self._workspace / document.path,
+                self._document_root(source_id),
+            )
         state = await self._object_state.get_object_state(source_id, object_id)
         if state is not None:
             await self._object_state.put_object_state(
@@ -917,6 +958,107 @@ class ConnectedDataService:
         ]
         await self.finish_sync(source)
         return sum(outcomes)
+
+    async def relayout_source(self, source: ConnectedSource) -> RelayoutReport:
+        """Move existing documents to their mirrored source paths, without re-embedding.
+
+        Chunk ids are keyed by the object, so a moved file keeps every chunk,
+        text and vector; only the stored path pointer and the object-state path
+        change. Each step is idempotent (move, repoint chunks, repoint state) and
+        always runs for every document, so a crashed pass resumes by running
+        again and a finished tree reports all zeros. The routing-index chunk is
+        not re-embedded here; the next sync's ``finish_sync`` refreshes it.
+        """
+        await self._require_current_generation(source)
+        source_id = self._source_id(source)
+        moves = await asyncio.to_thread(self._plan_relayout, source_id)
+        moved = await asyncio.to_thread(
+            self._move_documents, moves, self._document_root(source_id)
+        )
+        index = self._doc_index()
+        repathed = state_updated = 0
+        for position, move in enumerate(moves):
+            pointer = move.target.relative_to(self._workspace).as_posix()
+            repathed += int(
+                await index.repath_object(source_id, self._agent_did, move.object_id, pointer) > 0
+            )
+            state = await self._object_state.get_object_state(source_id, move.object_id)
+            if state is not None and not state.deleted and state.path != move.target.as_posix():
+                await self._object_state.put_object_state(
+                    source_id,
+                    move.object_id,
+                    state.model_copy(update={"path": move.target.as_posix()}),
+                )
+                state_updated += 1
+            if position % 100 == 99:
+                await asyncio.sleep(0)  # a large source must not hold the loop
+        # A relayout is not a change to the knowledge: its indexes settle unlogged.
+        await asyncio.to_thread(
+            source_maintainer(self._document_root(source_id)).sync_all, log=False
+        )
+        report = RelayoutReport(
+            scanned=len(moves),
+            moved=moved,
+            repathed=repathed,
+            state_updated=state_updated,
+            refused=sum(1 for move in moves if move.refused),
+        )
+        self._audit_relayout(source_id, report)
+        return report
+
+    def _plan_relayout(self, source_id: str) -> list[_Move]:
+        """Every document's current and mirrored path, collisions resolved in order."""
+        root = self._document_root(source_id)
+        if not root.is_dir():
+            return []
+        claimed: dict[Path, str] = {}
+        moves: list[_Move] = []
+        for path in sorted(root.rglob("*.md")):
+            if not self._is_document_file(root, path):
+                continue
+            try:
+                metadata = read_frontmatter(path) or {}
+            except ValueError:
+                continue
+            object_id = metadata.get("external_id")
+            if metadata.get("type") != "ConnectedDocument" or not isinstance(object_id, str):
+                continue
+            target, refused = target_path(
+                root, object_id, str(metadata.get("locator", "")), current=path
+            )
+            if claimed.get(target, object_id) != object_id:
+                target = root / flat_name(object_id)
+            claimed[target] = object_id
+            moves.append(_Move(object_id=object_id, current=path, target=target, refused=refused))
+        return moves
+
+    @staticmethod
+    def _move_documents(moves: list[_Move], root: Path) -> int:
+        """Rename each misplaced document (atomic per file) and prune emptied folders."""
+        moved = 0
+        for move in moves:
+            if move.current == move.target:
+                continue
+            move.target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(move.current, move.target)
+            prune_empty_dirs(move.current.parent, root)
+            moved += 1
+        return moved
+
+    def _audit_relayout(self, source_id: str, report: RelayoutReport) -> None:
+        if self._audit is None:
+            return
+        emit(
+            AuditEvent(
+                actor_did=self._agent_did,
+                action="connected_data.relayout",
+                target=source_id,
+                outcome="allow",
+                payload_hash=content_hash(source_id),
+                extra={key: str(value) for key, value in report.model_dump().items()},
+            ),
+            self._audit,
+        )
 
     async def _reindex_one(self, source_id: str, document: ConnectedDocument) -> bool:
         path = self._workspace / document.path
@@ -998,18 +1140,41 @@ class ConnectedDataService:
                 kept.append(hit)
         return kept
 
-    def _document_path(self, source_id: str, object_id: str) -> Path:
-        object_key = hashlib.sha256(object_id.encode("utf-8")).hexdigest()
-        return self._document_root(source_id) / f"{object_key}.md"
+    def _document_target(
+        self,
+        source_id: str,
+        source_object: ConnectedObject,
+        prior: ConnectedObjectState | None,
+    ) -> Path:
+        """Where this object's extracted document lives, mirroring its source path.
+
+        A locator is remote-controlled: a traversal-shaped one is refused (and
+        audited) and the document keeps the flat per-object name instead.
+        """
+        current = Path(prior.path) if prior is not None and prior.path else None
+        path, refused = target_path(
+            self._document_root(source_id),
+            source_object.object_id,
+            source_object.locator,
+            current=current,
+        )
+        if refused:
+            self._audit_object(source_id, source_object, "layout_refused", "locator_traversal")
+        return path
+
+    @staticmethod
+    def _is_document_file(root: Path, path: Path) -> bool:
+        """A concept document of the pool: not a reserved file, not in a hidden folder."""
+        parts = path.relative_to(root).parts
+        return listable_file(parts[-1]) and all(listable_dir(part) for part in parts[:-1])
 
     def _document_root(self, source_id: str) -> Path:
         """Canonical extracted-document root for one source instance."""
         return self._workspace / "memory" / "connected" / source_id
 
-    @staticmethod
-    def _remove_file(state: ConnectedObjectState | None) -> None:
+    def _remove_file(self, source_id: str, state: ConnectedObjectState | None) -> None:
         if state is not None and state.path:
-            Path(state.path).unlink(missing_ok=True)
+            _remove_document_file(Path(state.path), self._document_root(source_id))
 
     def _audit_object(
         self,
@@ -1028,7 +1193,7 @@ class ConnectedDataService:
                 actor_did=self._agent_did,
                 action=f"connected_data.object.{outcome}",
                 target=source_id,
-                outcome="deny" if outcome == "skipped" else "allow",
+                outcome="deny" if outcome in {"skipped", "layout_refused"} else "allow",
                 payload_hash=payload,
                 extra={"reason": reason} if reason else {},
             ),
@@ -1050,6 +1215,7 @@ __all__ = [
     "ConnectedSourceShape",
     "DocumentStatus",
     "InMemoryObjectState",
+    "RelayoutReport",
     "SourceContent",
     "SourceMappingDeniedError",
     "SourceMappingPendingError",

@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from arcokf import validate_folder_index
+from arcokf import listable_file, validate_folder_index
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.memory import FakeBackend
 
@@ -73,7 +73,7 @@ async def _granted(workspace: Path):  # type: ignore[no-untyped-def]
 def _obj(object_id: str, *, revision: int = 1) -> ConnectedObject:
     return ConnectedObject(
         object_id=object_id,
-        locator=f"/reports/{object_id}.txt",
+        locator=f"{object_id}.txt",
         version=str(revision),
         media_type="text/plain",
         classification="unclassified",
@@ -159,7 +159,7 @@ async def test_index_is_hosted_under_workspace_never_remote(tmp_path: Path) -> N
         target = (doc_root / entry.path).resolve()
         assert target.is_relative_to(tmp_path.resolve())
     # The remote origin path (the object locator) was never materialized on disk.
-    assert not Path("/reports/q3.txt").exists()
+    assert not Path("q3.txt").exists()
 
 
 # -- Property 4: fail-closed on a tampered index / tampered document -------------
@@ -215,7 +215,7 @@ async def test_reader_fails_closed_on_a_tampered_listed_document(tmp_path: Path)
     doc_root = tmp_path / "memory" / "connected" / mapping.source_id
 
     # Swap the bytes of a listed document so its committed digest no longer matches.
-    listed = next(p for p in doc_root.glob("*.md") if p.name != "index.md")
+    listed = next(p for p in doc_root.glob("*.md") if listable_file(p.name))
     listed.write_text(listed.read_text(encoding="utf-8") + "\ntampered line\n", encoding="utf-8")
 
     view = _operator(tmp_path).read_collection_index(mapping.source_id)
@@ -247,7 +247,7 @@ async def test_resync_restores_a_fail_closed_index(tmp_path: Path) -> None:
 
     # A local edit to a listed document breaks the committed digest -> fail closed.
     doc_root = tmp_path / "memory" / "connected" / mapping.source_id
-    listed = next(p for p in doc_root.glob("*.md") if p.name != "index.md")
+    listed = next(p for p in doc_root.glob("*.md") if listable_file(p.name))
     listed.write_text(listed.read_text(encoding="utf-8") + "\nlocal drift\n", encoding="utf-8")
     broken = operator.read_collection_index(mapping.source_id)
     assert broken.present and not broken.verified and broken.guidance

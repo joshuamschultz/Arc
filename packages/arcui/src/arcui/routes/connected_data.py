@@ -464,6 +464,7 @@ async def sync_action(request: Request) -> JSONResponse:
         "pause": service.pause,
         "resume": service.resume,
         "reindex": service.reindex,
+        "relayout": service.relayout,
         "revoke": service.revoke,
     }
     operation = operations.get(action)
@@ -476,7 +477,12 @@ async def sync_action(request: Request) -> JSONResponse:
         return JSONResponse(ErrorResponse(error="source not found").model_dump(), status_code=404)
     result = await operation(connection_id)
     result_status = getattr(result, "status", "scheduled" if result else "not_found")
-    applied = result is True or result_status in {"scheduled", "paused", "revoked"}
+    applied = result is True or result_status in {
+        "scheduled",
+        "paused",
+        "revoked",
+        "relayout_done",
+    }
     emit_mutation_audit(
         request,
         target=f"agent:{agent_id}/source:{source_id}",
@@ -490,7 +496,14 @@ async def sync_action(request: Request) -> JSONResponse:
             ErrorResponse(error=getattr(result, "detail", "source action refused")).model_dump(),
             status_code=409,
         )
-    return JSONResponse({"status": result_status, "action": action, "source_id": source_id})
+    return JSONResponse(
+        {
+            "status": result_status,
+            "action": action,
+            "source_id": source_id,
+            "detail": getattr(result, "detail", ""),
+        }
+    )
 
 
 routes = [

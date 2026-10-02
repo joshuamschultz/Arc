@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from arcokf import validate_folder_index
+from arcokf import listable_dir, read_folder_digest, validate_folder_index
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
@@ -547,7 +547,7 @@ class MemoryOperator:
         index = DocIndex(self._db, self._workspace, self._cfg, embedder=self._embedder)
         return await index.list_documents(self._agent_did, source_id=source_id, limit=limit)
 
-    def read_collection_index(self, source_id: str) -> CollectionIndexView:
+    def read_collection_index(self, source_id: str, folder: str = "") -> CollectionIndexView:
         """Read one document source's verified OKF ``index.md`` (H-026).
 
         The index is hosted under the agent WORKSPACE
@@ -559,15 +559,25 @@ class MemoryOperator:
         fail closed to ``verified=False`` with an empty body rather than rendering an
         unverified artifact (ASI06). An absent index (never ingested, or an ungranted
         source) is an empty ``present=False`` result, not an error.
+
+        A source mirrors its remote folder tree, so the root index lists folders;
+        ``folder`` (a source-relative path) opens one of them, verified the same way.
+        ``document_count`` is the recursive total below the folder.
         """
         if _SAFE_SOURCE_ID.fullmatch(source_id) is None:
             return CollectionIndexView(source_id=source_id, error="invalid source id")
+        parts = [part for part in folder.split("/") if part]
+        if not all(listable_dir(part) and part != ".." for part in parts):
+            return CollectionIndexView(source_id=source_id, error="invalid folder")
         base = (self._workspace / "memory" / "connected").resolve()
         root = (base / source_id).resolve()
         # Defense in depth: a source id that survived the regex must still resolve
         # to a direct child of the connected root (no symlink/parent escape).
         if root.parent != base:
             return CollectionIndexView(source_id=source_id, error="invalid source id")
+        root = root.joinpath(*parts)
+        if not root.resolve().is_relative_to(base / source_id):
+            return CollectionIndexView(source_id=source_id, error="invalid folder")
         index_path = root / "index.md"
         if not index_path.is_file():
             return CollectionIndexView(source_id=source_id, present=False)
@@ -590,6 +600,7 @@ class MemoryOperator:
                 error=str(exc),
                 guidance=_INDEX_UNVERIFIED_GUIDANCE,
             )
+        digest = read_folder_digest(root)
         entries = [
             CollectionIndexEntry(
                 path=entry.path,
@@ -605,7 +616,7 @@ class MemoryOperator:
             source_id=source_id,
             present=True,
             verified=True,
-            document_count=len(entries),
+            document_count=digest.count if digest is not None else len(entries),
             entries=entries,
             markdown=markdown,
         )

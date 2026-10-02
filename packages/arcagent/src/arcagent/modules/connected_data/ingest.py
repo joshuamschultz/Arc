@@ -450,6 +450,14 @@ class ArcMemoryIngestAdapter(IngestPort):
         module = import_module("arcmemory.connected_data")
         await self._connected_service().finish_sync(self._source_model(module, source))
 
+    async def relayout_source(self, source: SourceDescription) -> dict[str, int]:
+        """Move a source's documents to their mirrored paths (no re-embedding)."""
+        module = import_module("arcmemory.connected_data")
+        report = await self._connected_service().relayout_source(
+            self._source_model(module, source)
+        )
+        return {str(key): int(value) for key, value in report.model_dump().items()}
+
     async def reset_source(self, source: SourceDescription) -> None:
         """Clear retrievable source artifacts without discarding approved routing."""
         module = import_module("arcmemory.connected_data")
