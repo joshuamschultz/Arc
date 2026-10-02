@@ -173,6 +173,21 @@ class DocIndex:
         await backend.delete_object(scope.key, object_key(source_id, object_id))
         await backend.delete_object(scope.key, object_id)
 
+    async def repath_object(
+        self, source_id: str, agent_did: str, object_id: str, source_path: str
+    ) -> int:
+        """Point one object's chunks at the file's new path without re-embedding.
+
+        Chunk ids are keyed by the object, not its location, so a document that
+        moves keeps every chunk, text and vector; only the stored pointer
+        changes. Returns the number of chunks updated (0 when already current).
+        """
+        scope = doc_scope(agent_did, source_id)
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        return await backend.repath_object(
+            scope.key, object_key(source_id, object_id), source_path
+        )
+
     async def delete_source(self, source_id: str, agent_did: str) -> None:
         """Delete every indexed chunk in one connected source's isolated pool."""
         backend = open_index_backend(self._cfg.index_backend, db=self._db)

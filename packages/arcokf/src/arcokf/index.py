@@ -21,13 +21,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
 
-from .core import ROOT_INDEX_METADATA, VERSION, lint, validate
+from .core import ROOT_INDEX_METADATA, VERSION, is_reserved_name, lint, validate
 
 INDEX_NAME = "index.md"
 DIGEST_NAME = ".index.digest"
 FOLDERS_GROUP = "Folders"
 
-_RESERVED_NAMES = frozenset({"index.md", "context.md", "log.md"})
 _OPERATIONAL_DIRS = frozenset(
     {".git", ".arc", ".codex", "audit", "audits", "config", "secrets", "credentials"}
 )
@@ -110,9 +109,7 @@ def listable_dir(name: str) -> bool:
 
 def listable_file(name: str) -> bool:
     """Whether a file is a concept document an index may list."""
-    return (
-        name.lower().endswith(".md") and name not in _RESERVED_NAMES and not name.startswith(".")
-    )
+    return name.lower().endswith(".md") and not is_reserved_name(name) and not name.startswith(".")
 
 
 def folder_entry(path: Path) -> IndexEntry | None:
@@ -139,6 +136,8 @@ def folder_entry(path: Path) -> IndexEntry | None:
         (str(metadata[key]) for key in ("title", "name") if metadata.get(key)),
         heading or path.stem,
     )
+    if not _one_line(title, _MAX_TITLE):
+        title = path.stem  # a blank title must not make the whole folder unindexable
     description = next(
         (
             str(metadata[key])
@@ -165,7 +164,7 @@ def _normalised(entry: IndexEntry) -> IndexEntry:
     if entry.is_folder:
         if path.parts[-1] != INDEX_NAME or len(path.parts) != 2:
             raise FolderIndexError(f"folder entry must be <name>/index.md: {entry.path!r}")
-    elif path.suffix.lower() != ".md" or path.name in _RESERVED_NAMES or len(path.parts) != 1:
+    elif path.suffix.lower() != ".md" or is_reserved_name(path.name) or len(path.parts) != 1:
         raise FolderIndexError(f"index path is not a listable document: {entry.path!r}")
     title = _one_line(entry.title, _MAX_TITLE).replace("[", "(").replace("]", ")")
     if not title:

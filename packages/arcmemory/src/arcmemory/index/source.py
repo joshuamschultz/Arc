@@ -27,7 +27,7 @@ from arcmemory.security import dominating_classification
 from arcmemory.types import Event
 
 # Curated markdown source directories, in a fixed order (determinism).
-_SOURCE_SUBDIRS = ("entities", "insights", "procedures", "events", "daily-log")
+SOURCE_SUBDIRS = ("entities", "insights", "procedures", "events", "daily-log")
 
 #: Per-chunk byte ceiling. An append-only daily-log (or a giant ingested event)
 #: grows without bound, and the Postgres index backend feeds each chunk's text to
@@ -98,7 +98,7 @@ def iter_source_chunks(
     before.
     """
     excluded: set[str] = set()
-    for subdir in _SOURCE_SUBDIRS:
+    for subdir in SOURCE_SUBDIRS:
         directory = mem_dir / subdir
         if not directory.exists():
             continue
@@ -155,17 +155,19 @@ def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Itera
     re-embed the root listing.
     """
     maintainer = memory_maintainer(mem_dir)
-    for sub in ("", *_SOURCE_SUBDIRS):
+    for sub in ("", *SOURCE_SUBDIRS):
         folder = mem_dir / sub if sub else mem_dir
         validation = maintainer.validate(folder)
         if not validation.valid:
             continue
         index_path = folder / "index.md"
         rel = index_path.relative_to(workspace).as_posix()
+        unlabeled = _unlabeled_paths(validation.entries, excluded, sub)
         lines = [
             _FOLDER_COUNT_RE.sub("", line)
             for line in routing_text(index_path.read_text(encoding="utf-8")).splitlines()
             if not _links_excluded(line, excluded, sub)
+            and not _links_excluded(line, unlabeled, "")
         ]
         yield from bounded_chunks(
             f"file:{rel}",
@@ -176,22 +178,40 @@ def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Itera
         )
 
 
-def _routing_label(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> str:
-    """The label a folder's routing chunk is gated on: its most restrictive listed document.
-
-    A listed document with no label makes the chunk unlabeled (""), which the
-    no-read-up gate fails closed on at federal, exactly as for an unlabeled card.
-    Bookkeeping cards are not listed in the chunk, so they do not count.
-    """
-    listed = [
+def _listed(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> list[IndexEntry]:
+    return [
         entry
         for entry in entries
         if not entry.is_folder and f"{folder}/{entry.path}".lstrip("/") not in excluded
     ]
-    labels = [entry.classification for entry in listed]
-    if any(not label for label in labels):
-        return ""
-    return dominating_classification(labels)
+
+
+def _unlabeled_paths(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> set[str]:
+    """Listed documents without a label, whose lines may not ride a classified chunk.
+
+    Once any listed document carries a label the chunk is gated on the highest
+    one; an unlabeled document's line is then left out of it, so a reader's
+    clearance is never decided by a label the line does not have. (A folder of
+    only unlabeled documents is unchanged: its chunk stays unlabeled.)
+    """
+    listed = _listed(entries, excluded, folder)
+    if not any(entry.classification for entry in listed):
+        return set()
+    return {entry.path for entry in listed if not entry.classification}
+
+
+def _routing_label(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> str:
+    """The label a folder's routing chunk is gated on: its most restrictive listed document.
+
+    The highest known label wins and is never replaced by "" because some other
+    document is unlabeled: the chunk holds every listed line, so a classified
+    title must not become readable at the lowest band. Only when no listed
+    document has a label does the chunk stay unlabeled, which the no-read-up
+    gate fails closed on at federal. Bookkeeping cards are not listed in the
+    chunk, so they do not count.
+    """
+    labels = [entry.classification for entry in _listed(entries, excluded, folder)]
+    return dominating_classification([label for label in labels if label] or labels)
 
 
 def _links_excluded(line: str, excluded: set[str], folder: str) -> bool:
@@ -308,6 +328,7 @@ __all__ = [
     "BOOKKEEPING_ENTITY_TYPES",
     "EMBED_TEXT_MAX_CHARS",
     "MAX_CHUNK_BYTES",
+    "SOURCE_SUBDIRS",
     "SourceChunk",
     "bounded_chunks",
     "embed_text",

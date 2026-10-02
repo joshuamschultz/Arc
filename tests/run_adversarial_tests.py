@@ -41,6 +41,19 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcmemory/tests/security/test_connected_index_tampering.py",
         "packages/arcmemory/tests/security/test_per_folder_index_tamper.py",
         "packages/arcmemory/tests/unit/test_collection_index_pipeline.py",
+        # Verify-seam review (item 62): a poisoned .dirty journal (absolute path,
+        # symlinked folder, oversized) writes nothing outside memory/; a mixed
+        # unlabeled + classified folder never lowers the routing chunk's label;
+        # the walker never follows a symlink into connected/; a future-dated forged
+        # index is never reused; one bad title never stops a drain; walker drops
+        # are audited.
+        "packages/arcmemory/tests/security/test_okf_verify_review.py",
+        # Locator traversal (remote-controlled paths stay inside the source root,
+        # never through a planted symlink) and log.md forgery (a forged log or
+        # archive is discarded and never merged; reserved-file structure enforced).
+        "packages/arcmemory/tests/unit/test_connected_layout.py",
+        "packages/arcmemory/tests/unit/index/test_okf_log.py",
+        "packages/arcokf/tests/test_log.py",
     ),
     "prompt replacement and instruction-boundary attacks": (
         "packages/arcprompt/tests/unit/test_verifier.py",

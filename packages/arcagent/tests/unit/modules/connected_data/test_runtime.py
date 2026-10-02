@@ -381,6 +381,55 @@ async def test_reindex_resets_artifacts_before_scheduling_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_relayout_runs_the_port_without_touching_the_checkpoint_or_sync_state() -> None:
+    class _Relayout(_ApprovalGatedIngest):
+        relayouts = 0
+
+        async def relayout_source(self, source: SourceDescription) -> dict[str, int]:
+            type(self).relayouts += 1
+            return {"moved": 2, "repathed": 2}
+
+    catalog = SourceCatalog()
+    await catalog.register("mail", _SnapshotSource())
+    ingest = _Relayout()
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: ingest,
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+
+    result = await service.relayout("mail")
+    unknown = await service.relayout("nope")
+
+    await service.close()
+    assert (result.status, result.detail) == ("relayout_done", "moved=2 repathed=2")
+    assert ingest.reset_calls == 0, "relayout must not reset the checkpoint"
+    assert unknown.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_relayout_is_refused_when_the_port_cannot_do_it() -> None:
+    catalog = SourceCatalog()
+    await catalog.register("mail", _SnapshotSource())
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: _ApprovalGatedIngest(),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    result = await service.relayout("mail")
+    await service.close()
+    assert (result.status, result.detail) == ("refused", "relayout_unavailable")
+
+
+@pytest.mark.asyncio
 async def test_revoke_fails_closed_when_source_purge_fails() -> None:
     class _FailingPurge(_ApprovalGatedIngest):
         async def purge_source(self, source: SourceDescription) -> None:

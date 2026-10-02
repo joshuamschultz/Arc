@@ -69,7 +69,7 @@ async def _ingest(
         _source(),
         ConnectedObject(
             object_id=object_id,
-            locator=f"/docs/{object_id}.txt",
+            locator=f"{object_id}.txt",
             version="1",
             media_type="text/plain",
             classification="unclassified",
@@ -200,7 +200,7 @@ async def test_deleting_an_object_updates_the_index_at_finish(tmp_path: Path) ->
         _source(),
         ConnectedObject(
             object_id="doc-00000",
-            locator="/docs/doc-00000.txt",
+            locator="doc-00000.txt",
             version="2",
             deleted=True,
             classification="unclassified",

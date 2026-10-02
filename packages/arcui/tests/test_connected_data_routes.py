@@ -142,6 +142,10 @@ class _Service:
         self.action = ("reindex", connection_id)
         return True
 
+    async def relayout(self, connection_id: str) -> bool:
+        self.action = ("relayout", connection_id)
+        return True
+
     async def revoke(self, connection_id: str) -> bool:
         self.action = ("revoke", connection_id)
         return True
@@ -267,6 +271,17 @@ def test_reindex_is_an_audited_operator_lifecycle_action() -> None:
     assert response.status_code == 200
     assert response.json()["action"] == "reindex"
     assert service.action == ("reindex", "dropbox-olivia")
+
+
+def test_relayout_is_an_audited_operator_lifecycle_action() -> None:
+    client, service = _client()
+    response = client.post(
+        "/api/agents/olivia/knowledge/sync/dropbox-olivia/relayout",
+        headers={"Authorization": "Bearer operator"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "relayout"
+    assert service.action == ("relayout", "dropbox-olivia")
 
 
 def test_sync_action_accepts_the_wire_source_id_not_only_the_connection_id() -> None:

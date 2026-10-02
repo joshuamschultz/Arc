@@ -103,6 +103,15 @@ class IndexBackend(Protocol):
         """Remove exactly one object's chunk membership from ``scope``."""
         ...
 
+    async def repath_object(self, scope: str, object_id: str, source_path: str) -> int:
+        """Point one object's chunks at a new ``source_path``; return rows changed.
+
+        Metadata only: chunk ids, text and vectors are untouched, so a document
+        that moves on disk keeps its embeddings. Idempotent: a chunk already at
+        ``source_path`` is not counted.
+        """
+        ...
+
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
         """Scope-filtered cosine search; best match first. ``[]`` when unavailable."""
         ...
@@ -290,6 +299,17 @@ class SqliteIndexBackend:
             conn.execute(f"DELETE FROM fts_chunks WHERE rowid IN ({marks})", text_rows)  # noqa: S608
         conn.execute(f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
         conn.commit()
+
+    async def repath_object(self, scope: str, object_id: str, source_path: str) -> int:
+        conn = self._db.connect()
+        # The same primary-key range as ``delete_object``: exactly ``<object_id>#…``.
+        cursor = conn.execute(
+            "UPDATE chunks SET source_path=? WHERE scope=? AND chunk_id>=? AND chunk_id<? "
+            "AND source_path<>?",
+            (source_path, scope, object_id + "#", object_id + "$", source_path),
+        )
+        conn.commit()
+        return cursor.rowcount
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
         """Brute-force cosine over ``vec0``, JOINed to ``chunks`` for scope isolation.
@@ -573,6 +593,18 @@ class PostgresIndexBackend:
                 exact,
                 prefix,
             )
+
+    async def repath_object(self, scope: str, object_id: str, source_path: str) -> int:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            status: str = await conn.execute(
+                "UPDATE chunks SET source_path=$3 "
+                "WHERE scope=$1 AND starts_with(chunk_id, $2) AND source_path<>$3",
+                scope,
+                object_id + "#",
+                source_path,
+            )
+        return int(status.rsplit(" ", 1)[-1])
 
     async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
         """Scope-filtered cosine ANN via the pgvector ``<=>`` operator, nearest first."""

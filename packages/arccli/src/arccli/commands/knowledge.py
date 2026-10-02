@@ -239,7 +239,10 @@ def _action(action: str) -> Callable[[argparse.Namespace], None]:
             body = call(
                 "POST", f"{base}/sync/{source}/{action}", json={}, timeout=_CALL_TIMEOUT_SECONDS
             )
-            _show(args, body, lambda: write(f"{source}: {action} {body.get('status', '')}"))
+            detail = f" ({body['detail']})" if body.get("detail") else ""
+            _show(
+                args, body, lambda: write(f"{source}: {action} {body.get('status', '')}{detail}")
+            )
 
         _with_call(args, run)
 
@@ -279,7 +282,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog=_PROG,
         description=(
             "Connected-source knowledge lifecycle on a running agent — sources, status, "
-            "resources, select, map, approve, sync, reindex, revoke, activate."
+            "resources, select, map, approve, sync, reindex, relayout, revoke, activate."
         ),
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
@@ -294,6 +297,11 @@ def _build_parser() -> argparse.ArgumentParser:
     _verb(subs, "approve", "Approve the staged mapping with the operator key.")
     _verb(subs, "sync", "Sync a source now.")
     _verb(subs, "reindex", "Rebuild a source's index from scratch.")
+    _verb(
+        subs,
+        "relayout",
+        "Move a source's stored documents into folders that mirror the source (no re-embedding).",
+    )
     _verb(subs, "revoke", "Stop serving a source's knowledge.", yes=True)
     _verb(subs, "activate", "Enable the connected-data module on the agent.", source=False)
     return parser
@@ -308,6 +316,7 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "approve": _approve,
     "sync": _action("sync"),
     "reindex": _action("reindex"),
+    "relayout": _action("relayout"),
     "revoke": _action("revoke"),
     "activate": _activate,
 }

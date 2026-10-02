@@ -28,6 +28,12 @@ VERSION = "0.2"
 #: The only frontmatter a bundle-root ``index.md`` may carry (OKF v0.2).
 ROOT_INDEX_METADATA = {"okf_version": VERSION}
 _RESERVED_NAMES = frozenset({"context.md", "index.md", "log.md"})
+_LOG_ARCHIVE_RE = re.compile(r"^log\.\d{4}\.md$")
+
+
+def is_reserved_name(name: str) -> bool:
+    """Whether ``name`` is an OKF reserved file (index, context, log or a log archive)."""
+    return name in _RESERVED_NAMES or _LOG_ARCHIVE_RE.fullmatch(name) is not None
 
 
 class DiagnosticCode(StrEnum):
@@ -230,7 +236,7 @@ def validate(
         )
     metadata, body, diagnostics = _frontmatter(text, path)
     basename = path.rsplit("/", 1)[-1] if path else None
-    if basename in _RESERVED_NAMES:
+    if basename is not None and is_reserved_name(basename):
         diagnostics.extend(_reserved_diagnostics(text, metadata, basename, path, bundle_root))
     else:
         diagnostics.extend(_concept_diagnostics(metadata, path))
