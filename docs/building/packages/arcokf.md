@@ -164,9 +164,18 @@ Properties:
 
 - **Canonical round-trip check.** Parsing re-renders and compares byte for byte, so
   any hand edit (reorder, added line, tweaked summary) is detected without a signature.
-- **Sidecar digest.** An index edited without its sidecar fails shallow validation;
-  one forged together with its sidecar is caught by the deep check and healed by a
-  forced re-sync from the documents.
+- **Sidecar digest.** An index edited without its sidecar fails shallow validation.
+  The sidecar is an unkeyed hash, so on its own it proves only that the two files
+  agree: anyone who can write `index.md` can recompute it. Authenticity is the
+  owner's job. `arcmemory` signs every sidecar hash with the agent's key in a
+  `.okf.seal` per collection and checks `FolderIndexValidation.sidecar_sha` against
+  it; the deep check catches a forged pair for a caller with no seal.
+- **Verify once, use those bytes.** `validate_folder_index` reads the index and the
+  sidecar once each and returns the exact `text` and `digest` it checked; callers
+  use them and never re-open the file. Every read goes through
+  `read_regular_file` (`O_NOFOLLOW` + `fstat`: a regular file, never a symlink leaf,
+  optionally the same inode the caller listed), and `folder_entry` hashes and parses
+  one buffer.
 - **Nothing silently vanishes.** Classified documents are listed with
   `(classification: <label>)`; the reader gates on the label.
 - **Path guards.** Absolute paths, `..`, sub-paths, non-`.md` suffixes and reserved
