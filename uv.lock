@@ -282,6 +282,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "arcgateway", extra = ["mattermost", "slack"] },
     { name = "arcllm", extra = ["jev"] },
     { name = "freezegun" },
     { name = "httpx2" },
@@ -324,6 +325,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "arcgateway", extras = ["mattermost", "slack"], editable = "packages/arcgateway" },
     { name = "arcllm", extras = ["jev"], editable = "packages/arcllm" },
     { name = "freezegun", specifier = ">=1.5.5" },
     { name = "httpx2", specifier = ">=2.13.1" },
