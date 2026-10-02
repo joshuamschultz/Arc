@@ -473,3 +473,34 @@ def test_record_seal_does_not_retry_after_owner_changes_during_reconciliation() 
     with pytest.raises(QueueBrokerError, match="owner changed"):
         anchor.seal_record(b"record")
     assert writes == 1
+
+
+def test_record_seal_refuses_empty_plaintext_before_broker_call() -> None:
+    now = 1000
+    machine = InProcessSigner(b"a" * 32)
+    broker = InProcessSigner(b"b" * 32)
+    lease = _lease(machine, now)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    client = httpx.Client(
+        base_url="https://broker.example", transport=httpx.MockTransport(handler)
+    )
+    anchor = QueueBrokerAnchor(
+        client,
+        tenant_id="tenant-a",
+        journal_scope="queue/tenant-a",
+        machine_id="machine-a",
+        tls_fingerprint="c" * 64,
+        signer=machine,
+        broker_public_key=broker.public_key,
+        lease_envelope=sign_broker_queue_lease(lease, broker.sign),
+        clock=lambda: now,
+    )
+    with pytest.raises(QueueBrokerError, match="plaintext exceeds limit"):
+        anchor.seal_record(b"")
+    assert calls == 0

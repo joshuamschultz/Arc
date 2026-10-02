@@ -286,7 +286,7 @@ class QueueBrokerAnchor:
 
     def seal_record(self, payload: bytes) -> str:
         """Seal bounded bytes under the same lease sequence as queue root CAS."""
-        if type(payload) is not bytes or len(payload) > 512 * 1024:
+        if type(payload) is not bytes or not 0 < len(payload) <= 512 * 1024:
             raise QueueBrokerError("queue record plaintext exceeds limit")
         encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         return str(self._record_request("seal", encoded)["ciphertext"])
