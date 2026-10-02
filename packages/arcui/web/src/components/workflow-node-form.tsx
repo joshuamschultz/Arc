@@ -291,6 +291,20 @@ export function WorkflowNodeForm({
         </Field>
       )}
 
+      {draft.kind === 'gate' && (
+        <Field
+          label="Approvers"
+          hint="Who may decide, comma-separated: DIDs or role:<name>. Empty = operator only."
+          helpKey="workflow.node.approvers"
+        >
+          <Input
+            value={draft.approvers}
+            placeholder="role:reviewer, did:arc:telegram:12345"
+            onChange={(e) => set('approvers', e.target.value)}
+          />
+        </Field>
+      )}
+
       {draft.kind === 'router' && (
         <>
           <Field
