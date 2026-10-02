@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from arcprompt import PromptSource, StockPromptSource
 from arctrust import AgentIdentity, Signer
@@ -20,6 +20,9 @@ from arcagent.core.telemetry import AgentTelemetry, DurableTelemetryAuditSink
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.extension.source_catalog import SourceCatalog
 from arcagent.tools._egress import EgressProxy
+
+if TYPE_CHECKING:
+    from arcagent.capabilities.capability_loader import SkillArtifactResolver
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,13 @@ class RuntimeDependencies:
     #: (provenance-audited bytes) backs only the prompt the run assembles itself.
     #: The stock default keeps a bare container (tests, tools) zero-config.
     prompt_source: PromptSource = field(default_factory=StockPromptSource)
+    #: The agent's anchored skill revision authority (None: no revision anchor).
+    #: Paired with ``operator_signer`` it is the ONE write path for skill content:
+    #: a module that changes a skill commits an operator-signed revision through it.
+    skill_revisions: SkillArtifactResolver | None = None
+    #: Re-scan the agent's capability roots after a module activated new content
+    #: (an improver revision), so the next turn loads the new head.
+    capability_reload: Callable[[], Coroutine[Any, Any, str]] | None = None
 
     def select_for(
         self, configure: Callable[..., None], module_config: dict[str, Any]
@@ -123,6 +133,8 @@ class DependencyKey(Enum):
     PREPARE_COLLECTED_REQUEST = "prepare_collected_request"
     AUDIT_SINK = "audit_sink"
     PROMPT_SOURCE = "prompt_source"
+    SKILL_REVISIONS = "skill_revisions"
+    CAPABILITY_RELOAD = "capability_reload"
 
 
 class RuntimeModule(Protocol):

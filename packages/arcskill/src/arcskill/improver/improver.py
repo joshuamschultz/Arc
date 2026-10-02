@@ -65,7 +65,9 @@ from arcskill.improver.seams import (
     LLMInvoker,
     Merger,
     Mutator,
-    Signer,
+    SkillRevisionRefusedError,
+    SkillRevisionWriter,
+    SkillWriterUnavailableError,
 )
 from arcskill.improver.suitegen import GenerationResult, SuiteGenerator
 from arcskill.improver.trace_store import TraceStore
@@ -75,6 +77,9 @@ _logger = logging.getLogger("arcskill.improver.improver")
 # SkillOpt rejected-edit buffer: how many prior rejected patches per skill are fed back
 # to the mutator as negative feedback (bounded — the convergence lever SkillOpt credits).
 _REJECTED_BUFFER_MAX = 5
+
+# Why a write-bearing operation refused: no operator-anchored revision writer.
+_NO_WRITER = "skill revisions are not wired: no operator-anchored revision authority on this agent"
 
 
 def _fingerprint(content: bytes) -> str:
@@ -102,16 +107,24 @@ class _SuiteGeneratorTrigger:
 
     ``create`` and ``extend`` both route to ``generate()`` — the generator is add-only
     by construction, so an extend is just another bounded adoption pass (REQ-106).
+    Adopted anchors are committed as one operator-signed revision through the writer;
+    the generator itself writes nothing.
     """
 
-    def __init__(self, generator: SuiteGenerator) -> None:
+    def __init__(self, generator: SuiteGenerator, writer: SkillRevisionWriter) -> None:
         self._generator = generator
+        self._writer = writer
 
     async def generate(
         self, *, skill_name: str, skill_dir: Path, kind: str
     ) -> GenerationResult | None:
         view = build_bundle_view(skill_name, skill_dir / "SKILL.md")
-        return await self._generator.generate(skill_name, view)
+        result = await self._generator.generate(skill_name, view)
+        if result.files:
+            await asyncio.to_thread(
+                self._writer.commit, skill_name, result.files, reason=f"golden suite {kind}"
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -136,7 +149,7 @@ class ArcSkillImprover:
         config: ImproverConfig | None = None,
         tier: str = "personal",
         llm: LLMInvoker | None = None,
-        signer: Signer | None = None,
+        writer: SkillRevisionWriter | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
         merger: Merger | None = None,
@@ -158,7 +171,9 @@ class ArcSkillImprover:
         # effect; standalone (no agent) → the shipped stock prompts.
         self._prompts: PromptSource = prompt_source or StockPromptSource()
         self._llm = llm
-        self._signer = signer
+        # The one write path (W0-skill): every applied change is committed as an
+        # operator-signed anchored revision. None → every write fails closed.
+        self._writer = writer
         # Operator-approval seam (D-10). The improver decides *when* approval is required
         # per the tier ladder; the injected provider (bound to the shared HumanGate) decides
         # the answer. Fail-closed when required but unwired (federal/enterprise), so a missing
@@ -181,7 +196,8 @@ class ArcSkillImprover:
             LLMSkillMerger(llm, prompt_source=self._prompts) if llm else None
         )
         # Suite trigger (SPEC-054 COMP-004): default to the production adapter over the
-        # concrete SuiteGenerator when an LLM seam is present — mirrors the mutator default.
+        # concrete SuiteGenerator when an LLM seam AND a revision writer are present —
+        # adopted anchors are skill content, so no writer means no generation.
         self._suite_generator: SuiteTrigger | None = suite_generator or (
             _SuiteGeneratorTrigger(
                 SuiteGenerator(
@@ -189,9 +205,10 @@ class ArcSkillImprover:
                     runner=self._eval_runner,
                     config=self._config.suite,
                     prompt_source=self._prompts,
-                )
+                ),
+                writer,
             )
-            if llm
+            if llm and writer is not None
             else None
         )
         self._skill_path = skill_path
@@ -361,11 +378,16 @@ class ArcSkillImprover:
         if not gate_ok:
             return
         detail = f"merge {candidate.skill_b} into {candidate.skill_a}: {candidate.reason}"
+        if self._writer is None:
+            _logger.info("skill consolidation %s skipped: %s", candidate.skill_a, _NO_WRITER)
+            return
         if not await self._authorize(
             "skill.lifecycle.consolidate", "consolidate", candidate.skill_a, detail
         ):
             return
-        self._apply_merge(candidate, path_a, merged_text, patch.summary if patch else "")
+        await self._apply_merge(
+            candidate, merged_text, patch.summary if patch else "", self._writer
+        )
 
     async def _merge_gate_passes(
         self,
@@ -403,14 +425,20 @@ class ArcSkillImprover:
                 return False
         return True
 
-    def _apply_merge(
-        self, candidate: ConsolidationCandidate, path_a: Path, merged_text: str, summary: str
+    async def _apply_merge(
+        self,
+        candidate: ConsolidationCandidate,
+        merged_text: str,
+        summary: str,
+        writer: SkillRevisionWriter,
     ) -> None:
-        """Write the merged text to the survivor, mark the absorbed skill merged, audit."""
-        apply_bundle_patch(
-            path_a.parent,
+        """Commit the merged text to the survivor, mark the absorbed skill merged, audit."""
+        await asyncio.to_thread(
+            apply_bundle_patch,
+            candidate.skill_a,
             BundlePatch(files={"SKILL.md": merged_text.encode("utf-8")}, summary=summary),
-            signer=self._signer,
+            writer=writer,
+            reason=f"merge {candidate.skill_b} into {candidate.skill_a}",
         )
         prior_active = self._candidate_store.load_manifest(candidate.skill_a).get(
             "active_candidate_id"
@@ -549,7 +577,7 @@ class ArcSkillImprover:
             reflector=SkillReflector(self._config, llm=llm, prompt_source=self._prompts),
             guardrails=self._guardrails,
             store=self._candidate_store,
-            signer=self._signer,
+            writer=self._writer,
         )
 
     async def _propose_prose(
@@ -592,6 +620,8 @@ class ArcSkillImprover:
         """
         if self._llm is None:  # a proposal needs the eval model; narrow for the type checker
             return status_result("unavailable", skill_name, "improvement needs the eval model")
+        if self._writer is None:
+            return status_result("unavailable", skill_name, _NO_WRITER)
         candidate = proposal.candidate
         decision = await self._gate(skill_name, skill_path, proposal.current_text, candidate.text)
         gate = gate_payload(decision)
@@ -611,13 +641,19 @@ class ArcSkillImprover:
             self._log_gate(skill_name, source, "prose", decision, "denied", candidate.id)
             reason = "operator approval is required and was not granted"
             return {**status_result("denied", skill_name, reason), "gate": gate}
-        self._prose_engine(self._llm).apply_result(
-            skill_name,
-            candidate,
-            skill_path=skill_path,
-            seed_scores=proposal.seed_scores,
-            trace_ids=proposal.trace_ids,
-        )
+        try:
+            revision = await asyncio.to_thread(
+                self._prose_engine(self._llm).apply_result,
+                skill_name,
+                candidate,
+                skill_path=skill_path,
+                seed_scores=proposal.seed_scores,
+                trace_ids=proposal.trace_ids,
+            )
+        except (SkillWriterUnavailableError, SkillRevisionRefusedError) as exc:
+            self._log_gate(skill_name, source, "prose", decision, "refused", candidate.id)
+            reason = f"the signed revision was refused: {exc}"
+            return {**status_result("refused", skill_name, reason), "gate": gate}
         self._guardrails.set_generation(skill_name, candidate.generation)
         self._log_gate(skill_name, source, "prose", decision, "applied", candidate.id)
         if self._reload is not None:
@@ -626,6 +662,7 @@ class ArcSkillImprover:
             **status_result("applied", skill_name, decision.reason),
             "candidate_id": candidate.id,
             "generation": candidate.generation,
+            "revision": revision,
             "gate": gate,
         }
 
@@ -718,7 +755,16 @@ class ArcSkillImprover:
         ):
             self._log_gate(skill_name, "auto", "code", decision, "denied")
             return
-        apply_bundle_patch(skill_dir, patch, signer=self._signer)
+        if self._writer is None:
+            self._log_gate(skill_name, "auto", "code", decision, "refused")
+            _logger.info("skill %s code patch not applied: %s", skill_name, _NO_WRITER)
+            return
+        try:
+            await asyncio.to_thread(apply_bundle_patch, skill_name, patch, writer=self._writer)
+        except ValueError as exc:
+            self._log_gate(skill_name, "auto", "code", decision, "refused")
+            self._emit_audit(skill_name, "skill.mutation.refused", str(exc))
+            return
         self._log_gate(skill_name, "auto", "code", decision, "applied")
         self._audit_code_mutation(skill_name, current, patch, [t.trace_id for t in traces])
         self._guardrails.set_generation(
@@ -1013,6 +1059,8 @@ class ArcSkillImprover:
         target = self._control_target(skill_name)
         if isinstance(target, dict):
             result = target
+        elif self._writer is None:
+            result = status_result("unavailable", skill_name, _NO_WRITER)
         elif self._suite_generator is None:
             result = status_result(
                 "unavailable", skill_name, "suite generation needs the eval model"
@@ -1212,6 +1260,8 @@ class ArcSkillImprover:
         """
         from arcskill.improver.curation import emit_golden_case
 
+        if self._writer is None:
+            raise SkillWriterUnavailableError(_NO_WRITER)
         if self._skill_path is None:
             raise RuntimeError("no skill_path resolver wired; cannot locate the skill's evals/")
         path = self._skill_path(case.skill_name)
@@ -1220,7 +1270,7 @@ class ArcSkillImprover:
         return emit_golden_case(
             path.parent,
             case,
-            signer=self._signer,
+            writer=self._writer,
             redactor=redactor,
             audit_sink=self._audit_sink,
             actor_did=self._agent_did,

@@ -75,7 +75,8 @@ class BundlePatch:
     ``files`` maps a bundle-relative path (e.g. ``scripts/calc.py``) to its full new
     bytes — the code-repair path proposes whole-file replacements, not hunks, so the
     patch is inert data the sandboxed :class:`~arcskill.improver.seams.EvalRunner`
-    validates and the agent-DID :class:`~arcskill.improver.seams.Signer` re-signs.
+    validates and the operator-anchored :class:`~arcskill.improver.seams.SkillRevisionWriter`
+    commits as a new signed revision.
     """
 
     files: dict[str, bytes]

@@ -13,12 +13,13 @@ Every emission, in order:
    raw trace body about to become a *distributable* artifact, so arctrust redaction +
    ``SECRET_PATTERNS`` run over every text field BEFORE the case is written
    (LLM02/LLM07, locked design §4).
-3. **Write + sign** — the case JSON and a discoverable pytest anchor land atomically,
-   each signed via the injected :class:`~arcskill.improver.seams.Signer` sidecar so the
-   hub re-verifies them at load (same signature the whole bundle rides).
-4. **Manifest** — provenance-tagged ``curated`` entries with ``gate_type`` and (for
-   judge_rubric) the pinned judge id + rubric sha256, add-only beside machine anchors.
-5. **Audit** — one ``skill.golden.curated`` event (who curated what, from which trace).
+3. **Commit** — the case JSON, a discoverable pytest anchor, and the updated eval
+   manifest (provenance-tagged ``curated`` entries with ``gate_type`` and, for
+   judge_rubric, the pinned judge id + rubric sha256, add-only beside machine
+   anchors) are committed together as ONE operator-signed skill revision through the
+   injected :class:`~arcskill.improver.seams.SkillRevisionWriter`. Nothing is written
+   into the skill folder in place.
+4. **Audit** — one ``skill.golden.curated`` event (who curated what, from which trace).
 """
 
 from __future__ import annotations
@@ -31,26 +32,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arcskill.improver._util import atomic_write_text
 from arcskill.improver.goldencase import AssertionCheck, CuratedGoldenCase
-from arcskill.improver.seams import Signer
+from arcskill.improver.seams import SkillRevisionWriter
 
 _logger = logging.getLogger("arcskill.improver.curation")
 
 # A redactor turns any text into a redistribution-safe version (PII/secrets removed).
 Redactor = Callable[[str], str]
 
-_SIDECAR_SUFFIX = ".arcsig"
-
 
 @dataclass(frozen=True)
 class EmittedGolden:
-    """What one emission produced — the paths written and the recorded case."""
+    """What one emission committed: skill-root-relative paths, the case, the revision."""
 
     case: CuratedGoldenCase
-    case_path: Path
-    anchor_path: Path
+    case_path: str
+    anchor_path: str
     nodeid: str
+    revision: str
 
 
 def default_redactor(text: str) -> str:
@@ -89,42 +88,52 @@ def emit_golden_case(
     skill_dir: Path,
     case: CuratedGoldenCase,
     *,
-    signer: Signer | None = None,
+    writer: SkillRevisionWriter,
     redactor: Redactor | None = None,
     audit_sink: Any = None,
     actor_did: str = "",
     tier: str = "personal",
 ) -> EmittedGolden:
-    """Emit ``case`` as a signed, redacted golden under ``skill_dir/evals/curated/``.
+    """Commit ``case`` as a redacted golden under ``evals/curated/`` in a new revision.
 
-    Raises :class:`~arcskill.improver.goldencase.CurationError` (incl. ``PinnedJudgeError``)
-    if the case is malformed or unpinned — fail-closed, nothing is written.
+    ``skill_dir`` is the ACTIVE bundle folder; it is only read (the existing eval
+    manifest). Raises :class:`~arcskill.improver.goldencase.CurationError` (incl.
+    ``PinnedJudgeError``) if the case is malformed or unpinned — fail-closed, nothing
+    is committed.
     """
     case.validate_pinned()  # judge pin enforced BEFORE any write
     redactor = redactor or default_redactor
     safe = _redact_case(case, redactor)
 
-    curated_dir = skill_dir / "evals" / "curated"
     id8 = _case_id8(safe)
     case_name = f"case_{id8}.json"
     anchor_name = f"test_curated_{id8}.py"
-    case_path = curated_dir / case_name
-    anchor_path = curated_dir / anchor_name
+    case_path = f"evals/curated/{case_name}"
+    anchor_path = f"evals/curated/{anchor_name}"
 
     case_bytes = (safe.model_dump_json(indent=2) + "\n").encode("utf-8")
-    anchor_src = _anchor_source(safe, id8)
-    anchor_bytes = anchor_src.encode("utf-8")
+    anchor_bytes = _anchor_source(safe, id8).encode("utf-8")
+    manifest_bytes = _curated_manifest(
+        skill_dir / "evals", safe, case_name, anchor_name, case_bytes, anchor_bytes
+    )
+    revision = writer.commit(
+        safe.skill_name,
+        {
+            case_path: case_bytes,
+            anchor_path: anchor_bytes,
+            "evals/.manifest.json": manifest_bytes,
+        },
+        reason=f"curated golden {id8} from trace {safe.source_trace_id}",
+    )
 
-    _write_signed(case_path, case_bytes, signer)
-    _write_signed(anchor_path, anchor_bytes, signer)
-    _record_manifest(skill_dir / "evals", safe, case_name, anchor_name, case_bytes, anchor_bytes)
-
-    nodeid = f"evals/curated/{anchor_name}::test_curated_{id8}"
+    nodeid = f"{anchor_path}::test_curated_{id8}"
     _emit_curation_audit(safe, nodeid, audit_sink=audit_sink, actor_did=actor_did, tier=tier)
     _logger.info(
         "curated golden %s emitted for skill %s (gate=%s)", id8, safe.skill_name, safe.gate_type
     )
-    return EmittedGolden(case=safe, case_path=case_path, anchor_path=anchor_path, nodeid=nodeid)
+    return EmittedGolden(
+        case=safe, case_path=case_path, anchor_path=anchor_path, nodeid=nodeid, revision=revision
+    )
 
 
 def load_curated_cases(skill_dir: Path) -> list[CuratedGoldenCase]:
@@ -145,13 +154,6 @@ def _case_id8(case: CuratedGoldenCase) -> str:
     """Deterministic 8-hex id from the case identity (stable across re-emits)."""
     key = f"{case.skill_name}:{case.case_id}:{case.gate_type}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
-
-
-def _write_signed(path: Path, content: bytes, signer: Signer | None) -> None:
-    """Atomic write + optional sidecar signature (fail-closed re-verify at load)."""
-    atomic_write_text(path, content.decode("utf-8"))
-    if signer is not None:
-        signer.sign(path, content)
 
 
 def _anchor_source(case: CuratedGoldenCase, id8: str) -> str:
@@ -184,15 +186,15 @@ def _anchor_source(case: CuratedGoldenCase, id8: str) -> str:
     )
 
 
-def _record_manifest(
+def _curated_manifest(
     evals_dir: Path,
     case: CuratedGoldenCase,
     case_name: str,
     anchor_name: str,
     case_bytes: bytes,
     anchor_bytes: bytes,
-) -> None:
-    """Add-only, provenance-tagged manifest entries for the curated pair.
+) -> bytes:
+    """The eval manifest with add-only, provenance-tagged entries for the curated pair.
 
     The pytest anchor entry carries ``provenance``/``gate_type`` (+ pinned judge for
     judge_rubric) so :func:`~arcskill.improver.evalgate.load_suite` tags the discovered
@@ -217,7 +219,7 @@ def _record_manifest(
         "provenance": "curated",
         "kind": "case-spec",
     }
-    atomic_write_text(evals_dir / ".manifest.json", json.dumps(manifest, indent=2))
+    return json.dumps(manifest, indent=2).encode("utf-8")
 
 
 def _read_manifest(evals_dir: Path) -> dict[str, Any]:

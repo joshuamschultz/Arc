@@ -1,4 +1,4 @@
-"""Golden emission: redact-before-write, sign, provenance-tag, pin (H-041)."""
+"""Golden emission: redact-before-commit, one revision, provenance-tag, pin (H-041)."""
 
 from __future__ import annotations
 
@@ -19,16 +19,12 @@ from arcskill.improver.goldencase import (
     rubric_digest,
 )
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
 
-class _RecordingSigner:
-    """Writes a real sidecar so the 'signed' guarantee is observable."""
 
-    def __init__(self) -> None:
-        self.signed: list[Path] = []
-
-    def sign(self, path: Path, content: bytes) -> None:
-        self.signed.append(path)
-        path.with_name(path.name + ".arcsig").write_text("sig:" + str(len(content)))
+def _writer(skill_dir: Path) -> DirRevisionWriter:
+    """The operator-anchored writer double, materializing commits into the skill."""
+    return DirRevisionWriter(lambda _name: skill_dir)
 
 
 def _skill_dir(tmp_path: Path) -> Path:
@@ -52,7 +48,7 @@ def test_planted_secret_is_redacted_before_the_golden_is_written(tmp_path: Path)
         source_trace_id="t-1",
         ideal_output=f"the token is {secret} and the answer is 42",
     )
-    emitted = emit_golden_case(skill_dir, case, signer=_RecordingSigner())
+    emitted = emit_golden_case(skill_dir, case, writer=_writer(skill_dir))
 
     # The secret must appear in NO written artifact under evals/.
     for path in (skill_dir / "evals").rglob("*"):
@@ -63,16 +59,19 @@ def test_planted_secret_is_redacted_before_the_golden_is_written(tmp_path: Path)
     assert "[" in emitted.case.ideal_output  # a redaction tag replaced it
 
 
-def test_emission_signs_both_artifacts(tmp_path: Path) -> None:
+def test_emission_commits_case_anchor_and_manifest_as_one_revision(tmp_path: Path) -> None:
     skill_dir = _skill_dir(tmp_path)
-    signer = _RecordingSigner()
+    writer = _writer(skill_dir)
     case = CuratedGoldenCase(
         case_id="c", skill_name="myskill", gate_type="exact_match", ideal_output="hi"
     )
-    emitted = emit_golden_case(skill_dir, case, signer=signer)
-    assert emitted.case_path.with_name(emitted.case_path.name + ".arcsig").exists()
-    assert emitted.anchor_path.with_name(emitted.anchor_path.name + ".arcsig").exists()
-    assert len(signer.signed) == 2
+    emitted = emit_golden_case(skill_dir, case, writer=writer)
+    assert len(writer.commits) == 1
+    name, files, _reason = writer.commits[0]
+    assert name == "myskill"
+    assert set(files) == {emitted.case_path, emitted.anchor_path, "evals/.manifest.json"}
+    # The improver signs nothing: signatures come from the operator-anchored writer.
+    assert not list(skill_dir.rglob("*.arcsig"))
 
 
 def test_manifest_tags_curated_provenance_and_gate_type(tmp_path: Path) -> None:
@@ -86,9 +85,9 @@ def test_manifest_tags_curated_provenance_and_gate_type(tmp_path: Path) -> None:
         judge_model_id="anthropic:haiku",
         rubric_sha256=rubric_digest(rubric),
     )
-    emitted = emit_golden_case(skill_dir, case, signer=_RecordingSigner())
+    emitted = emit_golden_case(skill_dir, case, writer=_writer(skill_dir))
     manifest = json.loads((skill_dir / "evals" / ".manifest.json").read_text())
-    anchor_rel = emitted.anchor_path.relative_to(skill_dir / "evals").as_posix()
+    anchor_rel = emitted.anchor_path.removeprefix("evals/")
     entry = manifest["files"][anchor_rel]
     assert entry["provenance"] == "curated"
     assert entry["gate_type"] == "judge_rubric"
@@ -104,7 +103,7 @@ def test_load_suite_sees_curated_case_as_human_with_gate_type(tmp_path: Path) ->
         gate_type="assertions",
         assertions=[AssertionCheck(kind="contains", value="ok")],
     )
-    emit_golden_case(skill_dir, case, signer=_RecordingSigner())
+    emit_golden_case(skill_dir, case, writer=_writer(skill_dir))
     suite = load_suite(skill_dir)
     curated = [c for c in suite if c.curated]
     assert len(curated) == 1
@@ -123,8 +122,8 @@ def test_judge_rubric_case_without_pin_is_rejected_before_write(tmp_path: Path) 
         rubric_sha256=rubric_digest("r"),
     )
     with pytest.raises(PinnedJudgeError):
-        emit_golden_case(skill_dir, case, signer=_RecordingSigner())
-    # Fail-closed: nothing was written.
+        emit_golden_case(skill_dir, case, writer=_writer(skill_dir))
+    # Fail-closed: nothing was committed.
     assert not (skill_dir / "evals").exists()
 
 
@@ -133,7 +132,7 @@ def test_load_curated_cases_roundtrips(tmp_path: Path) -> None:
     case = CuratedGoldenCase(
         case_id="c", skill_name="myskill", gate_type="exact_match", ideal_output="v"
     )
-    emit_golden_case(skill_dir, case, signer=None)
+    emit_golden_case(skill_dir, case, writer=_writer(skill_dir))
     loaded = load_curated_cases(skill_dir)
     assert [c.case_id for c in loaded] == ["c"]
     assert loaded[0].gate_type == "exact_match"

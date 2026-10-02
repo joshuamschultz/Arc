@@ -1,7 +1,8 @@
 """Per-agent skills-module runtime — wires the SkillAdapter seam (SPEC-044).
 
 Mirrors :mod:`arcagent.modules.memory._runtime`. ``configure`` builds the injected
-seams (agent-DID :class:`Signer`, operator-key WORM :class:`~arctrust.AuditSink`, the eval
+seams (the operator-anchored skill revision writer, operator-key WORM
+:class:`~arctrust.AuditSink`, the eval
 LLM bridged to a text-in/text-out invoker, the agent's :class:`~arcprompt.PromptSource`, and
 the operator-approval provider bound to the shared :class:`HumanGate`) and selects
 the :class:`~arcagent.skilladapt.SkillAdapter`. With a :class:`NullSkillAdapter`, ``active``
@@ -24,35 +25,23 @@ creation gives it this agent's state for its whole lifetime.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 from collections import OrderedDict
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from arcprompt import PromptSource
 
-from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
 from arcagent.modules.skills.outcome import OneShotInvoker, OutcomeClassifier
 from arcagent.skilladapt import LLMInvoker, NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
 _logger = logging.getLogger("arcagent.modules.skills._runtime")
-
-
-class _SidecarSigner:
-    """Agent-DID sidecar :class:`Signer` — writes ``<path>.arcsig`` (SPEC-033)."""
-
-    def __init__(self, signer_did: str, private_key: bytes) -> None:
-        self._did = signer_did
-        self._key = private_key
-
-    def sign(self, path: Path, content: bytes) -> None:
-        artifact_signing.write_signature(
-            path, content, signer_did=self._did, private_key=self._key
-        )
 
 
 @dataclass
@@ -159,10 +148,11 @@ def configure(
     llm_config: Any = None,
     agent_name: str = "",
     agent_did: str = "",
-    identity: Any = None,
     operator_signer: Any = None,
     human_gate: Any = None,
     prompt_source: PromptSource | None = None,
+    skill_revisions: Any = None,
+    capability_reload: Callable[[], Coroutine[Any, Any, str]] | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -170,13 +160,18 @@ def configure(
     key), handed to the improver and the outcome classifier so an operator's signed
     prompt edit reaches the model. ``None`` (module configured outside an agent) leaves
     both on their shipped stock prompts.
+
+    ``skill_revisions`` (the agent's anchored revision authority) plus
+    ``operator_signer`` build the improver's ONE write path: every applied change is
+    an operator-signed anchored revision. The agent's own DID key signs nothing here;
+    without either, the improver refuses every write (fail closed).
+    ``capability_reload`` re-scans the agent's capabilities after a commit.
     """
     from arcagent.modules.skills.approval import build_skill_approval_provider
     from arcagent.modules.skills.config import SkillsConfig
 
     cfg = SkillsConfig(**(config or {}))
     ws = workspace.resolve()
-    signer = _build_signer(identity)
     audit_sink = _build_worm_sink(ws, operator_signer, telemetry)
     # Operator-approval seam (D-10): a thin provider bound to the SHARED HumanGate
     # (SPEC-035/043 — operator-signed, self-approval-guarded, fail-closed at federal). No
@@ -206,7 +201,8 @@ def configure(
         config=cfg.improver,
         tier=cfg.tier,
         llm=llm,
-        signer=signer,
+        writer=_build_writer(skill_revisions, operator_signer, new_state.resolve_skill_path),
+        reload=_reload_trigger(capability_reload),
         approval_provider=approval_provider,
         audit_sink=audit_sink,
         agent_did=agent_did,
@@ -217,6 +213,64 @@ def configure(
     new_state.active = not isinstance(new_state.adapter, NullSkillAdapter)
     _state_var.set(new_state)
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)
+
+
+def _build_writer(
+    skill_revisions: Any,
+    operator_signer: Any,
+    skill_path: Callable[[str], Path | None],
+) -> Any:
+    """The operator-anchored revision writer, or None (the improver then refuses writes).
+
+    Skill revisions live in the capability-import module. It is imported here, at the
+    boundary, so this module still starts when that one is absent; no authority means
+    no writer, never a fallback signer.
+    """
+    try:
+        from arcagent.modules.capability_import.authority_factory import (
+            build_operator_skill_writer,
+        )
+        from arcagent.modules.capability_import.revisions import installed_skill_folder
+    except ImportError:
+        return None
+
+    def folder_of(skill_name: str) -> Path | None:
+        location = skill_path(skill_name)
+        return installed_skill_folder(location) if location is not None else None
+
+    return build_operator_skill_writer(skill_revisions, operator_signer, folder_of)
+
+
+def _reload_trigger(
+    capability_reload: Callable[[], Coroutine[Any, Any, str]] | None,
+) -> Callable[[], None] | None:
+    """A sync reload hook for the improver that schedules the agent's async reload.
+
+    The improver calls ``reload()`` synchronously from inside its own task; the
+    agent's capability reload is async, so it runs as a tracked task on the loop.
+    """
+    if capability_reload is None:
+        return None
+    pending: set[asyncio.Task[str]] = set()
+
+    def trigger() -> None:
+        task = asyncio.get_running_loop().create_task(capability_reload())
+        pending.add(task)
+        task.add_done_callback(_finish_reload(pending))
+
+    return trigger
+
+
+def _finish_reload(pending: set[asyncio.Task[str]]) -> Callable[[asyncio.Task[str]], None]:
+    def done(task: asyncio.Task[str]) -> None:
+        pending.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            _logger.warning(
+                "capability reload after a skill revision failed: %s",
+                type(task.exception()).__name__,
+            )
+
+    return done
 
 
 def _eval_invoker(
@@ -237,16 +291,6 @@ def _eval_invoker(
         agent_label=f"{agent_name}/skills" if agent_name else "skills",
     )
     return OneShotInvoker(model) if model is not None else None
-
-
-def _build_signer(identity: Any) -> _SidecarSigner | None:
-    """Agent-DID sidecar signer from an AgentIdentity, or ``None`` (verify-only)."""
-    if identity is None or not getattr(identity, "can_sign", False):
-        return None
-    try:
-        return _SidecarSigner(identity.did, identity.signing_seed)
-    except Exception:  # reason: verify-only identity — no seed; skip signing
-        return None
 
 
 def _build_worm_sink(workspace: Path, operator_signer: Any | None, telemetry: Any) -> Any:
