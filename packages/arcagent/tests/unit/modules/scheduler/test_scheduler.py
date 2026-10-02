@@ -397,6 +397,7 @@ class TestOverlapSkips:
         engine.should_fire = lambda e: True  # type: ignore[method-assign]
 
         await engine._tick()
+        await engine.drain()
 
         assert ran == ["scheduler:sched_a", "scheduler:sched_b"]
 
@@ -490,25 +491,22 @@ class TestExecution:
         assert "metadata" in updates
 
     @pytest.mark.asyncio
-    async def test_execute_handles_timeout(self) -> None:
+    async def test_timeout_seconds_does_not_cut_a_running_execution(self) -> None:
+        """Contract C1: timeout_seconds bounds the start, never the run."""
+
         async def slow_run(prompt: str, *, session_key: str) -> str:
-            await asyncio.sleep(10)
+            await asyncio.sleep(1.2)
             return "done"
 
         store = MagicMock(spec=ScheduleStore)
-        config = make_config()
-        config.default_timeout_seconds = 300
         engine = SchedulerEngine(
             store=store,
-            config=config,
+            config=make_config(),
             telemetry=MagicMock(),
             agent_run_fn=slow_run,
         )
-        entry = make_entry(timeout_seconds=1)
-        # Should handle timeout gracefully, not raise
-        await engine.execute(entry)
-        # A lost result must leave the due slot pending for reconciliation.
-        store.update.assert_not_called()
+        result = await engine.execute(make_entry(timeout_seconds=1))
+        assert result == "done"
 
     @pytest.mark.asyncio
     async def test_interval_not_auto_disabled(self) -> None:

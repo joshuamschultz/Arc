@@ -71,6 +71,9 @@ class _State:
     accepted_reply_fn: Callable[..., Awaitable[str]] | None = None
     reply_send: ReplySender | None = None
     reply_lookup: ReplyLookup | None = None
+    # Delivers ``("platform:chat_id", text)`` to a person. Bound on ``agent:ready``;
+    # absent when the agent runs without a gateway.
+    channel_deliver_fn: Callable[[str, str], Awaitable[None]] | None = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

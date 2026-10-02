@@ -17,6 +17,8 @@ def make_config() -> MagicMock:
     cfg.default_timeout_seconds = 300
     cfg.max_timeout_seconds = 3600
     cfg.circuit_breaker_threshold = 3
+    cfg.breaker_rearm_seconds = 900
+    cfg.missed_fire_grace_seconds = 120
     cfg.check_interval_seconds = 30
     cfg.store_path = "schedules.json"
     cfg.enabled = True

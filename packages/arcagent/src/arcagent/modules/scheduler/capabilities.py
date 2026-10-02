@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from arcagent.core import turn_context
@@ -35,6 +36,11 @@ from arcagent.modules.scheduler.models import (
     ScheduleEntry,
     generate_schedule_id,
     validate_prompt,
+)
+from arcagent.modules.scheduler.occurrence import next_fire_at
+from arcagent.modules.scheduler.operator_notice import (
+    format_schedule_notice,
+    notify_operator,
 )
 from arcagent.modules.scheduler.registration import register_schedule_revision
 from arcagent.modules.scheduler.scheduler import SchedulerEngine
@@ -132,6 +138,7 @@ async def bind_agent_run_fn(ctx: Any) -> None:
     st.accepted_reply_fn = data.get("accepted_reply_fn")
     st.reply_send = data.get("scheduled_reply_send")
     st.reply_lookup = data.get("scheduled_reply_lookup")
+    st.channel_deliver_fn = data.get("channel_deliver_fn")
     # Remember it against the agent's workspace as well: the engine may live in
     # a different asyncio task, where this state object is not the one it reads.
     _runtime.remember_run_fn(st.workspace, run_fn)
@@ -240,7 +247,14 @@ async def schedule_list(enabled_only: bool = False) -> str:
     entries = st.store.load()
     if enabled_only:
         entries = [e for e in entries if e.enabled]
-    return json.dumps([e.model_dump(mode="json") for e in entries])
+    now = datetime.now(UTC)
+    rows = []
+    for entry in entries:
+        row = entry.model_dump(mode="json")
+        following = next_fire_at(entry, now, default_timezone=st.config.timezone or "UTC")
+        row["next_fire_at"] = None if following is None else following.isoformat()
+        rows.append(row)
+    return json.dumps(rows)
 
 
 @tool(
@@ -281,6 +295,7 @@ async def schedule_update(
         candidate = ScheduleEntry.model_validate(
             {**prior.model_dump(), **updates}, context=st.config.validation_context()
         )
+        candidate = _with_disable_reason(prior, candidate)
         if (
             st.control_artifact_authority is None
             or st.control_tenant_id is None
@@ -331,7 +346,7 @@ async def schedule_cancel(
         ):
             raise ControlArtifactUnavailableError("signed schedule registration unavailable")
         disabled = await register_schedule_revision(
-            prior.model_copy(update={"enabled": False}),
+            _with_disable_reason(prior, prior.model_copy(update={"enabled": False})),
             previous=prior,
             tenant_id=st.control_tenant_id,
             agent_did=st.agent_did,
@@ -357,6 +372,56 @@ async def schedule_cancel(
 
 
 # --- Helpers --------------------------------------------------------------
+
+
+def _with_disable_reason(prior: ScheduleEntry, candidate: ScheduleEntry) -> ScheduleEntry:
+    """Stamp WHY a row is off when a person turns it off, and clear it when turned on.
+
+    Only a deliberate off is ``operator``; the breaker's own trip is stamped by the
+    engine, and that is the one that re-arms itself.
+    """
+    if prior.enabled and not candidate.enabled:
+        meta = candidate.metadata.model_copy(
+            update={
+                "disabled_reason": "operator",
+                "disabled_at": datetime.now(UTC).isoformat(),
+                "next_fire_at": None,
+            }
+        )
+        return candidate.model_copy(update={"metadata": meta})
+    if candidate.enabled and not prior.enabled:
+        meta = candidate.metadata.model_copy(
+            update={"disabled_reason": None, "disabled_at": None, "consecutive_failures": 0}
+        )
+        return candidate.model_copy(update={"metadata": meta})
+    return candidate
+
+
+@hook(event="schedule:failed")
+async def notify_operator_of_failure(ctx: Any) -> None:
+    """Tell the operator a schedule failed, and when the breaker has switched it off."""
+    await _deliver_notice("schedule:failed", ctx)
+
+
+@hook(event="schedule:missed")
+async def notify_operator_of_missed_fire(ctx: Any) -> None:
+    """Tell the operator a schedule is past due and has not started."""
+    await _deliver_notice("schedule:missed", ctx)
+
+
+@hook(event="schedule:rearmed")
+async def notify_operator_of_rearm(ctx: Any) -> None:
+    """Tell the operator a tripped schedule has switched itself back on."""
+    await _deliver_notice("schedule:rearmed", ctx)
+
+
+async def _deliver_notice(event: str, ctx: Any) -> None:
+    data = ctx.data if hasattr(ctx, "data") else {}
+    await notify_operator(
+        _runtime.state(),
+        format_schedule_notice(event, data),
+        fallback_target=data.get("deliver_to"),
+    )
 
 
 __all__ = [
