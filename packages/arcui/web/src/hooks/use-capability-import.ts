@@ -9,6 +9,8 @@ export interface CapabilityImportReview {
   review_digest: string
   tools: string[]
   skills: string[]
+  /** Review findings as `"<code>: <detail>"` (e.g. `builtin_name_collision: pdf`). */
+  findings?: string[]
   files: Array<{ path: string; sha256: string; size: number }>
   supplier_metadata_keys?: string[]
   activation: 'review_only'
