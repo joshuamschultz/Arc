@@ -150,3 +150,25 @@ def test_only_present_sections_appear_no_fabrication() -> None:
     body = {"messages": [{"role": "system", "content": "<base>\nHi.\n</base>"}]}
     keys = _keys(build_prompt_sections(body))
     assert keys == ["system_prompt"]
+
+
+def test_strategies_label_shows_the_selected_strategy() -> None:
+    """The chosen strategy guidance arrives as <strategy_NAME>; the section
+    header names it, so an edited playbook is visibly the one that ran."""
+    sections = {s["key"]: s for s in build_prompt_sections(_request_body())}
+    assert "Selected: react" in sections["strategies"]["label"]
+    assert "Think, then act" in sections["strategies"]["body"]
+
+
+def test_selection_call_is_labelled_strategy_selection() -> None:
+    """The call that picks a strategy (it carries the select_strategy tool)
+    shows its prompt under a Strategy selection section."""
+    body = {
+        "messages": [
+            {"role": "system", "content": "Pick the best strategy.\n\nreact: one tool at a time"}
+        ],
+        "tools": [{"name": "select_strategy", "description": "Choose"}],
+    }
+    sections = {s["key"]: s for s in build_prompt_sections(body)}
+    assert sections["strategy_selection"]["label"] == "Strategy selection"
+    assert "Pick the best strategy" in sections["strategy_selection"]["body"]

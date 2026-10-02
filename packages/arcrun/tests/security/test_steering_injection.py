@@ -51,7 +51,7 @@ class TestSteeringInjection:
         # Only the caller's system prompt and the chosen strategy's guidance.
         assert [m.content for m in system_msgs] == [
             "Be helpful.",
-            load_stock("arcrun", "strategy_react"),
+            f"<strategy_react>\n{load_stock('arcrun', 'strategy_react')}\n</strategy_react>",
         ]
 
     @pytest.mark.asyncio

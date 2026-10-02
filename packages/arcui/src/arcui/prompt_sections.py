@@ -50,9 +50,38 @@ def _approx_tokens(text: str) -> int:
 
 def _is_strategy_tag(tag: str) -> bool:
     """Guidance sections — ``spawn_guidance`` and any ``strategy*``-tagged section a
-    transcript carries — group under the one display section. (arcrun's per-run
-    strategy guidance is its own untagged system message, not an assembled tag.)"""
+    transcript carries — group under the one display section. (arcrun tags the
+    chosen strategy's guidance ``<strategy_NAME>``, so it lands here too.)"""
     return tag.startswith("strategy") or tag.endswith("_guidance")
+
+
+_SELECTION_LABEL = "Strategy selection"
+_SELECTION_TOOL = "select_strategy"
+_STRATEGY_PREFIX = "strategy_"
+
+
+def _is_selection_call(tools: Any) -> bool:
+    """True when the request is arcrun's strategy-selection call (it forces the
+    ``select_strategy`` tool), as opposed to a turn that runs the chosen one."""
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function")
+        spec: dict[str, Any] = fn if isinstance(fn, dict) else tool
+        if spec.get("name") == _SELECTION_TOOL:
+            return True
+    return False
+
+
+def _strategies_label(parsed: list[tuple[str, str]]) -> str:
+    """``Strategies`` plus the chosen strategy's name, read from the one
+    ``<strategy_NAME>`` block arcrun injects for the strategy that runs."""
+    for tag, body in parsed:
+        if tag.startswith(_STRATEGY_PREFIX) and body and not tag.endswith("_guidance"):
+            return f"Strategies · Selected: {tag[len(_STRATEGY_PREFIX) :]}"
+    return "Strategies"
 
 
 def _prettify(tag: str) -> str:
@@ -132,6 +161,10 @@ def build_prompt_sections(request_body: Any) -> list[dict[str, Any]]:
     raw_messages = request_body.get("messages")
     messages: list[Any] = raw_messages if isinstance(raw_messages, list) else []
     system_text = _collect_system_text(messages)
+    if _is_selection_call(request_body.get("tools")):
+        return (
+            [_section("strategy_selection", _SELECTION_LABEL, system_text)] if system_text else []
+        )
     session_data = _collect_agent_context(messages)
     parsed = _parse_top_sections(system_text)
     by_tag = {tag: body for tag, body in parsed}
@@ -166,7 +199,7 @@ def build_prompt_sections(request_body: Any) -> list[dict[str, Any]]:
     # --- canonical H-049 order --------------------------------------------
     add("system_prompt", "System prompt", by_tag.get(_BASE_TAG, ""))
     add("identity", "Identity", by_tag.get(_IDENTITY_TAG, ""))
-    add("strategies", "Strategies", strategies_body)
+    add("strategies", _strategies_label(parsed), strategies_body)
     add("policies", "Policies", by_tag.get(_POLICY_TAG, ""))
     add("tool_list", "Tool list", tools_body)
     add("skill_list", "Skill list", skills_body)
