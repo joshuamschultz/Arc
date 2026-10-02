@@ -71,7 +71,7 @@ agent = "@sales_agent"
 needs = ["route_new"]
 # Reads filter_new.output.new_files (a transitive ancestor, now delivered) and copies
 # each transcript verbatim to crm/meetings/transcripts/<meeting>/. No model involved.
-script = "scripts/archive_transcripts.py"   # KEEP-FROM-LIVE or write: see header
+script = "scripts/archive_transcripts.py"   # needs ARC_MEETINGS_SOURCE = local Dropbox /Meetings root
 output_schema = "schemas/archive_transcripts.json"
 timeout_s = 900
 max_attempts = 2
