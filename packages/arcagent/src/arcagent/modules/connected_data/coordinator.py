@@ -190,9 +190,8 @@ class ConnectedDataCoordinator:
                     for item in page.objects
                     if not item.deleted and not _is_container(item)
                 )
-                page_bytes = await self._ingest_page(
-                    source, page, mapping, chosen, run, cancel_event
-                )
+                landed = await self._ingest_page(source, page, mapping, chosen, run, cancel_event)
+                page_bytes = landed.bytes
                 page_id = _page_id(source_id, cursor, page)
                 if not await self._state.commit_page(
                     agent_did,
@@ -206,6 +205,7 @@ class ConnectedDataCoordinator:
                     fencing_token=lease.fencing_token,
                 ):
                     raise LeaseLostError()
+                await self._emit_page(source, landed)
                 pages, processed, cursor = pages + 1, processed + page_bytes, page.next_checkpoint
                 if not page.has_more:
                     break
@@ -375,7 +375,7 @@ class ConnectedDataCoordinator:
         limits: SyncLimits,
         run: _Run,
         cancel_event: asyncio.Event | None,
-    ) -> int:
+    ) -> _PageLanded:
         mappings: list[tuple[SourceObject, SourceContent | None, MappingPlan]] = []
         page_bytes = 0
         fetched = 0
@@ -519,7 +519,7 @@ class ConnectedDataCoordinator:
         # un-takeable) is a healthy empty page and advances normally.
         if outcomes["failed"] and not outcomes["ok"]:
             raise SyncError("every object on the page failed to ingest")
-        return page_bytes
+        return _PageLanded(bytes=page_bytes, objects=outcomes["ok"], failed=outcomes["failed"])
 
     async def _finish_run(
         self,
@@ -682,6 +682,29 @@ class ConnectedDataCoordinator:
         if inspect.isawaitable(result):
             await result
 
+    async def _emit_page(self, source: SourceDescription, landed: _PageLanded) -> None:
+        """One summary per committed page, in place of one audit row per object fetched.
+
+        A large account is tens of thousands of object reads; a row each flooded the
+        chain (26.8k fetch lines per agent in three days) and buried the rows that
+        matter. The grant is still re-checked before every read, and a refused or
+        failed read still audits on its own; what is summarised is only the routine
+        success. Per-object rows remain for the objects that were skipped or failed.
+        """
+        if self._audit is None:
+            return
+        result = self._audit(
+            "connector.source.page",
+            {
+                "source": _safe_id(source.connection_id),
+                "objects": landed.objects,
+                "bytes": landed.bytes,
+                "failed": landed.failed,
+            },
+        )
+        if inspect.isawaitable(result):
+            await result
+
     async def _emit_skip(
         self, source: SourceDescription, source_object: SourceObject, reason: str
     ) -> None:
@@ -716,6 +739,15 @@ class ConnectedDataCoordinator:
     def _check_deadline(self, run: _Run, limits: SyncLimits) -> None:
         if self._elapsed(run) >= limits.max_seconds:
             raise SyncError("time limit exceeded")
+
+
+@dataclass(frozen=True)
+class _PageLanded:
+    """What one page put into the index: bytes taken, objects ingested, objects failed."""
+
+    bytes: int
+    objects: int
+    failed: int
 
 
 @dataclass

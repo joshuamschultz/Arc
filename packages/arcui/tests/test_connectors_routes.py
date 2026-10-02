@@ -14,6 +14,7 @@ installed, and a write that lands before a refusal.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import arcagent
 import pytest
 from arcagent.connections import HostPrerequisiteDirector
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -551,6 +553,18 @@ def test_agent_connectors_is_404_for_an_unknown_agent(world: Path) -> None:
 # --- install ---------------------------------------------------------------
 
 
+_LISTING_IDENTITY = (
+    "instance",
+    "extension",
+    "extension_display_name",
+    "knowledge_mode",
+    "knowledge_reason",
+    "approval",
+    "agents",
+    "connect_kind",
+)
+
+
 def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
     client, agent_id, agent_dir = _agent(world)
     _write_bundle(_bundles(world))
@@ -573,19 +587,22 @@ def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
     assert _SENTINEL in env, "the credential belongs in the owner-only env file"
 
     listing = client.get("/api/connections", headers=_headers("viewer")).json()
-    assert listing["connections"] == [
-        {
-            "instance": _INSTANCE,
-            "extension": _EXTENSION,
-            # The bundle this test writes declares no display_name, so the row
-            # falls back to the coordinate — never to a blank.
-            "extension_display_name": _EXTENSION,
-            "knowledge_mode": "source",
-            "knowledge_reason": "",
-            "approval": "outbound",
-            "agents": [_AGENT],
-        }
-    ]
+    assert len(listing["connections"]) == 1
+    row = listing["connections"][0]
+    assert {key: row[key] for key in _LISTING_IDENTITY} == {
+        "instance": _INSTANCE,
+        "extension": _EXTENSION,
+        # The bundle this test writes declares no display_name, so the row
+        # falls back to the coordinate — never to a blank.
+        "extension_display_name": _EXTENSION,
+        "knowledge_mode": "source",
+        "knowledge_reason": "",
+        "approval": "outbound",
+        "agents": [_AGENT],
+        "connect_kind": "token",
+    }
+    # Connecting ends with a real check, so the card opens on a truth, not a guess.
+    assert (row["status"], row["display_status"]) == ("healthy", "healthy")
 
     # The other direction: the agent's own view is the grant read from its side,
     # which is exactly what its connector module will attach at the next start.
@@ -1826,69 +1843,42 @@ def test_completing_oauth_is_operator_only_and_needs_a_code(
     )
 
 
-# --- COMP-008 / T-1107: connection health + MCP door status on the panel ------
+# --- connection health + MCP door status on the panel -------------------------
 #
-# The per-agent connector panel must show, per connection, whether that agent's
-# connected-data sync has hit a terminal credential failure (``needs_attention``,
-# COMP-008), and whether the agent's MCP door (``[modules.mcp_server]``) is open.
-# Both facts are read off the embedded agent object arcui already holds — the
-# connected-data service for health, the agent config for the door — never by
-# reaching into ``team/`` or importing an arcagent internal. A missing record is
-# healthy / door-off, never a 500.
+# The per-agent connector panel shows, per connection, whether it is waiting on a
+# person (``needs_attention``) and whether the agent's MCP door
+# (``[modules.mcp_server]``) is open. Health is the connection's own health record,
+# the same fact the card's chip shows; the door is read off the embedded agent's
+# config, never by reaching into ``team/`` or importing an arcagent internal. A
+# missing record is "unknown", never a 500.
 
 
-class _FakeConnectedDataService:
-    """Stand-in for the agent's connected-data capability service.
-
-    The route only calls ``list_sources`` and reads ``connection_id`` / ``status``
-    off each row, so a list of duck-typed statuses is a faithful fake.
-    """
-
-    def __init__(self, statuses: tuple[Any, ...]) -> None:
-        self._statuses = statuses
-
-    async def list_sources(self) -> tuple[Any, ...]:
-        return self._statuses
-
-
-class _FakeCapabilityRegistry:
-    """Resolve the connected-data capability exactly as the real registry does."""
-
-    def __init__(self, capabilities: dict[str, Any]) -> None:
-        self._capabilities = capabilities
-
-    async def get_capability(self, name: str) -> Any:
-        return self._capabilities.get(name)
-
-
-def _embed_fake_agent(
-    client: TestClient,
-    agent_id: str,
-    *,
-    door_enabled: bool,
-    attention_ids: tuple[str, ...] = (),
-) -> str:
+def _embed_fake_agent(client: TestClient, agent_id: str, *, door_enabled: bool) -> str:
     """Put a fake embedded agent in the cache keyed by the roster-resolved DID.
 
-    ``attention_ids`` are the connection ids the agent's sync reports as
-    ``needs_attention``; ``door_enabled`` controls whether the agent config
-    carries an enabled ``[modules.mcp_server]`` entry.
+    ``door_enabled`` controls whether the agent config carries an enabled
+    ``[modules.mcp_server]`` entry.
     """
     did = resolve_agent_did(client.app.state.roster_provider(), agent_id)
     assert did is not None
-    statuses = tuple(
-        types.SimpleNamespace(connection_id=cid, status="needs_attention") for cid in attention_ids
-    )
-    service = _FakeConnectedDataService(statuses)
-    entry = types.SimpleNamespace(instance=types.SimpleNamespace(service=service))
-    registry = _FakeCapabilityRegistry({"connected_data": entry})
     modules = {"mcp_server": types.SimpleNamespace(enabled=True)} if door_enabled else {}
-    agent = types.SimpleNamespace(
-        _config=types.SimpleNamespace(modules=modules),
-        _capability_registry=registry,
-    )
+    agent = types.SimpleNamespace(_config=types.SimpleNamespace(modules=modules))
     client.app.state.embedded_agent_cache = {did: agent}
     return did
+
+
+def _record_health(client: TestClient, instance: str, *, ok: bool) -> None:
+    """Report one signal to the connection's health record, as the writers do."""
+    store = arcagent.ConnectionStateStore(client.app.state.arcstore_backend)
+    authority = arcagent.ConnectionHealthAuthority(store)
+    signal = arcagent.HealthSignal(
+        ok=ok,
+        source="probe",
+        checked_by=arcagent.PROBE_DID,
+        reason_code=None if ok else "invalid_grant",
+        provider="Acme",
+    )
+    assert asyncio.run(authority.record(instance, signal)) is not None
 
 
 def test_agent_connectors_reports_the_mcp_door_is_open(world: Path) -> None:
@@ -1905,18 +1895,20 @@ def test_agent_connectors_flags_a_connection_needing_attention(world: Path) -> N
     client, agent_id, _dir = _agent(world)
     _write_bundle(_bundles(world))
     assert _install(client).status_code == 200
-    _embed_fake_agent(client, agent_id, door_enabled=False, attention_ids=(_INSTANCE,))
+    _embed_fake_agent(client, agent_id, door_enabled=False)
+    _record_health(client, _INSTANCE, ok=False)
 
     body = client.get(f"/api/agents/{agent_id}/connectors", headers=_headers("viewer")).json()
     row = next(r for r in body["instances"] if r["instance"] == _INSTANCE)
     assert row["needs_attention"] is True
+    assert (row["status"], row["action"]) == ("needs_you", "reconnect")
     assert body["mcp_door_enabled"] is False
 
 
 def test_agent_connectors_renders_healthy_and_door_off_without_an_embedded_agent(
     world: Path,
 ) -> None:
-    """No embedded agent (or no health record) is healthy + door-off, not a 500."""
+    """No embedded agent is door-off, and a healthy record is not flagged, not a 500."""
     client, agent_id, _dir = _agent(world)
     _write_bundle(_bundles(world))
     assert _install(client).status_code == 200

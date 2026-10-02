@@ -43,6 +43,7 @@ import tomllib
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -701,6 +702,7 @@ class Connections:
         connector_control: ConnectorControl | None = None,
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
@@ -713,6 +715,9 @@ class Connections:
         # one-shot surface (a CLI verb) whose begin and complete are one process.
         self._remote_logins = remote_logins if remote_logins is not None else RemoteLoginLedger()
         self._host_step_timeout = host_step_timeout
+        # The time a health check is stamped with. Injectable so a test can walk the
+        # ten-minute and 24-hour escalation bounds without waiting for them.
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
 
     @classmethod
     def for_deployment(
@@ -729,6 +734,7 @@ class Connections:
         connector_control: ConnectorControl | None = None,
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -746,6 +752,7 @@ class Connections:
             connector_control=connector_control,
             remote_logins=remote_logins,
             host_step_timeout=host_step_timeout,
+            clock=clock,
         )
 
     @property
@@ -868,7 +875,7 @@ class Connections:
                 plan, sink, checked_by=checked_by, source=source, timeout=timeout
             )
             signal = replace(signal, credential_generation=generation)
-            await authority.record(instance, signal)
+            await authority.record(instance, signal, now=self._clock())
             authority.audit_checked(
                 instance,
                 checked_by=checked_by,
@@ -879,6 +886,15 @@ class Connections:
             )
             return await self._record_of(authority, instance)
 
+    async def health_records(self) -> dict[str, ConnectionRecord]:
+        """Every connection's stored health record, read once and read-only.
+
+        What a listing surface shows beside each connection. Reads the shared record
+        and nothing else: no credential, no provider, no process.
+        """
+        state = await self._connection_state()
+        return {record.connection: record for record in await state.list()}
+
     async def ensure_health_records(self) -> None:
         """Give every defined connection a health record, so the probe loop sees it.
 
@@ -887,8 +903,14 @@ class Connections:
         because the loop schedules from the records it can list.
         """
         state = await self._connection_state()
+        have = {record.connection for record in await state.list()}
+        missing = [instance for instance in self.registry.all() if instance not in have]
+        if not missing:
+            # The common tick plans nothing: planning a bundle writes an audit row,
+            # and one per connection per minute would be its own flood.
+            return
         with self._audit.open() as sink:
-            for instance in self.registry.all():
+            for instance in missing:
                 try:
                     plan = self._plan_for(instance, sink)
                 except ExtensionError:

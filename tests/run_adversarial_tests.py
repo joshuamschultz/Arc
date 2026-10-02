@@ -362,6 +362,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_serve_control_authority.py",
         "tests/journeys/test_journey_schedules.py",
     ),
+    # P18-1: a connection's health record is what the operator trusts to decide
+    # whether to reconnect an account, so it must not be forgeable by an agent tool
+    # or a viewer, floodable into a notice storm, injectable through provider error
+    # text, leaky about credentials, or silently believed after a row is tampered
+    # with. The architecture test keeps the authority the only writer.
+    "connection health forgery, notice flooding and status-read leakage (alpha-2 P18-1)": (
+        "packages/arcagent/tests/security/test_connection_health_abuse.py",
+        "packages/arcui/tests/security/test_connections_card_abuse.py",
+        "packages/arcagent/tests/unit/extension/test_connection_health_cas.py",
+        "tests/architecture/test_connection_health_single_writer.py",
+    ),
 }
 
 

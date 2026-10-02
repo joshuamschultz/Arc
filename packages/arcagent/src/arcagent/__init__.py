@@ -86,7 +86,17 @@ from arcagent.core.tool_policy import (
     summarize_tool_policy,
 )
 from arcagent.extension import ProbeResult, ToolOutcome, ToolResult
+from arcagent.extension.connection_health import (
+    NOTICE_CLAIM_TTL,
+    PROBE_DID,
+    ConnectionHealthAuthority,
+    HealthSignal,
+    PendingNotice,
+    action_label,
+    next_check_time,
+)
 from arcagent.extension.inspect import inspect_extensions
+from arcagent.extension.state import ConnectionRecord, ConnectionStateStore, ConnectionStatus
 from arcagent.keys import KeyStatus, KeyStore, classifier_models, default_env_file
 from arcagent.knowledge import (
     KnowledgeAccess,
@@ -258,7 +268,9 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "MEMORY_PROMOTION_MAX_ITEMS",
+    "NOTICE_CLAIM_TTL",
     "NOT_INSTALLED",
+    "PROBE_DID",
     "SECURITY_CONFIG_KNOBS",
     "AcceptedRunOwner",
     "AnchoredSkillRevisionResolver",
@@ -285,6 +297,10 @@ __all__ = [
     "ClosableSink",
     "ConfigError",
     "Connection",
+    "ConnectionHealthAuthority",
+    "ConnectionRecord",
+    "ConnectionStateStore",
+    "ConnectionStatus",
     "ConnectionWorld",
     "Connections",
     "ConnectorControl",
@@ -305,6 +321,7 @@ __all__ = [
     "DeliveryUnavailableError",
     "ExtensionError",
     "GatedItem",
+    "HealthSignal",
     "HostPrerequisiteDirector",
     "HostVerdict",
     "IdentityError",
@@ -323,6 +340,7 @@ __all__ = [
     "MemoryPromotionConfig",
     "ModuleBusError",
     "OperatorSkillRevisionWriter",
+    "PendingNotice",
     "PersonalKnowledgePort",
     "ProbeResult",
     "PromotionSource",
@@ -358,6 +376,7 @@ __all__ = [
     "ToolSpec",
     "ToolVetoedError",
     "VerifiedRunAuthorization",
+    "action_label",
     "append_module_scan_roots",
     "audit_tier_relaxations",
     "build_mcp_door",
@@ -387,6 +406,7 @@ __all__ = [
     "model_config_path",
     "module_root",
     "modules_path",
+    "next_check_time",
     "operator_key_path",
     "pin_name_for",
     "read_capability_source",

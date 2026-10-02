@@ -29,7 +29,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.extension.attachment import ProbeResult, Requirement, ToolResult, ToolSpec
+from arcagent.extension.attachment import (
+    ProbeResult,
+    Requirement,
+    ToolOutcome,
+    ToolResult,
+    ToolSpec,
+)
 from arctrust.paths import config_file
 
 from arccli.commands.connector import _SUBCOMMAND_MAP, connector_handler
@@ -51,8 +57,16 @@ attachment = "cli"
 name = "api_token"
 prompt = "Paste your Acme API token"
 
+[health]
+probe = "tool:acme_whoami"
+
 [tools]
-allow = ["create_issue"]
+allow = ["create_issue", "acme_whoami"]
+
+[[tools.declared]]
+name = "acme_whoami"
+description = "Say who is signed in."
+classification = "read_only"
 
 [approval]
 default = "outbound"
@@ -179,6 +193,9 @@ class _FakeAttachment:
 class _UnreachableAttachment(_FakeAttachment):
     async def probe(self) -> ProbeResult:
         return ProbeResult(reachable=False, detail="acme: command not found")
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content="acme: command not found")
 
 
 @pytest.fixture
@@ -472,7 +489,9 @@ class TestReadVerbs:
         capsys.readouterr()
 
         run("probe", _INSTANCE)
-        assert "acme 1.0.0" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "'sales' is healthy" in out
+        assert "create_issue" in out
 
     def test_probe_exits_non_zero_when_unreachable(
         self, run: Callable[..., None], arc_dir: Path, monkeypatch: pytest.MonkeyPatch

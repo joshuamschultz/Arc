@@ -99,6 +99,20 @@ def test_three_failures_inside_two_minutes_stay_healthy() -> None:
     assert record.consecutive_failures == 3
 
 
+def test_an_operator_check_that_fails_shows_error_at_once_and_sends_no_notice() -> None:
+    """ "Check now" answering green while the provider is down would be the lie we remove."""
+    record = _record(status="healthy", last_success_at=NOW.isoformat())
+
+    patch, transition = next_health(
+        record, _fail("provider_unavailable", source="operator", detail="refused"), NOW
+    )
+
+    after = _apply(record, patch)
+    assert (after.status, after.action) == ("error", "wait")
+    assert transition.notice is None
+    assert after.notice_seq == 0
+
+
 def test_24h_without_success_is_error_on_first_failure() -> None:
     record = _record(status="healthy", last_success_at=(NOW - timedelta(hours=25)).isoformat())
 

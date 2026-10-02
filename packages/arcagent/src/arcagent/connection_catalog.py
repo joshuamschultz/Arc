@@ -85,6 +85,8 @@ class CatalogEntry:
     secrets: tuple[SecretRequirement, ...] = ()
     host_requires: tuple[HostRequirement, ...] = ()
     tools: tuple[DeclaredTool, ...] = ()
+    #: True when the manifest declares an ``[oauth]`` flow — read, not inferred.
+    oauth: bool = False
 
 
 def catalog(
@@ -144,6 +146,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         secrets=tuple(manifest.secrets),
         host_requires=tuple(manifest.host_requires),
         tools=tuple(manifest.tools.declared),
+        oauth=manifest.oauth is not None,
     )
 
 

@@ -23,6 +23,9 @@ from arcagent.extension.source import (
 )
 
 _T = TypeVar("_T")
+
+#: Operations whose routine success is summarised per page by the coordinator.
+_SUMMARISED_OPERATIONS = frozenset({"fetch"})
 _GrantCheck = Callable[[], Awaitable[bool]]
 
 
@@ -33,6 +36,11 @@ class SourceAuthorizationBinding:
     event that must take effect immediately. Every source read therefore checks
     the deployment grant again before touching the provider and emits one audit
     verdict without recording locators, object identifiers, or source content.
+
+    The routine success of an object fetch is the one verdict NOT written per call:
+    a sync reads tens of thousands of objects, and the coordinator audits one summary
+    per committed page instead. The grant is still checked before and after every
+    fetch, and a refusal or a failed read still audits on its own.
     """
 
     def __init__(
@@ -130,7 +138,8 @@ class SourceAuthorizationBinding:
         if not await self._grant_is_active(operation):
             self._audit(operation, "deny", reason="grant_revoked_during_call")
             raise SourceError(SourceFailureCode.AUTH_REQUIRED, "source grant is not active")
-        self._audit(operation, "allow")
+        if operation not in _SUMMARISED_OPERATIONS:
+            self._audit(operation, "allow")
         return result
 
     async def _grant_is_active(self, operation: str) -> bool:

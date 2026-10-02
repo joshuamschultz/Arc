@@ -154,9 +154,7 @@ async def test_the_production_service_reports_to_the_shared_health_record(
     async def opener() -> Any:
         raise AssertionError("opened only when a report is written")
 
-    connected_runtime.configure(
-        agent_did="did:agent", workspace=tmp_path, bus=ModuleBus(), arcstore_opener=opener
-    )
+    connected_runtime.configure(agent_did="did:agent", workspace=tmp_path, arcstore_opener=opener)
     state = connected_runtime.state()
     state.source_catalog = SourceCatalog()
     capability = ConnectedData()

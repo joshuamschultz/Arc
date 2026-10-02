@@ -256,7 +256,7 @@ def action_label(action: ConnectionAction, *, provider: str = "", detail: str = 
     if action == "approve":
         return "Approve changed tools"
     if action == "install_host":
-        return f"Install {detail}".strip()
+        return f"Install {detail}".strip() if detail else "Show install steps"
     return ""
 
 
@@ -390,7 +390,14 @@ def _on_failure(record: ConnectionRecord, signal: HealthSignal, now: datetime) -
         return {**counters, **_settled(signal, spec, now, since)}
     if record.status == "needs_you":
         return counters
-    if record.status == "error" or _past_error_ceiling(record, counters, now, since):
+    # An operator's own check is a deliberate look at this moment, not one sample of
+    # many to average: "Check now" that answers green while the provider is down is
+    # the lie this authority exists to stop. (It sends no notice; they are watching.)
+    if (
+        record.status == "error"
+        or signal.source == "operator"
+        or _past_error_ceiling(record, counters, now, since)
+    ):
         return {**counters, **_settled(signal, spec, now, since)}
     return counters
 

@@ -371,10 +371,17 @@ def _list(args: argparse.Namespace) -> None:
         _out("No connections on this deployment.")
         _out(f"  bundles are read from: {_roots_line(connections.world.extension_roots)}")
         return
+    records = _health_records(connections)
     _print_table(
-        ["Connection", "Extension", "Approval", "Granted to"],
+        ["Connection", "Extension", "Approval", "Granted to", "Status", "Reason", "Checked"],
         [
-            [name, cfg.extension, cfg.approval, ", ".join(cfg.agents) or "(nobody)"]
+            [
+                name,
+                cfg.extension,
+                cfg.approval,
+                ", ".join(cfg.agents) or "(nobody)",
+                *_health_cells(records.get(name)),
+            ]
             for name, cfg in sorted(defined.items())
         ],
     )
@@ -452,17 +459,47 @@ def _semantic(args: argparse.Namespace) -> None:
     _out(f"Edit it: $EDITOR {path}")
 
 
+def _health_records(connections: arcagent.Connections) -> dict[str, arcagent.ConnectionRecord]:
+    """The stored health records, or nothing when the data plane cannot be read.
+
+    A listing must still answer "who holds what" when the store is down; the status
+    columns then read "?" rather than the command failing.
+    """
+    try:
+        return asyncio.run(connections.health_records())
+    except Exception:  # reason: the listing's job is grants; health is best-effort here
+        return {}
+
+
+def _health_cells(record: arcagent.ConnectionRecord | None) -> list[str]:
+    """STATUS, REASON and CHECKED for one connection, from its stored record."""
+    if record is None:
+        return ["?", "", "never"]
+    return [record.status, record.reason_text or "", record.last_checked_at or "never"]
+
+
 def _probe(args: argparse.Namespace) -> None:
-    """Prove one instance is live right now."""
+    """Check one instance right now and record what was found.
+
+    The same check the probe loop runs, so the answer is the connection's health
+    record: what this prints is what the card and the next notice will say.
+    """
     connections = _connections(args)
     try:
-        result = asyncio.run(connections.probe(args.instance))
+        record = asyncio.run(
+            connections.check_health(
+                args.instance, checked_by=causal.actor_did(), source="operator"
+            )
+        )
+        tools = asyncio.run(connections.tools(args.instance)) if record.status == "healthy" else ()
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    if not result.reachable:
-        _fail(f"probe: '{args.instance}' did not answer — {result.detail}")
-    _out(f"'{args.instance}' is reachable. {result.detail}")
-    _out(f"  tools: {', '.join(spec.name for spec in result.tools) or '(none served)'}")
+    if record.status != "healthy":
+        _fail(
+            f"probe: '{args.instance}' is {record.status} — {record.reason_text or 'not checked'}"
+        )
+    _out(f"'{args.instance}' is healthy.")
+    _out(f"  tools: {', '.join(spec.name for spec in tools) or '(none served)'}")
 
 
 def _doctor(args: argparse.Namespace) -> None:

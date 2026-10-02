@@ -321,3 +321,42 @@ async def test_a_connection_with_no_record_gets_one_so_the_loop_can_see_it(
     await world.connections.ensure_health_records()
 
     assert (await world.record()).status == "unknown"
+
+
+async def test_a_dead_arc_held_credential_is_not_probed_until_its_generation_changes(
+    tmp_path: Path, provider: _Provider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No hammering a refresh token the provider already rejected (D8).
+
+    Until Arc custody supplies generations the hook answers ``None`` and every check
+    really probes; this drives the rule with a generation in place so it is proven
+    before the custody row exists.
+    """
+    world = _world(tmp_path, provider, '[health]\nprobe = "attachment"')
+    await world.install()
+    generation = {"value": 3}
+
+    async def current(_self: Connections, _instance: str) -> int:
+        return generation["value"]
+
+    monkeypatch.setattr(Connections, "_credential_generation", current)
+    provider.reachable = False
+    provider.detail = "401 invalid_grant: token has been expired or revoked"
+    first = await world.connections.check_health(_INSTANCE, checked_by=PROBE_DID)
+    assert (first.status, first.credential_generation) == ("needs_you", 3)
+    calls_after_first = provider.probe_calls
+    world.sink.events.clear()
+
+    again = await world.connections.check_health(_INSTANCE, checked_by=PROBE_DID)
+
+    assert provider.probe_calls == calls_after_first, "a dead credential was probed again"
+    assert again.revision == first.revision, "a skipped check writes no state"
+    skipped = [e for e in world.sink.events if e.action == "connection.health.checked"]
+    assert [e.extra.get("skipped") for e in skipped] == ["credential_unchanged"]
+
+    generation["value"] = 4
+    provider.reachable = True
+    after_reconnect = await world.connections.check_health(_INSTANCE, checked_by=PROBE_DID)
+
+    assert provider.probe_calls > calls_after_first
+    assert (after_reconnect.status, after_reconnect.credential_generation) == ("healthy", 4)

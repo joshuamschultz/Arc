@@ -4,18 +4,31 @@
 
 Each Google account is its own connection of the **Google Workspace** bundle.
 Arc drives the `gog` program on the Arc host to sign each one in from the
-browser, and checks each one with a real read-only Gmail call made as that
-account. The refresh token stays in `gog`'s keyring on the host; Arc never sees
-it.
+browser. Arc checks each one in the background with a real read-only Gmail call
+made as that account, and keeps the answer in one health record per connection.
+The refresh token stays in `gog`'s keyring on the host; Arc never sees it.
 
 ## What the card tells you
 
 | Card says | What it means | What to do |
 |---|---|---|
-| **Working** | A read of this account's inbox label succeeded just now. | Nothing. |
-| **Reconnect needed** | A token is stored but Google no longer accepts it (`invalid_grant`). | Click **Reconnect** and sign in again. See [why it keeps happening](#stop-the-weekly-expiry). |
-| **Not signed in** | No token for this account on the host. | Click **Sign in**. |
-| **Not installed** | `gog` is not on the host's `PATH`. | Use **Install** on the bundle card, or follow its manual steps. |
+| **Healthy · checked 4 min ago** | Arc's last check read this account's inbox label successfully. | Nothing. |
+| **Needs you: Google sign-in expired or was revoked** | A token is stored but Google no longer accepts it (`invalid_grant`). | Click **Reconnect Google** and sign in again. See [why it keeps happening](#stop-the-weekly-expiry). |
+| **Needs you: Not connected yet** | No token for this account on the host. | Click **Reconnect Google** (the sign-in button). |
+| **Needs you: gog is not installed on this computer** | `gog` is not on the host's `PATH`. | Click **Install gog**, or use **Install** on the bundle card. |
+| **Syncing** | An agent is indexing this account right now. | Nothing. |
+| **Error: Google is not answering** | Google, or the network, failed three checks in a row over at least ten minutes. Arc keeps retrying. | Usually nothing. Use **Advanced > Check now** to look again. |
+| **Not checked yet** | Arc has not looked at this connection yet. The first check runs within a minute of starting ArcUI. | Wait, or use **Advanced > Check now**. |
+
+One chip, one button. The chip is a stored fact, not a live read: opening the
+Connections page never contacts Google and never reads a credential. Arc
+re-checks every 30 minutes, every 10 while the status is **Error**, and every
+5 while it is **Needs you** (so signing in from the terminal turns the card
+green by itself). When a connection starts needing you, Arc sends you one
+message on the channel you last used (for example Telegram) with a link to the
+card, and one more when it is working again. A connection that flaps does not
+repeat itself: at most six messages per connection per hour. If no agent could
+reach you, the card says **Could not notify you** under the chip.
 
 `gog auth list` is no longer the check. It only proves a token is *stored*: an
 account whose token Google revoked lists exactly like a working one.
@@ -37,12 +50,13 @@ an OAuth client name (below: `arc`).
     | read_only | `yes` | Read mail, calendar and Drive only (recommended). Choose `no` only if an agent must draft or send mail. |
 
     Choose which agents may use it. Save.
-3. On the new connection's card click **Sign in**, then **Open Google sign-in**.
+3. On the new connection's card click its button (**Reconnect Google**; the card reads
+   **Needs you: Not connected yet**), then **Open Google sign-in**.
 4. In the Google page, sign in **as that exact address** and click **Allow**.
 5. The browser lands on a `http://127.0.0.1:…/oauth2/callback?…` page that fails
    to load. That is expected. Copy the **whole** address from the browser bar.
 6. Paste it into the card and click **Finish sign-in**. The card re-checks the
-   account and shows **Working**.
+   account and shows **Healthy**.
 
 Repeat for every account. Accounts are independent: `blackarc`
 (`josh@blackarcindustrial.com`), `systems` (`josh@blackarcsystems.com`) and
@@ -227,7 +241,7 @@ only until your own client exists.
   Google still revokes it when the account's password changes, when access is
   removed at <https://myaccount.google.com/permissions>, after six months unused,
   or when more than 100 tokens exist for one client and account. The card will
-  show **Reconnect needed**; reconnect as above.
+  show **Needs you**; reconnect as above.
 - **Service accounts do not help personal accounts.** `gog` supports service
   accounts only with Workspace domain-wide delegation. A personal @gmail.com
   address has no domain to delegate from, so the browser sign-in above is the
@@ -242,7 +256,7 @@ only until your own client exists.
 | "that address does not point at this computer" | Copy the address of the page that failed to load, not the Google page. |
 | "authorized as X, expected Y" | Sign in as the connection's address; use Google's account chooser. |
 | "this connection's account is not a plain email address" | **Edit details** and fix the account. |
-| Reconnect needed again after a week | The connection is not using a published client. Do [the durable fix](#stop-the-weekly-expiry). |
+| Needs you again after a week | The connection is not using a published client. Do [the durable fix](#stop-the-weekly-expiry). |
 | "this agent holds several google_workspace connections; pass account …" | Name the account in the call, or grant the agent only one. |
 | "account does not name a connection this agent may use" | Grant that connection to the agent, or use one of the listed accounts. |
 | "… is signed in read-only, so … cannot run" | Set `read_only` to `no` with **Edit details**, then **Reconnect**. |

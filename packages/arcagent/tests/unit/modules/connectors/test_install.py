@@ -366,7 +366,9 @@ class TestInstall:
         # without the approval every tool it serves is suspended at the next start.
         record = await state.get(_INSTANCE)
         assert record is not None
-        assert record.status == "unknown", "install proved the credential once; only a check says healthy"
+        assert record.status == "unknown", (
+            "install proved the credential once; only a check says healthy"
+        )
         assert list(record.approved_tool_hashes) == ["create_issue"]
         # The secret is in the store and nowhere else.
         assert "s3cr3t" not in connections.path.read_text(encoding="utf-8")

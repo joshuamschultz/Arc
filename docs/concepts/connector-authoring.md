@@ -228,6 +228,28 @@ sensitive = true
 variable = "VENDOR_API_KEY"     # env var for stdio; declarative for http
 ```
 
+### Declaring health
+
+Every bundle declares how its connection is health-checked, so the card says
+"Needs you" the day a token dies instead of "Not checked yet" forever. An
+architecture test (`test_every_bundle_declares_health`) refuses a shipped bundle
+without it. A generated bundle must emit it too.
+
+```toml
+[health]
+probe = "attachment"            # the attachment's own probe(): the cheapest real authenticated call
+# probe = "host_verify"         # the [[host_requires]] verify_command (cli bundles)
+# probe = "tool:vendor_whoami"  # one read_only tool in [tools].allow
+# args = { limit = "1" }        # only for tool: probes
+# mode = "none"                 # nothing to check; then `reason = "..."` is required
+```
+
+A `cli` bundle may not use `probe = "attachment"`: a CLI attachment's probe is
+`--version`, which proves a binary exists and nothing about the account. Report
+failures as typed, plain-language reasons (`auth_required`, `rate_limited`, ...)
+and never put a credential or a provider URL in the error text: it reaches a
+browser and a chat message after redaction, but redaction is a net, not a plan.
+
 ### Contract test (CON-15)
 
 Every MCP connector must ship a runnable contract test against a spec-conformant
