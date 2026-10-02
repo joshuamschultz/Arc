@@ -85,6 +85,14 @@ def _operator_did(signer: Signer) -> str:
     return OperatorApprovalAuthority(signer).did
 
 
+async def _reload_live_agent(request: Request, agent_did: str) -> None:
+    """Reload a running agent so a promoted capability or revision is what it serves."""
+    cache = getattr(request.app.state, "embedded_agent_cache", None)
+    live_agent = cache.get(agent_did) if cache is not None else None
+    if live_agent is not None:
+        await live_agent.reload_or_raise()
+
+
 def _review_payload(
     service: arcagent.CapabilityImportService, import_id: str
 ) -> dict[str, object]:
@@ -327,6 +335,18 @@ async def promote_import(request: Request) -> JSONResponse:
     service = arcagent.CapabilityImportService(
         workspace / "capabilities", audit_sink=operator_audit_sink(request)
     )
+    # A new version of an installed skill becomes a new revision in the same
+    # anchored lineage the Versions tab reads, instead of "already exists".
+    factory = getattr(request.app.state, "skill_revision_anchor_factory", None)
+    revisions = (
+        arcagent.AnchoredSkillRevisionResolver(
+            agent_did=target_did,
+            config_path=workspace / "arcagent.toml",
+            anchor_factory=factory,
+        )
+        if factory is not None
+        else None
+    )
     try:
         promoted = await asyncio.to_thread(
             service.promote,
@@ -335,8 +355,10 @@ async def promote_import(request: Request) -> JSONResponse:
             operator_did=operator_did,
             signer=signer,
             config_path=workspace / "arcagent.toml",
+            revisions=revisions,
         )
         payload = await asyncio.to_thread(_review_payload, service, import_id)
+        await _reload_live_agent(request, target_did)
     except (OSError, RuntimeError, ValueError) as exc:
         emit_mutation_audit(
             request,

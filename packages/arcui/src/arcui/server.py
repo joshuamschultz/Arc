@@ -967,9 +967,12 @@ def serve(
     """
     import uvicorn
 
+    from arcui.routes.trust import default_skill_revision_anchor_factory
+
     app = create_app(
         auth_config=auth_config,
         config_controller=config_controller,
+        skill_revision_anchor_factory=default_skill_revision_anchor_factory(),
     )
 
     if llm is not None:

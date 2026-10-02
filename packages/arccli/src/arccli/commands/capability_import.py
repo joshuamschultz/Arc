@@ -18,6 +18,7 @@ from arcgateway import team_roster
 from arctrust import Signer, SignerError
 from arctrust.policy import OperatorApprovalAuthority
 
+from arccli.commands._serve import build_skill_revision_anchor_factory
 from arccli.commands._shared import audit_chain, dispatch, print_table, write
 from arccli.commands.trust import _resolve_agent
 
@@ -217,6 +218,17 @@ def _promote(args: argparse.Namespace) -> None:
     operator_did = OperatorApprovalAuthority(signer).did
     service = arcagent.CapabilityImportService(agent_root / "capabilities")
     with audit_chain("arc capability-import", lambda: operator_did) as (sink, _):
+        # A new version of an installed skill becomes a new anchored revision.
+        factory = build_skill_revision_anchor_factory(sink)
+        revisions = (
+            arcagent.AnchoredSkillRevisionResolver(
+                agent_did=target_did,
+                config_path=agent_root / "arcagent.toml",
+                anchor_factory=factory,
+            )
+            if factory is not None
+            else None
+        )
         promoted = service.promote(
             staging,
             target_agent_did=target_did,
@@ -224,6 +236,7 @@ def _promote(args: argparse.Namespace) -> None:
             signer=signer,
             config_path=agent_root / "arcagent.toml",
             audit_sink=sink,
+            revisions=revisions,
         )
     paths = ", ".join(
         path.relative_to(agent_root / "capabilities").as_posix() for path in promoted

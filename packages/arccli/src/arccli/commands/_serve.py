@@ -27,6 +27,40 @@ from arccli.commands._shared import write as _write
 _logger = logging.getLogger("arccli.serve")
 
 
+def build_skill_revision_anchor_factory(
+    audit_sink: arctrust.AuditSink | None = None,
+) -> Callable[[str, str], arctrust.MonotonicAnchor] | None:
+    """Return the deployment's skill revision authority, or None (fail closed).
+
+    Personal and enterprise get the zero-config operator-signed local journal
+    (:class:`arctrust.FileJournalAnchor` under
+    :func:`arctrust.skill_revision_anchor_dir`), signed through the operator
+    signing capability — never raw key material. Its first use is audited as a
+    ``warn``: the head is custodied locally, not externally. Federal floors to
+    an external anchor (``[security] skill_revision_anchor``); no external
+    anchor client is configured here, so federal answers None and every
+    anchored skill route stays closed (503) instead of trusting a local file.
+
+    Every entry point that builds the arcui app or the agent loader passes this
+    one value, so the dashboard and the running agents share one authority.
+    """
+    import arcagent
+
+    from arccli.commands.operator import _machine_security, resolve_operator_signer
+
+    try:
+        security = _machine_security()
+    except ValueError as exc:
+        _logger.warning("skill revision authority refused by [security]: %s", exc)
+        return None
+    factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = (
+        arcagent.build_skill_revision_anchor_factory(
+            security, resolve_operator_signer, audit_sink=audit_sink
+        )
+    )
+    return factory
+
+
 def discover_agent_dirs(team_root: Path) -> list[Path]:
     """Immediate subdirectories of ``team_root`` that contain an arcagent.toml."""
     if not team_root.is_dir():

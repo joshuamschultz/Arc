@@ -147,3 +147,30 @@ def test_synced_config_still_loads(stale_agent: Path) -> None:
 
     config = arcagent.load_config(stale_agent / "arcagent.toml")
     assert config.modules["connected_data"].enabled
+
+
+def test_sync_of_a_federal_agent_backfills_federal_floors(tmp_path: Path) -> None:
+    """A federal agent names its tier in [security]; the backfill must render at
+    that tier, or it writes personal values federal refuses and the agent no
+    longer loads (e.g. ``skill_revision_anchor = "file"``)."""
+    import arcagent
+
+    agent_dir = tmp_path / "team" / "fed"
+    _write_agent(
+        agent_dir,
+        """
+[agent]
+name = "Fed"
+
+[identity]
+did = "did:arc:local:fed/abcd"
+
+[security]
+tier = "federal"
+""".lstrip(),
+    )
+    sync_agent_config(agent_dir)
+
+    config = arcagent.load_config(agent_dir / "arcagent.toml")
+    assert config.security.tier == "federal"
+    assert config.security.skill_revision_anchor == "vault"

@@ -299,6 +299,17 @@ def trust_dir(base: Base = None) -> Path:
     return arc_state(base) / "trust"
 
 
+def skill_revision_anchor_dir(base: Base = None) -> Path:
+    """Return the local revision-anchor journals: ``<arc_state>/trust/anchors``.
+
+    One operator-signed, hash-chained journal per scope
+    (:class:`arctrust.FileJournalAnchor`) — the zero-config skill revision
+    authority at personal and enterprise tier. Under ``trust/`` because it is
+    trust state: it decides which signed skill revision is active.
+    """
+    return trust_dir(base) / "anchors"
+
+
 def store_dir(base: Base = None) -> Path:
     """Return the arcstore data dir: ``<arc_state>/store``."""
     return arc_state(base) / "store"

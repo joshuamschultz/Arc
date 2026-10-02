@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arccli.commands._serve import build_skill_revision_anchor_factory
 from arccli.commands.agent._common import (
     _iter_capability_files,
     _load_arcagent,
@@ -66,7 +67,9 @@ async def _chat_interactive(
     session_id: str | None,
 ) -> None:
     """Interactive REPL chat coroutine via ArcAgent."""
-    arc_agent, config, _config_path = _load_arcagent(agent_dir)
+    arc_agent, config, _config_path = _load_arcagent(
+        agent_dir, skill_revision_anchor_factory=build_skill_revision_anchor_factory()
+    )
     _scaffold_workspace(agent_dir, config.agent.name)
 
     if model_override:

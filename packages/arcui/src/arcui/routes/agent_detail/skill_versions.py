@@ -250,7 +250,7 @@ async def post_skill_promote_golden(request: Request) -> JSONResponse:
         nodeid = await asyncio.to_thread(stage_and_activate)
         await live_agent.reload_or_raise()
         active = resolver.resolve(folder, "agent-skills")
-        if nodeid not in {item.id for item in load_suite(active.parent)}:
+        if active is None or nodeid not in {item.id for item in load_suite(active.parent)}:
             raise RuntimeError("curated case did not reach the active skill")
     except (CurationError, ValueError) as exc:
         emit_mutation_audit(

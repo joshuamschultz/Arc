@@ -62,6 +62,19 @@ class ConfigSyncResult:
         return bool(self.added)
 
 
+def _agent_tier(document: TOMLDocument) -> str:
+    """The tier to render the backfill at: ``[security].tier`` is canonical.
+
+    Rendering a federal agent's gaps at personal would write values federal
+    refuses fail-closed, and the synced agent would no longer load.
+    """
+    for section in ("security", "agent"):
+        table = document.get(section, {})
+        if _is_table(table) and "tier" in table:
+            return str(table["tier"])
+    return "personal"
+
+
 def _is_table(value: Any) -> bool:
     return isinstance(value, dict | Table)
 
@@ -88,7 +101,7 @@ def plan_config_sync(agent_dir: Path) -> tuple[TOMLDocument, list[str]]:
     scaffold = tomlkit.parse(
         render_agent_config(
             name=str(agent_table.get("name", agent_dir.name)),
-            tier=str(agent_table.get("tier", "personal")),
+            tier=_agent_tier(existing),
             did=str(identity_table.get("did", "")),
         )
     )
@@ -221,7 +234,7 @@ def plan_config_refresh(agent_dir: Path) -> tuple[TOMLDocument, ConfigRefreshRes
     identity_table = existing.get("identity", {})
     fresh_text = render_agent_config(
         name=str(agent_table.get("name", agent_dir.name)),
-        tier=str(agent_table.get("tier", "personal")),
+        tier=_agent_tier(existing),
         did=str(identity_table.get("did", "")),
     )
     fresh_document = tomlkit.parse(fresh_text)

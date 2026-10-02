@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import stat
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -41,8 +42,33 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _scope(agent_did: str, skill_name: str) -> str:
+def skill_revision_scope(agent_did: str, skill_name: str) -> str:
+    """Return the anchor scope one agent's skill lineage is bound to.
+
+    Anchor factories build their anchor for exactly this scope; the resolver
+    refuses any anchor that answers for another agent or skill.
+    """
     return f"skill/{_digest(agent_did.encode())}/{skill_name}"
+
+
+def _enrollment_required(config_path: Path) -> bool:
+    """Federal requires explicit operator enrollment before a skill is anchored.
+
+    Below federal an unenrolled skill keeps loading through the direct
+    Sign/TOFU gate until its first revision. An unreadable config fails closed.
+    """
+    try:
+        document = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return True
+    security = document.get("security", {})
+    tier = security.get("tier", "personal") if isinstance(security, dict) else "federal"
+    return tier not in {"personal", "enterprise"}
+
+
+def _has_revision_evidence(folder: Path) -> bool:
+    revisions = folder.parent.parent / ".skill-revisions" / folder.name
+    return revisions.exists() and any(revisions.iterdir())
 
 
 def _safe_name(name: str) -> bool:
@@ -291,18 +317,24 @@ class AnchoredSkillRevisionResolver:
 
     def _anchor(self, skill_name: str) -> MonotonicAnchor:
         anchor = self._anchor_factory(self._agent_did, skill_name)
-        if anchor.scope != _scope(self._agent_did, skill_name):
+        if anchor.scope != skill_revision_scope(self._agent_did, skill_name):
             raise ValueError("skill anchor scope does not match agent and skill")
         return anchor
 
-    def resolve(self, folder: Path, scan_root: str) -> Path:
-        """Return an immutable active SKILL.md, or None before first revision."""
+    def resolve(self, folder: Path, scan_root: str) -> Path | None:
+        """Return the immutable active SKILL.md, or None for an unenrolled skill.
+
+        None (load the installed, signed original through the direct trust
+        gate) is only valid below federal and only while no revision evidence
+        exists; an empty head beside signed revisions is an authority reset.
+        """
         if not _safe_name(folder.name):
             raise ValueError("invalid skill name")
         anchor = self._anchor(folder.name)
         head = anchor.latest()
         if head is None:
-            raise ValueError("skill revision authority is unavailable")
+            self._require_unenrolled(folder)
+            return None
         _reject_regressed_head(folder, head, self._config_path, self._agent_did)
         revision = folder.parent.parent / ".skill-revisions" / folder.name / head.digest
         self._verify_revision(revision, head, folder.name)
@@ -341,11 +373,19 @@ class AnchoredSkillRevisionResolver:
         self._verify_revision(revision, head, folder.name, files=files)
         return files
 
+    def _require_unenrolled(self, folder: Path) -> None:
+        if _enrollment_required(self._config_path) or _has_revision_evidence(folder):
+            raise ValueError("skill revision authority is unavailable")
+
     def revision_history(self, folder: Path) -> list[tuple[str, int, str, bool]]:
-        """Return verified activation lineage from the external head backward."""
+        """Return verified activation lineage from the external head backward.
+
+        An unenrolled skill below federal has no lineage yet: ``[]``.
+        """
         head = self._anchor(folder.name).latest()
         if head is None:
-            raise ValueError("skill revision authority is unavailable")
+            self._require_unenrolled(folder)
+            return []
         _reject_regressed_head(folder, head, self._config_path, self._agent_did)
         history: list[tuple[str, int, str, bool]] = []
         while head is not None:
@@ -402,6 +442,49 @@ class AnchoredSkillRevisionResolver:
             operator_did=operator_did,
             restore_from_digest=revision_digest,
         )
+
+    def supersede(
+        self,
+        folder: Path,
+        files: Mapping[str, bytes],
+        *,
+        signer: Signer,
+        operator_did: str,
+    ) -> str:
+        """Activate an operator-reviewed new version of an installed skill.
+
+        The installed original is enrolled as its own signed revision first, so
+        the update never erases the version it replaces and rollback can reach
+        it. Returns the new revision digest.
+        """
+        replacement = dict(files)
+        _validate_reviewed_files(replacement)
+        if self._anchor(folder.name).latest() is None:
+            original = _snapshot(folder)["SKILL.md"]
+            self.revise(
+                folder,
+                original,
+                expected_sha256=_digest(original),
+                signer=signer,
+                operator_did=operator_did,
+            )
+        head = self._anchor(folder.name).latest()
+        if head is None:
+            raise ValueError("skill revision authority is unavailable")
+        current = self.read_bundle(folder)
+        self.revise(
+            folder,
+            replacement["SKILL.md"],
+            expected_sha256=_digest(current["SKILL.md"]),
+            expected_active_digest=head.digest,
+            replacement_files=replacement,
+            signer=signer,
+            operator_did=operator_did,
+        )
+        activated = self._anchor(folder.name).latest()
+        if activated is None:
+            raise ValueError("skill revision authority is unavailable")
+        return activated.digest
 
     async def promote_reviewed_bundle(
         self,

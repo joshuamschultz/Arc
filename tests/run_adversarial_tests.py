@@ -213,6 +213,20 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_hosted_optional_import.py",
         "packages/arcui/tests/test_hosted_setup.py",
     ),
+    # alpha-2 P5 skill revision authority: the zero-config local journal refuses
+    # an edited line, a truncated or restored-older journal (rollback/downgrade),
+    # a deleted seal, a replayed or cross-scope entry, a journal forged with
+    # another key, and a symlinked journal; concurrent writers serialize. An
+    # empty head beside signed revision evidence is a reset, never a fallback;
+    # federal without an external anchor keeps every anchored route closed.
+    # Covers ASI04/ASI06/LLM03 on the skill update and rollback path.
+    "skill revision journal tampering, downgrade and forged signer": (
+        "packages/arctrust/tests/test_file_journal_anchor.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_import_revision.py",
+        "packages/arcagent/tests/unit/capabilities/test_skill_revision_update_path.py",
+        "packages/arcagent/tests/unit/core/test_skill_revision_anchor_config.py",
+        "packages/arccli/tests/test_skill_revision_authority.py",
+    ),
     # SPEC-082 MCP door + connectors: an outside operator/agent drives Arc's own
     # tools through the same signed-authorized-audited envelope. Every hostile
     # inbound — forged/duplicated DID, replayed nonce, stale timestamp, unsigned

@@ -37,9 +37,13 @@ def _load_arcagent(agent: str) -> tuple[Any, Any, Path]:
     Delegates to the shared agent loader (returns ``(ArcAgent, config, path)``);
     ``arcagent.build_mcp_door`` adapts that started agent to the door surface.
     """
+    from arccli.commands._serve import build_skill_revision_anchor_factory
     from arccli.commands.agent._common import _load_arcagent as _load_raw
 
-    return _load_raw(Path(agent).expanduser())
+    return _load_raw(
+        Path(agent).expanduser(),
+        skill_revision_anchor_factory=build_skill_revision_anchor_factory(),
+    )
 
 
 def _serve_stdio(agent: Any) -> None:
