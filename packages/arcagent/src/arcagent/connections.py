@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import time
 import tomllib
@@ -108,6 +109,7 @@ from arcagent.extension.manifest import (
     ArtifactPin,
     DeclaredTool,
     HostRequirement,
+    OAuthFlow,
     SecretRequirement,
     load_manifest,
 )
@@ -1990,6 +1992,46 @@ class Connections:
             await self._push_credential_change(plan.instance)
         return tuple(written)
 
+    async def renew_credentials(self, *, concurrency: int = 4) -> dict[str, str]:
+        """Renew every OAuth connection whose access token is due (the proactive renewer).
+
+        One pass over the custody rows. Each due ``[oauth]`` connection is renewed under
+        the same fenced lease an on-demand renewal takes, so this loop and a running
+        agent can never both spend one refresh token. A failure on one connection is
+        isolated and reported per connection; it never stops the pass.
+
+        Returns:
+            ``{connection: "renewed" | "fresh" | <error code>}`` for every OAuth row.
+        """
+        outcome: dict[str, str] = {}
+        slots = asyncio.Semaphore(concurrency)
+        with self._audit.open() as sink:
+            custody = await self._custody(sink)
+            flows: dict[str, OAuthFlow] = {}
+            for instance in await custody.rows.connections():
+                try:
+                    flow = self._plan_for(instance, sink).manifest.oauth
+                except ExtensionError:
+                    continue
+                if flow is not None:
+                    flows[instance] = flow
+
+            async def renew_one(instance: str) -> None:
+                async with slots:
+                    try:
+                        renewed = await custody.planner.ensure_fresh(
+                            instance, flow=flows[instance]
+                        )
+                        outcome[instance] = "renewed" if renewed else "fresh"
+                    except ExtensionError as exc:
+                        outcome[instance] = str(exc.details.get("error_code") or exc.code)
+                    except Exception as exc:  # reason: one bad row never stops the pass
+                        _logger.warning("credential renewal failed: %s", instance, exc_info=True)
+                        outcome[instance] = type(exc).__name__
+
+            await asyncio.gather(*(renew_one(instance) for instance in flows))
+        return outcome
+
     async def migrate_secrets(self, *, dry_run: bool = False) -> MigrationReport:
         """Move the legacy ``connections.env`` into sealed custody, once (P18-2).
 
@@ -2001,6 +2043,9 @@ class Connections:
             ExtensionError: The migration could not complete (no custody cipher,
                 a read-back mismatch, a symlinked or loose file). The file is kept.
         """
+        env_path = legacy_env_path(self._world.connections_file)
+        if not os.path.lexists(env_path):
+            return MigrationReport(skipped=True, path=str(env_path))
         with self._audit.open() as sink:
             custody: Custody | None
             try:
@@ -2022,7 +2067,7 @@ class Connections:
 
             verify = (await fresh_store()) if custody is not None else None
             report = await migrate_connector_secrets(
-                env_path=legacy_env_path(self._world.connections_file),
+                env_path=env_path,
                 registry=self.registry,
                 declared_fields=declared,
                 secret_store=custody.store if custody is not None else None,
