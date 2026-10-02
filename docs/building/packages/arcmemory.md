@@ -671,6 +671,29 @@ package-level mechanisms:
   (`private` / `shared-with-agent` / `shared-with-others-via-agent`) is read from YAML
   frontmatter; unknown/unparseable values fall back to the tier default (federal =
   `private`, per NIST 800-53 AC-3 / CMMC). `authorize()` audits every denial.
+- **Agent-signed OKF indexes and logs (`okf_seal.py`, ASI06, ADR-029).** Every
+  `.index.digest` and `.log.digest` is an unkeyed hash, so a collection root
+  (`memory/` and each `memory/connected/<source>/`) also carries `.okf.seal`: the
+  SHA-256 of every folder sidecar and of the log sidecar, the collection path, a
+  generation counter and the agent DID, signed with the agent's identity key (never
+  the operator key). The brain pins that key per workspace
+  (`bind_memory_identity`); readers (routing chunks, the OKF walker, connected
+  routing windows, the maintainer's own reuse) trust a folder only when its
+  sidecar hash is in a seal that verifies. A forged or unsigned pair, an older
+  signed pair, a lower-generation seal replayed in the same process, or a seal
+  copied from another collection or key fails closed, and the next drain
+  regenerates that folder from the documents with no reuse of its lines. A process
+  with no pinned key writes nothing and trusts nothing. Routing-chunk labels come
+  from the documents' own frontmatter (stat-cached), never from index lines. Each
+  drain renders every folder in memory, writes a signed intent holding the new
+  sidecar hashes and the pending log events, writes the files, then the final
+  seal; a crash in between is replayed on the next drain, so no log line is lost.
+  Residual: the generation high-water mark is per process, so a whole-tree rollback
+  made before a process has seen the newer seal is not detected (as for
+  `FileJournalAnchor`).
+- **Verify once, read once (F6).** Index, sidecar, log and listed documents are
+  opened once with `O_NOFOLLOW` and checked with `fstat` (regular file, same inode
+  as listed); every reader uses the exact verified bytes and never re-opens the file.
 - **Loud degrade (`degrade.py` / `status.py`).** A missing vector channel is announced
   once per process per reason (`warn_once`), surfaced by `semantic_degraded()` and the
   `semantic_status` / `probe_index_backend` readouts behind `arc memory status`. The

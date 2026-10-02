@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
 
-from .core import ROOT_INDEX_METADATA, VERSION, is_reserved_name, lint, validate
+from .core import ROOT_INDEX_METADATA, VERSION, is_reserved_name, validate
+from .safe_io import read_regular_file
 
 INDEX_NAME = "index.md"
 DIGEST_NAME = ".index.digest"
@@ -85,6 +87,12 @@ class FolderIndexValidation:
     valid: bool
     error: str = ""
     entries: tuple[IndexEntry, ...] = ()
+    #: The exact index text that was verified; a consumer uses this, never a re-read.
+    text: str = ""
+    #: The exact sidecar that was verified, and the SHA-256 of its bytes (what an
+    #: owner's signature commits to).
+    digest: FolderDigest | None = None
+    sidecar_sha: str = ""
 
 
 def _one_line(value: object, limit: int) -> str:
@@ -112,7 +120,7 @@ def listable_file(name: str) -> bool:
     return name.lower().endswith(".md") and not is_reserved_name(name) and not name.startswith(".")
 
 
-def folder_entry(path: Path) -> IndexEntry | None:
+def folder_entry(path: Path, *, expect: os.stat_result | None = None) -> IndexEntry | None:
     """Build the index entry for one document, or ``None`` if it is not valid OKF.
 
     Every valid document is listed, whatever its classification: the entry
@@ -120,9 +128,13 @@ def folder_entry(path: Path) -> IndexEntry | None:
     from frontmatter (``title``/``name``; ``description``/``summary``/
     ``when_to_use``/``trigger``) and fall back to the first heading and the
     first prose line.
+
+    The document is opened once, never through a symlink, and (with ``expect``)
+    only if it is still the file the caller listed; the entry and its digest
+    come from that one read.
     """
     try:
-        raw = path.read_bytes()
+        raw = read_regular_file(path, expect=expect)
     except OSError:
         return None
     result = validate(raw, path=path.as_posix())
@@ -268,7 +280,7 @@ def parse_folder_digest(text: str) -> FolderDigest:
 def read_folder_digest(folder: Path) -> FolderDigest | None:
     """The folder's sidecar, or ``None`` when absent or unreadable."""
     try:
-        return parse_folder_digest((folder / DIGEST_NAME).read_text(encoding="utf-8"))
+        return parse_folder_digest(read_regular_file(folder / DIGEST_NAME).decode("utf-8"))
     except (OSError, UnicodeError, FolderIndexError):
         return None
 
@@ -281,15 +293,22 @@ def validate_folder_index(
     Shallow (default, O(1) plus the index size): the index is canonical, carries
     the right frontmatter, and matches its sidecar byte for byte. Deep adds
     O(folder): every listed document still exists with its recorded digest, no
-    valid document is missing from the listing, and child-folder counts match
     the children's own sidecars.
+
+    Each file is read once, never through a symlink, and the result carries the
+    exact text and sidecar that were checked: a consumer uses those, never a
+    second read that an attacker could swap in between. The sidecar is only an
+    unkeyed hash here; an owner that needs authenticity checks ``sidecar_sha``
+    against its own signature.
     """
     try:
-        text = (folder / INDEX_NAME).read_text(encoding="utf-8")
-        digest = parse_folder_digest((folder / DIGEST_NAME).read_text(encoding="utf-8"))
-        if hashlib.sha256(text.encode("utf-8")).hexdigest() != digest.index:
+        raw = read_regular_file(folder / INDEX_NAME)
+        sidecar = read_regular_file(folder / DIGEST_NAME)
+        text = raw.decode("utf-8")
+        digest = parse_folder_digest(sidecar.decode("utf-8"))
+        if hashlib.sha256(raw).hexdigest() != digest.index:
             raise FolderIndexError("folder index does not match its digest")
-        if not lint(folder / INDEX_NAME, bundle_root=root).valid:
+        if not validate(raw, path=(folder / INDEX_NAME).as_posix(), bundle_root=root).valid:
             raise FolderIndexError("folder index is not valid OKF")
         entries = parse_folder_index(text, root=root)
         listed_docs = {entry.path for entry in entries if not entry.is_folder}
@@ -297,7 +316,13 @@ def validate_folder_index(
             raise FolderIndexError("folder index and digest list different documents")
         if deep:
             entries = _verify_deep(folder, entries, digest)
-        return FolderIndexValidation(True, entries=entries)
+        return FolderIndexValidation(
+            True,
+            entries=entries,
+            text=text,
+            digest=digest,
+            sidecar_sha=hashlib.sha256(sidecar).hexdigest(),
+        )
     except (FolderIndexError, OSError, UnicodeError) as exc:
         return FolderIndexValidation(False, error=str(exc))
 
@@ -309,7 +334,12 @@ def _listing(entry: IndexEntry) -> tuple[str, str, str, str]:
 def _verify_deep(
     folder: Path, entries: tuple[IndexEntry, ...], digest: FolderDigest
 ) -> tuple[IndexEntry, ...]:
-    on_disk = {path.name for path in folder.glob("*.md") if listable_file(path.name)}
+    with os.scandir(folder) as scan:
+        on_disk = {
+            item.name
+            for item in scan
+            if listable_file(item.name) and not item.is_dir(follow_symlinks=False)
+        }
     verified: list[IndexEntry] = []
     for entry in entries:
         if entry.is_folder:

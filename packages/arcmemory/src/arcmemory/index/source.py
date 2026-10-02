@@ -145,10 +145,12 @@ def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Itera
     """One chunk per verified folder ``index.md``: its routing lines and nothing else.
 
     A folder index is a derived routing artifact, never part of the inventory it
-    describes. A reader may use it only after the owning maintainer produced a
-    canonical file whose digest sidecar still matches (O(1) per folder, never a
-    re-hash of the documents); tampering therefore degrades to ordinary document
-    recall instead of becoming trusted instructions. Only headings and listing
+    describes. A reader may use it only after the owning maintainer verified a
+    canonical file whose digest sidecar the agent signed (O(1) per folder, never
+    a re-hash of the documents); a forged pair degrades to ordinary document
+    recall instead of becoming trusted instructions. The chunk text is the exact
+    text that was verified (never a second read), and its label comes from the
+    listed documents themselves, never from the index lines. Only headings and listing
     lines are embedded: never the root's ``okf_version`` frontmatter, the digest
     sidecar, or the dirty journal. Lines linking a bookkeeping card (``excluded``)
     are dropped, and folder document counts are stripped so a new card does not
@@ -162,10 +164,12 @@ def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Itera
             continue
         index_path = folder / "index.md"
         rel = index_path.relative_to(workspace).as_posix()
-        unlabeled = _unlabeled_paths(validation.entries, excluded, sub)
+        listed = _listed(validation.entries, excluded, sub)
+        labels = maintainer.document_labels(folder, [entry.path for entry in listed])
+        unlabeled = _unlabeled_paths(listed, labels)
         lines = [
             _FOLDER_COUNT_RE.sub("", line)
-            for line in routing_text(index_path.read_text(encoding="utf-8")).splitlines()
+            for line in routing_text(validation.text).splitlines()
             if not _links_excluded(line, excluded, sub)
             and not _links_excluded(line, unlabeled, "")
         ]
@@ -173,8 +177,8 @@ def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Itera
             f"file:{rel}",
             rel,
             "\n".join(lines),
-            _routing_label(validation.entries, excluded, sub),
-            index_path.stat().st_mtime,
+            _routing_label(listed, labels),
+            index_path.lstat().st_mtime,
         )
 
 
@@ -186,7 +190,7 @@ def _listed(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) ->
     ]
 
 
-def _unlabeled_paths(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> set[str]:
+def _unlabeled_paths(listed: list[IndexEntry], labels: dict[str, str]) -> set[str]:
     """Listed documents without a label, whose lines may not ride a classified chunk.
 
     Once any listed document carries a label the chunk is gated on the highest
@@ -194,13 +198,12 @@ def _unlabeled_paths(entries: tuple[IndexEntry, ...], excluded: set[str], folder
     clearance is never decided by a label the line does not have. (A folder of
     only unlabeled documents is unchanged: its chunk stays unlabeled.)
     """
-    listed = _listed(entries, excluded, folder)
-    if not any(entry.classification for entry in listed):
+    if not any(labels.get(entry.path) for entry in listed):
         return set()
-    return {entry.path for entry in listed if not entry.classification}
+    return {entry.path for entry in listed if not labels.get(entry.path)}
 
 
-def _routing_label(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> str:
+def _routing_label(listed: list[IndexEntry], labels: dict[str, str]) -> str:
     """The label a folder's routing chunk is gated on: its most restrictive listed document.
 
     The highest known label wins and is never replaced by "" because some other
@@ -208,10 +211,11 @@ def _routing_label(entries: tuple[IndexEntry, ...], excluded: set[str], folder: 
     title must not become readable at the lowest band. Only when no listed
     document has a label does the chunk stay unlabeled, which the no-read-up
     gate fails closed on at federal. Bookkeeping cards are not listed in the
-    chunk, so they do not count.
+    chunk, so they do not count. Each label is read from the document (a
+    missing or unreadable document counts as unlabeled), never from its line.
     """
-    labels = [entry.classification for entry in _listed(entries, excluded, folder)]
-    return dominating_classification([label for label in labels if label] or labels)
+    known = [labels.get(entry.path, "") for entry in listed]
+    return dominating_classification([label for label in known if label] or known)
 
 
 def _links_excluded(line: str, excluded: set[str], folder: str) -> bool:

@@ -191,8 +191,11 @@ when to write one.
 
 **Why the round-trip check:** the index re-renders the entries it just parsed and compares the result
 to the file byte for byte. Anything a hand edit could do — reordering, an added link line, a tweaked
-summary, a swapped digest — changes those bytes, so tamper detection needs no separate signature and
-no second source of truth.
+summary, a swapped digest — changes those bytes. That detects an edit of the index alone. A forged
+index plus a recomputed sidecar still agrees with itself, so an owner that needs authenticity signs
+the sidecar hash (`FolderIndexValidation.sidecar_sha`); `arcmemory` does this with the agent key.
+Every read is one `O_NOFOLLOW` open checked with `fstat` (`read_regular_file`), and validation returns
+the exact `text` and `digest` it verified so no caller reads the file a second time.
 
 **Why every document is listed with its label:** silently omitting classified documents left
 cleared agents with an empty index. An entry now carries `(classification: <label>)` and the reader

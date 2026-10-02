@@ -65,6 +65,10 @@ async def get_source_index(request: Request) -> JSONResponse:
     """
     agent_id = request.path_params["agent_id"]
     source_id = request.path_params["source_id"]
+    # A source mirrors its remote tree: the root index lists folders, and the
+    # operator opens one with ``?folder=<source-relative path>``. The facade
+    # refuses any folder that is hidden, operational, ``..`` or outside the source.
+    folder = request.query_params.get("folder", "")
 
     denied = _require_operator(request)
     if denied is not None:
@@ -91,7 +95,7 @@ async def get_source_index(request: Request) -> JSONResponse:
 
     op: MemoryOperator = _operator_for(Path(agent.workspace_path), agent.did)
     try:
-        view = op.read_collection_index(source_id)
+        view = op.read_collection_index(source_id, folder)
     except Exception as exc:  # a genuine store/filesystem failure — surface, don't fake
         logger.warning("doc-repo index: store unreadable for %s/%s: %s", agent_id, source_id, exc)
         emit_mutation_audit(
@@ -107,7 +111,10 @@ async def get_source_index(request: Request) -> JSONResponse:
         target=f"agent:{agent_id}/source:{source_id}",
         operation=_OPERATION,
         outcome="applied",
-        detail=f"present={view.present},verified={view.verified},docs={view.document_count}",
+        detail=(
+            f"folder={view.folder},present={view.present},"
+            f"verified={view.verified},docs={view.document_count}"
+        ),
     )
     return JSONResponse(view.model_dump(mode="json"))
 

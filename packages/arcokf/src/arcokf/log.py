@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
 
 from .core import is_reserved_name
+from .safe_io import read_regular_file
 
 LOG_NAME = "log.md"
 LOG_DIGEST_NAME = ".log.digest"
@@ -212,27 +213,34 @@ def parse_log_digest(text: str) -> LogDigest:
 def read_log_digest(folder: Path) -> LogDigest | None:
     """The folder's log sidecar, or ``None`` when absent or unreadable."""
     try:
-        return parse_log_digest((folder / LOG_DIGEST_NAME).read_text(encoding="utf-8"))
+        return parse_log_digest(read_regular_file(folder / LOG_DIGEST_NAME).decode("utf-8"))
     except (OSError, UnicodeError, ChangeLogError):
         return None
 
 
-def read_verified_log(folder: Path, name: str = LOG_NAME) -> tuple[LogEntry, ...] | None:
+def read_verified_log(
+    folder: Path, name: str = LOG_NAME, *, digest: LogDigest | None = None
+) -> tuple[LogEntry, ...] | None:
     """The entries of ``folder/name`` if it is canonical and matches its sidecar.
 
     ``name`` is ``log.md`` or an archive (``log.YYYY.md``). ``None`` means
     untrusted: absent, malformed, edited behind the owner's back or never
     recorded in the sidecar. A reader fails closed on ``None``.
+
+    ``digest`` is a sidecar the caller already verified (an owner that signs it);
+    without one the sidecar on disk is read. The log is read once, never through
+    a symlink, and parsed from the bytes that were hashed.
     """
-    digest = read_log_digest(folder)
+    if digest is None:
+        digest = read_log_digest(folder)
     if digest is None:
         return None
     expected = digest.log if name == LOG_NAME else digest.archives.get(name.split(".")[1], "")
     try:
-        text = (folder / name).read_text(encoding="utf-8")
-        if hashlib.sha256(text.encode("utf-8")).hexdigest() != expected:
+        raw = read_regular_file(folder / name)
+        if hashlib.sha256(raw).hexdigest() != expected:
             return None
-        return parse_change_log(text)
+        return parse_change_log(raw.decode("utf-8"))
     except (OSError, UnicodeError, ChangeLogError):
         return None
 

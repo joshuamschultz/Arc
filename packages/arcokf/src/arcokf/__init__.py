@@ -54,6 +54,7 @@ from .log import (
     render_change_log,
     render_log_digest,
 )
+from .safe_io import UnsafeFileError, read_regular_file
 
 __all__ = [
     "CREATION",
@@ -79,6 +80,7 @@ __all__ = [
     "LogDigest",
     "LogEntry",
     "OKFValidationError",
+    "UnsafeFileError",
     "ValidationResult",
     "archive_name",
     "canonical_order",
@@ -96,6 +98,7 @@ __all__ = [
     "parse_log_digest",
     "read_folder_digest",
     "read_log_digest",
+    "read_regular_file",
     "read_verified_log",
     "render",
     "render_change_log",
