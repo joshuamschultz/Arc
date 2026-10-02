@@ -471,8 +471,8 @@ class TestTraceStoreRemainingBranches:
         assert len(future_found) == 0
 
     @pytest.mark.asyncio
-    async def test_query_handles_empty_lines_in_file(self, agent_root: Path) -> None:
-        """Line 326: empty lines in JSONL file are skipped during query."""
+    async def test_query_blank_tail_line_fails_closed(self, agent_root: Path) -> None:
+        """A blank line inside the verified tail fails closed (fc2ae6ca)."""
         store = JSONLTraceStore(agent_root)
         r1 = self._make_record(trace_id="empty-line-first")
         r2 = self._make_record(trace_id="empty-line-second")
@@ -489,15 +489,12 @@ class TestTraceStoreRemainingBranches:
         f.write_text("\n".join(lines) + "\n")
 
         store2 = JSONLTraceStore(agent_root)
-        results, _ = await store2.query()
-        # Should still find both records even with middle empty lines
-        found_ids = {r.trace_id for r in results}
-        assert "empty-line-first" in found_ids
-        assert "empty-line-second" in found_ids
+        with pytest.raises(RuntimeError, match="malformed record"):
+            await store2.query()
 
     @pytest.mark.asyncio
-    async def test_query_handles_bad_json_lines_gracefully(self, agent_root: Path) -> None:
-        """Lines 329-330: JSONDecodeError in query iteration is skipped."""
+    async def test_query_bad_tail_line_fails_closed(self, agent_root: Path) -> None:
+        """A garbage line inside the verified tail fails closed (fc2ae6ca)."""
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="good-record")
         await store.append(r)
@@ -510,10 +507,8 @@ class TestTraceStoreRemainingBranches:
         f.write_text("NOTJSON{{{garbage\n" + original)
 
         store2 = JSONLTraceStore(agent_root)
-        results, _ = await store2.query()
-        # Broken line skipped; good record still returned
-        found = [r for r in results if r.trace_id == "good-record"]
-        assert len(found) == 1
+        with pytest.raises(RuntimeError, match="malformed record"):
+            await store2.query()
 
     @pytest.mark.asyncio
     async def test_query_end_date_filter_excludes_future(self, agent_root: Path) -> None:

@@ -788,11 +788,10 @@ class TestTraceStoreEdgePaths:
         assert store2._last_hash != "0" * 64
 
     @pytest.mark.asyncio
-    async def test_warm_start_with_bad_last_line_logs_warning(
+    async def test_warm_start_with_bad_last_line_fails_closed(
         self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Lines 199-200: bad JSON on last line handled gracefully."""
-        import logging
+        """A malformed tail fails closed (fc2ae6ca) instead of resuming the chain."""
 
         store = JSONLTraceStore(agent_root)
         traces_dir = agent_root / "traces"
@@ -805,20 +804,15 @@ class TestTraceStoreEdgePaths:
         bad_file.write_text("not valid json\n")
         bad_file.chmod(0o600)
 
-        # Fresh store — should survive warm-start without exception
         store2 = JSONLTraceStore(agent_root)
-        with caplog.at_level(logging.WARNING, logger="arcllm.trace_store"):
-            r = self._make_record(trace_id="after-bad-line")
-            await store2.append(r)
-        # Record was still written successfully
-        assert store2._line_count >= 1
+        with pytest.raises(RuntimeError, match="malformed record"):
+            await store2.append(self._make_record(trace_id="after-bad-line"))
 
     @pytest.mark.asyncio
-    async def test_verify_tail_tamper_detected_prev_hash_mismatch(
+    async def test_verify_tail_prev_hash_mismatch_fails_closed(
         self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Lines 225-230: hash chain break detected during tail verification."""
-        import logging
+        """Hash chain break fails closed during tail verification (fc2ae6ca)."""
 
         store = JSONLTraceStore(agent_root)
 
@@ -839,16 +833,14 @@ class TestTraceStoreEdgePaths:
 
         # New store should detect tamper during warm-start tail verification
         store2 = JSONLTraceStore(agent_root)
-        with caplog.at_level(logging.ERROR, logger="arcllm.trace_store"):
+        with pytest.raises(RuntimeError, match="broken chain|invalid record hash"):
             await store2._warm_start()
-        assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
-    async def test_verify_tail_tamper_detected_record_hash_mismatch(
+    async def test_verify_tail_record_hash_mismatch_fails_closed(
         self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Lines 234-238: record_hash mismatch detected during tail verification."""
-        import logging
+        """record_hash mismatch fails closed during tail verification (fc2ae6ca)."""
 
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="t-hash")
@@ -864,27 +856,17 @@ class TestTraceStoreEdgePaths:
         f.write_text("\n".join(lines) + "\n")
 
         store2 = JSONLTraceStore(agent_root)
-        with caplog.at_level(logging.ERROR, logger="arcllm.trace_store"):
+        with pytest.raises(RuntimeError, match="invalid record hash"):
             await store2._warm_start()
-        assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
-    async def test_verify_tail_unparseable_line_does_not_abort_remaining_checks(
+    async def test_verify_tail_unparseable_line_fails_closed(
         self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """L11: a single unparseable line in the tail must not silently
-        disable verification of every record after it — the old broad
-        ``except (json.JSONDecodeError, Exception)`` + ``return`` combo
-        aborted the whole tail check on the first bad line."""
-        import logging
-
+        """An unparseable tail line refuses to resume the chain (fc2ae6ca)."""
         store = JSONLTraceStore(agent_root)
-        r1 = self._make_record(trace_id="t1")
-        r2 = self._make_record(trace_id="t2")
-        r3 = self._make_record(trace_id="t3")
-        await store.append(r1)
-        await store.append(r2)
-        await store.append(r3)
+        for trace_id in ("t1", "t2", "t3"):
+            await store.append(self._make_record(trace_id=trace_id))
 
         traces_dir = agent_root / "traces"
         today = store._today()
@@ -894,14 +876,8 @@ class TestTraceStoreEdgePaths:
         f.write_text("\n".join(lines) + "\n")
 
         store2 = JSONLTraceStore(agent_root)
-        with caplog.at_level(logging.WARNING, logger="arcllm.trace_store"):
+        with pytest.raises(RuntimeError, match="malformed record"):
             await store2._warm_start()
-
-        # Both the parse failure AND a downstream check on the surviving
-        # third line were logged — proving the loop kept going past the
-        # bad line instead of returning immediately.
-        assert any("Unparseable" in m for m in caplog.messages)
-        assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_rotation_tombstone_written_on_date_change(self, agent_root: Path) -> None:
