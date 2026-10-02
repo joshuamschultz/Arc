@@ -16,9 +16,12 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import arcagent
+
+if TYPE_CHECKING:
+    from arcgateway.adapters.voice.config import WakeConfig
 
 # Telegram bot tokens: "<bot_id>:<secret>" — digits, colon, ~35 url-safe chars.
 _TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
@@ -107,6 +110,7 @@ def connect_voice(
     speed: float = 1.12,
     chat_id: str = "olivia",
     port: int = 8790,
+    wake_words: list[str] | None = None,
 ) -> dict[str, str]:
     """Wire the desk voice channel to ``agent_did``. Returns ``{token_env, agent_did, token}``.
 
@@ -114,6 +118,9 @@ def connect_voice(
     ``ARC_VOICE_TOKEN``, and writes a ``[platforms.voice]`` block bound to the agent
     with a Kokoro cascade engine (blend + speed are config, tunable later). Models
     are per-box under ``model_dir`` (never vendored). Shared by the CLI and arcui.
+
+    ``wake_words`` (validated, 1-3) is what the mic box listens for; omitted, an
+    earlier setting is kept, else the channel name. ``listening`` is kept if set.
     """
     import secrets
 
@@ -123,14 +130,18 @@ def connect_voice(
         raise ValueError("chat_id must not contain ':' (collides with the reply address).")
     token = (token or secrets.token_hex(32)).strip()
     token_env = "ARC_VOICE_TOKEN"  # noqa: S105 - env var NAME, not a secret value
-    _upsert_env(env_file, token_env, token)
-
-    md = str(Path(model_dir).expanduser())
     existing = gateway_config.read_text(encoding="utf-8") if gateway_config.exists() else ""
     data: dict[str, Any] = tomllib.loads(existing) if existing else {}
     platforms = data.setdefault("platforms", {})
+    previous = platforms.get("voice", {}) if isinstance(platforms.get("voice"), dict) else {}
+    wake = _wake_block(previous.get("wake"), wake_words, default_word=chat_id)  # validates first
+    _upsert_env(env_file, token_env, token)
+
+    md = str(Path(model_dir).expanduser())
     platforms["voice"] = {
         "enabled": True,
+        "listening": bool(previous.get("listening", True)),
+        "wake": wake,
         "agent_did": agent_did.strip(),
         "host": "0.0.0.0",  # noqa: S104 - LAN reachability for the desk mic client
         "port": port,
@@ -154,4 +165,76 @@ def connect_voice(
     return {"token_env": token_env, "agent_did": agent_did.strip(), "token": token}
 
 
-__all__ = ["connect_telegram", "connect_voice"]
+def _wake_block(previous: object, words: list[str] | None, *, default_word: str) -> dict[str, Any]:
+    """The ``[platforms.voice.wake]`` table: validated words, other fields preserved."""
+    from arcgateway.adapters.voice.config import WakeConfig  # voice-only; folder stays deletable
+
+    base = dict(previous) if isinstance(previous, dict) else {}
+    if words is not None:
+        base["words"] = words
+    elif not base.get("words"):
+        base["words"] = [default_word.lower()] if _is_valid_word(default_word.lower()) else []
+    try:
+        return WakeConfig.model_validate(base).model_dump()
+    except ValueError as exc:
+        raise ValueError(_first_error(exc)) from exc
+
+
+def _is_valid_word(word: str) -> bool:
+    from arcgateway.adapters.voice.config import WakeConfig  # voice-only; folder stays deletable
+
+    try:
+        WakeConfig(words=[word])
+    except ValueError:
+        return False
+    return True
+
+
+def _voice_table(data: dict[str, Any]) -> dict[str, Any]:
+    voice = data.get("platforms", {}).get("voice")
+    if not isinstance(voice, dict) or not voice.get("enabled"):
+        raise ValueError("voice is not connected. Run connect-voice first.")
+    return voice
+
+
+def set_voice_listening(*, gateway_config: Path, on: bool) -> None:
+    """Persist the listening ON/OFF choice so a restart keeps it."""
+    existing = gateway_config.read_text(encoding="utf-8") if gateway_config.exists() else ""
+    data: dict[str, Any] = tomllib.loads(existing) if existing else {}
+    _voice_table(data)["listening"] = on
+    gateway_config.write_text(arcagent.dumps_toml(data), encoding="utf-8")
+
+
+def set_voice_wake(
+    *, gateway_config: Path, words: list[str], mode: str | None = None, match: str | None = None
+) -> WakeConfig:
+    """Validate and persist the typed wake word(s). Returns the stored config."""
+    from arcgateway.adapters.voice.config import WakeConfig  # voice-only; folder stays deletable
+
+    existing = gateway_config.read_text(encoding="utf-8") if gateway_config.exists() else ""
+    data: dict[str, Any] = tomllib.loads(existing) if existing else {}
+    voice = _voice_table(data)
+    block = dict(voice.get("wake") or {})
+    block["words"] = words
+    if mode is not None:
+        block["mode"] = mode
+    if match is not None:
+        block["match"] = match
+    try:
+        wake = WakeConfig.model_validate(block)
+    except ValueError as exc:  # pydantic ValidationError is a ValueError
+        raise ValueError(_first_error(exc)) from exc
+    voice["wake"] = wake.model_dump()
+    gateway_config.write_text(arcagent.dumps_toml(data), encoding="utf-8")
+    return wake
+
+
+def _first_error(exc: ValueError) -> str:
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        first = errors()[0]
+        return str(first.get("msg", "invalid wake word")).removeprefix("Value error, ")
+    return str(exc)
+
+
+__all__ = ["connect_telegram", "connect_voice", "set_voice_listening", "set_voice_wake"]

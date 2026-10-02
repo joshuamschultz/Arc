@@ -189,27 +189,37 @@ live push-to-talk experience.
 
 ## 10. Run the client under launchd / systemd
 
-The client is push-to-talk (interactive), so it is usually run in a terminal. To
-keep it resident, wrap `arc-voice` in a user service. Linux desk box:
+`arc-voice` is a separate process on the box that owns the microphone. The gateway
+does not start it and "Connect voice" does not create it, so it needs its own unit.
+The repo ships one: `deploy/systemd/arc-voice.service`. Copy it to
+`~/.config/systemd/user/`, then:
 
-```ini
-# ~/.config/systemd/user/arc-voice.service
-[Unit]
-Description=Arc desk voice client
-[Service]
-Environment=ARC_VOICE_URI=ws://<engine-host>:8790
-Environment=ARC_VOICE_TOKEN=<token>
-Environment=DBUS_SESSION_BUS_ADDRESS=/dev/null
-ExecStart=%h/.local/bin/arc-voice
-Restart=on-failure
-[Install]
-WantedBy=default.target
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now arc-voice
+systemctl --user status arc-voice          # must say "active (running)"
+journalctl --user -u arc-voice -f          # "stt-wake listening ..." then "heard ..."
 ```
 
-`systemctl --user enable --now arc-voice`. On macOS use a launchd agent, and grant
-the launching binary microphone access (TCC) — a background agent gets no prompt.
+The unit reads `ARC_VOICE_TOKEN` from `~/arc/config/arc.env` and sets
+`ARC_VOICE_ALWAYS_ON=1` (STT-keyword wake, no trained model). On macOS use a launchd
+agent and grant the launching binary microphone access (TCC) — a background agent
+gets no prompt.
 
-## 11. Always-on "hey Olivia" (DGX USB mic)
+**Is it working?** The agent card (Connect tab, Voice panel) and
+`arc gateway voice-status <agent> --email <you>` show three parts, each with a
+heartbeat and a plain reason when down: the gateway adapter, the mic client
+(`arc-voice`), and the speech engine. Listening can be switched ON/OFF from the
+card or `arc gateway voice-listen <agent> on|off`; it is saved and takes effect
+without a restart (OFF closes the microphone). The wake word is typed in the card
+or `arc gateway voice-wake <agent> <word>` and reaches the mic box live.
+
+**What a typed wake word is.** It is matched against a local transcript of what the
+mic box hears (whole words, one-edit fuzzy match near the start of a sentence). It
+is not a trained wake-word model: it costs a little CPU while people talk and a
+similar-sounding word can wake it. For a trained model, see §11.
+
+## 11. Optional: a trained wake-word model (DGX USB mic)
 
 The always-on client runs on the box with the mic. For the DGX, plug in a **USB
 mic + speaker** and run the client there (no network hop — local loop to

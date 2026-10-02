@@ -24,9 +24,44 @@ Example (TOML):
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+#: A typed wake word: lowercase letters, apostrophes and spaces. No digits or
+#: punctuation, so nothing typed here can mangle an address, a path or a log line.
+_WAKE_WORD = re.compile(r"^[a-z' ]{2,32}$")
+MAX_WAKE_WORDS = 3
+
+
+class WakeConfig(BaseModel):
+    """``[platforms.voice.wake]`` — what the mic box listens for.
+
+    ``stt`` mode matches the typed words in a local transcript (any word, no
+    training). ``model`` uses a trained openWakeWord file at ``model_path``.
+    Empty ``words`` means "use the channel name" (see ``VoiceAdapter``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    words: list[str] = Field(default_factory=list)
+    mode: Literal["stt", "model", "ptt"] = "stt"
+    model_path: str = ""
+    match: Literal["exact", "fuzzy"] = "fuzzy"
+
+    @field_validator("words")
+    @classmethod
+    def _words_are_plain(cls, value: list[str]) -> list[str]:
+        cleaned = [w.strip().lower() for w in value]
+        if len(cleaned) > MAX_WAKE_WORDS:
+            raise ValueError(f"at most {MAX_WAKE_WORDS} wake words")
+        for word in cleaned:
+            if not _WAKE_WORD.fullmatch(word) or not word.replace("'", "").strip():
+                raise ValueError(
+                    "a wake word is 2-32 characters: lowercase letters, apostrophes and spaces"
+                )
+        return cleaned
 
 
 class VoicePlatformConfig(BaseModel):
@@ -42,6 +77,9 @@ class VoicePlatformConfig(BaseModel):
     token_env: str = "ARC_VOICE_TOKEN"  # noqa: S105 - env var NAME, not a secret value
     operator_did: str = "did:arc:operator"
     chat_id: str = "voice"
+    #: Desired listening state; persisted so a restart keeps the operator's choice.
+    listening: bool = True
+    wake: WakeConfig = Field(default_factory=WakeConfig)
     #: Engine selection + per-engine config sub-tables (registry-resolved by name).
     engine: dict[str, Any] = Field(default_factory=dict)
 
@@ -59,4 +97,4 @@ class VoicePlatformConfig(BaseModel):
         return value
 
 
-__all__ = ["VoicePlatformConfig"]
+__all__ = ["MAX_WAKE_WORDS", "VoicePlatformConfig", "WakeConfig"]

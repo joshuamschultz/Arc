@@ -1,0 +1,31 @@
+[Unit]
+# The always-on desk voice client. It runs on the box that owns the microphone
+# and speaker (the DGX's USB mic), NOT inside the gateway. If this unit is not
+# running, saying the wake word does nothing, and the agent card shows
+# "No mic client is connected".
+Description=Arc — desk voice client (always-on wake word)
+After=network-online.target arc.service
+Wants=arc.service
+
+[Service]
+Type=simple
+# Token and URI come from the same env file the gateway reads. The wake words
+# are typed in the agent card (or `arc gateway voice-wake`) and arrive from the
+# gateway, so nothing here needs editing to change them.
+EnvironmentFile=-%h/arc/config/arc.env
+Environment=ARC_VOICE_URI=ws://127.0.0.1:8790
+# STT-keyword wake: any typed word works, no trained model. Remove this and set
+# ARC_VOICE_WAKE_MODEL=/path/hey_olivia.onnx to use a trained model instead.
+Environment=ARC_VOICE_ALWAYS_ON=1
+# ALSA capture/playback device. Find yours with `arecord -l`.
+Environment=ARC_VOICE_MIC=plughw:CARD=MV7i,DEV=0
+# Headless nodes: stop CLIs hanging on a missing keyring bus.
+Environment=DBUS_SESSION_BUS_ADDRESS=/dev/null
+ExecStart=%h/.local/bin/arc-voice
+# A refused token or a missing mic exits the client; the restart loop keeps that
+# visible on the card (client offline) instead of silent.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

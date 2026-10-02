@@ -19,9 +19,16 @@ import getpass
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from arcgateway.connect import connect_telegram, connect_voice
 
+from arccli.commands._operator_http import (
+    DEFAULT_URL,
+    agent_name,
+    operator_session,
+    server_url,
+)
 from arccli.commands._shared import err
 from arccli.commands._shared import write as _out
 
@@ -102,6 +109,13 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
     parser.add_argument("--chat-id", default="olivia", help="Voice chat id (no ':').")
     parser.add_argument("--token", default=None, help="Pairing token (omit to auto-generate).")
     parser.add_argument(
+        "--wake",
+        action="append",
+        default=None,
+        metavar="WORD",
+        help="Wake word to listen for (repeat for up to 3). Default: the channel name.",
+    )
+    parser.add_argument(
         "--gateway-config",
         default=str(Path("~/.arc/gateway.toml").expanduser()),
         help="Gateway config to update (default: ~/.arc/gateway.toml).",
@@ -117,6 +131,7 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
     try:
         agent_did = _agent_did(agent_dir)
         result = connect_voice(
+            wake_words=ns.wake,
             agent_did=agent_did,
             gateway_config=Path(ns.gateway_config).expanduser(),
             env_file=Path(ns.env_file).expanduser(),
@@ -138,7 +153,92 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
     _out("Next:")
     _out(f"  1. Download the Kokoro models into {ns.model_dir} (see the deploy runbook).")
     _out("  2. systemctl --user restart arc.service   # gateway picks up the channel")
-    _out("  3. On the mic box: ARC_VOICE_TOKEN=<token> ARC_VOICE_ALWAYS_ON=1 arc-voice")
+    _out("  3. On the mic box, run arc-voice as a service so it survives reboots:")
+    _out("       deploy/systemd/arc-voice.service  (copy it, put ARC_VOICE_TOKEN in its env file)")
+    _out("     or once by hand: ARC_VOICE_TOKEN=<token> ARC_VOICE_ALWAYS_ON=1 arc-voice")
+    _out("  4. Check it: arc gateway voice-status <agent> --email <you>")
+    _out("Wake words are matched on a local transcript, not a trained model.")
+    _out("Change the word any time: arc gateway voice-wake <agent> <word> --email <you>")
+
+
+_STATE_LABEL = {
+    "offline": "OFFLINE",
+    "paused": "PAUSED (listening is OFF)",
+    "listening": "LISTENING",
+    "heard": "HEARD A WAKE WORD",
+    "speaking": "SPEAKING",
+}
+
+
+def _voice_parser(prog: str, description: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description=description)
+    parser.add_argument("agent", help="Agent directory or roster name.")
+    parser.add_argument("--url", default=DEFAULT_URL, help="ArcUI server URL.")
+    parser.add_argument("--email", required=True, help="Arc operator account email.")
+    return parser
+
+
+def _voice_request(
+    prog: str, ns: argparse.Namespace, method: str, suffix: str, body: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One operator call to ``/api/agents/<name>/voice<suffix>`` on the running server."""
+    url = server_url(prog, ns.url)
+    name = agent_name(prog, ns.agent)
+    with operator_session(prog, url, ns.email) as call:
+        kwargs: dict[str, Any] = {} if body is None else {"json": body}
+        return call(method, f"/api/agents/{name}/voice{suffix}", **kwargs)
+
+
+def _print_part(label: str, part: dict[str, Any]) -> None:
+    mark = "up" if part.get("up") else "DOWN"
+    reason = part.get("reason") or ""
+    _out(f"  {label:<14} {mark}{'  - ' + reason if reason else ''}")
+
+
+def gateway_voice_status_handler(args: list[str]) -> None:
+    """Show live voice status: the three parts, listening, and the wake word."""
+    prog = "arc gateway voice-status"
+    ns = _voice_parser(prog, "Show live voice status.").parse_args(args)
+    status = _voice_request(prog, ns, "GET", "")
+    live = status.get("live")
+    if not status.get("enabled") or live is None:
+        _out("Voice is not connected to this agent. Run: arc gateway connect-voice --agent <dir>")
+        return
+    _out(f"Voice: {_STATE_LABEL.get(str(live.get('state')), live.get('state'))}")
+    _print_part("gateway", live.get("adapter", {}))
+    _print_part("mic client", live.get("client", {}))
+    _print_part("speech engine", live.get("engine", {}))
+    _out(f"  listening      {'ON' if live.get('listening') else 'OFF'}")
+    _out(f"  wake word      {', '.join(live.get('wake_words', []))}  ({live.get('wake_mode')})")
+    if live.get("reason"):
+        _out(f"Why: {live['reason']}")
+
+
+def gateway_voice_listen_handler(args: list[str]) -> None:
+    """Turn listening ON or OFF live (saved, no restart)."""
+    prog = "arc gateway voice-listen"
+    parser = _voice_parser(prog, "Turn voice listening on or off.")
+    parser.add_argument("state", choices=("on", "off"), help="on or off.")
+    ns = parser.parse_args(args)
+    result = _voice_request(prog, ns, "POST", "/listening", {"on": ns.state == "on"})
+    _out(f"Listening is now {ns.state.upper()}.")
+    if not result.get("applied_live"):
+        _out("Saved. The running gateway will pick it up on its next restart.")
+
+
+def gateway_voice_wake_handler(args: list[str]) -> None:
+    """Set the typed wake word (saved, sent to the mic box live)."""
+    prog = "arc gateway voice-wake"
+    parser = _voice_parser(prog, "Set the wake word(s) the mic box listens for.")
+    parser.add_argument("words", nargs="+", help="1 to 3 words, letters and apostrophes only.")
+    parser.add_argument("--match", choices=("exact", "fuzzy"), default=None)
+    ns = parser.parse_args(args)
+    body: dict[str, Any] = {"words": ns.words}
+    if ns.match:
+        body["match"] = ns.match
+    result = _voice_request(prog, ns, "POST", "/wake", body)
+    _out(f"Wake word set to: {', '.join(result.get('wake', {}).get('words', ns.words))}")
+    _out(str(result.get("note", "")))
 
 
 def gateway_voice_engines_handler(_args: list[str]) -> None:
@@ -154,4 +254,7 @@ __all__ = [
     "gateway_connect_telegram_handler",
     "gateway_connect_voice_handler",
     "gateway_voice_engines_handler",
+    "gateway_voice_listen_handler",
+    "gateway_voice_status_handler",
+    "gateway_voice_wake_handler",
 ]

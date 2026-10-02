@@ -46,7 +46,13 @@ from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
 from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
 from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
-from arcui.routes.agent_detail.connect_voice import connect_voice_route, get_voice_status
+from arcui.routes.agent_detail.connect_voice import (
+    connect_voice_route,
+    get_voice_status,
+    post_voice_listening,
+    post_voice_test,
+    post_voice_wake,
+)
 from arcui.routes.agent_detail.files_write import delete_file, put_file_write
 from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
@@ -189,6 +195,9 @@ routes = [
     Route("/api/agents/{id}/connect-telegram", connect_telegram_route, methods=["POST"]),
     Route("/api/agents/{id}/connect-voice", connect_voice_route, methods=["POST"]),
     Route("/api/agents/{id}/voice", get_voice_status, methods=["GET"]),
+    Route("/api/agents/{id}/voice/listening", post_voice_listening, methods=["POST"]),
+    Route("/api/agents/{id}/voice/wake", post_voice_wake, methods=["POST"]),
+    Route("/api/agents/{id}/voice/test", post_voice_test, methods=["POST"]),
     Route("/api/agents/{id}/memory/promotion", get_memory_promotion, methods=["GET"]),
     Route("/api/agents/{id}/memory/promotion", put_memory_promotion, methods=["PUT"]),
     Route("/api/agents/{id}/memory/promotion/run", run_memory_promotion, methods=["POST"]),
