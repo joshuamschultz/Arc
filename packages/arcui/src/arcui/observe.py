@@ -17,12 +17,13 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from arcstore.backends import ArcStoreBackend, open_backend
 from arcstore.backends.base import TaskBoardBackend
 from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.ingest import StoreIngest
+from arcstore.query import audit_totals
 from arcstore.tasks import (
     MutableTaskBackend,
     Task,
@@ -328,6 +329,12 @@ def _project_audit_event(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+AuditFilter = Literal["deny", "control"]
+"""The Security screen's server-side tabs."""
+
+_AUDIT_FILTER_COLUMNS: dict[str, str] = {"deny": "is_denial", "control": "is_control"}
+
+
 class Observe:
     """arcui's read-only view of the durable operational record.
 
@@ -344,6 +351,7 @@ class Observe:
         arcstore_config: ArcStoreConfig | None = None,
         arcstore_secret: SecretStr | None = None,
         workspace_dir: Path | None = None,
+        worm_public_key: bytes | None = None,
     ) -> None:
         base = data_dir if data_dir is not None else resolve_data_dir()
         self._data_dir = base
@@ -359,6 +367,9 @@ class Observe:
             spool_dir=base / "spool",
             worm_dir=base / "worm",
             workspace_dir=workspace_dir,
+            # Item 20 P20-1: the operator public key every WORM chain is signed
+            # with. Without it every mirrored row was stamped unverified.
+            worm_public_key=worm_public_key,
         )
         self._started = False
 
@@ -413,14 +424,22 @@ class Observe:
         return _row_to_trace(rows[0], include_bodies=True) if rows else None
 
     async def audit(
-        self, *, agent: str | None = None, target: str | None = None, limit: int = 100
+        self,
+        *,
+        agent: str | None = None,
+        target: str | None = None,
+        category: AuditFilter | None = None,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
+        """Newest-first ledger page; ``category`` narrows to denials or control actions."""
         await self._ensure()
         where: dict[str, Any] = {}
         if agent:
             where["actor_did"] = agent
         if target:
             where["target"] = target
+        if category is not None:
+            where[_AUDIT_FILTER_COLUMNS[category]] = True
         # Order by ``ts``, not the WORM chain's own ``seq``: this table mirrors
         # MANY chains (one per agent, plus ``audit-chain-arcui.jsonl``), each with
         # its own sequence numbering starting at 0, so "seq DESC" would interleave
@@ -432,6 +451,16 @@ class Observe:
             "audit_chain", where=where or None, order_by="ts DESC", limit=limit
         )
         return [_project_audit_event(r) for r in rows]
+
+    async def audit_totals(self) -> dict[str, int]:
+        """Ledger-wide ``{total, verified, broken}`` — the summary counts the ledger."""
+        await self._ensure()
+        return await audit_totals(self._backend)
+
+    async def reverify_audit(self) -> dict[str, int]:
+        """Re-verify every mirrored chain from genesis and UPDATE stored verdicts."""
+        await self._ensure()
+        return await self._ingest.reverify()
 
     async def run_recalls(self, run_id: str) -> list[dict[str, Any]]:
         """Recall-attribution events correlated to one run (SPEC-073 Phase D2).

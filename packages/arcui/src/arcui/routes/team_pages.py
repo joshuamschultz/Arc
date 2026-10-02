@@ -42,8 +42,8 @@ from arcui.routes.agent_detail.tools import (
     agent_tool_rows,
 )
 from arcui.schemas import (
-    AuditEventsResponse,
     ErrorResponse,
+    FleetAuditResponse,
     PolicyBulletsResponse,
     TaskBoardResponse,
     TeamPolicyStatsResponse,
@@ -483,7 +483,11 @@ async def get_audit(request: Request) -> JSONResponse:
     """GET /api/team/audit — fleet audit chain (last N), newest first.
 
     ``target`` (optional) narrows to one audited resource — e.g.
-    ``task:<id>`` for a task's activity timeline (SDD §6 FR-12).
+    ``task:<id>`` for a task's activity timeline (SDD §6 FR-12). ``filter``
+    (``deny`` | ``control``) is the Security tabs' server-side narrowing.
+    ``totals`` counts the whole ledger, so the summary never counts a page.
+    Each event carries ``signer``, ``verified`` and its causal chain
+    (``causal`` plus ``initiator``/``run_id``/``tool_call_id``/... columns).
     """
     limit, err = safe_int(
         request.query_params.get("limit"),
@@ -495,9 +499,18 @@ async def get_audit(request: Request) -> JSONResponse:
     if err is not None:
         return err
     target = request.query_params.get("target")
-    events = await request.app.state.observe.audit(limit=limit, target=target)
+    audit_filter = request.query_params.get("filter")
+    if audit_filter is not None and audit_filter not in _AUDIT_FILTERS:
+        return JSONResponse({"error": "Invalid filter"}, status_code=400)
+    observe = request.app.state.observe
+    events = await observe.audit(limit=limit, target=target, category=audit_filter)
     events = _attach_actor_identity(events, _roster(request))
-    return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))
+    totals = await observe.audit_totals()
+    return JSONResponse(FleetAuditResponse(events=events, totals=totals).model_dump(mode="json"))
+
+
+_AUDIT_FILTERS = frozenset({"deny", "control"})
+"""``filter=`` values the Security screen's tabs send (item 20)."""
 
 
 routes = [

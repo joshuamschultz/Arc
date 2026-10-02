@@ -461,6 +461,16 @@ class AuditEventsResponse(BaseModel):
     events: list[dict[str, Any]]
 
 
+class FleetAuditResponse(BaseModel):
+    """Body of ``GET /api/team/audit`` — a ledger page plus the whole ledger's counts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[dict[str, Any]]
+    totals: dict[str, int]
+    """``{total, verified, broken}`` over every mirrored record, not the page (item 20)."""
+
+
 # ---------------------------------------------------------------------------
 # Agent detail — skills / tools
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import secrets
 from collections import OrderedDict
 from typing import Any
 
+from arctrust import causal
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -230,6 +231,24 @@ class AuthConfig:
         return self.sessions.validate(token)
 
 
+ANONYMOUS_UI_ACTOR = "did:arc:ui:anonymous"
+"""Initiator for an unauthenticated API call (login, liveness)."""
+
+
+def ui_session_actor(request: Request) -> str:
+    """The initiator id for an authenticated UI request.
+
+    The signed-in account's DID when there is one; otherwise a pseudo-DID for
+    the auth layer's session (a shared bearer token has no person behind it,
+    but each browser session is still a distinct actor).
+    """
+    account_did = getattr(request.state, "account_did", None)
+    if account_did:
+        return str(account_did)
+    session_id = getattr(request.state, "session_id", None) or "untracked"
+    return f"did:arc:ui:session:{session_id}"
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Starlette middleware that validates bearer tokens on /api/* routes.
 
@@ -259,7 +278,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # endpoints are how a credential is obtained in the first place.
         if path in _UNAUTHENTICATED_PATHS:
             request.state.role = None
-            return await call_next(request)
+            with causal.bind(causal.root("ui_session", ANONYMOUS_UI_ACTOR)):
+                return await call_next(request)
 
         # All other /api/* routes require a valid human (viewer/operator) token.
         auth_header = request.headers.get("authorization", "")
@@ -299,7 +319,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # audit event to this operator session on every request.
         self._set_session_id(request, token)
         logger.debug("auth.ok path=%s role=%s", path, role)
-        return await call_next(request)
+        # Item 20: everything this request causes is attributed to the browser
+        # session that made it — never to the operator key that signs the audit.
+        # Built from the auth layer's own state, never from request headers.
+        with causal.bind(causal.root("ui_session", ui_session_actor(request))):
+            return await call_next(request)
 
     @staticmethod
     def _set_session_id(request: Request, token: str) -> None:

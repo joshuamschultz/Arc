@@ -59,6 +59,22 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_session_replay_media.py",
         "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
     ),
+    # Item 20 audit causality: the actor on a record is the real initiator and
+    # cannot be claimed. A causal context forged in tool arguments or an HTTP
+    # header is ignored; a forged/stripped WORM ``signer`` or an edited causal
+    # chain breaks the record hash; a replayed record breaks the chain and every
+    # row after it; a cancelled request's binding never leaks into the next;
+    # background work never inherits a request; the operator key never stands
+    # in for a UI session, a scheduler or an unbound caller.
+    "forged audit attribution, forged signer and replayed audit records": (
+        "packages/arctrust/tests/test_causal.py",
+        "packages/arctrust/tests/test_audit_signer_verifier.py",
+        "packages/arcstore/tests/integration/test_ingest_verify.py",
+        "packages/arcui/tests/unit/test_audit_causality.py",
+        "packages/arcagent/tests/unit/core/test_tool_dispatch_causality.py",
+        "packages/arcagent/tests/unit/extension/test_connection_actor.py",
+        "packages/arcagent/tests/unit/utils/test_spawn_background_detached.py",
+    ),
     "forged, unauthorized and replayed control actions": (
         "packages/arcui/tests/test_workflow_routes.py",
         # An agent writes then runs its own workflow: unsigned runs are refused

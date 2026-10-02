@@ -11,6 +11,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
+from arctrust import causal
+
 from arcagent.core.config import EvalConfig
 from arcagent.utils import load_eval_model
 
@@ -93,7 +95,10 @@ def spawn_background(
         async with semaphore:
             await asyncio.wait_for(coro, timeout=timeout)
 
-    task = asyncio.create_task(_semaphore_wrapped())
+    # Detached (item 20): background work is its own causal root, attributed to
+    # the job, never to — or correlated with — the request that started it.
+    job = getattr(coro, "__qualname__", "background")
+    task = causal.spawn_detached(_semaphore_wrapped(), initiator_id=f"did:arc:system:{job}")
     background_tasks.add(task)
 
     def _on_done(t: asyncio.Task[None]) -> None:

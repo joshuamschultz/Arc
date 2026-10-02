@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_team, config_file, default_operator_key_path
 
@@ -164,6 +165,11 @@ class ConnectionWorld:
     grant list are one set of facts, not one set per agent. An agent enters this
     module only as a NAME in :attr:`~arcagent.extension.grants.Connection.agents`,
     which is matched against the agent's directory name when it starts.
+
+    ``did`` is the deployment's operator authority. It is never recorded as the
+    actor of an audited act: who caused a read, probe or change is the bound
+    :mod:`arctrust.causal` initiator (a UI session, the scheduler, an agent, the
+    CLI operator). Authority and actor are different facts (item 20).
     """
 
     arc_dir: Path
@@ -862,7 +868,7 @@ class Connections:
             await store.put(
                 SecretRef(connection=instance, field=flow.refresh_token_secret),
                 tokens.refresh_token,
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
             )
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
@@ -889,7 +895,7 @@ class Connections:
     async def _read_secret(self, store: SecretStore, instance: str, field: str) -> str:
         """One connector secret's value, or empty when nothing is stored yet."""
         found = await store.get(
-            SecretRef(connection=instance, field=field), caller_did=self._world.did
+            SecretRef(connection=instance, field=field), caller_did=causal.actor_did()
         )
         return found.reveal() if found is not None else ""
 
@@ -978,7 +984,7 @@ class Connections:
             path = await install_pinned_binary(
                 pin,
                 install_dir=target,
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
                 audit_sink=sink,
                 tier=self._world.tier,
             )
@@ -1021,7 +1027,7 @@ class Connections:
         for required in checks:
             result = await run_authorization_check(
                 required,
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
                 audit_sink=sink,
                 tier=self._world.tier,
                 env=placed,
@@ -1089,7 +1095,7 @@ class Connections:
                 step = await run_remote_login_begin(
                     required,
                     values=values,
-                    caller_did=self._world.did,
+                    caller_did=causal.actor_did(),
                     audit_sink=sink,
                     tier=self._world.tier,
                     instance=instance,
@@ -1149,7 +1155,7 @@ class Connections:
                     values=values,
                     redirect_url=redirect_url,
                     expected=pending,
-                    caller_did=self._world.did,
+                    caller_did=causal.actor_did(),
                     audit_sink=sink,
                     tier=self._world.tier,
                     instance=instance,
@@ -1182,7 +1188,7 @@ class Connections:
         except ExtensionError as refusal:
             emit(
                 AuditEvent(
-                    actor_did=self._world.did,
+                    actor_did=causal.actor_did(),
                     action=f"extension.host.remote_login.{step}",
                     target=f"host:{binary}",
                     outcome="deny",
@@ -1246,7 +1252,7 @@ class Connections:
         result = await run_token_login(
             accepting,
             token=token,
-            caller_did=self._world.did,
+            caller_did=causal.actor_did(),
             audit_sink=sink,
             tier=self._world.tier,
             values={field.name: field.value for field in await self._supplied(plan, sink)},
@@ -1311,7 +1317,7 @@ class Connections:
                 agents=agents,
                 secret_values=secrets,
                 store=self._store(sink),
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
                 state=await self._connection_state(),
                 attachment_factory=self._factory,
                 audit_sink=sink,
@@ -1415,7 +1421,7 @@ class Connections:
                 if not value:
                     continue
                 ref = SecretRef(connection=plan.instance, field=required.name)
-                await store.put(ref, value, caller_did=self._world.did)
+                await store.put(ref, value, caller_did=causal.actor_did())
                 written.append(required.name)
         return tuple(written)
 
@@ -1446,7 +1452,7 @@ class Connections:
             ledger = ToolContractLedger(
                 await self._connection_state(), connection=instance, sink=sink
             )
-            await ledger.approve(specs, actor_did=self._world.did)
+            await ledger.approve(specs, actor_did=causal.actor_did())
         return tuple(spec.name for spec in specs)
 
     async def remove(self, instance: str) -> RemovalReport:
@@ -1461,7 +1467,7 @@ class Connections:
                 connections=self.registry,
                 instance=instance,
                 store=self._store(sink),
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
                 secret_fields=self._declared_secret_fields(instance, sink),
                 state=await self._connection_state(),
             )
@@ -1593,7 +1599,7 @@ class Connections:
         """
         emit(
             AuditEvent(
-                actor_did=self._world.did,
+                actor_did=causal.actor_did(),
                 action=action,
                 target=f"connector:{instance}",
                 outcome="allow",
@@ -1669,7 +1675,7 @@ class Connections:
             plan.manifest,
             connection=plan.instance,
             store=self._store(sink),
-            caller_did=self._world.did,
+            caller_did=causal.actor_did(),
         )
         return self._factory(plan.manifest, plan.bundle, secrets)
 
@@ -1702,7 +1708,7 @@ class Connections:
             value = ""
             if not declared.sensitive:
                 ref = SecretRef(connection=plan.instance, field=declared.name)
-                found = await store.get(ref, caller_did=self._world.did)
+                found = await store.get(ref, caller_did=causal.actor_did())
                 value = found.reveal() if found is not None else ""
             rows.append(
                 SuppliedCredential(
@@ -1736,7 +1742,7 @@ class Connections:
                 plan.manifest,
                 connection=plan.instance,
                 store=self._store(sink),
-                caller_did=self._world.did,
+                caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}
@@ -1760,7 +1766,7 @@ class Connections:
         rows: list[DoctorCheck] = []
         for required in plan.secrets:
             ref = SecretRef(connection=instance, field=required.name)
-            found = await store.get(ref, caller_did=self._world.did)
+            found = await store.get(ref, caller_did=causal.actor_did())
             status = "present" if found else "missing"
             rows.append(DoctorCheck(required.name, status, str(self._world.env_file)))
         return rows

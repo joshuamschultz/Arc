@@ -740,6 +740,30 @@ class TestFleetAudit:
         assert event["action"] == "policy.evaluate"
         assert event["outcome"] == "deny"
 
+    def test_filter_tabs_narrow_the_ledger_and_totals_count_it_all(
+        self, tmp_path, _isolated_arc_data_dir: Path
+    ):
+        """Item 20: ``filter=deny|control`` is honoured server-side; totals are the ledger's."""
+        from arcui.server import create_app
+
+        _write_worm_audit(_isolated_arc_data_dir, seq=0, actor_did="did:arc:a", outcome="allow")
+        _write_worm_audit(_isolated_arc_data_dir, seq=1, actor_did="did:arc:a", outcome="deny")
+        _write_worm_audit(_isolated_arc_data_dir, seq=2, actor_did="did:arc:a", outcome="denied")
+
+        team = _build_team(tmp_path, [("alpha", "")])
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            denials = client.get("/api/team/audit?filter=deny", headers=_viewer(auth)).json()
+            page = client.get("/api/team/audit?limit=1", headers=_viewer(auth)).json()
+            bad = client.get("/api/team/audit?filter=bogus", headers=_viewer(auth))
+        assert sorted(e["outcome"] for e in denials["events"]) == ["denied", "deny"]
+        assert len(page["events"]) == 1
+        # The chain is fake-signed, so nothing verifies and the break is counted.
+        assert page["totals"]["total"] == 3
+        assert page["totals"]["verified"] == 0
+        assert bad.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # Auth
