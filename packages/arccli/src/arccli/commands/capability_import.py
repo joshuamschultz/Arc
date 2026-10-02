@@ -91,8 +91,14 @@ def _archive_source(archive: Path, limits: arcagent.CapabilityImportLimits) -> t
     """
     if str(archive) == "-":
         return _copy_stdin_archive(limits), True
+    # A skill folder goes straight to intake, which walks it without following
+    # links, drops Finder/Explorer junk, and digests the tree deterministically.
+    if archive.is_dir() and not archive.is_symlink():
+        return archive, False
     if archive.suffix.casefold() != ".zip":
-        raise ValueError("capability imports must be ZIP archives (use '-' for stdin)")
+        raise ValueError(
+            "capability imports must be a ZIP archive or a folder (use '-' for stdin)"
+        )
     return archive, False
 
 
@@ -119,6 +125,10 @@ def _print_review(review: arcagent.CapabilityImportReview, agent_id: str) -> Non
             ]
         ],
     )
+    if review.findings:
+        write("Review findings (read before promoting):")
+        for finding in review.findings:
+            write(f"  - {finding}")
 
 
 def _import(args: argparse.Namespace) -> None:
@@ -267,7 +277,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arc capability-import")
     subs = parser.add_subparsers(dest="subcmd", required=True)
     commands = (
-        ("import", "Stage one ZIP for static review; it remains inactive."),
+        ("import", "Stage one ZIP or folder for static review; it remains inactive."),
         ("list", "List staged reviews."),
         ("show", "Print one reviewed file."),
         ("edit", "Edit one staged file and regenerate evidence."),
@@ -279,7 +289,9 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--agent", default=None, help="Agent id under team/.")
         if name == "import":
             sub.add_argument(
-                "archive", type=Path, help="ZIP path, or '-' to read a ZIP from stdin."
+                "archive",
+                type=Path,
+                help="ZIP path, skill folder, or '-' to read a ZIP from stdin.",
             )
             sub.add_argument("--json", action="store_true", help="Print review metadata as JSON.")
         if name == "list":

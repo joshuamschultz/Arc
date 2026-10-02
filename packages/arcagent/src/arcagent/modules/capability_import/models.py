@@ -110,6 +110,9 @@ class CapabilityImportReview(BaseModel):
     files: list[CapabilityImportReviewFile] = Field(max_length=512)
     tools: list[str] = Field(max_length=512)
     skills: list[str] = Field(max_length=512)
+    # Review findings (``"<code>: <detail>"``, e.g. ``builtin_name_collision: pdf``)
+    # the operator must see BEFORE promoting (J4 M4/G10).
+    findings: list[str] = Field(default_factory=list, max_length=512)
     supplier_sbom_sha256: str | None = Field(default=None, pattern=_SHA256)
     supplier_metadata_keys: list[str] = Field(max_length=128)
     activation: Literal["review_only"]
@@ -119,4 +122,11 @@ class CapabilityImportReview(BaseModel):
     def validate_names(cls, values: list[str]) -> list[str]:
         if any(not value or len(value) > 128 for value in values):
             raise ValueError("review metadata name is out of bounds")
+        return values
+
+    @field_validator("findings")
+    @classmethod
+    def validate_findings(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 4096 for value in values):
+            raise ValueError("review finding is out of bounds")
         return values

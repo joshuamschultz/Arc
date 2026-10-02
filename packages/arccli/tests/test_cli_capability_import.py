@@ -252,3 +252,62 @@ def test_list_and_edit_are_agent_scoped_and_review_bound(
     assert "review digest" in capsys.readouterr().out
     staged = agent_root / "capabilities/imports/.staging" / import_id / "skills/imported/SKILL.md"
     assert b"Use edited." in staged.read_bytes()
+
+
+# J4 M3 / G9 — `arc capability-import import <dir>`
+
+
+def test_import_accepts_a_skill_folder(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A plain skill folder stages like its ZIP would; Finder junk is dropped."""
+    agent_root = _agent_root(tmp_path, "ada")
+    folder = tmp_path / "imported"
+    (folder / "references").mkdir(parents=True)
+    (folder / "SKILL.md").write_bytes(_SKILL)
+    (folder / "references" / "guide.md").write_bytes(b"guide")
+    (folder / ".DS_Store").write_bytes(b"junk")
+    monkeypatch.setattr(
+        command, "_resolve_target", lambda _agent: ("ada", agent_root, "did:arc:agent:ada")
+    )
+
+    command.capability_import_handler(["import", str(folder), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skills"] == ["imported"]
+    assert [item["path"] for item in payload["files"]] == [
+        "skills/imported/SKILL.md",
+        "skills/imported/references/guide.md",
+    ]
+    staged = agent_root / "capabilities/imports/.staging" / payload["import_id"]
+    assert (staged / "skills/imported/references/guide.md").is_file()
+    assert not (agent_root / "capabilities/skills").exists()
+
+
+def test_import_refuses_a_folder_holding_a_symlink(tmp_path: Path, monkeypatch) -> None:
+    agent_root = _agent_root(tmp_path, "ada")
+    folder = tmp_path / "imported"
+    folder.mkdir()
+    (folder / "SKILL.md").write_bytes(_SKILL)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside", encoding="utf-8")
+    (folder / "leak.md").symlink_to(secret)
+    monkeypatch.setattr(
+        command, "_resolve_target", lambda _agent: ("ada", agent_root, "did:arc:agent:ada")
+    )
+
+    with pytest.raises(SystemExit):
+        command.capability_import_handler(["import", str(folder)])
+    assert not (agent_root / "capabilities/imports/.staging").exists()
+
+
+def test_import_prints_review_findings(tmp_path: Path, monkeypatch, capsys) -> None:
+    """The operator sees a builtin-name collision before promote (J4 M4)."""
+    agent_root = _agent_root(tmp_path, "ada")
+    skill = _SKILL.replace(b"name: imported", b"name: create-skill")
+    archive = _archive(tmp_path / "c.zip", {"skills/create-skill/SKILL.md": skill})
+    monkeypatch.setattr(
+        command, "_resolve_target", lambda _agent: ("ada", agent_root, "did:arc:agent:ada")
+    )
+
+    command.capability_import_handler(["import", str(archive)])
+
+    assert "builtin_name_collision: create-skill" in capsys.readouterr().out
