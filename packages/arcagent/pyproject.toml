@@ -117,7 +117,9 @@ module = ["browser_use.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pypdf", "pypdf.*"]
+# Optional document-extraction deps (file_handler imports each lazily and
+# degrades when absent), so no stub package is a workspace requirement.
+module = ["pypdf", "pypdf.*", "docx", "docx.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

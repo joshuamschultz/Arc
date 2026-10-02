@@ -74,6 +74,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "types-pyyaml>=6.0.12.20260408",
     "types-croniter>=6.2.2.20260408",
+    "types-jsonschema>=4.23",
     "freezegun>=1.5.5",
     "python-dotenv>=1.2.2",
 ]
