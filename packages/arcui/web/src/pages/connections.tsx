@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Cable,
   LogIn,
@@ -10,11 +10,11 @@ import {
   Trash2,
   TriangleAlert,
   BookOpen,
+  ChevronDown,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
-import { StatusChip } from '@/components/ai'
 import { ContextNote } from '@/components/hitl'
 import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
@@ -22,21 +22,34 @@ import { RemoteSignInPanel } from '@/components/remote-sign-in-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
-  useActivateConnectedData,
   useApproveConnector,
   useConnections,
   useConnectorCatalog,
   useConnectorDoctor,
-  useConnectorAuthorization,
-  useConnectedSources,
   useProbeConnector,
   useRemoveConnector,
   useRoster,
 } from '@/lib/queries'
-import type { Agent, CatalogBundle, ConnectorInstance, ConnectorSignIn } from '@/lib/types'
+import type {
+  Agent,
+  CatalogBundle,
+  ConnectionAction,
+  ConnectionDisplayStatus,
+  ConnectionKnowledgeSync,
+  ConnectionNotice,
+  ConnectorInstance,
+} from '@/lib/types'
+import { fmtTime, relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { agentLabel, grantName } from '@/lib/agent-names'
 
@@ -128,47 +141,66 @@ function SearchPathLine({ roots }: { roots: string[] }) {
   )
 }
 
-// The connection's live reachability as one plain-language chip. `StatusChip`
-// carries the app's shared status vocabulary and colour, so a connection reads
-// the same as a task or a run. Detail text sits beside the chip, never inside.
-function ReachabilityChip({
-  probe,
-}: {
-  probe: ReturnType<typeof useProbeConnector>
-}) {
-  if (probe.isPending) return <StatusChip value="running" />
-  if (probe.isError) return <StatusChip value="error" />
-  if (probe.data) return <StatusChip value={probe.data.reachable ? 'online' : 'failed'} />
-  return <span className="text-[11px] text-muted-foreground">Not checked</span>
+const STATUS_TONE: Record<ConnectionDisplayStatus, string> = {
+  healthy: 'border-status-online/30 bg-status-online/12 text-status-online',
+  needs_you: 'border-status-warning/30 bg-status-warning/12 text-status-warning',
+  syncing: 'border-status-online/30 bg-status-online/12 text-status-online',
+  error: 'border-status-error/30 bg-status-error/12 text-status-error',
+  unknown: 'border-border bg-muted/40 text-muted-foreground',
 }
 
-// A browser-sign-in connection's state as one short chip. Same tones as the
-// doctor rows; the full sentence lives in the sign-in panel below.
-const SIGN_IN_CHIP: Record<ConnectorSignIn, { label: string; tone: string }> = {
-  signed_in: { label: 'Working', tone: 'border-status-online/30 bg-status-online/12 text-status-online' },
-  expired: { label: 'Reconnect needed', tone: 'border-status-warning/30 bg-status-warning/12 text-status-warning' },
-  signed_out: { label: 'Not signed in', tone: 'border-status-warning/30 bg-status-warning/12 text-status-warning' },
-  not_installed: { label: 'Not installed', tone: 'border-status-error/30 bg-status-error/12 text-status-error' },
-  unknown: { label: "Can't tell yet", tone: 'border-border bg-muted/40 text-muted-foreground' },
+const STATUS_LABEL: Record<ConnectionDisplayStatus, string> = {
+  healthy: 'Healthy',
+  needs_you: 'Needs you',
+  syncing: 'Syncing',
+  error: 'Error',
+  unknown: 'Not checked yet',
 }
 
-function SignInChip({ signIn }: { signIn: ConnectorSignIn }) {
-  const chip = SIGN_IN_CHIP[signIn]
+// The one line under the chip, built only from the stored health row.
+function statusLine(inst: ConnectorInstance): string {
+  switch (inst.display_status) {
+    case 'healthy':
+      return inst.last_checked_at ? `Healthy · checked ${relativeTime(inst.last_checked_at)}` : 'Healthy'
+    case 'needs_you':
+      return `Needs you: ${inst.reason_text ?? ''}`.trim()
+    case 'error':
+      return `Error: ${inst.reason_text ?? ''}`.trim()
+    case 'syncing':
+      return 'Syncing'
+    default:
+      return 'Not checked yet'
+  }
+}
+
+function noticeLine(notice: ConnectionNotice): string {
+  return notice.delivered
+    ? `Told you on ${notice.channel} at ${fmtTime(notice.at)}`
+    : 'Could not notify you'
+}
+
+function ConnectionStatusChip({ status }: { status: ConnectionDisplayStatus }) {
   return (
     <span
-      data-sign-in-chip
-      className={cn('rounded-sm border px-1.5 py-0.5 text-[11px] font-medium', chip.tone)}
+      data-status-chip={status}
+      className={cn(
+        'rounded-sm border px-1.5 py-0.5 text-[11px] font-medium',
+        STATUS_TONE[status],
+      )}
     >
-      {chip.label}
+      {STATUS_LABEL[status]}
     </span>
   )
 }
+
+type OpenPanel = 'auth' | 'doctor' | null
 
 function ConnectionCard({
   inst,
   bundle,
   agents,
   operatorMode,
+  focused,
   onReauth,
 }: {
   inst: ConnectorInstance
@@ -178,68 +210,115 @@ function ConnectionCard({
   /** The whole fleet, so the card can show who does NOT hold this as well. */
   agents: Agent[]
   operatorMode: boolean
+  /** Deep-linked from a notice: scroll into view and outline. */
+  focused: boolean
   onReauth: (bundle: CatalogBundle, instance: string) => void
 }) {
   const probe = useProbeConnector(inst.instance)
   const approve = useApproveConnector(inst.instance)
   const remove = useRemoveConnector()
-  const [showDoctor, setShowDoctor] = useState(false)
+  const [panel, setPanel] = useState<OpenPanel>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (focused) cardRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [focused])
 
   const busy = probe.isPending || approve.isPending || remove.isPending
   // No declared secrets means the host binary holds the credential: there is
-  // nothing to type, so this card signs in rather than opening a blank form.
+  // nothing to type, so there is no key form to open.
   const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
-  // A native OAuth connector (e.g. Dropbox) HAS secrets — the app key/secret,
-  // supplied via Re-auth — but is finished by an authorization CODE, not a typed
-  // token. It therefore needs BOTH: Re-auth to set the app key/secret, and the
-  // Sign-in panel to run the code exchange. Without surfacing the code flow, the
-  // operator kept pasting a "refresh token" they could never obtain.
-  const authz = useConnectorAuthorization(inst.instance, true)
-  const isOauth = authz.data?.oauth === true
-  // A host program whose sign-in finishes in the browser (Google via gog): this
-  // card signs in with a consent link and a pasted address, and its Re-auth
-  // form only edits the account and client — it never holds a credential.
-  const remoteLogin = authz.data?.hosts?.some((h) => h.remote_login) === true
-  const signIn: ConnectorSignIn = authz.data?.sign_in ?? 'unknown'
-  const account = authz.data?.credentials.find((c) => c.name === 'account')?.value ?? ''
-  // Open the sign-in by default when the account needs one; the person's own
-  // toggle wins once they touch it.
-  const needsSignIn = remoteLogin && (signIn === 'expired' || signIn === 'signed_out')
-  const [authToggled, setAuthToggled] = useState<boolean | null>(null)
-  const showAuth = authToggled ?? needsSignIn
-  const setShowAuth = (open: boolean) => setAuthToggled(open)
+  const kind = inst.connect_kind
+  const remoteLogin = kind === 'remote_login'
+  const reauthLabel = kind === 'oauth' ? 'App key/secret' : remoteLogin ? 'Edit details' : 'Re-auth'
+  const togglePanel = (next: Exclude<OpenPanel, null>) =>
+    setPanel((current) => (current === next ? null : next))
+
+  const primaryClick: Partial<Record<ConnectionAction, () => void>> = {
+    reconnect: () => togglePanel('auth'),
+    approve: () => approve.mutate(),
+    install_host: () => togglePanel('doctor'),
+  }
+  const onPrimary = primaryClick[inst.action]
 
   return (
-    <div data-connection-card className="rounded-lg border border-border bg-card">
+    <div
+      ref={cardRef}
+      data-connection-card
+      className={cn(
+        'rounded-lg border border-border bg-card',
+        focused && 'ring-2 ring-primary',
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 p-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="font-display text-[15px] font-semibold text-foreground">
-            {inst.instance}
-          </span>
-          <span
-            title={inst.extension}
-            className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-          >
-            {inst.extension_display_name}
-          </span>
-          {remoteLogin && (
-            <div className="flex w-full flex-wrap items-center gap-2">
-              {account && <span className="text-xs text-muted-foreground">{account}</span>}
-              <SignInChip signIn={signIn} />
-            </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-display text-[15px] font-semibold text-foreground">
+              {inst.instance}
+            </span>
+            <span
+              title={inst.extension}
+              className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+            >
+              {inst.extension_display_name}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ConnectionStatusChip status={inst.display_status} />
+            <span data-status-line className="text-xs text-muted-foreground">
+              {statusLine(inst)}
+            </span>
+          </div>
+          {inst.last_notice && (
+            <p className="text-[11px] text-muted-foreground">{noticeLine(inst.last_notice)}</p>
+          )}
+          {probe.isError && (
+            <p className="text-[11px] text-destructive">{probe.error.message}</p>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1 text-right">
-          <ReachabilityChip probe={probe} />
-          {probe.isError ? (
-            <span className="text-[11px] text-destructive">{probe.error.message}</span>
-          ) : (
-            probe.data?.detail && (
-              <span className="text-[11px] text-muted-foreground">{probe.data.detail}</span>
-            )
-          )}
-        </div>
+        {operatorMode && (
+          <div className="flex items-center gap-1.5">
+            {onPrimary && inst.action_label && (
+              <Button size="xs" disabled={busy} onClick={onPrimary}>
+                {inst.action_label}
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="xs">
+                  Advanced <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={busy} onSelect={() => probe.mutate()}>
+                  <RefreshCw /> Check now
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => togglePanel('doctor')}>
+                  <Stethoscope /> {panel === 'doctor' ? 'Hide doctor' : 'Doctor'}
+                </DropdownMenuItem>
+                {!holdsOwnLogin && (
+                  <DropdownMenuItem
+                    disabled={busy || !bundle}
+                    onSelect={() => bundle && onReauth(bundle, inst.instance)}
+                  >
+                    <LogIn /> {reauthLabel}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem disabled={busy} onSelect={() => approve.mutate()}>
+                  <ShieldCheck /> Approve tools
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={() => setConfirmRemove(true)}
+                >
+                  <Trash2 /> Remove
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       <div className="space-y-1.5 border-t border-border px-4 py-3">
@@ -265,115 +344,41 @@ function ConnectionCard({
         ) : inst.agents.length === 0 ? (
           <p className="text-[11px] text-muted-foreground">Grant this connection to an agent first.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {inst.agents.map((holder) => {
-              const agent = agents.find((candidate) => grantName(candidate) === holder)
-              return agent ? (
-                <ConnectionKnowledgeAction
-                  key={holder}
-                  agent={agent}
-                  connectionId={inst.instance}
-                  operatorMode={operatorMode}
-                />
-              ) : null
-            })}
+          <div className="space-y-1.5">
+            {inst.knowledge_sync.map((row) => (
+              <KnowledgeSyncRow key={`${row.agent}:${row.source_id}`} row={row} />
+            ))}
+            <div className="flex flex-wrap gap-1.5">
+              {inst.agents.map((holder) => {
+                const agent = agents.find((candidate) => grantName(candidate) === holder)
+                return agent ? (
+                  <ConnectionKnowledgeAction
+                    key={holder}
+                    agent={agent}
+                    connectionId={inst.instance}
+                  />
+                ) : null
+              })}
+            </div>
           </div>
         )}
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-4 py-3">
-        <Button variant="ghost" size="xs" onClick={() => setShowDoctor(!showDoctor)}>
-          <Stethoscope /> {showDoctor ? 'Hide doctor' : 'Doctor'}
-        </Button>
         <FieldHelp helpKey="connection.check" route="connections" />
-        {operatorMode && (
+        {operatorMode && confirmRemove && (
           <>
             <Button
-              variant="outline"
+              variant="destructive"
               size="xs"
               disabled={busy}
-              onClick={() => probe.mutate()}
-              title="Open a live connection and report what it serves"
+              onClick={() => remove.mutate(inst.instance)}
             >
-              <RefreshCw /> Probe
+              Confirm remove
             </Button>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={busy}
-              onClick={() => approve.mutate()}
-              title="Record the tool contract this connection serves right now"
-            >
-              <ShieldCheck /> Approve
+            <Button variant="ghost" size="xs" onClick={() => setConfirmRemove(false)}>
+              Cancel
             </Button>
-            {(holdsOwnLogin || isOauth || remoteLogin) && (
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => setShowAuth(!showAuth)}
-                title={
-                  isOauth
-                    ? `Connect ${inst.extension_display_name} — open the URL and paste the code`
-                    : remoteLogin
-                      ? `Sign in to ${account || 'this account'} from your browser`
-                      : `Check or renew the ${inst.extension_display_name} sign-in on this computer`
-                }
-              >
-                <LogIn />{' '}
-                {showAuth
-                  ? 'Hide sign-in'
-                  : isOauth
-                    ? 'Connect'
-                    : remoteLogin && signIn === 'expired'
-                      ? 'Reconnect'
-                      : 'Sign in'}
-              </Button>
-            )}
-            {!holdsOwnLogin && (
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={busy || !bundle}
-                onClick={() => bundle && onReauth(bundle, inst.instance)}
-                title={
-                  bundle
-                    ? isOauth
-                      ? 'Set or replace the app key and secret'
-                      : remoteLogin
-                        ? 'Change which account and client this connection uses'
-                        : 'Replace this connection’s credentials'
-                    : `${inst.extension_display_name} is no longer on the extension search path`
-                }
-              >
-                {isOauth ? 'App key/secret' : remoteLogin ? 'Edit details' : 'Re-auth'}
-              </Button>
-            )}
-            {confirmRemove ? (
-              <>
-                <Button
-                  variant="destructive"
-                  size="xs"
-                  disabled={busy}
-                  onClick={() => remove.mutate(inst.instance)}
-                >
-                  Confirm remove
-                </Button>
-                <Button variant="ghost" size="xs" onClick={() => setConfirmRemove(false)}>
-                  Cancel
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="ghost"
-                size="xs"
-                disabled={busy}
-                onClick={() => setConfirmRemove(true)}
-                className="text-destructive hover:text-destructive"
-                title="Remove this connection and its stored credentials"
-              >
-                <Trash2 /> Remove
-              </Button>
-            )}
           </>
         )}
       </div>
@@ -395,7 +400,7 @@ function ConnectionCard({
         </div>
       )}
 
-      {showAuth && (
+      {operatorMode && panel === 'auth' && (
         <div className="border-t border-border p-4">
           {remoteLogin ? (
             <RemoteSignInPanel
@@ -412,7 +417,7 @@ function ConnectionCard({
           )}
         </div>
       )}
-      {showDoctor && (
+      {panel === 'doctor' && (
         <div className="border-t border-border p-4">
           <DoctorPanel instance={inst.instance} />
         </div>
@@ -421,67 +426,44 @@ function ConnectionCard({
   )
 }
 
+// One agent's sync of this connection, straight from the stored row.
+function KnowledgeSyncRow({ row }: { row: ConnectionKnowledgeSync }) {
+  return (
+    <div data-knowledge-row className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+      <span className="font-medium text-foreground">{row.agent}</span>
+      <span>Last sync: {row.last_synced_at ? relativeTime(row.last_synced_at) : 'Never'}</span>
+      <span>{row.pages} pages</span>
+      {row.error_code && <span className="text-destructive">{row.error_code}</span>}
+      {row.running && <span className="font-medium text-status-online">Syncing</span>}
+    </div>
+  )
+}
+
+// Always navigates: whether the source is enrolled is the Knowledge page's
+// question, not this card's, and asking here polled every agent every 10 s.
 function ConnectionKnowledgeAction({
   agent,
   connectionId,
-  operatorMode,
 }: {
   agent: Agent
   connectionId: string
-  operatorMode: boolean
 }) {
   const navigate = useNavigate()
   const agentId = agent.agent_id ?? grantName(agent)
-  const sources = useConnectedSources(agentId)
-  const activate = useActivateConnectedData(agentId)
-  const enrolled = sources.data?.items.some(
-    (source) => source.connection_id === connectionId || source.connection_id.startsWith(`${connectionId}:`),
-  )
-  const unavailable = sources.data?.status === 'degraded'
   const label = agentLabel(agent)
-
   return (
     <Button
-      variant={enrolled ? 'outline' : 'secondary'}
+      variant="outline"
       size="xs"
-      disabled={
-        sources.isLoading ||
-        activate.isPending ||
-        (unavailable && !operatorMode) ||
-        (!unavailable && !enrolled)
+      onClick={() =>
+        navigate(
+          `/knowledge?agent=${encodeURIComponent(agentId)}&tab=connections&connection=${encodeURIComponent(connectionId)}`,
+        )
       }
-      onClick={() => {
-        if (unavailable) {
-          activate.mutate(undefined, {
-            onSuccess: () =>
-              navigate(
-                `/knowledge?agent=${encodeURIComponent(agentId)}&tab=connections&connection=${encodeURIComponent(connectionId)}`,
-              ),
-          })
-          return
-        }
-        navigate(`/knowledge?agent=${encodeURIComponent(agentId)}&tab=connections&connection=${encodeURIComponent(connectionId)}`)
-      }}
-      title={
-        unavailable
-          ? operatorMode
-            ? `Enable Knowledge sync for ${label}`
-            : `Operator controls are required to enable Knowledge sync for ${label}`
-          : enrolled
-            ? `Choose resources, approve mapping, and sync ${connectionId} for ${label}`
-            : `${connectionId} is not yet available to ${label}'s Knowledge module`
-      }
+      title={`Choose resources, approve mapping, and sync ${connectionId} for ${label}`}
     >
       <BookOpen />
-      {activate.isPending
-        ? `${label}: enabling…`
-        : sources.isLoading
-          ? `${label}: checking…`
-          : unavailable
-            ? `${label}: enable sync`
-          : enrolled
-            ? `${label}: configure & sync`
-            : `${label}: not indexable`}
+      {`${label}: configure & sync`}
     </Button>
   )
 }
@@ -561,7 +543,7 @@ export function BundleCard({
             <FieldHelp helpKey="connection.bundle" route="connections" />
             {perAccount && (
               <p className="mt-1.5 text-[11px] text-muted-foreground">
-                Each account is its own connection. After adding it, click Sign in on its card.
+                Each account is its own connection. After adding it, click the sign-in button on its card.
               </p>
             )}
           </>
@@ -593,6 +575,8 @@ export function ConnectionsPage() {
   const roster = useRoster()
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
   const [operatorMode] = useOperatorMode()
+  const [searchParams] = useSearchParams()
+  const focusInstance = searchParams.get('focus')
 
   const catalog = useConnectorCatalog()
   const connections = useConnections()
@@ -653,6 +637,7 @@ export function ConnectionsPage() {
                       bundle={bundleFor(inst.extension)}
                       agents={agents}
                       operatorMode={operatorMode}
+                      focused={focusInstance === inst.instance}
                       onReauth={(bundle, instance) => setSheet({ bundle, instance })}
                     />
                   ))}
