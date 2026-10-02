@@ -63,7 +63,6 @@ from arctrust.paths import identity_dir, module_root, operator_dir
 
 from arcagent.core import turn_context
 from arcagent.core.agent import ArcAgent
-from arcagent.core.control_contract import SignedControlRevision
 from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
@@ -73,6 +72,7 @@ from arcagent.core.config import (
     SecurityConfig,
     TelemetryConfig,
 )
+from arcagent.core.control_contract import SignedControlRevision
 
 # The repository source tree modules are bundled FROM. Resolved from the repo
 # layout, never from ``arcagent.__file__``: SPEC-066 removes ``modules/`` from

@@ -833,7 +833,7 @@ class TestTraceStoreEdgePaths:
 
         # New store should detect tamper during warm-start tail verification
         store2 = JSONLTraceStore(agent_root)
-        with pytest.raises(RuntimeError, match="broken chain|invalid record hash"):
+        with pytest.raises(RuntimeError, match=r"broken chain|invalid record hash"):
             await store2._warm_start()
 
     @pytest.mark.asyncio
