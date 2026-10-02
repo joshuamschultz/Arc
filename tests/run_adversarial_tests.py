@@ -27,6 +27,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # trusted by the once-per-run incremental refresh; a non-canonical one
         # is refused on read and by the operator view.
         "packages/arcmemory/tests/security/test_connected_index_tampering.py",
+        "packages/arcmemory/tests/security/test_per_folder_index_tamper.py",
         "packages/arcmemory/tests/unit/test_collection_index_pipeline.py",
     ),
     "prompt replacement and instruction-boundary attacks": (

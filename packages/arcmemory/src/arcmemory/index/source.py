@@ -16,12 +16,14 @@ from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
-from arcokf import OKFValidationError
+from arcokf import IndexEntry, OKFValidationError
 from pydantic import BaseModel
 
-from arcmemory.collection_index import memory_collection, routing_text
-from arcmemory.mdfile import parse_document
+from arcmemory.collection_index import memory_maintainer, routing_text
+from arcmemory.mdfile import card_files, parse_document
+from arcmemory.security import dominating_classification
 from arcmemory.types import Event
 
 # Curated markdown source directories, in a fixed order (determinism).
@@ -53,7 +55,7 @@ EMBED_TEXT_MAX_CHARS = 8_000
 #: deterministic rebuild filter on (both walk ``iter_source_chunks``).
 BOOKKEEPING_ENTITY_TYPES = frozenset({"mapping", "source", "blob_folder", "db_table"})
 
-_DIGEST_RE = re.compile(r" — sha256:[0-9a-f]+")
+_FOLDER_COUNT_RE = re.compile(r" - \d+ docs?$")
 _LINK_TARGET_RE = re.compile(r"\]\(([^)]+)\)")
 
 # Human-readable frontmatter fields worth embedding alongside the body.
@@ -100,7 +102,7 @@ def iter_source_chunks(
         directory = mem_dir / subdir
         if not directory.exists():
             continue
-        for path in sorted(directory.glob("*.md")):
+        for path in card_files(directory):
             # as_posix() keeps source identifiers stable across OSes — on Windows
             # str() would emit backslashes and fork the chunk_id from Unix.
             rel = path.relative_to(workspace).as_posix()
@@ -140,37 +142,64 @@ def iter_source_chunks(
 
 
 def _routing_chunks(mem_dir: Path, workspace: Path, excluded: set[str]) -> Iterator[SourceChunk]:
-    """The collection ``index.md`` routing lines, minus bookkeeping and digests.
+    """One chunk per verified folder ``index.md``: its routing lines and nothing else.
 
-    ``index.md`` is a derived routing artifact, never part of the inventory it
-    describes. A reader may use it only after the owning collection service has
-    produced a canonical, digest-verified file; tampering therefore degrades to
-    ordinary document recall instead of becoming trusted instructions.
-
-    Lines that link a bookkeeping card (``excluded``: collected by the file walk,
-    which never skips those — they are never stored) are dropped, and the
-    machine ``sha256:`` digest on each line is stripped so a content-only change
-    elsewhere does not re-embed the routing text. A large inventory's routing
-    lines can STILL run to megabytes, so this goes through the size bound too —
-    one collection index must never become a single chunk that overflows the
-    Postgres tsvector limit.
+    A folder index is a derived routing artifact, never part of the inventory it
+    describes. A reader may use it only after the owning maintainer produced a
+    canonical file whose digest sidecar still matches (O(1) per folder, never a
+    re-hash of the documents); tampering therefore degrades to ordinary document
+    recall instead of becoming trusted instructions. Only headings and listing
+    lines are embedded: never the root's ``okf_version`` frontmatter, the digest
+    sidecar, or the dirty journal. Lines linking a bookkeeping card (``excluded``)
+    are dropped, and folder document counts are stripped so a new card does not
+    re-embed the root listing.
     """
-    collection_index = memory_collection(mem_dir)
-    if not collection_index.verify():
-        return
-    index_path = collection_index.index_path
-    rel = index_path.relative_to(workspace).as_posix()
-    lines = [
-        _DIGEST_RE.sub("", line)
-        for line in routing_text(index_path.read_text(encoding="utf-8")).splitlines()
-        if not _links_excluded(line, excluded)
+    maintainer = memory_maintainer(mem_dir)
+    for sub in ("", *_SOURCE_SUBDIRS):
+        folder = mem_dir / sub if sub else mem_dir
+        validation = maintainer.validate(folder)
+        if not validation.valid:
+            continue
+        index_path = folder / "index.md"
+        rel = index_path.relative_to(workspace).as_posix()
+        lines = [
+            _FOLDER_COUNT_RE.sub("", line)
+            for line in routing_text(index_path.read_text(encoding="utf-8")).splitlines()
+            if not _links_excluded(line, excluded, sub)
+        ]
+        yield from bounded_chunks(
+            f"file:{rel}",
+            rel,
+            "\n".join(lines),
+            _routing_label(validation.entries, excluded, sub),
+            index_path.stat().st_mtime,
+        )
+
+
+def _routing_label(entries: tuple[IndexEntry, ...], excluded: set[str], folder: str) -> str:
+    """The label a folder's routing chunk is gated on: its most restrictive listed document.
+
+    A listed document with no label makes the chunk unlabeled (""), which the
+    no-read-up gate fails closed on at federal, exactly as for an unlabeled card.
+    Bookkeeping cards are not listed in the chunk, so they do not count.
+    """
+    listed = [
+        entry
+        for entry in entries
+        if not entry.is_folder and f"{folder}/{entry.path}".lstrip("/") not in excluded
     ]
-    yield from bounded_chunks(f"file:{rel}", rel, "\n".join(lines), "", index_path.stat().st_mtime)
+    labels = [entry.classification for entry in listed]
+    if any(not label for label in labels):
+        return ""
+    return dominating_classification(labels)
 
 
-def _links_excluded(line: str, excluded: set[str]) -> bool:
+def _links_excluded(line: str, excluded: set[str], folder: str) -> bool:
     match = _LINK_TARGET_RE.search(line)
-    return match is not None and match.group(1) in excluded
+    if match is None:
+        return False
+    target = unquote(match.group(1))
+    return (f"{folder}/{target}" if folder else target) in excluded
 
 
 def render_index_text(frontmatter: dict[str, Any], body: str) -> str:

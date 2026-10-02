@@ -56,12 +56,12 @@ What makes `arcokf` a safe document boundary rather than a Markdown reader:
 - **Reserved workspace files** — `context.md`, `index.md`, and `log.md` may omit frontmatter, and are refused if they try to *become* typed concept documents
 - **Format boundary is explicit** — operational TOML, JSON, JSONL, signatures, and audit files are not OKF documents and are intentionally outside this contract
 
-### **Deterministic Collection Indexes**
+### **Deterministic Per-Folder Indexes**
+- **Spec-shaped listing** — `# <type>` groups of `* [Title](doc.md) - description`; only the bundle-root index carries frontmatter, and only `okf_version`
 - **Canonical round-trip check** — an index that is not byte-identical to its own re-render is reported as non-canonical or tampered
-- **Hash-verifiable inventory** — one SHA-256 digest over the whole canonical entry list, plus a per-document digest, so a stale or edited corpus is detectable without re-reading it
-- **Classification floor** — only documents explicitly labelled `classification: unclassified` enter a shared index; missing, malformed, or elevated labels are never listed
-- **Path guards** — absolute paths, `..` traversal, non-`.md` suffixes, reserved names, and operational directories (`.git`, `.arc`, `audit`, `secrets`, `credentials`, …) are refused at entry construction
-
+- **Sidecar digest** — a `.index.digest` file commits the index's SHA-256 and every listed document's SHA-256; shallow verification is O(1), deep verification O(folder)
+- **Nothing silently vanishes** — classified documents are listed with their label so a reader can gate on it
+- **Path guards** — absolute paths, `..` traversal, sub-paths, non-`.md` suffixes, and reserved names are refused
 ---
 
 ## 🏗️ Where It Fits
@@ -176,34 +176,27 @@ to know *everything* wrong with them before it writes any of them. An exception 
 problem and destroys the rest of the pass; a `ValidationResult` reports all of them and leaves the
 decision — and the write — to the caller.
 
-### Collection Indexes (`arcokf.index`)
+### Folder Indexes (`arcokf.index`)
 
-A collection index is deliberately a plain reserved `index.md`. Machine-readable HTML entry comments
-make validation unambiguous while the adjacent Markdown links stay useful to a person reading the
-folder. `arcokf` only renders and validates; the owning store decides when to write one.
+Every folder may carry a reserved `index.md`: a grouped listing an agent reads to see what a folder
+holds before opening any file. `arcokf` only renders, parses and validates; the owning store decides
+when to write one.
 
 | Symbol | What It Does |
 |---|---|
-| `CollectionEntry` | One authorized document: relative `path`, `title`, SHA-256 `digest`, one-line `summary` |
-| `render_collection_index(entries)` | Render the canonical index — sorted by path, with a whole-inventory SHA-256 and a per-entry JSON comment |
-| `validate_collection_index(index, root=None)` | Parse and canonicality-check an index; with a `root`, also re-inventory the tree, re-digest every listed file, and re-lint it as OKF |
-| `inventory_documents(root)` | Deterministically enumerate the authorized documents under `root` |
-| `document_entry(path, root)` | Build one entry for a single document without walking its siblings; returns `None` when the document is invalid or not `unclassified` |
-| `CollectionIndexValidation` | `valid`, `error`, and the parsed `entries` |
-| `CollectionIndexError` | Raised internally for any entry that cannot be represented safely; surfaced as `error` text |
-
-Short aliases `render_index` and `validate_index` live on the submodule (`arcokf.index`); the
-explicit names are the documented public API off the package root.
+| `IndexEntry` | One line: `path`, `title`, `description`, `group` (document `type`), `classification` label |
+| `render_folder_index(entries, root=…)` | Render the canonical index: folders first, then one `#` group per type |
+| `validate_folder_index(folder, root=…, deep=…)` | Verify ONE folder against its sidecar (shallow O(1), deep O(folder)) |
+| `folder_entry(path)` | Build the entry for one document (every valid document is listed, with its label) |
 
 **Why the round-trip check:** the index re-renders the entries it just parsed and compares the result
 to the file byte for byte. Anything a hand edit could do — reordering, an added link line, a tweaked
 summary, a swapped digest — changes those bytes, so tamper detection needs no separate signature and
 no second source of truth.
 
-**Why the classification floor:** a shared index is safe for the lowest clearance only. A document
-with a missing, malformed, or elevated `classification` label is silently omitted rather than listed,
-so an index can never advertise the existence of something its readers may not see. A
-higher-clearance collection gets its own owner and its own index.
+**Why every document is listed with its label:** silently omitting classified documents left
+cleared agents with an empty index. An entry now carries `(classification: <label>)` and the reader
+gates on it, so nothing vanishes and nothing is shown below its clearance.
 
 ---
 

@@ -14,6 +14,8 @@ from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 
+from arcmemory.mdfile import card_files
+
 
 @lru_cache(maxsize=2048)
 def _phrase_regex(slug: str) -> re.Pattern[str]:
@@ -38,7 +40,7 @@ def entity_vocabulary(mem_dir: Path, seed_vocab: Iterable[str] = ()) -> set[str]
     vocab = set(seed_vocab)
     entities_dir = mem_dir / "entities"
     if entities_dir.exists():
-        vocab.update(p.stem for p in entities_dir.glob("*.md"))
+        vocab.update(p.stem for p in card_files(entities_dir))
     return vocab
 
 

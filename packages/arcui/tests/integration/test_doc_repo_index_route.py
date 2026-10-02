@@ -154,7 +154,7 @@ def test_operator_reads_verified_index(app_with_index: tuple[Any, str]) -> None:
     body = resp.json()
     assert body["present"] and body["verified"]
     assert body["document_count"] == 1 and body["entries"]
-    assert body["markdown"].startswith("# Collection Index")
+    assert body["markdown"].startswith("# ")
 
 
 def test_viewer_is_forbidden(app_with_index: tuple[Any, str]) -> None:

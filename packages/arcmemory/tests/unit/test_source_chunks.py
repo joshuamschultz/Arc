@@ -10,9 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from arcmemory.collection_index import CollectionIndexStore
+from arcmemory.collection_index import memory_maintainer
 from arcmemory.index.source import MAX_CHUNK_BYTES, iter_source_chunks
 from arcmemory.types import Event
 
@@ -141,29 +139,73 @@ def test_file_too_large_for_okf_degrades_instead_of_aborting_the_walk(workspace:
         assert len(c.text.encode("utf-8")) <= MAX_CHUNK_BYTES
 
 
-def test_oversized_collection_index_splits_into_bounded_windows(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A large memory ``index.md`` (a fleet with thousands of routing lines) must
-    not become one chunk that overflows the tsvector limit — it too is bounded.
-    The validator is stubbed valid so the test exercises only the size path."""
+def test_oversized_folder_index_splits_into_bounded_windows(workspace: Path) -> None:
+    """A large folder ``index.md`` (thousands of routing lines) must not become
+    one chunk that overflows the tsvector limit — it too is bounded."""
     mem = workspace / "memory"
-    mem.mkdir(parents=True)
-    routing = "\n".join(
-        f"- [entities/item_{i:05d}.md](entities/item_{i:05d}.md)" for i in range(2000)
-    )
-    (mem / "index.md").write_text(f"# Inventory\n{routing}\n", encoding="utf-8")
-    assert len((mem / "index.md").read_text("utf-8").encode("utf-8")) > MAX_CHUNK_BYTES
-    monkeypatch.setattr(CollectionIndexStore, "verify", lambda self: True)
+    for i in range(1500):
+        _entity_file(
+            workspace,
+            f"item-{i:05d}",
+            f"---\ntype: Entity\ntitle: Item {i:05d} {'x' * 30}\n---\n\nbody\n".encode(),
+        )
+    memory_maintainer(mem).sync_all()
+    index = mem / "entities" / "index.md"
+    assert len(index.read_text("utf-8").encode("utf-8")) > MAX_CHUNK_BYTES
 
     chunks = [
-        c for c in iter_source_chunks(mem, workspace, []) if c.source_path == "memory/index.md"
+        c
+        for c in iter_source_chunks(mem, workspace, [])
+        if c.source_path == "memory/entities/index.md"
     ]
 
     assert len(chunks) >= 2
-    assert chunks[0].chunk_id == "file:memory/index.md"
+    assert chunks[0].chunk_id == "file:memory/entities/index.md"
     for c in chunks:
         assert len(c.text.encode("utf-8")) <= MAX_CHUNK_BYTES
+
+
+def test_index_chunks_contain_routing_lines_only(workspace: Path) -> None:
+    """Embedded index text is headings + listing lines: never ``okf_version``
+    frontmatter, digests, the sidecar, or the dirty journal."""
+    mem = workspace / "memory"
+    _entity_file(
+        workspace,
+        "felix",
+        b"---\ntype: Entity\ntitle: Felix\nclassification: unclassified\n---\n\nthe feline\n",
+    )
+    _entity_file(
+        workspace,
+        "ledger",
+        b"---\ntype: Entity\nentity_type: mapping\ntitle: Ledger\n---\n\nbookkeeping\n",
+    )
+    memory_maintainer(mem).sync_all()
+    (mem / ".dirty").write_text("entities\n", encoding="utf-8")
+
+    chunks = list(iter_source_chunks(mem, workspace, []))
+
+    by_id = {c.chunk_id: c for c in chunks}
+    root = by_id["file:memory/index.md"]
+    assert root.text == "# Folders\n* [entities/](entities/index.md)"  # no count, no frontmatter
+    folder = by_id["file:memory/entities/index.md"]
+    assert (
+        folder.text == "# Entity\n* [Felix](felix.md) - the feline (classification: unclassified)"
+    )  # bookkeeping card dropped
+    assert folder.classification == "unclassified"
+    for chunk in chunks:
+        assert "okf_version" not in chunk.text
+        assert "sha256" not in chunk.text
+    assert not any(c.source_path.endswith((".index.digest", ".dirty")) for c in chunks)
+
+
+def test_unlabeled_listed_document_makes_the_routing_chunk_fail_closed(workspace: Path) -> None:
+    mem = workspace / "memory"
+    _entity_file(workspace, "bare", b"---\ntype: Entity\ntitle: Bare\n---\n\nno label\n")
+    memory_maintainer(mem).sync_all()
+
+    chunks = {c.chunk_id: c for c in iter_source_chunks(mem, workspace, [])}
+
+    assert chunks["file:memory/entities/index.md"].classification == ""
 
 
 def test_oversized_event_splits_into_bounded_windows(workspace: Path) -> None:

@@ -64,7 +64,7 @@ def test_apply_rewrites_to_valid_okf_and_is_idempotent(tmp_path: Path) -> None:
     assert [p.name for p in report.migrated] == ["acme-corp.md"]
     assert lint(legacy).valid
     text = legacy.read_text(encoding="utf-8")
-    assert "type: ArcMemory" in text
+    assert "type: Note" in text
     assert "slug: acme-corp" in text
     assert "Acme Corp" in text
 

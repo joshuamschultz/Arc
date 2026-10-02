@@ -197,6 +197,18 @@ class MemoryConfig(BaseModel):
         default=True, description="surface WHEN-stamps, supersession, and temporal ranking"
     )
 
+    # OKF index walk — retrieval that reads root index -> folder index -> documents
+    # (deterministic BM25 over the routing lines) and fuses with vec/BM25/graph.
+    okf_walk_enabled: bool = Field(
+        default=True, description="fuse the per-folder OKF index walk into recall"
+    )
+    okf_walk_top_folders: int = Field(
+        default=3, ge=1, description="folders descended into per level of the index walk"
+    )
+    okf_walk_top_docs: int = Field(
+        default=10, ge=1, description="documents the index walk contributes to fusion"
+    )
+
     # -- Data-source ingestion & routing (SPEC-073) -----------------------------
     # Document-search axis: how a blob body is chunked before embedding.
     doc_chunk_tokens: int = Field(

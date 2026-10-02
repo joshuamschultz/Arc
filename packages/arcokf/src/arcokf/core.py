@@ -25,6 +25,9 @@ MAX_FRONTMATTER_BYTES = 256_000
 MAX_NESTING = 32
 MAX_ALIASES = 16
 VERSION = "0.2"
+#: The only frontmatter a bundle-root ``index.md`` may carry (OKF v0.2).
+ROOT_INDEX_METADATA = {"okf_version": VERSION}
+_RESERVED_NAMES = frozenset({"context.md", "index.md", "log.md"})
 
 
 class DiagnosticCode(StrEnum):
@@ -39,6 +42,7 @@ class DiagnosticCode(StrEnum):
     TOO_MANY_ALIASES = "too_many_aliases"
     WIKI_LINK = "wiki_link"
     RESERVED_DOCUMENT = "reserved_document"
+    INVALID_FIELD = "invalid_field"
 
 
 @dataclass(frozen=True)
@@ -169,7 +173,50 @@ def _frontmatter(text: str, path: str | None) -> tuple[dict[str, Any], str, list
     return metadata, text[end + 4 :], diagnostics
 
 
-def validate(source: str | bytes, *, path: str | None = None) -> ValidationResult:
+def _reserved_diagnostics(
+    text: str, metadata: dict[str, Any], basename: str, path: str | None, bundle_root: bool
+) -> list[Diagnostic]:
+    """Reserved names are never concept documents; only a root index may say ``okf_version``."""
+    if not text.startswith("---\n"):
+        return []
+    if basename == "index.md" and bundle_root and metadata == ROOT_INDEX_METADATA:
+        return []
+    return [
+        Diagnostic(
+            DiagnosticCode.RESERVED_DOCUMENT,
+            f"{basename} cannot be a concept document",
+            path,
+        )
+    ]
+
+
+def _concept_diagnostics(metadata: dict[str, Any], path: str | None) -> list[Diagnostic]:
+    """``type`` is required; ``title``/``description``/``generated`` are checked when present."""
+    diagnostics: list[Diagnostic] = []
+    kind = metadata.get("type")
+    if "type" not in metadata or (isinstance(kind, str) and not kind.strip()):
+        diagnostics.append(
+            Diagnostic(DiagnosticCode.MISSING_TYPE, "concept requires a non-empty type", path)
+        )
+    elif not isinstance(kind, str):
+        diagnostics.append(Diagnostic(DiagnosticCode.INVALID_TYPE, "type must be a string", path))
+    for key in ("title", "description"):
+        if isinstance(metadata.get(key), dict | list):
+            diagnostics.append(
+                Diagnostic(DiagnosticCode.INVALID_FIELD, f"{key} must be a scalar", path)
+            )
+    generated = metadata.get("generated")
+    if generated is not None and not isinstance(generated, dict):
+        diagnostics.append(
+            Diagnostic(DiagnosticCode.INVALID_FIELD, "generated must be a mapping", path)
+        )
+    return diagnostics
+
+
+def validate(
+    source: str | bytes, *, path: str | None = None, bundle_root: bool = False
+) -> ValidationResult:
+    """Validate one OKF document; ``bundle_root`` marks the bundle's root ``index.md``."""
     text, decoding_error = _decode(source)
     if decoding_error:
         return ValidationResult(False, (decoding_error,))
@@ -183,25 +230,10 @@ def validate(source: str | bytes, *, path: str | None = None) -> ValidationResul
         )
     metadata, body, diagnostics = _frontmatter(text, path)
     basename = path.rsplit("/", 1)[-1] if path else None
-    if basename in {"context.md", "index.md", "log.md"}:
-        if text.startswith("---\n"):
-            diagnostics.append(
-                Diagnostic(
-                    DiagnosticCode.RESERVED_DOCUMENT,
-                    f"{basename} cannot be a concept document",
-                    path,
-                )
-            )
-    elif "type" not in metadata:
-        diagnostics.append(
-            Diagnostic(DiagnosticCode.MISSING_TYPE, "concept requires a non-empty type", path)
-        )
-    elif not isinstance(metadata["type"], str):
-        diagnostics.append(Diagnostic(DiagnosticCode.INVALID_TYPE, "type must be a string", path))
-    elif not metadata["type"].strip():
-        diagnostics.append(
-            Diagnostic(DiagnosticCode.MISSING_TYPE, "concept requires a non-empty type", path)
-        )
+    if basename in _RESERVED_NAMES:
+        diagnostics.extend(_reserved_diagnostics(text, metadata, basename, path, bundle_root))
+    else:
+        diagnostics.extend(_concept_diagnostics(metadata, path))
     if re.search(r"\[\[[^\]]+\]\]", body):
         diagnostics.append(
             Diagnostic(DiagnosticCode.WIKI_LINK, "wiki-links are not standard OKF links", path)
@@ -217,7 +249,7 @@ def parse(source: str | bytes, *, path: str | None = None) -> Document:
     return result.document
 
 
-def lint(path: Path) -> ValidationResult:
+def lint(path: Path, *, bundle_root: bool = False) -> ValidationResult:
     """Validate one UTF-8 document from disk, retaining its relative path."""
     try:
         source = path.read_bytes()
@@ -226,7 +258,7 @@ def lint(path: Path) -> ValidationResult:
             False,
             (Diagnostic(DiagnosticCode.INVALID_UTF8, str(error), path.as_posix()),),
         )
-    return validate(source, path=path.as_posix())
+    return validate(source, path=path.as_posix(), bundle_root=bundle_root)
 
 
 def render(document: Document) -> str:

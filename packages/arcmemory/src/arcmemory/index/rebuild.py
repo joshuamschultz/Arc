@@ -13,19 +13,20 @@ table is simply left empty -- retrieval degrades to BM25 + graph, never fails.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from collections.abc import Iterable
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Protocol
 
-from arcmemory.collection_index import memory_collection
+from arcmemory.collection_index import memory_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.degrade import warn_once
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.source import embed_text, iter_source_chunks
-from arcmemory.mdfile import parse_document
+from arcmemory.mdfile import card_files, parse_document
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import extract_wiki_links
@@ -170,11 +171,11 @@ class IndexRebuilder:
         not survive as orphans; ``insight_trigger`` so a poisoned abstraction-space
         vector cannot outlive the rebuild meant to fix it.
         """
-        # The collection index is a derived routing artifact, so its owning
-        # service refreshes it before this disposable SQLite cache is rebuilt.
-        # A tampered file is replaced from the canonical document inventory;
-        # retrieval never repairs it on its own.
-        memory_collection(self._mem_dir).sync()
+        # The per-folder indexes are derived routing artifacts, so their owning
+        # maintainer heals them (missing, tampered, stale folders only, off the
+        # loop) before this disposable SQLite cache is rebuilt. Retrieval never
+        # repairs an index on its own.
+        await asyncio.to_thread(memory_maintainer(self._mem_dir).sync_all)
         conn = self._db.connect()
         scope = self._scope.key
         # Snapshot existing vectors keyed by content hash BEFORE the wipe, so a
@@ -302,7 +303,7 @@ class IndexRebuilder:
             directory = self._mem_dir / subdir
             if not directory.exists():
                 continue
-            for path in sorted(directory.glob("*.md")):
+            for path in card_files(directory):
                 self._link_card(path, link_key, date_key)
 
     def _link_card(self, path: Path, link_key: str, date_key: str) -> None:

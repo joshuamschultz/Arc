@@ -27,7 +27,7 @@ from typing import Any
 
 import arcagent
 import arctrust
-from arcokf import OKFValidationError, render_collection_index, validate
+from arcokf import OKFValidationError, render_folder_index, validate
 from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import commented_module_surface
@@ -94,7 +94,7 @@ _DEFAULT_CONTEXT = """\
 Working memory for the agent. Updated during conversations.
 """
 
-_DEFAULT_INDEX = render_collection_index(())
+_DEFAULT_INDEX = render_folder_index((), root=False)
 
 AGENT_TIERS = ("personal", "enterprise", "federal")
 """Canonical deployment tiers, least to most stringent."""
