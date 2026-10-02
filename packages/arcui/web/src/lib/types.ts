@@ -1508,13 +1508,18 @@ export interface DocumentsResponse {
   items: DocHitItem[]
 }
 
-/** One authorized document in a verified collection index (mirror of
- *  `arcmemory.operator.CollectionIndexEntry`). */
+/** One line of a verified collection index: a document or a child folder
+ *  (mirror of `arcmemory.operator.CollectionIndexEntry`). `path` is
+ *  source-relative; a folder's `path` is the `folder` argument that opens it. */
 export interface CollectionIndexEntry {
+  kind: 'document' | 'folder'
   path: string
   title: string
   summary: string
+  classification: string
   digest: string
+  /** Recursive document count (folders only). */
+  count: number
 }
 
 /** A connected document source's verified OKF `index.md` — what's inside +
@@ -1522,6 +1527,8 @@ export interface CollectionIndexEntry {
  *  `markdown`/`entries` are populated ONLY when `verified` is true. */
 export interface CollectionIndexView {
   source_id: string
+  /** Source-relative folder this view lists (`''` is the source root). */
+  folder: string
   present: boolean
   verified: boolean
   document_count: number

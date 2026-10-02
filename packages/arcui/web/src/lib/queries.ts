@@ -773,12 +773,13 @@ export const useDocuments = (agentId: string | null, source: string, q: string) 
 
 /** One document source's verified OKF `index.md` — what's inside + purpose
  *  (H-026). Operator-gated + audited server-side; fail-closed on tamper. */
-export const useSourceIndex = (agentId: string | null, source: string) =>
+export const useSourceIndex = (agentId: string | null, source: string, folder = '') =>
   useQuery<CollectionIndexView>({
-    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index'],
+    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index', folder],
     queryFn: ({ signal }) =>
       apiGet(
-        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index`,
+        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index` +
+          (folder ? `?folder=${encodeURIComponent(folder)}` : ''),
         signal,
       ),
     enabled: !!agentId && !!source,
