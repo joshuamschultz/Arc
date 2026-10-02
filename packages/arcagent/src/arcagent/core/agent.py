@@ -90,6 +90,7 @@ from arcagent.knowledge import (
     SHARED_KNOWLEDGE_DETACHED,
     SharedKnowledgePort,
 )
+from arcagent.skilladapt import NullSkillAdapter, SkillAdapter
 from arcagent.streaming import (
     DeliveryStreamEvent,
     DeliveryTerminalEvent,
@@ -114,6 +115,8 @@ _DELIVERY_STREAM_QUEUE_MAXSIZE = 32
 #: The operation contract a module registers (``@capability(name=...)``) to serve
 #: :meth:`ArcAgent.run_memory_promotion`; an operation name, not a module name.
 _MEMORY_PROMOTION = "memory_promotion"
+#: The operation contract a module registers to serve :meth:`ArcAgent.skill_adapter`.
+_SKILL_ADAPTER = "skill_adapter"
 #: Largest ``max_items`` a manual promotion run accepts; surfaces check it before
 #: calling, and the memory backend enforces it again.
 MEMORY_PROMOTION_MAX_ITEMS = 5000
@@ -391,6 +394,21 @@ class ArcAgent:
             )
         result: Mapping[str, object] = await run(agent_did=self.did, max_items=max_items)
         return result
+
+    async def skill_adapter(self) -> SkillAdapter:
+        """This started agent's skill adapter, for operator controls (alpha-2 P8).
+
+        The in-process seam behind improve-now and the golden-set controls. Core names
+        no module (ADR-033): it asks for whichever active capability registered the
+        ``skill_adapter`` operation contract. When none is active, or the agent is
+        not started, it returns a :class:`NullSkillAdapter`, whose controls answer
+        a typed ``unavailable``.
+        """
+        entry = None
+        if self._started and self._capability_registry is not None:
+            entry = await self._capability_registry.get_capability(_SKILL_ADAPTER)
+        adapter = getattr(entry.instance, "adapter", None) if entry and entry.setup_done else None
+        return adapter if adapter is not None else NullSkillAdapter()
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).

@@ -121,5 +121,10 @@ class ImproverConfig(BaseModel):
     # Golden-suite auto-generation (SPEC-054 REQ-112).
     suite: SuiteConfig = Field(default_factory=SuiteConfig)
 
+    # Operator controls (alpha-2 P8): wall-clock ceiling for one improve-now, eval
+    # run, or regen. The optimize pass is already iteration-bounded (cost); this bounds
+    # time so an operator request can never hang.
+    manual_timeout_s: float = Field(default=600.0, gt=0.0, le=3600.0)
+
 
 __all__ = ["ChangeBoundConfig", "ImproverConfig", "LifecycleConfig", "SuiteConfig"]

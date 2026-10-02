@@ -113,6 +113,7 @@ async function apiSend<T>(
   path: string,
   body?: unknown,
   headers?: Record<string, string>,
+  timeoutMs = 60_000,
 ): Promise<T> {
   let res: Response
   try {
@@ -120,7 +121,7 @@ async function apiSend<T>(
       method,
       headers: { ...authHeaders(), 'Content-Type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') {
@@ -137,8 +138,14 @@ async function apiSend<T>(
   return (await res.json()) as T
 }
 
-export const apiPost = <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
-  apiSend<T>('POST', path, body, headers)
+/** POST; `timeoutMs` lifts the default 60s ceiling for a known-long operator action
+ *  (the server bounds that action itself). */
+export const apiPost = <T>(
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+  timeoutMs?: number,
+) => apiSend<T>('POST', path, body, headers, timeoutMs)
 export const apiPatch = <T>(path: string, body?: unknown) =>
   apiSend<T>('PATCH', path, body)
 export const apiPut = <T>(path: string, body?: unknown) =>

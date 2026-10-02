@@ -86,7 +86,9 @@ class CandidateStore:
         return d
 
     def _manifest_path(self, skill_name: str) -> Path:
-        return self._candidates_dir(skill_name) / "manifest.json"
+        # No mkdir: reading state must never create it (the save path's atomic
+        # write creates the parent on demand).
+        return self._skill_dir(skill_name) / "candidates" / "manifest.json"
 
     def save(
         self,

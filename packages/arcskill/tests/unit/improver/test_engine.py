@@ -215,6 +215,24 @@ class TestOptimizationLoop:
         assert result.iterations_run >= 1
         assert result.best_candidate is not None
 
+    @pytest.mark.asyncio
+    async def test_preview_pass_writes_no_seed_snapshot(
+        self, optimizer: SkillOptimizer, mock_evaluator: AsyncMock, workspace: Path
+    ) -> None:
+        """alpha-2 P8: an operator dry run must leave the workspace untouched."""
+
+        async def _flat(*args: Any, **kwargs: Any) -> EvalResult:
+            r = EvalResult(
+                per_trace_scores=[{"accuracy": DimensionScore(dimension="accuracy", score=4)}]
+            )
+            r.compute_aggregates()
+            return r
+
+        mock_evaluator.evaluate.side_effect = _flat
+        traces = [_make_trace(turn=i) for i in range(4)]
+        await optimizer.optimize("test-skill", SKILL_TEXT, traces, persist_seed=False)
+        assert not list(workspace.rglob("seed.md"))
+
 
 class TestPostOptimizationApplication:
     """G6: Atomic write, registry rescan, audit log."""

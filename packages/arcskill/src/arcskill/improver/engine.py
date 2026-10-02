@@ -84,8 +84,14 @@ class SkillOptimizer:
         skill_name: str,
         current_text: str,
         traces: list[SkillTrace],
+        *,
+        persist_seed: bool = True,
     ) -> OptimizeResult | None:
-        """Run the full optimization loop."""
+        """Run the full optimization loop.
+
+        ``persist_seed=False`` keeps the pass write-free (an operator's dry-run
+        preview): the seed snapshot is only written by a pass that may apply.
+        """
         # Split traces
         train, holdout = self.split_traces(traces, ratio=0.7, seed=42)
 
@@ -109,8 +115,8 @@ class SkillOptimizer:
         frontier = ParetoFrontier()
         frontier.add(seed)
 
-        # Save seed snapshot
-        self._store.save_seed(skill_name, current_text)
+        if persist_seed:
+            self._store.save_seed(skill_name, current_text)
 
         token_budget = int(seed.token_count * self._config.max_token_ratio)
 

@@ -812,7 +812,8 @@ export interface SkillDetail {
 
 export interface SkillEvalCase {
   nodeid: string
-  provenance: 'machine' | 'human'
+  provenance: 'machine' | 'human' | 'curated'
+  gate_type: 'exact_match' | 'assertions' | 'judge_rubric'
 }
 
 export interface SkillEvalCasesResponse {

@@ -10,9 +10,12 @@ Dispatched from ``arc skill``:
   passing-anchor loss (REQ-119), and commit atomically. The manifest hash then
   no longer matches the committed bytes, so the file classifies human-authored
   (REQ-111) — removing the manifest entry would flip it back to machine.
-* ``arc skill evals regen <skill_path> [--yes]`` — unified-diff preview of the
-  machine-authored files; actual regeneration needs agent context (LLM invoker
-  + sandbox runner), so a confirmed regen errors clearly.
+* ``arc skill evals run <skill> --agent A --email E`` — run the golden suite now on
+  the RUNNING agent (its sandbox); pass/fail per case, nonzero on any failure.
+* ``arc skill evals regen <skill_path> --agent A --email E [--yes]`` — unified-diff
+  preview of the machine-authored files, then (confirmed) regenerate them for real
+  on the running agent, which owns the eval model and the adoption cascade. Without
+  ``--agent`` it previews and explains that regeneration needs agent context.
 * ``arc skill evals promote <skill_path> <spec.json>`` — the operator-facing golden
   curation loop (H-041). Reads a curation spec (gate_type + ideal/assertions/rubric),
   and emits a SIGNED + REDACTED golden case under ``evals/curated/`` via the ONE
@@ -43,6 +46,8 @@ from typing import TYPE_CHECKING
 from arccli.commands._shared import err
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
+from arccli.commands.skill_improve import confirm as _confirm
+from arccli.commands.skill_improve import evals_regen, evals_run
 
 if TYPE_CHECKING:
     from arcskill.improver.models import EvalCase
@@ -52,18 +57,23 @@ _MIN_GOLDEN_CASES = 3
 
 
 def evals_handler(args: argparse.Namespace) -> None:
-    """Route `arc skill evals` invocations: list, edit, or regen."""
+    """Route `arc skill evals` invocations: list, edit, run, regen, promote, judge."""
     target: list[str] = args.target
     if target[0] == "edit":
         if len(target) != 3:
             err("Usage: arc skill evals edit <skill_path> <file> [--force]")
             sys.exit(2)
         _edit(Path(target[1]).expanduser().resolve(), target[2], force=args.force)
+    elif target[0] == "run":
+        if len(target) != 2:
+            err("Usage: arc skill evals run <skill> --agent <name> --email <operator>")
+            sys.exit(2)
+        evals_run(args, target[1])
     elif target[0] == "regen":
         if len(target) != 2:
-            err("Usage: arc skill evals regen <skill_path> [--yes]")
+            err("Usage: arc skill evals regen <skill_path> --agent <name> --email <operator>")
             sys.exit(2)
-        _regen(Path(target[1]).expanduser().resolve(), yes=args.yes)
+        _regen(Path(target[1]).expanduser().resolve(), args)
     elif target[0] == "promote":
         if len(target) != 3:
             err("Usage: arc skill evals promote <skill_path> <spec.json>")
@@ -239,8 +249,8 @@ def _commit(target: Path, edited: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _regen(skill_dir: Path, *, yes: bool) -> None:
-    """Preview what regen would overwrite; the bare CLI cannot regenerate."""
+def _regen(skill_dir: Path, args: argparse.Namespace) -> None:
+    """Preview what regen would overwrite, then regenerate on the running agent."""
     cases = _load_cases(skill_dir)
     machine_files = sorted({case.id.split("::", 1)[0] for case in cases if case.machine_authored})
     if not machine_files:
@@ -248,14 +258,16 @@ def _regen(skill_dir: Path, *, yes: bool) -> None:
         sys.exit(1)
     for rel in machine_files:
         _print_regen_diff(skill_dir, rel)
-    if not yes and not _confirm("Regenerate the files above? [y/N] "):
+    if not args.agent or not args.email:
+        err(
+            "Error: regeneration runs in agent context (eval model + sandbox) on the running "
+            "agent; pass --agent <name> and --email <operator>."
+        )
+        sys.exit(1)
+    if not args.yes and not _confirm("Regenerate the files above? [y/N] "):
         err("Regen aborted.")
         sys.exit(1)
-    err(
-        "Error: regeneration requires agent context (LLM invoker + sandbox runner); "
-        "run the improver inside an agent instead."
-    )
-    sys.exit(1)
+    evals_regen(args, str(skill_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +415,3 @@ def _print_regen_diff(skill_dir: Path, rel: str) -> None:
     old_lines = (skill_dir / rel).read_text(encoding="utf-8").splitlines(keepends=True)
     diff = difflib.unified_diff(old_lines, [], fromfile=f"a/{rel}", tofile=f"b/{rel}")
     sys.stdout.writelines(diff)
-
-
-def _confirm(prompt: str) -> bool:
-    """Prompt on stdin; EOF declines."""
-    try:
-        return input(prompt).strip().lower() in ("y", "yes")
-    except EOFError:
-        return False

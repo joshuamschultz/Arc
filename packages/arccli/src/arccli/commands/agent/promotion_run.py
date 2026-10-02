@@ -26,33 +26,18 @@ cap — never content).
 from __future__ import annotations
 
 import argparse
-import getpass
-import re
-import sys
-import tomllib
-from pathlib import Path
-from typing import Any, NoReturn
-from urllib.parse import urlsplit
+from typing import Any
 
 import arcagent
-import httpx
 
-from arccli.commands._shared import err, print_json, write
+from arccli.commands._operator_http import DEFAULT_URL, agent_name, operator_session, server_url
+from arccli.commands._shared import print_json, write
 
 _PROG = "arc agent promotion run"
-_DEFAULT_URL = "http://127.0.0.1:8420"
-_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 _MAX_ITEMS = arcagent.MEMORY_PROMOTION_MAX_ITEMS
-_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 _COUNTS = ("evaluated", "promoted", "kept_private", "blocked_secret", "too_large", "deferred")
-#: Login/logout are quick; a backfill run may classify thousands of items in turn.
-_AUTH_TIMEOUT_SECONDS = 10.0
+#: A backfill run may classify thousands of items in turn.
 _RUN_TIMEOUT_SECONDS = 3600.0
-
-
-def _fail(message: str) -> NoReturn:
-    err(f"{_PROG}: {message}")
-    sys.exit(1)
 
 
 def _max_items_arg(raw: str) -> int:
@@ -66,86 +51,17 @@ def _max_items_arg(raw: str) -> int:
     return value
 
 
-def _agent_name(target: str) -> str:
-    """The roster name ArcUI routes on: an agent directory's ``[agent].name``, else ``target``."""
-    config = Path(target).expanduser() / "arcagent.toml" if target else None
-    name: object = target
-    if config is not None and config.is_file():
-        try:
-            name = tomllib.loads(config.read_text(encoding="utf-8")).get("agent", {}).get("name")
-        except (OSError, tomllib.TOMLDecodeError):
-            _fail(f"cannot read {config}")
-    if not isinstance(name, str) or not _SAFE_NAME.fullmatch(name):
-        _fail("agent name must be one path segment of letters, digits, '.', '_' or '-'")
-    return name
-
-
-def _server_url(raw: str) -> str:
-    parsed = urlsplit(raw)
-    if (
-        parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in ("", "/")
-    ):
-        _fail("server URL must contain only scheme and host")
-    if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in _LOOPBACK):
-        _fail("a remote server requires HTTPS")
-    return raw.rstrip("/")
-
-
-def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-    try:
-        response = client.request(method, path, **kwargs)
-    except httpx.HTTPError:
-        _fail("operator server is unavailable")
-    try:
-        body = response.json()
-    except ValueError:
-        _fail("operator server returned an invalid response")
-    if not isinstance(body, dict):
-        _fail("operator server returned an invalid response")
-    if response.status_code >= 400:
-        _fail(str(body.get("error", "request refused")))
-    return body
-
-
-def _login(client: httpx.Client, email: str, password: str) -> str:
-    credentials = {"email": email, "password": password}
-    login = _request(client, "POST", "/api/auth/login", json=credentials)
-    token = login.get("token")
-    if not isinstance(token, str) or not token:
-        _fail("operator session is unavailable")
-    client.headers["Authorization"] = f"Bearer {token}"
-    return str(login.get("role", ""))
-
-
 def _run_on_server(url: str, email: str, name: str, max_items: int | None) -> dict[str, Any]:
-    password = getpass.getpass("Arc account password: ")
-    if not password:
-        _fail("account password is required")
     body = {} if max_items is None else {"max_items": max_items}
-    with httpx.Client(
-        base_url=url, timeout=_AUTH_TIMEOUT_SECONDS, follow_redirects=False, trust_env=False
-    ) as client:
-        role = _login(client, email, password)
-        try:
-            if role != "operator":
-                _fail("an operator account is required")
-            path = f"/api/agents/{name}/memory/promotion/run"
-            return _request(client, "POST", path, json=body, timeout=_RUN_TIMEOUT_SECONDS)
-        finally:
-            try:
-                client.post("/api/auth/logout")
-            except httpx.HTTPError:
-                pass
+    with operator_session(_PROG, url, email) as call:
+        path = f"/api/agents/{name}/memory/promotion/run"
+        return call("POST", path, json=body, timeout=_RUN_TIMEOUT_SECONDS)
 
 
 def run_promotion(args: argparse.Namespace) -> None:
     """Entry for ``arc agent promotion run``."""
-    url = _server_url(args.url)
-    name = _agent_name(args.target)
+    url = server_url(_PROG, args.url)
+    name = agent_name(_PROG, args.target)
     result = _run_on_server(url, args.email, name, args.max_items)
     wire = {"status": str(result.get("status", ""))}
     wire.update({count: result.get(count, 0) for count in _COUNTS})
@@ -164,7 +80,7 @@ def add_run_parser(verbs: Any) -> None:
     p.add_argument("target", help="Agent directory or roster name.")
     p.add_argument("--max-items", type=_max_items_arg, default=None, help="Cap for this run only.")
     p.add_argument("--json", action="store_true", help="Emit JSON.")
-    p.add_argument("--url", default=_DEFAULT_URL, help="ArcUI server URL.")
+    p.add_argument("--url", default=DEFAULT_URL, help="ArcUI server URL.")
     p.add_argument("--email", required=True, help="Arc operator account email.")
 
 

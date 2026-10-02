@@ -120,6 +120,23 @@ class _State:
         if turn is not None:
             turn.turn_number = turn_number
 
+    def resolve_skill_path(self, skill_name: str) -> Path | None:
+        """Resolve a skill name to its SKILL.md via THIS agent's CapabilityRegistry.
+
+        Bound to the state, not read from the context variable, so an operator
+        surface calling the adapter from its own task (an arcui request) still
+        resolves this agent's skills. The registry is read lazily, so the real
+        :class:`~arcagent.capabilities.capability_registry.CapabilityRegistry`
+        delivered at ``agent:ready`` is visible without rebinding the adapter.
+        """
+        if self.skill_registry is None:
+            return None
+        entry = self.skill_registry.skill_entry(skill_name)
+        if entry is None:
+            return None
+        location: Path = entry.location
+        return location
+
     def index_skills(self, registry: Any) -> None:
         """Rebuild the SKILL.md-path -> name lookup from the CapabilityRegistry."""
         self.skill_registry = registry
@@ -169,23 +186,9 @@ def configure(
         build_skill_approval_provider(human_gate, agent_did) if human_gate is not None else None
     )
     llm = _eval_invoker(eval_config, llm_config, agent_name)
-    adapter = select_skill_adapter(
-        cfg.adapter,
-        workspace=ws,
-        config=cfg.improver,
-        tier=cfg.tier,
-        llm=llm,
-        signer=signer,
-        approval_provider=approval_provider,
-        audit_sink=audit_sink,
-        agent_did=agent_did,
-        skill_path=_skill_path,
-        adapter_allowlist=tuple(cfg.adapter_allowlist),
-        prompt_source=prompt_source,
-    )
     new_state = _State(
-        adapter=adapter,
-        active=not isinstance(adapter, NullSkillAdapter),
+        adapter=NullSkillAdapter(),
+        active=False,
         workspace=ws,
         telemetry=telemetry,
         sweep_poll_seconds=cfg.sweep_poll_seconds,
@@ -197,6 +200,21 @@ def configure(
             else None
         ),
     )
+    new_state.adapter = select_skill_adapter(
+        cfg.adapter,
+        workspace=ws,
+        config=cfg.improver,
+        tier=cfg.tier,
+        llm=llm,
+        signer=signer,
+        approval_provider=approval_provider,
+        audit_sink=audit_sink,
+        agent_did=agent_did,
+        skill_path=new_state.resolve_skill_path,
+        adapter_allowlist=tuple(cfg.adapter_allowlist),
+        prompt_source=prompt_source,
+    )
+    new_state.active = not isinstance(new_state.adapter, NullSkillAdapter)
     _state_var.set(new_state)
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)
 
@@ -252,22 +270,6 @@ def _build_worm_sink(workspace: Path, operator_signer: Any | None, telemetry: An
     if preexisting and not sink.verify_chain() and telemetry is not None:
         telemetry.audit_event("skills.audit.chain_verify_failed", {"chain": str(chain)})
     return sink
-
-
-def _skill_path(skill_name: str) -> Path | None:
-    """Resolve a skill name to its SKILL.md path via the CapabilityRegistry (lazy).
-
-    Reads the real registry shape (``_skills`` dict of ``SkillEntry`` with ``.location``),
-    so the improver can locate a skill's bundle to mutate it (SPEC-044 finding 3b).
-    """
-    st = _state_var.get()
-    if st is None or st.skill_registry is None:
-        return None
-    entry = st.skill_registry.skill_entry(skill_name)
-    if entry is None:
-        return None
-    location: Path = entry.location
-    return location
 
 
 async def run_lifecycle_sweep() -> None:
