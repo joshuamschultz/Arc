@@ -61,6 +61,34 @@ def build_skill_revision_anchor_factory(
     return factory
 
 
+class AgentAuditForwarder:
+    """Audit sink for the revision anchor of a CLI-loaded agent: forwards to its chain.
+
+    The anchor factory is built before the agent exists, while the agent's
+    operator-signed audit chain only opens at ``startup``. Events before the agent
+    is bound or started are dropped, exactly like :class:`_AppAuditSink` in
+    ``arc ui`` degrades before the app chain exists; afterwards every
+    revision-anchor event lands in that agent's audit trail.
+    """
+
+    def __init__(self) -> None:
+        self.agent: Any = None
+
+    def bind(self, agent: Any) -> None:
+        self.agent = agent
+
+    def write(self, event: arctrust.AuditEvent) -> None:
+        import arcagent
+
+        if self.agent is None:
+            return
+        try:
+            sink = self.agent.audit_sink
+        except arcagent.ArcAgentError:
+            return
+        sink.write(event)
+
+
 def discover_agent_dirs(team_root: Path) -> list[Path]:
     """Immediate subdirectories of ``team_root`` that contain an arcagent.toml."""
     if not team_root.is_dir():
