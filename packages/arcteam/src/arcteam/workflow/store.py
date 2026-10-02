@@ -44,7 +44,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from arctrust import ArtifactSignature, sign_artifact, verify_artifact
+from arctrust import (
+    ArtifactSignature,
+    Signer,
+    sign_artifact,
+    sign_artifact_with_signer,
+    verify_artifact,
+)
 from pydantic import BaseModel, ConfigDict
 
 from arcteam.types import normalize_channel
@@ -65,7 +71,13 @@ from arcteam.workflow.models import (
     WorkflowDefinition,
     parse_definition,
 )
-from arcteam.workflow.serialize import canonical_bytes, content_hash, dump_toml, file_manifest
+from arcteam.workflow.serialize import (
+    canonical_bytes,
+    content_hash,
+    dump_toml,
+    file_manifest,
+    referenced_files,
+)
 from arcteam.workflow.validator import KnownReferences, confine, validate_definition
 
 _logger = logging.getLogger("arcteam.workflow.store")
@@ -74,6 +86,7 @@ DEFINITION_FILE = "workflow.toml"
 SIDECAR_FILE = "workflow.toml.arcsig"
 ARCHIVE_MARKER = "archived.json"
 VERSIONS_DIR = "versions"
+FILES_SUFFIX = ".files"
 
 DefinitionStatus = Literal["draft", "signed", "archived"]
 
@@ -331,9 +344,11 @@ class DefinitionStore:
         if issues:
             raise WorkflowValidationError(issues)
 
+        # Retain BEFORE writing: the retained copies must be what was signed, and
+        # the incoming files are about to overwrite exactly those bytes.
+        self._retain_current(bundle_root)
         for target, body in incoming.items():
             _atomic_write(target, body)
-        self._retain_current(bundle_root)
         _atomic_write(bundle_root / DEFINITION_FILE, text.encode("utf-8"))
         (bundle_root / SIDECAR_FILE).unlink(missing_ok=True)
 
@@ -530,6 +545,51 @@ class DefinitionStore:
         sidecar = bundle_root / SIDECAR_FILE
         if sidecar.is_file():
             _atomic_write(archive / f"{definition.version}.arcsig", sidecar.read_bytes())
+        self._retain_files(
+            bundle_root, definition, archive / f"{definition.version}{FILES_SUFFIX}"
+        )
+
+    def _retain_files(
+        self, bundle_root: Path, definition: WorkflowDefinition, destination: Path
+    ) -> None:
+        """Keep the companion files this revision referenced, for later diffs.
+
+        The definition file alone cannot show what a prompt said when it was
+        signed; without the bytes an approval can report that a file changed
+        but never how.
+        """
+        for reference in referenced_files(definition):
+            source = confine(bundle_root.resolve(), reference)
+            if source is not None and source.is_file():
+                _atomic_write(destination / reference, source.read_bytes())
+
+    def last_signed_version(self, workflow_id: str) -> int | None:
+        """The newest retained revision that carries a signature, or None.
+
+        Retained, not current: the question an approval asks is what the draft
+        in front of the operator differs from, and the draft is the current one.
+        """
+        vdir = self.path_for(workflow_id) / VERSIONS_DIR
+        if not vdir.is_dir():
+            return None
+        signed = [
+            int(path.stem)
+            for path in vdir.glob("*.arcsig")
+            if _read_signature(path) is not None and (vdir / f"{path.stem}.toml").is_file()
+        ]
+        return max(signed, default=None)
+
+    def retained_file(self, workflow_id: str, version: int, reference: str) -> bytes | None:
+        """A companion file as it stood in a retained revision, or None if not kept."""
+        root = (self.path_for(workflow_id) / VERSIONS_DIR / f"{version}{FILES_SUFFIX}").resolve()
+        target = confine(root, reference)
+        return target.read_bytes() if target is not None and target.is_file() else None
+
+    @staticmethod
+    def read_bundle_file(bundle_root: Path, reference: str) -> bytes | None:
+        """A current companion file's bytes, confined to the bundle, or None."""
+        target = confine(bundle_root.resolve(), reference)
+        return target.read_bytes() if target is not None and target.is_file() else None
 
     def version_history(self, workflow_id: str) -> tuple[VersionRecord, ...]:
         """Every version's signer + signed-at, ascending, current version last.
@@ -587,7 +647,34 @@ def sign_definition(
         signer_did=signer_did,
         private_key=private_key,
     )
+    return _record_signature(store, bundle, signature, signer_did)
+
+
+def sign_definition_with_signer(
+    store: DefinitionStore, workflow_id: str, *, signer_did: str, signer: Signer
+) -> WorkflowBundle:
+    """Sign a bundle through a custody-agnostic :class:`~arctrust.Signer` handle.
+
+    The seed-free sibling of :func:`sign_definition`: a vault- or notary-held
+    operator key signs by reference and never enters this process, so a federal
+    deployment signs the same way a personal one does. Same canonical bytes, same
+    sidecar, same audit event.
+    """
+    bundle = store.load(workflow_id)
+    signature = sign_artifact_with_signer(
+        canonical_bytes(bundle.definition, bundle.manifest),
+        signer_did=signer_did,
+        signer=signer,
+    )
+    return _record_signature(store, bundle, signature, signer_did)
+
+
+def _record_signature(
+    store: DefinitionStore, bundle: WorkflowBundle, signature: ArtifactSignature, signer_did: str
+) -> WorkflowBundle:
+    """Write the detached sidecar, reload, and emit the one ``workflow.signed`` event."""
     _atomic_write(bundle.root / SIDECAR_FILE, signature.to_json().encode("utf-8"))
+    workflow_id = bundle.definition.id
     signed = store.load(workflow_id)
     store.emit_audit(
         "workflow.signed",
@@ -661,4 +748,5 @@ __all__ = [
     "file_manifest",
     "load_sidecar",
     "sign_definition",
+    "sign_definition_with_signer",
 ]

@@ -74,6 +74,9 @@ class _State:
     # Delivers ``("platform:chat_id", text)`` to a person. Bound on ``agent:ready``;
     # absent when the agent runs without a gateway.
     channel_deliver_fn: Callable[[str, str], Awaitable[None]] | None = None
+    # Posts ``("channel://name", text)`` onto the arcteam bus, for schedules whose
+    # ``deliver_to`` is a team channel. Absent when the messaging module is off.
+    team_send: Callable[[str, str], Awaitable[None]] | None = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

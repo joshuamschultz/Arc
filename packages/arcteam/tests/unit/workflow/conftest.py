@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-# The DESIGN.md §4 example graph, already carrying the join="any" fix for the
-# router-exclusivity deadlock the design's own example shipped with.
+# The DESIGN.md §4 example graph. Fan-in after a router is unsupported, so QA
+# follows the provision branch only and the manual-review branch ends at its gate.
 EXAMPLE_DOCUMENT: dict[str, Any] = {
     "workflow": {
         "schema_version": "1.0",
@@ -83,8 +83,7 @@ EXAMPLE_DOCUMENT: dict[str, Any] = {
             "id": "qa",
             "kind": "agent",
             "agent": "@reviewer",
-            "needs": ["provision", "manual_review"],
-            "join": "any",
+            "needs": ["provision"],
             "output_schema": "schemas/qa_verdict.json",
         },
         {
@@ -93,8 +92,6 @@ EXAMPLE_DOCUMENT: dict[str, Any] = {
             "agent": "@ops",
             "needs": ["qa"],
             "when": "$nodes.qa.output.verdict == 'revise'",
-            "loop_back_to": "provision",
-            "max_iterations": 3,
         },
     ],
 }
@@ -153,10 +150,8 @@ class Node:
     kind: str
     agent: str | None = None
     needs: tuple[str, ...] = ()
-    join: str = "all"
     when: str | None = None
-    loop_back_to: str | None = None
-    max_iterations: int | None = None
+    on_failure: str = "fail_run"
     output_schema: str | None = None
     artifacts: tuple[str, ...] = ()
     strategy: tuple[str, ...] = ()
@@ -283,6 +278,11 @@ class FlowRunStore:
         fence: Any | None = None,
     ) -> RunRow:
         del trigger_digest
+        # Idempotent on the run id, like the real store: a repeated occurrence
+        # returns the existing run and never erases its progress.
+        existing = await self.get(run_id)
+        if existing is not None:
+            return existing
         row = RunRow(
             run_id=run_id,
             workflow_id=workflow_id,
@@ -390,9 +390,12 @@ class FlowRunStore:
         expected_status: str | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: Any | None = None,
     ) -> bool:
         patch: dict[str, Any] = {"status": status}
+        if clear_error:
+            patch["last_error"] = None
         if resolution is not None:
             patch["resolution"] = resolution
         if last_error is not None:
@@ -538,6 +541,18 @@ class RecordingSink:
 
     def actions(self) -> list[str]:
         return [e.action for e in self.events]
+
+
+class RecordingNotifier:
+    """The host's operator seam: records ``(text, idempotency_key)``, reports a channel."""
+
+    def __init__(self, channel: str | None = "telegram") -> None:
+        self.channel = channel
+        self.notices: list[tuple[str, str]] = []
+
+    async def __call__(self, text: str, idempotency_key: str) -> str | None:
+        self.notices.append((text, idempotency_key))
+        return self.channel
 
 
 class DroppingSender:

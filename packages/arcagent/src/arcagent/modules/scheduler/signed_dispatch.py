@@ -19,10 +19,11 @@ from arcagent.core.run_contract import (
     RunOutcomeUnknownError,
     RunTriggerIssuer,
 )
-from arcagent.modules.scheduler.models import ScheduleEntry
+from arcagent.modules.scheduler.models import CHANNEL_TARGET_PREFIX, ScheduleEntry
 from arcagent.modules.scheduler.occurrence import scheduled_occurrence
 
 AgentRunFn = Callable[..., Awaitable[Any]]
+TeamSend = Callable[[str, str], Awaitable[None]]
 PrepareRun = Callable[..., CanonicalRunRequest]
 
 
@@ -38,6 +39,7 @@ async def dispatch_signed_schedule(
     prepare: PrepareRun | None,
     run_fn: AgentRunFn | None,
     start_timeout: float | None = None,
+    team_send: TeamSend | None = None,
 ) -> Any:
     """Verify the current signed revision before admitting one immutable due slot.
 
@@ -142,4 +144,24 @@ async def dispatch_signed_schedule(
     )
     if getattr(result, "outcome_unknown", None) is not None:
         raise RunOutcomeUnknownError(occurrence.run_id)
+    await _deliver_to_channel(entry, result, team_send)
     return result
+
+
+async def _deliver_to_channel(
+    entry: ScheduleEntry, result: Any, team_send: TeamSend | None
+) -> None:
+    """Post the run's final text to a canonical ``channel://`` target on the team bus.
+
+    Gateway ``platform:chat_id`` targets keep their own delivery path; only the
+    team-bus scheme lands here. A channel target with no sender wired fails
+    closed rather than finishing a run whose output silently goes nowhere.
+    """
+    target = entry.deliver_to
+    if target is None or not target.startswith(CHANNEL_TARGET_PREFIX):
+        return
+    if team_send is None:
+        raise ControlArtifactUnavailableError("team delivery unavailable for channel target")
+    text = str(getattr(result, "content", None) or result or "").strip()
+    if text:
+        await team_send(target, text)

@@ -50,27 +50,26 @@ def test_a_minimal_linear_graph_validates() -> None:
 # --- join / router exclusivity: THE deadlock --------------------------------
 
 
-def test_needs_spanning_exclusive_router_routes_without_join_any_is_rejected(
+def test_needs_spanning_exclusive_router_routes_are_rejected(
     example_document: dict[str, Any],
 ) -> None:
-    """The DESIGN §4 defect: qa would wait forever under join=all."""
+    """Fan-in after a router can never become ready, and there is no override."""
     qa = next(node for node in example_document["node"] if node["id"] == "qa")
-    del qa["join"]
+    qa["needs"] = ["provision", "manual_review"]
 
     issues = _issues(example_document)
 
-    assert [(i.node_id, i.field) for i in issues] == [("qa", "join")]
-    assert issues[0].observed == "all"
-    assert "any" in issues[0].admissible
+    assert [(i.node_id, i.field) for i in issues] == [("qa", "needs")]
+    assert "not supported" in issues[0].error
 
 
-def test_join_any_admits_the_merge_of_two_exclusive_branches(
+def test_the_example_graph_with_one_branch_per_node_validates(
     example_document: dict[str, Any],
 ) -> None:
     assert _issues(example_document) == ()
 
 
-def test_needs_from_one_branch_only_does_not_require_join_any() -> None:
+def test_needs_from_one_branch_only_is_accepted() -> None:
     document = {
         "workflow": {"id": "one-branch", "owner": "@a"},
         "node": [
@@ -114,7 +113,7 @@ def test_exclusivity_is_detected_through_transitive_descendants() -> None:
         ],
     }
 
-    assert ("merge", "join") in _fields(document)
+    assert ("merge", "needs") in _fields(document)
 
 
 # --- cycles ------------------------------------------------------------------
@@ -134,7 +133,7 @@ def test_an_undeclared_cycle_is_rejected() -> None:
 
     assert issues
     assert all(issue.field == "needs" for issue in issues)
-    assert any("undeclared cycle" in issue.error for issue in issues)
+    assert any("cycle through" in issue.error for issue in issues)
 
 
 def test_a_self_dependency_is_rejected() -> None:
@@ -144,81 +143,12 @@ def test_a_self_dependency_is_rejected() -> None:
     assert ("b", "needs") in _fields(document)
 
 
-def test_a_declared_bounded_loop_is_accepted(example_document: dict[str, Any]) -> None:
-    assert _issues(example_document) == ()
-
-
-def test_a_loop_without_max_iterations_is_rejected(example_document: dict[str, Any]) -> None:
-    revise = next(node for node in example_document["node"] if node["id"] == "revise")
-    del revise["max_iterations"]
-
-    assert ("revise", "max_iterations") in _fields(example_document)
-
-
-def test_two_back_edges_into_one_cycle_are_rejected_as_overlapping_loops() -> None:
-    document = {
-        "workflow": {"id": "overlap", "owner": "@a"},
-        "node": [
-            {"id": "a", "kind": "agent", "agent": "@a"},
-            {"id": "b", "kind": "agent", "agent": "@a", "needs": ["a"]},
-            {
-                "id": "c",
-                "kind": "agent",
-                "agent": "@a",
-                "needs": ["b"],
-                "loop_back_to": "b",
-                "max_iterations": 2,
-            },
-            {
-                "id": "d",
-                "kind": "agent",
-                "agent": "@a",
-                "needs": ["c"],
-                "loop_back_to": "b",
-                "max_iterations": 2,
-            },
-        ],
-    }
-
-    issues = _issues(document)
-
-    assert any("exactly one declared" in issue.error for issue in issues)
-
-
-def test_loop_back_to_a_node_that_is_not_an_ancestor_is_rejected() -> None:
-    document = {
-        "workflow": {"id": "stray-loop", "owner": "@a"},
-        "node": [
-            {"id": "a", "kind": "agent", "agent": "@a"},
-            {"id": "b", "kind": "agent", "agent": "@a", "needs": ["a"]},
-            {"id": "c", "kind": "agent", "agent": "@a"},
-            {
-                "id": "d",
-                "kind": "agent",
-                "agent": "@a",
-                "needs": ["b"],
-                "loop_back_to": "c",
-                "max_iterations": 2,
-            },
-        ],
-    }
-
-    assert ("d", "loop_back_to") in _fields(document)
-
-
-def test_loop_back_to_an_unknown_node_is_rejected() -> None:
+def test_a_back_edge_through_needs_is_a_cycle_and_rejected() -> None:
+    """A retry is an operator action on a failed node, never a loop in the graph."""
     document = minimal_document()
-    document["node"][1]["loop_back_to"] = "ghost"
-    document["node"][1]["max_iterations"] = 2
+    document["node"][0]["needs"] = ["b"]
 
-    assert ("b", "loop_back_to") in _fields(document)
-
-
-def test_max_iterations_without_a_loop_is_rejected() -> None:
-    document = minimal_document()
-    document["node"][1]["max_iterations"] = 3
-
-    assert ("b", "max_iterations") in _fields(document)
+    assert any("cycle through" in issue.error for issue in _issues(document))
 
 
 # --- dangling and unknown references ----------------------------------------
@@ -641,3 +571,32 @@ def test_all_problems_are_reported_together_not_one_at_a_time() -> None:
     document["node"][1]["when"] = "len($input.x) > 1"
 
     assert len(_issues(document)) >= 2
+
+
+# --- on_failure ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("as_router", [False, True])
+def test_continue_is_refused_on_a_gate_and_a_router(as_router: bool) -> None:
+    """A failed gate is a rejection and a failed router chose nothing: neither may be skipped past."""
+    document = minimal_document()
+    if as_router:
+        document["node"][0] = {
+            "id": "a",
+            "kind": "router",
+            "agent": "@a",
+            "mode": "llm",
+            "routes": [{"to": "b", "default": True}],
+        }
+    else:
+        document["node"][0] = {"id": "a", "kind": "gate", "gate": "human:ok"}
+    document["node"][0]["on_failure"] = "continue"
+
+    assert ("a", "on_failure") in _fields(document)
+
+
+def test_continue_is_accepted_on_an_agent_node() -> None:
+    document = minimal_document()
+    document["node"][0]["on_failure"] = "continue"
+
+    assert _issues(document) == ()

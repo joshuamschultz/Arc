@@ -67,6 +67,10 @@ class _BoundedAgentCache:
     def __len__(self) -> int:
         return len(self._agents)
 
+    def values(self) -> list[Any]:
+        """The loaded agents, oldest first. A snapshot: callers may await while iterating."""
+        return list(self._agents.values())
+
     def get(self, agent_did: str) -> Any | None:
         agent = self._agents.get(agent_did)
         if agent is not None:
@@ -137,6 +141,10 @@ def install_embedded_agent_hooks(app: Any, *, cache_maxsize: int = _DEFAULT_CACH
     executor.set_agent_factory(factory)
     executor._arcui_wrapped = True
     app.state.embedded_agent_cache = cache
+    # Workflow failure notices reach the operator through a live agent.
+    from arcgateway.workflow_runner_host import OPERATOR_NOTICES
+
+    OPERATOR_NOTICES.bind(cache.values)
 
 
 def adopt_agent(app: Any, agent_did: str, agent: Any) -> None:

@@ -129,7 +129,15 @@ Key fields:
   schedule**; the runner ticks the frontier and narrates progress to the team
   channel.
 - **`needs`** — a node's dependency list. A node runs once every named upstream
-  reaches `done` (or `skipped`). `join = "all"` (default) or `"any"` sets fan-in.
+  reaches `done` (or `skipped`). A skipped upstream skips the node too. A workflow
+  is a DAG: there are no loops and no `join = "any"`, and a node may not need
+  nodes from two exclusive routes of one router. Retry a failed node with
+  `arc workflow retry <run> <node>`; finished nodes never run again.
+- **`on_failure`** — what a failed node does to the run: `fail_run` (default:
+  the run fails with the node's error and every node that never ran is marked
+  `cancelled` with the reason), `continue` (dependents run and are told what
+  failed; not allowed on a gate or router), or `skip_dependents` (descendants are
+  `skipped` with the reason and the run ends `done_with_failures`).
 - **Node kinds** — `agent` (a bounded agent run with a file-referenced `prompt`),
   `tool`, `script`, `router`, `gate`.
 - **`deliver_to`** — the important one for scheduled work. A cron run arrives on
@@ -137,20 +145,52 @@ Key fields:
   operator last used — often the wrong one. Pinning `deliver_to =
   "platform:chat_id"` in the *signed* document makes the summary land on the same
   channel every time, and a model cannot redirect it. It's a gateway target like
-  `telegram:12345`.
+  `telegram:12345`, or a team channel written `channel://<name>`, which posts the
+  run's final text onto that arcteam channel.
 
-### Create, sign, run
+### Start from a template, test, sign, run
+
+Four starter templates ship with Arc: `intake_specialist`, `fanout_synthesize`,
+`maker_checker`, and `scheduled_watcher`. Copy one in as an unsigned draft, try it
+safely, sign it, then run it:
+
+```bash
+arc workflow templates                                # the starters and what each is for
+arc workflow new weekly-brief --from fanout_synthesize   # copy one in as a draft
+arc workflow test weekly-brief                        # try the draft: state-modifying work is stubbed
+arc workflow sign weekly-brief                        # sign the registered bundle, by id
+arc workflow run weekly-brief --input in.json --detach   # run it now
+```
+
+`sign` and `verify` take a workflow **id**, not a path. They act on the bundle the
+runner reads (under your Arc home's `workflows/` directory), and refuse any path that
+resolves outside it. A vault-held operator key signs the same way an on-disk one does.
+
+A **test run** is the one way to try a draft before it is signed, at any tier. Tools
+and scripts that change something are replaced by a recorded echo of the call, agent
+nodes run under a small cost cap, the run is audited as `workflow.test_run`, and
+nothing a schedule or an agent does can start it.
+
+### Create, edit, inspect, resolve gates
 
 ```bash
 arc workflow create ./nightly-meeting-ingest/         # validate + register a document
-arc workflow sign   ./nightly-meeting-ingest/         # sign the bundle
 arc workflow list                                     # registered workflows
 arc workflow show nightly-meeting-ingest              # one workflow's detail
-arc workflow run nightly-meeting-ingest --input in.json --detach   # run it now
 arc workflow serve                                    # tick schedules continuously
 arc workflow cancel <run_id>
-arc workflow verify ./nightly-meeting-ingest/         # check the signature
+arc workflow verify nightly-meeting-ingest            # check the signature
+arc workflow gate <task_id> approve|reject|revise     # decide a waiting gate
 ```
+
+A run that reaches a `gate` node waits for a human. Decide it from the CLI with
+`arc workflow gate`, from the dashboard, or from chat with
+`/gate <task_id> approve|reject|revise [notes]`. All three call the same control-plane
+operation and record who decided.
+
+When a signature request is waiting in Approvals, the card shows why it was raised and
+a diff of the draft against the last signed version (nodes added, removed, and changed,
+plus each prompt or schema file).
 
 Every `arc workflow` verb takes `--dir` to point at a config directory other than
 the default. Validation runs inside `create`/`edit`, so there's no separate

@@ -34,7 +34,7 @@ import asyncio
 import importlib
 import logging
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -64,6 +64,42 @@ class WorkflowRunnerProtocol(Protocol):
     async def aclose(self) -> None:
         """Release resources (store handles, in-flight cancellation) on shutdown."""
         ...
+
+
+class OperatorNoticeRelay:
+    """Carries workflow operator notices to a live agent's ``notify_operator``.
+
+    The runner is built before any agent is loaded and the agents are owned by
+    whoever hosts them (arcui's embedded cache), so the runner is handed this
+    relay and the host binds the roster afterwards. Unbound, or with no agent
+    that has reached the operator, a notice is undelivered (``None``) and the
+    runner audits exactly that; it is never reported as delivered.
+    """
+
+    def __init__(self) -> None:
+        self._agents: Callable[[], Sequence[Any]] | None = None
+
+    def bind(self, agents: Callable[[], Sequence[Any]]) -> None:
+        """Name where the live agents come from. Re-binding replaces the source."""
+        self._agents = agents
+
+    async def notify(self, text: str, idempotency_key: str) -> str | None:
+        """First live agent that can reach the operator wins; its channel is returned."""
+        if self._agents is None:
+            return None
+        for agent in self._agents():
+            try:
+                channel = await agent.notify_operator(text, idempotency_key=idempotency_key)
+            except Exception:  # reason: one agent's failure must not hide the next one's channel
+                _logger.warning("workflow operator notice: notify_operator failed", exc_info=True)
+                continue
+            if channel:
+                return str(channel)
+        return None
+
+
+#: The one relay this process's runner uses; the agent host binds it.
+OPERATOR_NOTICES = OperatorNoticeRelay()
 
 
 class RunnerAlreadyActiveError(RuntimeError):
@@ -303,6 +339,7 @@ async def _default_runner_factory(*, tier: str, key_path: Path) -> WorkflowRunne
             runner_key_path=key_path,
             registry=owners,
             narrator=narrator,
+            operator_notifier=OPERATOR_NOTICES.notify,
         )
     except Exception:
         await backend.stop()

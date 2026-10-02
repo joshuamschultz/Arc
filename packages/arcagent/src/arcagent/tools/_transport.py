@@ -78,6 +78,9 @@ class RegisteredTool:
     # and calling ``arcrun.run`` directly — forces callers to reach into
     # arcagent internals).
     signals_completion: bool = False
+    # False when a repeat execution duplicates an external effect the tool
+    # cannot dedupe from the call's idempotency key (carried to arcrun.Tool).
+    idempotent: bool = True
 
 
 # -- Type map for native_tool decorator schema generation --

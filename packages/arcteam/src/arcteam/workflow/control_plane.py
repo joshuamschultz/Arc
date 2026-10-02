@@ -26,7 +26,8 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .runner import WorkflowRunner
+from .errors import WorkflowError
+from .runner import TEST_RUN_MAX_COST_USD, NodeRetryRefusedError, WorkflowRunner
 from .runner_contracts import (
     BundleSpec,
     DefinitionParser,
@@ -38,6 +39,7 @@ from .runner_contracts import (
     Tier,
     ValidationIssueLike,
 )
+from .templates import load_template
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,14 @@ _GATE_DECISIONS: dict[str, str] = {
     "approve": "approved",
     "fail_run": "rejected",
     "return_for_revision": "returned_for_revision",
+}
+
+#: The words a human reviewer uses (CLI, chat card) mapped to the decision the
+#: control plane takes. One table, so every caller means the same thing by "reject".
+GATE_WORDS: dict[str, str] = {
+    "approve": "approve",
+    "reject": "fail_run",
+    "revise": "return_for_revision",
 }
 
 
@@ -236,7 +246,75 @@ class WorkflowControlPlane:
         )
         return ControlPlaneResult(ok=True)
 
+    async def create_from_template(
+        self,
+        template: str,
+        workflow_id: str,
+        *,
+        actor_did: str,
+        owner: str | None = None,
+    ) -> ControlPlaneResult:
+        """Start a new draft from a shipped starter template (J3 F6, G5).
+
+        Goes through :meth:`create`, so a template is validated, versioned,
+        audited and left unsigned exactly like any other authored definition —
+        a template confers no trust, it only saves the blank page.
+        """
+        try:
+            document, files = load_template(template, workflow_id=workflow_id, owner=owner)
+        except WorkflowError as exc:
+            self._emit(
+                _Operation("workflow.created", workflow_id, "invalid", {"template": template}),
+                actor_did,
+            )
+            return ControlPlaneResult(
+                ok=False, errors=(OperationIssue(None, "template", str(exc)),)
+            )
+        return await self._write(
+            document,
+            actor_did=actor_did,
+            expected_version=None,
+            action="workflow.created",
+            reason=f"from template {template}",
+            files=files,
+        )
+
     # -- initiation ---------------------------------------------------------
+
+    async def test_run(self, workflow_id: str, *, actor_did: str) -> ControlPlaneResult:
+        """Try a draft at any tier without trusting it (J3 F6, G8).
+
+        The one unsigned run allowed above personal tier, and only in test mode:
+        the run id is in the reserved test namespace, every node row is flagged
+        so the executing agent stubs state-modifying tools with a recorded echo,
+        agent nodes run under a small cost cap, and nothing a schedule or an agent
+        does can start it. Audited as ``workflow.test_run``. Callers are
+        operator-authenticated surfaces; this method does not itself check a role.
+        """
+        try:
+            record = await self._runner.start_run(
+                workflow_id,
+                input={},
+                initiator="operator",
+                initiator_did=actor_did,
+                mode="test",
+            )
+        except Exception as exc:
+            self._emit(
+                _Operation("workflow.test_run", workflow_id, "refused", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+        self._emit(
+            _Operation(
+                "workflow.test_run",
+                f"{workflow_id}/{record.run_id}",
+                "started",
+                {"run_id": record.run_id, "max_cost_usd": TEST_RUN_MAX_COST_USD},
+            ),
+            actor_did,
+        )
+        return ControlPlaneResult(ok=True, run=record)
 
     async def run(
         self,
@@ -383,6 +461,28 @@ class WorkflowControlPlane:
         )
         return ControlPlaneResult(ok=True, run=record)
 
+    async def retry_node(self, run_id: str, node_id: str, *, actor_did: str) -> ControlPlaneResult:
+        """Re-run one failed node of a failed run; completed nodes are kept (J3 G3)."""
+        target = f"{run_id}/{node_id}"
+        try:
+            record = await self._runner.retry_node(run_id, node_id, actor_did=actor_did)
+        except NodeRetryRefusedError as exc:
+            self._emit(
+                _Operation("workflow.node.retried", target, "refused", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(node_id, None, str(exc)),))
+        except Exception as exc:
+            self._emit(
+                _Operation("workflow.node.retried", target, "error", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+        self._emit(
+            _Operation("workflow.node.retried", target, "retried", {"run_id": run_id}), actor_did
+        )
+        return ControlPlaneResult(ok=True, run=record)
+
     # -- internals ----------------------------------------------------------
 
     async def _write(
@@ -480,6 +580,7 @@ class WorkflowControlPlane:
 
 
 __all__ = [
+    "GATE_WORDS",
     "ControlPlaneResult",
     "OperationIssue",
     "WorkflowControlPlane",

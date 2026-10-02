@@ -448,7 +448,7 @@ async def test_an_unknown_workflow_is_a_typed_refusal(stores: Any, registry: Any
     assert not result.ok
 
 
-def test_the_operation_set_is_the_shared_eight(stores: Any) -> None:
+def test_the_operation_set_is_the_shared_nine(stores: Any) -> None:
     """Purge belongs here: it is the one component holding BOTH stores.
 
     Gate resolution belongs here too, and for a stricter reason: REQ-246 says a
@@ -476,6 +476,9 @@ def test_the_operation_set_is_the_shared_eight(stores: Any) -> None:
         "run",
         "cancel",
         "resolve_gate",
+        "retry_node",
+        "create_from_template",
+        "test_run",
     }
 
 

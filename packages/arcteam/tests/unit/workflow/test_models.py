@@ -88,19 +88,25 @@ def test_each_kind_parses_to_its_own_typed_model(example_document: dict[str, Any
     assert script.script == "scripts/provision.py"
 
 
-def test_join_defaults_to_all_and_any_is_honoured(example_document: dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    "removed", [{"join": "any"}, {"loop_back_to": "provision", "max_iterations": 3}]
+)
+def test_removed_join_and_loop_fields_are_refused(
+    example_document: dict[str, Any], removed: dict[str, Any]
+) -> None:
+    """Loops and ``join = "any"`` are gone; a definition naming them does not parse."""
+    next(n for n in example_document["node"] if n["id"] == "qa").update(removed)
+
+    with pytest.raises(WorkflowParseError):
+        parse_definition(example_document)
+
+
+def test_on_failure_defaults_to_fail_run_and_is_carried(example_document: dict[str, Any]) -> None:
+    next(n for n in example_document["node"] if n["id"] == "qa")["on_failure"] = "continue"
     definition = parse_definition(example_document)
 
-    assert definition.node_by_id("collect").join == "all"
-    assert definition.node_by_id("qa").join == "any"
-
-
-def test_loop_fields_are_carried(example_document: dict[str, Any]) -> None:
-    revise = parse_definition(example_document).node_by_id("revise")
-
-    assert revise.loop_back_to == "provision"
-    assert revise.max_iterations == 3
-    assert revise.when == "$nodes.qa.output.verdict == 'revise'"
+    assert definition.node_by_id("collect").on_failure == "fail_run"
+    assert definition.node_by_id("qa").on_failure == "continue"
 
 
 def test_schema_version_defaults_to_the_current_language_version() -> None:

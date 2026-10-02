@@ -21,8 +21,6 @@ export interface WorkflowRunStatusFrame extends TeamFrame {
   run_id: string
   node_id: string
   status: WorkflowNodeStatus
-  iteration?: number | null
-  max_iterations?: number | null
   task_run_id?: string | null
 }
 
@@ -60,8 +58,6 @@ export function useWorkflowRunLiveStatus(
         bufferRef.current[frame.node_id] = {
           node_id: frame.node_id,
           status: frame.status,
-          iteration: frame.iteration,
-          max_iterations: frame.max_iterations,
           task_run_id: frame.task_run_id,
         }
       }

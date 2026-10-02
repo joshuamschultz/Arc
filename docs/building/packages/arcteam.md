@@ -346,9 +346,8 @@ The five node kinds (`NODE_KINDS`):
 | `router` | `RouterNode` | Declared branch selection — `mode="rules"` (predicates) or `mode="llm"` (choice among declared route ids). |
 | `gate` | `GateNode` | A **human decision**, resolvable only through the control plane, never by a tool. |
 
-Every node shares `NodeBase` fields: `needs` (upstream ids), `join` (`all`
-default, or `any`), `when` (a predicate), `loop_back_to` + `max_iterations` (a
-declared bounded loop), `output_schema`, `artifacts`, `strategy`, `timeout_s`,
+Every node shares `NodeBase` fields: `needs` (upstream ids), `when` (a predicate),
+`on_failure` (`fail_run`, `continue` or `skip_dependents`), `output_schema`, `artifacts`, `strategy`, `timeout_s`,
 `max_attempts`, and `deliver_to` (see below). Quotas are enforced: `MAX_NODES`
 = 200, `MAX_DEFINITION_BYTES` = 256 KB — because the binding limit is the
 per-agent serial dispatcher (LLM10).
@@ -409,14 +408,12 @@ alternatives drive the largest share of a model's repair success, REQ-222).
 The checks comparable engines defer to runtime and then debug forever are exactly
 the ones caught here statically:
 
-- **The join deadlock.** A node whose `needs` span mutually exclusive routes of
-  one router waits forever under `join="all"`, because only one branch runs. It
-  is rejected with `join="any"` named as the fix.
-- **Undeclared cycles.** A cycle is legal only when *declared*: every
-  strongly-connected component larger than one node must be entered by exactly
-  one `loop_back_to`, all members share that one counter, and the back-edge must
-  carry `max_iterations`. Nested/overlapping loops are refused in v1. (Tarjan's
-  SCC is iterative so a long chain cannot exhaust the stack.)
+- **The exclusive-route merge.** A node whose `needs` span mutually exclusive
+  routes of one router can never become ready, because only one branch runs.
+  Fan-in after a router is not supported and is rejected.
+- **Cycles.** A workflow is a DAG; any cycle is refused. (Tarjan's SCC is
+  iterative so a long chain cannot exhaust the stack.) A retry is an operator
+  action on a failed node, never a loop in the definition.
 - **Statically-unsatisfiable output references.** A node reading
   `$nodes.X.output.*` where X is not a transitive dependency — or sits on a
   branch it can never co-occur with — can never bind, so it is refused.
@@ -445,8 +442,9 @@ knowledge is normal), and enforces the quotas.
    deterministic key, so two runners deciding the same frontier compute the same
    id.
 
-One `advance` tick settles spend, decides every node (`needs` + `join` → run /
-skip / wait), follows completed routers and declared loops, resolves gates an
+One `advance` tick settles spend, decides every node (`needs` → run /
+skip / wait), follows completed routers (one repair attempt for an undeclared
+route, then the node fails), resolves gates an
 operator has since decided, **materializes the reachable frontier as durable task
 rows**, then rolls terminal node states into the Run. `run_forever` ticks every
 active run until cancelled; a poisoned run is isolated and, after

@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "passes": {
+      "type": "boolean"
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "passes",
+    "problems"
+  ],
+  "additionalProperties": true
+}

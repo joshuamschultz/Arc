@@ -82,8 +82,10 @@ class SchedulerEngine:
         accepted_reply_fn: AcceptedReplyFn | None = None,
         reply_send: ReplySender | None = None,
         reply_lookup: ReplyLookup | None = None,
+        team_send: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
+        self._team_send = team_send
         self._config = config
         self._telemetry = telemetry
         self._agent_run_fn: AgentRunFn | None = agent_run_fn
@@ -320,7 +322,12 @@ class SchedulerEngine:
             prepare=prepare,
             run_fn=run_fn,
             start_timeout=float(entry.timeout_seconds),
+            team_send=self._team_send,
         )
+
+    def set_team_send(self, team_send: Callable[[str, str], Awaitable[None]] | None) -> None:
+        """Bind the team-bus sender a ``channel://`` ``deliver_to`` posts through."""
+        self._team_send = team_send
 
     # --- Evaluation ---
 

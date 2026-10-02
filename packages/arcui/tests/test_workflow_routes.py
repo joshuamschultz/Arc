@@ -632,3 +632,64 @@ def test_every_route_handler_delegates_to_a_control_plane_call() -> None:
             )
             assert calls_plane, f"{node.name} never calls a control-plane operation"
     assert seen == handler_names
+
+
+# --- P14-B step 8: retry one failed node ----------------------------------------
+
+
+class RetryingPlane(FakeControlPlane):
+    def __init__(self) -> None:
+        super().__init__()
+        self.retry_result = ControlPlaneResult(value={"run_id": "run-1", "status": "running"})
+
+    async def retry_node(
+        self, run_id: str, node_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        self.calls.append(("retry_node", (run_id, node_id), {"actor": actor}))
+        return self.retry_result
+
+
+def _app() -> tuple[Any, Any, RetryingPlane]:
+    app, auth, _, _ = _make_app()
+    plane = RetryingPlane()
+    app.state.workflow_control_plane = plane
+    return app, auth, plane
+
+
+def test_retry_requires_operator_and_audits(caplog: pytest.LogCaptureFixture) -> None:
+    app, auth, plane = _app()
+    app.state.audit = UIAuditLogger()
+    client = TestClient(app)
+    path = "/api/workflow-runs/run-1/nodes/b/retry"
+
+    viewer = client.post(path, headers=_viewer(auth))
+    assert viewer.status_code == 403
+    assert plane.calls == []
+
+    with caplog.at_level("INFO", logger="arcui.audit"):
+        resp = client.post(path, headers=_operator(auth))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+    assert plane.calls[0][:2] == ("retry_node", ("run-1", "b"))
+    mutation = _mutations(caplog)[-1]
+    assert mutation["operation"] == "run.retry_node"
+    assert mutation["outcome"] == "applied"
+
+
+def test_a_refused_retry_is_relayed_and_audited_as_refused(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, auth, plane = _app()
+    app.state.audit = UIAuditLogger()
+    plane.retry_result = ControlPlaneResult(
+        errors=[WorkflowFieldError(node_id="b", field="", error="only a failed run can retry")]
+    )
+    client = TestClient(app)
+
+    with caplog.at_level("INFO", logger="arcui.audit"):
+        resp = client.post("/api/workflow-runs/run-1/nodes/b/retry", headers=_operator(auth))
+
+    assert resp.status_code >= 400
+    assert "only a failed run" in resp.text
+    assert _mutations(caplog)[-1]["outcome"] != "applied"

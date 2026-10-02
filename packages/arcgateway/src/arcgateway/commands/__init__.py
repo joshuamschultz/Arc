@@ -7,7 +7,14 @@ then ``registry.register(MyCommand())`` here.
 
 from __future__ import annotations
 
-from arcgateway.commands.base import CommandContext, CommandSpec, SlashCommand, WorkflowProvider
+from arcgateway.commands.base import (
+    CommandContext,
+    CommandSpec,
+    GateResolver,
+    SlashCommand,
+    WorkflowProvider,
+)
+from arcgateway.commands.gate import GateCommand
 from arcgateway.commands.help import HelpCommand
 from arcgateway.commands.new_session import NewSessionCommand
 from arcgateway.commands.registry import CommandRegistry
@@ -25,6 +32,8 @@ __all__ = [
     "CommandContext",
     "CommandRegistry",
     "CommandSpec",
+    "GateCommand",
+    "GateResolver",
     "HelpCommand",
     "NewSessionCommand",
     "SlashCommand",

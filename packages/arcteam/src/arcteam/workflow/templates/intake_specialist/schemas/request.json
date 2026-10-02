@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "subject": {
+      "type": "string"
+    },
+    "details": {
+      "type": "string"
+    },
+    "requester": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "subject",
+    "details"
+  ],
+  "additionalProperties": true
+}

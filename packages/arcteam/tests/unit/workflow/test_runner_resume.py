@@ -425,3 +425,39 @@ async def test_resume_without_the_lease_waits_for_the_next_tick() -> None:
     lease.held = True
     await standby.tick()
     assert (await world.runs.get("run-l")).node_states["one"].status == "done"  # type: ignore[union-attr]
+
+
+async def test_reclaim_stamps_reclaimed_at_on_the_row() -> None:
+    backend = FakeBackend()
+    await backend.start()
+    world = World(backend)
+    await world.new_runner().start_run(
+        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-ra"
+    )
+    one = task_id("run-ra", "one")
+    row = await world.tasks.get(one)
+    assert row is not None
+    await world.tasks.start_task(one, SALES_DID, attempt_key=attempt_key(row, 1))
+    before = await world.tasks.get(one)
+    assert before is not None and "reclaimed_at" not in before.metadata
+
+    await world.new_runner().resume()
+
+    reclaimed = await world.tasks.get(one)
+    assert reclaimed is not None and reclaimed.status == "todo"
+    assert datetime.fromisoformat(str(reclaimed.metadata["reclaimed_at"])).tzinfo is not None
+    assert reclaimed.metadata["flow_run_id"] == "run-ra", "the node block survives the stamp"
+
+
+def test_attempt_with_its_own_timeout_is_not_expired_inside_the_margin() -> None:
+    """A slow turn finishing at its timeout must never be reclaimed and double-run."""
+    from arcstore.tasks import RECLAIM_MARGIN_S
+
+    from arcteam.workflow.stores import _attempt_expired
+
+    now = datetime.now(UTC)
+    row = Task(id="t", title="t", status="in_progress", creator_did=OPS_DID, timeout_seconds=1200)
+    row = row.model_copy(update={"started_at": (now - timedelta(seconds=1200)).isoformat()})
+    assert not _attempt_expired(row, now, 900.0)
+    past = now + timedelta(seconds=RECLAIM_MARGIN_S + 1)
+    assert _attempt_expired(row, past, 900.0)

@@ -43,7 +43,13 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # Delivery target: ``platform:chat_id`` or ``platform:chat_id:thread_id``.
 # Kept string-only here — arcagent must not import arcgateway's DeliveryTarget
 # (layering). The gateway parses and validates the full target at send time.
-_DELIVER_TO_RE = re.compile(r"^[a-z][a-z0-9_]*:[^:]+(:[^:]+)?$")
+_DELIVER_TO_RE = re.compile(
+    r"^(?:[a-z][a-z0-9_]*:(?!//)[^:]+(:[^:]+)?|channel://[A-Za-z0-9][A-Za-z0-9._-]*)$"
+)
+
+#: The canonical team-bus delivery scheme (arcteam channel); anything else is a
+#: gateway ``platform:chat_id`` target.
+CHANNEL_TARGET_PREFIX = "channel://"
 
 # Default floor constraints, used only when no SchedulerConfig context is
 # supplied to validation (e.g. reconstructing persisted entries). The live
@@ -199,7 +205,10 @@ class ScheduleEntry(BaseModel):
     @classmethod
     def _validate_deliver_to(cls, v: str | None) -> str | None:
         if v is not None and not _DELIVER_TO_RE.match(v):
-            msg = f"Invalid deliver_to {v!r}, expected 'platform:chat_id[:thread_id]'"
+            msg = (
+                f"Invalid deliver_to {v!r}, expected 'platform:chat_id[:thread_id]' "
+                f"or 'channel://<name>'"
+            )
             raise ValueError(msg)
         return v
 

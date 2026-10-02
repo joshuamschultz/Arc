@@ -161,6 +161,22 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/integration/test_file_delete_routes.py",
         "packages/arcui/tests/integration/test_path_traversal_e2e.py",
     ),
+    # Workflow runner state: a stale executor or a forged attempt key cannot
+    # complete or fail a newer attempt; a stale revision cannot overwrite the
+    # node snapshot; a replayed or concurrent gate resolution decides once; an
+    # operator retry of a still-running run, a node that did not fail, or a
+    # non-idempotent tool without operator OK is refused; test runs never run
+    # state-modifying tools or unsigned scripts.
+    "workflow runner attempt forgery, stale writers and replayed operator actions": (
+        "packages/arcagent/tests/unit/modules/tasks/test_attempt_keys.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_attempt_safety.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_workflow_test_mode.py",
+        "packages/arcstore/tests/unit/test_runs_node_states.py",
+        "packages/arcteam/tests/unit/workflow/test_gate_resolution.py",
+        "packages/arcteam/tests/unit/workflow/test_control_plane_retry.py",
+        "packages/arcteam/tests/unit/workflow/test_run_create_idempotence.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_occurrence.py",
+    ),
     "report read authority and provenance refusal": (
         "packages/arcui/tests/test_report_preview.py",
     ),

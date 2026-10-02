@@ -34,12 +34,12 @@ from typing import Any
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState, PathEntry, Run, RunStore
-from arcstore.tasks import Task, TaskStore, _validate_free_text
+from arcstore.tasks import Task, TaskStore, _validate_free_text, reclaim_allowance_s
 from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
 from .narrator import RunNarrator
-from .runner_contracts import RunStatus
+from .runner_contracts import TERMINAL_RUN_STATUSES, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ class WorkflowRunStore:
         for _ in range(_CAS_RETRIES):
             run = await self._runs.get(run_id)
             state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
-            if run is None or state is None or run.status in {"done", "failed", "cancelled"}:
+            if run is None or state is None or run.status in TERMINAL_RUN_STATUSES:
                 raise RunStateMissingError(f"active run {run_id} is unavailable")
             basis = f"{run.status}:{state['path_len']}"
             count = (
@@ -278,6 +278,7 @@ class WorkflowRunStore:
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: RunnerFence | None = None,
     ) -> bool:
         current = await self._runs.get(run_id)
@@ -290,6 +291,7 @@ class WorkflowRunStore:
             actor_did=actor_did,
             expected_status=expected,
             last_error=_storable_error(last_error),
+            clear_last_error=clear_error,
             fence=fence,
         )
         if outcome != "applied":
@@ -521,6 +523,9 @@ class WorkflowTaskStore:
         self, row: Task, *, now: datetime, actor_did: str, fence: RunnerFence | None
     ) -> Task | None:
         reason = "attempt abandoned: its process stopped mid-run (reclaimed on resume)"
+        # A node executor reads this to refuse a blind re-run of a tool that
+        # cannot dedupe its effect (the first attempt may have half-run).
+        stamp = {"reclaimed_at": now.isoformat()}
         if row.attempts >= row.max_attempts:
             return await self._tasks.dead_letter(
                 row.id,
@@ -529,6 +534,7 @@ class WorkflowTaskStore:
                 last_error=reason,
                 expected_attempts=row.attempts,
                 fence=fence,
+                metadata_patch=stamp,
             )
         return await self._tasks.requeue(
             row.id,
@@ -537,6 +543,7 @@ class WorkflowTaskStore:
             next_attempt_at=now.isoformat(),
             expected_attempts=row.attempts,
             fence=fence,
+            metadata_patch=stamp,
         )
 
 
@@ -662,7 +669,7 @@ def _attempt_expired(row: Task, now: datetime, stale_after_s: float) -> bool:
         return True
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
-    allowance = max(float(row.timeout_seconds or 0.0), stale_after_s)
+    allowance = reclaim_allowance_s(row.timeout_seconds, stale_after_s)
     return (now - started).total_seconds() >= allowance
 
 

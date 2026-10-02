@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
@@ -599,6 +600,23 @@ def _notify_target(st: Any) -> str | None:
         return current
     known = known_channels.list_channels(st.workspace)
     return known[0]["target"] if known else None
+
+
+def team_sender() -> Callable[[str, str], Awaitable[None]] | None:
+    """A ``(target, text)`` sender bound to this agent's messaging state, or None.
+
+    Lets a sibling module (the scheduler) post to a team channel through the one
+    send path without reaching into messaging's private runtime.
+    """
+    try:
+        st = _runtime.state()
+    except RuntimeError:
+        return None
+
+    async def send(target: str, message: str) -> None:
+        await _send_to_team(st, target, message)
+
+    return send
 
 
 async def _send_to_team(st: Any, target: str, message: str) -> None:

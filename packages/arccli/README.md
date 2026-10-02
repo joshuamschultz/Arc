@@ -379,8 +379,12 @@ arc module remove <module>
 arc workflow list
 arc workflow show <name>
 arc workflow run <name>
-arc workflow sign ./my-workflow.toml
+arc workflow templates
+arc workflow new <name> --from <template>
+arc workflow test <name>
+arc workflow sign <name>
 arc workflow verify <name>
+arc workflow gate <task_id> approve|reject|revise
 
 # === Editable system prompts (arcprompt) ===
 arc prompt list

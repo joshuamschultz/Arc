@@ -1,6 +1,6 @@
 """``arc workflow`` — ArcFlow operator CLI (SPEC-061 COMP-019).
 
-``create | edit | archive | unarchive | purge | run | cancel`` delegate to the
+``create | edit | archive | unarchive | purge | run | cancel | retry`` delegate to the
 arcteam :class:`~arcteam.workflow.control_plane.WorkflowControlPlane`
 (COMP-021) — the single shared operation set every surface (agent tools, this
 CLI, the dashboard) invokes, so there is exactly one implementation of what a
@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import tomllib
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -48,18 +49,30 @@ from arcteam.workflow import (
     confine,
     parse_definition,
     referenced_files,
-    sign_definition,
+    sign_definition_with_signer,
     validate_definition,
 )
-from arcteam.workflow.control_plane import ControlPlaneResult, OperationIssue, WorkflowControlPlane
+from arcteam.workflow.control_plane import (
+    GATE_WORDS,
+    ControlPlaneResult,
+    OperationIssue,
+    WorkflowControlPlane,
+)
+from arcteam.workflow.models import WORKFLOW_ID_PATTERN
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
 from arcteam.workflow.service import WorkflowRunnerService
+from arcteam.workflow.templates import list_templates
 from arctrust import WormSink
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_state, config_file, workflows_dir
 
 from arccli.commands._shared import dispatch, err, print_json, print_table, write
-from arccli.commands.operator import load_operator_key, operator_key_path, operator_public_key
+from arccli.commands.operator import (
+    load_operator_key,
+    operator_key_path,
+    operator_public_key,
+    resolve_operator_signer,
+)
 
 
 def _backend_factory() -> Any:
@@ -138,7 +151,7 @@ def _audit_sink() -> WormSink:
     from arcstore import resolve_data_dir
     from arcstore.ingest import WORM_ACTIVE_FILENAME
 
-    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
+    from arccli.commands.operator import resolve_record_cipher
 
     worm_dir = resolve_data_dir(None) / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
@@ -464,48 +477,57 @@ def _store(args: argparse.Namespace) -> DefinitionStore:
 # ---------------------------------------------------------------------------
 
 
-def _sign(args: argparse.Namespace) -> None:
-    """Operator-sign a workflow bundle: writes ``workflow.toml.arcsig``.
+_LEGAL_ID = re.compile(WORKFLOW_ID_PATTERN)
 
-    Signing key resolution happens ONLY here, in this CLI process — it never
-    enters an agent process (REQ-224), mirroring ``arc blueprint sign``
-    exactly: same ``load_operator_key``, same in-process-seed requirement (a
-    vault_transit federal key has no in-process seed and must sign
-    out-of-band), same ``operator:<pubkey-prefix>`` signer DID convention.
-    This function never resolves the control plane — signing never touches the
-    agent-shared operation set, by construction.
 
-    The bundle is addressed as ``<parent>/<id>`` so an operator can sign a
-    bundle wherever it sits, not only under ``~/.arc/workflows``.
+def _registered_bundle(arc_dir: Path, target: str) -> tuple[Path, Path]:
+    """Resolve ``target`` to ``(bundle_dir, workflow.toml)`` INSIDE the registered dir.
+
+    ``target`` is a workflow id, or a path that resolves to one bundle directly
+    under :func:`_workflows_root`. Anything else is refused: signing a copy the
+    runner never reads reports "signed" while the registered bundle stays a draft
+    (J3 F7), and a symlink or ``..`` path is the same mistake made sneakily, so
+    resolution follows links before the containment check.
     """
-    bundle_dir, toml_path = _workflow_dir_and_toml(args.path)
+    root = _workflows_root(arc_dir).resolve()
+    chosen = root / target if _LEGAL_ID.fullmatch(target) else Path(target).expanduser()
+    resolved = chosen.resolve()
+    bundle_dir = resolved.parent if resolved.is_file() else resolved
+    if bundle_dir.parent != root:
+        err(
+            f"Error: {target!r} is not a registered workflow. Use a workflow id; "
+            f"bundles live under {root}"
+        )
+        sys.exit(1)
+    toml_path = bundle_dir / "workflow.toml"
     if not toml_path.is_file():
         err(f"Error: workflow.toml not found: {toml_path}")
         sys.exit(1)
+    return bundle_dir, toml_path
 
+
+def _sign(args: argparse.Namespace) -> None:
+    """Operator-sign a REGISTERED workflow bundle: writes ``workflow.toml.arcsig``.
+
+    The key is resolved only here, in this CLI process, as a signer HANDLE — never
+    a seed (REQ-224) — so an in-process key and a vault- or notary-held one sign the
+    same way and no deployment is told to "sign out-of-band". This function never
+    resolves the control plane: signing never touches the agent-shared operation
+    set, by construction.
+    """
     arc_dir = _arc_dir(args)
-    operator = load_operator_key(arc_dir)
-    # DC-4 known limitation (shared with `arc blueprint sign`): signing needs the
-    # raw seed; a vault_transit (federal) operator key has no in-process seed and
-    # must sign out-of-band.
-    seed = getattr(operator, "seed", None)
-    if not seed:
-        err(
-            "Error: the operator key has no in-process seed (vault_transit custody). "
-            "`arc workflow sign` needs an in-process operator/author key; a vault-held "
-            "federal key must sign out-of-band."
-        )
-        sys.exit(1)
+    bundle_dir, toml_path = _registered_bundle(arc_dir, args.target)
+    signer = resolve_operator_signer(arc_dir)
 
     sink = _audit_sink()
     try:
-        bundle = sign_definition(
+        bundle = sign_definition_with_signer(
             _resolve_bundle_signer(
                 bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir), sink=sink
             ),
             bundle_dir.name,
-            signer_did=f"operator:{operator.public_key.hex()[:16]}",
-            private_key=seed,
+            signer_did=f"operator:{signer.public_key.hex()[:16]}",
+            signer=signer,
         )
     except WorkflowError as exc:
         err(f"Error: {exc}")
@@ -516,7 +538,7 @@ def _sign(args: argparse.Namespace) -> None:
 
 
 def _verify(args: argparse.Namespace) -> None:
-    """Report a workflow bundle's signature validity, pinned to the operator key.
+    """Report a registered workflow bundle's signature validity, pinned to the operator key.
 
     Pinned (not TOFU): ``is_verified`` is true only when the sidecar verifies
     against THIS deployment's operator key, so an attacker who self-signs with
@@ -524,12 +546,8 @@ def _verify(args: argparse.Namespace) -> None:
     SPEC-047 HIGH-1). Trust is read from ``is_verified``, never from
     ``status`` — an archived bundle can still be validly signed.
     """
-    bundle_dir, toml_path = _workflow_dir_and_toml(args.path)
-    if not toml_path.is_file():
-        err(f"Error: workflow.toml not found: {toml_path}")
-        sys.exit(1)
-
     arc_dir = _arc_dir(args)
+    bundle_dir, _ = _registered_bundle(arc_dir, args.target)
     store = _resolve_bundle_signer(bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir))
     try:
         bundle = store.load(bundle_dir.name)
@@ -762,6 +780,106 @@ def _cancel(args: argparse.Namespace) -> None:
     _with_plane(args, _run)
 
 
+def _retry(args: argparse.Namespace) -> None:
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        result = _ok_or_exit(
+            await plane.retry_node(args.run_id, args.node_id, actor_did=actor_did)
+        )
+        record = result.run
+        assert record is not None  # noqa: S101 — ok=True always carries the run
+        write(f"Retrying node {args.node_id} of {args.run_id} (status={record.status}).")
+
+    _with_plane(args, _run)
+
+
+# ---------------------------------------------------------------------------
+# Starting points and trying things out — templates, test runs, gates
+# ---------------------------------------------------------------------------
+
+
+def _templates(args: argparse.Namespace) -> None:
+    """List the starter templates ``new --from`` can copy."""
+    del args
+    print_table(
+        ["ID", "TITLE", "DESCRIPTION"], [[t.id, t.title, t.description] for t in list_templates()]
+    )
+
+
+def _new(args: argparse.Namespace) -> None:
+    """Create a draft from a starter template, then say what comes next."""
+
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        result = _ok_or_exit(
+            await plane.create_from_template(
+                args.template, args.id, actor_did=actor_did, owner=args.owner
+            )
+        )
+        bundle = result.bundle
+        assert bundle is not None  # noqa: S101 — ok=True always carries the bundle
+        write(
+            f"Created draft workflow {bundle.definition.id} from template {args.template} "
+            f"(status={bundle.status}).\n"
+            f"Next: read it with `arc workflow show {args.id}`, try it with "
+            f"`arc workflow test {args.id}`, then sign it with `arc workflow sign {args.id}`."
+        )
+
+    _with_plane(args, _run)
+
+
+def _test_workflow(args: argparse.Namespace) -> None:
+    """Try a draft with state-modifying work stubbed; it never needs a signature."""
+    arc_dir = _arc_dir(args)
+
+    async def _run() -> None:
+        actor_did = _actor_did(arc_dir)
+        plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
+        service = WorkflowRunnerService(plane.runner, interval=args.interval)
+        await service.start()
+        try:
+            result = _ok_or_exit(await plane.test_run(args.id, actor_did=actor_did))
+            record = result.run
+            assert record is not None  # noqa: S101 — ok=True always carries the run
+            write(
+                f"Started TEST run {record.run_id} for {args.id}: state-modifying tools "
+                f"and scripts are stubbed, spend is capped."
+            )
+            try:
+                terminal = await asyncio.wait_for(
+                    service.wait_for_terminal(record.run_id), timeout=args.timeout
+                )
+            except TimeoutError:
+                await plane.cancel(record.run_id, actor_did=actor_did, reason="test run timed out")
+                err(
+                    f"Test run {record.run_id} did not finish in {args.timeout:.0f}s "
+                    f"(is it waiting at a gate?). Cancelled."
+                )
+                sys.exit(1)
+            write(f"Test run {record.run_id} finished (status={terminal.status})")
+        finally:
+            await service.stop()
+            await aclose()
+
+    _run_or_report(_run)
+
+
+def _gate(args: argparse.Namespace) -> None:
+    """Approve, reject, or send back a waiting gate, as the operator."""
+
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        _ok_or_exit(
+            await plane.resolve_gate(
+                args.task_id,
+                decision=GATE_WORDS[args.decision],
+                notes=args.notes or "",
+                actor_did=actor_did,
+            )
+        )
+        past = {"approve": "approved", "reject": "rejected", "revise": "sent back for revision"}
+        write(f"Gate {args.task_id} {past[args.decision]}.")
+
+    _with_plane(args, _run)
+
+
 # ---------------------------------------------------------------------------
 # Argparse dispatcher
 # ---------------------------------------------------------------------------
@@ -842,6 +960,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_dir_arg(p)
 
+    p = subs.add_parser("templates", help="List the starter workflow templates.")
+    _add_dir_arg(p)
+
+    p = subs.add_parser("new", help="Create a draft workflow from a starter template.")
+    p.add_argument("id", help="Id for the new workflow (a bare name).")
+    p.add_argument("--from", dest="template", required=True, help="Template id (see `templates`).")
+    p.add_argument("--owner", default=None, help="Agent handle that owns the workflow.")
+    _add_dir_arg(p)
+
+    p = subs.add_parser(
+        "test", help="Test-run a draft: state-modifying tools stubbed, spend capped, no signature."
+    )
+    p.add_argument("id")
+    p.add_argument(
+        "--timeout", type=float, default=600.0, help="Seconds to wait before cancelling (600)."
+    )
+    p.add_argument("--interval", type=float, default=1.0, help="Runner tick seconds (1.0).")
+    _add_dir_arg(p)
+
+    p = subs.add_parser("gate", help="Resolve a waiting gate: approve, reject, or revise.")
+    p.add_argument("task_id", help="The gate's task id.")
+    p.add_argument("decision", choices=sorted(GATE_WORDS))
+    p.add_argument("--notes", default=None, help="Why, recorded with the decision.")
+    _add_dir_arg(p)
+
     p = subs.add_parser("serve", help="Run ArcFlow headlessly until interrupted.")
     p.add_argument(
         "--interval",
@@ -856,14 +999,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", default=None)
     _add_dir_arg(p)
 
-    p = subs.add_parser("sign", help="Operator-sign a workflow bundle (writes .arcsig sidecar).")
-    p.add_argument("path")
+    p = subs.add_parser(
+        "retry", help="Re-run one failed node of a failed run; finished nodes are kept."
+    )
+    p.add_argument("run_id")
+    p.add_argument("node_id")
+    _add_dir_arg(p)
+
+    p = subs.add_parser(
+        "sign", help="Operator-sign a registered workflow by id (writes .arcsig sidecar)."
+    )
+    p.add_argument("target", metavar="id", help="Workflow id under the registered directory.")
     _add_dir_arg(p)
 
     p = subs.add_parser(
         "verify", help="Verify a workflow bundle's signature against the pinned operator key."
     )
-    p.add_argument("path")
+    p.add_argument("target", metavar="id", help="Workflow id under the registered directory.")
     _add_dir_arg(p)
 
     return parser
@@ -878,8 +1030,13 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "unarchive": _unarchive,
     "purge": _purge,
     "run": _run_workflow,
+    "templates": _templates,
+    "new": _new,
+    "test": _test_workflow,
+    "gate": _gate,
     "serve": _serve,
     "cancel": _cancel,
+    "retry": _retry,
     "sign": _sign,
     "verify": _verify,
 }

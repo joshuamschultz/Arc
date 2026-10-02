@@ -18,6 +18,7 @@ import {
   STRATEGIES,
   splitList,
   type NodeDraft,
+  type OnFailure,
 } from '@/lib/workflow-node-draft'
 import type { WorkflowNode, WorkflowNodeKind } from '@/lib/types'
 
@@ -401,19 +402,18 @@ export function WorkflowNodeForm({
             ))}
           </div>
         )}
-        {draft.needs.length > 1 && (
-          <Field label="Join" hint="all: wait for every upstream. any: first one through wins." helpKey="workflow.node.join">
-            <Select value={draft.join} onValueChange={(v) => set('join', v as 'all' | 'any')}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">all</SelectItem>
-                <SelectItem value="any">any</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-        )}
+        <Field label="On failure" hint="What the run does when this node fails." helpKey="workflow.node.on_failure">
+          <Select value={draft.onFailure} onValueChange={(v) => set('onFailure', v as OnFailure)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="fail_run">fail_run</SelectItem>
+              <SelectItem value="continue">continue</SelectItem>
+              <SelectItem value="skip_dependents">skip_dependents</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
       </div>
 
       <Field label="Condition" hint="Skip this node unless the expression is true (optional)." helpKey="workflow.node.condition">
@@ -435,16 +435,6 @@ export function WorkflowNodeForm({
           </Field>
           <Field label="Artifacts" hint="Comma separated files that must exist when the node finishes." helpKey="workflow.node.artifacts">
             <Input value={draft.artifacts} onChange={(e) => set('artifacts', e.target.value)} />
-          </Field>
-          <Field label="Loop back to" hint="Declared back-edge target. Needs a max iterations bound." helpKey="workflow.node.loop_back_to">
-            <Input value={draft.loopBackTo} onChange={(e) => set('loopBackTo', e.target.value)} />
-          </Field>
-          <Field label="Max iterations" helpKey="workflow.node.max_iterations">
-            <Input
-              value={draft.maxIterations}
-              inputMode="numeric"
-              onChange={(e) => set('maxIterations', e.target.value)}
-            />
           </Field>
           <Field label="Timeout (seconds)" helpKey="workflow.node.timeout">
             <Input

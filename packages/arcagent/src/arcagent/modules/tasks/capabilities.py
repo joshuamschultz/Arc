@@ -74,8 +74,9 @@ from arcagent.modules.tasks._dispatch_helpers import (
 from arcagent.modules.tasks._dispatch_helpers import (
     session_key as _session_key,
 )
-from arcagent.modules.tasks.models import Priority, Task
+from arcagent.modules.tasks.models import Priority, Task, reclaim_allowance_s
 from arcagent.modules.tasks.node_execution import (
+    TEST_MODE,
     WorkflowNode,
     _confined,
     allowed_strategies,
@@ -309,6 +310,28 @@ async def complete_task(
         return json.dumps({"error": str(exc)})
 
 
+async def _fail_claimed_attempt(
+    st: _runtime._State, current: Task, resolution: str
+) -> Task | None:
+    """Fail a claimed workflow attempt, only while the CALLER's attempt holds the row.
+
+    The caller's attempt is the bound dispatch's key, not the row's: the row's
+    key is whoever claimed last, so reading it back would let a stale executor
+    from attempt N fail attempt N+1. With no bound node (an operator-side call)
+    the row's own key is what is pinned.
+    """
+    bound = current_node()
+    caller_key = bound.attempt_key if bound is not None and bound.attempt_key else ""
+    failed: Task | None = await st.store.fail_attempt(
+        current.id,
+        attempt_key=caller_key or str(current.metadata["attempt_key"]),
+        attempts=current.attempts,
+        resolution=resolution,
+        actor_did=st.identity.did,
+    )
+    return failed
+
+
 @tool(
     name="fail_task",
     description="Mark an owned task failed, with a short resolution",
@@ -324,9 +347,14 @@ async def fail_task(
         if current is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
-        updated = await st.store.finish(
-            id, status="failed", resolution=resolution, actor_did=st.identity.did
-        )
+        if current.metadata.get("attempt_key"):
+            updated = await _fail_claimed_attempt(st, current, resolution)
+            if updated is None:
+                return json.dumps({"error": f"Task '{id}' is no longer held by this attempt"})
+        else:
+            updated = await st.store.finish(
+                id, status="failed", resolution=resolution, actor_did=st.identity.did
+            )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         await _notify_operator(st, f"failed: {current.title}", current.classification, alert=True)
@@ -801,6 +829,41 @@ def _parse_tool_output(raw: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"result": value}
 
 
+def _retry_needs_operator_ok(task: Task, declared: arcrun.Tool) -> bool:
+    """True when a non-idempotent tool would run again for a retried/reclaimed attempt.
+
+    The prior attempt may have half-run, and the tool cannot dedupe a repeat from
+    the attempt key, so a second execution could duplicate a send or an upload.
+    The operator releases it by setting ``metadata.operator_retry_ok``.
+    """
+    if declared.idempotent:
+        return False
+    retried = task.attempts > 1 or bool(task.metadata.get("reclaimed_at"))
+    return retried and not task.metadata.get("operator_retry_ok")
+
+
+async def _refuse_non_idempotent_rerun(
+    st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
+) -> None:
+    """Dead-letter the attempt: retrying cannot fix it, only an operator can."""
+    reason = (
+        f"tool {node.tool!r} is not idempotent and attempt {task.attempts} is a re-run; "
+        "an operator must set metadata.operator_retry_ok to run it again"
+    )
+    _logger.warning("Workflow node task %s refused: %s", task.id, reason)
+    failed = await st.store.dead_letter(
+        task.id,
+        actor_did=self_did,
+        resolution=f"refused re-run of attempt {task.attempts} — operator OK required",
+        last_error=reason,
+        expected_attempts=task.attempts,
+    )
+    if failed is not None:
+        await _notify_operator(
+            st, f"needs operator OK to re-run: {task.title}", task.classification, alert=True
+        )
+
+
 async def _run_tool_node(
     st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
 ) -> None:
@@ -820,6 +883,20 @@ async def _run_tool_node(
     declared = next((item for item in registry.to_arcrun_tools() if item.name == node.tool), None)
     if declared is None:
         await _fail_node_attempt(st, task, f"declared tool {node.tool!r} is unavailable")
+        return
+    if node.mode == TEST_MODE and declared.classification != "read_only":
+        # A test run records what WOULD have happened. Only an explicitly
+        # read-only tool runs; an unclassified one is treated as state-modifying.
+        await _complete_stubbed_node(
+            st,
+            task,
+            node,
+            {"stubbed": True, "tool": node.tool, "args": node.args},
+            self_did,
+        )
+        return
+    if _retry_needs_operator_ok(task, declared):
+        await _refuse_non_idempotent_rerun(st, task, node, self_did)
         return
     context = arcrun.ToolContext(
         run_id=node.run_id,
@@ -843,6 +920,29 @@ async def _run_tool_node(
     )
 
 
+async def _complete_stubbed_node(
+    st: _runtime._State,
+    task: Task,
+    node: WorkflowNode,
+    output: dict[str, Any],
+    self_did: str,
+) -> None:
+    """Finish a test-run node with a recorded echo instead of its real effect.
+
+    Exactly once per attempt, like the real thing, and deliberately NOT held to
+    the node's output schema: the echo says what would have run, it is not what
+    the node would have produced.
+    """
+    await _complete_node_attempt(
+        st,
+        task,
+        attempt_key=_node_attempt_key(task, node),
+        output=output,
+        resolution="stubbed in test run",
+        self_did=self_did,
+    )
+
+
 async def _run_script_node(
     st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
 ) -> None:
@@ -858,6 +958,12 @@ async def _run_script_node(
     """
     key = _node_attempt_key(task, node)
     if await _attempt_already_recorded(st, task, key):
+        return
+    if node.mode == TEST_MODE:
+        # An unsigned draft's code is what a test run has not been trusted with.
+        await _complete_stubbed_node(
+            st, task, node, {"stubbed": True, "script": node.script}, self_did
+        )
         return
     bundle = _bundle_root(st, node)
     if bundle is None:
@@ -1002,7 +1108,23 @@ async def _dispatch_tick() -> None:
     if started is None or started.status != "in_progress":
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
         return
+    started = await _stamp_dispatch_timeout(st, started, self_did)
     await _run_task(st, started, run_id, self_did)
+
+
+async def _stamp_dispatch_timeout(st: _runtime._State, task: Task, self_did: str) -> Task:
+    """Put the effective dispatch timeout on the row, where every reclaimer reads it.
+
+    The runner's reclaim lease is derived from the row's timeout, so a timeout
+    that lives only in this agent's config would leave a slow turn to be
+    reclaimed and double-run. One source: the same ``resolve_timeout`` the run
+    itself is bounded by.
+    """
+    timeout = _resolve_timeout(task, st.config)
+    if timeout is None or task.timeout_seconds == timeout:
+        return task
+    updated = await st.store.update(task.id, {"timeout_seconds": timeout}, actor_did=self_did)
+    return updated or task
 
 
 async def _announce_task_moment(st: _runtime._State, task: Task) -> None:
@@ -1052,6 +1174,8 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     run_kwargs: dict[str, Any] = {}
     if node is not None:
         run_kwargs["allowed_strategies"] = allowed_strategies(node)
+        if node.max_cost_usd is not None:
+            run_kwargs["max_cost_usd"] = node.max_cost_usd
         # A node may pin where its human-facing notification goes. Threaded as
         # the turn's reply target, it becomes what ``notify_user`` delivers to —
         # so a cron run's summary lands on the pinned channel instead of falling
@@ -1251,6 +1375,7 @@ async def _handle_attempt_failure(
     error: str,
     *,
     expected_attempts: int | None = None,
+    reclaimed: bool = False,
 ) -> None:
     """Retry (with exponential backoff) or dead-letter a failed attempt (P1).
 
@@ -1260,7 +1385,10 @@ async def _handle_attempt_failure(
     conditional in the store, so a concurrent stuck-reclaim can't double-apply.
     ``expected_attempts`` pins both writes to the failing attempt, so a stale
     executor can never requeue or dead-letter an attempt that started after it.
+    ``reclaimed`` stamps ``metadata.reclaimed_at`` (a stuck-reclaim, not a failure
+    the attempt itself reported).
     """
+    stamp = {"reclaimed_at": datetime.now(UTC).isoformat()} if reclaimed else None
     current = await st.store.get(task_id)
     if current is None:
         return
@@ -1276,6 +1404,7 @@ async def _handle_attempt_failure(
             resolution=f"failed on attempt {current.attempts} — error is not retryable",
             last_error=error,
             expected_attempts=expected_attempts,
+            metadata_patch=stamp,
         )
         await _notify_operator(
             st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
@@ -1288,6 +1417,7 @@ async def _handle_attempt_failure(
             resolution=f"failed after {current.attempts} attempt(s) — retries exhausted",
             last_error=error,
             expected_attempts=expected_attempts,
+            metadata_patch=stamp,
         )
         await _notify_operator(
             st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
@@ -1301,6 +1431,7 @@ async def _handle_attempt_failure(
         last_error=error,
         next_attempt_at=next_at,
         expected_attempts=expected_attempts,
+        metadata_patch=stamp,
     )
 
 
@@ -1332,7 +1463,7 @@ async def _reliability_tick() -> None:
                 alert=True,
             )
             await _handle_attempt_failure(
-                st, task.id, self_did, "stuck: no active run — reclaimed"
+                st, task.id, self_did, "stuck: no active run — reclaimed", reclaimed=True
             )
     st.reclaim_done = True
     await _reconcile_parents(st, self_did)
@@ -1443,7 +1574,8 @@ def _should_reclaim(st: _runtime._State, task: Task, now: datetime, first_pass: 
     """
     if task.id in st.running:
         return False
-    return first_pass or _is_stale(task, now, st.config.stuck_reclaim_seconds)
+    lease = reclaim_allowance_s(_resolve_timeout(task, st.config), st.config.stuck_reclaim_seconds)
+    return first_pass or _is_stale(task, now, lease)
 
 
 async def _cancel_running(st: _runtime._State, task: Task, self_did: str) -> None:

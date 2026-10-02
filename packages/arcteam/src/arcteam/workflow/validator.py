@@ -8,16 +8,12 @@ reach disk, so validation is always in-memory and always complete.
 The checks that matter most are the ones comparable engines defer to runtime
 and then debug forever:
 
-* **The join deadlock.** A node whose ``needs`` span mutually exclusive routes
-  of one router waits forever under the default ``join = "all"``, because only
-  one of those branches will ever run. The design's own example graph shipped
-  with this bug. It is rejected here, statically, with ``join = "any"`` named
-  as the fix.
-* **Undeclared cycles.** Cycles are legal but must be *declared*: every
-  strongly-connected component larger than one node must be entered by exactly
-  one ``loop_back_to``, all its members share that one counter, and the
-  back-edge must carry ``max_iterations``. Nested and overlapping loops are
-  refused in v1 rather than given ambiguous counter semantics.
+* **The exclusive-route merge.** A node whose ``needs`` span mutually exclusive
+  routes of one router can never become ready, because only one of those
+  branches will ever run. Fan-in after a router is not supported: it is
+  rejected here, statically, and each branch continues on its own.
+* **Cycles.** A workflow is a DAG. Any cycle is refused; a retry is an operator
+  action on a failed node, never a loop in the definition.
 * **Statically unsatisfiable output references.** A node reading
   ``$nodes.X.output.*`` where X is not a transitive dependency — or sits on a
   branch the reader can never co-occur with — can never bind that value.
@@ -29,6 +25,7 @@ the whole list comes back at once so a repair pass sees every problem.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -121,8 +118,9 @@ def validate_definition(
     if cycles:
         return tuple(issues)
 
-    issues += _check_joins(definition, graph)
+    issues += _check_exclusive_needs(definition, graph)
     issues += _check_output_references(definition, graph)
+    issues += _check_prompt_references(definition, graph, bundle_root)
     return tuple(issues)
 
 
@@ -171,14 +169,6 @@ def _check_structure(definition: WorkflowDefinition) -> Iterable[ValidationIssue
     ids = set(definition.node_ids)
     for node in definition.nodes:
         yield from _check_needs(node, ids)
-        if node.loop_back_to is not None and node.loop_back_to not in ids:
-            yield ValidationIssue(
-                node_id=node.id,
-                field="loop_back_to",
-                error="loop_back_to names a node that does not exist",
-                observed=node.loop_back_to,
-                admissible=tuple(sorted(ids)),
-            )
         if isinstance(node, RouterNode):
             yield from _check_routes(node, definition, ids)
 
@@ -252,21 +242,16 @@ def _check_routes(
 
 def _check_node_options(definition: WorkflowDefinition) -> Iterable[ValidationIssue]:
     for node in definition.nodes:
-        if node.loop_back_to is not None and node.max_iterations is None:
+        if node.on_failure == "continue" and node.kind in ("gate", "router"):
             yield ValidationIssue(
                 node_id=node.id,
-                field="max_iterations",
-                error="a declared loop must carry a hard iteration bound",
-                observed=None,
-                admissible=("max_iterations = 1..100",),
-            )
-        if node.loop_back_to is None and node.max_iterations is not None:
-            yield ValidationIssue(
-                node_id=node.id,
-                field="max_iterations",
-                error="max_iterations only means something on a node declaring loop_back_to",
-                observed=node.max_iterations,
-                admissible=("remove max_iterations", "add loop_back_to = <ancestor node id>"),
+                field="on_failure",
+                error=(
+                    "a failed gate is a rejection and a failed router chose no route; "
+                    "the run may not go on past either"
+                ),
+                observed=node.on_failure,
+                admissible=("fail_run", "skip_dependents"),
             )
         yield from _check_artifact_paths(node)
 
@@ -415,17 +400,13 @@ def confine(root: Path, reference: str) -> Path | None:
 
 
 class _Graph:
-    """Adjacency over ``needs`` edges, plus declared back-edges."""
+    """Adjacency over ``needs`` edges."""
 
     def __init__(self, definition: WorkflowDefinition) -> None:
         self.forward: dict[str, set[str]] = {node.id: set() for node in definition.nodes}
-        self.with_back_edges: dict[str, set[str]] = {node.id: set() for node in definition.nodes}
         for node in definition.nodes:
             for need in node.needs:
                 self.forward[need].add(node.id)
-                self.with_back_edges[need].add(node.id)
-            if node.loop_back_to is not None:
-                self.with_back_edges[node.id].add(node.loop_back_to)
 
     def descendants(self, start: str) -> frozenset[str]:
         """``start`` plus everything downstream of it over ``needs`` edges."""
@@ -499,95 +480,49 @@ def _pop_component(stack: list[str], on_stack: set[str], root: str) -> frozenset
             return frozenset(component)
 
 
-# --- cycles and loops --------------------------------------------------------
+# --- cycles ------------------------------------------------------------------
 
 
 def _check_cycles(definition: WorkflowDefinition, graph: _Graph) -> Iterable[ValidationIssue]:
-    """Every cycle must be one declared, bounded loop. Nothing else is legal."""
-    in_a_loop: set[str] = set()
-    for component in _strongly_connected(graph.with_back_edges):
-        if len(component) == 1 and not _has_self_edge(graph, component):
+    """A workflow is a DAG: any cycle, however small, is refused."""
+    del definition
+    for component in _strongly_connected(graph.forward):
+        if (
+            len(component) == 1
+            and next(iter(component)) not in graph.forward[next(iter(component))]
+        ):
             continue
-        back_edges = [
-            node
-            for node in definition.nodes
-            if node.id in component and node.loop_back_to in component
-        ]
-        if len(back_edges) != 1:
-            yield _cycle_issue(component, back_edges)
-            continue
-        in_a_loop.update(component)
-    yield from _check_stray_back_edges(definition, in_a_loop)
-
-
-def _has_self_edge(graph: _Graph, component: frozenset[str]) -> bool:
-    node_id = next(iter(component))
-    return node_id in graph.with_back_edges[node_id]
-
-
-def _cycle_issue(component: frozenset[str], back_edges: list[WorkflowNode]) -> ValidationIssue:
-    members = sorted(component)
-    if not back_edges:
-        return ValidationIssue(
+        members = sorted(component)
+        yield ValidationIssue(
             node_id=members[0],
             field="needs",
-            error=(
-                f"undeclared cycle through {', '.join(members)} — a cycle is legal only when "
-                f"one node in it declares loop_back_to with max_iterations"
-            ),
+            error=f"cycle through {', '.join(members)} - a workflow must be a DAG",
             observed=members,
-            admissible=(f"loop_back_to = one of {members}", "max_iterations = 1..100"),
+            admissible=("remove one of the needs edges that closes the cycle",),
         )
-    return ValidationIssue(
-        node_id=sorted(node.id for node in back_edges)[0],
-        field="loop_back_to",
-        error=(
-            f"the cycle through {', '.join(members)} must be entered by exactly one declared "
-            f"back-edge so all its members share one counter; nested and overlapping loops "
-            f"are not supported"
-        ),
-        observed=sorted(node.id for node in back_edges),
-        admissible=("exactly one node in the cycle declaring loop_back_to",),
-    )
 
 
-def _check_stray_back_edges(
-    definition: WorkflowDefinition, in_a_loop: set[str]
+# --- exclusive routes --------------------------------------------------------
+
+
+def _check_exclusive_needs(
+    definition: WorkflowDefinition, graph: _Graph
 ) -> Iterable[ValidationIssue]:
-    """A back-edge that forms no cycle is a mislabelled forward edge."""
-    for node in definition.nodes:
-        if node.loop_back_to is not None and node.id not in in_a_loop:
-            yield ValidationIssue(
-                node_id=node.id,
-                field="loop_back_to",
-                error=(
-                    "loop_back_to must target an ancestor of this node so the back-edge closes "
-                    "a real loop"
-                ),
-                observed=node.loop_back_to,
-                admissible=("a node this one transitively depends on",),
-            )
-
-
-# --- joins -------------------------------------------------------------------
-
-
-def _check_joins(definition: WorkflowDefinition, graph: _Graph) -> Iterable[ValidationIssue]:
-    """Reject the deadlock: needs spanning exclusive router routes under join=all."""
+    """Reject the deadlock: needs spanning exclusive router routes."""
     exclusive = _exclusive_regions(definition, graph)
     for node in definition.nodes:
-        if node.join == "any" or len(node.needs) < 2:
+        if len(node.needs) < 2:
             continue
         if any(_spans_two_routes(node.needs, regions) for regions in exclusive):
             yield ValidationIssue(
                 node_id=node.id,
-                field="join",
+                field="needs",
                 error=(
-                    "these needs sit on mutually exclusive routes of one router, so under "
-                    'join = "all" this node can never become ready'
+                    "these needs sit on mutually exclusive routes of one router, so this node "
+                    "can never become ready; fan-in after a router is not supported"
                 ),
-                observed=node.join,
-                admissible=("any",),
+                observed=list(node.needs),
+                admissible=("continue each route on its own branch",),
             )
 
 
@@ -629,6 +564,36 @@ def _check_output_references(
             yield from _check_reference(node, field, referenced, ancestors, ids, exclusive)
         if isinstance(node, ToolNode):
             yield from _check_arg_strings(node)
+
+
+_PROSE_REFERENCE = re.compile(r"\$nodes\.([A-Za-z][A-Za-z0-9_-]*)\.output\b")
+
+
+def _check_prompt_references(
+    definition: WorkflowDefinition, graph: _Graph, bundle_root: Path | None
+) -> Iterable[ValidationIssue]:
+    """Prose may mention only the output of nodes it is guaranteed to run after.
+
+    A prompt that cites ``$nodes.X.output`` for a node that is not an ancestor
+    describes data the node will never be handed; it is caught here, not by a
+    model improvising at run time. A prompt that is not on disk yet is skipped
+    (the file check reports it).
+    """
+    if bundle_root is None:
+        return
+    root = bundle_root.resolve()
+    exclusive = _exclusive_regions(definition, graph)
+    ids = set(definition.node_ids)
+    for node in definition.nodes:
+        if not isinstance(node, AgentNode) or node.prompt is None:
+            continue
+        path = confine(root, node.prompt)
+        if path is None or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        ancestors = graph.ancestors(node.id)
+        for referenced in sorted(set(_PROSE_REFERENCE.findall(text))):
+            yield from _check_reference(node, "prompt", referenced, ancestors, ids, exclusive)
 
 
 def _referenced_node_ids(node: WorkflowNode) -> Iterable[tuple[str, str]]:

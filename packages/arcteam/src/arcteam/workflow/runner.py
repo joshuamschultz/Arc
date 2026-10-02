@@ -50,11 +50,15 @@ from .errors import UnsignedWorkflowError
 from .narrator import RunNarrator, assert_channel_binding
 from .runner_budget import RunBudget
 from .runner_contracts import (
+    RETRYABLE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
     ArgsResolver,
+    BundleSpec,
     DefinitionStoreLike,
     Initiator,
     NodeSpec,
+    OnFailure,
+    OperatorNotifier,
     OwnerResolver,
     PredicateEvaluator,
     RouterNodeSpec,
@@ -72,6 +76,21 @@ from .stores import RunStateMissingError
 logger = logging.getLogger(__name__)
 
 
+#: Run ids in this namespace are test runs: unsigned drafts an operator is trying
+#: out. A live start can never claim it, so the id alone says what a run is.
+TEST_RUN_PREFIX = "test-"
+
+#: The most a test run may spend. A draft nobody has read yet gets a small purse.
+TEST_RUN_MAX_COST_USD = 0.50
+
+RunMode = Literal["live", "test"]
+
+
+def is_test_run(run_id: str) -> bool:
+    """Whether ``run_id`` names a test run (see :data:`TEST_RUN_PREFIX`)."""
+    return run_id.startswith(TEST_RUN_PREFIX)
+
+
 class WorkflowRunError(RuntimeError):
     """The run cannot proceed at all."""
 
@@ -82,6 +101,10 @@ class WorkflowRunNotFoundError(WorkflowRunError):
 
 class UnsignedWorkflowRefusedError(WorkflowRunError):
     """An unsigned definition was asked to run by an initiator or tier that may not."""
+
+
+class NodeRetryRefusedError(WorkflowRunError):
+    """An operator asked to retry a node that cannot be retried, and why."""
 
 
 class NodeDecisionError(WorkflowRunError):
@@ -134,7 +157,7 @@ def _is_infra_error(exc: BaseException) -> bool:
 
 # A node's inherited outputs ride on its task row, so one huge upstream result
 # would make every descendant's prompt huge too. Past this size it is a ref.
-UPSTREAM_INLINE_LIMIT_BYTES = 16_384
+UPSTREAM_INLINE_LIMIT_BYTES = 32_768
 
 
 def _ancestors(node: NodeSpec, definition: WorkflowSpec) -> set[str]:
@@ -171,6 +194,29 @@ def _failure_reason(failed: NodeInstance) -> str:
     if not detail:
         return f"node failed: {failed.node_id}"
     return f"node {failed.node_id} failed: {detail}"
+
+
+def _completed_with_failures(failures: list[NodeInstance]) -> str:
+    """The resolution of a run that finished although some nodes failed."""
+    return "completed with failures: " + "; ".join(_failure_reason(f) for f in failures)
+
+
+def _descendants(node_id: str, definition: WorkflowSpec) -> set[str]:
+    """Every node that reaches ``node_id`` through ``needs``, transitively."""
+    found: set[str] = set()
+    frontier = [node_id]
+    while frontier:
+        current = frontier.pop()
+        for node in definition.nodes:
+            if current in node.needs and node.id not in found:
+                found.add(node.id)
+                frontier.append(node.id)
+    return found
+
+
+def _upstream_failed_reason(node_id: str, error: str) -> str:
+    """Why a node that never ran did not: the upstream failure, in one line."""
+    return f"upstream {node_id} failed: {error}" if error else f"upstream {node_id} failed"
 
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -211,6 +257,7 @@ class _Decision:
 
     action: Literal["wait", "skip", "go"]
     iteration: int = 0
+    reason: str = "condition"
 
 
 _WAIT = _Decision("wait")
@@ -245,6 +292,7 @@ class WorkflowRunner:
         evaluate: PredicateEvaluator,
         resolve_args: ArgsResolver,
         narrator: RunNarrator | None = None,
+        operator_notifier: OperatorNotifier | None = None,
         audit_sink: AuditSink | None = None,
         node_max_tokens: int | None = None,
         node_max_cost_usd: float | None = None,
@@ -267,6 +315,7 @@ class WorkflowRunner:
         self._evaluate = evaluate
         self._resolve_args = resolve_args
         self._narrator = narrator
+        self._operator_notifier = operator_notifier
         self._sink: AuditSink = audit_sink or NullSink()
         self._node_max_tokens = node_max_tokens
         self._node_max_cost_usd = node_max_cost_usd
@@ -335,8 +384,15 @@ class WorkflowRunner:
         run_id: str | None = None,
         trigger_digest: str | None = None,
         detached: bool = False,
+        mode: RunMode = "live",
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier.
+
+        ``mode="test"`` is the one way an unsigned draft runs above personal
+        tier: the run id is minted in the reserved test namespace, trust is not
+        asked, the run's spend is capped, and every node row is flagged so the
+        agent executing it stubs state-modifying work. A live start can never
+        claim a test id.
 
         ``detached=True`` only creates the Run row and returns: the lease
         holder's next tick materializes the frontier. Without it, a CLI or
@@ -353,15 +409,27 @@ class WorkflowRunner:
         # directory. The store refuses a traversal id itself — this is the
         # boundary check that means that backstop is never the thing that fires.
         _assert_safe_name("workflow id", workflow_id)
-        try:
-            bundle = self._definitions.load_for_run(workflow_id)
-        except UnsignedWorkflowError as exc:
-            self._deny_unsigned(workflow_id, initiator, initiator_did)
-            raise UnsignedWorkflowRefusedError(str(exc)) from exc
+        test_mode = mode == "test"
+        if test_mode:
+            run_id = run_id or f"{TEST_RUN_PREFIX}{uuid4().hex[:12]}"
+        if test_mode != (run_id is not None and is_test_run(run_id)):
+            raise WorkflowRunError(
+                f"run ids starting with {TEST_RUN_PREFIX!r} are reserved for test runs"
+            )
+        if test_mode:
+            bundle = self._definitions.load(workflow_id)
+            if bundle.status == "archived":
+                raise WorkflowRunError(f"workflow {workflow_id!r} is archived")
+        else:
+            try:
+                bundle = self._definitions.load_for_run(workflow_id)
+            except UnsignedWorkflowError as exc:
+                self._deny_unsigned(workflow_id, initiator, initiator_did)
+                raise UnsignedWorkflowRefusedError(str(exc)) from exc
         # Trust is `is_verified`, never `status`: status carries lifecycle, and
         # an archived bundle can be validly signed. Keying the gate off status
         # would refuse a definition that is in fact trusted.
-        if not bundle.is_verified:
+        if not bundle.is_verified and not test_mode:
             self._admit_unsigned(workflow_id, initiator, initiator_did)
         definition = bundle.definition
         assert_channel_binding(definition.channel)
@@ -370,6 +438,7 @@ class WorkflowRunner:
         # A caller-supplied run id becomes part of every task key this run
         # writes. Check it before the Run row exists, not after.
         _assert_safe_name("run id", run_id)
+        replayed = await self._runs.get(run_id) is not None
         run = await self._runs.create_run(
             run_id=run_id,
             workflow_id=definition.id,
@@ -380,11 +449,23 @@ class WorkflowRunner:
             channel=definition.channel,
             input=dict(input),
             budget_tokens=None if budget is None else budget.tokens,
-            budget_cost_usd=None,
+            budget_cost_usd=TEST_RUN_MAX_COST_USD if test_mode else None,
             budget_wall_clock_s=None if budget is None else budget.wall_clock_s,
             fence=self._mutation_fence(),
         )
         self._open_run_workspace(run_id)
+        if replayed:
+            # The same occurrence fired again (a retry after a lost response, a
+            # double fire): the existing run carries on. Nothing is restarted,
+            # re-announced or re-audited as a start.
+            self._audit(
+                "workflow.run.start_replayed",
+                target=f"{definition.id}/{run_id}",
+                outcome="replayed",
+                actor_did=initiator_did,
+                extra={"initiator": initiator},
+            )
+            return run if detached else await self.advance(run_id)
         self._audit(
             "workflow.run.started",
             target=f"{definition.id}/{run_id}",
@@ -398,6 +479,7 @@ class WorkflowRunner:
                 # the definition behind run 17" stops being reconstructible.
                 "signer_did": bundle.signer_did,
                 "initiator": initiator,
+                "mode": mode,
             },
         )
         if self._narrator is not None:
@@ -508,7 +590,7 @@ class WorkflowRunner:
         # Dispatch re-reads through the integrity + tier gate on every tick, but
         # NOT the archived refusal: archiving a workflow must not break the runs
         # already moving through it.
-        bundle = self._definitions.load_for_dispatch(run.workflow_id)
+        bundle = self._bundle_for_dispatch(run)
         if bundle.content_hash != run.content_hash:
             return await self._terminate(run_id, "failed", "definition changed under a live run")
         definition = bundle.definition
@@ -529,6 +611,13 @@ class WorkflowRunner:
             if not changed:
                 break
         return await self._finalize(run, definition, last_state)
+
+    def _bundle_for_dispatch(self, run: RunRecord) -> BundleSpec:
+        """The bundle to dispatch ``run`` from. A test run is trusted by no one, so
+        the signature gate is not asked of it; it never reaches a live path."""
+        if is_test_run(run.run_id):
+            return self._definitions.load(run.workflow_id)
+        return self._definitions.load_for_dispatch(run.workflow_id)
 
     async def run_forever(self, *, interval: float = 5.0) -> None:
         """Tick until cancelled — the host's entry point (COMP-009).
@@ -723,14 +812,14 @@ class WorkflowRunner:
         self, run: RunRecord, exc: BaseException, count: int
     ) -> None:
         """One mail: this run has not advanced for ``count`` ticks, and why."""
-        delivered = False
-        if self._narrator is not None:
-            delivered = await self._narrator.operator_stuck_notice(
-                run_id=run.run_id,
-                workflow_id=run.workflow_id,
-                error_class=type(exc).__name__,
-                consecutive_failures=count,
-            )
+        delivered = await self._tell_operator(
+            (
+                f"Workflow {run.workflow_id} run {run.run_id} has not advanced for {count} "
+                f"consecutive ticks ({type(exc).__name__}). The run is still live and "
+                "retrying every tick; no further notice until it advances."
+            ),
+            f"workflow-run:{run.run_id}:stuck:{len(run.path_taken)}",
+        )
         self._audit(
             "workflow.run.operator_notified",
             target=f"{run.workflow_id}/{run.run_id}",
@@ -812,6 +901,67 @@ class WorkflowRunner:
             )
         return await self._require_run(run_id)
 
+    async def retry_node(self, run_id: str, node_id: str, *, actor_did: str) -> RunRecord:
+        """Re-run one failed node of a finished run, keeping everything that completed.
+
+        Only a run that ended in failure can retry (a running run is still being
+        driven by the runner). The node gets a fresh instance (the next iteration,
+        a fresh attempt budget); its row is written BEFORE the run reopens, so a
+        tick can never see a reopened run whose failed node still looks fatal.
+        Nodes that already finished are untouched, and never run again.
+        Like ``cancel``, this is an operator control-plane action and does not
+        need the runner lease.
+        """
+        run = await self._require_run(run_id)
+        if run.status not in RETRYABLE_RUN_STATUSES:
+            raise NodeRetryRefusedError(
+                f"run {run_id} is {run.status}: only a failed run can retry a node"
+            )
+        bundle = self._definitions.load_for_dispatch(run.workflow_id)
+        if bundle.content_hash != run.content_hash:
+            raise NodeRetryRefusedError("the definition changed under this run; start a new run")
+        definition = bundle.definition
+        if node_id not in definition.node_ids:
+            raise NodeRetryRefusedError(f"node {node_id!r} is not in workflow {definition.id!r}")
+        state = RunState(await self._tasks.query_by_flow_run(run_id), run.path_taken)
+        latest = state.latest(node_id)
+        if latest is None or latest.task.status != "failed":
+            raise NodeRetryRefusedError(f"node {node_id!r} did not fail, so it cannot be retried")
+        iteration = latest.iteration + 1
+        task = await self._build_task(
+            run,
+            definition,
+            definition.node_by_id(node_id),
+            iteration,
+            state,
+            state.scope(run.input),
+            self._legs_for(run, state),
+        )
+        created = await self._tasks.create_batch([task], actor_did=actor_did)
+        await self._record_materialization(run, state, created[0])
+        reopened = await self._runs.set_status(
+            run_id,
+            "running",
+            actor_did=actor_did,
+            expected_status=run.status,
+            resolution=f"retrying node {node_id}",
+            clear_error=True,
+        )
+        if not reopened:
+            raise NodeRetryRefusedError(f"run {run_id} changed while retrying; try again")
+        self._audit(
+            "workflow.node.retried",
+            target=f"{run.workflow_id}/{node_id}",
+            outcome="retried",
+            actor_did=actor_did,
+            extra={
+                "run_id": run_id,
+                "iteration": iteration,
+                "previous_error": latest.task.last_error,
+            },
+        )
+        return await self._require_run(run_id)
+
     # -- one pass over the graph -------------------------------------------
 
     async def _pass(
@@ -833,22 +983,19 @@ class WorkflowRunner:
         routed = await self._follow_llm_routers(run, definition, state)
         if routed is None:
             return await self._require_run(run.run_id), True, state
-        changed |= routed
+        repairs, routes_changed = routed
+        changed |= routes_changed
 
-        looped = await self._follow_loops(run, definition, state)
-        if looped is None:
-            return await self._require_run(run.run_id), True, state
-        pending, loop_changed = looped
-        pending.extend(revisions)
-        changed |= loop_changed
+        pending: list[tuple[NodeSpec, int]] = [*revisions, *repairs]
+        failure_policy = {node.id: node.on_failure for node in definition.nodes}
 
         try:
             for node in definition.nodes:
-                decision = self._decide(node, state, scope)
+                decision = self._decide(node, state, scope, failure_policy)
                 if decision.action == "wait":
                     continue
                 if decision.action == "skip":
-                    await self._skip(run, node.id, decision.iteration, state, "condition")
+                    await self._skip(run, node.id, decision.iteration, state, decision.reason)
                     changed = True
                 elif node.kind == "router" and cast(RouterNodeSpec, node).mode == "rules":
                     await self._choose_rules_route(
@@ -868,16 +1015,24 @@ class WorkflowRunner:
             return await self._require_run(run.run_id), True, state
         return await self._require_run(run.run_id), changed, state
 
-    def _decide(self, node: NodeSpec, state: RunState, scope: Mapping[str, Any]) -> _Decision:
+    def _decide(
+        self,
+        node: NodeSpec,
+        state: RunState,
+        scope: Mapping[str, Any],
+        failure_policy: Mapping[str, OnFailure],
+    ) -> _Decision:
         """Whether this node runs, is skipped, or is not yet decidable."""
-        candidate = self._candidate_iteration(node, state)
+        candidate = self._candidate_iteration(node, state, failure_policy)
         if candidate is None:
             return _WAIT
-        action, iteration = candidate
-        if action == "skip":
-            return _Decision("skip", iteration)
+        action, iteration, reason = candidate
         if state.highest_iteration(node.id) >= iteration:
+            # Already materialized, routed or skipped at this iteration: a
+            # skipped need must not re-journal its dependents' skip every pass.
             return _WAIT
+        if action == "skip":
+            return _Decision("skip", iteration, reason)
         if node.when is not None:
             try:
                 satisfied = self._evaluate(node.when, scope)
@@ -888,34 +1043,39 @@ class WorkflowRunner:
         return _Decision("go", iteration)
 
     def _candidate_iteration(
-        self, node: NodeSpec, state: RunState
-    ) -> tuple[Literal["go", "skip"], int] | None:
-        """Resolve ``needs`` + ``join`` into a decision, or ``None`` to wait.
+        self, node: NodeSpec, state: RunState, failure_policy: Mapping[str, OnFailure]
+    ) -> tuple[Literal["go", "skip"], int, str] | None:
+        """Resolve ``needs`` into a decision, or ``None`` to wait.
 
-        A need is satisfied when it is done OR skipped; ``join="any"`` fires on
-        the first done need, ``join="all"`` requires them all and propagates a
-        skip. Exactly one non-run terminal state, and it travels transitively.
+        A need is satisfied when it is done, skipped, or failed under a policy
+        that lets the run go on. Every need must settle, and a skipped need
+        skips this node too. A failed ``continue`` node counts as done (its
+        dependents run and are told); a failed ``skip_dependents`` node skips
+        them, with the reason; a failed ``fail_run`` node is never satisfied.
         """
         if not node.needs:
-            return ("go", 0)
-        done: list[int] = []
-        skipped: list[int] = []
+            return ("go", 0, "condition")
+        settled: list[int] = []
+        skipped: list[tuple[int, str]] = []
         for need in node.needs:
             status, iteration = state.terminal_state(need)
             if status == "done":
-                done.append(iteration)
+                settled.append(iteration)
             elif status == "skipped":
-                skipped.append(iteration)
-        if node.join == "any":
-            if done:
-                return ("go", max(done))
-            if len(skipped) == len(node.needs):
-                return ("skip", max(skipped))
-            return None
+                skipped.append((iteration, state.skip_reasons.get((need, iteration), "")))
+            elif status == "failed":
+                policy = failure_policy[need]
+                if policy == "continue":
+                    settled.append(iteration)
+                elif policy == "skip_dependents":
+                    error = (state.latest_failure_reason(need) or "").strip()
+                    skipped.append((iteration, _upstream_failed_reason(need, error)))
         if skipped:
-            return ("skip", max(skipped))
-        if len(done) == len(node.needs):
-            return ("go", max(done))
+            iteration = max(i for i, _ in skipped)
+            reason = next((r for _, r in skipped if r.startswith("upstream ")), "condition")
+            return ("skip", iteration, reason)
+        if len(settled) == len(node.needs):
+            return ("go", max(settled), "condition")
         return None
 
     # -- effects ------------------------------------------------------------
@@ -1004,6 +1164,18 @@ class WorkflowRunner:
             # could complete stays unreachable by splitting it across nodes.
             "accumulated_legs": list(legs),
         }
+        failed_upstream = {
+            ancestor: reason
+            for ancestor, reason in state.upstream_failed().items()
+            if ancestor in _ancestors(node, definition)
+        }
+        if failed_upstream:
+            metadata["upstream_failed"] = failed_upstream
+        if is_test_run(run.run_id):
+            # The executing agent reads these two: it alone knows a tool's
+            # classification (to stub state-modifying work) and enforces the cap.
+            metadata["mode"] = "test"
+            metadata["max_cost_usd"] = TEST_RUN_MAX_COST_USD
         revision_notes = state.revisions.get((node.id, iteration))
         if revision_notes:
             metadata["revision_notes"] = revision_notes
@@ -1178,7 +1350,7 @@ class WorkflowRunner:
         self, run: RunRecord, node_id: str, iteration: int, state: RunState, reason: str
     ) -> None:
         """Record a non-run terminal state. Skipped nodes get no task row, ever."""
-        state.record_skip(node_id, iteration)
+        state.record_skip(node_id, iteration, reason)
         await self._append(
             run.run_id,
             {"kind": "skipped", "node_id": node_id, "iteration": iteration, "reason": reason},
@@ -1217,8 +1389,15 @@ class WorkflowRunner:
 
     async def _follow_llm_routers(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
-    ) -> bool | None:
-        """Follow a completed llm router's choice. ``None`` means the run failed."""
+    ) -> tuple[list[tuple[NodeSpec, int]], bool] | None:
+        """Follow a completed llm router's choice; one repair for an invalid one.
+
+        The answer must be a declared route. An undeclared one gets exactly one
+        repair attempt (the router runs again, told what it may choose); a second
+        invalid answer fails the node. Never a silent fall-through to a branch.
+        ``None`` means the pass should restart against fresh state.
+        """
+        repairs: list[tuple[NodeSpec, int]] = []
         changed = False
         for node in definition.nodes:
             if node.kind != "router":
@@ -1229,20 +1408,57 @@ class WorkflowRunner:
             instance = state.latest(node.id)
             if instance is None or instance.task.status != "done":
                 continue
-            if (node.id, instance.iteration) in state.routes:
+            key = (node.id, instance.iteration)
+            if key in state.routes or key in state.superseded:
                 continue
             chosen = str(instance.output.get("route", ""))
             declared = [route.to for route in router.routes]
-            if chosen not in declared:
-                await self._terminate(
-                    run.run_id,
-                    "failed",
-                    f"node {node.id}: undeclared route {chosen!r}, declared {declared}",
-                )
+            if chosen in declared:
+                await self._record_route(run, router, instance.iteration, chosen, state)
+                changed = True
+            elif node.id in state.repaired:
+                await self._fail_node(run, node.id, state, f"router output invalid: {chosen!r}")
                 return None
-            await self._record_route(run, router, instance.iteration, chosen, state)
-            changed = True
-        return changed
+            else:
+                repairs.append(
+                    await self._request_router_repair(run, router, instance, declared, state)
+                )
+                changed = True
+        return repairs, changed
+
+    async def _request_router_repair(
+        self,
+        run: RunRecord,
+        router: RouterNodeSpec,
+        instance: NodeInstance,
+        declared: list[str],
+        state: RunState,
+    ) -> tuple[NodeSpec, int]:
+        """Journal the repair and put the router back on the frontier with notes."""
+        chosen = str(instance.output.get("route", ""))
+        notes = (
+            f"Your route {chosen!r} is not declared. Choose exactly one of: {', '.join(declared)}."
+        )
+        await self._append(
+            run.run_id,
+            {
+                "kind": "repair",
+                "node_id": router.id,
+                "iteration": instance.iteration,
+                "notes": notes,
+            },
+        )
+        # Mirror the journal entry now: the next pass would derive the same.
+        state.superseded.add((router.id, instance.iteration))
+        state.repaired.add(router.id)
+        state.revisions[(router.id, instance.iteration + 1)] = notes
+        self._audit(
+            "workflow.router.repair_requested",
+            target=f"{run.workflow_id}/{router.id}",
+            outcome="repair",
+            extra={"run_id": run.run_id, "answer": chosen, "declared": declared},
+        )
+        return router, instance.iteration + 1
 
     async def _record_route(
         self,
@@ -1272,54 +1488,6 @@ class WorkflowRunner:
         )
         for target in untaken:
             await self._skip(run, target, iteration, state, "branch not taken")
-
-    async def _follow_loops(
-        self, run: RunRecord, definition: WorkflowSpec, state: RunState
-    ) -> tuple[list[tuple[NodeSpec, int]], bool] | None:
-        """Mint the next iteration of a declared back-edge's target.
-
-        The counter is keyed on the TARGET, not on the node carrying the edge, so
-        a router inside the loop body cannot reset it. Exhaustion fails the node.
-        """
-        pending: list[tuple[NodeSpec, int]] = []
-        changed = False
-        for node in definition.nodes:
-            target_id = node.loop_back_to
-            if target_id is None:
-                continue
-            status, iteration = state.terminal_state(node.id)
-            if status != "done" or (node.id, iteration) in state.loops:
-                continue
-            taken = state.materialized_count(target_id)
-            bound = node.max_iterations or 1
-            state.record_loop(node.id, iteration)
-            if taken >= bound:
-                await self._append(
-                    run.run_id,
-                    {
-                        "kind": "loop",
-                        "node_id": node.id,
-                        "iteration": iteration,
-                        "target": target_id,
-                        "outcome": "exhausted",
-                    },
-                )
-                await self._fail_node(
-                    run, node.id, state, f"max_iterations ({bound}) reached looping to {target_id}"
-                )
-                return None
-            await self._append(
-                run.run_id,
-                {
-                    "kind": "loop",
-                    "node_id": node.id,
-                    "iteration": iteration,
-                    "target": target_id,
-                },
-            )
-            pending.append((definition.node_by_id(target_id), taken))
-            changed = True
-        return pending, changed
 
     async def _resolve_gates(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
@@ -1387,7 +1555,7 @@ class WorkflowRunner:
     ) -> list[tuple[NodeSpec, int]]:
         """Put each node this gate reviewed back on the frontier, with notes.
 
-        The next iteration is minted exactly the way a declared loop mints one,
+        The next iteration is minted as a fresh instance of the node,
         so a revision is an ordinary new node instance: it materializes, the
         gate re-materializes behind it, and the path taken records both. The
         notes travel on the Run's journal rather than in a message, so the
@@ -1412,8 +1580,13 @@ class WorkflowRunner:
         return pending
 
     async def _fail_node(self, run: RunRecord, node_id: str, state: RunState, reason: str) -> None:
+        """Mark a node failed with its reason; the roll-up applies its ``on_failure``.
+
+        A node whose answer was unusable fails even though its task row said
+        done, so the row is rewritten, not just left alone.
+        """
         instance = state.latest(node_id)
-        if instance is not None and instance.task.status not in ("done", "failed"):
+        if instance is not None and instance.task.status != "failed":
             await self._tasks.update(
                 instance.task.id,
                 {"status": "failed", "last_error": reason},
@@ -1426,7 +1599,6 @@ class WorkflowRunner:
             outcome="failed",
             extra={"run_id": run.run_id, "reason": reason},
         )
-        await self._terminate(run.run_id, "failed", f"node {node_id}: {reason}")
 
     # -- roll-up -------------------------------------------------------------
 
@@ -1457,8 +1629,11 @@ class WorkflowRunner:
                 return await self._require_run(run.run_id)
             return run
         failures = state.failures()
-        if failures:
-            return await self._terminate(run.run_id, "failed", _failure_reason(failures[0]))
+        policy = {node.id: node.on_failure for node in definition.nodes}
+        fatal = [f for f in failures if policy.get(f.node_id, "fail_run") == "fail_run"]
+        if fatal:
+            await self._cancel_unreached(run, definition, state, fatal[0])
+            return await self._terminate(run.run_id, "failed", _failure_reason(fatal[0]))
         # A task that settled between the decide pass and this roll-up moved the
         # frontier AFTER the pass decided against it — not a stall. The decide pass
         # and this roll-up read the store separately, so a predecessor committing
@@ -1488,7 +1663,42 @@ class WorkflowRunner:
                 "failed",
                 f"stalled: nothing in flight and {undecided[0]} never became reachable",
             )
+        if failures:
+            return await self._terminate(
+                run.run_id, "done_with_failures", _completed_with_failures(failures)
+            )
         return await self._terminate(run.run_id, "done", "all nodes complete")
+
+    async def _cancel_unreached(
+        self, run: RunRecord, definition: WorkflowSpec, state: RunState, failed: NodeInstance
+    ) -> None:
+        """Say why each node that will never run did not, when a failure ends the run.
+
+        A descendant of the failed node names it and its error; a node on an
+        independent branch that never started names the run's failure instead.
+        Journaled, so the per-node snapshot and the run view show the reason.
+        """
+        error = (failed.task.last_error or "").strip()
+        downstream = _descendants(failed.node_id, definition)
+        for node in definition.nodes:
+            if state.terminal_state(node.id)[0] != "absent":
+                continue
+            reason = (
+                _upstream_failed_reason(failed.node_id, error)
+                if node.id in downstream
+                else f"run failed: {_failure_reason(failed)}"
+            )
+            state.record_cancel(node.id, 0, reason)
+            await self._append(
+                run.run_id,
+                {"kind": "cancelled", "node_id": node.id, "iteration": 0, "reason": reason},
+            )
+            self._audit(
+                "workflow.node.cancelled",
+                target=f"{run.workflow_id}/{node.id}",
+                outcome="cancelled",
+                extra={"run_id": run.run_id, "reason": reason},
+            )
 
     @staticmethod
     def _terminal_states_moved(prev: RunState, curr: RunState, definition: WorkflowSpec) -> bool:
@@ -1512,7 +1722,7 @@ class WorkflowRunner:
             actor_did=self._runner_did,
             expected_status=run.status,
             resolution=resolution,
-            last_error=resolution if status == "failed" else None,
+            last_error=resolution if status in ("failed", "done_with_failures") else None,
             fence=self._mutation_fence(),
         )
         if not flipped:
@@ -1528,9 +1738,25 @@ class WorkflowRunner:
             await self._narrator.run_outcome(
                 channel=run.channel, run_id=run_id, status=status, detail=resolution
             )
-        if status == "failed":
+        if status in ("failed", "done_with_failures"):
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
+
+    async def _tell_operator(self, text: str, idempotency_key: str) -> bool:
+        """Hand one notice to the host's operator seam. Never raises; reports delivery.
+
+        The key is stable per run and kind, so a retried or restarted runner that
+        reaches the same terminal state cannot notify twice. The run is already
+        past the point where a delivery failure could change its outcome.
+        """
+        if self._operator_notifier is None:
+            return False
+        try:
+            channel = await self._operator_notifier(text, idempotency_key)
+        except Exception:  # reason: the run is already terminal; report, do not raise
+            logger.warning("operator notice %s not delivered", idempotency_key, exc_info=True)
+            return False
+        return channel is not None
 
     async def _notify_operator_of_failure(self, run: RunRecord, reason: str) -> None:
         """Every terminal failure reaches a human, with the reason, whatever the channel.
@@ -1540,14 +1766,10 @@ class WorkflowRunner:
         and its outcome is audited either way: a notice that could not be sent is
         a recorded fact, not silence.
         """
-        delivered = False
-        if self._narrator is not None:
-            delivered = await self._narrator.operator_failure_notice(
-                run_id=run.run_id,
-                workflow_id=run.workflow_id,
-                version=run.version,
-                reason=reason,
-            )
+        delivered = await self._tell_operator(
+            f"Workflow {run.workflow_id} v{run.version} failed (run {run.run_id}): {reason}",
+            f"workflow-run:{run.run_id}:failed:{len(run.path_taken)}",
+        )
         self._audit(
             "workflow.run.operator_notified",
             target=f"{run.workflow_id}/{run.run_id}",
@@ -1727,6 +1949,7 @@ def build_workflow_runner(
     registry: Any = None,
     operator_public_key: bytes | None = None,
     narrator: RunNarrator | None = None,
+    operator_notifier: OperatorNotifier | None = None,
     audit_sink: AuditSink | None = None,
     on_close: Callable[[], Awaitable[None]] | None = None,
     tick_failure_threshold: int = 3,
@@ -1805,6 +2028,7 @@ def build_workflow_runner(
         evaluate=evaluate_predicate,
         resolve_args=resolve_node_args,
         narrator=narrator,
+        operator_notifier=operator_notifier,
         audit_sink=sink,
         run_workspace_root=root / "shared",
         on_close=on_close,

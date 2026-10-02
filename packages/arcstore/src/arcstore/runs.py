@@ -23,14 +23,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arcstore.mutation_fence import RunnerFence
 from arcstore.tasks import _validate_free_text
 
-RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
+RunStatus = Literal[
+    "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
+]
 NodeKind = Literal["agent", "tool", "script", "router", "gate"]
 NodeOutcome = Literal["done", "failed", "skipped"]
 NodeStatus = Literal[
     "materialized", "in_progress", "review", "done", "failed", "skipped", "cancelled", "routed"
 ]
 
-_TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
+_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"done", "done_with_failures", "failed", "cancelled"}
+)
 
 
 def _now() -> str:
@@ -280,6 +284,7 @@ class RunStore:
         actor_did: str,
         expected_status: RunStatus,
         last_error: str | None = None,
+        clear_last_error: bool = False,
         fence: RunnerFence | None = None,
     ) -> tuple[Run | None, str]:
         """Advance a run's status, conditional on its current status (REQ-228).
@@ -300,8 +305,13 @@ class RunStore:
         patch: dict[str, Any] = {"status": new_status, "updated_at": now}
         if last_error is not None:
             patch["last_error"] = last_error
+        elif clear_last_error:
+            patch["last_error"] = None
         if new_status in _TERMINAL_STATUSES:
             patch["completed_at"] = now
+        else:
+            # A run reopened by a node retry is no longer complete.
+            patch["completed_at"] = None
         won = await self._backend.update_if(
             self._COLLECTION,
             run_id,

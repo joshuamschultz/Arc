@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcteam.workflow.narrator import RunNarrator
-
 from .conftest import (
     OPS_DID,
     RUNNER_DID,
     SALES_DID,
     Definition,
     Node,
-    RecordingSender,
+    RecordingNotifier,
+    RecordingSink,
     complete_node,
     fail_node,
     task_id,
@@ -54,32 +53,46 @@ async def test_failed_run_records_child_last_error(stores: Any, registry: Any) -
 
 
 async def test_failed_run_notifies_operator_with_reason(stores: Any, registry: Any) -> None:
-    sender = RecordingSender()
-    narrator = RunNarrator(sender, sender_did=RUNNER_DID)
-    await _fail_collect(stores, registry, narrator=narrator)
+    notifier = RecordingNotifier()
+    sink = RecordingSink()
+    record, _, run = await _fail_collect(
+        stores, registry, operator_notifier=notifier, audit_sink=sink
+    )
 
-    notices = [m for m in sender.sent if "user://operator" in m.to]
-    assert len(notices) == 1
-    body = notices[0].body
-    assert "chain" in body and "collect" in body and "prompt is too long" in body
-    assert notices[0].msg_type.value == "alert"
+    assert len(notifier.notices) == 1
+    text, key = notifier.notices[0]
+    assert "chain" in text and "collect" in text and "prompt is too long" in text
+    assert key.startswith(f"workflow-run:{run.run_id}:failed:")
+    notified = [e for e in sink.events if e.action == "workflow.run.operator_notified"]
+    assert [e.outcome for e in notified] == ["delivered"]
 
 
 async def test_operator_notice_reaches_operator_even_with_no_channel_bound(
     stores: Any, registry: Any
 ) -> None:
-    sender = RecordingSender()
-    narrator = RunNarrator(sender, sender_did=RUNNER_DID)
-    await _fail_collect(stores, registry, narrator=narrator)
+    notifier = RecordingNotifier()
+    await _fail_collect(stores, registry, operator_notifier=notifier)
 
     assert CHAIN.channel is None
-    assert any("user://operator" in m.to for m in sender.sent)
+    assert len(notifier.notices) == 1
+
+
+async def test_undelivered_operator_notice_is_audited_as_undelivered(
+    stores: Any, registry: Any
+) -> None:
+    sink = RecordingSink()
+    await _fail_collect(
+        stores, registry, operator_notifier=RecordingNotifier(channel=None), audit_sink=sink
+    )
+
+    notified = [e for e in sink.events if e.action == "workflow.run.operator_notified"]
+    assert [e.outcome for e in notified] == ["undelivered"]
 
 
 async def test_successful_run_sends_no_operator_notice(stores: Any, registry: Any) -> None:
     _, _, tasks = stores
-    sender = RecordingSender()
-    runner = build(stores, registry, CHAIN, narrator=RunNarrator(sender, sender_did=RUNNER_DID))
+    notifier = RecordingNotifier()
+    runner = build(stores, registry, CHAIN, operator_notifier=notifier)
     run = await runner.start_run(
         "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
     )
@@ -88,7 +101,7 @@ async def test_successful_run_sends_no_operator_notice(stores: Any, registry: An
         record = await runner.advance(run.run_id)
 
     assert record.status == "done"
-    assert not [m for m in sender.sent if "user://operator" in m.to]
+    assert notifier.notices == []
 
 
 async def test_node_receives_transitive_ancestor_output(stores: Any, registry: Any) -> None:

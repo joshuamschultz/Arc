@@ -25,13 +25,19 @@ export interface RouteDraft {
   default: boolean
 }
 
+export const ON_FAILURE_VALUES = ['fail_run', 'continue', 'skip_dependents'] as const
+export type OnFailure = (typeof ON_FAILURE_VALUES)[number]
+
+const parseOnFailure = (value: unknown): OnFailure =>
+  (ON_FAILURE_VALUES as readonly unknown[]).includes(value) ? (value as OnFailure) : 'fail_run'
+
 /** The editable shape behind the form — flat strings so inputs stay controlled. */
 export interface NodeDraft {
   id: string
   kind: WorkflowNodeKind
   agent: string
   needs: string[]
-  join: 'all' | 'any'
+  onFailure: OnFailure
   when: string
   // agent
   prompt: string
@@ -50,8 +56,6 @@ export interface NodeDraft {
   // shared extras
   outputSchema: string
   artifacts: string
-  loopBackTo: string
-  maxIterations: string
   timeout: string
   maxAttempts: string
 }
@@ -76,7 +80,7 @@ export function toDraft(node: WorkflowNode): NodeDraft {
     kind: node.kind,
     agent: asText(raw.agent),
     needs: Array.isArray(node.needs) ? node.needs.map(String) : [],
-    join: node.join === 'any' ? 'any' : 'all',
+    onFailure: parseOnFailure(node.on_failure),
     when: asText(node.when),
     prompt: asText(raw.prompt),
     skill: asText(raw.skill),
@@ -93,8 +97,6 @@ export function toDraft(node: WorkflowNode): NodeDraft {
     })),
     outputSchema: asText(raw.output_schema),
     artifacts: asList(raw.artifacts),
-    loopBackTo: asText(node.loop_back_to),
-    maxIterations: asText(node.max_iterations),
     timeout: asText(raw.timeout_s),
     maxAttempts: asText(raw.max_attempts),
   }
@@ -107,15 +109,11 @@ export function fromDraft(draft: NodeDraft): Record<string, unknown> {
     if (value.trim()) node[key] = value.trim()
   }
   put('agent', draft.agent)
-  if (draft.needs.length > 0) {
-    node.needs = draft.needs
-    if (draft.join === 'any') node.join = 'any'
-  }
+  if (draft.needs.length > 0) node.needs = draft.needs
+  if (draft.onFailure !== 'fail_run') node.on_failure = draft.onFailure
   put('when', draft.when)
   put('output_schema', draft.outputSchema)
   if (splitList(draft.artifacts).length > 0) node.artifacts = splitList(draft.artifacts)
-  put('loop_back_to', draft.loopBackTo)
-  if (draft.maxIterations.trim()) node.max_iterations = Number(draft.maxIterations)
   if (draft.timeout.trim()) node.timeout_s = Number(draft.timeout)
   if (draft.maxAttempts.trim()) node.max_attempts = Number(draft.maxAttempts)
 

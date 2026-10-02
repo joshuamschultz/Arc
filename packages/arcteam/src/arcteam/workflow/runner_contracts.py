@@ -18,7 +18,7 @@ it is allowed to touch.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol
 
 from arcstore.mutation_fence import RunnerFence
@@ -34,11 +34,25 @@ Initiator = Literal["operator", "agent", "scheduler", "chat"]
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
 
-RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
+OperatorNotifier = Callable[[str, str], Awaitable[str | None]]
+"""``(text, idempotency_key) -> channel``: put one notice in front of the operator.
+
+The runner owns the wording and the key; the host decides how it is delivered
+(``ArcAgent.notify_operator``). ``None`` means nobody was told, and the runner
+audits exactly that."""
+
+RunStatus = Literal[
+    "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
+]
 NodeKind = Literal["agent", "tool", "script", "router", "gate"]
+OnFailure = Literal["fail_run", "continue", "skip_dependents"]
 BundleStatus = Literal["draft", "signed", "archived"]
 
-TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
+TERMINAL_RUN_STATUSES: frozenset[str] = frozenset(
+    {"done", "done_with_failures", "failed", "cancelled"}
+)
+#: A node can be retried only once the run has stopped on a failure.
+RETRYABLE_RUN_STATUSES: frozenset[str] = frozenset({"failed", "done_with_failures"})
 #: Task statuses that mean a node is still owed work (in flight, not terminal).
 IN_FLIGHT_TASK_STATUSES: frozenset[str] = frozenset({"backlog", "todo", "in_progress", "review"})
 
@@ -84,13 +98,9 @@ class NodeSpec(Protocol):
     @property
     def needs(self) -> Sequence[str]: ...
     @property
-    def join(self) -> Literal["all", "any"]: ...
-    @property
     def when(self) -> str | None: ...
     @property
-    def loop_back_to(self) -> str | None: ...
-    @property
-    def max_iterations(self) -> int | None: ...
+    def on_failure(self) -> OnFailure: ...
     @property
     def output_schema(self) -> str | None: ...
     @property
@@ -363,6 +373,7 @@ class RunStoreLike(Protocol):
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: RunnerFence | None = None,
     ) -> bool:
         """Conditional transition. ``False`` means another writer won the race."""
@@ -477,6 +488,7 @@ class OwnerResolver(Protocol):
 
 __all__ = [
     "IN_FLIGHT_TASK_STATUSES",
+    "RETRYABLE_RUN_STATUSES",
     "TERMINAL_RUN_STATUSES",
     "ArgsResolver",
     "BudgetSpec",
@@ -488,6 +500,8 @@ __all__ = [
     "Initiator",
     "NodeKind",
     "NodeSpec",
+    "OnFailure",
+    "OperatorNotifier",
     "OwnerResolver",
     "PredicateEvaluator",
     "RouteSpec",

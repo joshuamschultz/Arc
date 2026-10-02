@@ -7,7 +7,7 @@ the next step is re-derived on every tick from two durable sources:
   ``status=done`` plus ``output`` IS the memoization record (Restate/Inngest
   model, not a full replay), and
 * the **Run record's path taken** — the ordered trace of materializations,
-  router choices, skips, loop iterations, gate decisions, and settlements.
+  router choices, skips, gate revisions, gate decisions, and settlements.
 
 Re-deriving rather than remembering is what makes a restart safe: a runner that
 died mid-materialization comes back, reads the same two sources, and reaches the
@@ -26,12 +26,12 @@ from arcstore.tasks import Task
 
 from .runner_contracts import IN_FLIGHT_TASK_STATUSES
 
-NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped"]
+NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped", "cancelled"]
 
 
 @dataclass(frozen=True)
 class NodeInstance:
-    """One materialized attempt of a node at one loop iteration."""
+    """One materialized attempt of a node: iteration 0, or a revision or retry of it."""
 
     node_id: str
     iteration: int
@@ -59,10 +59,14 @@ class RunState:
             group.sort(key=lambda instance: instance.iteration)
 
         self.skips: set[tuple[str, int]] = set()
+        self.skip_reasons: dict[tuple[str, int], str] = {}
+        # Routers whose invalid answer already got its one repair attempt.
+        self.repaired: set[str] = set()
+        # Nodes that never ran because the run ended first, and why.
+        self.cancels: dict[tuple[str, int], str] = {}
         self.routes: dict[tuple[str, int], str] = {}
         self.settled: set[tuple[str, int]] = set()
         self.gates: set[tuple[str, int]] = set()
-        self.loops: set[tuple[str, int]] = set()
         self.materialized: set[tuple[str, int]] = set()
         # Reviewer notes addressed to one upcoming node instance (REQ-247).
         self.revisions: dict[tuple[str, int], str] = {}
@@ -78,6 +82,13 @@ class RunState:
                 self.materialized.add(key)
             elif kind == "skipped":
                 self.skips.add(key)
+                self.skip_reasons[key] = str(entry.get("reason", ""))
+            elif kind == "repair":
+                self.superseded.add(key)
+                self.repaired.add(key[0])
+                self.revisions[(key[0], key[1] + 1)] = str(entry.get("notes", ""))
+            elif kind == "cancelled":
+                self.cancels[key] = str(entry.get("reason", ""))
             elif kind == "route":
                 self.routes[key] = str(entry.get("chosen", ""))
             elif kind == "settled":
@@ -86,8 +97,6 @@ class RunState:
                 self.gates.add(key)
                 if entry.get("decision") == "returned_for_revision":
                     self.superseded.add(key)
-            elif kind == "loop":
-                self.loops.add(key)
             elif kind == "revision":
                 self.revisions[key] = str(entry.get("notes", ""))
 
@@ -98,7 +107,7 @@ class RunState:
         return group[-1] if group else None
 
     def materialized_count(self, node_id: str) -> int:
-        """How many times this node has been materialized (its loop counter)."""
+        """How many times this node has been materialized (its iteration counter)."""
         return len(self.instances.get(node_id, []))
 
     def highest_iteration(self, node_id: str) -> int:
@@ -106,6 +115,7 @@ class RunState:
         reached = [instance.iteration for instance in self.instances.get(node_id, [])]
         reached.extend(iteration for node, iteration in self.skips if node == node_id)
         reached.extend(iteration for node, iteration in self.routes if node == node_id)
+        reached.extend(iteration for node, iteration in self.cancels if node == node_id)
         return max(reached, default=-1)
 
     def status_at(self, node_id: str, iteration: int) -> NodeStatus:
@@ -118,6 +128,8 @@ class RunState:
             return "done"
         if (node_id, iteration) in self.skips:
             return "skipped"
+        if (node_id, iteration) in self.cancels:
+            return "cancelled"
         for instance in self.instances.get(node_id, []):
             if instance.iteration != iteration:
                 continue
@@ -166,12 +178,21 @@ class RunState:
         ]
 
     def failures(self) -> list[NodeInstance]:
+        """Nodes whose LATEST instance failed. A retried node's old failure is history."""
         return [
-            instance
-            for group in self.instances.values()
-            for instance in group
-            if instance.task.status == "failed"
+            group[-1] for group in self.instances.values() if group[-1].task.status == "failed"
         ]
+
+    def latest_failure_reason(self, node_id: str) -> str | None:
+        instance = self.latest(node_id)
+        return None if instance is None else instance.task.last_error
+
+    def upstream_failed(self) -> dict[str, str]:
+        """Each failed node's recorded reason, for dependents that run anyway."""
+        return {
+            instance.node_id: (instance.task.last_error or "").strip()
+            for instance in self.failures()
+        }
 
     def scope(self, run_input: Mapping[str, Any]) -> dict[str, Any]:
         """The predicate/wiring scope: ``$nodes.<id>.output.<field>`` and ``$input.*``."""
@@ -189,14 +210,15 @@ class RunState:
     # so dropping one of these costs an extra pass and changes no outcome.
     # Verified by mutation — see the equivalence note in the test suite.
 
-    def record_skip(self, node_id: str, iteration: int) -> None:
+    def record_skip(self, node_id: str, iteration: int, reason: str = "") -> None:
         self.skips.add((node_id, iteration))
+        self.skip_reasons[(node_id, iteration)] = reason
+
+    def record_cancel(self, node_id: str, iteration: int, reason: str) -> None:
+        self.cancels[(node_id, iteration)] = reason
 
     def record_route(self, node_id: str, iteration: int, chosen: str) -> None:
         self.routes[(node_id, iteration)] = chosen
-
-    def record_loop(self, node_id: str, iteration: int) -> None:
-        self.loops.add((node_id, iteration))
 
     def record_instance(self, node_id: str, iteration: int, task: Task) -> None:
         """Idempotent: a row already derived from the store is not added twice."""
@@ -266,6 +288,11 @@ def derive_node_states(
                 status="skipped", iteration=iteration, reason=str(entry.get("reason", ""))
             )
             offer(node_id, iteration, _RANK_SKIP, skipped)
+        elif kind == "cancelled":
+            cancelled = NodeState(
+                status="cancelled", iteration=iteration, reason=str(entry.get("reason", ""))
+            )
+            offer(node_id, iteration, _RANK_SKIP, cancelled)
         elif kind == "route":
             base = rows.get((node_id, iteration)) or NodeState(
                 status="routed", iteration=iteration

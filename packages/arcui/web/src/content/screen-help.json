@@ -662,9 +662,9 @@
         "description": "Each route names a target node and may include a condition; mark at most one fallback route. Rules mode checks conditions in order, while LLM mode chooses a declared target."
       },
       {
-        "key": "workflow.node.join",
-        "label": "Join behavior",
-        "description": "For a node with multiple upstream dependencies, all waits for every upstream node and any proceeds after the first upstream completes."
+        "key": "workflow.node.on_failure",
+        "label": "On failure",
+        "description": "What happens when this node fails. fail_run stops the whole run, continue lets the rest of the run carry on, and skip_dependents skips only the nodes that depend on this one."
       },
       {
         "key": "workflow.node.type",
@@ -706,16 +706,6 @@
         "key": "workflow.node.artifacts",
         "label": "Artifacts",
         "description": "Artifact references associated with the node."
-      },
-      {
-        "key": "workflow.node.loop_back_to",
-        "label": "Loop back to",
-        "description": "Target node for a loop-back edge."
-      },
-      {
-        "key": "workflow.node.max_iterations",
-        "label": "Maximum loop iterations",
-        "description": "Upper bound on how many times a loop-back may repeat. Set this whenever a loop-back target is configured."
       },
       {
         "key": "workflow.node.timeout",
