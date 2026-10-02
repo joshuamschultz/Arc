@@ -269,3 +269,86 @@ async def test_restart_between_fire_and_tick_yields_exactly_one_completed_run(
         node_task_id(run_id, node, 0) for node in ("collect", "archive")
     )
     assert not [m for m in world.gateway.sent if "user://operator" in m.to]
+
+
+_THREE_NODE_DAG = """
+[workflow]
+id = "dag3"
+version = 1
+owner = "@sales"
+
+[[node]]
+id = "collect"
+kind = "agent"
+agent = "@sales"
+
+[[node]]
+id = "archive"
+kind = "agent"
+agent = "@sales"
+needs = ["collect"]
+max_attempts = 1
+
+[[node]]
+id = "notify"
+kind = "agent"
+agent = "@sales"
+needs = ["archive"]
+"""
+
+
+async def _start_dag3_with_dead_lettered_archive(world: _World) -> str:
+    bundle = world.tmp_path / "workflows" / "dag3"
+    bundle.mkdir(parents=True)
+    (bundle / "workflow.toml").write_text(_THREE_NODE_DAG, encoding="utf-8")
+    started = await world.plane.run_workflow("dag3", {}, actor=world.actor)
+    run_id = started.value["run_id"]
+    await _fail_the_archive_node(world, run_id)
+    return str(run_id)
+
+
+async def test_three_node_dag_dead_letter_cancels_dependents_and_ui_shows_reason(
+    world: _World,
+) -> None:
+    """G-A: a dead-lettered node fails the run; the node behind it says why it never ran."""
+    run_id = await _start_dag3_with_dead_lettered_archive(world)
+
+    detail = await world.plane.get_run(run_id, actor=world.actor)
+
+    assert detail["status"] == "failed"
+    nodes = {n["node_id"]: n for n in detail["nodes"]}
+    assert nodes["collect"]["status"] == "done"
+    assert nodes["archive"]["status"] == "failed"
+    assert "prompt is too long" in nodes["archive"]["last_error"]
+    assert nodes["notify"]["status"] == "cancelled"
+    assert nodes["notify"]["reason"].startswith("upstream archive failed")
+    assert "prompt is too long" in nodes["notify"]["reason"]
+
+
+async def test_j3_retry_failed_node_skips_completed_upstream(world: _World) -> None:
+    """G3: the operator retries the failed node; the finished node is never executed again."""
+    run_id = await _start_dag3_with_dead_lettered_archive(world)
+    collect_before = await world.tasks.get(node_task_id(run_id, "collect", 0))
+    assert collect_before is not None and collect_before.attempts == 1
+
+    retried = await world.plane.retry_node(run_id, "archive", actor=world.actor)
+    assert retried.errors is None, retried.errors
+    for node, iteration in (("archive", 1), ("notify", 1)):
+        row = node_task_id(run_id, node, iteration)
+        await world.tasks.start_task(row, SALES)
+        await world.tasks.finish(
+            row, status="done", resolution="ok", actor_did=SALES, output={"node": node}
+        )
+        await world.runner.advance(run_id)
+
+    detail = await world.plane.get_run(run_id, actor=world.actor)
+    assert detail["status"] == "done"
+    nodes = {n["node_id"]: n for n in detail["nodes"]}
+    assert {k: v["status"] for k, v in nodes.items()} == {
+        "collect": "done",
+        "archive": "done",
+        "notify": "done",
+    }
+    collect_after = await world.tasks.get(node_task_id(run_id, "collect", 0))
+    assert collect_after is not None and collect_after.attempts == 1, "collect ran exactly once"
+    assert await world.tasks.get(node_task_id(run_id, "collect", 1)) is None
