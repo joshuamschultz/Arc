@@ -25,8 +25,6 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # leftover sidecar whose file was deleted); the agent key never signs under
         # the agent-root capabilities/ tree.
         "packages/arcui/tests/test_trust_route.py",
-        "packages/arccli/tests/test_cli_trust.py",
-        "packages/arccli/tests/test_capability_signing_authority.py",
         # `arc skill evals promote/edit` on an installed skill commit an operator-signed
         # anchored revision, or stop with "activation unavailable" — never an unsigned
         # eval file the improver gate would score.
