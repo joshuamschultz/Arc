@@ -96,12 +96,15 @@ async def get_skill_detail(request: Request) -> JSONResponse:
                         return _error("Active skill revision unavailable", 503)
                     content = resolver.preview_original(folder)
                 else:
+                    # None: not yet enrolled below federal — the signed original
+                    # on disk is what loads, so the direct read below is correct.
                     revision = resolver.resolve(folder, source_root)
-                    verified = resolver.read_current(folder, revision)
-                    if verified is None:
-                        return _error("Active skill revision unavailable", 503)
-                    content = verified
-                    source_path_str = str(revision)
+                    if revision is not None:
+                        verified = resolver.read_current(folder, revision)
+                        if verified is None:
+                            return _error("Active skill revision unavailable", 503)
+                        content = verified
+                        source_path_str = str(revision)
             except (OSError, RuntimeError, ValueError):
                 return _error("Active skill revision unavailable", 503)
     if row.get("status") == "unavailable" and content is None:

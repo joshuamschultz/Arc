@@ -404,3 +404,93 @@ def test_upload_rejects_non_zip_names(tmp_path: Path, bad_name: str) -> None:
     )
 
     assert response.status_code == 422
+
+
+def _skill_version(version: str) -> bytes:
+    return _SKILL.replace(b"version: 1.0.0", f"version: {version}".encode()).replace(
+        b"Use the skill.", f"Use the skill, v{version}.".encode()
+    )
+
+
+def test_importing_a_new_version_becomes_a_new_anchored_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import arcagent
+    from arctrust import FileJournalAnchor
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    operator = OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
+    signer = operator.into_signer()
+    client, workspace, _audit = _client(tmp_path)
+    anchors = tmp_path / "anchors"
+
+    def factory(did: str, name: str) -> FileJournalAnchor:
+        return FileJournalAnchor(
+            anchors, scope=arcagent.skill_revision_scope(did, name), signer=signer
+        )
+
+    client.app.state.skill_revision_anchor_factory = factory
+
+    def _upload_and_promote(version: str) -> dict[str, object]:
+        uploaded = client.post(
+            "/api/agents/ada/capability-imports",
+            headers={"Authorization": "Bearer viewer"},
+            files={
+                "file": (
+                    "portable.zip",
+                    _archive(("skills/imported/SKILL.md", _skill_version(version))),
+                    "application/zip",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        promoted = client.post(
+            f"/api/agents/ada/capability-imports/{uploaded.json()['import_id']}/promote",
+            headers={"Authorization": "Bearer operator"},
+        )
+        assert promoted.status_code == 200, promoted.text
+        body: dict[str, object] = promoted.json()
+        return body
+
+    _upload_and_promote("1.0.0")
+    second = _upload_and_promote("1.1.0")
+    assert second["status"] == "promoted"
+    resolver = arcagent.AnchoredSkillRevisionResolver(
+        agent_did="did:arc:agent:ada",
+        config_path=workspace / "arcagent.toml",
+        anchor_factory=factory,
+    )
+    folder = workspace / "capabilities" / "skills" / "imported"
+    history = resolver.revision_history(folder)
+    assert [(version, "v1.1.0" in body) for _, version, body, _ in history] == [
+        (2, True),
+        (1, False),
+    ]
+
+
+def test_importing_a_new_version_without_an_authority_still_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+    OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
+    client, _workspace, _audit = _client(tmp_path)
+    statuses = []
+    for version in ("1.0.0", "1.1.0"):
+        uploaded = client.post(
+            "/api/agents/ada/capability-imports",
+            headers={"Authorization": "Bearer viewer"},
+            files={
+                "file": (
+                    "portable.zip",
+                    _archive(("skills/imported/SKILL.md", _skill_version(version))),
+                    "application/zip",
+                )
+            },
+        )
+        statuses.append(
+            client.post(
+                f"/api/agents/ada/capability-imports/{uploaded.json()['import_id']}/promote",
+                headers={"Authorization": "Bearer operator"},
+            ).status_code
+        )
+    assert statuses == [200, 422]

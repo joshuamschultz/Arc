@@ -8,9 +8,11 @@ import json
 import os
 import shutil
 import stat
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
+from typing import Protocol
 
 from arctrust import (
     AuditEvent,
@@ -62,6 +64,19 @@ _MANIFEST_FIELDS = frozenset(
         "tools",
     }
 )
+
+
+class SkillRevisionAuthority(Protocol):
+    """Anchored lineage that can supersede an installed skill with a reviewed version."""
+
+    def supersede(
+        self,
+        folder: Path,
+        files: Mapping[str, bytes],
+        *,
+        signer: Signer,
+        operator_did: str,
+    ) -> str: ...
 
 
 class CapabilityImportService:
@@ -306,6 +321,7 @@ class CapabilityImportService:
         signer: Signer,
         config_path: Path,
         audit_sink: AuditSink | None = None,
+        revisions: SkillRevisionAuthority | None = None,
     ) -> tuple[Path, ...]:
         """Sign and copy a reviewed import into this agent's capability roots.
 
@@ -313,6 +329,10 @@ class CapabilityImportService:
         creates the loader's detached signatures and the operator DID is stored
         in the TOFU approvals. Staging must still match its reviewed manifest;
         this method never imports or executes staged source.
+
+        When the import is a new version of one skill that is already installed
+        and ``revisions`` is the agent's anchored lineage, the reviewed bundle
+        becomes a new signed revision instead of being refused.
         """
         manifest = self._manifest_from_staging(staging_dir)
         if manifest.target_agent_did != target_agent_did:
@@ -323,6 +343,18 @@ class CapabilityImportService:
         self._require_current_review(manifest, staging_dir, row)
 
         final_targets = self._target_paths(manifest, self._root)
+        update = self._installed_skill_update(manifest, final_targets)
+        if update is not None and revisions is not None:
+            return self._promote_revision(
+                manifest,
+                staging_dir,
+                update,
+                revisions=revisions,
+                signer=signer,
+                operator_did=operator_did,
+                config_path=config_path,
+                audit_sink=audit_sink,
+            )
         for path in final_targets:
             _reject_symlinked_parents(path, self._root)
         if self._root.is_symlink():
@@ -392,6 +424,70 @@ class CapabilityImportService:
             audit_sink,
         )
         return tuple(final_targets)
+
+    def _installed_skill_update(
+        self, manifest: CapabilityImportManifest, final_targets: list[Path]
+    ) -> Path | None:
+        """Return the installed skill folder this import updates, if it is one."""
+        folders = {
+            Path(*_target_relative(item.path).parts[:2])
+            for item in manifest.files
+            if _is_capability(item.path)
+        }
+        if len(folders) != 1:
+            return None
+        relative = next(iter(folders))
+        folder = self._root / relative
+        if relative.parts[0] != "skills" or folder.is_symlink() or not folder.is_dir():
+            return None
+        if not any(path.exists() for path in final_targets):
+            return None
+        return folder
+
+    def _promote_revision(
+        self,
+        manifest: CapabilityImportManifest,
+        staging_dir: Path,
+        folder: Path,
+        *,
+        revisions: SkillRevisionAuthority,
+        signer: Signer,
+        operator_did: str,
+        config_path: Path,
+        audit_sink: AuditSink | None,
+    ) -> tuple[Path, ...]:
+        """Supersede an installed skill with the reviewed bundle as a new revision."""
+        prefix = f"skills/{folder.name}/"
+        files: dict[str, bytes] = {}
+        for item in manifest.files:
+            if not _is_capability(item.path):
+                continue
+            content = _read_reviewed(Path(staging_dir), item)
+            files[item.path.removeprefix(prefix)] = content
+        validators_before = load_validators(config_path)
+        try:
+            pin_key(config_path, public_key=signer.public_key)
+            revision = revisions.supersede(folder, files, signer=signer, operator_did=operator_did)
+        except Exception:
+            persist_validators(config_path, validators_before)
+            raise
+        self._ledger.set(
+            manifest.import_id,
+            CapabilityImportStatus.PROMOTED,
+            target_agent_did=manifest.target_agent_did,
+            review_digest=manifest.review_digest,
+            promoted_paths=[],
+            superseded_skill=folder.name,
+            revision_digest=revision,
+        )
+        self._emit(
+            manifest.import_id,
+            "capability_import.promoted",
+            operator_did,
+            manifest.review_digest,
+            audit_sink,
+        )
+        return tuple(folder / relative for relative in sorted(files))
 
     def revoke(
         self,
@@ -535,23 +631,9 @@ class CapabilityImportService:
         for item in manifest.files:
             if not _is_capability(item.path):
                 continue
-            source = Path(staging_dir) / item.path
-            _reject_symlinked_parents(source, Path(staging_dir))
-            if source.is_symlink() or not source.is_file():
-                raise ValueError("capability import source is unavailable")
+            content = _read_reviewed(Path(staging_dir), item)
             target = temporary / _target_relative(item.path)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(source, flags)
-            try:
-                with os.fdopen(descriptor, "rb") as stream:
-                    descriptor = -1
-                    content = stream.read()
-            finally:
-                if descriptor >= 0:
-                    os.close(descriptor)
-            if len(content) != item.size or hashlib.sha256(content).hexdigest() != item.sha256:
-                raise ValueError("capability import source changed during promotion")
             target.write_bytes(content)
             target.chmod(0o600)
             if item.path.startswith("tools/") or item.path.endswith("/SKILL.md"):
@@ -601,6 +683,25 @@ def _reserved_builtin_skill_names() -> frozenset[str]:
     if not root.is_dir():
         return frozenset()
     return frozenset(folder.name for folder in root.iterdir() if (folder / "SKILL.md").is_file())
+
+
+def _read_reviewed(staging_dir: Path, item: CapabilityImportFile) -> bytes:
+    """Read one staged file without following links and prove it is the reviewed byte."""
+    source = staging_dir / item.path
+    _reject_symlinked_parents(source, staging_dir)
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("capability import source is unavailable")
+    descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            content = stream.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(content) != item.size or hashlib.sha256(content).hexdigest() != item.sha256:
+        raise ValueError("capability import source changed during promotion")
+    return content
 
 
 def _is_capability(path: str) -> bool:

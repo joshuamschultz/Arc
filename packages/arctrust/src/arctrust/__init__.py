@@ -131,6 +131,7 @@ from arctrust.deployment_grant import (
     verify_challenge,
     verify_deployment_grant,
 )
+from arctrust.file_journal_anchor import LOCAL_ANCHOR_CUSTODY, FileJournalAnchor
 from arctrust.fips import (
     ArcTrustFipsError,
     algorithm_is_fips_approved,
@@ -179,6 +180,7 @@ from arctrust.paths import (
     queue_journal_file,
     runtime_bin,
     runtime_venv,
+    skill_revision_anchor_dir,
     skills_dir,
     store_dir,
     trust_dir,
@@ -397,6 +399,7 @@ __all__ = [
     "DEFAULT_OFF_ENTITIES",
     "ECDSA_P256",
     "ED25519",
+    "LOCAL_ANCHOR_CUSTODY",
     "MAX_REGEX_SCAN_LENGTH",
     "OPERATOR",
     "SECRETS_CATEGORY",
@@ -435,6 +438,7 @@ __all__ = [
     "DurableAuditSink",
     "EnrollmentGrant",
     "EntityToggle",
+    "FileJournalAnchor",
     "FileNotaryTransit",
     "HostedClaimError",
     "HostedClaimJournal",
@@ -569,6 +573,7 @@ __all__ = [
     "sign_rekey_grant",
     "sign_rekey_intent",
     "sign_scenario_grant",
+    "skill_revision_anchor_dir",
     "skills_dir",
     "store_dir",
     "trust_dir",

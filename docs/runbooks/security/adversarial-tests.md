@@ -46,6 +46,7 @@ instead of silently reducing coverage.
 | Threat | Production boundaries exercised |
 |---|---|
 | Direct skill/tool/module modification | load-time signatures, trust pins, drift detection, operator promotion |
+| Skill revision journal tampering, downgrade and forged signer | operator-signed hash-chained local anchor (edit, truncation, restored copy, deleted seal, replayed/cross-scope entry, foreign key, symlink), reset-vs-evidence refusal, federal external-anchor floor |
 | Prompt replacement or injected instructions | pinned prompt signatures, overlay isolation, role/instruction boundaries |
 | LLM/run/tool/audit log scraping or tampering | at-rest sealing, hash chains, replay redaction and path isolation |
 | Manual/forged/replayed agent actions | ArcUI operator gates, signed approvals, gateway identity and replay dedup |

@@ -37,7 +37,7 @@ import stat
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import tomlkit
 from arctrust import ValidatorsConfig
@@ -568,6 +568,20 @@ class SecurityConfig(BaseModel):
         description="Transparency-log endpoint when witness_mode='transparency_log'.",
     )
 
+    # alpha-2 Q6 — which authority anchors the active skill revision. Personal
+    # and enterprise default to the operator-signed local file journal (zero
+    # config, audit-warned as a local anchor). Federal floors to an externally
+    # custodied anchor and refuses an explicit ``file`` fail-closed.
+    skill_revision_anchor: Literal["file", "vault", "queue"] = Field(
+        default="file",
+        description=(
+            "Skill revision authority: 'file' (operator-signed local journal under "
+            "<arc_state>/trust/anchors; personal/enterprise default), 'vault' "
+            "(Vault KV CAS head) or 'queue' (queue broker head). Federal floors "
+            "to 'vault' and refuses 'file'."
+        ),
+    )
+
     @model_validator(mode="after")
     def _enforce_tier_crypto_floor(self) -> SecurityConfig:
         """Couple the crypto + breaker posture to the tier (SPEC-037/043, ADR-019).
@@ -580,6 +594,7 @@ class SecurityConfig(BaseModel):
         The enforcement policy lives in ``arcagent/tiers.py``; this validator is the hook.
         """
         if self.tier == "federal":
+            self._floor_skill_revision_anchor()
             for knob in SECURITY_CONFIG_KNOBS:
                 resolved = resolve_tier_floor(
                     knob,
@@ -591,6 +606,17 @@ class SecurityConfig(BaseModel):
         elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
             self.custody = "vault_transit"
         return self
+
+    def _floor_skill_revision_anchor(self) -> None:
+        """Federal never trusts a local journal for the active skill revision."""
+        if self.skill_revision_anchor != "file":
+            return
+        if "skill_revision_anchor" in self.model_fields_set:
+            raise ValueError(
+                "federal tier requires an external skill_revision_anchor "
+                "('vault' or 'queue') — refusing the local 'file' journal"
+            )
+        self.skill_revision_anchor = "vault"
 
 
 class CapabilitiesConfig(BaseModel):

@@ -238,14 +238,15 @@ def __getattr__(name: str) -> Any:
         "ReviewedSkillBundle",
         "SkillRuntime",
         "reviewed_bundle_digest",
+        "skill_revision_scope",
     }:
         from arcagent.modules.capability_import import revisions
 
         return getattr(revisions, name)
-    if name == "LiveSkillRevisionResolver":
-        from arcagent.modules.capability_import.authority_factory import LiveSkillRevisionResolver
+    if name in {"LiveSkillRevisionResolver", "build_skill_revision_anchor_factory"}:
+        from arcagent.modules.capability_import import authority_factory
 
-        return LiveSkillRevisionResolver
+        return getattr(authority_factory, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -349,6 +350,7 @@ __all__ = [
     "audit_tier_relaxations",
     "build_mcp_door",
     "build_prompt_resolver",
+    "build_skill_revision_anchor_factory",
     "builtin_capabilities_path",
     "catalog",
     "collect_agent_capability_inventory",
@@ -385,6 +387,7 @@ __all__ = [
     "set_workflow_runner",
     "sidecar_path",
     "sign_capability",
+    "skill_revision_scope",
     "stream_token_text",
     "stricter_tier",
     "summarize_tool_policy",

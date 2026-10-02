@@ -175,7 +175,14 @@ def render_agent_config(*, name: str, tier: str = "personal", did: str = "") -> 
     top_overrides: dict[str, dict[str, Any]] = {
         "agent": {"name": name, "org": "local"},
         "identity": {"did": did},
-        "security": {"tier": tier, "policy_audit_log": "", **_crypto_posture(tier)},
+        "security": {
+            "tier": tier,
+            "policy_audit_log": "",
+            **_crypto_posture(tier),
+            # Federal refuses the local journal fail-closed, and this template
+            # states every knob outright — so federal must state its floor.
+            "skill_revision_anchor": "vault" if tier == "federal" else "file",
+        },
         "telemetry": {"service_name": name},
     }
     body = arcagent.config_render.render_arcagent_toml(

@@ -157,6 +157,21 @@ def _operator_signer() -> Signer:
     return key.into_signer(security.signing_algorithm)
 
 
+def default_skill_revision_anchor_factory() -> Any:
+    """The deployment's skill revision authority for an app built outside ``arc``.
+
+    Same policy as ``arc ui start`` (arcagent owns it): the operator-signed local
+    journal below federal, None (anchored routes closed) at federal or when the
+    ``[security]`` block refuses the requested anchor.
+    """
+    try:
+        security = _machine_security()
+    except ValueError:
+        logger.warning("skill revision authority refused by [security]")
+        return None
+    return arcagent.build_skill_revision_anchor_factory(security, _operator_signer)
+
+
 def operator_signer_for_request(request: Request) -> Signer:
     """Resolve the deployment's operator signing capability for this request."""
     factory = getattr(request.app.state, "operator_signer_factory", None)

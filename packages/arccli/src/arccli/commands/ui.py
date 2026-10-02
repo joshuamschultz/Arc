@@ -283,6 +283,12 @@ def _start(args: argparse.Namespace) -> None:
     # --gateway-config later.
     gateway_config = _maybe_build_gateway_config(args, team_root)
 
+    # One skill revision authority for the dashboard AND the agents it serves
+    # (alpha-2 P5). Zero-config local journal below federal; None at federal
+    # without an external anchor, which keeps every anchored route closed.
+    from arccli.commands._serve import build_skill_revision_anchor_factory
+
+    anchor_audit = _AppAuditSink()
     app = create_app(
         auth_config=auth,
         max_agents=max_agents,
@@ -291,7 +297,9 @@ def _start(args: argparse.Namespace) -> None:
         # Personal/enterprise operators may put URLs/emails in task text (e.g.
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
+        skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
     )
+    anchor_audit.app = app
 
     is_loopback = host in LOOPBACK_HOSTS
     viewer_token_value = app.state.auth_config.viewer_token
@@ -412,6 +420,24 @@ def _start(args: argparse.Namespace) -> None:
             from arcgateway.fleet import set_current_fleet
 
             set_current_fleet(None)
+
+
+class _AppAuditSink:
+    """Audit sink for components built before the app: forwards to its WORM chain.
+
+    The revision anchor factory must exist before ``create_app`` (the embedded
+    gateway receives it there), while the operator-signed chain is only opened
+    by the app itself. Events before the chain exists are dropped exactly like
+    ``arcui.audit.operator_audit_sink`` degrades without an operator chain.
+    """
+
+    def __init__(self) -> None:
+        self.app: Any = None
+
+    def write(self, event: Any) -> None:
+        worm = getattr(getattr(self.app, "state", None), "audit_worm", None)
+        if worm is not None:
+            worm.sink.write(event)
 
 
 def _deployment_tier(gateway_config: Any | None) -> str:
