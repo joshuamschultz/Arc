@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NodeDetail, RunError } from '@/components/workflows-view/node-detail'
 import type { WorkflowRunNodeStatus } from '@/lib/types'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 const node = (extra: Partial<WorkflowRunNodeStatus>): WorkflowRunNodeStatus => ({
   node_id: 'ingest',
@@ -59,6 +64,61 @@ describe('NodeDetail', () => {
   it('renders nothing for a node with no detail fields', () => {
     const { container } = render(<NodeDetail node={node({ status: 'skipped' })} />)
     expect(container.textContent).toBe('')
+  })
+})
+
+describe('NodeDetail route, reason and retry', () => {
+  const wrap = (ui: React.ReactElement) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  }
+
+  it('routed node shows the chosen route chip', () => {
+    wrap(<NodeDetail node={node({ status: 'routed', route: 'urgent' })} />)
+    expect(screen.getByText('chose route: urgent')).toBeTruthy()
+  })
+
+  it('skipped and cancelled nodes show their reason', () => {
+    wrap(
+      <>
+        <NodeDetail node={node({ node_id: 'a', status: 'skipped', reason: 'upstream x failed: boom' })} />
+        <NodeDetail node={node({ node_id: 'b', status: 'cancelled', reason: 'run cancelled' })} />
+      </>,
+    )
+    expect(screen.getByText('upstream x failed: boom')).toBeTruthy()
+    expect(screen.getByText('run cancelled')).toBeTruthy()
+  })
+
+  it.each([
+    ['failed node, failed run, operator', 'failed', 'failed', true, true],
+    ['done node', 'done', 'failed', true, false],
+    ['run still running', 'failed', 'running', true, false],
+    ['not operator', 'failed', 'failed', false, false],
+  ] as const)('retry button: %s', (_label, nodeStatus, runStatus, canRetry, visible) => {
+    wrap(
+      <NodeDetail
+        node={node({ status: nodeStatus, last_error: 'x' })}
+        runId="r1"
+        runStatus={runStatus}
+        canRetry={canRetry}
+      />,
+    )
+    expect(!!screen.queryByRole('button', { name: /retry node/i })).toBe(visible)
+  })
+
+  it('retry posts to the node retry route and shows errors inline', async () => {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(`${init?.method} ${String(path)}`)
+        return new Response(JSON.stringify({ error: 'node not retryable' }), { status: 409 })
+      }),
+    )
+    wrap(<NodeDetail node={node({ status: 'failed' })} runId="r 1" runStatus="failed" canRetry />)
+    await userEvent.click(screen.getByRole('button', { name: /retry node/i }))
+    expect(await screen.findByText('node not retryable')).toBeTruthy()
+    expect(calls).toEqual(['POST /api/workflow-runs/r%201/nodes/ingest/retry'])
   })
 })
 

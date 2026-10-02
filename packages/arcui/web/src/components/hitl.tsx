@@ -4,6 +4,7 @@ import { Check, X, ShieldCheck, Database, Send, Bug, Info, ArrowRight } from 'lu
 import { Button } from '@/components/ui/button'
 import { FieldHelp } from '@/components/help'
 import { apiPost, ApiError } from '@/lib/api'
+import { ApprovalDiff } from '@/components/approval-diff'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useRoster, type PendingApproval } from '@/lib/queries'
@@ -304,7 +305,11 @@ export function ApprovalRequest({
           </div>
         </div>
 
+        {a.reason && <p className="text-xs leading-relaxed text-foreground/90">{a.reason}</p>}
+
         {a.arguments && <CallArguments args={a.arguments} />}
+
+        {a.diff && <ApprovalDiff diff={a.diff} />}
 
         {isFullTrifecta ? (
           <TrifectaGate legs={legs} />
