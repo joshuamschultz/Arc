@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import arcrun
 from arcprompt import PromptSource
+from arctrust import causal
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -438,9 +439,7 @@ async def _dispatch_stream_locked(
     # run's trace as the reads that follow it. arcrun reuses this id when handed in,
     # so the two halves share one timeline instead of assembly falling outside it.
     run_id = run_id or str(uuid.uuid4())
-    from arcstore.spool import request_context
-
-    with request_context(run_id):
+    with causal.run_scope(run_id):
         with agent._queue_run_context(session.session_id, run_id):
             run_ctx = await build_run_context(agent, input_text)
         telemetry, bus, model, provider, prompt, bridge, prompt_source = run_ctx
@@ -575,10 +574,8 @@ async def start_tracked_run(
         bind_inbound_channel(
             agent, reply_target, reply_label, overheard=overheard, hop=hop, interactive=True
         )
-        from arcstore.spool import request_context
-
         with (
-            request_context(run_id),
+            causal.run_scope(run_id),
             agent._queue_run_context(session.session_id, run_id),
         ):
             (
@@ -687,11 +684,9 @@ async def maybe_compact(
     cfg = agent._config.context
     if ratio >= cfg.compact_threshold:
         eval_model = agent._ensure_model()
-        from arcstore.spool import request_context
-
         evaluation_id = str(uuid.uuid4())
         with (
-            request_context(evaluation_id),
+            causal.run_scope(evaluation_id),
             agent._queue_run_context(
                 session.session_id,
                 evaluation_id,

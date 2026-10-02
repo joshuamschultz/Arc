@@ -45,6 +45,7 @@ from arctrust import (
     Signer,
     WitnessAnchor,
     WormSink,
+    causal,
     parse_classification,
     worm_policy_sink,
 )
@@ -1378,7 +1379,7 @@ class ArcAgent:
         self._ensure_started()
         if self._accepted_run_owner is not None:
             raise RuntimeError("one-shot run requires a signed accepted request")
-        from arcstore.spool import current_request_id, request_context
+        from arcstore.spool import current_request_id
 
         from arcagent.core.session_internal.capability_ledger import current_session_id
 
@@ -1389,7 +1390,7 @@ class ArcAgent:
             parent_session_id = current.session_id if current is not None else None
         run_id = str(uuid.uuid4())
         with (
-            request_context(run_id),
+            causal.run_scope(run_id),
             self._queue_run_context(
                 parent_session_id, run_id, origin="evaluation", parent_run_id=parent_run_id
             ),

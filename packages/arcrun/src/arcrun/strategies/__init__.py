@@ -267,15 +267,17 @@ async def select_strategy(
 
     # Imported here rather than at module scope: ``react`` imports ``Strategy``
     # from this module, so a top-level import would be circular.
+    from arcrun.causality import llm_call_scope
     from arcrun.strategies.react import accumulate_usage
 
     try:
         invoke_kwargs: dict[str, Any] = {}
         if state.deadline is not None:
             invoke_kwargs["_arc_deadline"] = state.deadline
-        response = await state.await_work(
-            model.invoke(selection_messages, tools=[select_tool], **invoke_kwargs)
-        )
+        with llm_call_scope(state.turn_count):
+            response = await state.await_work(
+                model.invoke(selection_messages, tools=[select_tool], **invoke_kwargs)
+            )
         # Choosing a strategy costs real tokens and real money. Leaving that
         # uncounted would understate every run's usage and hide the spend from
         # the budget breaker, which reads these same counters (LLM10).

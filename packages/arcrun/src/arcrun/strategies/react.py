@@ -26,6 +26,7 @@ from arcrun.builtins.task_complete import (
     make_budget_breach_args,
     make_cancel_args,
 )
+from arcrun.causality import llm_call_scope
 from arcrun.checkpoint import to_checkpoint
 from arcrun.executor import execute_tool_call
 from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
@@ -305,11 +306,14 @@ async def react_loop(
         if state.turn_count == 0 and state.tool_choice is not None:
             invoke_kwargs["tool_choice"] = state.tool_choice
         call_start = time.time()
-        response = (
-            await _stream_model_call(model, call_messages, tools, state, invoke_kwargs)
-            if state.stream_event is not None
-            else await state.await_work(model.invoke(call_messages, tools=tools, **invoke_kwargs))
-        )
+        with llm_call_scope(state.turn_count):
+            response = (
+                await _stream_model_call(model, call_messages, tools, state, invoke_kwargs)
+                if state.stream_event is not None
+                else await state.await_work(
+                    model.invoke(call_messages, tools=tools, **invoke_kwargs)
+                )
+            )
         if response is None:
             return _halt_on_cancel(state)
         latency_ms = (time.time() - call_start) * 1000

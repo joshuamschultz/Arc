@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arcstore.spool import request_context
 from arctrust.audit import AuditEvent
+from arctrust.causal import run_scope
 
 from arcmemory.brain import ArcMemoryBrain
 
@@ -45,12 +45,12 @@ def _attributed_events(sink: RecordingSink) -> list[AuditEvent]:
 
 
 async def test_recall_attribution_carries_the_active_run_id(workspace: Path) -> None:
-    """Inside ``request_context("run-abc")``, the attribution event is stamped."""
+    """Inside ``run_scope("run-abc")``, the attribution event is stamped."""
     _write_entity(workspace, "public-note", "unclassified", "the widget shipping cadence")
     sink = RecordingSink()
     brain = ArcMemoryBrain(workspace, _DID, audit_sink=sink)
 
-    with request_context("run-abc"):
+    with run_scope("run-abc"):
         text = await brain.retrieve("widget", clearance="unclassified", top_k=5, budget=10_000)
 
     assert "shipping cadence" in text, "setup broken: the seeded card never surfaced"

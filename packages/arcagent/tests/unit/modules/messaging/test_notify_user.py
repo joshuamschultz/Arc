@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from arctrust import AgentIdentity
+from arctrust import AgentIdentity, causal
 from packages.arcagent.tests.unit.modules.messaging.conftest import (
     make_config_dict,
     make_operator_signer,
@@ -155,7 +155,7 @@ class TestFailedDeliveryIsTraced:
         st.channel_deliver_fn = AsyncMock(side_effect=RuntimeError("no route"))
         turn_context.set_inbound_channel("telegram:5")
 
-        with spool.request_context("run-x"):
+        with causal.run_scope("run-x"):
             out = json.loads(await notify_user(message="hi"))
 
         assert "error" in out  # the model still sees the failure

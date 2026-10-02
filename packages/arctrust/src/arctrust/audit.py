@@ -666,7 +666,6 @@ def worm_policy_sink(sink: AuditSink) -> Callable[[str, dict[str, Any]], None]:
             outcome=str(payload.get("decision", "")),
             classification=payload.get("classification"),
             tier=payload.get("tier"),
-            request_id=payload.get("session_id"),
             payload_hash=payload.get("input_hash"),
             extra={
                 "layer": payload.get("layer"),

@@ -21,14 +21,14 @@ Design (SDD §4 + Research §11.2):
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
 import json
 import logging
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+
+from arctrust import causal
 
 from arcstore.config import resolve_data_dir
 from arcstore.records import SpoolRecord
@@ -38,39 +38,17 @@ _logger = logging.getLogger("arcstore.spool")
 _FILE_MODE = 0o600
 """Owner-only — the spool may carry sensitive metadata (NFR-5)."""
 
-# Task-local run correlation id. arcrun binds this around a run so every record
-# emitted inside it (llm_call, tool_event, run_event) shares one ``request_id``
-# without each producer having to thread the run id through its call stack. A
-# ContextVar (not a global) keeps concurrent runs isolated — ``asyncio.Task``
-# snapshots the context at creation, so spawned children carry their own copy.
-_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "arcstore_request_id", default=None
-)
-
 
 def current_request_id() -> str | None:
     """The run correlation id bound on this task, or ``None`` outside any run.
 
-    Lets a producer decide whether an operation even belongs to a run before
-    spooling it: an implicit tool_event with no run to attach to is an orphan no
-    timeline would ever show, so it is cheaper — and cleaner — not to write it.
+    Reads the one causal context (:mod:`arctrust.causal`); a run is entered with
+    ``arctrust.causal.run_scope``. Lets a producer decide whether an operation
+    even belongs to a run before spooling it: an implicit tool_event with no run
+    to attach to is an orphan no timeline would ever show.
     """
-    return _request_id_var.get()
-
-
-@contextlib.contextmanager
-def request_context(request_id: str) -> Iterator[None]:
-    """Bind the active run correlation id for spool records on this task.
-
-    Records appended within the ``with`` block that do not already carry a
-    ``request_id`` inherit ``request_id``. An explicit id on a record always
-    wins. The binding is restored on exit, so it never leaks across runs.
-    """
-    token = _request_id_var.set(request_id)
-    try:
-        yield
-    finally:
-        _request_id_var.reset(token)
+    ctx = causal.current()
+    return ctx.run_id if ctx is not None else None
 
 
 def spool_path(*, data_dir: Path | None = None) -> Path:
@@ -89,7 +67,7 @@ def record(rec: SpoolRecord, *, path: Path | None = None) -> None:
     """
     try:
         if rec.request_id is None:
-            active = _request_id_var.get()
+            active = current_request_id()
             if active is not None:
                 rec = rec.model_copy(update={"request_id": active})
         target = path if path is not None else spool_path()

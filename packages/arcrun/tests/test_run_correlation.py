@@ -1,7 +1,7 @@
 """The loop binds its run_id as the spool correlation id for the whole run.
 
 arcrun owns the run_id; arcllm (deep in the model call) spools ``llm_call``
-records without one. Wrapping strategy execution in ``request_context(run_id)``
+records without one. Wrapping strategy execution in ``run_scope(run_id)``
 lets those records inherit the run id, so a run's LLM calls join its tool/run
 events on ``request_id`` in the observability plane.
 """

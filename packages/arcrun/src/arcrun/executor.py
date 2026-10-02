@@ -13,6 +13,7 @@ import jsonschema
 from arctrust import sanitize_error_text
 
 from arcrun._messages import tool_result
+from arcrun.causality import tool_call_scope
 from arcrun.ledger import (
     CanonicalToolArgumentsError,
     ToolExecutionIntent,
@@ -95,7 +96,18 @@ async def execute_tool_call(
 
     Returns (tool_result_message, success).
     Strategy owns cancel/steer checks — call this only for tool calls you want to run.
+    The call runs under its own causal ``tool_call_id`` and turn, so the policy
+    check, the tool body and every audit record they emit are attributable to it.
     """
+    with tool_call_scope(tc.id, state.turn_count):
+        return await _execute_tool_call(tc, state, sandbox)
+
+
+async def _execute_tool_call(
+    tc: Any,
+    state: RunState,
+    sandbox: Sandbox,
+) -> tuple[arcllm.Message, bool]:
     bus = state.event_bus
     turn_number = state.turn_count + 1
     if state.outcome_unknown is not None:
