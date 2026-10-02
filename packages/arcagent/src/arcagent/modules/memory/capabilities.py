@@ -297,17 +297,51 @@ class MemoryPromotionRun:
 
     async def run(self, *, agent_did: str, max_items: int | None = None) -> Mapping[str, object]:
         """Run the named agent's promotion sweep once; its status and counts."""
-        brain = _runtime.state_for(agent_did).brain
-        run_promotion = getattr(brain, "run_promotion", None)
-        if run_promotion is None:
-            raise CapabilityUnavailableError(
-                code="MEMORY_PROMOTION_UNAVAILABLE",
-                message="this agent's memory backend cannot run promotion",
-            )
-        result = await run_promotion(max_items=max_items)
-        if is_dataclass(result) and not isinstance(result, type):
-            return asdict(result)
-        return dict(result)
+        run_promotion = _brain_operation(agent_did, "run_promotion")
+        return _as_mapping(await run_promotion(max_items=max_items))
+
+    async def share(
+        self, *, agent_did: str, kind: str, item_id: str, decided_by: str
+    ) -> Mapping[str, object]:
+        """Share one of the named agent's cards on an operator's decision (alpha-2 item 16).
+
+        Returns ``{"status", "shared_ref"}`` — never content. The Brain's sweep runs
+        every gate (tier, demotion, secret, size, clearance).
+        """
+        share = _brain_operation(agent_did, "share_memory_item")
+        return _as_mapping(await share(kind, item_id, decided_by=decided_by))
+
+    async def history(
+        self, *, agent_did: str, kind: str, item_id: str
+    ) -> list[Mapping[str, object]]:
+        """One card's verified promotion decisions, oldest first (no content).
+
+        Only rows whose signature verified are returned, so the signature itself
+        is left off the wire.
+        """
+        history = _brain_operation(agent_did, "promotion_history")
+        rows = await asyncio.to_thread(history, kind, item_id)
+        return [
+            {key: value for key, value in row.stored().items() if key != "signature"}
+            for row in rows
+        ]
+
+
+def _brain_operation(agent_did: str, name: str) -> Any:
+    """The NAMED agent's Brain operation; refused when its backend has none."""
+    operation = getattr(_runtime.state_for(agent_did).brain, name, None)
+    if operation is None:
+        raise CapabilityUnavailableError(
+            code="MEMORY_PROMOTION_UNAVAILABLE",
+            message="this agent's memory backend cannot run promotion",
+        )
+    return operation
+
+
+def _as_mapping(result: Any) -> Mapping[str, object]:
+    if is_dataclass(result) and not isinstance(result, type):
+        return asdict(result)
+    return dict(result)
 
 
 # -- Fleet shared-knowledge port (SPEC-083) -------------------------------

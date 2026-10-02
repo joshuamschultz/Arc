@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -77,6 +78,19 @@ class PersonalKnowledgePort(KnowledgePort, Protocol):
     ) -> PromotionSource: ...
 
 
+class KnowledgeDemotion(Protocol):
+    """One verified operator demotion of a shared document (alpha-2 item 16)."""
+
+    @property
+    def identifier(self) -> str: ...
+
+    @property
+    def demoted_by(self) -> str: ...
+
+    @property
+    def reason(self) -> str: ...
+
+
 class SharedKnowledgePort(KnowledgePort, Protocol):
     async def promote(
         self,
@@ -84,15 +98,24 @@ class SharedKnowledgePort(KnowledgePort, Protocol):
         access: KnowledgeAccess,
         *,
         decision: str,
-        confidence: float,
-        classifier_version: str,
+        confidence: float | None = None,
+        classifier_version: str | None = None,
+        decided_by: str | None = None,
     ) -> KnowledgeRef:
-        """Promote ``source`` as ``access.caller_did`` under a recorded classifier decision.
+        """Promote ``source`` as ``access.caller_did`` under a recorded decision.
+
+        ``decision="classifier_promote"`` carries ``confidence`` and
+        ``classifier_version``; ``decision="operator_promote"`` carries the
+        operator DID in ``decided_by`` and no classifier verdict.
 
         Raises ``PermissionError`` when the shared side refuses before writing
-        (owner, clearance, signer, TOFU pin, type allowlist). Any other failure
-        means the write may or may not have landed.
+        (owner, clearance, signer, TOFU pin, type allowlist, demoted). Any other
+        failure means the write may or may not have landed.
         """
+        ...
+
+    async def demotions(self, access: KnowledgeAccess) -> Sequence[KnowledgeDemotion]:
+        """Every verified operator demotion of a shared document."""
         ...
 
     async def revoke(self, reference: str, access: KnowledgeAccess) -> None: ...
@@ -102,6 +125,7 @@ __all__ = [
     "SHARED_KNOWLEDGE_ATTACHED",
     "SHARED_KNOWLEDGE_DETACHED",
     "KnowledgeAccess",
+    "KnowledgeDemotion",
     "KnowledgeDocument",
     "KnowledgeDraft",
     "KnowledgeHit",

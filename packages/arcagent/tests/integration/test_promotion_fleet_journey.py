@@ -39,7 +39,9 @@ from arcmemory.stores.insight import InsightStore
 from arcmemory.types import Event, Insight, Procedure
 from arcprompt import StockPromptSource
 from arctrust import ValidatorsConfig, generate_keypair
+from arctrust.identity import did_from_public_key
 from arctrust.paths import identity_dir, module_root, operator_dir
+from arctrust.signer import InProcessSigner
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -220,7 +222,9 @@ def _next_night(workspace: Path) -> None:
     (workspace.resolve() / "memory" / _HYGIENE_LAST_NAME).unlink()
 
 
-def _fleet(agent: ArcAgent, workspace: Path, team_root: Path) -> tuple[Any, Any, Any]:
+def _fleet(
+    agent: ArcAgent, workspace: Path, team_root: Path, operator_public_key: bytes | None = None
+) -> tuple[Any, Any, Any]:
     from arcteam.shared_knowledge import (
         ComposedSharedKnowledgeAgent,
         FleetSharedKnowledgeComposition,
@@ -229,7 +233,9 @@ def _fleet(agent: ArcAgent, workspace: Path, team_root: Path) -> tuple[Any, Any,
     from arcteam.team import Team
 
     team = Team(id="team:fleet", name="fleet", members=[agent.did], default_channel="channel://f")
-    service = FleetSharedKnowledgeService.for_team_root(team_root)
+    service = FleetSharedKnowledgeService.for_team_root(
+        team_root, operator_public_key=operator_public_key
+    )
     access = KnowledgeAccess(agent.did, "UNCLASSIFIED")
     member = ComposedSharedKnowledgeAgent(
         agent,
@@ -307,3 +313,77 @@ async def test_module_forged_attach_and_detach_are_ignored_and_audited(
         assert forged == [SHARED_KNOWLEDGE_ATTACHED, SHARED_KNOWLEDGE_DETACHED]
         with pytest.raises(RuntimeError, match="already claimed"):
             bus.claim_core_emitter()
+
+
+_OPERATOR_SIGNER = InProcessSigner(b"\x0a" * 32)
+_OPERATOR_DID = did_from_public_key(
+    _OPERATOR_SIGNER.public_key, org="operator", agent_type="approver"
+)
+
+
+async def test_operator_share_then_demote_is_sticky_on_the_real_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, classifier: _Classifier
+) -> None:
+    """Alpha-2 item 16, end to end: hand share -> demote -> the agent never re-shares.
+
+    Real agent, real memory bundle, real fleet service and signed store; only the
+    LLM wire is faked. The operator's share skips the classifier, lands with
+    signed provenance, and once the operator demotes it the agent's own nightly
+    sweep makes the demote its sticky ledger decision: the card is never sent to
+    the classifier and a second hand share is refused.
+    """
+    agent, workspace = _agent(tmp_path, monkeypatch)
+    async with _started(agent):
+        brain = _memory_state(agent).brain
+        _card(workspace, "acme-renewal")
+        composition, service, member = _fleet(
+            agent, workspace, tmp_path / "team", _OPERATOR_SIGNER.public_key
+        )
+        await composition.start([member])
+
+        shared = await agent.share_memory_item("insight", "acme-renewal", decided_by=_OPERATOR_DID)
+
+        assert shared["status"] == "published"
+        (document,) = await service.list_documents(member.access)
+        assert (document.kind, document.contributors) == ("insight", (agent.did,))
+        (provenance,) = await service.provenance(document.reference.identifier, member.access)
+        assert (provenance.decision, provenance.decided_by) == ("operator_promote", _OPERATOR_DID)
+        assert classifier.inputs == []
+
+        await service.demote(
+            document.reference.identifier,
+            operator_signer=_OPERATOR_SIGNER,
+            reason="stale pricing",
+            clearance="UNCLASSIFIED",
+        )
+        summary = await brain.consolidate()
+        again = await agent.share_memory_item("insight", "acme-renewal", decided_by=_OPERATOR_DID)
+        history = await agent.memory_decision_history("insight", "acme-renewal")
+
+        assert summary["promotion_status"] == "completed"
+        assert classifier.inputs == []
+        assert again["status"] == "demoted"
+        assert [row["decision"] for row in history] == [
+            "promoted_by_operator",
+            "demoted_by_operator",
+        ]
+        assert history[-1]["decided_by"] == _OPERATOR_DID
+        assert "signature" not in history[-1]
+        assert await service.list_documents(member.access) == []
+
+
+async def test_operator_share_of_a_secret_card_is_blocked_on_the_real_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, classifier: _Classifier
+) -> None:
+    agent, workspace = _agent(tmp_path, monkeypatch)
+    async with _started(agent):
+        InsightStore(workspace.resolve()).write(
+            Insight(id="deploy-key", statement="The deploy password is hunter2.", trigger="t")
+        )
+        composition, service, member = _fleet(agent, workspace, tmp_path / "team")
+        await composition.start([member])
+
+        result = await agent.share_memory_item("insight", "deploy-key", decided_by=_OPERATOR_DID)
+
+        assert result["status"] == "blocked_secret"
+        assert await service.list_documents(member.access) == []

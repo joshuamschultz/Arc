@@ -386,17 +386,47 @@ class ArcAgent:
                 capability provides ``memory_promotion``.
             ValueError / TypeError: ``max_items`` is not an int in 1..5000.
         """
+        run = await self._memory_promotion_operation("run")
+        result: Mapping[str, object] = await run(agent_did=self.did, max_items=max_items)
+        return result
+
+    async def share_memory_item(
+        self, kind: str, item_id: str, *, decided_by: str
+    ) -> Mapping[str, object]:
+        """Share one memory card on an operator's decision (alpha-2 item 16).
+
+        The same promotion path as the sweep (tier lock, demotion, secret gate with
+        no override, size, clearance); ``decided_by`` is the operator DID the
+        caller authenticated. Returns ``{"status", "shared_ref"}``, never content.
+        Raises ``CapabilityUnavailableError`` like :meth:`run_memory_promotion` and
+        ``ValueError`` for a non-promotable kind or a malformed card id.
+        """
+        share = await self._memory_promotion_operation("share")
+        result: Mapping[str, object] = await share(
+            agent_did=self.did, kind=kind, item_id=item_id, decided_by=decided_by
+        )
+        return result
+
+    async def memory_decision_history(self, kind: str, item_id: str) -> list[Mapping[str, object]]:
+        """One card's verified promotion decisions, oldest first (no content)."""
+        history = await self._memory_promotion_operation("history")
+        rows: list[Mapping[str, object]] = await history(
+            agent_did=self.did, kind=kind, item_id=item_id
+        )
+        return rows
+
+    async def _memory_promotion_operation(self, name: str) -> Any:
+        """The active ``memory_promotion`` capability's operation, or refused."""
         entry = None
         if self._started and self._capability_registry is not None:
             entry = await self._capability_registry.get_capability(_MEMORY_PROMOTION)
-        run = getattr(entry.instance, "run", None) if entry and entry.setup_done else None
-        if run is None:
+        operation = getattr(entry.instance, name, None) if entry and entry.setup_done else None
+        if operation is None:
             raise CapabilityUnavailableError(
                 code="MEMORY_PROMOTION_UNAVAILABLE",
                 message="memory promotion is not available on this agent",
             )
-        result: Mapping[str, object] = await run(agent_did=self.did, max_items=max_items)
-        return result
+        return operation
 
     async def skill_adapter(self) -> SkillAdapter:
         """This started agent's skill adapter, for operator controls (alpha-2 P8).

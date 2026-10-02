@@ -25,12 +25,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from arcmemory.promotion.publisher import PublisherUnavailableError, PublishOutcomeUnknownError
+from arcmemory.promotion.publisher import (
+    Demotion,
+    PublisherUnavailableError,
+    PublishOutcomeUnknownError,
+)
 
 from arcagent.knowledge import KnowledgeAccess, PromotionSource, SharedKnowledgePort
 
 #: The only decision the shared side accepts for an automated promotion (COMP-024).
 _CLASSIFIER_DECISION = "classifier_promote"
+#: An operator's hand share (alpha-2 item 16): no classifier verdict, a named DID.
+_OPERATOR_DECISION = "operator_promote"
 
 
 class PromotionExporter(Protocol):
@@ -42,7 +48,12 @@ class PromotionExporter(Protocol):
 
 
 class SharedKnowledgePublisher:
-    """Publish one classifier-approved memory card through the shared-knowledge port."""
+    """Publish one approved memory card through the shared-knowledge port.
+
+    Approved by the classifier (:meth:`publish`) or by an operator
+    (:meth:`publish_by_operator`); also reports the shared side's verified
+    operator demotions (:meth:`demotions`) so the sweep can make them sticky.
+    """
 
     def __init__(
         self,
@@ -73,15 +84,63 @@ class SharedKnowledgePublisher:
             PublishOutcomeUnknownError: the shared write may have landed, or it
                 returned a reference that is not the bytes we sent.
         """
+        return await self._promote(
+            reference,
+            content_sha256,
+            decision=_CLASSIFIER_DECISION,
+            confidence=confidence,
+            classifier_version=classifier_version,
+        )
+
+    async def publish_by_operator(
+        self, reference: str, *, content_sha256: str, decided_by: str
+    ) -> str:
+        """Promote ``reference`` on an operator's decision (alpha-2 item 16).
+
+        The same digest re-check and the same two failures as :meth:`publish`;
+        the shared side records ``decided_by`` durably before it writes.
+        """
+        return await self._promote(
+            reference, content_sha256, decision=_OPERATOR_DECISION, decided_by=decided_by
+        )
+
+    async def demotions(self) -> dict[str, Demotion]:
+        """The shared side's verified operator demotions, keyed by shared ref.
+
+        Raises :class:`PublisherUnavailableError` when they cannot be read, so the
+        sweep decides nothing rather than re-sending a demoted card.
+        """
+        try:
+            found = await self._port.demotions(self._access_factory())
+        except Exception as error:  # reason: unreadable -> the sweep must decide nothing
+            raise PublisherUnavailableError(
+                f"shared demotions unreadable ({type(error).__name__})"
+            ) from error
+        return {
+            item.identifier: Demotion(item.identifier, item.demoted_by, item.reason)
+            for item in found
+        }
+
+    async def _promote(
+        self,
+        reference: str,
+        content_sha256: str,
+        *,
+        decision: str,
+        confidence: float | None = None,
+        classifier_version: str | None = None,
+        decided_by: str | None = None,
+    ) -> str:
         access = self._access_factory()
         source = await self._verified_source(reference, content_sha256, access)
         try:
             shared = await self._port.promote(
                 source,
                 access,
-                decision=_CLASSIFIER_DECISION,
+                decision=decision,
                 confidence=confidence,
                 classifier_version=classifier_version,
+                decided_by=decided_by,
             )
         except PermissionError as error:
             raise PublisherUnavailableError(f"shared side refused: {error}") from error
