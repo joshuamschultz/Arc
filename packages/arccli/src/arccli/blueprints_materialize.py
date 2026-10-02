@@ -28,11 +28,22 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
+from arctrust import Signer as TrustSigner
+from arctrust import SignerError
 
 from arccli.blueprints import ResolvedBlueprint, apply_blueprint, dumps_toml
 
 # (signer_did, ed25519_seed) — the raw 32-byte seed the signer holds.
 Signer = tuple[str, bytes]
+
+
+@dataclass(frozen=True)
+class CapabilitySigner:
+    """The operator's signer handle plus the DID its signatures are recorded under."""
+
+    did: str
+    signer: TrustSigner
+
 
 _CONTEXT_DIRNAME = "context"
 _SIDECAR_SUFFIX = ".arcsig"
@@ -57,24 +68,24 @@ def materialize_blueprint(
     *,
     deployment_tier: str,
     operator_signer: Signer | None = None,
-    agent_signer: Signer | None = None,
+    capability_signer: CapabilitySigner | None = None,
 ) -> MaterializeResult:
     """Write the full blueprint surface into ``agent_dir``. Returns what landed.
 
     ``operator_signer`` signs prompt overlays; if the blueprint ships overlays and no
     operator signer is available this raises (an unsigned overlay is refused by the
-    resolver at run start — shipping one silently would be a dead feature). ``agent_signer``
-    signs copied capabilities/skills; when absent they are copied unsigned with a warning
-    (fail-open, mirroring ``arc agent create`` — they load once trusted or with
-    ``auto_run_agent_code``).
+    resolver at run start — shipping one silently would be a dead feature).
+    ``capability_signer`` is the OPERATOR signer handle that signs copied capabilities and
+    skills (the agent key never signs under ``capabilities/``); when absent they are copied
+    unsigned with a warning and stay gated until ``arc trust approve``.
     """
     result = MaterializeResult(agent_dir=agent_dir)
     merged = _merge_configs(bp, agent_dir, deployment_tier=deployment_tier)
     _write_persona(bp, agent_dir, result)
     _sign_persona(agent_dir, operator_signer, result)
     _author_prompt_overlays(bp, agent_dir, operator_signer, result)
-    _install_capabilities(bp, agent_dir, agent_signer, result)
-    _install_skills(bp, agent_dir, agent_signer, result)
+    _install_capabilities(bp, agent_dir, capability_signer, result)
+    _install_skills(bp, agent_dir, capability_signer, result)
     _seed_schedules(bp, agent_dir, merged, result)
     return result
 
@@ -220,17 +231,17 @@ def _confine(context_root: Path, package: str, name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Capabilities + skills (agent-signed)
+# Capabilities + skills (operator-signed)
 # ---------------------------------------------------------------------------
 
 
 def _install_capabilities(
     bp: ResolvedBlueprint,
     agent_dir: Path,
-    agent_signer: Signer | None,
+    capability_signer: CapabilitySigner | None,
     result: MaterializeResult,
 ) -> None:
-    """Copy ``capabilities/*`` into ``<agent_root>/capabilities`` and agent-sign every ``.py``."""
+    """Copy ``capabilities/*`` into the agent root, operator-signing each ``.py``."""
     if bp.capabilities_dir is None:
         return
     dest = agent_dir / "capabilities"
@@ -241,17 +252,17 @@ def _install_capabilities(
         target = dest / item.name
         _copy(item, target)
         if item.is_file() and item.suffix == ".py":
-            _sign_agent_artifact(target, agent_signer, result)
+            _sign_agent_artifact(target, agent_dir, capability_signer, result)
             result.capabilities.append(item.name)
 
 
 def _install_skills(
     bp: ResolvedBlueprint,
     agent_dir: Path,
-    agent_signer: Signer | None,
+    capability_signer: CapabilitySigner | None,
     result: MaterializeResult,
 ) -> None:
-    """Copy each ``skills/<name>/`` into ``capabilities/skills`` and agent-sign its SKILL.md."""
+    """Copy each ``skills/<name>/`` into ``capabilities/skills`` and operator-sign its SKILL.md."""
     if bp.skills_dir is None:
         return
     dest = agent_dir / "capabilities" / "skills"
@@ -263,7 +274,7 @@ def _install_skills(
         _copy(skill, target)
         skill_md = target / "SKILL.md"
         if skill_md.is_file():
-            _sign_agent_artifact(skill_md, agent_signer, result)
+            _sign_agent_artifact(skill_md, agent_dir, capability_signer, result)
         result.skills.append(skill.name)
 
 
@@ -277,14 +288,27 @@ def _copy(src: Path, dst: Path) -> None:
 
 
 def _sign_agent_artifact(
-    path: Path, agent_signer: Signer | None, result: MaterializeResult
+    path: Path,
+    agent_dir: Path,
+    capability_signer: CapabilitySigner | None,
+    result: MaterializeResult,
 ) -> None:
-    """Sign an agent-root artifact with the agent's pinned key, or warn (fail-open)."""
-    if agent_signer is None:
+    """Operator-sign an agent-root artifact (signature + key pin + TOFU pin), or warn.
+
+    Fail closed: a signing failure leaves the artifact unsigned, hence gated.
+    """
+    if capability_signer is None:
         result.unsigned_warnings.append(str(path))
         return
-    signer_did, seed = agent_signer
-    arcagent.write_signature(path, path.read_bytes(), signer_did=signer_did, private_key=seed)
+    try:
+        arcagent.sign_capability(
+            path,
+            signer_did=capability_signer.did,
+            signer=capability_signer.signer,
+            config_path=agent_dir / "arcagent.toml",
+        )
+    except (OSError, ValueError, SignerError):
+        result.unsigned_warnings.append(str(path))
 
 
 # ---------------------------------------------------------------------------
@@ -340,27 +364,22 @@ def operator_signer_pair() -> Signer | None:
     return OperatorApprovalAuthority(op.into_signer()).did, op.seed
 
 
-def agent_signer_pair(agent_dir: Path) -> Signer | None:
-    """Resolve the agent's own pinned identity as ``(did, seed)`` — None if it cannot sign.
-
-    This is the identity ``arc agent create`` already signed the scaffold with, so
-    blueprint-shipped capabilities sign under the same key the TOFU gate pins.
-    """
-    from arccli.commands.agent.create import _mint_agent_identity
+def operator_capability_signer() -> CapabilitySigner | None:
+    """Resolve the operator signer handle for capability signing — None if unavailable."""
+    from arccli.commands.operator import operator_signer_and_did
 
     try:
-        identity = _mint_agent_identity(agent_dir)
-    except Exception:  # reason: fail-open — an unsigned copy still installs, TOFU can grant later
+        did, signer = operator_signer_and_did()
+    except (OSError, ValueError, RuntimeError, SignerError):
         return None
-    if not getattr(identity, "can_sign", False):
-        return None
-    return identity.did, identity.signing_seed
+    return CapabilitySigner(did=did, signer=signer)
 
 
 __all__ = [
+    "CapabilitySigner",
     "MaterializeResult",
     "Signer",
-    "agent_signer_pair",
     "materialize_blueprint",
+    "operator_capability_signer",
     "operator_signer_pair",
 ]

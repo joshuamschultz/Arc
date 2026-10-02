@@ -215,12 +215,13 @@ class TestCreate:
 
         assert artifact_signing.verify_file(calc, calc.read_bytes()) is True
 
-        # The signature must be attributable to the SAME DID arcteam
-        # registered — not an unrelated throwaway key.
+        # The agent can write capabilities/, so the OPERATOR signs here — an
+        # agent-signed file would be self-approved code (item 53).
         config = tomllib.loads((agent_dir / "arcagent.toml").read_text())
         manifest = artifact_signing.load_signature(calc)
         assert manifest is not None
-        assert manifest.signer_did == config["identity"]["did"]
+        assert manifest.signer_did != config["identity"]["did"]
+        assert manifest.signer_did.startswith("did:arc:operator")
 
     def test_create_fails_if_exists(self, tmp_path):
         (tmp_path / "my-agent").mkdir()

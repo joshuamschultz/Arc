@@ -67,11 +67,13 @@ def _folder_archive() -> bytes:
     return buffer.getvalue()
 
 
-def _client(tmp_path: Path) -> tuple[TestClient, Path, _Audit]:
+def _client(
+    tmp_path: Path, config: str = '[security]\ntier = "federal"\n'
+) -> tuple[TestClient, Path, _Audit]:
     workspace = tmp_path / "ada" / "workspace"
     workspace.mkdir(parents=True)
     (workspace / "arcagent.toml").write_text(
-        '[agent]\nname = "ada"\n\n[security]\ntier = "federal"\n', encoding="utf-8"
+        f'[agent]\nname = "ada"\n\n{config}', encoding="utf-8"
     )
     audit = _Audit()
     app = Starlette(routes=routes)
@@ -122,6 +124,42 @@ def test_upload_returns_review_evidence_without_activating_capabilities(tmp_path
     assert listed.status_code == 200
     assert listed.json()["imports"][0]["import_id"] == body["import_id"]
     assert "source" not in listed.json()["imports"][0]
+
+
+_BARE_SKILL = b"---\nname: bare\ndescription: only the required fields\n---\n\nDo the thing.\n"
+
+
+def _upload_bare_skill(client: TestClient) -> object:
+    return client.post(
+        "/api/agents/ada/capability-imports",
+        headers={"Authorization": "Bearer viewer"},
+        files={"file": ("SKILL.md", _BARE_SKILL, "text/markdown")},
+    )
+
+
+def test_import_route_strict_at_federal_when_configured(tmp_path: Path) -> None:
+    """Federal + strict_skill_sections refuses a skill missing the Arc sections AT REVIEW."""
+    client, _, _ = _client(
+        tmp_path,
+        '[security]\ntier = "federal"\n[capabilities]\nstrict_skill_sections = true\n',
+    )
+    response = _upload_bare_skill(client)
+    assert response.status_code == 422, response.text  # type: ignore[attr-defined]  # reason: TestClient response
+    listed = client.get(
+        "/api/agents/ada/capability-imports", headers={"Authorization": "Bearer viewer"}
+    )
+    assert listed.json()["imports"] == []  # nothing is reviewable, so nothing can be promoted
+
+
+def test_import_lenient_below_federal(tmp_path: Path) -> None:
+    """Below federal a missing section is a review finding, even with strict configured."""
+    client, _, _ = _client(
+        tmp_path,
+        '[security]\ntier = "enterprise"\n[capabilities]\nstrict_skill_sections = true\n',
+    )
+    response = _upload_bare_skill(client)
+    assert response.status_code == 201, response.text  # type: ignore[attr-defined]  # reason: TestClient response
+    assert response.json()["findings"]  # type: ignore[attr-defined]  # reason: TestClient response
 
 
 def test_plain_skill_markdown_uses_the_review_pipeline(tmp_path: Path) -> None:

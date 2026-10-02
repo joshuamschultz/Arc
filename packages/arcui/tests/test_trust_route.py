@@ -236,9 +236,7 @@ def test_approve_refuses_a_skill_that_fails_validation_and_signs_nothing(tmp_pat
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
     skill_md = _skill_md(team_root, "olivia")
     # Only identity is required (J4 B1): a skill with no description is invalid.
-    skill_md.write_text(
-        _VALID_SKILL.replace("description: does {name}\n", ""), encoding="utf-8"
-    )
+    skill_md.write_text(_VALID_SKILL.replace("description: does {name}\n", ""), encoding="utf-8")
     client = _make_client(team_root)
 
     resp = client.post(
@@ -272,6 +270,36 @@ def test_disapprove_removes_the_sidecar_and_unpins_the_key(tmp_path: Path) -> No
     assert _pinned_keys(team_root, "olivia") == ()
     gated = client.get("/api/trust/gated", headers=_VIEWER).json()["gated"]
     assert "reporter" in {it["name"] for it in gated}
+
+
+def test_disapprove_revokes_every_file_in_skill_folder(tmp_path: Path) -> None:
+    """Revoking a skill revokes the whole pack, including a leftover sidecar.
+
+    Signing covers every file in the folder, so revoking only ``SKILL.md`` left
+    the resource sidecars and pins live. A sidecar whose file was since deleted
+    must not survive either: recreating the file would re-enable it.
+    """
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    folder = _skill_md(team_root, "olivia").parent
+    (folder / "references").mkdir()
+    (folder / "references" / "guide.md").write_text("guide\n", encoding="utf-8")
+    (folder / "references" / "gone.md").write_text("gone\n", encoding="utf-8")
+    client = _make_client(team_root)
+    body = {"agent_id": "olivia", "name": "reporter"}
+    assert client.post("/api/trust/approve", headers=_OPERATOR, json=body).status_code == 200
+    assert (folder / "references" / "guide.md.arcsig").exists()
+    (folder / "references" / "gone.md").unlink()  # sidecar is now orphaned
+
+    resp = client.post("/api/trust/disapprove", headers=_OPERATOR, json=body)
+
+    assert resp.status_code == 200
+    assert sorted(p.name for p in folder.rglob("*.arcsig")) == []
+    assert _pinned_keys(team_root, "olivia") == ()
+    config = (team_root / "olivia" / "arcagent.toml").read_text(encoding="utf-8")
+    assert "skill-resource/reporter/references" not in config
 
 
 def test_missing_operator_key_is_500_and_signs_nothing(tmp_path: Path) -> None:

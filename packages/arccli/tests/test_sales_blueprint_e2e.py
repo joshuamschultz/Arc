@@ -12,8 +12,10 @@ import os
 import tomllib
 from pathlib import Path
 
+from arctrust import InProcessSigner
+
 from arccli import blueprints as bp
-from arccli.blueprints_materialize import materialize_blueprint
+from arccli.blueprints_materialize import CapabilitySigner, materialize_blueprint
 
 
 def _agent(root: Path) -> Path:
@@ -31,7 +33,7 @@ def test_sales_blueprint_materializes_full_surface(tmp_path: Path) -> None:
         agent,
         deployment_tier="personal",
         operator_signer=("operator:test", os.urandom(32)),
-        agent_signer=("did:agent:test", os.urandom(32)),
+        capability_signer=CapabilitySigner("operator:test", InProcessSigner(os.urandom(32))),
     )
 
     # sibling config

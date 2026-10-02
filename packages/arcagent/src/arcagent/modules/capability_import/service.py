@@ -190,7 +190,9 @@ class CapabilityImportService:
         *,
         target_agent_did: str,
         limits: CapabilityImportLimits,
+        strict_sections: bool = False,
     ) -> CapabilityImportManifest:
+        """Statically review staged bytes; ``strict_sections`` refuses (federal opt-in)."""
         manifest = build_manifest(
             intake.staging_dir,
             import_id=intake.import_id,
@@ -198,6 +200,7 @@ class CapabilityImportService:
             archive_sha256=intake.archive_sha256,
             limits=limits,
             reserved_skill_names=_reserved_builtin_skill_names(),
+            strict_sections=strict_sections,
         )
         write_evidence(intake.staging_dir, manifest)
         self._ledger.set(
@@ -252,6 +255,7 @@ class CapabilityImportService:
         *,
         target_agent_did: str,
         limits: CapabilityImportLimits | None = None,
+        strict_sections: bool = False,
     ) -> CapabilityImportManifest:
         """Atomically edit one staged file and regenerate its review evidence.
 
@@ -299,6 +303,7 @@ class CapabilityImportService:
                     archive_sha256=manifest.archive_sha256,
                     limits=effective_limits,
                     reserved_skill_names=_reserved_builtin_skill_names(),
+                    strict_sections=strict_sections,
                 )
             except CapabilityImportError as exc:
                 raise ValueError("edited capability failed static validation") from exc

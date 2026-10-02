@@ -231,6 +231,23 @@ def test_approve_then_disapprove_round_trip(
     assert "reporter" in capsys.readouterr().out  # gated again
 
 
+def test_disapprove_revokes_every_file_in_a_skill_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI revokes the whole approved pack, not only SKILL.md (item 54)."""
+    team_root = _team(tmp_path, monkeypatch)
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    folder = _skill_md(team_root).parent
+    (folder / "notes.md").write_text("notes\n", encoding="utf-8")
+
+    trust_handler(["approve", "reporter"])
+    assert (folder / "notes.md.arcsig").exists()
+    trust_handler(["disapprove", "reporter"])
+
+    assert sorted(p.name for p in folder.rglob("*.arcsig")) == []
+    assert load_validators(_config(team_root)).approved == ()
+
+
 def test_disapprove_clears_a_pin_whose_artifact_was_deleted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

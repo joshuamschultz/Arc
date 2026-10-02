@@ -146,6 +146,20 @@ def resolve_operator_signer(arc_dir: Path | None = None) -> Signer:
     return load_operator_key(arc_dir).into_signer(sec.signing_algorithm)
 
 
+def operator_signer_and_did(arc_dir: Path | None = None) -> tuple[str, Signer]:
+    """The operator signer handle and the DID its signatures are recorded under.
+
+    One resolver for every CLI surface that signs a capability: the agent key
+    never signs anything under ``capabilities/`` (the agent can write that tree,
+    so an agent-signed file is self-approved code). Custody stays behind the
+    handle, so a vault-held operator key works identically.
+    """
+    from arctrust.policy import OperatorApprovalAuthority
+
+    signer = resolve_operator_signer(arc_dir)
+    return OperatorApprovalAuthority(signer).did, signer
+
+
 def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
     """Resolve the at-rest seal for a CLI-written WORM chain (D-577).
 

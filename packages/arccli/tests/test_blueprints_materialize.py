@@ -8,14 +8,16 @@ schedules seeded and round-tripping through the scheduler store.
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from pathlib import Path
 
 import pytest
+from arctrust import InProcessSigner
 
 from arccli import blueprints as bp
-from arccli.blueprints_materialize import materialize_blueprint
+from arccli.blueprints_materialize import CapabilitySigner, materialize_blueprint
 
 
 def _write_v2_blueprint(root: Path) -> Path:
@@ -63,7 +65,7 @@ def test_materialize_writes_full_surface(tmp_path: Path) -> None:
         agent,
         deployment_tier="personal",
         operator_signer=("operator:test", os.urandom(32)),
-        agent_signer=("did:agent:test", os.urandom(32)),
+        capability_signer=CapabilitySigner("operator:test", InProcessSigner(os.urandom(32))),
     )
 
     # sibling tomls merged
@@ -81,6 +83,8 @@ def test_materialize_writes_full_surface(tmp_path: Path) -> None:
     # capability copied + signed
     cap = agent / "capabilities" / "crm.py"
     assert cap.is_file() and Path(f"{cap}.arcsig").is_file()
+    # signed by the operator handle (and its key pinned), never an agent key
+    assert json.loads(Path(f"{cap}.arcsig").read_text())["signer_did"] == "operator:test"
     # skill copied + signed
     skill_md = agent / "capabilities" / "skills" / "deal-review" / "SKILL.md"
     assert skill_md.is_file() and Path(f"{skill_md}.arcsig").is_file()

@@ -21,6 +21,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/capabilities/test_capability_gating.py",
         "packages/arcagent/tests/security/test_module_capability_trust.py",
         "packages/arcagent/tests/security/capabilities/test_capability_import_drift.py",
+        # Disapprove revokes the WHOLE skill pack (every sidecar + pin, including a
+        # leftover sidecar whose file was deleted); the agent key never signs under
+        # the agent-root capabilities/ tree.
+        "packages/arcui/tests/test_trust_route.py",
+        # `arc skill evals promote/edit` on an installed skill commit an operator-signed
+        # anchored revision, or stop with "activation unavailable" — never an unsigned
+        # eval file the improver gate would score.
+        "packages/arccli/tests/test_skill_evals_activation.py",
+        # Federal strict skill sections are enforced at import REVIEW, not after promote.
+        "packages/arcui/tests/test_capability_import_routes.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_import_strict_sections.py",
+        "tests/architecture/test_agent_key_never_signs_capabilities.py",
     ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never

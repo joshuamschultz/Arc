@@ -53,6 +53,7 @@ from arctrust import (
 
 from arcagent.capabilities.artifact_signing import (
     SIDECAR_SUFFIX,
+    key_still_in_use,
     load_signature,
     sidecar_path,
     verify_file,
@@ -221,7 +222,7 @@ def revoke(
     """
     manifest = load_signature(artifact)
     sidecar_path(artifact).unlink(missing_ok=True)
-    if manifest is not None and not _key_still_in_use(config_path.parent, manifest.public_key):
+    if manifest is not None and not key_still_in_use(config_path.parent, manifest.public_key):
         unpin_key(config_path, public_key=bytes.fromhex(manifest.public_key))
     disapprove(config_path, name=pin_name_for_path(artifact))
     _audit(
@@ -280,20 +281,6 @@ def _source_hash(artifact: Path) -> str | None:
         return hash_source(artifact.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
         return None
-
-
-def _key_still_in_use(agent_root: Path, public_key_hex: str) -> bool:
-    """True when any artifact still under ``agent_root`` is signed by that key.
-
-    Runs after the revoked artifact's own sidecar is gone, so it sees exactly
-    the set of signatures that must keep working.
-    """
-    for sidecar in agent_root.rglob(f"*{SIDECAR_SUFFIX}"):
-        artifact = sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX))
-        manifest = load_signature(artifact)
-        if manifest is not None and manifest.public_key == public_key_hex:
-            return True
-    return False
 
 
 __all__ = ["revoke", "sign", "trust_bundled_capabilities"]

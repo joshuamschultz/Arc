@@ -175,7 +175,11 @@ async def upload_import(request: Request) -> JSONResponse:
             limits=limits,
         )
         manifest = await asyncio.to_thread(
-            service.review, intake, target_agent_did=target_did, limits=limits
+            service.review,
+            intake,
+            target_agent_did=target_did,
+            limits=limits,
+            strict_sections=arcagent.strict_sections_for_agent(workspace / "arcagent.toml"),
         )
         review = await asyncio.to_thread(service.review_summary, manifest)
         payload = review.model_dump(mode="json")
@@ -283,6 +287,7 @@ async def edit_import_file(request: Request) -> JSONResponse:
             body["path"],
             content,
             target_agent_did=resolved[1],
+            strict_sections=arcagent.strict_sections_for_agent(resolved[0] / "arcagent.toml"),
         )
     except (OSError, ValueError) as exc:
         emit_mutation_audit(

@@ -378,8 +378,8 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     result = None
     if bp is not None:
         from arccli.blueprints_materialize import (
-            agent_signer_pair,
             materialize_blueprint,
+            operator_capability_signer,
             operator_signer_pair,
         )
 
@@ -388,7 +388,7 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
             agent_dir,
             deployment_tier=tier,
             operator_signer=operator_signer_pair(),
-            agent_signer=agent_signer_pair(agent_dir),
+            capability_signer=operator_capability_signer(),
         )
 
     _write("")

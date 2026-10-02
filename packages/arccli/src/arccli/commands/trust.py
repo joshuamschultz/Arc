@@ -183,7 +183,11 @@ def _approve(args: argparse.Namespace) -> None:
     approver = _operator_did(signer)
     try:
         with audit_chain("arc trust", _operator_actor) as (sink, _):
-            arcagent.sign_capability(
+            # A skill is approved as one pack: every file in its folder is signed.
+            sign = (
+                arcagent.sign_skill_folder if target.kind == "skill" else arcagent.sign_capability
+            )
+            sign(
                 artifact,
                 signer_did=approver,
                 signer=signer,
@@ -223,8 +227,12 @@ def _disapprove(args: argparse.Namespace) -> None:
     )
     target = next((item for item in inventory if item.name == args.name), None)
     if target is not None:
+        # A skill was approved as one pack, so it is revoked as one pack.
+        revoke = (
+            arcagent.revoke_skill_folder if target.kind == "skill" else arcagent.revoke_capability
+        )
         with audit_chain("arc trust", _operator_actor) as (sink, actor):
-            arcagent.revoke_capability(
+            revoke(
                 Path(target.path),
                 config_path=config_path,
                 operator_did=actor,

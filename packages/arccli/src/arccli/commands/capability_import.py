@@ -140,7 +140,12 @@ def _import(args: argparse.Namespace) -> None:
         capabilities_root = agent_root / "capabilities"
         service = arcagent.CapabilityImportService(capabilities_root)
         intake = arcagent.intake_capability_archive(source, capabilities_root, limits=limits)
-        manifest = service.review(intake, target_agent_did=target_did, limits=limits)
+        manifest = service.review(
+            intake,
+            target_agent_did=target_did,
+            limits=limits,
+            strict_sections=arcagent.strict_sections_for_agent(agent_root / "arcagent.toml"),
+        )
         review = service.review_summary(manifest)
     finally:
         if remove_source:
@@ -207,6 +212,7 @@ def _edit(args: argparse.Namespace) -> None:
         args.path,
         content,
         target_agent_did=target_did,
+        strict_sections=arcagent.strict_sections_for_agent(agent_root / "arcagent.toml"),
     )
     write(f"Updated {args.path}; review digest is now {manifest.review_digest}.")
 

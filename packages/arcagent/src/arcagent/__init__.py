@@ -12,6 +12,7 @@ from arcagent.capabilities.artifact_signing import (
     sidecar_path,
     verify_file,
     write_signature,
+    write_signature_with_signer,
 )
 from arcagent.capabilities.capability_loader import CapabilityLoader, SkillArtifactResolver
 from arcagent.capabilities.capability_registry import CapabilityRegistry
@@ -91,7 +92,7 @@ from arcagent.knowledge import (
 )
 from arcagent.modules.capability_import.archive import intake as intake_capability_archive
 from arcagent.modules.capability_import.errors import CapabilityImportError
-from arcagent.modules.capability_import.manifest import manifest_dict
+from arcagent.modules.capability_import.manifest import manifest_dict, strict_sections_for_agent
 from arcagent.modules.capability_import.models import (
     CapabilityImportLimits,
     CapabilityImportManifest,
@@ -99,7 +100,11 @@ from arcagent.modules.capability_import.models import (
     CapabilityImportReview,
     CapabilityImportStatus,
 )
-from arcagent.modules.capability_import.pack_signing import SkillPackError, sign_skill_folder
+from arcagent.modules.capability_import.pack_signing import (
+    SkillPackError,
+    revoke_skill_folder,
+    sign_skill_folder,
+)
 from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
@@ -392,6 +397,7 @@ __all__ = [
     "resolve_workspace_import_policy",
     "reviewed_bundle_digest",
     "revoke_capability",
+    "revoke_skill_folder",
     "serve_mcp_stdio",
     "set_workflow_runner",
     "sidecar_path",
@@ -400,6 +406,7 @@ __all__ = [
     "signed_workspace_files",
     "skill_revision_scope",
     "stream_token_text",
+    "strict_sections_for_agent",
     "stricter_tier",
     "summarize_tool_policy",
     "tier_rank",
@@ -409,6 +416,7 @@ __all__ = [
     "validate_skill_folder",
     "verify_file",
     "write_signature",
+    "write_signature_with_signer",
 ]
 
 try:
