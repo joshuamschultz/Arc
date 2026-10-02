@@ -3,8 +3,10 @@
 from arcteam.shared_knowledge.attachment import SharedKnowledgeAttachment
 from arcteam.shared_knowledge.backend import (
     FleetSharedKnowledgeBackend,
+    SharedKnowledgeDemotion,
     SharedKnowledgeDocument,
     SharedKnowledgeHit,
+    SharedKnowledgeProvenance,
     SharedKnowledgeReference,
     SharedKnowledgeSummary,
 )
@@ -27,10 +29,12 @@ __all__ = [
     "FleetSharedKnowledgePort",
     "FleetSharedKnowledgeService",
     "SharedKnowledgeAttachment",
+    "SharedKnowledgeDemotion",
     "SharedKnowledgeDocument",
     "SharedKnowledgeHit",
     "SharedKnowledgePromotionOutcomeUnknownError",
     "SharedKnowledgePromotionRefusedError",
+    "SharedKnowledgeProvenance",
     "SharedKnowledgeReference",
     "SharedKnowledgeSummary",
     "SharedKnowledgeUnavailableError",

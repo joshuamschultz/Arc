@@ -69,6 +69,7 @@ from arcui.routes.agent_detail.memory_promotion import (
     put_memory_promotion,
 )
 from arcui.routes.agent_detail.memory_promotion_run import run_memory_promotion
+from arcui.routes.agent_detail.memory_share import get_memory_card_decisions, share_memory_card
 from arcui.routes.agent_detail.policy import (
     get_policy,
     get_policy_bullets,
@@ -217,6 +218,15 @@ routes = [
     Route("/api/agents/{id}/memory/promotion", get_memory_promotion, methods=["GET"]),
     Route("/api/agents/{id}/memory/promotion", put_memory_promotion, methods=["PUT"]),
     Route("/api/agents/{id}/memory/promotion/run", run_memory_promotion, methods=["POST"]),
+    # Alpha-2 item 16: operator hand share + a card's decision history.
+    Route(
+        "/api/agents/{id}/knowledge/{kind}/{item_id}/share", share_memory_card, methods=["POST"]
+    ),
+    Route(
+        "/api/agents/{id}/knowledge/{kind}/{item_id}/decisions",
+        get_memory_card_decisions,
+        methods=["GET"],
+    ),
 ]
 
 __all__ = ["routes"]

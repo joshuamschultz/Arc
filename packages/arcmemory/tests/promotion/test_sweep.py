@@ -56,7 +56,11 @@ from arcmemory.promotion.classifier import (
 )
 from arcmemory.promotion.config import PromotionConfig
 from arcmemory.promotion.ledger import LedgerRow, PromotionLedger
-from arcmemory.promotion.publisher import PublisherUnavailableError, PublishOutcomeUnknownError
+from arcmemory.promotion.publisher import (
+    Demotion,
+    PublisherUnavailableError,
+    PublishOutcomeUnknownError,
+)
 from arcmemory.promotion.question import load_promotion_question
 from arcmemory.promotion.render import content_digest, render_candidate
 from arcmemory.promotion.sweep import PromotionSweep
@@ -147,16 +151,34 @@ class FakePublisher:
         *,
         mode: str = "ok",
         before: Callable[[str], None] | None = None,
+        demoted: dict[str, Demotion] | None = None,
     ) -> None:
         self._timeline = timeline
         self._mode = mode
         self._before = before
         self.calls: list[PublishCall] = []
+        self.operator_calls: list[tuple[str, str, str]] = []
+        #: The shared side's verified demotions; ``None`` -> unreadable.
+        self.demoted: dict[str, Demotion] | None = demoted if demoted is not None else {}
 
     async def publish(
         self, reference: str, *, content_sha256: str, confidence: float, classifier_version: str
     ) -> str:
         self.calls.append(PublishCall(reference, content_sha256, confidence, classifier_version))
+        return self._outcome(reference)
+
+    async def publish_by_operator(
+        self, reference: str, *, content_sha256: str, decided_by: str
+    ) -> str:
+        self.operator_calls.append((reference, content_sha256, decided_by))
+        return self._outcome(reference)
+
+    async def demotions(self) -> dict[str, Demotion]:
+        if self.demoted is None:
+            raise PublisherUnavailableError("shared store unreadable")
+        return self.demoted
+
+    def _outcome(self, reference: str) -> str:
         self._timeline.append(("publish", reference))
         if self._before is not None:
             self._before(reference)
@@ -864,3 +886,195 @@ async def test_stale_pending_row_is_never_published_after_the_item_changes(env: 
         assert (call.reference.partition(":")[2], call.content_sha256) in judged
         current = render_candidate(env.insights.read(call.reference.partition(":")[2]))  # type: ignore[arg-type]
         assert call.content_sha256 == current.content_sha256
+
+
+# -- sticky decisions + operator decisions (alpha-2 item 16) -------------------
+
+_OPERATOR = "did:arc:operator:approver/abcd1234"
+
+
+def _demoted(shared_ref: str, reason: str = "stale pricing") -> dict[str, Demotion]:
+    return {shared_ref: Demotion(shared_ref=shared_ref, decided_by=_OPERATOR, reason=reason)}
+
+
+async def test_classifier_version_bump_does_not_rejudge(env: Env) -> None:
+    """One durable decision per card version: a new model is not new facts."""
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    await env.sweep().run(_NIGHT_1)
+    classifier = FakeClassifier(env.timeline)
+
+    await env.sweep(
+        cfg=PromotionConfig(enabled=True, classifier_model="jev-1.14"), classifier=classifier
+    ).run(_NIGHT_2)
+
+    assert classifier.inputs == []
+
+
+async def test_operator_decided_card_is_skipped_on_second_pass(env: Env) -> None:
+    """An operator share is final for the classifier — even after the card changes."""
+    _add_insight(env, "kid-recital", "The recital is on Friday at six.")
+    labels = {"kid-recital": "personal"}
+    await env.sweep(classifier=FakeClassifier(env.timeline, labels=labels)).run(_NIGHT_1)
+    shared = await env.sweep().share("insight", "kid-recital", decided_by=_OPERATOR, now=_NIGHT_1)
+    assert shared.status == "published"
+    _add_insight(env, "kid-recital", "The recital moved to Saturday at five.")
+    classifier = FakeClassifier(env.timeline, labels=labels)
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(classifier=classifier, publisher=publisher).run(_NIGHT_2)
+
+    assert classifier.inputs == []
+    assert publisher.calls == []
+    row = env.ledger.latest("insight", "kid-recital")
+    assert row is not None
+    assert (row.decision, row.decided_by) == ("promoted_by_operator", _OPERATOR)
+
+
+async def test_operator_share_publishes_a_kept_private_card_without_the_classifier(
+    env: Env,
+) -> None:
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    await env.sweep(
+        classifier=FakeClassifier(env.timeline, labels={"acme-renewal": "personal"})
+    ).run(_NIGHT_1)
+    classifier = FakeClassifier(env.timeline)
+    publisher = FakePublisher(env.timeline)
+    sink = RecordingSink(env.timeline)
+
+    result = await env.sweep(classifier=classifier, publisher=publisher, sink=sink).share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_2
+    )
+
+    assert (result.status, result.shared_ref) == ("published", "shared:insight:acme-renewal")
+    assert classifier.inputs == []
+    digest = render_candidate(env.insights.read("acme-renewal")).content_sha256  # type: ignore[arg-type]
+    assert publisher.operator_calls == [("insight:acme-renewal", digest, _OPERATOR)]
+    assert publisher.calls == []
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert (row.decision, row.publish_state, row.shared_ref) == (
+        "promoted_by_operator",
+        "published",
+        "shared:insight:acme-renewal",
+    )
+    [audit] = sink.actions("memory.promotion.operator_promote")
+    assert (audit.outcome, audit.extra["decided_by"]) == ("published", _OPERATOR)
+
+
+async def test_operator_share_of_a_secret_card_is_blocked_with_no_override(env: Env) -> None:
+    """The secret gate has no operator override: nothing is published, ever."""
+    _add_insight(env, "deploy-key", "The deploy password is hunter2 for the staging box.")
+    publisher = FakePublisher(env.timeline)
+
+    result = await env.sweep(publisher=publisher).share(
+        "insight", "deploy-key", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert result.status == "blocked_secret"
+    assert publisher.operator_calls == []
+    assert publisher.calls == []
+    row = env.ledger.latest("insight", "deploy-key")
+    assert row is not None
+    assert row.decision == "blocked_secret"
+
+
+async def test_operator_share_refused_by_the_shared_side_records_no_decision(env: Env) -> None:
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    refusing = FakePublisher(env.timeline, mode="refuse")
+
+    result = await env.sweep(publisher=refusing).share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert result.status == "refused"
+    assert env.ledger.latest("insight", "acme-renewal") is None
+
+
+async def test_operator_share_at_federal_tier_is_forbidden(env: Env) -> None:
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    publisher = FakePublisher(env.timeline)
+
+    result = await env.sweep(tier="federal", publisher=publisher).share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert result.status == "tier_forbidden"
+    assert publisher.operator_calls == []
+
+
+@pytest.mark.parametrize(("kind", "item_id"), [("event", "x"), ("insight", "../escape")])
+async def test_operator_share_refuses_a_bad_reference(env: Env, kind: str, item_id: str) -> None:
+    with pytest.raises(ValueError):
+        await env.sweep().share(kind, item_id, decided_by=_OPERATOR, now=_NIGHT_1)
+
+
+async def test_revoked_shared_ref_counts_as_demoted(env: Env) -> None:
+    """A verified operator demotion of our shared copy becomes a sticky ledger row."""
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    await env.sweep().run(_NIGHT_1)
+    publisher = FakePublisher(env.timeline, demoted=_demoted("shared:insight:acme-renewal"))
+    sink = RecordingSink(env.timeline)
+
+    result = await env.sweep(publisher=publisher, sink=sink).run(_NIGHT_2)
+
+    assert result.demoted == 1
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert (row.decision, row.decided_by, row.reason) == (
+        "demoted_by_operator",
+        _OPERATOR,
+        "stale pricing",
+    )
+    decision = [e for e in sink.actions("memory.promotion.decision") if e.outcome == row.decision]
+    assert decision and decision[0].extra["decided_by"] == _OPERATOR
+
+
+async def test_demoted_card_is_never_resent_or_republished_after_an_edit(env: Env) -> None:
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    await env.sweep().run(_NIGHT_1)
+    demoted = _demoted("shared:insight:acme-renewal")
+    await env.sweep(publisher=FakePublisher(env.timeline, demoted=demoted)).run(_NIGHT_2)
+    _add_insight(env, "acme-renewal", "Acme renewal now closes at $51k/yr.")
+    classifier = FakeClassifier(env.timeline)
+    # The tombstone is gone from the shared side: the ledger decision still holds.
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(classifier=classifier, publisher=publisher).run(_NIGHT_3)
+    share = await env.sweep(publisher=publisher).share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_3
+    )
+
+    assert classifier.inputs == []
+    assert publisher.calls == []
+    assert share.status == "demoted"
+    assert publisher.operator_calls == []
+
+
+async def test_unreadable_demotions_decide_nothing(env: Env) -> None:
+    """Fail closed: a sweep that cannot see demotions sends and publishes nothing."""
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    classifier = FakeClassifier(env.timeline)
+    publisher = FakePublisher(env.timeline, demoted=None)
+    publisher.demoted = None
+
+    result = await env.sweep(classifier=classifier, publisher=publisher).run(_NIGHT_1)
+
+    assert result.status == "publisher_unavailable"
+    assert classifier.inputs == []
+    assert env.ledger_text() == ""
+
+
+async def test_history_lists_the_cards_decisions_oldest_first(env: Env) -> None:
+    _add_insight(env, "acme-renewal", "Acme renewal closes at $42k/yr.")
+    await env.sweep().run(_NIGHT_1)
+    await env.sweep(
+        publisher=FakePublisher(env.timeline, demoted=_demoted("shared:insight:acme-renewal"))
+    ).run(_NIGHT_2)
+
+    history = env.sweep().history("insight", "acme-renewal")
+
+    assert [(row.decision, row.publish_state) for row in history] == [
+        ("promote", "pending"),
+        ("promote", "published"),
+        ("demoted_by_operator", "none"),
+    ]

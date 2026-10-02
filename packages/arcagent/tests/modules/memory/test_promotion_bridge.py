@@ -148,11 +148,69 @@ async def test_publish_promotes_verified_source_with_classifier_decision(tmp_pat
         "decision": "classifier_promote",
         "confidence": 0.97,
         "classifier_version": "jev-1.13.0",
+        "decided_by": None,
     }
     assert source.digest == _DIGEST
     assert source.reference.scope == "personal"
     assert source.reference.identifier == _REF
     assert _INSIGHT.statement in source.content
+
+
+_OPERATOR = "did:arc:operator:approver/abcd1234"
+
+
+async def test_publish_by_operator_sends_the_decider_and_no_verdict(tmp_path: Path) -> None:
+    """Alpha-2 item 16: an operator share names the operator and carries no confidence."""
+    port = _FakeSharedPort()
+
+    shared_ref = await _publisher(_workspace(tmp_path), port).publish_by_operator(
+        _REF, content_sha256=_DIGEST, decided_by=_OPERATOR
+    )
+
+    assert shared_ref == "shared-7"
+    [(_source, _access, kwargs)] = port.promoted
+    assert kwargs == {
+        "decision": "operator_promote",
+        "confidence": None,
+        "classifier_version": None,
+        "decided_by": _OPERATOR,
+    }
+
+
+async def test_publish_by_operator_refuses_changed_bytes_before_the_port(tmp_path: Path) -> None:
+    from arcmemory.promotion.publisher import PublisherUnavailableError
+
+    port = _FakeSharedPort()
+
+    with pytest.raises(PublisherUnavailableError):
+        await _publisher(_workspace(tmp_path), port).publish_by_operator(
+            _REF, content_sha256="sha256:" + "0" * 64, decided_by=_OPERATOR
+        )
+
+    assert port.promoted == []
+
+
+async def test_demotions_map_the_ports_verified_demotions(tmp_path: Path) -> None:
+    class _DemotingPort(_FakeSharedPort):
+        async def demotions(self, access: KnowledgeAccess) -> list[Any]:
+            return [SimpleNamespace(identifier="shared-7", demoted_by=_OPERATOR, reason="stale")]
+
+    demotions = await _publisher(_workspace(tmp_path), _DemotingPort()).demotions()
+
+    assert {ref: (d.decided_by, d.reason) for ref, d in demotions.items()} == {
+        "shared-7": (_OPERATOR, "stale")
+    }
+
+
+async def test_unreadable_demotions_are_a_publisher_refusal(tmp_path: Path) -> None:
+    from arcmemory.promotion.publisher import PublisherUnavailableError
+
+    class _BrokenPort(_FakeSharedPort):
+        async def demotions(self, access: KnowledgeAccess) -> list[Any]:
+            raise OSError("team root unmounted")
+
+    with pytest.raises(PublisherUnavailableError):
+        await _publisher(_workspace(tmp_path), _BrokenPort()).demotions()
 
 
 async def test_publish_uses_the_runtime_identity_access_for_the_promote(tmp_path: Path) -> None:

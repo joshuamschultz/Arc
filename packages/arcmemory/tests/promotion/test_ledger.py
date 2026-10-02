@@ -19,9 +19,8 @@ Contract under test (SDD COMP-016, README abuse case 6):
 - ``latest(item_kind, item_id) -> LedgerRow | None`` — newest row whose signature
   verifies against the pinned key; tampered / unsigned / foreign-key / garbage
   rows are ignored (never treated as a verdict).
-- ``is_current(row, text, classifier, cfg) -> bool`` — True only when
-  ``content_sha256``, ``classifier_id``, ``classifier_version`` (vs
-  ``cfg.classifier_model``) and ``question_version`` all match.
+- ``needs_judging(row, text) -> bool`` — a verdict holds until the card's bytes
+  change (alpha-2 item 16); an operator decision holds whatever the bytes.
 
 The signer is the real arctrust ``InProcessSigner`` (Ed25519); no crypto is mocked.
 """
@@ -35,7 +34,7 @@ from types import SimpleNamespace
 import pytest
 from arctrust.signer import InProcessSigner
 
-from arcmemory.promotion.ledger import LedgerRow, PromotionLedger, is_current
+from arcmemory.promotion.ledger import LedgerRow, PromotionLedger, needs_judging
 
 _Q1 = "sha256:" + "1" * 64
 _HASH_A = "sha256:" + "a" * 64
@@ -281,48 +280,123 @@ def test_ledger_file_holds_only_the_documented_keys(
     }
 
 
-# --- is_current ----------------------------------------------------------------------
+# --- operator decisions (alpha-2 item 16) -----------------------------------------
+
+_OPERATOR = "did:arc:operator:approver/abcd1234"
 
 
-def _current_args(
-    *,
-    content_sha256: str = _HASH_A,
-    classifier_id: str = "jev",
-    question_version: str = _Q1,
-    classifier_model: str = "jev-1.13.0",
-) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
-    return (
-        SimpleNamespace(content_sha256=content_sha256),
-        SimpleNamespace(classifier_id=classifier_id, question_version=question_version),
-        SimpleNamespace(classifier_model=classifier_model),
-    )
+def _operator_row(decision: str = "demoted_by_operator", **overrides: object) -> LedgerRow:
+    fields: dict[str, object] = {
+        "classifier_id": None,
+        "classifier_version": None,
+        "question_version": None,
+        "decision": decision,
+        "label": None,
+        "confidence": None,
+        "personal_probability": None,
+        "decided_by": _OPERATOR,
+        "reason": "stale pricing",
+        "shared_ref": "0123456789abcdef",
+    }
+    fields.update(overrides)
+    return _row(**fields)
 
 
-def test_is_current_true_when_hash_and_versions_all_match(ledger: PromotionLedger) -> None:
-    row = ledger.append(_row())
-
-    assert is_current(row, *_current_args()) is True
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"content_sha256": _HASH_B},
-        {"classifier_model": "jev-1.14"},
-        {"question_version": "sha256:" + "2" * 64},
-        {"classifier_id": "other"},
-    ],
-    ids=[
-        "content_changed",
-        "classifier_version_changed",
-        "question_changed",
-        "classifier_changed",
-    ],
-)
-def test_is_current_false_when_anything_differs(
-    ledger: PromotionLedger, change: dict[str, str]
+@pytest.mark.parametrize("decision", ["promoted_by_operator", "demoted_by_operator"])
+def test_operator_row_round_trips_with_decided_by_and_reason(
+    ledger: PromotionLedger, decision: str
 ) -> None:
-    """A stale verdict is never reused — the item is re-evaluated (REQ-499)."""
+    signed = ledger.append(_operator_row(decision))
+
+    latest = ledger.latest("insight", "acme-renewal")
+    assert latest == signed
+    assert latest is not None
+    assert (latest.decided_by, latest.reason) == (_OPERATOR, "stale pricing")
+
+
+def test_operator_row_requires_a_did_decider() -> None:
+    with pytest.raises(ValueError):
+        _operator_row(decided_by=None)
+    with pytest.raises(ValueError):
+        _operator_row(decided_by="operator")
+
+
+def test_operator_row_refuses_a_classifier_verdict() -> None:
+    with pytest.raises(ValueError):
+        _operator_row(confidence=0.99)
+
+
+def test_classifier_row_refuses_an_operator_decider() -> None:
+    with pytest.raises(ValueError):
+        _row(decided_by=_OPERATOR)
+
+
+def test_forged_unsigned_operator_row_ignored(
+    ledger: PromotionLedger, ledger_file: Path, other_signer: InProcessSigner
+) -> None:
+    """A demote/promote row the agent did not sign is never a decision."""
+    ledger.append(_row())
+    PromotionLedger(ledger_file.parents[2], other_signer).append(_operator_row())
+    with ledger_file.open("a", encoding="utf-8") as handle:
+        unsigned = _operator_row("promoted_by_operator").model_dump(mode="json")
+        handle.write(json.dumps(unsigned) + "\n")
+
+    latest = ledger.latest("insight", "acme-renewal")
+
+    assert latest is not None
+    assert latest.decision == "keep_private"
+
+
+def test_classifier_row_bytes_are_unchanged_by_the_operator_fields(
+    ledger: PromotionLedger, ledger_file: Path, signer: InProcessSigner
+) -> None:
+    """Rows signed before operator fields existed must still verify (no re-judging)."""
+    row = _row()
+    legacy = json.loads(row.model_dump_json(exclude={"signature", "decided_by", "reason"}))
+    from arctrust import canonical_json
+
+    legacy["signature"] = signer.sign(canonical_json(legacy)).hex()
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+
+    assert ledger.latest("insight", "acme-renewal") is not None
+
+
+def test_history_lists_verified_rows_oldest_first(
+    ledger: PromotionLedger, ledger_file: Path, other_signer: InProcessSigner
+) -> None:
+    ledger.append(_row())
+    ledger.append(_row(decision="promote", label="company", publish_state="pending"))
+    PromotionLedger(ledger_file.parents[2], other_signer).append(_operator_row())
+    ledger.append(_operator_row())
+    ledger.append(_row(item_id="other"))
+
+    history = ledger.history("insight", "acme-renewal")
+
+    assert [row.decision for row in history] == ["keep_private", "promote", "demoted_by_operator"]
+
+
+# --- stickiness: a decision holds until the card's bytes change -------------------
+
+
+def test_fingerprint_change_requeues_jev_row(ledger: PromotionLedger) -> None:
     row = ledger.append(_row())
 
-    assert is_current(row, *_current_args(**change)) is False
+    assert needs_judging(row, SimpleNamespace(content_sha256=_HASH_A)) is False
+    assert needs_judging(row, SimpleNamespace(content_sha256=_HASH_B)) is True
+
+
+def test_a_new_classifier_or_question_does_not_requeue(ledger: PromotionLedger) -> None:
+    """One durable decision per card version: a model or question bump is not new facts."""
+    row = ledger.append(_row(classifier_version="jev-0.1", question_version="sha256:" + "9" * 64))
+
+    assert needs_judging(row, SimpleNamespace(content_sha256=_HASH_A)) is False
+
+
+@pytest.mark.parametrize("decision", ["promoted_by_operator", "demoted_by_operator"])
+def test_demoted_row_blocks_requeue_even_after_change(
+    ledger: PromotionLedger, decision: str
+) -> None:
+    row = ledger.append(_operator_row(decision))
+
+    assert needs_judging(row, SimpleNamespace(content_sha256=_HASH_B)) is False

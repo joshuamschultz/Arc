@@ -223,6 +223,33 @@ def _promotable_document_types() -> frozenset[str] | None:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _operator_public_key() -> bytes | None:
+    """The deployment operator's verify key — the trust anchor for demotions.
+
+    Agents read operator demotions through it (alpha-2 item 16): only a tombstone
+    this key signed becomes an agent's sticky ``demoted_by_operator`` decision.
+    Unresolvable → ``None``: no tombstone counts as a demotion (fail closed); a
+    demoted document still stays hidden, because its bytes were retired. Read-only:
+    an in-process deployment's key is read, never bootstrapped; a vault-transit
+    deployment asks the transit for its public key.
+    """
+    from arctrust.signer import VAULT_TRANSIT
+
+    from arccli.commands.operator import (
+        _machine_security,
+        operator_public_key,
+        resolve_operator_signer,
+    )
+
+    try:
+        if _machine_security().custody == VAULT_TRANSIT:
+            return resolve_operator_signer().public_key
+        return operator_public_key()
+    except Exception as exc:  # reason: any custody failure means "no anchor", never a guess
+        _logger.warning("operator key unresolvable; shared demotions unanchored: %s", exc)
+        return None
+
+
 async def install_fleet_shared_knowledge(
     team_root: Path, started: list[tuple[Any, Path, str]]
 ) -> int:
@@ -261,7 +288,9 @@ async def install_fleet_shared_knowledge(
         default_channel="channel://fleet",
     )
     service = FleetSharedKnowledgeService.for_team_root(
-        team_root, promotable_document_types=_promotable_document_types()
+        team_root,
+        promotable_document_types=_promotable_document_types(),
+        operator_public_key=_operator_public_key(),
     )
     composition = FleetSharedKnowledgeComposition(team, service)
     members = [

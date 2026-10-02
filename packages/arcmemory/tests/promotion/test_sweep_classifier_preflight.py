@@ -106,6 +106,9 @@ class _Publisher:
         self.references.append(reference)
         return f"shared:{reference}"
 
+    async def demotions(self) -> dict[str, object]:
+        return {}
+
 
 class _DurableSink:
     def __init__(self) -> None:

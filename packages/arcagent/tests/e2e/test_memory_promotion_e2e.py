@@ -52,7 +52,11 @@ _ISSUER_KEYPAIR = generate_keypair()
 
 _KEY = "tsk_e2e_SENTINEL_KEY_5e6f7a8b"
 _ALT_KEY = "tsk_alt_SENTINEL_KEY_9c0d1e2f"
-_CLEARANCE = "CUI"
+#: The agents' clearance. Minted cards carry the default ``unclassified`` label and
+#: the shared label is the card's own (alpha-2 Q16-a: never the clearance written
+#: over it; a card whose label differs from the writer's clearance is refused), so
+#: the agents clear exactly that label for a card to be shareable at all.
+_CLEARANCE = "UNCLASSIFIED"
 #: Inside every agent's nightly window (opens 03:00 + <60 min DID offset, 3h long).
 _NIGHT = datetime(2026, 9, 27, 4, 30).astimezone()
 
@@ -695,6 +699,7 @@ async def test_run_now_backfills_existing_memory_then_sends_only_new_items(
             "blocked_secret": 0,
             "too_large": 0,
             "deferred": 0,
+            "demoted": 0,
         }
         assert len(wire.requests) == 2
         assert all(r.headers["authorization"] == f"Bearer {_KEY}" for r in wire.requests)

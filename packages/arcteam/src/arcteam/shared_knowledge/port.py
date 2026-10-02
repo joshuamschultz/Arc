@@ -81,10 +81,15 @@ class FleetSharedKnowledgePort:
         access: _Access,
         *,
         decision: str,
-        confidence: float,
-        classifier_version: str,
+        confidence: float | None = None,
+        classifier_version: str | None = None,
+        decided_by: str | None = None,
     ) -> Any:
-        """Promote ``source`` as the bound agent under a classifier decision."""
+        """Promote ``source`` as the bound agent under a recorded decision.
+
+        A classifier decision carries ``confidence`` + ``classifier_version``; an
+        operator decision carries ``decided_by``. The service enforces which.
+        """
         self._require_bound_caller(access)
         return await self._service.promote(
             _GivenSource(source),
@@ -95,7 +100,13 @@ class FleetSharedKnowledgePort:
             decision=decision,
             confidence=confidence,
             classifier_version=classifier_version,
+            decided_by=decided_by,
         )
+
+    async def demotions(self, access: _Access) -> list[Any]:
+        """Every verified operator demotion (identifier, demoted_by, reason, demoted_at)."""
+        self._require_bound_caller(access)
+        return list((await self._service.demotions()).values())
 
     async def save(self, draft: object, access: _Access) -> Any:
         """Refused: shared knowledge is written only by promotion from personal scope."""

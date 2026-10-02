@@ -695,8 +695,15 @@ async def _promotion_sweep(h: Harness) -> None:
     from arcteam.team import Team
 
     agent = h.agent
+    # Labelled at the agent's clearance: the shared label is the card's own and a
+    # card labelled anything else is never sent (alpha-2 Q16-a).
     InsightStore(agent.workspace).write(
-        Insight(id="acme-renewal", statement="Acme renewals close at 42k on net-60.", trigger="t")
+        Insight(
+            id="acme-renewal",
+            statement="Acme renewals close at 42k on net-60.",
+            trigger="t",
+            classification="cui",
+        )
     )
     team = Team(id="team:c", name="c", members=[agent.did], default_channel="channel://c")
     service = FleetSharedKnowledgeService.for_team_root(h.agent_dir.parent)

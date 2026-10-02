@@ -102,15 +102,22 @@ async def test_export_insight_returns_rendered_bytes_at_caller_clearance(
 
 
 @pytest.mark.asyncio
-async def test_export_labels_at_clearance_not_at_card_label(
+async def test_label_equals_card_label_or_refuses(
     exporter: ConsolidatedMemoryExporter, stores: SimpleNamespace
 ) -> None:
-    """Decision 2: the promoted label is the agent's clearance (no write-down)."""
-    _write_insight(stores, classification="unclassified")
+    """Q16-a: the shared label is the card's own label, never the clearance over it.
+
+    A card below the writer's clearance is refused rather than relabelled up, so
+    the label a shared card shows is always true.
+    """
+    _write_insight(stores, classification="cui")
 
     source = await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
-
     assert source.classification == "CUI"
+
+    _write_insight(stores, classification="unclassified")
+    with pytest.raises(PermissionError, match="never relabelled"):
+        await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
 
 
 @pytest.mark.asyncio
