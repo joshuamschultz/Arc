@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from arctrust import causal
 from croniter import croniter
 
 from arcagent.core.control_contract import (
@@ -190,7 +191,16 @@ class SchedulerEngine:
         )
 
         try:
-            result = await asyncio.wait_for(self._dispatch(entry), timeout=timeout)
+            # Item 20: a firing is caused by the schedule, on the owning agent's
+            # behalf — never by whoever last touched the process. A fresh root,
+            # so nothing bound by a caller of execute() leaks into the run.
+            firing = causal.root(
+                "scheduler",
+                f"did:arc:scheduler:{entry.id}",
+                on_behalf_of=self._agent_did or None,
+            )
+            with causal.bind(firing):
+                result = await asyncio.wait_for(self._dispatch(entry), timeout=timeout)
             elapsed = time.monotonic() - start_time
             self._on_execution_complete(entry, result, elapsed, occurrence.run_id)
             await self._deliver_reply(entry, occurrence.run_id, result)

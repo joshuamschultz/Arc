@@ -169,6 +169,44 @@ async def _run_backfill(data_dir: Path, worm_pubkey: bytes | None) -> dict[str, 
         await backend.stop()
 
 
+def _reverify(args: argparse.Namespace) -> None:
+    """Re-verify every mirrored WORM chain from genesis and UPDATE stored verdicts.
+
+    Item 20: a row is mirrored once and its ``verified`` flag was never revisited,
+    so rows ingested before the key was passed (or before a tamper was found)
+    stayed wrong forever. This walks each chain with the operator key and
+    rewrites every row's verdict in place.
+    """
+    data_dir = _resolve_dir(args)
+    summary = asyncio.run(_run_reverify(data_dir, _resolve_pubkey(args)))
+    if getattr(args, "json", False):
+        _out(json.dumps({"data_dir": str(data_dir), "summary": summary}, indent=2))
+        return
+    _out(
+        f"Re-verified {summary['events']} audit records in {data_dir}: "
+        f"{summary['verified']} verified, {summary['broken']} chain break(s)"
+    )
+
+
+async def _run_reverify(data_dir: Path, worm_pubkey: bytes) -> dict[str, int]:
+    from arcstore.backends import open_backend
+    from arcstore.ingest import StoreIngest
+
+    layout = _ensure_layout(data_dir)
+    backend = open_backend()
+    await backend.start()
+    try:
+        ingest = StoreIngest(
+            backend,
+            spool_dir=layout["spool"],
+            worm_dir=layout["worm"],
+            worm_public_key=worm_pubkey,
+        )
+        return await ingest.reverify()
+    finally:
+        await backend.stop()
+
+
 def _up(args: argparse.Namespace) -> None:
     data_dir = _resolve_dir(args)
     _out(f"Starting arcstore ingest (backfill + tail) on {data_dir}. Ctrl+C to stop.")
@@ -208,6 +246,7 @@ _SUBCOMMANDS = {
     "status": _status,
     "verify": _verify,
     "backfill": _backfill,
+    "reverify": _reverify,
     "up": _up,
 }
 
@@ -215,7 +254,7 @@ _SUBCOMMANDS = {
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc store",
-        description="Operational store lifecycle — init, status, verify, backfill, up.",
+        description="Operational store lifecycle — init, status, verify, backfill, reverify, up.",
         add_help=True,
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
@@ -245,6 +284,14 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill_p.add_argument("--json", action="store_true", help="Emit JSON.")
     backfill_p.add_argument("--pubkey", default=None, help="Operator pubkey (hex) for WORM check.")
     backfill_p.add_argument("--did", default=None, help="Operator DID for WORM verify.")
+
+    reverify_p = subs.add_parser(
+        "reverify", help="Re-verify every mirrored WORM row and update its verdict."
+    )
+    _common(reverify_p)
+    reverify_p.add_argument("--json", action="store_true", help="Emit JSON.")
+    reverify_p.add_argument("--pubkey", default=None, help="Operator Ed25519 public key (hex).")
+    reverify_p.add_argument("--did", default=None, help="Operator DID (resolved via trust store).")
 
     up_p = subs.add_parser("up", help="Backfill then tail in the foreground.")
     _common(up_p)

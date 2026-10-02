@@ -196,3 +196,38 @@ def test_backfill_json_payload_is_machine_readable(
         store_handler(["backfill", "--data-dir", str(tmp_path), "--json"])
     payload = json.loads(buf.getvalue())
     assert payload["counts"]["llm_calls"] == 1
+
+
+# -- reverify (item 20) ---------------------------------------------------------
+
+
+def test_reverify_repairs_rows_mirrored_without_the_key(
+    tmp_path: Path, fake_backend: FakeBackend
+) -> None:
+    """Rows mirrored before the key was passed stay ``verified=false`` until reverified."""
+    import asyncio
+    import contextlib
+    import io
+
+    pub = _seed_valid_worm(tmp_path)
+    store_handler(["backfill", "--data-dir", str(tmp_path)])  # no key: nothing verifies
+
+    async def _verified() -> list[bool]:
+        rows = await fake_backend.query("audit_chain")
+        return [bool(r["verified"]) for r in rows]
+
+    assert asyncio.run(_verified()) == [False, False]
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        store_handler(["reverify", "--data-dir", str(tmp_path), "--pubkey", pub.hex(), "--json"])
+
+    assert asyncio.run(_verified()) == [True, True]
+    assert json.loads(buf.getvalue())["summary"] == {"events": 2, "verified": 2, "broken": 0}
+
+
+def test_reverify_requires_the_key(tmp_path: Path, fake_backend: FakeBackend) -> None:
+    _seed_valid_worm(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        store_handler(["reverify", "--data-dir", str(tmp_path)])
+    assert exc.value.code != 0

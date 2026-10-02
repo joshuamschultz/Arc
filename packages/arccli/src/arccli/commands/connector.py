@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import arcagent
+from arctrust import causal
 from arctrust.paths import arc_team
 
 from arccli.commands._shared import dispatch, err
@@ -739,8 +740,23 @@ _SUBCOMMAND_MAP = {
 
 
 def connector_handler(args: list[str]) -> None:
-    """Top-level handler for ``arc connector <sub> [args]``."""
-    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
+    """Top-level handler for ``arc connector <sub> [args]``.
+
+    Item 20: every credential read or change this command causes is attributed
+    to the person at the terminal; the operator key that signs the audit chain
+    is recorded separately as its signer.
+    """
+    with causal.bind(causal.root("operator", _cli_actor())):
+        dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
+
+
+def _cli_actor() -> str:
+    """The OS account running ``arc``, as a pseudo-DID."""
+    try:
+        user = getpass.getuser()
+    except (KeyError, OSError):  # reason: no passwd entry / login name in a container
+        user = "unknown"
+    return f"did:arc:cli:{user}"
 
 
 __all__ = ["connector_handler"]

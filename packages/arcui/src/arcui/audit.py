@@ -15,6 +15,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from arcstore.ingest import UI_WORM_FILENAME
+from arctrust import causal
 from arctrust.audit import AuditEvent, WormSink
 from opentelemetry import trace
 from pydantic import BaseModel
@@ -228,9 +230,6 @@ class UIAuditLogger:
                 )
 
 
-_WORM_FILENAME = "audit-chain-arcui.jsonl"
-
-
 @dataclass(frozen=True)
 class MutationWormWriter:
     """Durable, operator-signed WORM record for UI mutations (COMP-010, NIST AU-9).
@@ -245,7 +244,9 @@ class MutationWormWriter:
     Holds a long-lived :class:`~arctrust.audit.WormSink` (which keeps an exclusive
     ``flock`` for its lifetime — hence the per-writer ``audit-chain-arcui.jsonl``
     filename, distinct from each agent's own chain) plus the deployment operator
-    DID the records are attributed to.
+    DID. That DID names the SIGNING AUTHORITY only (it is what an operator-signed
+    capability approval is attributed to); the actor on each record is the
+    request's causal initiator — the browser session that made the change.
     """
 
     sink: WormSink
@@ -255,7 +256,7 @@ class MutationWormWriter:
         """Append one signed, chained record for a mutation. Fail-open (AU-5)."""
         self.sink.write(
             AuditEvent(
-                actor_did=self.operator_did,
+                actor_did=causal.actor_did(),
                 action=fields.operation,
                 target=fields.target,
                 outcome=fields.outcome,
@@ -286,7 +287,7 @@ def build_mutation_worm_writer(data_dir: Path) -> MutationWormWriter | None:
     except (OSError, ValueError, RuntimeError):
         _logger.warning("arcui mutation WORM: operator key unavailable; mutations log+OTel only")
         return None
-    worm_path = Path(data_dir) / "worm" / _WORM_FILENAME
+    worm_path = Path(data_dir) / "worm" / UI_WORM_FILENAME
     try:
         sink = WormSink(worm_path, signer)
     except (OSError, RuntimeError):
@@ -388,7 +389,11 @@ def operator_audit_sink(request: Any) -> Any:
 
 
 def operator_actor_did(request: Any) -> str:
-    """The DID recorded as the actor for an operator-driven mutation."""
+    """The operator SIGNING AUTHORITY's DID — for acts the operator key itself signs.
+
+    Not an actor for audit: who caused a UI act is ``arctrust.causal.actor_did()``,
+    bound per request by :class:`~arcui.auth.AuthMiddleware`.
+    """
     worm = getattr(request.app.state, "audit_worm", None)
     return str(worm.operator_did) if worm is not None else _UI_ACTOR_DID
 

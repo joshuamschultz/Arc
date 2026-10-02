@@ -34,11 +34,12 @@ from typing import Any
 
 import arcagent
 import tomlkit
+from arctrust import causal
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from arcui.audit import emit_mutation_audit, operator_actor_did, operator_audit_sink
+from arcui.audit import emit_mutation_audit, operator_audit_sink
 from arcui.routes.agent_detail._common import _agent_root
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
@@ -117,7 +118,7 @@ def _configured_key_env(doc: dict[str, Any]) -> str:
 async def _key_set(request: Request, doc: dict[str, Any]) -> bool:
     env_var = _configured_key_env(doc)
     store = arcagent.KeyStore(arcagent.default_env_file(), sink=operator_audit_sink(request))
-    statuses = await store.list(caller_did=operator_actor_did(request))
+    statuses = await store.list(caller_did=causal.actor_did())
     return any(s.env_var == env_var and s.present for s in statuses)
 
 

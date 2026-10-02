@@ -793,3 +793,33 @@ class TestPoisonRowDoesNotStopTheEngine:
             assert engine.running, "breaker tripped — one bad row killed the engine"
         finally:
             await engine.stop()
+
+
+# --- Item 20: causal attribution ---
+
+
+class TestSchedulerCausality:
+    async def test_a_firing_runs_as_the_scheduler_never_the_operator(self) -> None:
+        from arctrust import causal
+
+        seen: list[causal.CausalContext | None] = []
+
+        async def run(prompt: str, **_: object) -> str:
+            seen.append(causal.current())
+            return "done"
+
+        engine = SchedulerEngine(
+            store=MagicMock(spec=ScheduleStore),
+            config=make_config(),
+            telemetry=MagicMock(),
+            agent_run_fn=run,
+            agent_did="did:arc:t:exec/olivia",
+        )
+        await engine.execute(make_entry(prompt="Sweep", id="sched_sweep"))
+
+        (ctx,) = seen
+        assert ctx is not None
+        assert ctx.initiator == "scheduler"
+        assert ctx.initiator_id == "did:arc:scheduler:sched_sweep"
+        assert ctx.on_behalf_of == "did:arc:t:exec/olivia"
+        assert causal.current() is None

@@ -25,12 +25,12 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import arcrun
-from arctrust import AgentIdentity
+from arctrust import AgentIdentity, causal
 
 from arcagent.core.config import ToolConfig, ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
@@ -610,6 +610,28 @@ class ToolRegistry:
             },
         )
 
+    def _causal_scope(
+        self, dispatch: ToolDispatchContext
+    ) -> AbstractContextManager[causal.CausalContext]:
+        """The agent is the actor of its tool call, inside this run and this call.
+
+        Set from the dispatch envelope (arcrun's run and call ids, this
+        registry's own DID) — never from the tool's arguments — so the policy
+        record and anything the tool itself audits carry the same chain. When
+        the agent already acts as itself the ids are refined in; otherwise it
+        acts on behalf of whoever is bound (a UI session, the scheduler).
+        """
+        ids = {"run_id": dispatch.run_id, "tool_call_id": dispatch.call_id}
+        ids = {key: value for key, value in ids.items() if isinstance(value, str) and value}
+        bound = causal.current()
+        if (
+            bound is not None
+            and bound.initiator == "agent"
+            and bound.initiator_id == self._agent_did
+        ):
+            return causal.refine(**ids)
+        return causal.delegate("agent", self._agent_did, **ids)
+
     def _create_wrapped_execute(self, tool: RegisteredTool) -> Any:
         """Create a wrapped execute function for a tool.
 
@@ -643,11 +665,12 @@ class ToolRegistry:
             )
             self._normalize_dispatch(dispatch)
 
-            await self._authorize_dispatch(dispatch)
-            await self._approve_dispatch(dispatch)
+            with self._causal_scope(dispatch):
+                await self._authorize_dispatch(dispatch)
+                await self._approve_dispatch(dispatch)
 
-            await self._execute_dispatch(dispatch)
-            await self._record_dispatch(dispatch)
+                await self._execute_dispatch(dispatch)
+                await self._record_dispatch(dispatch)
             return dispatch.result
 
         return wrapped_execute

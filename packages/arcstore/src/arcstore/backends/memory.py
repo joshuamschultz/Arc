@@ -128,6 +128,19 @@ class FakeBackend(SourceSyncBackend):
             rows.sort(key=lambda row: (row.get(column) is None, row.get(column)), reverse=reverse)
         return rows if limit is None else rows[:limit]
 
+    async def merge_rows(self, table: str, rows: list[tuple[str, dict[str, Any]]]) -> int:
+        updated = 0
+        async with self._lock:
+            bucket = self._tables.get(table, {})
+            for key, patch in rows:
+                if key in bucket:
+                    bucket[key].update(copy.deepcopy(patch))
+                    updated += 1
+        return updated
+
+    async def count(self, table: str, *, where: dict[str, Any] | None = None) -> int:
+        return len(await self.query(table, where=where))
+
     async def get_cursor(self, name: str) -> int:
         async with self._lock:
             return self._cursors.get(name, 0)

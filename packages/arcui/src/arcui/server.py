@@ -773,12 +773,16 @@ def create_app(
     )
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
+    # Every WORM chain the ingest mirrors (each agent's, arcui's, the CLI's) is
+    # signed with the deployment operator key; its public half verifies them.
+    audit_worm = app.state.audit_worm
     app.state.observe = Observe(
         data_dir=data_dir,
         workspace_dir=workspace_dir,
         backend=task_store_backend,
         arcstore_config=arcstore_config,
         arcstore_secret=arcstore_secret,
+        worm_public_key=audit_worm.sink.public_key if audit_worm is not None else None,
     )
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
     app.state.task_store = TaskStore(task_store_backend)

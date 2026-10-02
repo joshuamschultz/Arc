@@ -138,6 +138,10 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
         schemas.AuditEventsResponse,
         {"events": [{"agent_id": "a", "event_type": "tool.start"}]},
     ),
+    (
+        schemas.FleetAuditResponse,
+        {"events": [], "totals": {"total": 0, "verified": 0, "broken": 0}},
+    ),
     (schemas.SkillsResponse, {"skills": []}),
     (
         schemas.SkillsResponse,

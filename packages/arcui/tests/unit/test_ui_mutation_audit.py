@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arctrust import OperatorKey, default_operator_key_path
-from arctrust.audit import verify_chain
+from arctrust import OperatorKey, causal, default_operator_key_path
+from arctrust.audit import signer_fingerprint, verify_chain
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -164,14 +164,16 @@ class TestBuildMutationWormWriter:
         records = [json.loads(line) for line in chain.read_text().splitlines()]
         events = [r["event"] for r in records]
         # The ingest maps action/target/outcome into the audit_chain the Security
-        # screen reads.
+        # screen reads. Item 20: with no request binding the actor is loudly
+        # unattributed — never the operator key that signs the record.
         assert any(
             e["action"] == "approval.approve"
             and e["target"] == "approval:7"
             and e["outcome"] == "applied"
-            and e["actor_did"] == writer.operator_did
+            and e["actor_did"] == causal.UNATTRIBUTED
             for e in events
         )
+        assert all(r["signer"] == signer_fingerprint(public_key) for r in records)
 
     def test_absent_operator_key_degrades_to_none(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

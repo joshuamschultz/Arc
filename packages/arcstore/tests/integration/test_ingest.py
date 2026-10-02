@@ -260,9 +260,14 @@ class TestWormIngest:
                 worm_public_key=kp.public_key,
             )
             await ingest2.backfill()
-            rows2 = await backend2.query("audit_chain")
+            rows2 = await backend2.query("audit_chain", where={"action": "tool.call"})
             assert rows2  # rows still ingested
-            assert not any(r["verified"] for r in rows2)  # but flagged unverified
+            # Per-row verdicts (item 20): the record before the tamper still
+            # verifies; the tampered record and everything after it do not.
+            verdicts = {r["seq"]: r["verified"] for r in rows2}
+            assert verdicts == {0: True, 2: False}
+            broken = await backend2.query("audit_chain", where={"action": "audit.chain.broken"})
+            assert [b["seq"] for b in broken] == [1]
             await backend2.stop()
         finally:
             await backend.stop()

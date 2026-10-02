@@ -120,6 +120,19 @@ class ArcStoreBackend(Protocol):
         """
         ...
 
+    async def merge_rows(self, table: str, rows: list[tuple[str, dict[str, Any]]]) -> int:
+        """Merge each ``patch`` into the existing row under ``key``; return rows updated.
+
+        The one in-place update an insert-once table allows: re-verifying a
+        mirrored audit row (item 20). Keys that are absent are skipped, never
+        inserted.
+        """
+        ...
+
+    async def count(self, table: str, *, where: dict[str, Any] | None = None) -> int:
+        """Number of rows matching ``where`` (same equality semantics as :meth:`query`)."""
+        ...
+
     async def get_cursor(self, name: str) -> int:
         """Return the persisted byte offset for a source file (0 if unknown)."""
         ...

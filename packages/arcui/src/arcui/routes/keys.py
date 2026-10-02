@@ -18,11 +18,12 @@ from __future__ import annotations
 import logging
 
 import arcagent
+from arctrust import causal
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit, operator_actor_did, operator_audit_sink
+from arcui.audit import emit_mutation_audit, operator_audit_sink
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
     _error,
@@ -63,7 +64,7 @@ async def get_keys(request: Request) -> JSONResponse:
     a reader anything a key holder does not already know.
     """
     try:
-        statuses = await _store(request).list(caller_did=operator_actor_did(request))
+        statuses = await _store(request).list(caller_did=causal.actor_did())
     except arcagent.ExtensionError as exc:
         return _error(exc.message, 400)
 
@@ -102,7 +103,7 @@ async def put_key(request: Request) -> JSONResponse:
         return _error("Body must be a JSON object with a string 'value'", 400)
 
     try:
-        await _store(request).set(env_var, value, caller_did=operator_actor_did(request))
+        await _store(request).set(env_var, value, caller_did=causal.actor_did())
     except arcagent.ExtensionError as exc:
         emit_mutation_audit(
             request,
@@ -135,7 +136,7 @@ async def delete_key(request: Request) -> JSONResponse:
 
     env_var = request.path_params["env_var"]
     try:
-        removed = await _store(request).delete(env_var, caller_did=operator_actor_did(request))
+        removed = await _store(request).delete(env_var, caller_did=causal.actor_did())
     except arcagent.ExtensionError as exc:
         return _error(exc.message, 400)
 
