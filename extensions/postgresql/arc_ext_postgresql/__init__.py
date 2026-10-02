@@ -12,9 +12,10 @@ import asyncio
 import hashlib
 import importlib
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
@@ -38,6 +39,9 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+if TYPE_CHECKING:
+    from arcagent.extension.credential_broker import AccessTokenHandle
+
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
 _TEXT_TYPES = ("char", "text", "json", "xml", "uuid")
 _MAX_LIMIT = 200
@@ -47,8 +51,8 @@ _TIMEOUT_SECONDS = 20.0
 class PostgreSQLAttachment:
     """A bounded read-only connector that also satisfies ArcMemory's datastore port."""
 
-    def __init__(self, database_url: str, connection_id: str = "") -> None:
-        self._database_url = database_url
+    def __init__(self, credential: AccessTokenHandle, connection_id: str = "") -> None:
+        self._credential = credential
         self._connection_id = connection_id
         self._pool: Any | None = None
         self._pool_lock = asyncio.Lock()
@@ -68,11 +72,11 @@ class PostgreSQLAttachment:
 
     async def probe(self) -> ProbeResult:
         """Verify the scoped connection without returning connection details."""
-        if not self._database_url:
-            return ProbeResult(reachable=False, detail="postgresql has no database_dsn credential")
         try:
             await self._execute("SELECT 1")
-        except (OSError, ConnectionError, TimeoutError, SourceError) as exc:
+        except SourceError as exc:
+            return ProbeResult(reachable=False, detail=f"postgresql did not answer: {exc.detail}")
+        except (OSError, ConnectionError, TimeoutError) as exc:
             return ProbeResult(
                 reachable=False, detail=f"PostgreSQL did not answer: {type(exc).__name__}"
             )
@@ -162,7 +166,7 @@ class PostgreSQLAttachment:
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
         """Describe a stable opaque database account, never a URL or credential."""
-        parsed = urlparse(self._database_url)
+        parsed = urlparse(await self._dsn())
         account_material = f"{parsed.hostname or ''}\0{parsed.path.strip('/')}"
         account_id = hashlib.sha256(account_material.encode()).hexdigest()[:24]
         return SourceDescription(
@@ -385,13 +389,14 @@ class PostgreSQLAttachment:
                     SourceFailureCode.UNSUPPORTED_CONTENT,
                     "PostgreSQL support requires the optional asyncpg dependency",
                 ) from exc
-            parsed = urlparse(self._database_url)
+            dsn = await self._dsn()
+            parsed = urlparse(dsn)
             ssl: str | None = (
                 None if parsed.hostname in {"localhost", "127.0.0.1", "::1"} else "require"
             )
             self._driver = driver
             self._pool = await driver.create_pool(
-                dsn=self._database_url,
+                dsn=dsn,
                 min_size=1,
                 max_size=4,
                 command_timeout=_TIMEOUT_SECONDS,
@@ -399,6 +404,15 @@ class PostgreSQLAttachment:
                 ssl=ssl,
             )
             return self._pool
+
+    async def _dsn(self) -> str:
+        """The DSN for this connect, fetched now so a rotation reaches the next pool."""
+        try:
+            return (await self._credential.field("database_dsn")).reveal()
+        except ExtensionError as exc:
+            raise SourceError(
+                SourceFailureCode.AUTH_REQUIRED, "PostgreSQL credential unavailable"
+            ) from exc
 
     async def _drop_pool(self, pool: Any) -> None:
         async with self._pool_lock:
@@ -408,10 +422,8 @@ class PostgreSQLAttachment:
 
 
 def build_native_attachment(context: dict[str, Any]) -> PostgreSQLAttachment:
-    """Build from Arc's ephemeral vault-reveal context; never persist credentials."""
-    return PostgreSQLAttachment(
-        str(context.get("database_dsn", "")), str(context.get("connection_id", ""))
-    )
+    """Build over the credential handle; the DSN is fetched at each connect, never held."""
+    return PostgreSQLAttachment(context["credential"], str(context.get("connection_id", "")))
 
 
 def _schema(properties: dict[str, dict[str, str]], required: tuple[str, ...]) -> dict[str, Any]:

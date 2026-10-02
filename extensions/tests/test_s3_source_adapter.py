@@ -29,6 +29,8 @@ from arcagent.extension.source import (
 )
 from arcagent.modules.connectors.install import build_attachment
 
+from extensions.tests.fake_credential import FakeCredentialHandle
+
 _BUNDLE = Path(__file__).resolve().parents[1] / "s3"
 _ACCESS_KEY = "AKIA-connector-test"
 _SECRET_KEY = "s3-secret-must-never-escape"
@@ -124,12 +126,13 @@ def _attachment(
         _BUNDLE,
         {
             "access_key_id": Secret(_ACCESS_KEY),
-            "secret_access_key": Secret(_SECRET_KEY),
             "region": Secret("us-east-1"),
             "endpoint_url": Secret(endpoint_url),
-            "session_token": Secret(session_token),
             "role_arn": Secret(role_arn),
         },
+        credential=FakeCredentialHandle(  # type: ignore[arg-type]  # structural stand-in
+            fields={"secret_access_key": _SECRET_KEY, "session_token": session_token}
+        ),
     )
     return wrapper._delegate, calls  # type: ignore[attr-defined]
 

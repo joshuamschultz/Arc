@@ -1,10 +1,10 @@
-"""What the Dropbox adapter puts on the wire, and what it does with a refresh token.
+"""What the Dropbox adapter puts on the wire.
 
 The conformance suite (``test_connector_bundles``) proves the manifest and the
 adapter agree and that an unconfigured probe refuses by name. This file proves the
-part only a live call exercises: that the adapter mints a short-lived access token
-from the durable refresh token, caches it across calls, carries it as a bearer on
-both Dropbox hosts, and reaches the files API for a read and a write.
+part only a live call exercises: that the adapter asks its credential handle for a
+bearer on every request, carries it on both Dropbox hosts, and reaches the files
+API for a read and a write. Token renewal is Arc's; it is not under test here.
 
 httpx is mocked at the transport, so no socket is opened; every assertion is on
 the request the shipped adapter actually built.
@@ -22,7 +22,6 @@ import httpx
 import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.secrets import Secret
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
@@ -34,22 +33,21 @@ from arcagent.extension.source import (
 )
 from arcagent.modules.connectors.install import build_attachment
 
+from extensions.tests.fake_credential import FakeCredentialHandle
+
 _BUNDLE = Path(__file__).resolve().parents[1] / "dropbox"
 _TOKEN = "AT-live-xyz"
 
 
-def _attachment() -> Any:
+def _attachment(handle: FakeCredentialHandle | None = None) -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
     wrapper: Any = build_attachment(
         manifest,
         _BUNDLE,
-        {
-            "app_key": Secret("app-key-1234"),
-            "app_secret": Secret("app-secret-5678"),
-            "refresh_token": Secret("refresh-abcd"),
-        },
+        {},
+        credential=handle or FakeCredentialHandle(bearer_values=[_TOKEN]),  # type: ignore[arg-type]  # structural stand-in
     )
     return wrapper._delegate
 
@@ -58,18 +56,12 @@ class _Recorder:
     """Answers Dropbox's three hosts and remembers what each request carried."""
 
     def __init__(self) -> None:
-        self.token_mints = 0
         self.list_body: dict[str, Any] | None = None
         self.upload_arg: str | None = None
         self.upload_body: str | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        if url == "https://api.dropbox.com/oauth2/token":
-            self.token_mints += 1
-            assert request.headers["authorization"].startswith("Basic "), "app auth missing"
-            assert b"grant_type=refresh_token" in request.content
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 14400})
         assert request.headers.get("authorization") == f"Bearer {_TOKEN}", url
         if url.endswith("/2/users/get_current_account"):
             return httpx.Response(200, json={"email": "josh@example.com"})
@@ -96,12 +88,11 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Recorder]:
     yield rec
 
 
-async def test_probe_mints_a_token_then_reads_the_account(recorder: _Recorder) -> None:
+async def test_probe_reads_the_account(recorder: _Recorder) -> None:
     result = await _attachment().probe()
 
     assert result.reachable
     assert "josh@example.com" in result.detail
-    assert recorder.token_mints == 1
 
 
 async def test_a_call_works_after_close_source_closed_the_client(recorder: _Recorder) -> None:
@@ -116,43 +107,14 @@ async def test_a_call_works_after_close_source_closed_the_client(recorder: _Reco
     assert (await att.probe()).reachable
 
 
-async def test_a_malformed_refresh_token_is_named_not_hidden_behind_a_generic_400(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Dropbox's token endpoint answers 400 ``invalid_grant`` for a bad/malformed
-    refresh token — the exact real failure. The probe must tell the operator to
-    re-authorize, not surface the useless "answered 400, could not be checked".
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(
-                400,
-                json={"error": "invalid_grant", "error_description": "refresh token is malformed"},
-            )
-        return httpx.Response(500, json={"error": "token mint should have failed first"})
-
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx,
-        "AsyncClient",
-        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
-    )
-
-    result = await _attachment().probe()
-
-    assert not result.reachable
-    detail = result.detail.lower()
-    assert "refresh token" in detail and "authorize" in detail, result.detail
-
-
-async def test_the_access_token_is_cached_across_calls(recorder: _Recorder) -> None:
-    attachment = _attachment()
+async def test_a_bearer_is_asked_for_on_every_request(recorder: _Recorder) -> None:
+    handle = FakeCredentialHandle(bearer_values=[_TOKEN])
+    attachment = _attachment(handle)
 
     await attachment.invoke("dropbox_account", {})
     await attachment.invoke("dropbox_list", {})
 
-    assert recorder.token_mints == 1, "the refresh token was exchanged more than once"
+    assert handle.bearer_calls == 2, "the attachment cached a bearer instead of asking per request"
 
 
 async def test_list_reaches_list_folder_with_a_rooted_path(recorder: _Recorder) -> None:
@@ -202,8 +164,6 @@ async def test_source_sync_maps_initial_and_incremental_pages(
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         calls.append(url)
-        if url == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         if url.endswith("/2/files/list_folder"):
             return httpx.Response(
                 200,
@@ -256,7 +216,6 @@ async def test_source_sync_maps_initial_and_incremental_pages(
     assert second.next_checkpoint == "c2"
     assert second.objects[0].kind is SourceObjectKind.DELETED
     assert second.objects[1].object_id == "id:one"
-    assert calls.count("https://api.dropbox.com/oauth2/token") == 1
 
 
 async def test_binary_fetch_preserves_bytes_and_refuses_a_changed_revision(
@@ -265,8 +224,6 @@ async def test_binary_fetch_preserves_bytes_and_refuses_a_changed_revision(
     binary = b"%PDF-\x00\xffcontent"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         return httpx.Response(
             200,
             headers={
@@ -297,19 +254,13 @@ async def test_binary_fetch_preserves_bytes_and_refuses_a_changed_revision(
     assert changed.value.code is SourceFailureCode.VERSION_CHANGED
 
 
-async def test_retry_is_bounded_and_a_401_refreshes_once(
+async def test_retry_is_bounded_and_a_401_invalidates_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token_mints = 0
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls, token_mints
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            token_mints += 1
-            return httpx.Response(
-                200, json={"access_token": f"token-{token_mints}", "expires_in": 3600}
-            )
+        nonlocal calls
         calls += 1
         if calls == 1:
             return httpx.Response(401)
@@ -320,19 +271,24 @@ async def test_retry_is_bounded_and_a_401_refreshes_once(
             json={"account_id": "dbid:a", "email": "a@example.com"},
         )
 
-    attachment = _mock_attachment(monkeypatch, handler)
+    handle = FakeCredentialHandle(bearer_values=[_TOKEN])
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    attachment = _attachment(handle)
     description = await attachment.inspect_source(InspectSource(connection_id="dbx:a"))
     await attachment.close_source()
 
     assert description.account_id == "dbid:a"
-    assert token_mints == 2
+    assert handle.invalidations == 1
     assert calls == 3
 
 
 async def test_checkpoint_reset_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         return httpx.Response(409, json={"error_summary": "reset/invalid_cursor"})
 
     attachment = _mock_attachment(monkeypatch, handler)
@@ -353,8 +309,6 @@ async def test_retry_budget_is_bounded(
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         calls += 1
         return httpx.Response(status, headers={"Retry-After": "0"})
 
@@ -369,8 +323,6 @@ async def test_retry_budget_is_bounded(
 
 async def test_binary_fetch_enforces_the_byte_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 3600})
         return httpx.Response(
             200,
             headers={
@@ -392,27 +344,23 @@ async def test_binary_fetch_enforces_the_byte_ceiling(monkeypatch: pytest.Monkey
     assert raised.value.code is SourceFailureCode.TOO_LARGE
 
 
-async def test_concurrent_connections_and_token_mints_are_isolated(
+async def test_concurrent_connections_use_their_own_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mints: dict[str, int] = {}
-
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == "https://api.dropbox.com/oauth2/token":
-            body = request.content.decode()
-            account = "a" if "refresh-abcd" in body else "b"
-            mints[account] = mints.get(account, 0) + 1
-            return httpx.Response(
-                200, json={"access_token": f"token-{account}", "expires_in": 3600}
-            )
         token = request.headers["authorization"].removeprefix("Bearer token-")
         return httpx.Response(
             200, json={"account_id": f"dbid:{token}", "email": f"{token}@example.com"}
         )
 
-    first = _mock_attachment(monkeypatch, handler)
-    second = _attachment()
-    second._refresh_token = "refresh-other"
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}),
+    )
+    first = _attachment(FakeCredentialHandle(bearer_values=["token-a"]))
+    second = _attachment(FakeCredentialHandle(bearer_values=["token-b"]))
     results = await asyncio.gather(
         first.inspect_source(InspectSource(connection_id="dbx:a")),
         first.inspect_source(InspectSource(connection_id="dbx:a")),
@@ -422,7 +370,6 @@ async def test_concurrent_connections_and_token_mints_are_isolated(
     await second.close_source()
 
     assert [result.account_id for result in results] == ["dbid:a", "dbid:a", "dbid:b"]
-    assert mints == {"a": 1, "b": 1}
 
 
 def test_a_changed_file_gets_a_higher_revision_so_edits_reindex() -> None:
@@ -470,8 +417,6 @@ class _FakeDropboxFiles:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        if url == "https://api.dropbox.com/oauth2/token":
-            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 14400})
         body = json.loads(request.content)
         if url.endswith("/2/files/get_metadata"):
             path = body["path"]

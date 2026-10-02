@@ -32,6 +32,8 @@ from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.secrets import Secret
 from arcagent.modules.connectors.install import build_attachment, visible_values
 
+from extensions.tests.fake_credential import FakeCredentialHandle
+
 BUNDLE = Path(__file__).resolve().parents[1] / "onepassword"
 
 #: The vault the operator configured. Distinctive so finding it in an argv proves
@@ -84,7 +86,14 @@ class _Recorder:
 
 def _attach(recorder: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(asyncio, "create_subprocess_exec", recorder)
-    return build_attachment(_manifest(), BUNDLE, _secrets())
+    return build_attachment(
+        _manifest(),
+        BUNDLE,
+        _secrets(),
+        credential=FakeCredentialHandle(  # type: ignore[arg-type]  # structural stand-in
+            fields={"service_account_token": _TOKEN}
+        ),
+    )
 
 
 # --- the vault is the operator's, not the model's ------------------------------

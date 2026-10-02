@@ -36,12 +36,13 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.cli_attachment import CliCommand
+from arcagent.extension.custody import CredentialRowStore, SealedCredentialBackend
 from arcagent.extension.field_formats import normalize
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.host_login import authorization_verdict, expired_verdict
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.platforms import ANY_PLATFORM
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
+from arcagent.extension.secrets import SecretStore
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
@@ -49,6 +50,8 @@ from arcagent.modules.connectors.install import (
     install_connector,
 )
 from arcagent.tools._egress_policy import is_egress
+
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 #: The bundles directory this repository ships.
 EXTENSIONS_ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +64,15 @@ _CALLER = "did:arc:testorg:executor/bundles"
 #: digest for each, or ``host-setup`` refuses on that host — correctly, and
 #: uselessly.
 _DEPLOYED_PLATFORMS = ("linux/arm64", "linux/amd64", "darwin/arm64", "darwin/amd64")
+
+
+def _secret_store() -> SecretStore:
+    """A sealed, in-memory custody store: the one place install writes credentials."""
+    from arcstore.backends.memory import FakeBackend
+
+    from packages.arcagent.tests.custody_fakes import make_cipher
+
+    return SecretStore(SealedCredentialBackend(CredentialRowStore(FakeBackend(), make_cipher())))
 
 
 async def _connection_state() -> ConnectionStateStore:
@@ -665,7 +677,12 @@ def test_a_cli_bundle_builds_and_its_commands_match_its_declarations(
     """
     if manifest.extension.attachment != "cli":
         pytest.skip("not a CLI bundle")
-    build_attachment(manifest, bundle, {})  # refuses an unbuildable config
+    build_attachment(  # refuses an unbuildable config
+        manifest,
+        bundle,
+        {},
+        credential=FakeCredentialHandle(),  # type: ignore[arg-type]  # structural stand-in
+    )
     commands = _cli_commands(manifest)
     assert {command.tool for command in commands} == set(_declared_tags(manifest))
     for command in commands:
@@ -740,12 +757,21 @@ async def test_a_native_bundle_without_its_credentials_refuses_by_name(
             f"ARC_{manifest.extension.name.upper()}_{secret.name.upper()}", "from-the-environment"
         )
 
-    result = await build_attachment(manifest, bundle, {}).probe()
+    attachment = build_attachment(
+        manifest,
+        bundle,
+        {},
+        credential=FakeCredentialHandle(),  # type: ignore[arg-type]  # structural stand-in
+    )
+    result = await attachment.probe()
 
     assert not result.reachable
     assert manifest.extension.name in result.detail
+    # Sensitive values come through the credential handle now, so a probe names
+    # the refused credential by its code; only visible fields are named.
     for secret in manifest.secrets:
-        assert secret.name in result.detail, "a refusal must name the field it is missing"
+        if not secret.sensitive and secret.name in {r.name for r in attachment.requirements()}:
+            assert secret.name in result.detail, "a refusal must name the field it is missing"
 
 
 def test_native_implementation_lives_below_the_bundle_root(
@@ -870,7 +896,7 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
     error names the offending tool so an operator can act on it.
     """
     manifest = _manifest_at(path, Tier.FEDERAL)
-    store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    store = _secret_store()
     registry = ConnectionRegistry(tmp_path)
 
     with pytest.raises(ExtensionError) as raised:
@@ -889,7 +915,6 @@ async def test_an_egress_bundle_is_refused_at_federal_before_anything_is_written
     assert error.details["step"] == "manifest"
     assert error.details["tool"] in sending
     assert "federal" in error.message
-    assert not (tmp_path / "arc.env").exists(), "a refused install must write nothing"
     # The grant list is the other thing an install writes, and the one that
     # decides access: a refused install leaving one behind would be a connection
     # nobody approved, already handed to an agent.
@@ -908,7 +933,7 @@ async def test_the_same_bundle_passes_the_gate_at_personal(path: Path, tmp_path:
     the reason.
     """
     manifest = _manifest_at(path, Tier.PERSONAL)
-    store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    store = _secret_store()
 
     try:
         await install_connector(
@@ -934,7 +959,7 @@ async def test_a_read_only_bundle_clears_the_federal_egress_gate(
 ) -> None:
     """Federal reads freely. A bundle with no send must not be caught by the gate."""
     manifest = _manifest_at(path, Tier.FEDERAL)
-    store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    store = _secret_store()
 
     try:
         await install_connector(
