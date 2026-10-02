@@ -72,6 +72,25 @@ def load_classifier(name: str, model: str, **key_coordinate: str) -> ClassifierP
     return factory(model, **key_coordinate)
 
 
+def list_classifier_models(name: str) -> tuple[str, ...]:
+    """The pinned model names drop-in ``name`` declares as ``MODELS``.
+
+    Raises:
+        ArcLLMConfigError: ``name`` is malformed.
+        ArcLLMClassifierUnavailableError: no drop-in named ``name`` is installed.
+    """
+    if not _DROP_IN_NAME.match(name):
+        raise ArcLLMConfigError(
+            f"Invalid classifier name {name!r}: use an installed drop-in name, not an import path."
+        )
+    if name not in _installed_names():
+        raise ArcLLMClassifierUnavailableError(
+            name, f"no classifier drop-in named '{name}' is installed"
+        )
+    models = getattr(_import_drop_in(name), "MODELS", ())
+    return tuple(m for m in models if isinstance(m, str))
+
+
 def list_classifier_keys() -> tuple[ProviderKey, ...]:
     """The key coordinate each installed drop-in declares, ordered by drop-in name.
 

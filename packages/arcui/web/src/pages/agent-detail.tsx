@@ -45,7 +45,6 @@ import { QueryState, EmptyState } from '@/components/states'
 import {
   useAgent,
   useAgentCapabilities,
-  useAgentChannels,
   useAgentInbox,
   useAgentInboxSearch,
   useAgentInboxThread,
@@ -74,7 +73,6 @@ import { ApprovalRequest } from '@/components/hitl'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
 import { MemoryBrowser } from '@/components/knowledge-memories'
-import { MemoryPromotionPanel } from '@/components/memory-promotion-panel'
 import { ChunkBrowser } from '@/components/knowledge-chunks'
 import { EntityBrowser } from '@/components/knowledge-entities'
 import { InsightBrowser } from '@/components/knowledge-insights'
@@ -1166,7 +1164,7 @@ function SchedulesTab({ agentId }: { agentId: string }) {
   )
 }
 
-function PolicyTab({ agentId }: { agentId: string }) {
+export function PolicyTab({ agentId }: { agentId: string }) {
   const policy = useAgentPolicy(agentId)
   const stats = useAgentPolicyStats(agentId)
   const config = useAgentConfig(agentId)
@@ -1208,11 +1206,14 @@ function PolicyTab({ agentId }: { agentId: string }) {
       </QueryState>
 
       {policy.data?.raw && (
-        <Section title="Policy document">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
+        <details className="group rounded-lg border border-border bg-card">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground">
+            Policy document
+          </summary>
+          <div className="px-4 pb-4">
             <Markdown>{policy.data.raw}</Markdown>
           </div>
-        </Section>
+        </details>
       )}
     </div>
   )
@@ -1748,7 +1749,6 @@ const KNOWLEDGE_TABS = [
 /** GAP-1: the full Knowledge surface, scoped to this agent (reuses the browsers). */
 function KnowledgeTab({ agentId }: { agentId: string }) {
   const query = useKnowledge(agentId)
-  const [operatorMode] = useOperatorMode()
   const [selectedEntitySlug, setSelectedEntitySlug] = useState<string | null>(null)
   const [tab, setTab] = useState('overview')
   const focusEntity = (slug: string) => {
@@ -1765,9 +1765,6 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
         ))}
       </TabsList>
       <TabsContent value="overview" className="space-y-4">
-        <div className="max-w-xl">
-          <MemoryPromotionPanel agentId={agentId} operatorMode={operatorMode} />
-        </div>
         <QueryState query={query} isEmpty={() => !query.data}>
           {(data) => <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />}
         </QueryState>
@@ -1958,10 +1955,9 @@ function ThreadParticipants({
 }
 
 /** ArcTeam mail only. Sessions and gateway conversations remain separate tabs. */
-function InboxTab({ agentId }: { agentId: string }) {
+export function InboxTab({ agentId }: { agentId: string }) {
   const queryClient = useQueryClient()
   const roster = useRoster()
-  const channelsQ = useAgentChannels(agentId)
   const inboxQ = useAgentInbox(agentId)
   const tasksQ = useAgentTasks(agentId)
   const approvalsQ = useApprovals()
@@ -1978,7 +1974,6 @@ function InboxTab({ agentId }: { agentId: string }) {
   const agents = roster.data?.agents ?? []
   const did = agents.find((a) => a.agent_id === agentId)?.did ?? ''
   const approvals = (approvalsQ.data?.approvals ?? []).filter((a) => a.agent_did === did)
-  const channels = channelsQ.data?.channels ?? []
   const inbox = inboxQ.data?.threads ?? []
   const tasks = (tasksQ.data?.tasks ?? []) as unknown as Dict[]
   const reviewTasks = tasks.filter((t) => String(t.status) === 'review')
@@ -2043,8 +2038,7 @@ function InboxTab({ agentId }: { agentId: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Delivery channels" value={channels.length} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatCard label="Inbox threads" value={inbox.length} />
         <StatCard label="Pending approvals" value={approvals.length} />
         <StatCard label="Awaiting review" value={reviewTasks.length} />
@@ -2070,23 +2064,6 @@ function InboxTab({ agentId }: { agentId: string }) {
           </div>
         </Section>
       )}
-
-      <Section title="Delivery channels">
-        {channels.length === 0 ? (
-          <EmptyState title="No delivery channels seen yet" description="Channels appear as the agent receives messages." />
-        ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-            {channels.map((c) => (
-              <li key={c.target} className="flex items-center justify-between gap-3 bg-card px-3 py-2 text-sm">
-                <span className="truncate text-foreground">{c.label}</span>
-                <span className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                  {c.target}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
 
       <Section title="Inbox threads">
         <div className="mb-2 flex max-w-xl gap-2">

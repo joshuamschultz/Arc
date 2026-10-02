@@ -770,6 +770,15 @@ class ProviderKeysResponse(BaseModel):
     keys: list[ProviderKeyStatus]
 
 
+class ClassifierModelsResponse(BaseModel):
+    """Body of ``GET /api/classifiers/{name}/models``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    classifier: str
+    models: list[str]
+
+
 class ProviderKeySetResponse(BaseModel):
     """Body of ``PUT /api/keys/{env_var}`` — the value is never echoed."""
 

@@ -43,6 +43,9 @@ from arcllm.exceptions import ArcLLMConfigError
 from arcllm.vault import VaultResolver
 
 API_KEY_ENV = "TYPESAFE_API_KEY"
+# Pinned model versions offered to operators (no "-latest": promotion config
+# rejects unpinned names). An unlisted pinned version is still accepted.
+MODELS: tuple[str, ...] = ("jev-1.13.0",)
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 _SDK_MODULE = "typesafe_sdk"
 _MAX_RETRIES = 2

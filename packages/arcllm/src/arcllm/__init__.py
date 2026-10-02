@@ -160,6 +160,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     # Classifier drop-ins (SPEC-083) — scanning imports each drop-in module.
     "classifier_key_envs": "arcllm.classifiers",
     "list_classifier_keys": "arcllm.classifiers",
+    "list_classifier_models": "arcllm.classifiers",
 }
 
 
@@ -294,6 +295,7 @@ __all__ = [
     "configured_redactor",
     "embed",
     "list_classifier_keys",
+    "list_classifier_models",
     "list_provider_keys",
     "load_for_replay",
     "load_global_config",

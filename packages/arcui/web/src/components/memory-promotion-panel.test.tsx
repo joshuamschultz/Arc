@@ -7,30 +7,39 @@
 //   GET  /api/agents/{id}/memory/promotion
 //        -> { enabled, confidence_threshold, classifier_model, tier, federal_locked, key_set }
 //   PUT  /api/agents/{id}/memory/promotion   body: settings only, never a key
-//   PUT  /api/keys/TYPESAFE_API_KEY          body: { value }  — the ONLY place a key goes
+//   GET  /api/classifiers/jev/models         -> { classifier, models: string[] }
+//   The key is NOT edited here (Settings -> Keys owns it): the panel shows a badge + link only.
 //
 // Accessible names pinned:
 //   heading "Memory sharing"; toggle (switch or checkbox) /enable memory sharing/i;
-//   inputs labelled /confidence threshold/i, /classifier model/i, /jev api key/i;
-//   buttons /save settings/i and /save key/i; key badge text "Key set" / "Key not set".
+//   input /confidence threshold/i; combobox /classifier model/i (models from the server,
+//   plus "Other…" which reveals a free-text /pinned model version/i input);
+//   button /save settings/i; key badge text "Key set" / "Key not set"; link to Settings.
 //
 // The server is stubbed at the network boundary (global fetch), as in
 // remote-sign-in-panel.test.tsx, so the panel is free to use any lib/queries hook.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { MemoryPromotionPanel } from '@/components/memory-promotion-panel'
 
+// Radix Select needs these browser APIs, which jsdom lacks.
+beforeAll(() => {
+  Element.prototype.hasPointerCapture ??= () => false
+  Element.prototype.setPointerCapture ??= () => {}
+  Element.prototype.releasePointerCapture ??= () => {}
+  Element.prototype.scrollIntoView ??= () => {}
+})
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
 
-const SENTINEL = 'ts-zzz-panel-jev-key-sentinel-5150'
 const SETTINGS_PATH = '/api/agents/olivia/memory/promotion'
-const KEY_PATH = '/api/keys/TYPESAFE_API_KEY'
+const MODELS_PATH = '/api/classifiers/jev/models'
 const RUN_PATH = '/api/agents/olivia/memory/promotion/run'
 const RUN_RESULT = {
   status: 'completed',
@@ -100,13 +109,8 @@ function stubServer({
       current = { ...current, ...(JSON.parse(rawBody) as Partial<Settings>) }
       return json(200, current)
     }
-    if (path.startsWith(KEY_PATH) && method === 'PUT') {
-      current = { ...current, key_set: true }
-      return json(200, { env_var: 'TYPESAFE_API_KEY', present: true })
-    }
-    if (path.startsWith(KEY_PATH) && method === 'DELETE') {
-      current = { ...current, key_set: false }
-      return json(200, { env_var: 'TYPESAFE_API_KEY', present: false, removed: true })
+    if (path.startsWith(MODELS_PATH) && method === 'GET') {
+      return json(200, { classifier: 'jev', models: ['jev-1.13.0', 'jev-1.14.0'] })
     }
     if (path.startsWith('/api/keys') && method === 'GET') {
       return json(200, {
@@ -140,25 +144,24 @@ const isDisabled = (el: HTMLElement) =>
   (el as HTMLInputElement | HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true'
 
 const threshold = () => screen.getByLabelText(/confidence threshold/i) as HTMLInputElement
-const model = () => screen.getByLabelText(/classifier model/i) as HTMLInputElement
-const keyField = () => screen.getByLabelText(/jev api key/i) as HTMLInputElement
+const model = () => screen.getByRole('combobox', { name: /classifier model/i }) as HTMLButtonElement
+const customModel = () => screen.getByLabelText(/pinned model version/i) as HTMLInputElement
 const saveSettings = () => screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement
-const saveKey = () => screen.getByRole('button', { name: /save key/i }) as HTMLButtonElement
 
 async function loaded() {
   await screen.findByRole('heading', { name: /memory sharing/i })
-  await waitFor(() => expect(model().value).not.toBe(''))
+  await screen.findByRole('combobox', { name: /classifier model/i })
 }
 
 describe('MemoryPromotionPanel', () => {
   it('renders the current settings from the server', async () => {
-    stubServer({ settings: personal({ enabled: true, confidence_threshold: 0.97, classifier_model: 'jev-1.14' }) })
+    stubServer({ settings: personal({ enabled: true, confidence_threshold: 0.97, classifier_model: 'jev-1.14.0' }) })
     renderPanel()
     await loaded()
 
     expect(isOn(toggle())).toBe(true)
     expect(Number(threshold().value)).toBe(0.97)
-    expect(model().value).toBe('jev-1.14')
+    expect(model().textContent).toContain('jev-1.14.0')
   })
 
   it('saves changed settings to the promotion route and nowhere else', async () => {
@@ -179,21 +182,59 @@ describe('MemoryPromotionPanel', () => {
     expect(typeof (puts[0].body as Settings).confidence_threshold).toBe('number')
   })
 
-  it('never puts a key field into the settings request', async () => {
+  it('has no key input: the key is edited in Settings -> Keys', async () => {
     const calls = stubServer()
     renderPanel()
     await loaded()
 
-    await userEvent.type(keyField(), SENTINEL)
-    await userEvent.click(toggle())
+    expect(screen.queryByLabelText(/jev api key/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /save key/i })).toBeNull()
+    const link = screen.getByRole('link', { name: /settings.*keys/i })
+    expect(link.getAttribute('href')).toBe('/settings')
+    expect(calls.filter((c) => c.path.startsWith('/api/keys') && c.method !== 'GET')).toHaveLength(0)
+  })
+
+  it('offers the models from the server in a dropdown, with Other…', async () => {
+    const calls = stubServer()
+    renderPanel()
+    await loaded()
+
+    expect(calls.some((c) => c.path === MODELS_PATH)).toBe(true)
+    expect(model().textContent).toContain('jev-1.13.0')
+    await userEvent.click(model())
+    expect(await screen.findByRole('option', { name: 'jev-1.14.0' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /other/i })).toBeTruthy()
+  })
+
+  it('saves a model picked from the dropdown', async () => {
+    const calls = stubServer()
+    renderPanel()
+    await loaded()
+
+    await userEvent.click(model())
+    await userEvent.click(await screen.findByRole('option', { name: 'jev-1.14.0' }))
     await userEvent.click(saveSettings())
 
-    await waitFor(() => expect(calls.some((c) => c.path === SETTINGS_PATH && c.method === 'PUT')).toBe(true))
-    const settingsPut = calls.find((c) => c.path === SETTINGS_PATH && c.method === 'PUT')!
-    expect(settingsPut.rawBody).not.toContain(SENTINEL)
-    for (const k of Object.keys(settingsPut.body as object)) {
-      expect(['enabled', 'confidence_threshold', 'classifier_model']).toContain(k)
-    }
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({
+      classifier_model: 'jev-1.14.0',
+    })
+  })
+
+  it('keeps an unlisted pinned version editable as free text via Other…', async () => {
+    const calls = stubServer({ settings: personal({ classifier_model: 'jev-9.9.9' }) })
+    renderPanel()
+    await loaded()
+
+    expect(customModel().value).toBe('jev-9.9.9')
+    await userEvent.clear(customModel())
+    await userEvent.type(customModel(), 'jev-2.0.0')
+    await userEvent.click(saveSettings())
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({
+      classifier_model: 'jev-2.0.0',
+    })
   })
 
   it('shows the server refusal and keeps the form editable', async () => {
@@ -217,32 +258,11 @@ describe('MemoryPromotionPanel', () => {
     expect(screen.queryByText('Key set')).toBeNull()
   })
 
-  it('shows "Key set" without any value when a key is stored', async () => {
+  it('shows "Key set" when a key is stored', async () => {
     stubServer({ settings: personal({ key_set: true }) })
     renderPanel()
     await loaded()
-
     expect(screen.getByText('Key set')).toBeTruthy()
-    expect(keyField().value).toBe('')
-    expect(keyField().type).toBe('password')
-  })
-
-  it('sends the key only to /api/keys, then shows "Key set" and clears the field', async () => {
-    const calls = stubServer()
-    renderPanel()
-    await loaded()
-
-    await userEvent.type(keyField(), SENTINEL)
-    await userEvent.click(saveKey())
-
-    expect(await screen.findByText('Key set')).toBeTruthy()
-    const carrying = calls.filter((c) => c.rawBody.includes(SENTINEL) || c.path.includes(SENTINEL))
-    expect(carrying).toHaveLength(1)
-    expect(carrying[0].method).toBe('PUT')
-    expect(carrying[0].path).toBe(KEY_PATH)
-    expect(carrying[0].body).toEqual({ value: SENTINEL })
-    expect(keyField().value).toBe('')
-    expect(document.body.textContent ?? '').not.toContain(SENTINEL)
   })
 
   it('is disabled with a federal-tier reason and cannot write', async () => {
@@ -268,7 +288,6 @@ describe('MemoryPromotionPanel', () => {
     expect(isDisabled(toggle())).toBe(true)
     const saveSettings = screen.queryByRole('button', { name: /save settings/i })
     expect(saveSettings === null || isDisabled(saveSettings)).toBe(true)
-    expect(screen.queryByLabelText(/jev api key/i)).toBeNull()
     expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0)
   })
 })
