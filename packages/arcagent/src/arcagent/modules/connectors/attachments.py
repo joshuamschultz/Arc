@@ -14,7 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import ExtensionAttachment, Requirement, RequirementKind
-from arcagent.extension.cli_attachment import CliAttachment, CliCommand, CliResilience
+from arcagent.extension.cli_attachment import (
+    CliAttachment,
+    CliCommand,
+    CliResilience,
+    CredentialEnv,
+)
+from arcagent.extension.credential_broker import AccessTokenHandle
 from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.launcher import sandbox_policy_for
 from arcagent.extension.manifest import ExtensionManifest
@@ -179,6 +185,42 @@ class _MultiSourceEnabledAttachment(_SourceEnabledAttachment):
         return dict(self._sources)
 
 
+def _visible(manifest: ExtensionManifest, secrets: Mapping[str, Secret]) -> dict[str, Secret]:
+    """Only the fields the manifest declares non-sensitive."""
+    sensitive = {declared.name for declared in manifest.secrets if declared.sensitive}
+    return {name: value for name, value in secrets.items() if name not in sensitive}
+
+
+def _placed_by_handle(
+    manifest: ExtensionManifest, credential: AccessTokenHandle | None
+) -> CredentialEnv | None:
+    """A per-spawn resolver for the sensitive placed credentials, or None if there are none."""
+    placed = [
+        (declared.placement.variable, declared.name, declared.required)
+        for declared in manifest.secrets
+        if declared.sensitive and declared.placement is not None
+    ]
+    if not placed:
+        return None
+    if credential is None:
+        raise _refuse(
+            f"{manifest.extension.name} places a credential and was built with no "
+            "credential handle",
+            extension=manifest.extension.name,
+        )
+    handle = credential
+
+    async def resolve() -> dict[str, Secret]:
+        env: dict[str, Secret] = {}
+        for variable, name, required in placed:
+            value = await (handle.field(name) if required else handle.maybe_field(name))
+            if value is not None:
+                env[variable] = value
+        return env
+
+    return resolve
+
+
 def build_attachment(
     manifest: ExtensionManifest,
     bundle: Path,
@@ -186,8 +228,16 @@ def build_attachment(
     *,
     connection_id: str = "",
     download_dir: Path | None = None,
+    credential: AccessTokenHandle | None = None,
 ) -> ExtensionAttachment:
     """Build the declared attachment at the sole credential-reveal boundary.
+
+    ``credential`` is the connection's :class:`AccessTokenHandle` (P18-2). A
+    ``native`` or ``cli`` attachment receives sensitive values ONLY through it, at
+    call time: its build-time ``secrets`` are filtered to the fields the manifest
+    declares non-sensitive, so a sensitive value is never baked into an
+    attachment. ``mcp`` attachments still resolve their header/env at session
+    start (C7) and get a reconcile push on every credential change.
 
     ``download_dir`` is where a CLI command that saves a file may write — the
     agent's own downloads folder for this connection. ``None`` (every management
@@ -203,7 +253,8 @@ def build_attachment(
     if kind == "native":
         entrypoint = _NativeConfig.model_validate(manifest.config.get("native", {})).entrypoint
         context: dict[str, Any] = {"bundle": str(bundle), "connection_id": connection_id}
-        context.update({name: secret.reveal() for name, secret in secrets.items()})
+        context.update(visible_values(manifest, secrets))
+        context["credential"] = credential
         with _importable(bundle):
             return NativeAttachment(entrypoint, context)
     if kind == "cli":
@@ -224,7 +275,7 @@ def build_attachment(
             probe_argv=declared.probe_argv,
             install_instruction=declared.install_instruction,
             resilience=declared.resilience,
-            env=placement_environment(manifest, secrets),
+            env=placement_environment(manifest, _visible(manifest, secrets)),
             values=visible_values(manifest, secrets),
             owned_env=frozenset(
                 declared.placement.variable
@@ -237,6 +288,7 @@ def build_attachment(
                 if declared.placement is not None and not declared.sensitive
             ),
             download_dir=download_dir,
+            credential_env=_placed_by_handle(manifest, credential),
         )
         return _with_source_adapter(manifest, bundle, cli_attachment)
     if kind == "mcp":

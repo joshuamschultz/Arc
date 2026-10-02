@@ -38,19 +38,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import time
 import tomllib
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-import httpx
 from arctrust import causal
-from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.paths import arc_team, config_file
 from arctrust.signer import Signer
 
@@ -71,12 +71,26 @@ from arcagent.extension.connection_health import (
     ConnectionHealthAuthority,
     HealthSignal,
     SignalSource,
+    StoreHealthReporter,
     classify,
     custody_of,
     effective_probe,
 )
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
+from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
+from arcagent.extension.custody import CredentialCipher
+from arcagent.extension.custody_migrate import (
+    MigrationReport,
+    legacy_env_path,
+    migrate_connector_secrets,
+)
+from arcagent.extension.custody_select import (
+    VAULT_REQUIRED,
+    Custody,
+    deployment_cipher,
+    open_custody,
+)
 from arcagent.extension.grants import (
     BAD_NAME,
     NO_SUCH_CONNECTION,
@@ -95,10 +109,16 @@ from arcagent.extension.manifest import (
     ArtifactPin,
     DeclaredTool,
     HostRequirement,
+    OAuthFlow,
     SecretRequirement,
     load_manifest,
 )
-from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
+from arcagent.extension.oauth import (
+    OAuthTokens,
+    build_authorize_url,
+    exchange_authorization_code,
+    post_form,
+)
 from arcagent.extension.remote_login import (
     REMOTE_LOGIN_FAILED,
     REMOTE_LOGIN_NEEDS_CONFIRMATION,
@@ -106,7 +126,7 @@ from arcagent.extension.remote_login import (
     RemoteLoginLedger,
     checked_account,
 )
-from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
+from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import (
     ConnectionRecord,
     ConnectionStateStore,
@@ -118,7 +138,6 @@ from arcagent.modules.connectors.install import (
     InstallReport,
     RemovalReport,
     build_attachment,
-    connector_env_file,
     install_connector,
     placement_environment,
     plan_connector,
@@ -215,7 +234,6 @@ class ConnectionWorld:
     did: str
     tier: Tier
     extension_roots: tuple[Path, ...]
-    env_file: Path
     egress_allow: tuple[str, ...] = ()
     #: ``[tools.policy] mcp_stdio_allow`` — the programs an operator-added MCP server
     #: may launch above personal tier.
@@ -228,6 +246,11 @@ class ConnectionWorld:
     def connections_file(self) -> Path:
         """Where this deployment's connections and grants live."""
         return ConnectionRegistry(self.arc_dir).path
+
+    @property
+    def credential_location(self) -> str:
+        """Where connector credentials live, in words a surface can print."""
+        return CREDENTIAL_LOCATION
 
 
 @dataclass(frozen=True)
@@ -252,6 +275,10 @@ class McpServerAdded:
     exposed: tuple[str, ...] = ()
 
 
+#: Where every connector credential lives since P18-2: sealed rows, never a file.
+CREDENTIAL_LOCATION = "sealed Arc custody (arcstore, encrypted with the operator key)"
+
+
 #: Recorded as the actor when a deployment has no operator key to derive a DID
 #: from. Honest rather than convenient: an unkeyed deployment cannot pin its
 #: connector verdicts to a person, and saying so in the chain is better than
@@ -264,7 +291,6 @@ def resolve_deployment(
     arc_dir: Path | str | None = None,
     data_dir: Path | str | None = None,
     extensions_root: Path | str | None = None,
-    env_file: Path | str | None = None,
 ) -> ConnectionWorld:
     """Resolve one deployment's paths, tier, and operator identity.
 
@@ -276,7 +302,6 @@ def resolve_deployment(
             state and the audit chain live. Created when the caller names one.
         extensions_root: Use exactly this bundle root. An operator pointing a
             command at one directory gets that directory and no fallback behind it.
-        env_file: Owner-only credential store (default ``<arc_dir>/connections.env``).
 
     Returns:
         The resolved deployment, ready to hand to :class:`Connections`.
@@ -288,7 +313,6 @@ def resolve_deployment(
         did=_operator_did(root),
         tier=deployment_tier(root),
         extension_roots=resolve_roots(root, extensions_root=extensions_root),
-        env_file=(Path(env_file).expanduser().resolve() if env_file else connector_env_file(root)),
         egress_allow=deployment_egress_allow(root),
         mcp_stdio_allow=deployment_mcp_stdio_allow(root),
         extensions_override=extensions_root is not None,
@@ -375,7 +399,7 @@ def _root(arc_dir: Path | str | None) -> Path:
     """The deployment root every connection path is resolved against.
 
     The OPERATOR root, not the install home. Everything reached from here is
-    config or state — ``connections.toml``, ``connections.env``, the operator
+    config or state — ``connections.toml``, the operator
     key, installed extensions — and all of it moved beside the fleet so an
     update can replace the install without touching it. Answering ``arc_home()``
     left the registry reading ``~/.arc/config/connections.toml`` after the
@@ -671,24 +695,6 @@ def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
     )
 
 
-async def _oauth_post(
-    url: str, data: dict[str, str], auth: tuple[str, str]
-) -> tuple[int, dict[str, Any]]:
-    """POST form data with HTTP basic auth for the OAuth exchange — the one HTTP call.
-
-    A plain function, not a method, so :meth:`Connections.complete_oauth` injects
-    it exactly as the exchange's tests inject a fake: the framework owns the HTTP
-    client, the pure exchange in :mod:`arcagent.extension.oauth` owns the protocol.
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, data=data, auth=auth)
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    return response.status_code, payload if isinstance(payload, dict) else {}
-
-
 def _authorization(
     instance: str,
     plan: ConnectorPlan,
@@ -752,8 +758,13 @@ class Connections:
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
+        credential_cipher: CredentialCipher | None = None,
     ) -> None:
         self._world = world
+        # The cipher sealing connector credentials. Resolved from the operator key
+        # on first use when not injected (a test, or a caller that already holds it).
+        self._credential_cipher = credential_cipher
+        self._backend: Any = None
         self._audit = audit if audit is not None else AuditChain()
         self._factory: AttachmentFactory = attachment_factory or build_attachment
         self._install_dir = install_dir
@@ -775,7 +786,6 @@ class Connections:
         arc_dir: Path | str | None = None,
         data_dir: Path | str | None = None,
         extensions_root: Path | str | None = None,
-        env_file: Path | str | None = None,
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
@@ -784,13 +794,13 @@ class Connections:
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
+        credential_cipher: CredentialCipher | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
             arc_dir=arc_dir,
             data_dir=data_dir,
             extensions_root=extensions_root,
-            env_file=env_file,
         )
         return cls(
             world,
@@ -802,6 +812,7 @@ class Connections:
             remote_logins=remote_logins,
             host_step_timeout=host_step_timeout,
             clock=clock,
+            credential_cipher=credential_cipher,
         )
 
     @property
@@ -1000,12 +1011,16 @@ class Connections:
         return record
 
     async def _credential_generation(self, instance: str) -> int | None:
-        """The custody generation the credential is at. Arc custody (P18-2) fills this in.
+        """The custody generation the credential is at, or None when Arc holds none.
 
-        Until a credential lives in Arc custody there is no generation to compare,
-        so every check really probes.
+        A dead Arc-held credential is not probed again until this changes (P18-1 D8):
+        the operator reconnecting bumps it, and nothing else does.
         """
-        return None
+        try:
+            custody = await self._custody(NullSink())
+        except ExtensionError:
+            return None
+        return await custody.rows.generation(instance)
 
     @staticmethod
     async def _skip_dead_credential(
@@ -1155,7 +1170,7 @@ class Connections:
                     ),
                     details={"instance": instance},
                 )
-            store = self._store(sink)
+            store = await self._store(sink)
             client_id = await self._read_secret(store, instance, flow.client_id_secret)
             client_secret = await self._read_secret(store, instance, flow.client_secret_secret)
             if not client_id or not client_secret:
@@ -1172,20 +1187,57 @@ class Connections:
                 code=code.strip(),
                 client_id=client_id,
                 client_secret=client_secret,
-                post=_oauth_post,
+                post=post_form,
             )
-            await store.put(
-                SecretRef(connection=instance, field=flow.refresh_token_secret),
-                tokens.refresh_token,
-                caller_did=causal.actor_did(),
-            )
+            await self._store_grant(instance, flow.refresh_token_secret, tokens, store, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
             authorize_url = await self._oauth_authorize_url(plan, sink)
-        await self._operator_check(instance)
+        await self._push_credential_change(instance)
         return _authorization(
             instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
+        )
+
+    async def _store_grant(
+        self,
+        instance: str,
+        refresh_field: str,
+        tokens: OAuthTokens,
+        store: SecretStore,
+        sink: AuditSink,
+    ) -> None:
+        """Persist what the code exchange issued.
+
+        With an access token and a lifetime, the refresh token and the access token
+        are committed in ONE write, so the first call uses the exchanged access token
+        instead of spending a refresh. Otherwise only the refresh token is stored.
+        """
+        ref = SecretRef(connection=instance, field=refresh_field)
+        if not tokens.access_token or tokens.expires_in <= 0:
+            await store.put(ref, tokens.refresh_token, caller_did=causal.actor_did())
+            return
+        custody = await self._custody(sink)
+        issued = self._clock()
+        generation = await custody.rows.put_grant(
+            instance,
+            refresh_field=refresh_field,
+            refresh_token=tokens.refresh_token,
+            access_token=tokens.access_token,
+            issued_at=issued,
+            expires_at=issued + timedelta(seconds=tokens.expires_in),
+            scope=None,
+            actor_did=causal.actor_did(),
+        )
+        emit(
+            AuditEvent(
+                actor_did=causal.actor_did(),
+                action="secret.write",
+                target=f"secret:{ref}",
+                outcome="allow",
+                extra={"store": "sealed", "kind": "oauth_grant", "generation": generation},
+            ),
+            sink,
         )
 
     async def _oauth_authorize_url(self, plan: ConnectorPlan, sink: AuditSink) -> str:
@@ -1198,7 +1250,7 @@ class Connections:
         flow = plan.manifest.oauth
         if flow is None:
             return ""
-        store = self._store(sink)
+        store = await self._store(sink)
         client_id = await self._read_secret(store, plan.instance, flow.client_id_secret)
         return build_authorize_url(flow, client_id=client_id) if client_id else ""
 
@@ -1624,12 +1676,14 @@ class Connections:
             _check_agent(agent)
         self._refuse_lax_plan(plan, agents)
         with self._audit.open() as sink:
+            custody = await self._custody(sink)
             report = await install_connector(
                 plan,
                 connections=self.registry,
                 agents=agents,
                 secret_values=secrets,
-                store=self._store(sink),
+                store=custody.store,
+                credential=self._operator_handle(custody, plan),
                 caller_did=causal.actor_did(),
                 state=await self._connection_state(),
                 attachment_factory=self._factory,
@@ -1800,6 +1854,72 @@ class Connections:
             )
         return signed
 
+    def install_bundle(self, folder: Path, *, replace: bool = False) -> Path:
+        """Install a signed, code-bearing bundle into ``~/.arc/extensions`` (P18-2).
+
+        Nothing executes from the operator tree, so a third-party or hand-written
+        connector with code is installed here instead. Every file must verify
+        against the deployment's operator key NOW (sign it first with
+        ``arc connector sign``); the loader verifies it again on every load.
+
+        Raises:
+            ExtensionError: Not a bundle, a symlink inside it, a file that does
+                not verify, no pinned operator key, or the name already installed.
+        """
+        from arctrust.paths import installed_extensions_dir
+
+        from arcagent.capabilities import artifact_signing
+
+        source = Path(folder)
+        manifest_path = source / MANIFEST_NAME
+        if source.is_symlink() or not manifest_path.is_file() or manifest_path.is_symlink():
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", f"{folder} holds no {MANIFEST_NAME}")
+        manifest = load_manifest(manifest_path.read_text(encoding="utf-8"), tier=self._world.tier)
+        name = manifest.extension.name
+        key = self._pinned_key()
+        if key is None:
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", "no operator key is pinned to verify against")
+        files = sorted(path for path in source.rglob("*") if path.is_file() or path.is_symlink())
+        if any(path.is_symlink() for path in files):
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", f"{name!r} contains a symlink")
+        shipped = [p for p in files if p.suffix != artifact_signing.SIDECAR_SUFFIX]
+        unverified = [
+            p
+            for p in shipped
+            if not artifact_signing.verify_file(p, p.read_bytes(), trusted_public_key=key)
+        ]
+        if unverified:
+            raise _refuse(
+                "BUNDLE_UNSIGNED",
+                f"{len(unverified)} file(s) in {name!r} are unsigned or fail verification; "
+                "sign it with `arc connector sign` first",
+            )
+        root = installed_extensions_dir()
+        target = root / name
+        if (target.exists() or target.is_symlink()) and not replace:
+            raise _refuse("BUNDLE_EXISTS", f"{name!r} is already installed at {target}")
+        root.mkdir(parents=True, exist_ok=True)
+        staging = root / f".{name}.staging-{os.getpid()}"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(source, staging, symlinks=True)
+        if target.exists():
+            shutil.rmtree(target)
+        staging.replace(target)
+        with self._audit.open() as sink:
+            emit(
+                AuditEvent(
+                    actor_did=causal.actor_did(),
+                    action="connector.bundle_installed",
+                    target=f"bundle:{name}",
+                    outcome="allow",
+                    tier=self._world.tier.value,
+                    extra={"files": str(len(shipped))},
+                ),
+                sink,
+            )
+        self._learn_roots(self._bundle_roots())
+        return target
+
     def _learn_roots(self, roots: tuple[Path, ...]) -> None:
         self._world = replace(self._world, extension_roots=roots)
 
@@ -1968,7 +2088,7 @@ class Connections:
         shaped = shape_supplied(plan, secrets)
         written: list[str] = []
         with self._audit.open() as sink:
-            store = self._store(sink)
+            store = await self._store(sink)
             for required in plan.secrets:
                 value = shaped.get(required.name)
                 if not value:
@@ -1977,8 +2097,96 @@ class Connections:
                 await store.put(ref, value, caller_did=causal.actor_did())
                 written.append(required.name)
         if written:
-            await self._operator_check(plan.instance)
+            await self._push_credential_change(plan.instance)
         return tuple(written)
+
+    async def renew_credentials(self, *, concurrency: int = 4) -> dict[str, str]:
+        """Renew every OAuth connection whose access token is due (the proactive renewer).
+
+        One pass over the custody rows. Each due ``[oauth]`` connection is renewed under
+        the same fenced lease an on-demand renewal takes, so this loop and a running
+        agent can never both spend one refresh token. A failure on one connection is
+        isolated and reported per connection; it never stops the pass.
+
+        Returns:
+            ``{connection: "renewed" | "fresh" | <error code>}`` for every OAuth row.
+        """
+        outcome: dict[str, str] = {}
+        slots = asyncio.Semaphore(concurrency)
+        with self._audit.open() as sink:
+            custody = await self._custody(sink)
+            flows: dict[str, OAuthFlow] = {}
+            for instance in await custody.rows.connections():
+                try:
+                    flow = self._plan_for(instance, sink).manifest.oauth
+                except ExtensionError:
+                    continue
+                if flow is not None:
+                    flows[instance] = flow
+
+            async def renew_one(instance: str) -> None:
+                async with slots:
+                    try:
+                        renewed = await custody.planner.ensure_fresh(
+                            instance, flow=flows[instance]
+                        )
+                        outcome[instance] = "renewed" if renewed else "fresh"
+                    except ExtensionError as exc:
+                        outcome[instance] = str(exc.details.get("error_code") or exc.code)
+                    except Exception as exc:  # reason: one bad row never stops the pass
+                        _logger.warning("credential renewal failed: %s", instance, exc_info=True)
+                        outcome[instance] = type(exc).__name__
+
+            await asyncio.gather(*(renew_one(instance) for instance in flows))
+        return outcome
+
+    async def migrate_secrets(self, *, dry_run: bool = False) -> MigrationReport:
+        """Move the legacy plaintext credential file into sealed custody, once (P18-2).
+
+        Every declared credential is stored, read back through a fresh store and
+        compared, and only then is the file deleted; undeclared keys are dropped
+        by name. Running agents are pushed the change. A dry run writes nothing.
+
+        Raises:
+            ExtensionError: The migration could not complete (no custody cipher,
+                a read-back mismatch, a symlinked or loose file). The file is kept.
+        """
+        env_path = legacy_env_path(self._world.arc_dir)
+        if not os.path.lexists(env_path):
+            return MigrationReport(skipped=True, path=str(env_path))
+        with self._audit.open() as sink:
+            custody: Custody | None
+            try:
+                custody = await self._custody(sink)
+            except ExtensionError:
+                if not dry_run:
+                    raise
+                custody = None
+
+            def declared(instance: str, _extension: str) -> tuple[str, ...] | None:
+                try:
+                    plan = self._plan_for(instance, sink)
+                except ExtensionError:
+                    return None
+                return tuple(required.name for required in plan.secrets)
+
+            async def fresh_store() -> SecretStore:
+                return (await self._custody(sink)).store
+
+            verify = (await fresh_store()) if custody is not None else None
+            report = await migrate_connector_secrets(
+                env_path=env_path,
+                registry=self.registry,
+                declared_fields=declared,
+                secret_store=custody.store if custody is not None else None,
+                verify_store=(lambda: verify) if verify is not None else None,
+                actor_did=causal.actor_did(),
+                sink=sink,
+                dry_run=dry_run,
+            )
+        for instance in report.connections if report.deleted else ():
+            await self._push_credential_change(instance)
+        return report
 
     async def approve(self, instance: str) -> tuple[str, ...]:
         """Record the tool contract this connection serves RIGHT NOW as approved.
@@ -2026,9 +2234,8 @@ class Connections:
             return await remove_connector(
                 connections=self.registry,
                 instance=instance,
-                store=self._store(sink),
+                credentials=(await self._custody(sink)).rows,
                 caller_did=causal.actor_did(),
-                secret_fields=self._declared_secret_fields(instance, sink),
                 state=await self._connection_state(),
             )
 
@@ -2120,13 +2327,12 @@ class Connections:
     def _refuse_silent_rehome(self, instance: str, agents: Sequence[str], sink: AuditSink) -> None:
         """Refuse a grant that would raise the tier past the store holding the credential.
 
-        Granting a federal agent an account whose token sits in this host's
-        ``connections.env`` does not move the token. Honouring it would leave a
-        connection reporting federal stringency with its credential in a local
-        file — a control reporting a posture it does not have, which is the exact
-        defect class this feature has already shipped. Re-homing it silently is
-        the other half of that hazard, so neither happens: the operator is told
-        what to configure and re-runs the connect.
+        Granting a federal agent an account whose token is sealed under an
+        in-process key does not move the token into Vault. Honouring it would leave
+        a connection reporting federal stringency with its credential under a
+        personal-tier cipher — a control reporting a posture it does not have.
+        Re-homing it silently is the other half of that hazard, so neither happens:
+        the operator is told what to configure and re-runs the connect.
 
         A connection Arc stores no credential for is untouched by this: a bundle
         whose binary owns its own token has nothing in any store to be in the
@@ -2137,17 +2343,20 @@ class Connections:
             return
         if not self._declared_secret_fields(instance, sink):
             return
-        try:
-            select_secret_backend(required, env_file=self._world.env_file)
-        except ExtensionError as exc:
-            raise _refuse(
-                TIER_WOULD_RISE,
-                f"granting {instance!r} to these agents raises it to {required.value}, "
-                f"and this deployment cannot hold its credential at that tier: "
-                f"{exc.message}. Configure that store, then connect {instance!r} again.",
-                connection=instance,
-                required_tier=required.value,
-            ) from exc
+        if required is not Tier.FEDERAL:
+            return
+        # Federal custody is Vault Transit only (FIPS forbids the in-process
+        # XChaCha20 cipher); until the Transit row cipher ships (P18-2F) there is no
+        # store that can hold this credential at federal stringency.
+        raise _refuse(
+            TIER_WOULD_RISE,
+            f"granting {instance!r} to these agents raises it to {required.value}, "
+            f"and this deployment cannot hold its credential at that tier "
+            f"({VAULT_REQUIRED}: connector credentials need the Vault Transit row cipher). "
+            f"Configure it, then connect {instance!r} again.",
+            connection=instance,
+            required_tier=required.value,
+        )
 
     def _record(self, sink: AuditSink, action: str, instance: str, agents: Sequence[str]) -> None:
         """Record a change to who may reach an account (AU-2).
@@ -2231,13 +2440,20 @@ class Connections:
         report on a connection the operator does not have. A declared credential the
         store does not hold refuses by name rather than answering from a blank one.
         """
+        custody = await self._custody(sink)
         secrets = await resolve_secrets(
             plan.manifest,
             connection=plan.instance,
-            store=self._store(sink),
+            store=custody.store,
             caller_did=causal.actor_did(),
+            include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
-        return self._factory(plan.manifest, plan.bundle, secrets)
+        return self._factory(
+            plan.manifest,
+            plan.bundle,
+            secrets,
+            credential=self._operator_handle(custody, plan),
+        )
 
     async def _supplied(
         self, plan: ConnectorPlan, sink: AuditSink
@@ -2255,7 +2471,7 @@ class Connections:
         built from this list must still draw the input on a connection that has
         never been configured.
         """
-        store = self._store(sink)
+        store = await self._store(sink)
         # An OAuth connector's refresh token is WRITTEN by ``complete_oauth``, never
         # typed — the operator supplies only the app key/secret. Listing it as a
         # field to fill would send them looking for a value they can't get by hand,
@@ -2301,17 +2517,68 @@ class Connections:
             secrets = await resolve_secrets(
                 plan.manifest,
                 connection=plan.instance,
-                store=self._store(sink),
+                store=await self._store(sink),
                 caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}
         return placement_environment(plan.manifest, secrets)
 
-    def _store(self, sink: AuditSink) -> SecretStore:
+    async def _custody(self, sink: AuditSink) -> Custody:
+        """Sealed custody over this deployment's arcstore, sealed with its operator key.
+
+        Raises:
+            ExtensionError: ``SECRET_STORE_VAULT_REQUIRED`` when this deployment's
+                custody cannot hold a connector credential yet (vault_transit).
+        """
+        if self._credential_cipher is None:
+            self._credential_cipher = deployment_cipher(self._world.arc_dir, tier=self._world.tier)
+        backend = await self._custody_backend()
+
+        async def opened() -> Any:
+            return backend
+
+        return open_custody(
+            backend,
+            self._credential_cipher,
+            health=StoreHealthReporter(opened, sink=sink),
+            sink=sink,
+            actor_did=causal.actor_did(),
+        )
+
+    async def _custody_backend(self) -> Any:
+        if self._backend is None:
+            self._backend = await self._open_reconcile_backend()
+        return self._backend
+
+    async def _store(self, sink: AuditSink) -> SecretStore:
         """The one place a connector credential is written or read."""
-        backend = select_secret_backend(self._world.tier, env_file=self._world.env_file)
-        return SecretStore(backend, sink=sink)
+        return (await self._custody(sink)).store
+
+    def _operator_handle(self, custody: Custody, plan: ConnectorPlan) -> AccessTokenHandle:
+        """The credential handle the deployment's own verbs (probe, install) use."""
+        broker = custody.broker(registry=lambda: self.registry)
+        return broker.operator_handle(
+            plan.instance, actor_did=causal.actor_did(), plan=credential_plan(plan.manifest)
+        )
+
+    async def _push_credential_change(self, instance: str) -> None:
+        """A credential changed: reach running agents, then look at the connection.
+
+        Native and CLI attachments already read the new value through their handle;
+        the push is for MCP attachments (resolved at session start, C7) and for
+        non-sensitive fields baked in at build.
+        """
+        try:
+            agents = self.registry.get(instance).agents
+        except ExtensionError:
+            agents = ()
+        if agents:
+            try:
+                await self._reconcile_agents(agents)
+            except Exception:  # reason: the credential is stored; activation retries
+                _logger.warning("reconcile after credential change failed: %s", instance)
+        await self._operator_check(instance)
 
     def _pinned_key(self) -> bytes | None:
         """The operator key an extension bundle's signatures are pinned to (REQ-283)."""
@@ -2322,14 +2589,20 @@ class Connections:
         self, plan: ConnectorPlan, instance: str, sink: AuditSink
     ) -> list[DoctorCheck]:
         """One row per declared credential: present or missing, never the value."""
-        store = self._store(sink)
-        rows: list[DoctorCheck] = []
-        for required in plan.secrets:
-            ref = SecretRef(connection=instance, field=required.name)
-            found = await store.get(ref, caller_did=causal.actor_did())
-            status = "present" if found else "missing"
-            rows.append(DoctorCheck(required.name, status, str(self._world.env_file)))
-        return rows
+        try:
+            custody = await self._custody(sink)
+            row = await custody.rows.read(instance)
+        except ExtensionError as exc:
+            return [DoctorCheck(required.name, "error", exc.message) for required in plan.secrets]
+        held = set(row.fields) if row is not None else set()
+        return [
+            DoctorCheck(
+                required.name,
+                "present" if required.name in held else "missing",
+                "sealed custody",
+            )
+            for required in plan.secrets
+        ]
 
     async def _reachability(self, plan: ConnectorPlan, sink: AuditSink) -> DoctorCheck:
         """Probing is the only honest answer to "does this connection work"."""
@@ -2345,6 +2618,7 @@ class Connections:
 __all__ = [
     "BAD_NAME",
     "BUNDLES_DIRNAME",
+    "CREDENTIAL_LOCATION",
     "NOT_INSTALLED",
     "PLAN_TIER_TOO_LOW",
     "TIER_WOULD_RISE",
@@ -2375,6 +2649,7 @@ __all__ = [
     "HostVerdict",
     "InstallReport",
     "McpServerAdded",
+    "MigrationReport",
     "ProbeResult",
     "RemoteLoginLedger",
     "RemoteLoginStart",

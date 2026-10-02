@@ -188,24 +188,29 @@ def test_available_is_empty_when_no_root_exists(tmp_path: Path) -> None:
 # --- resolve_extension_roots --------------------------------------------------
 
 
-def test_resolve_extension_roots_orders_agent_then_env_then_arc_home(
+def _install_roots(home: Path) -> tuple[Path, Path]:
+    """The install's shipped bundles and the operator-installed signed bundles."""
+    shipped = home / "runtime" / "current" / "extensions"
+    installed = home / "extensions"
+    shipped.mkdir(parents=True)
+    installed.mkdir(parents=True)
+    return shipped, installed
+
+
+def test_resolve_extension_roots_orders_env_then_install_then_deployment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D-584's order, with every root that does not exist dropped."""
+    """P18-2 order: code roots in the install first, the operator tree last."""
     agent = tmp_path / "agent"
     (agent / "extensions").mkdir(parents=True)
     env_root = tmp_path / "shared"
     env_root.mkdir()
     home = tmp_path / "arc_home"
-    extensions_dir(home).mkdir(parents=True)
-    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(env_root))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
+    shipped, installed = _install_roots(home)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(env_root))
 
-    assert resolve_extension_roots(agent) == (
-        agent / "extensions",
-        env_root,
-        extensions_dir(home),
-    )
+    assert resolve_extension_roots(agent) == (env_root, shipped, installed, agent / "extensions")
 
 
 def test_resolve_extension_roots_drops_absent_paths(
@@ -213,11 +218,11 @@ def test_resolve_extension_roots_drops_absent_paths(
 ) -> None:
     """A path that is not there is not searched, and is not an error."""
     home = tmp_path / "arc_home"
-    extensions_dir(home).mkdir(parents=True)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
+    shipped, installed = _install_roots(home)
     monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "missing"))
 
-    assert resolve_extension_roots(tmp_path / "no-such-agent") == (extensions_dir(home),)
+    assert resolve_extension_roots(tmp_path / "no-such-agent") == (shipped, installed)
 
 
 def test_resolve_extension_roots_works_without_an_agent(
@@ -225,8 +230,9 @@ def test_resolve_extension_roots_works_without_an_agent(
 ) -> None:
     """There is a fleet-wide answer: a surface may ask before choosing an agent."""
     home = tmp_path / "arc_home"
-    extensions_dir(home).mkdir(parents=True)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
+    shipped, installed = _install_roots(home)
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    extensions_dir(home).mkdir(parents=True)  # the old operator-tree root is not searched
 
-    assert resolve_extension_roots() == (extensions_dir(home),)
+    assert resolve_extension_roots() == (shipped, installed)

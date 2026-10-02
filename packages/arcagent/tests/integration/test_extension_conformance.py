@@ -63,6 +63,7 @@ from arcstore.backends.memory import FakeBackend
 from arctrust import ValidatorsConfig, generate_keypair
 from arctrust.audit import AuditEvent
 from arctrust.paths import module_root
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 import arcagent
 from arcagent.capabilities.capability_registry import CapabilityRegistry
@@ -84,12 +85,14 @@ from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
 from arcagent.extension.attachment import ExtensionAttachment
 from arcagent.extension.bridge import CapabilityBridge
+from arcagent.extension.connection_health import StoreHealthReporter
+from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
+from arcagent.extension.custody_select import Custody, deployment_cipher, open_custody
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
-    connector_env_file,
+    ConnectorPlan,
     install_connector,
     plan_connector,
 )
@@ -269,6 +272,10 @@ def _installed_connectors_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     """
     arc_dir = _arc_dir(tmp_path)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
+    # Bundles under test live OUTSIDE the install home and the operator tree: nothing
+    # that carries code may execute from either unsigned, at any tier. The explicit
+    # override is the operator choosing this root.
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "extensions"))
     bundle = arcbundle.build_bundle(
         Path(arcagent.__file__).resolve().parent / "modules" / "connectors",
         module="connectors",
@@ -289,9 +296,26 @@ def _connections(arc_dir: Path) -> ConnectionRegistry:
     return ConnectionRegistry(arc_dir)
 
 
-def _credential_store(arc_dir: Path) -> SecretStore:
-    """The file the agent's connector module reads, which is what every surface writes."""
-    return SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
+def _custody(backend: FakeBackend, arc_dir: Path | None = None) -> Custody:
+    """The sealed custody the agent's connector module reads, which every surface writes.
+
+    With ``arc_dir`` the cipher is the deployment's own (the operator key the agent
+    derives its custody cipher from), so a started agent can open what this seals.
+    """
+    cipher = make_cipher() if arc_dir is None else deployment_cipher(arc_dir, tier=Tier.PERSONAL)
+
+    async def opener() -> FakeBackend:
+        return backend
+
+    return open_custody(backend, cipher, health=StoreHealthReporter(opener))
+
+
+def _operator_handle(custody: Custody, arc_dir: Path, plan: ConnectorPlan) -> AccessTokenHandle:
+    """What the install's probe reads the connection's credential through."""
+    broker = custody.broker(registry=lambda: ConnectionRegistry(arc_dir))
+    return broker.operator_handle(
+        _INSTANCE, actor_did=_CALLER, plan=credential_plan(plan.manifest)
+    )
 
 
 def _data_dir(agent_dir: Path) -> Path:
@@ -471,9 +495,9 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
     """
     arc_dir = _arc_dir(tmp_path)
     backend = FakeBackend()
-    root = arc_dir / "extensions"
+    root = tmp_path / "extensions"
     _install(root)
-    store = SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
+    custody = _custody(backend, arc_dir)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -487,9 +511,10 @@ async def test_installing_the_reference_extension_reaches_its_own_implementation
         connections=_connections(arc_dir),
         agents=[_AGENT_SLUG],
         secret_values={"reference_token": "unused"},
-        store=store,
+        store=custody.store,
         caller_did=_CALLER,
         state=await _connection_state(backend),
+        credential=_operator_handle(custody, arc_dir, plan),
     )
 
     assert sorted(report.tools) == [_ECHO, _STORE]
@@ -522,10 +547,11 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
     backend = FakeBackend()
-    root = arc_dir / "extensions"
+    root = tmp_path / "extensions"
     _install(root)
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
     connections = _connections(arc_dir)
+    custody = _custody(backend, arc_dir)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -538,9 +564,10 @@ async def test_a_started_agent_serves_the_tools_of_an_installed_connection(
         connections=connections,
         agents=[_AGENT_SLUG],
         secret_values={"reference_token": "unused"},
-        store=_credential_store(arc_dir),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _connection_state(backend),
+        credential=_operator_handle(custody, arc_dir, plan),
     )
     assert _INSTANCE in connections.all(), "the install did not define the connection"
     # The manifest's default gates every outbound call on a signed operator grant, which
@@ -595,10 +622,11 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
     backend = FakeBackend()
-    root = arc_dir / "extensions"
+    root = tmp_path / "extensions"
     _install(root)
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
     connections = _connections(arc_dir)
+    custody = _custody(backend, arc_dir)
     plan = plan_connector(
         extensions_root=[root],
         extension=_BUNDLE,
@@ -611,9 +639,10 @@ async def test_a_started_agent_serves_a_connection_with_its_credential_delivered
         connections=connections,
         agents=[_AGENT_SLUG],
         secret_values={"reference_token": _TOKEN},
-        store=_credential_store(arc_dir),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _connection_state(backend),
+        credential=_operator_handle(custody, arc_dir, plan),
     )
     connections.define(
         _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
@@ -645,7 +674,7 @@ async def test_a_started_agent_refuses_a_connection_whose_credential_is_gone(
     agent_home = _agent_home(tmp_path)
     arc_dir = _arc_dir(tmp_path)
     backend = FakeBackend()
-    _install(arc_dir / "extensions")
+    _install(tmp_path / "extensions")
     config_path = _write_agent_toml(agent_home, connectors_enabled=True, arc_dir=arc_dir)
     _connections(arc_dir).define(
         _INSTANCE, Connection(extension=_BUNDLE, approval="none", agents=(_AGENT_SLUG,))
@@ -678,7 +707,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
     backend = FakeBackend()
     built: list[str] = []
 
-    def _factory(manifest: Any, bundle: Path, secrets: Any) -> Any:
+    def _factory(manifest: Any, bundle: Path, secrets: Any, *, credential: Any = None) -> Any:
         built.append(str(bundle))
         return _import_fixture_module().build_native_attachment({})
 
@@ -695,7 +724,7 @@ async def test_an_unsigned_bundle_is_verified_before_any_of_its_code_runs(
             connections=_connections(_arc_dir(tmp_path)),
             agents=[_AGENT_SLUG],
             secret_values={"reference_token": "unused"},
-            store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
+            store=_custody(backend).store,
             caller_did=_CALLER,
             state=await _connection_state(backend),
             attachment_factory=_factory,

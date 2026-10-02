@@ -18,7 +18,7 @@ from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import ArcStoreSourceSyncStore
 from arctrust.audit import AuditEvent
 from arctrust.identity import AgentIdentity
-from arctrust.paths import arc_team, extensions_dir
+from arctrust.paths import arc_team
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -66,14 +66,17 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 class Acme:
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context.get("credential")
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
+        token = await self._credential.maybe_field("api_token") if self._credential else None
         return ProbeResult(
-            reachable=bool(self._token), tools=await self.describe_tools(), detail="acme says no"
+            reachable=bool(token and token.reveal()),
+            tools=await self.describe_tools(),
+            detail="acme says no",
         )
 
     async def describe_tools(self) -> list[ToolSpec]:
@@ -102,9 +105,11 @@ class Fleet:
         # ARC_TEAM_ROOT outranks ARC_CONFIG_DIR, and the adversarial battery exports it.
         monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
         monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-        monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+        # Code-bearing bundles never load from the operator tree (P18-2); the fleet's
+        # bundle lives on the explicit extensions root, as a shipped bundle would.
+        monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundles"))
         arc_dir = tmp_path / "arc"
-        bundle = extensions_dir(arc_dir) / EXTENSION
+        bundle = tmp_path / "bundles" / EXTENSION
         bundle.mkdir(parents=True)
         (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
         (bundle / "acme_attachment.py").write_text(_ADAPTER, encoding="utf-8")

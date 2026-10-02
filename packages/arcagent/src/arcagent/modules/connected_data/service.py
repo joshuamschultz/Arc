@@ -28,14 +28,7 @@ from arcagent.extension.connection_health import (
     HealthSignal,
     classify,
 )
-from arcagent.extension.credentials import (
-    ConnectedAccount,
-    CredentialLifecycle,
-    CredentialRenewalError,
-    RenewedCredential,
-    RenewFn,
-)
-from arcagent.extension.secrets import Secret, SecretRef, SecretStore
+from arcagent.extension.credentials import CredentialRenewalError
 from arcagent.extension.source import (
     InspectSource,
     SelectSourceResources,
@@ -61,43 +54,6 @@ IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestP
 _TERMINAL_LEASE_SECONDS = 30.0
 
 
-class _NullSecretBackend:
-    """A secret backend that stores nothing — the default when no vault is wired."""
-
-    async def get(self, ref: SecretRef) -> str | None:
-        return None
-
-    async def put(self, ref: SecretRef, value: str) -> None:
-        return None
-
-    async def delete(self, ref: SecretRef) -> bool:
-        return False
-
-
-class _NullCredentialState:
-    """A credential-metadata store that holds nothing.
-
-    With no durable expiry, ``CredentialLifecycle`` finds nothing due and never
-    renews: proactive renewal stays inert until a real credential plane is handed
-    in through the ``credentials`` seam, rather than silently pretending to renew.
-    """
-
-    async def get(self, connection: str) -> None:
-        return None
-
-    async def record_credential_metadata(
-        self,
-        connection: str,
-        *,
-        expires_at: str | None = None,
-        issuer: str | None = None,
-        audience: str | None = None,
-        last_refresh_at: str | None = None,
-        actor_did: str,
-    ) -> bool:
-        return False
-
-
 class _NullHealthReporter:
     """The health path when no arcstore is wired: reports vanish, statuses are unknown.
 
@@ -112,21 +68,10 @@ class _NullHealthReporter:
         return {}
 
 
-async def _unsupported_renew(secret: Secret) -> RenewedCredential:
-    """Placeholder renewer: never invoked while no credential expiry is known."""
-    raise CredentialRenewalError(
-        error_code="renewal_unsupported",
-        message="no credential renewer is wired for this connection",
-    )
+class CredentialRenewal(Protocol):
+    """Proactive renewal of one connection's credential before a sync reads it (P18-2)."""
 
-
-def _default_credential_lifecycle(health: HealthReporter) -> CredentialLifecycle:
-    """A structurally-complete, inert lifecycle (null default for the seam)."""
-    return CredentialLifecycle(
-        secrets=SecretStore(_NullSecretBackend()),
-        state=_NullCredentialState(),
-        health=health,
-    )
+    async def ensure_fresh(self, connection: str) -> bool: ...
 
 
 class SourceSelectionStore(Protocol):
@@ -252,8 +197,7 @@ class ConnectedDataService:
         mapping_proposal_store_opener: Callable[[], Awaitable[MappingProposalStore]] | None = None,
         audit: AuditCallback | None = None,
         interval_seconds: float = 3600.0,
-        credentials: CredentialLifecycle | None = None,
-        credential_renew: RenewFn | None = None,
+        renewals: CredentialRenewal | None = None,
         health: HealthReporter | None = None,
         restart_backoff_seconds: float = 30.0,
         restart_backoff_max_seconds: float = 1800.0,
@@ -284,12 +228,12 @@ class ConnectedDataService:
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
         self._closed = False
-        # Proactive credential renewal (COMP-007) and terminal-failure health
-        # (COMP-008). The lifecycle defaults to an inert null so the seam is
-        # always present; a real credential plane is handed in by the runtime.
+        # Proactive credential renewal (COMP-007, P18-2) and terminal-failure
+        # health (COMP-008). ``renewals`` is the agent's credential broker
+        # registry; None (a standalone agent with no custody) renews nothing here,
+        # and an attachment still renews on demand through its handle.
         self._reporter: HealthReporter = health or _NullHealthReporter()
-        self._credentials = credentials or _default_credential_lifecycle(self._reporter)
-        self._credential_renew = credential_renew or _unsupported_renew
+        self._renewals = renewals
         # A credential that died is rechecked slowly rather than never: it can come
         # back without any act inside Arc (a host binary re-signed in its own
         # keyring), and a latch nothing clears is a source that never syncs again.
@@ -917,15 +861,14 @@ class ConnectedDataService:
         # than only after a call returns 401. A terminal renewal failure has
         # already marked the connection and escalated to the operator path;
         # aborting here keeps the sync from hammering a rejected credential.
-        try:
-            await self._credentials.ensure_fresh(
-                ConnectedAccount(connection=connection_id),
-                renew=self._credential_renew,
-                caller_did=self._agent_did,
-            )
-        except CredentialRenewalError as exc:
-            await self._mark_needs_attention(connection_id, exc.error_code)
-            return False
+        if self._renewals is not None:
+            try:
+                await self._renewals.ensure_fresh(connection_id)
+            except CredentialRenewalError as exc:
+                if not exc.terminal:
+                    raise  # counted: the run-failed path backs off and reports it
+                await self._mark_needs_attention(connection_id, exc.error_code)
+                return False
         selected = self._selected_resources.get(connection_id)
         if selected is None and self._resource_store is not None:
             selected = await self._resource_store.get(connection_id)

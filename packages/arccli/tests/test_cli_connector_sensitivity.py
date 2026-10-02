@@ -72,13 +72,13 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 class AcmeFieldsAttachment:
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context["credential"]
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        if not await self._credential.maybe_field("api_token"):
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(reachable=True, tools=await self.describe_tools(), detail="ok")
 

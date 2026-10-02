@@ -49,6 +49,7 @@ from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -166,6 +167,7 @@ class _World:
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
             state_opener=lambda: _open_fake(self.backend),
+            credential_cipher=make_cipher(),
         )
 
     def registry(self) -> ConnectionRegistry:
@@ -196,6 +198,7 @@ class _World:
             },
             telemetry=None,
             arcstore_opener=lambda: _open_fake(self.backend),
+            credential_cipher=make_cipher(),
             workspace=self.agent_dir / "workspace",
             identity=_identity(),
             config_path=self.agent_dir / "arcagent.toml",

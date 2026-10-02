@@ -20,14 +20,15 @@ mapping of names to values exactly as it did for a ``native`` bundle, hands it t
 **The leak assertion is a filesystem sweep, not a response check.** A sentinel is
 posted, and afterwards every file in the whole temporary Arc world is read: the
 audit chain, the connection state, the agent config, and anything a log wrote.
-The credential may appear in exactly one of them — the agent's own owner-only
-secret store — and a single other hit fails the test. Checking only the response
+The credential may appear in none of them: it lives only sealed in custody, and a
+single hit in any file fails the test. Checking only the response
 body would have missed the audit event, and checking only the audit event would
 have missed the chain.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shlex
@@ -36,10 +37,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.modules.connectors.install import connector_env_file
+from arcagent.extension.custody import CREDENTIAL_COLLECTION
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
-from arctrust.paths import arc_team, extensions_dir
+from arctrust.paths import arc_team
+from packages.arcui.tests.credential_custody import (
+    custody_field,
+    has_custody_row,
+    new_backend,
+    raw_custody_rows,
+)
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -123,7 +130,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect the whole Arc world into ``tmp_path`` so the sweep below is total."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundle_root"))
     return tmp_path
 
 
@@ -134,11 +141,6 @@ _AGENT = "acme_agent"
 def _arc_dir(world: Path) -> Path:
     """The deployment root: connections, credentials and the bundle search path."""
     return world / "arc"
-
-
-def _env_file(world: Path) -> Path:
-    """The one owner-only file a connector credential may be written to."""
-    return connector_env_file(_arc_dir(world))
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
@@ -161,6 +163,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
     app = Starlette(routes=connector_routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
+    app.state.arcstore_backend = new_backend()
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
@@ -169,7 +172,7 @@ def _agent(world: Path) -> tuple[TestClient, str, Path]:
 
 def _write_bundle(world: Path, *, placed: bool = True) -> Path:
     """Put the bundle on the DEPLOYMENT's search path; there is no agent-local one."""
-    bundle = extensions_dir(_arc_dir(world)) / _EXTENSION
+    bundle = world / "bundle_root" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(_manifest(placed=placed), encoding="utf-8")
     return bundle
@@ -283,8 +286,11 @@ def test_a_connection_whose_credential_was_forgotten_reports_signed_out(world: P
     client, _agent_id, _dir = _agent(world)
     _write_bundle(world)
     assert _install(client).status_code == 200
-    _env_file(world).write_text("", encoding="utf-8")
-    _env_file(world).chmod(0o600)
+    asyncio.run(
+        client.app.state.arcstore_backend.mutable_delete(
+            CREDENTIAL_COLLECTION, _INSTANCE, actor_did="did:arc:test:operator"
+        )
+    )
 
     body = client.get(
         f"/api/connections/{_INSTANCE}/auth-status", headers=_headers("viewer")
@@ -321,7 +327,10 @@ def test_the_pasted_value_is_written_only_to_the_agents_own_secret_store(
     assert _SENTINEL not in status.text
     assert _SENTINEL not in doctor.text
     assert _SENTINEL not in "".join(record.getMessage() for record in caplog.records)
-    assert _files_holding(world, _SENTINEL) == [_env_file(world)]
+    assert _files_holding(world, _SENTINEL) == [], "no file holds the credential"
+    backend = client.app.state.arcstore_backend
+    assert custody_field(backend, _arc_dir(world), _INSTANCE, "access_token") == _SENTINEL
+    assert _SENTINEL not in raw_custody_rows(backend), "the stored row is sealed"
 
 
 def test_removing_the_connection_takes_the_credential_back_out(world: Path) -> None:
@@ -335,6 +344,7 @@ def test_removing_the_connection_takes_the_credential_back_out(world: Path) -> N
     assert removed.status_code == 200
     assert removed.json()["removed_secrets"] == ["access_token"]
     assert _files_holding(world, _SENTINEL) == []
+    assert not has_custody_row(client.app.state.arcstore_backend, _arc_dir(world), _INSTANCE)
 
 
 def test_the_web_never_learns_that_a_placement_exists(world: Path) -> None:

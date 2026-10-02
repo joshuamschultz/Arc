@@ -28,6 +28,7 @@ from arctrust.audit import AuditEvent
 from arctrust.paths import arc_team
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -123,6 +124,7 @@ class _World:
             extensions_root=self.root,
             audit=AuditChain.held(_Sink()),
             state_opener=self.open_backend,
+            credential_cipher=make_cipher(),
         )
 
     async def connect(self, instance: str, account: str, agents: list[str], **extra: str) -> None:
@@ -177,6 +179,7 @@ class _World:
             tier="personal",
             human_gate=gate,
             arcstore_opener=self.open_backend,
+            credential_cipher=make_cipher(),
             source_catalog=catalog,
         )
         await Connectors().setup(None)

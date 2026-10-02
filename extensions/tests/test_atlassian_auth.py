@@ -48,10 +48,11 @@ from typing import Any
 import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment
+from arcagent.extension.credential_broker import AccessTokenHandle
+from arcagent.extension.custody import CredentialRowStore, SealedCredentialBackend
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.extension.secrets import (
-    LocalFileSecretBackend,
     Secret,
     SecretRef,
     SecretStore,
@@ -63,6 +64,10 @@ from arcagent.modules.connectors.install import (
     build_attachment,
     install_connector,
 )
+from arcstore.backends.memory import FakeBackend
+
+from extensions.tests.fake_credential import FakeCredentialHandle
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 EXTENSIONS_ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,8 +97,6 @@ BUNDLE_IDS = sorted(_PROBE_PATHS)
 
 async def _connection_state() -> ConnectionStateStore:
     """Open test state through the current backend opener seam."""
-    from arcstore.backends.memory import FakeBackend
-
     backend = FakeBackend()
 
     async def opener() -> FakeBackend:
@@ -197,11 +200,8 @@ def _attachment(bundle: str, *, base_url: str, email: str, token: str) -> Extens
     return build_attachment(
         _manifest(bundle),
         EXTENSIONS_ROOT / bundle,
-        {
-            "base_url": Secret(base_url),
-            "email": Secret(email),
-            "api_token": Secret(token),
-        },
+        {"base_url": Secret(base_url), "email": Secret(email)},
+        credential=FakeCredentialHandle(fields={"api_token": token}),  # type: ignore[arg-type]  # structural stand-in for AccessTokenHandle
     )
 
 
@@ -261,9 +261,15 @@ def _redirected(base_url: str) -> AttachmentFactory:
     """
 
     def build(
-        manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
+        manifest: ExtensionManifest,
+        bundle: Path,
+        secrets: Mapping[str, Secret],
+        *,
+        credential: AccessTokenHandle | None = None,
     ) -> ExtensionAttachment:
-        return build_attachment(manifest, bundle, {**secrets, "base_url": Secret(base_url)})
+        return build_attachment(
+            manifest, bundle, {**secrets, "base_url": Secret(base_url)}, credential=credential
+        )
 
     return build
 
@@ -287,7 +293,7 @@ async def test_a_credential_pasted_with_invisible_whitespace_still_authenticates
     """
     site = _Site()
     manifest = _manifest(bundle)
-    store = SecretStore(LocalFileSecretBackend(tmp_path / "arc.env"))
+    store = SecretStore(SealedCredentialBackend(CredentialRowStore(FakeBackend(), make_cipher())))
     with _serving(site) as base_url:
         report = await install_connector(
             ConnectorPlan(
@@ -312,6 +318,7 @@ async def test_a_credential_pasted_with_invisible_whitespace_still_authenticates
             caller_did=_CALLER,
             state=await _connection_state(),
             attachment_factory=_redirected(base_url),
+            credential=FakeCredentialHandle(fields={"api_token": _TOKEN}),  # type: ignore[arg-type]  # structural stand-in
         )
 
     assert report.tools, "a completed install serves the bundle's verbs"

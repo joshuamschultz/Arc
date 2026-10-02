@@ -32,19 +32,21 @@ import pytest
 from arcagent.connections import HostPrerequisiteDirector
 from arcagent.core.config import ToolConfig, ToolsConfig
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.custody_select import deployment_cipher
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.platforms import host_platform
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
-from arcagent.modules.connectors.install import connector_env_file
 from arcagent.tools.human_gate import HumanGate
 from arcgateway import team_roster
 from arcstore.backends.memory import FakeBackend
 from arctrust.identity import AgentIdentity
-from arctrust.paths import arc_team, extensions_dir
+from arctrust.paths import arc_team
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
+from packages.arcui.tests.credential_custody import custody_field, raw_custody_rows
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -107,13 +109,13 @@ class AcmeAttachment:
     """Reachable exactly when Arc handed it the credential the manifest declares."""
 
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context["credential"]
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        if not await self._credential.maybe_field("api_token"):
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(
             reachable=True, tools=await self.describe_tools(), detail="acme is authenticated"
@@ -371,7 +373,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundle_root"))
     return tmp_path
 
 
@@ -382,12 +384,17 @@ def _arc_dir(world: Path) -> Path:
 
 def _bundles(world: Path) -> Path:
     """The deployment's bundle root. There is deliberately no agent-local one."""
-    return extensions_dir(_arc_dir(world))
+    return world / "bundle_root"
 
 
-def _env_file(world: Path) -> Path:
-    """The one owner-only file every connector credential is written to."""
-    return connector_env_file(_arc_dir(world))
+def _custody_value(client: TestClient, world: Path, connection: str, field: str) -> str | None:
+    """The opened value of a sealed credential field the routes wrote."""
+    return custody_field(client.app.state.arcstore_backend, _arc_dir(world), connection, field)
+
+
+def _no_custody_rows(client: TestClient) -> bool:
+    """True when nothing at all was sealed into custody."""
+    return raw_custody_rows(client.app.state.arcstore_backend) == "[]"
 
 
 def _agent(world: Path) -> tuple[TestClient, str, Path]:
@@ -583,8 +590,10 @@ def test_install_goes_through_the_real_path_and_persists(world: Path) -> None:
         "agents": [_AGENT],
     }
     assert not (agent_dir / "connections.toml").exists(), "nothing is written into the agent"
-    env = _env_file(world).read_text(encoding="utf-8")
-    assert _SENTINEL in env, "the credential belongs in the owner-only env file"
+    assert _custody_value(client, world, _INSTANCE, "api_token") == _SENTINEL, (
+        "the credential belongs in sealed custody"
+    )
+    assert _SENTINEL not in raw_custody_rows(client.app.state.arcstore_backend)
 
     listing = client.get("/api/connections", headers=_headers("viewer")).json()
     assert len(listing["connections"]) == 1
@@ -655,7 +664,7 @@ def test_an_unsatisfied_host_prerequisite_is_400_and_writes_nothing(world: Path)
         }
     ]
     assert _defined(world) == {}
-    assert not _env_file(world).exists()
+    assert _no_custody_rows(client)
     assert _SENTINEL not in resp.text
 
 
@@ -667,7 +676,7 @@ def test_a_missing_declared_secret_is_422_and_writes_nothing(world: Path) -> Non
     assert resp.status_code == 422
     assert "api_token" in resp.json()["error"]
     assert _defined(world) == {}
-    assert not _env_file(world).exists()
+    assert _no_custody_rows(client)
 
 
 def test_a_duplicate_instance_is_409(world: Path) -> None:
@@ -859,6 +868,7 @@ async def _start_agent(world: Path, agent: str, backend: FakeBackend) -> ToolReg
         tier="personal",
         human_gate=gate,
         arcstore_opener=lambda: _open_fake_backend(backend),
+        credential_cipher=deployment_cipher(_arc_dir(world), tier=Tier.PERSONAL),
     )
     try:
         await Connectors().setup(None)
@@ -1010,9 +1020,10 @@ def test_auth_rotates_and_names_only_the_fields(world: Path) -> None:
     assert resp.status_code == 200
     assert resp.json() == {"instance": _INSTANCE, "updated": ["api_token"]}
     assert rotated not in resp.text
-    env = _env_file(world).read_text(encoding="utf-8")
-    assert rotated in env
-    assert _SENTINEL not in env
+    assert _custody_value(client, world, _INSTANCE, "api_token") == rotated
+    raw = raw_custody_rows(client.app.state.arcstore_backend)
+    assert rotated not in raw
+    assert _SENTINEL not in raw
 
 
 def test_the_auth_view_names_the_credential_fields_and_never_a_value(world: Path) -> None:
@@ -1100,7 +1111,8 @@ def test_remove_drops_the_credential_and_the_config_block(world: Path) -> None:
     assert body["removed_secrets"] == ["api_token"]
     assert body["removed_config"] is True
     assert _defined(world) == {}
-    assert _SENTINEL not in _env_file(world).read_text(encoding="utf-8")
+    assert _custody_value(client, world, _INSTANCE, "api_token") is None
+    assert _SENTINEL not in raw_custody_rows(client.app.state.arcstore_backend)
 
 
 def test_removing_an_instance_that_does_not_exist_is_not_an_error(world: Path) -> None:
@@ -1135,7 +1147,7 @@ def test_a_viewer_is_refused_every_mutation(world: Path) -> None:
     assert _grant(client, [_AGENT], token="viewer").status_code == 403
     assert _revoke(client, [_AGENT], token="viewer").status_code == 403
     assert _defined(world) == {}
-    assert not _env_file(world).exists()
+    assert _no_custody_rows(client)
 
 
 def test_an_oversized_install_body_is_413(world: Path) -> None:
@@ -1801,15 +1813,16 @@ def test_the_dashboard_completes_a_native_oauth_connection(
     ) -> tuple[int, Any]:
         return 200, {"refresh_token": "rt-web-durable", "expires_in": 14400}
 
-    monkeypatch.setattr("arcagent.connections._oauth_post", _fake_post)
+    monkeypatch.setattr("arcagent.connections.post_form", _fake_post)
 
     done = client.post(
         "/api/connections/obx/oauth", json={"code": "one-time"}, headers=_headers("operator")
     )
     assert done.status_code == 200, done.text
-    assert "rt-web-durable" in _env_file(world).read_text(encoding="utf-8"), (
-        "the exchanged durable token is persisted to the owner-only env file"
+    assert _custody_value(client, world, "obx", "refresh_token") == "rt-web-durable", (
+        "the exchanged durable token is persisted to sealed custody"
     )
+    assert "rt-web-durable" not in raw_custody_rows(client.app.state.arcstore_backend)
 
 
 def test_completing_oauth_is_operator_only_and_needs_a_code(

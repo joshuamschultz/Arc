@@ -172,7 +172,7 @@ def _monitor(
         return arcagent.Connections.for_deployment(
             audit=arcagent.AuditChain.held(fleet.sink),
             state_opener=opener,
-            attachment_factory=lambda _manifest, _bundle, _secrets: _Attachment(wire),
+            attachment_factory=lambda _manifest, _bundle, _secrets, **_kw: _Attachment(wire),
             clock=clock,
         )
 
@@ -345,7 +345,7 @@ async def test_unknown_error_three_times_is_error_then_recovers_with_one_note(
         return arcagent.Connections.for_deployment(
             audit=arcagent.AuditChain.held(fleet.sink),
             state_opener=_opener(fleet),
-            attachment_factory=lambda _m, _b, _s: _Attachment(wire),
+            attachment_factory=lambda _m, _b, _s, **_kw: _Attachment(wire),
             clock=clock,
         )
 

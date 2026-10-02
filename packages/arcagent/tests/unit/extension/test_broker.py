@@ -33,7 +33,7 @@ from arctrust.audit import AuditEvent
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.broker import MAX_BODY_BYTES, MAX_HEAD_BYTES, CredentialBroker
 from arcagent.extension.launcher import NoConfinement, ProcessDefinition, ProcessLauncher
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
+from arcagent.extension.secrets import SecretRef, SecretStore
 
 CREDENTIAL = "atlassian-refresh-tok-9f2c4e7a1b8d6"
 CALLER = "did:arc:agent:coder"
@@ -137,20 +137,14 @@ def agent_home(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def env_file(agent_home: Path) -> Path:
-    return agent_home / "arc.env"
-
-
-@pytest.fixture
 def ref() -> SecretRef:
     return SecretRef(connection="atlassian_work", field="access_token")
 
 
 @pytest.fixture
-async def secrets(env_file: Path, ref: SecretRef) -> SecretStore:
-    store = SecretStore(LocalFileSecretBackend(env_file))
-    await store.put(ref, CREDENTIAL, caller_did=CALLER)
-    return store
+async def secrets(sealed_secret_store: SecretStore, ref: SecretRef) -> SecretStore:
+    await sealed_secret_store.put(ref, CREDENTIAL, caller_did=CALLER)
+    return sealed_secret_store
 
 
 async def _raw_status(endpoint: str, raw: str) -> str:
@@ -281,9 +275,11 @@ async def test_child_process_never_sees_the_credential(
 # ---------------------------------------------------------------------------
 
 
-async def test_issue_refuses_when_no_credential_is_stored(env_file: Path) -> None:
+async def test_issue_refuses_when_no_credential_is_stored(
+    sealed_secret_store: SecretStore,
+) -> None:
     """Nothing to hold means no grant — never a grant that resolves to nothing."""
-    store = SecretStore(LocalFileSecretBackend(env_file))
+    store = sealed_secret_store
     unstored = SecretRef(connection="never_authorized", field="access_token")
 
     async with CredentialBroker(store) as broker:
@@ -526,9 +522,9 @@ async def test_a_request_with_no_handle_is_refused(secrets: SecretStore, ref: Se
 
 
 async def test_no_artifact_on_disk_holds_the_credential(
-    secrets: SecretStore, ref: SecretRef, env_file: Path, tmp_path: Path
+    secrets: SecretStore, ref: SecretRef, tmp_path: Path
 ) -> None:
-    """After a full cycle, only the secret store itself holds the value."""
+    """After a full cycle, only the sealed custody row holds the value, and not in plaintext."""
     async with RecordingUpstream() as upstream, CredentialBroker(secrets) as broker:
         grant = await broker.issue(ref, upstream=upstream.origin, caller_did=CALLER)
         async with httpx.AsyncClient() as connector:
@@ -538,7 +534,7 @@ async def test_no_artifact_on_disk_holds_the_credential(
             )
 
     hits = _files_containing(tmp_path, CREDENTIAL)
-    assert hits == [env_file], f"credential leaked into {[str(path) for path in hits]}"
+    assert hits == [], f"credential leaked into {[str(path) for path in hits]}"
     assert _files_containing(tmp_path, grant.handle) == [], "the handle is not persisted either"
 
 

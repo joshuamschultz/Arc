@@ -100,16 +100,17 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 
 class AcmeAttachment:
-    """Reachable exactly when Arc handed it the credential the manifest declares."""
+    """Reachable exactly when its credential handle serves the declared credential."""
 
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context.get("credential")
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        token = await self._credential.maybe_field("api_token") if self._credential else None
+        if token is None or not token.reveal():
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(
             reachable=True, tools=await self.describe_tools(), detail="acme is authenticated"
@@ -149,9 +150,10 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     ``ARC_CONFIG_DIR`` and ``ARCSTORE_DATA_DIR`` are redirected so the operator
     key this test mints, the connections it defines, and the WORM chain it writes
-    never touch the real ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` is cleared so a value
-    in the developer's environment cannot add a bundle the assertions do not
-    expect.
+    never touch the real ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` points at this test's
+    own bundle root: code-bearing bundles never load from the operator tree or
+    unsigned from the install home (P18-2), and a value in the developer's
+    environment cannot add a bundle the assertions do not expect.
 
     The agent lives under ``<arc_dir>/team/<name>`` because that is where the
     grant model looks for its tier: the directory name is the grant coordinate,
@@ -159,7 +161,7 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundles"))
 
     agent = tmp_path / "arc" / "team" / "acme_agent"
     agent.mkdir(parents=True)
@@ -198,12 +200,12 @@ def _arc_dir(agent_dir: Path) -> Path:
 
 
 def _write_bundle(agent_dir: Path, manifest: str = _MANIFEST) -> Path:
-    """Put a bundle on the DEPLOYMENT's search path.
+    """Put a bundle on the DEPLOYMENT's search path (``$ARC_EXTENSIONS_ROOT``).
 
     There is deliberately no agent-local extensions root: a connection is the
     deployment's, so its bundle has to be resolvable by every agent granted it.
     """
-    bundle = _arc_dir(agent_dir) / "extensions" / _EXTENSION
+    bundle = agent_dir.parents[2] / "bundles" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / "acme_tui_attachment.py").write_text(_ADAPTER, encoding="utf-8")
@@ -225,9 +227,23 @@ def _connections(agent_dir: Path) -> dict[str, Any]:
     return table
 
 
-def _env_file(agent_dir: Path) -> Path:
-    """Where a connector credential is written — one owner-only file per deployment."""
-    return config_file("connections.env", _arc_dir(agent_dir))
+async def _stored(agent_dir: Path, backend: FakeBackend) -> str:
+    """The credential as sealed custody holds it, opened with the deployment's key.
+
+    Also proves the stored row itself holds no plaintext.
+    """
+    from arctrust import ConnectorSecretCipher, operator_key_for
+
+    raw = str(await backend.mutable_query("connector_credentials"))
+    assert _SENTINEL not in raw, "a sealed row never holds the plaintext"
+    row = await backend.mutable_read("connector_credentials", _INSTANCE)
+    if row is None or "api_token" not in row["fields"]:
+        return ""
+    key = operator_key_for(base=_arc_dir(agent_dir))
+    assert key is not None
+    cipher = ConnectorSecretCipher.for_operator_key(key)
+    sealed = row["fields"]["api_token"]["sealed"]
+    return cipher.open(sealed, scope=_INSTANCE, slot="api_token").decode()
 
 
 async def _open_connect(pilot: Any) -> Any:
@@ -322,8 +338,9 @@ async def test_the_flow_installs_through_the_real_install_path(
     assert defined[_INSTANCE]["approval"] == "outbound"
     assert defined[_INSTANCE]["agents"] == ["acme_agent"]
     assert not (agent_dir / "connections.toml").exists(), "nothing is written into the agent"
-    env = _env_file(agent_dir).read_text(encoding="utf-8")
-    assert _SENTINEL in env, "the credential belongs in the owner-only env file"
+    assert await _stored(agent_dir, state_backend) == _SENTINEL, (
+        "the credential belongs in sealed custody"
+    )
 
 
 async def test_the_credential_never_reaches_the_transcript(
@@ -340,7 +357,7 @@ async def test_the_credential_never_reaches_the_transcript(
         text = _rendered(transcript)
 
     # The value really did flow — so its absence above is a redaction, not a no-op.
-    assert _SENTINEL in _env_file(agent_dir).read_text(encoding="utf-8")
+    assert await _stored(agent_dir, state_backend) == _SENTINEL
     assert _SENTINEL not in text
     assert _INSTANCE in text, "the report itself must still reach the transcript"
 
@@ -365,7 +382,7 @@ async def test_an_unmet_host_prerequisite_ends_the_flow_and_installs_nothing(
 
     assert "brew install definitely-not-installed-xyz" in text
     assert _connections(agent_dir) == {}
-    assert not _env_file(agent_dir).exists()
+    assert not list(_arc_dir(agent_dir).rglob("*.env"))
 
 
 async def test_connections_lists_what_the_agent_already_has(
@@ -417,7 +434,7 @@ async def test_a_bundle_that_will_not_parse_is_named_not_dropped(agent_dir: Path
     installed, and 500-ing the whole listing would hide the working one too.
     """
     _write_bundle(agent_dir)
-    broken = _arc_dir(agent_dir) / "extensions" / "brokenbundle"
+    broken = agent_dir.parents[2] / "bundles" / "brokenbundle"
     broken.mkdir()
     (broken / "extension.toml").write_text(
         '[extension]\nname = "brokenbundle"\n', encoding="utf-8"

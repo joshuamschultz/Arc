@@ -48,6 +48,11 @@ from arcui.approval_notifications import ApprovalNotificationHub
 from arcui.audit import UIAuditLogger, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.connection_health import build_connection_health_monitor
+from arcui.credential_renewer import (
+    CredentialRenewer,
+    build_credential_connections,
+    migrate_at_startup,
+)
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
@@ -668,6 +673,14 @@ def create_app(
             )
             await approval_dispatcher.start()
             starlette_app.state.approval_notification_dispatcher = approval_dispatcher
+        # P18-2: plaintext connector credentials never coexist with a running
+        # service. Migrate them into sealed custody first; refuse to start if that
+        # cannot complete. Then keep OAuth access tokens fresh on a timer.
+        credential_connections = build_credential_connections(starlette_app)
+        await migrate_at_startup(credential_connections())
+        credential_renewer = CredentialRenewer(credential_connections)
+        credential_renewer.start()
+        starlette_app.state.credential_renewer = credential_renewer
         # P18-1: one probe loop per process keeps every connection's health record
         # true and delivers the one operator notice an outage earns.
         connection_health = build_connection_health_monitor(starlette_app)
@@ -692,6 +705,7 @@ def create_app(
             await messaging_lifecycle.aclose()
             if connection_health is not None:
                 await connection_health.stop()
+            await credential_renewer.stop()
             if approval_dispatcher is not None:
                 await approval_dispatcher.stop()
             try:

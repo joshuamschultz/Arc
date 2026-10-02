@@ -20,7 +20,6 @@ and the single-use code must appear nowhere Arc writes.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import shutil
@@ -30,11 +29,10 @@ from typing import Any
 from urllib.parse import quote
 
 import pytest
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef
-from arcagent.modules.connectors.install import connector_env_file
 from arcgateway import team_roster
 from arctrust.identity import AgentIdentity
-from arctrust.paths import arc_team, extensions_dir
+from arctrust.paths import arc_team
+from packages.arcui.tests.credential_custody import new_backend, put_custody_field
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -58,7 +56,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("FAKE_GOG_HOME", str(tmp_path / "gog"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundle_root"))
     # The adversarial battery exports its own team root; this world has its own.
     monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.delenv("GOG_ACCOUNT", raising=False)
@@ -71,7 +69,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     shutil.copytree(
         _BUNDLE,
-        extensions_dir(tmp_path / "arc") / "google_workspace",
+        tmp_path / "bundle_root" / "google_workspace",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     return tmp_path
@@ -95,6 +93,7 @@ def _client(world: Path, *, step_timeout: float | None = None) -> TestClient:
     app = Starlette(routes=connector_routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
+    app.state.arcstore_backend = new_backend()
     app.state.roster_provider = lambda: team_roster.list_team(
         team_root=team_root, online_ids=set()
     )
@@ -321,8 +320,9 @@ def test_flag_text_in_the_account_never_reaches_argv(world: Path, account: str) 
     """Stored before this check existed, or hand-edited: refused at sign-in, not run."""
     client = _client(world)
     assert _add(client, "blackarc", _INDUSTRIAL).status_code == 200
-    backend = LocalFileSecretBackend(connector_env_file(world / "arc"))
-    asyncio.run(backend.put(SecretRef(connection="blackarc", field="account"), account))
+    put_custody_field(
+        client.app.state.arcstore_backend, world / "arc", "blackarc", "account", account
+    )
 
     resp = _begin(client, "blackarc")
 

@@ -9,10 +9,11 @@ NOT expire by default (token rotation is opt-in), so unlike the Dropbox bundle
 there is no refresh-token dance: the operator supplies one durable token and the
 connection keeps working.
 
-Credential handling and transport mirror the other native bundles: the declared
-secret arrives in the factory's context, resolved from Arc's secret store for
-this connected instance and nowhere else; every request carries an explicit
-timeout; and Slack's ``ok:false`` refusal is returned as an answer, never raised.
+Credential handling and transport mirror the other native bundles: the token is
+never held here. The attachment asks its credential handle for the bearer on every
+request, so a re-auth reaches a running agent and a revoked grant stops it; every
+request carries an explicit timeout; and Slack's ``ok:false`` refusal is returned as an
+answer, never raised.
 
 Knowledge model: one document per selected channel/DM. ``sync_source`` lists the
 selected conversations with a version (the latest message ts); ``fetch_source``
@@ -25,9 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import httpx
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
@@ -51,6 +53,9 @@ from arcagent.extension.source import (
     SyncSource,
     SyncSourcePage,
 )
+
+if TYPE_CHECKING:
+    from arcagent.extension.credential_broker import AccessTokenHandle
 
 #: Connecting is held to a short leash — an unreachable host is reported at once,
 #: not waited on — while a read already in flight is given room.
@@ -109,8 +114,8 @@ class SlackAttachment:
         "mpim:read": "mpim",
     }
 
-    def __init__(self, *, user_token: str) -> None:
-        self._token = user_token
+    def __init__(self, credential: AccessTokenHandle) -> None:
+        self._credential = credential
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
         self._selected: tuple[str, ...] = ()
         self._users: dict[str, str] = {}
@@ -132,16 +137,17 @@ class SlackAttachment:
 
     async def probe(self) -> ProbeResult:
         """auth.test — the cheapest call that proves the token and reach."""
-        if not self._token:
+        try:
+            result = await self._call("auth.test", {})
+        except ExtensionError as exc:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    "slack has no user_token — run 'arc connector auth <instance>' "
-                    "and paste your Slack User OAuth Token (xoxp-)."
+                    f"slack has no usable user_token ({exc.code}) — run "
+                    "'arc connector auth <instance>' and paste your Slack User OAuth Token "
+                    "(xoxp-)."
                 ),
             )
-        try:
-            result = await self._call("auth.test", {})
         except httpx.HTTPStatusError as exc:
             return ProbeResult(reachable=False, detail=_refused(exc.response.status_code))
         except (httpx.HTTPError, ValueError) as exc:
@@ -202,6 +208,8 @@ class SlackAttachment:
             return ToolResult(tool=tool, content=await self._dispatch(tool, args))
         except KeyError:
             return _error(tool, f"slack has no tool named {tool!r}")
+        except ExtensionError as exc:
+            return _error(tool, f"slack has no usable credential ({exc.code})")
         except httpx.HTTPStatusError as exc:
             return _error(tool, f"slack answered {exc.response.status_code}: {exc.response.text}")
         except (httpx.HTTPError, ValueError) as exc:
@@ -510,6 +518,10 @@ class SlackAttachment:
         """A source-side call, mapping a refusal to a typed ``SourceError``."""
         try:
             payload = await self._raw(method, params)
+        except ExtensionError as exc:
+            raise SourceError(
+                SourceFailureCode.AUTH_REQUIRED, "Slack credential unavailable"
+            ) from exc
         except httpx.HTTPStatusError as exc:
             raise _source_http_failure(exc.response) from exc
         except httpx.HTTPError as exc:
@@ -534,9 +546,10 @@ class SlackAttachment:
     async def _raw(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """POST one method, retrying a 429 / 5xx / ratelimited under a bounded budget."""
         for attempt in range(_MAX_ATTEMPTS):
+            token = (await self._credential.bearer()).reveal()
             response = await self._http().post(
                 f"{_API}/{method}",
-                headers={"Authorization": f"Bearer {self._token}"},
+                headers={"Authorization": f"Bearer {token}"},
                 data={k: str(v) for k, v in params.items()},
             )
             if response.status_code == 429 or response.status_code >= 500:
@@ -670,11 +683,6 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _credential(context: dict[str, Any], key: str) -> str:
-    """One declared credential out of the context Arc resolved from its secret store."""
-    return str(context.get(key) or "")
-
-
 def build_native_attachment(context: dict[str, Any]) -> SlackAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
-    return SlackAttachment(user_token=_credential(context, "user_token"))
+    return SlackAttachment(context["credential"])

@@ -11,9 +11,10 @@ from typing import Any
 import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.secrets import Secret
 from arcagent.extension.source import InspectSource, ListSourceResources, SelectSourceResources
 from arcagent.modules.connectors.install import build_attachment
+
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 _BUNDLE = Path(__file__).resolve().parents[1] / "postgresql"
 
@@ -93,8 +94,11 @@ def _attachment(connection_id: str = "") -> Any:
     wrapper: Any = build_attachment(
         manifest,
         _BUNDLE,
-        {"database_dsn": Secret("postgresql://reader:secret@db.example/app")},
+        {},
         connection_id=connection_id,
+        credential=FakeCredentialHandle(  # type: ignore[arg-type]  # structural stand-in
+            fields={"database_dsn": "postgresql://reader:secret@db.example/app"}
+        ),
     )
     return wrapper._delegate
 
@@ -163,7 +167,12 @@ def _attachment_for_dsn(dsn: str) -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
-    wrapper: Any = build_attachment(manifest, _BUNDLE, {"database_dsn": Secret(dsn)})
+    wrapper: Any = build_attachment(
+        manifest,
+        _BUNDLE,
+        {},
+        credential=FakeCredentialHandle(fields={"database_dsn": dsn}),  # type: ignore[arg-type]  # structural stand-in for AccessTokenHandle
+    )
     return wrapper._delegate
 
 

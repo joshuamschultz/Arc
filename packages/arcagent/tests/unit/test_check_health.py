@@ -119,7 +119,9 @@ class _World:
         async def open_backend() -> FakeBackend:
             return self.backend
 
-        def factory(_manifest: Any, _bundle: Any, _secrets: Any) -> _Attachment:
+        def factory(
+            _manifest: Any, _bundle: Any, _secrets: Any, *, credential: Any = None
+        ) -> _Attachment:
             if provider.build_error is not None:
                 raise provider.build_error
             return _Attachment(provider)
@@ -224,7 +226,7 @@ async def test_a_missing_credential_is_terminal(tmp_path: Path, provider: _Provi
     world = _world(tmp_path, provider, '[health]\nprobe = "attachment"')
     await world.install()
     with world.connections._audit.open() as sink:
-        await world.connections._store(sink).delete(
+        await (await world.connections._store(sink)).delete(
             SecretRef(connection=_INSTANCE, field="api_token"), caller_did="did:arc:test"
         )
 

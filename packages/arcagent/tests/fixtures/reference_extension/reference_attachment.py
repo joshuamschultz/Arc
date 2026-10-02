@@ -67,6 +67,16 @@ class ReferenceAttachment:
         self.stored: dict[str, str] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.credential = str(self.context.get(CREDENTIAL_NAME, ""))
+        self._handle = self.context.get("credential")
+        if self.credential:
+            self.stored[FINGERPRINT_KEY] = fingerprint(self.credential)
+
+    async def _hydrate(self) -> None:
+        """Read the credential through the handle at call time, as a real attachment must."""
+        if self._handle is None:
+            return
+        found = await self._handle.maybe_field(CREDENTIAL_NAME)
+        self.credential = "" if found is None else found.reveal()
         if self.credential:
             self.stored[FINGERPRINT_KEY] = fingerprint(self.credential)
 
@@ -87,6 +97,7 @@ class ReferenceAttachment:
         surface that only ever sees a ``ProbeResult`` can still tell a connected
         account from an unconfigured one.
         """
+        await self._hydrate()
         held = "authenticated" if self.credential else "unauthenticated"
         return ProbeResult(
             reachable=True,
@@ -129,6 +140,7 @@ class ReferenceAttachment:
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         """Execute one call. Records it so a caller holding this instance can see it."""
         self.calls.append((tool, dict(args)))
+        await self._hydrate()
         if tool == ECHO_TOOL:
             message = str(args.get("message", ""))
             return ToolResult(

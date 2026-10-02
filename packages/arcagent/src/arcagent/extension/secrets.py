@@ -1,31 +1,25 @@
-"""SPEC-062 COMP-010 — the secret store seam for connector credentials.
+"""SPEC-062 COMP-010 / P18-2 — the secret store seam for connector credentials.
 
-One interface, :class:`SecretStore`, keyed by ``(connection, field)``. Which store
-backs it is a tier decision made once in :func:`select_secret_backend`, never a
-branch at a call site (REQ-294): personal keeps credentials in the deployment's
-owner-only ``connections.env``, enterprise and federal point the same calls at an
-external vault.
+One interface, :class:`SecretStore`, keyed by ``(connection, field)``. Since P18-2
+every connector credential is held in a sealed arcstore custody row
+(:mod:`arcagent.extension.custody`); there is no plaintext file backend and no
+per-tier branch at a call site. The tier decides only which cipher seals the row
+(:mod:`arcagent.extension.custody_select`).
 
-Three properties are load-bearing rather than tidy:
+Two properties are load-bearing rather than tidy:
 
 * **A value only ever exists in the store.** Everything that crosses a boundary is
   a :class:`Secret`, whose ``repr``/``str``/``format`` render ``Secret(***)`` — so a
   credential interpolated into a log line, an exception, or a prompt renders as a
   placeholder instead of the token (REQ-265, LLM02/LLM07). Refusals name the
   coordinate and never echo the rejected material.
-* **A coordinate is untrusted input.** It becomes an environment key and a vault
-  path, so it is validated against a strict lowercase pattern. Lowercase is not
-  cosmetic: the local backend upper-cases coordinates into an env key, and
-  permitting ``Work`` alongside ``work`` would fold two connections onto one cell
-  — one account silently reading another's credential.
-* **A write is atomic and never a downgrade.** The local backend writes a private
-  temp file, fsyncs, and ``os.replace``s it, so an interrupted write leaves the
-  previous store rather than a truncated one (the torn-credential half of
-  REQ-288). A vault that cannot accept a write refuses loudly instead of falling
-  back to a local file, which would quietly undo an operator's hardening.
+* **A coordinate is untrusted input.** It is bound into the ciphertext as
+  associated data, so it is validated against a strict lowercase pattern:
+  permitting ``Work`` alongside ``work`` would fold two connections onto one cell.
 
-The env-file shape follows ``arcgateway/connect.py`` — the existing writer for a
-credential the gateway reads — so an operator sees one file format, not two.
+:class:`EnvFile` stays: it is the owner-only ``KEY=value`` file provider API keys
+live in (``arc.env``), and the one-time migration of the legacy plaintext
+connector file reads it through it.
 """
 
 from __future__ import annotations
@@ -33,30 +27,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
-import logging
 import os
 import stat
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.errors import ExtensionError
-from arcagent.core.tier import Tier
-from arcagent.core.vault import VaultBackend, VaultUnreachable
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 
-_logger = logging.getLogger("arcagent.extension.secrets")
-
-#: Prefix for the env keys this store owns, so an operator can see at a glance which
-#: entries in ``arc.env`` are connector credentials.
-_ENV_PREFIX = "ARC_SECRET"
-
-#: Root of the vault namespace this store owns.
-_VAULT_ROOT = "arc/connectors"
 _MAX_ENV_FILE_BYTES = 1024 * 1024
 _MAX_ENV_ENTRIES = 2048
 _MAX_ENV_VALUE_CHARS = 64 * 1024
@@ -133,16 +116,6 @@ class SecretRef:
                     details={"coordinate": name},
                 )
 
-    @property
-    def env_key(self) -> str:
-        """The env-file key for this coordinate, as the store writes it."""
-        return f"{_ENV_PREFIX}_{self.connection}_{self.field}".upper()
-
-    @property
-    def vault_path(self) -> str:
-        """The vault path for this coordinate."""
-        return f"{_VAULT_ROOT}/{self.connection}/{self.field}"
-
     def __str__(self) -> str:
         return f"{self.connection}/{self.field}"
 
@@ -156,14 +129,7 @@ class SecretBackend(Protocol):
 
     async def delete(self, ref: SecretRef) -> bool: ...
 
-
-@runtime_checkable
-class WritableVault(Protocol):
-    """A vault that also accepts writes — what unattended renewal requires."""
-
-    async def set_secret(self, path: str, value: str) -> None: ...
-
-    async def delete_secret(self, path: str) -> bool: ...
+    async def present(self, connection: str) -> frozenset[str]: ...
 
 
 class EnvFile:
@@ -174,11 +140,9 @@ class EnvFile:
     complete read-modify-replace transaction, so concurrent processes cannot
     overwrite a newer snapshot.
 
-    The recipe is shared rather than copied: connector credentials
-    (:class:`LocalFileSecretBackend`) and provider API keys
-    (:class:`arcagent.keys.KeyStore`) are the same kind of file with the same
-    exposure, and a second implementation is a second place to get a permission
-    bit wrong.
+    Provider API keys (:class:`arcagent.keys.KeyStore`) live in one of these, and
+    the one-time migration reads the legacy plaintext connector file
+    through it, so its ownership and ``O_NOFOLLOW`` checks apply there too.
     """
 
     def __init__(self, path: Path) -> None:
@@ -319,69 +283,6 @@ class EnvFile:
         )
 
 
-class LocalFileSecretBackend:
-    """The default store: one owner-only env file for the deployment (D-555).
-
-    One file rather than one per agent, because a connection is one account: two
-    agents granted it read the same entry, so a rotation is one write and a revoke
-    leaves nothing behind. Contention is an operator running the CLI while agents
-    are up, which the atomic rewrite already survives.
-    """
-
-    def __init__(self, env_file: Path) -> None:
-        self._file = EnvFile(env_file)
-
-    async def get(self, ref: SecretRef) -> str | None:
-        return (await self._file.read()).get(ref.env_key)
-
-    async def put(self, ref: SecretRef, value: str) -> None:
-        await self._file.put(ref.env_key, value)
-
-    async def delete(self, ref: SecretRef) -> bool:
-        return await self._file.delete(ref.env_key)
-
-
-class VaultSecretBackend:
-    """The external store enterprise and federal deployments point the same calls at.
-
-    Reads go through the existing :class:`~arcagent.core.vault.VaultBackend`
-    Protocol, so every backend the project already has works unchanged. Writes
-    need more than that Protocol offers; a vault that cannot take one refuses
-    rather than letting the caller fall back to a file on the host.
-    """
-
-    def __init__(self, vault: VaultBackend) -> None:
-        self._vault = vault
-
-    async def get(self, ref: SecretRef) -> str | None:
-        try:
-            return await self._vault.get_secret(ref.vault_path)
-        except VaultUnreachable as exc:
-            raise ExtensionError(
-                code="SECRET_STORE_UNREACHABLE",
-                message=f"the vault holding {ref} could not be reached",
-                details={"secret": str(ref)},
-            ) from exc
-
-    async def put(self, ref: SecretRef, value: str) -> None:
-        await self._writable(ref).set_secret(ref.vault_path, value)
-
-    async def delete(self, ref: SecretRef) -> bool:
-        return await self._writable(ref).delete_secret(ref.vault_path)
-
-    def _writable(self, ref: SecretRef) -> WritableVault:
-        if not isinstance(self._vault, WritableVault):
-            raise ExtensionError(
-                code="SECRET_STORE_READ_ONLY",
-                message=(
-                    f"the configured vault cannot store {ref}; provision the secret in "
-                    f"the vault at {ref.vault_path} instead"
-                ),
-                details={"secret": str(ref), "vault_path": ref.vault_path},
-            )
-        return self._vault
-
-
 class SecretStore:
     """The one interface connector code calls, whichever store is behind it."""
 
@@ -401,6 +302,10 @@ class SecretStore:
         await self._backend.put(ref, value)
         self._audit("secret.write", ref, caller_did, "allow")
 
+    async def present(self, connection: str) -> frozenset[str]:
+        """Which fields are stored for ``connection``. Names only; nothing is opened."""
+        return await self._backend.present(connection)
+
     async def delete(self, ref: SecretRef, *, caller_did: str) -> bool:
         """Forget a credential. True when one was removed."""
         removed = await self._backend.delete(ref)
@@ -409,10 +314,10 @@ class SecretStore:
 
     @staticmethod
     def _validate(ref: SecretRef, value: str) -> None:
-        """Refuse material that could forge a second entry, naming only the coordinate.
+        """Refuse empty values and control characters, naming only the coordinate.
 
-        The local store is line-oriented, so an unchecked newline in a value is a
-        write to a key the caller did not ask for.
+        A line break or NUL in a credential is never legitimate and is how a value
+        smuggles a second header or argument into whatever consumes it.
         """
         if not value:
             raise ExtensionError(
@@ -427,6 +332,10 @@ class SecretStore:
                 details={"secret": str(ref)},
             )
 
+    @property
+    def _store_name(self) -> str:
+        return str(getattr(self._backend, "store_name", type(self._backend).__name__))
+
     def _audit(self, action: str, ref: SecretRef, caller_did: str, outcome: str) -> None:
         """Record the credential carve-out: coordinates, caller, outcome — no value."""
         if self._sink is None:
@@ -437,53 +346,18 @@ class SecretStore:
                 action=action,
                 target=f"secret:{ref}",
                 outcome=outcome,
-                extra={"store": type(self._backend).__name__},
+                extra={"store": self._store_name},
             ),
             self._sink,
         )
 
 
-def select_secret_backend(
-    tier: Tier, *, env_file: Path | None = None, vault: VaultBackend | None = None
-) -> SecretBackend:
-    """Choose the backing store for a deployment. The only place tier is read.
-
-    A configured vault always wins. Without one, federal refuses rather than
-    writing a credential to the host — silently downgrading the store an operator
-    hardened is the failure this guard exists to prevent.
-    """
-    if vault is not None:
-        return VaultSecretBackend(vault)
-    if tier is Tier.FEDERAL:
-        raise ExtensionError(
-            code="SECRET_STORE_VAULT_REQUIRED",
-            message="federal deployments must configure an external vault for connector secrets",
-            details={"tier": str(tier)},
-        )
-    if env_file is None:
-        raise ExtensionError(
-            code="SECRET_STORE_UNCONFIGURED",
-            message="no vault and no deployment secret file were configured",
-            details={"tier": str(tier)},
-        )
-    if tier is Tier.ENTERPRISE:
-        _logger.warning(
-            "no vault configured; connector secrets for this deployment are stored at %s",
-            env_file,
-        )
-    return LocalFileSecretBackend(env_file)
-
-
 __all__ = [
     "REDACTED",
     "EnvFile",
-    "LocalFileSecretBackend",
     "Secret",
     "SecretBackend",
     "SecretRef",
     "SecretStore",
-    "VaultSecretBackend",
-    "WritableVault",
     "redact",
-    "select_secret_backend",
 ]

@@ -1,17 +1,14 @@
 """Dropbox files API adapter — the whole third-party side of the dropbox bundle.
 
-Speaks OAuth2 the way Dropbox recommends for an unattended app. The operator
-supplies three values once: the app key and secret that identify the app, and a
-refresh token that does not expire. From those this adapter mints a short-lived
-access token on demand (POST oauth2/token, grant_type=refresh_token) and caches
-it until just before it expires, so a connection made once keeps working with no
-further sign-in — the property the old `dbxcli` short-lived token could not hold.
+Dropbox speaks OAuth2, and Arc owns that side: it holds the refresh token, renews
+the short-lived access token, and commits the renewed one to sealed custody. This
+adapter never mints or stores a token. It asks its credential handle for a fresh
+bearer at the header site of every request, and on a 401 it tells the handle to
+invalidate so the next ask forces one renewal.
 
-Credential handling and the transport rules mirror the confluence bundle's, for
-the same reasons: the declared secrets arrive in the factory's context, resolved
-from Arc's secret store for this connected instance and from nowhere else; every
-request carries an explicit timeout; and a path is data carried in the request
-body or the `Dropbox-API-Arg` header, never spliced into a URL.
+The transport rules mirror the confluence bundle's: every request carries an
+explicit timeout, and a path is data carried in the request body or the
+`Dropbox-API-Arg` header, never spliced into a URL.
 
 Dropbox splits its API across two hosts: RPC calls (list, search, metadata) go to
 api.dropboxapi.com with a JSON body; file bytes (download, upload) go to
@@ -24,15 +21,14 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
-import time
 from datetime import datetime
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import httpx
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
-    RequirementKind,
     ToolOutcome,
     ToolResult,
     ToolSpec,
@@ -53,6 +49,9 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+if TYPE_CHECKING:
+    from arcagent.extension.credential_broker import AccessTokenHandle
+
 #: One flat 30 seconds covered both reaching Dropbox and reading a file from it,
 #: so any document that took longer than half a minute to download failed the
 #: whole sync with a ReadTimeout. Connecting is still held to a short leash —
@@ -67,16 +66,9 @@ _TIMEOUT: Final = httpx.Timeout(connect=10.0, read=300.0, write=120.0, pool=10.0
 #: read from it rather than restated.
 _TRANSFER_TOOL_TIMEOUT: Final = int(max(_TIMEOUT.read or 0.0, _TIMEOUT.write or 0.0))
 
-#: Where a refresh token is exchanged for a short-lived access token.
-_OAUTH_ENDPOINT: Final = "https://api.dropbox.com/oauth2/token"
-
 #: The RPC host (list, search, metadata, account) and the content host (bytes).
 _API: Final = "https://api.dropboxapi.com"
 _CONTENT: Final = "https://content.dropboxapi.com"
-
-#: Refresh a cached access token this many seconds before it actually expires, so
-#: a token never dies mid-request against a clock that is a little off.
-_EXPIRY_SLACK: Final = 60.0
 
 #: A downloaded file is returned as text; anything past this is truncated so a
 #: single large file cannot flood the model's context. The marker names the cut.
@@ -95,13 +87,8 @@ _ARCHIVE_SOURCE_FOLDER: Final = "Meetings"
 class DropboxAttachment:
     """Reaches the Dropbox files API over HTTPS, through the four hook methods."""
 
-    def __init__(self, *, app_key: str, app_secret: str, refresh_token: str) -> None:
-        self._app_key = app_key
-        self._app_secret = app_secret
-        self._refresh_token = refresh_token
-        self._token = ""
-        self._token_expiry = 0.0
-        self._token_lock = asyncio.Lock()
+    def __init__(self, credential: AccessTokenHandle) -> None:
+        self._credential = credential
         self._source_root = ""
         self._client = httpx.AsyncClient(timeout=_TIMEOUT)
 
@@ -124,29 +111,21 @@ class DropboxAttachment:
     # --- the hook contract ---------------------------------------------------
 
     def requirements(self) -> list[Requirement]:
-        """Three credentials and no host prerequisite: the transport is httpx."""
-        return [
-            Requirement(kind=RequirementKind.CREDENTIAL, name=name, instruction=instruction)
-            for name, instruction in (
-                ("app_key", "The Dropbox app's App key, from its Settings tab"),
-                ("app_secret", "The Dropbox app's App secret, from its Settings tab"),
-                ("refresh_token", "A Dropbox refresh token from an offline authorization"),
-            )
-        ]
+        """No sensitive field and no host prerequisite: Arc holds the credential."""
+        return []
 
     async def probe(self) -> ProbeResult:
         """Read the current account. The cheapest call that proves auth and reach."""
-        missing = self._missing()
-        if missing:
+        try:
+            account = await self._rpc("/2/users/get_current_account", None)
+        except ExtensionError as exc:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    f"dropbox has no credential for {', '.join(missing)} — "
-                    f"run 'arc connector auth <instance>' to supply them."
+                    f"dropbox has no usable credential ({exc.code}) — "
+                    f"run 'arc connector authorize <instance>' to connect it."
                 ),
             )
-        try:
-            account = await self._rpc("/2/users/get_current_account", None)
         except httpx.HTTPStatusError as exc:
             return ProbeResult(reachable=False, detail=_refused(exc.response.status_code))
         except (httpx.HTTPError, ValueError) as exc:
@@ -246,6 +225,8 @@ class DropboxAttachment:
             return ToolResult(tool=tool, content=await self._dispatch(tool, args))
         except KeyError:
             return _error(tool, f"dropbox has no tool named {tool!r}")
+        except ExtensionError as exc:
+            return _error(tool, f"dropbox has no usable credential ({exc.code})")
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             return _error(tool, f"dropbox answered {status}: {exc.response.text}")
@@ -356,6 +337,8 @@ class DropboxAttachment:
                 headers={"Dropbox-API-Arg": json.dumps({"path": path})},
                 stream=True,
             )
+        except ExtensionError as exc:
+            raise _credential_failure(exc) from exc
         except httpx.HTTPStatusError as exc:
             raise _source_http_failure(exc.response) from exc
         except httpx.HTTPError as exc:
@@ -562,6 +545,8 @@ class DropboxAttachment:
     async def _source_rpc(self, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
         try:
             return await self._rpc(path, body)
+        except ExtensionError as exc:
+            raise _credential_failure(exc) from exc
         except httpx.HTTPStatusError as exc:
             raise _source_http_failure(exc.response) from exc
         except httpx.HTTPError as exc:
@@ -588,7 +573,7 @@ class DropboxAttachment:
     ) -> httpx.Response:
         refreshed = False
         for attempt in range(_MAX_ATTEMPTS):
-            token = await self._access_token()
+            token = (await self._credential.bearer()).reveal()
             client = self._http
             request = client.build_request(
                 method,
@@ -599,7 +584,7 @@ class DropboxAttachment:
             response = await client.send(request, stream=stream)
             if response.status_code == 401 and not refreshed:
                 await response.aclose()
-                self._token = ""
+                await self._credential.invalidate()
                 refreshed = True
                 continue
             if response.status_code == 429 or response.status_code >= 500:
@@ -615,66 +600,22 @@ class DropboxAttachment:
             return response
         raise SourceError(SourceFailureCode.TRANSIENT, "Dropbox retry budget exhausted")
 
-    async def _access_token(self) -> str:
-        """A live access token, minted from the refresh token and cached until expiry.
-
-        The refresh token does not expire; the access token it mints lasts a few
-        hours. Caching it means a burst of verbs shares one mint, and the slack
-        means a token is renewed before it can die against a skewed clock.
-        """
-        async with self._token_lock:
-            if self._token and time.monotonic() < self._token_expiry:
-                return self._token
-            response = await self._http.post(
-                _OAUTH_ENDPOINT,
-                data={"grant_type": "refresh_token", "refresh_token": self._refresh_token},
-                auth=(self._app_key, self._app_secret),
-            )
-            payload = _body(response)
-            token = payload.get("access_token")
-            if not isinstance(token, str) or not token:
-                msg = "Dropbox returned no access token for the refresh token"
-                raise ValueError(msg)
-            self._token = token
-            lifetime = float(payload.get("expires_in", 14400)) - _EXPIRY_SLACK
-            self._token_expiry = time.monotonic() + lifetime
-            return token
-
-    def _missing(self) -> list[str]:
-        """Which of the three credentials this attachment does not have."""
-        held = {
-            "app_key": self._app_key,
-            "app_secret": self._app_secret,
-            "refresh_token": self._refresh_token,
-        }
-        return sorted(name for name, value in held.items() if not value)
-
 
 def _refused(status: int) -> str:
     """What the operator should do about the status Dropbox answered the probe with.
 
     Its own copy, deliberately: this folder imports nothing from Arc but the
     hook's value types, which is what makes the bundle deletable. 401 means the
-    refresh token or the app key/secret pair is wrong or revoked — Arc mints the
-    access token itself, so a bad token here is one of those three. 403 means the
+    access token was refused even after Arc renewed it, so the grant behind it was
+    revoked or the app credentials changed. 403 means the
     app is not permitted the scope a verb needs — the account signed in, but the
     app was not granted files access on its Permissions tab.
     """
-    if status == 400:
-        # Dropbox's OAuth2 token endpoint answers 400 invalid_grant for a bad,
-        # expired, malformed, or truncated refresh token — the actual failure an
-        # operator hits, and the one the generic message below hid.
+    if status in (400, 401):
         return (
-            "Dropbox rejected the refresh token (invalid_grant): it is malformed, expired, "
-            "or revoked. Re-authorize the app (token_access_type=offline) and paste the new "
-            "refresh token — a valid one is ~64 characters."
-        )
-    if status == 401:
-        return (
-            "Dropbox refused to mint an access token. The refresh token may be revoked, "
-            "or the app key and app secret may not be the pair that issued it. Re-authorize "
-            "the app (token_access_type=offline) and paste the new refresh token, or check "
-            "the key and secret on the app's Settings tab."
+            "Dropbox refused the access token even after a renewal. The authorization may "
+            "be revoked, or the app key and secret may have changed. Reconnect the account "
+            "with 'arc connector authorize <instance>'."
         )
     if status == 403:
         return (
@@ -844,8 +785,22 @@ def _modified_revision(value: Any) -> int:
         return 1
 
 
+#: Credential errors only a person can fix. Anything else (a busy renewal, a
+#: provider outage during renewal, a stale token) is transient and retried.
+_TERMINAL_CREDENTIAL_CODES: Final = frozenset(
+    {"CREDENTIAL_MISSING", "CREDENTIAL_UNREADABLE", "CREDENTIAL_NOT_GRANTED"}
+)
+
+
+def _credential_failure(exc: ExtensionError) -> SourceError:
+    """Map a credential-handle refusal onto the source taxonomy without over-escalating."""
+    terminal = exc.code in _TERMINAL_CREDENTIAL_CODES or bool(getattr(exc, "terminal", False))
+    code = SourceFailureCode.AUTH_REQUIRED if terminal else SourceFailureCode.TRANSIENT
+    return SourceError(code, f"Dropbox credential unavailable ({exc.code})")
+
+
 def _schema(
-    properties: dict[str, dict[str, str]], *, required: list[str] | None = None
+    properties: dict[str, dict[str, Any]], *, required: list[str] | None = None
 ) -> dict[str, Any]:
     """One tool's input schema, closed to anything the verb did not declare."""
     return {
@@ -864,15 +819,6 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _credential(context: dict[str, Any], key: str) -> str:
-    """One declared credential out of the context Arc resolved from its secret store."""
-    return str(context.get(key) or "")
-
-
 def build_native_attachment(context: dict[str, Any]) -> DropboxAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
-    return DropboxAttachment(
-        app_key=_credential(context, "app_key"),
-        app_secret=_credential(context, "app_secret"),
-        refresh_token=_credential(context, "refresh_token"),
-    )
+    return DropboxAttachment(context["credential"])

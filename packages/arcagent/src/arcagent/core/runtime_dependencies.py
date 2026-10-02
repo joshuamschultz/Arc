@@ -18,6 +18,8 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
 from arcagent.core.telemetry import AgentTelemetry, DurableTelemetryAuditSink
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.credential_broker import CredentialRenewals
+from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.source_catalog import SourceCatalog
 from arcagent.tools._egress import EgressProxy
 
@@ -58,6 +60,10 @@ class RuntimeDependencies:
     trigger_issuer: RunTriggerIssuer | None = None
     prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None
     source_catalog: SourceCatalog = field(default_factory=SourceCatalog)
+    #: Seals/opens connector credentials (P18-2). None: this agent holds no custody.
+    credential_cipher: CredentialCipher | None = None
+    #: The agent's live credential broker, published for the sync loop to renew with.
+    credential_renewals: CredentialRenewals = field(default_factory=CredentialRenewals)
     #: The agent's audit sink: telemetry for ordinary events, ``write_durable``
     #: into the operator-signed WORM chain for records that must not be lost.
     audit_sink: DurableTelemetryAuditSink | None = None
@@ -125,6 +131,8 @@ class DependencyKey(Enum):
     ARCSTORE_OPENER = "arcstore_opener"
     SOURCE_SYNC_STORE_OPENER = "source_sync_store_opener"
     SOURCE_CATALOG = "source_catalog"
+    CREDENTIAL_CIPHER = "credential_cipher"
+    CREDENTIAL_RENEWALS = "credential_renewals"
     FLEET = "fleet"
     CONTROL_ARTIFACT_AUTHORITY = "control_artifact_authority"
     CONTROL_TENANT_ID = "control_tenant_id"

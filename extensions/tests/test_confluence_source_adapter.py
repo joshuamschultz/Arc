@@ -13,11 +13,14 @@ from arcagent.extension.source import (
 )
 
 from extensions.confluence.arc_ext_confluence import ConfluenceAttachment
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 
 async def test_confluence_source_selects_syncs_and_fetches_pages() -> None:
     attachment = ConfluenceAttachment(
-        base_url="https://arc.atlassian.net", email="arc@example.test", api_token="secret"
+        base_url="https://arc.atlassian.net",
+        email="arc@example.test",
+        credential=FakeCredentialHandle(fields={"api_token": "secret"}),
     )
 
     async def get(path: str, params: dict[str, str]) -> dict[str, Any]:
@@ -67,7 +70,9 @@ async def test_confluence_source_selects_syncs_and_fetches_pages() -> None:
 
 async def test_confluence_source_walks_all_spaces() -> None:
     attachment = ConfluenceAttachment(
-        base_url="https://arc.atlassian.net", email="arc@example.test", api_token="secret"
+        base_url="https://arc.atlassian.net",
+        email="arc@example.test",
+        credential=FakeCredentialHandle(fields={"api_token": "secret"}),
     )
 
     async def get(path: str, params: dict[str, str]) -> dict[str, Any]:

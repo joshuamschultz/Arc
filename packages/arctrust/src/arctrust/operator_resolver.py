@@ -145,6 +145,22 @@ def operator_public_key_for(security: Any = None, *, base: Base = None) -> bytes
         return None
 
 
+def operator_key_for(
+    security: Any = None, *, base: Base = None, bootstrap: bool = False
+) -> OperatorKey | None:
+    """The operator key itself, for a caller that derives a custody key from its seed.
+
+    Only ``in_process`` custody has a seed in this process; ``vault_transit``
+    answers ``None`` so the caller uses its Transit cipher instead (or refuses).
+    ``bootstrap`` mints the on-disk key when absent, which only a personal-tier
+    caller may ask for; otherwise a missing key raises ``FileNotFoundError``.
+    """
+    sec = security if security is not None else machine_security(base)
+    if sec.custody == VAULT_TRANSIT:
+        return None
+    return OperatorKey.load(operator_key_file(sec, base), generate_if_absent=bootstrap)
+
+
 def bootstrap_operator_signer(security: Any = None, *, base: Base = None) -> Signer:
     """Mint the on-disk operator key if absent (personal tier), then sign with it.
 

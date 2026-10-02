@@ -6,8 +6,9 @@ import asyncio
 import hashlib
 import importlib
 import mimetypes
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
@@ -32,6 +33,9 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+if TYPE_CHECKING:
+    from arcagent.extension.credential_broker import AccessTokenHandle
+
 _MAX_READ = 20_000_000
 
 
@@ -42,15 +46,13 @@ class S3Attachment:
         self,
         *,
         access_key_id: str,
-        secret_access_key: str,
-        session_token: str,
+        credential: AccessTokenHandle,
         region: str,
         endpoint_url: str,
         endpoint_configured: bool = True,
     ) -> None:
         self._access_key_id = access_key_id
-        self._secret_access_key = secret_access_key
-        self._session_token = session_token
+        self._credential = credential
         self._region = region
         self._endpoint_url = endpoint_url or None
         self._endpoint_configured = endpoint_configured
@@ -71,16 +73,6 @@ class S3Attachment:
             ),
             Requirement(
                 kind=RequirementKind.CREDENTIAL,
-                name="secret_access_key",
-                instruction="Read-only S3 secret key",
-            ),
-            Requirement(
-                kind=RequirementKind.CREDENTIAL,
-                name="session_token",
-                instruction="Optional STS role-session token",
-            ),
-            Requirement(
-                kind=RequirementKind.CREDENTIAL,
                 name="region",
                 instruction="S3 bucket region",
             ),
@@ -97,14 +89,11 @@ class S3Attachment:
             name
             for name, value in (
                 ("access_key_id", self._access_key_id),
-                ("secret_access_key", self._secret_access_key),
                 ("region", self._region),
                 ("endpoint_url", "configured" if self._endpoint_configured else ""),
             )
             if not value
         )
-        if missing and not self._access_key_id and not self._secret_access_key:
-            missing = (*missing, "session_token")
         if missing:
             return ProbeResult(
                 reachable=False, detail=f"s3 has no credential for {', '.join(missing)}"
@@ -370,12 +359,19 @@ class S3Attachment:
             errors.EndpointConnectionError,
             errors.ReadTimeoutError,
         )
+        try:
+            secret_access_key = (await self._credential.field("secret_access_key")).reveal()
+            session = await self._credential.maybe_field("session_token")
+        except ExtensionError as exc:
+            raise SourceError(
+                SourceFailureCode.AUTH_REQUIRED, "S3 credential unavailable"
+            ) from exc
         self._client = await asyncio.to_thread(
             boto3.client,
             "s3",
             aws_access_key_id=self._access_key_id,
-            aws_secret_access_key=self._secret_access_key,
-            aws_session_token=self._session_token or None,
+            aws_secret_access_key=secret_access_key,
+            aws_session_token=(session.reveal() if session is not None else "") or None,
             region_name=self._region,
             endpoint_url=self._endpoint_url,
         )
@@ -414,8 +410,7 @@ class S3Attachment:
 def build_native_attachment(context: dict[str, Any]) -> S3Attachment:
     return S3Attachment(
         access_key_id=str(context.get("access_key_id", "")),
-        secret_access_key=str(context.get("secret_access_key", "")),
-        session_token=str(context.get("session_token", "")),
+        credential=context["credential"],
         region=str(context.get("region", "")),
         endpoint_url=str(context.get("endpoint_url", "")),
         endpoint_configured="endpoint_url" in context,

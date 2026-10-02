@@ -30,6 +30,7 @@ from arctrust import sign_control_actor_proof
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.core.agent_security import resolve_credential_cipher
 from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
 from arcagent.core.control_contract import (
     ControlActionProofSource,
@@ -420,6 +421,7 @@ def configure_module_runtimes(
         prompt_source=agent._prompt_source,
         skill_revisions=agent._skill_artifact_resolver,
         capability_reload=agent.reload,
+        credential_cipher=resolve_credential_cipher(agent),
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).

@@ -22,7 +22,6 @@ import httpx
 import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.secrets import Secret
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
@@ -33,6 +32,8 @@ from arcagent.extension.source import (
 )
 from arcagent.modules.connectors.install import build_attachment
 
+from extensions.tests.fake_credential import FakeCredentialHandle
+
 _BUNDLE = Path(__file__).resolve().parents[1] / "slack"
 _TOKEN = "xoxp-live-token"
 
@@ -41,7 +42,12 @@ def _attachment() -> Any:
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
-    wrapper: Any = build_attachment(manifest, _BUNDLE, {"user_token": Secret(_TOKEN)})
+    wrapper: Any = build_attachment(
+        manifest,
+        _BUNDLE,
+        {},
+        credential=FakeCredentialHandle(bearer_values=[_TOKEN]),  # type: ignore[arg-type]  # structural stand-in for AccessTokenHandle
+    )
     return wrapper._delegate
 
 

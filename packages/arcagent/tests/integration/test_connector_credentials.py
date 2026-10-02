@@ -40,24 +40,22 @@ from pathlib import Path
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment
+from arcagent.extension.connection_health import StoreHealthReporter
+from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
+from arcagent.extension.custody_select import Custody, open_custody
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.manifest import ExtensionManifest
-from arcagent.extension.secrets import (
-    LocalFileSecretBackend,
-    Secret,
-    SecretRef,
-    SecretStore,
-)
+from arcagent.extension.secrets import Secret, SecretRef
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
     build_attachment,
-    connector_env_file,
     install_connector,
     plan_connector,
     resolve_secrets,
@@ -121,9 +119,21 @@ def _arc_dir(tmp_path: Path) -> Path:
     return root
 
 
-def _store(arc_dir: Path, sink: _RecordingSink | None = None) -> SecretStore:
-    """The store the shipped surfaces use: the deployment's owner-only file."""
-    return SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)), sink=sink)
+def _custody(backend: FakeBackend, sink: _RecordingSink | None = None) -> Custody:
+    """The custody the shipped surfaces use: sealed rows on the operational plane."""
+
+    async def opener() -> FakeBackend:
+        return backend
+
+    return open_custody(backend, make_cipher(), health=StoreHealthReporter(opener), sink=sink)
+
+
+def _operator_handle(custody: Custody, arc_dir: Path, plan: ConnectorPlan) -> AccessTokenHandle:
+    """What the deployment's own verbs (install, probe) read the credential through."""
+    broker = custody.broker(registry=lambda: ConnectionRegistry(arc_dir))
+    return broker.operator_handle(
+        _INSTANCE, actor_did=_CALLER, plan=credential_plan(plan.manifest)
+    )
 
 
 def _plan(root: Path) -> ConnectorPlan:
@@ -145,11 +155,13 @@ async def _state(backend: FakeBackend) -> ConnectionStateStore:
     return await open_connection_state(opener=lambda: _open_fake(backend))
 
 
-async def _stored(arc_dir: Path, value: str = _TOKEN) -> SecretStore:
-    """A store already holding the credential an operator supplied."""
-    store = _store(arc_dir)
-    await store.put(SecretRef(connection=_INSTANCE, field=_FIELD), value, caller_did=_CALLER)
-    return store
+async def _stored(backend: FakeBackend, value: str = _TOKEN) -> Custody:
+    """A custody already holding the credential an operator supplied."""
+    custody = _custody(backend)
+    await custody.store.put(
+        SecretRef(connection=_INSTANCE, field=_FIELD), value, caller_did=_CALLER
+    )
+    return custody
 
 
 def _connections(
@@ -162,6 +174,7 @@ def _connections(
         extensions_root=root,
         audit=AuditChain.held(sink),
         state_opener=lambda: _open_fake(backend),
+        credential_cipher=make_cipher(),
     )
 
 
@@ -171,10 +184,11 @@ def _connections(
 async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
     tmp_path: Path, backend: FakeBackend
 ) -> None:
-    """The defect, inverted: the extension's own code must hold what the store holds.
+    """The defect, inverted: the extension's own code must reach what the store holds.
 
-    Built the way a running agent builds it — resolve from the store, then hand the
-    resolved mapping to the shipped builder — and then asked, through the
+    Built the way a running agent builds it — the sensitive value is NOT baked in
+    at build; the attachment is handed a custody handle and reads the value through
+    it at call time — and then asked, through the
     extension's own verb, for a fingerprint of what it received. A fingerprint
     rather than the value, because the value must never appear in a tool result;
     matching it proves the exact stored credential arrived, not merely that
@@ -182,13 +196,22 @@ async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
     """
     arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
-    store = await _stored(arc_dir)
+    custody = await _stored(backend)
     plan = _plan(root)
 
     secrets = await resolve_secrets(
-        plan.manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
+        plan.manifest,
+        connection=_INSTANCE,
+        store=custody.store,
+        caller_did=_CALLER,
+        include_sensitive=False,
     )
-    attachment = build_attachment(plan.manifest, plan.bundle, secrets)
+    attachment = build_attachment(
+        plan.manifest,
+        plan.bundle,
+        secrets,
+        credential=_operator_handle(custody, arc_dir, plan),
+    )
     answer = await attachment.invoke(_ECHO, {"message": _FINGERPRINT_KEY})
 
     assert answer.content == f"reference echo: {_FINGERPRINT}", (
@@ -211,25 +234,36 @@ async def test_the_install_path_hands_the_stored_credential_to_the_attachment_it
     arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     handed: list[dict[str, str]] = []
+    handles: list[AccessTokenHandle | None] = []
+    custody = _custody(backend)
+    plan = _plan(root)
 
     def _recording(
-        manifest: ExtensionManifest, bundle: Path, secrets: Mapping[str, Secret]
+        manifest: ExtensionManifest,
+        bundle: Path,
+        secrets: Mapping[str, Secret],
+        *,
+        credential: AccessTokenHandle | None = None,
     ) -> ExtensionAttachment:
         handed.append({name: secret.reveal() for name, secret in secrets.items()})
-        return build_attachment(manifest, bundle, secrets)
+        handles.append(credential)
+        return build_attachment(manifest, bundle, secrets, credential=credential)
 
     report = await install_connector(
-        _plan(root),
+        plan,
         connections=ConnectionRegistry(arc_dir),
         agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(arc_dir),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _state(backend),
         attachment_factory=_recording,
+        credential=_operator_handle(custody, arc_dir, plan),
     )
 
-    assert handed == [{_FIELD: _TOKEN}]
+    # The sensitive value is not baked into the build; it travels by handle only.
+    assert handed == [{}]
+    assert all(handle is not None for handle in handles)
     assert "authenticated" in report.detail
     assert "unauthenticated" not in report.detail
 
@@ -247,14 +281,17 @@ async def test_the_facade_probes_a_connection_that_holds_its_credential(
     arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     sink = _RecordingSink()
+    custody = _custody(backend)
+    plan = _plan(root)
     await install_connector(
-        _plan(root),
+        plan,
         connections=ConnectionRegistry(arc_dir),
         agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(arc_dir),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _state(backend),
+        credential=_operator_handle(custody, arc_dir, plan),
     )
 
     result = await _connections(tmp_path, root, sink, backend).probe(_INSTANCE)
@@ -281,15 +318,18 @@ async def test_a_revealed_credential_never_reaches_a_rendered_string(
     arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
     sink = _RecordingSink()
+    custody = _custody(backend, sink)
+    plan = _plan(root)
     report = await install_connector(
-        _plan(root),
+        plan,
         connections=ConnectionRegistry(arc_dir),
         agents=[_AGENT],
         secret_values={_FIELD: _TOKEN},
-        store=_store(arc_dir, sink),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _state(backend),
         audit_sink=sink,
+        credential=_operator_handle(custody, arc_dir, plan),
     )
     connections = _connections(tmp_path, root, sink, backend)
 
@@ -309,7 +349,7 @@ async def test_a_revealed_credential_never_reaches_a_rendered_string(
 
 
 async def test_a_refusal_names_the_missing_credential_and_never_its_value(
-    tmp_path: Path,
+    tmp_path: Path, backend: FakeBackend
 ) -> None:
     """Fail closed, by name. A field the store does not hold stops the connection.
 
@@ -317,9 +357,8 @@ async def test_a_refusal_names_the_missing_credential_and_never_its_value(
     deleted, a vault that lost it — which is the one state where a connection would
     otherwise attach and serve verbs that answer 401.
     """
-    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
-    store = _store(arc_dir)
+    store = _custody(backend).store
 
     with pytest.raises(ExtensionError) as caught:
         await resolve_secrets(
@@ -404,9 +443,8 @@ async def test_an_optional_field_left_blank_still_connects(
     field made that case unconnectable: the install refused with "no value
     supplied for required secret 'host'" and stored nothing.
     """
-    arc_dir = _arc_dir(tmp_path)
     root = _bundle_root(tmp_path)
-    store = await _stored(arc_dir)
+    store = (await _stored(backend)).store
     manifest = _with_optional(_plan(root).manifest)
 
     secrets = await resolve_secrets(
@@ -422,7 +460,7 @@ async def test_a_required_field_left_blank_is_still_refused_by_name(
 ) -> None:
     """The opt-out must not weaken the guard for everything else."""
     root = _bundle_root(tmp_path)
-    store = _store(_arc_dir(tmp_path))
+    store = _custody(backend).store
 
     with pytest.raises(ExtensionError) as caught:
         await resolve_secrets(

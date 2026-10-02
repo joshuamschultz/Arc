@@ -18,9 +18,10 @@ page that anyone else has touched.
 from __future__ import annotations
 
 import json
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import httpx
+from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
@@ -44,6 +45,9 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 
+if TYPE_CHECKING:
+    from arcagent.extension.credential_broker import AccessTokenHandle
+
 #: One flat 30 seconds covered both reaching Confluence and reading a page from
 #: it, so a slow moment on either half failed the whole sync — a space that had
 #: just indexed cleanly came back as ConnectTimeout on the next run. Connecting
@@ -61,10 +65,10 @@ _STRING: Final[dict[str, str]] = {"type": "string"}
 class ConfluenceAttachment:
     """Reaches Confluence Cloud over its REST API, through the four hook methods."""
 
-    def __init__(self, *, base_url: str, email: str, api_token: str) -> None:
+    def __init__(self, *, base_url: str, email: str, credential: AccessTokenHandle) -> None:
         self._base_url = base_url.rstrip("/")
         self._email = email
-        self._api_token = api_token
+        self._credential = credential
         self._selected_spaces: tuple[str, ...] = ()
 
     # --- the hook contract ---------------------------------------------------
@@ -93,6 +97,14 @@ class ConfluenceAttachment:
             )
         try:
             body = await self._get(f"{_API}/space", {"limit": "1"})
+        except ExtensionError as exc:
+            return ProbeResult(
+                reachable=False,
+                detail=(
+                    f"confluence has no usable api_token ({exc.code}) — "
+                    f"run 'arc connector auth <instance>' to supply it."
+                ),
+            )
         except httpx.HTTPStatusError as exc:
             return ProbeResult(
                 reachable=False, detail=_refused(exc.response.status_code, self._base_url)
@@ -161,6 +173,8 @@ class ConfluenceAttachment:
             return ToolResult(tool=tool, content=await self._dispatch(tool, args))
         except KeyError:
             return _error(tool, f"confluence has no tool named {tool!r}")
+        except ExtensionError as exc:
+            return _error(tool, f"confluence has no usable credential ({exc.code})")
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             return _error(tool, f"confluence answered {status}: {exc.response.text}")
@@ -326,32 +340,36 @@ class ConfluenceAttachment:
     # --- transport -------------------------------------------------------------
 
     async def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
-        async with self._client() as client:
+        async with await self._client() as client:
             response = await client.get(path, params=params)
         return _body(response)
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        async with self._client() as client:
+        async with await self._client() as client:
             response = await client.post(path, json=payload)
         return _body(response)
 
     async def _put(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        async with self._client() as client:
+        async with await self._client() as client:
             response = await client.put(path, json=payload)
         return _body(response)
 
-    def _client(self) -> httpx.AsyncClient:
-        """One client per call. There is no close() on the hook to release a shared one."""
+    async def _client(self) -> httpx.AsyncClient:
+        """One client per call, with the token fetched now so a rotation reaches it.
+
+        There is no close() on the hook to release a shared one.
+        """
+        api_token = (await self._credential.field("api_token")).reveal()
         return httpx.AsyncClient(
             base_url=self._base_url,
-            auth=(self._email, self._api_token),
+            auth=(self._email, api_token),
             headers={"Accept": "application/json"},
             timeout=_TIMEOUT,
         )
 
     def _missing(self) -> list[str]:
-        """Which of the three credentials this attachment does not have."""
-        held = {"base_url": self._base_url, "email": self._email, "api_token": self._api_token}
+        """Which of the visible settings this attachment does not have."""
+        held = {"base_url": self._base_url, "email": self._email}
         return sorted(name for name, value in held.items() if not value)
 
 
@@ -479,7 +497,7 @@ def _error(tool: str, content: str) -> ToolResult:
 
 
 def _credential(context: dict[str, Any], key: str) -> str:
-    """One declared credential out of the context Arc resolved from its secret store."""
+    """One non-sensitive declared setting out of the context Arc resolved."""
     return str(context.get(key) or "")
 
 
@@ -488,5 +506,5 @@ def build_native_attachment(context: dict[str, Any]) -> ConfluenceAttachment:
     return ConfluenceAttachment(
         base_url=_credential(context, "base_url"),
         email=_credential(context, "email"),
-        api_token=_credential(context, "api_token"),
+        credential=context["credential"],
     )

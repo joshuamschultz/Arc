@@ -29,6 +29,7 @@ from extensions.dropbox.arc_ext_dropbox import build_native_attachment as build_
 from extensions.github.arc_ext_github import _github_failure_code
 from extensions.google_workspace.arc_ext_google_workspace.source import GmailSourceAdapter
 from extensions.jira.arc_ext_jira import JiraSourceAdapter
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 
 class _ErroringAttachment:
@@ -137,7 +138,7 @@ def _dropbox(monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request],
         return real(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", factory)
-    return build_dropbox({"app_key": "k", "app_secret": "s", "refresh_token": "r"})
+    return build_dropbox({"credential": FakeCredentialHandle(bearer_values=["AT"])})
 
 
 def _token_then(answer: httpx.Response) -> Callable[[httpx.Request], httpx.Response]:
@@ -181,7 +182,7 @@ async def test_a_file_that_keeps_answering_5xx_is_a_transient_failure_of_that_fi
 
 async def test_dropbox_upload_is_not_cut_off_before_its_transport_gives_up() -> None:
     """30 s tool timeout vs a 300 s read / 120 s write transport: ``TOOL_TIMEOUT`` x N."""
-    attachment = build_dropbox({"app_key": "k", "app_secret": "s", "refresh_token": "r"})
+    attachment = build_dropbox({"credential": FakeCredentialHandle(bearer_values=["AT"])})
     tools = {tool.name: tool for tool in await attachment.describe_tools()}
     await attachment.close_source()
 

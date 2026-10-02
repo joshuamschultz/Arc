@@ -22,9 +22,10 @@ from typing import Any
 import pytest
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.secrets import Secret
 from arcagent.modules.connectors.install import build_attachment
 from arcmemory.datastore import DatastorePort
+
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 _EXTENSIONS = Path(__file__).resolve().parents[1]
 
@@ -154,8 +155,11 @@ async def test_postgres_is_called_the_way_the_runtime_calls_it(driver: _Driver) 
     wrapper: Any = build_attachment(
         manifest,
         bundle,
-        {"database_dsn": Secret("postgresql://reader:secret@db.example/app")},
+        {},
         connection_id="pg",
+        credential=FakeCredentialHandle(  # type: ignore[arg-type]  # structural stand-in
+            fields={"database_dsn": "postgresql://reader:secret@db.example/app"}
+        ),
     )
     attachment = wrapper._delegate
 

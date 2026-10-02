@@ -21,14 +21,51 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
+
 from arcagent.core.errors import ExtensionError
-from arcagent.extension.credentials import TERMINAL_ERROR_CODES
+from arcagent.extension.credentials import (
+    TERMINAL_ERROR_CODES,
+    CredentialRenewalError,
+    RefreshRequest,
+    RenewedCredential,
+)
 from arcagent.extension.manifest import OAuthFlow
+from arcagent.extension.secrets import Secret
 
 #: POSTs form data with HTTP basic auth and returns ``(status_code, json_body)``.
 #: Injected so the exchange is testable without a socket and the framework owns
 #: the one HTTP client rather than this module opening its own.
 PostForm = Callable[[str, dict[str, str], tuple[str, str]], Awaitable[tuple[int, dict[str, Any]]]]
+
+
+#: Whole-call bound on one token-endpoint POST.
+_POST_TIMEOUT_SECONDS = 20.0
+
+
+async def post_form(
+    url: str, data: dict[str, str], auth: tuple[str, str]
+) -> tuple[int, dict[str, Any]]:
+    """POST form data with HTTP basic auth to a token endpoint: the one HTTP call.
+
+    A transport failure becomes ``ConnectionError`` (an ``OSError``) so callers
+    classify it as retryable without knowing the HTTP client. A ``Retry-After``
+    header in seconds is carried as ``payload["_retry_after"]``.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_POST_TIMEOUT_SECONDS) as client:
+            response = await client.post(url, data=data, auth=auth)
+    except httpx.TransportError as exc:
+        raise ConnectionError(type(exc).__name__) from None
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    body: dict[str, Any] = payload if isinstance(payload, dict) else {}
+    retry_after = response.headers.get("retry-after", "")
+    if retry_after.isdigit():
+        body["_retry_after"] = int(retry_after)
+    return response.status_code, body
 
 
 @dataclass(frozen=True)
@@ -106,10 +143,76 @@ async def exchange_authorization_code(
     )
 
 
+async def refresh_access_token(request: RefreshRequest, *, post: PostForm) -> RenewedCredential:
+    """Exchange a refresh token for a fresh access token (RFC 6749 section 6).
+
+    Form body ``grant_type=refresh_token``, HTTP basic client authentication. The
+    provider's answer is classified so the caller knows whether a retry is sane:
+
+    * 400 ``invalid_grant``: terminal, the refresh token is dead (reconnect).
+    * 401 ``invalid_client``: terminal ``consent_required``; the app secret was
+      rotated and the operator must supply the new one.
+    * 429 / 5xx / a transport failure: retryable (``Retry-After`` carried).
+    * any other 4xx: terminal ``auth_required``.
+
+    No provider body text reaches the error beyond the OAuth ``error`` code.
+    """
+    try:
+        status, payload = await post(
+            request.flow.token_url,
+            {"grant_type": "refresh_token", "refresh_token": request.refresh_token.reveal()},
+            (request.client_id, request.client_secret.reveal()),
+        )
+    except OSError as exc:
+        raise CredentialRenewalError(
+            error_code="provider_unavailable",
+            message=f"could not reach the token endpoint: {type(exc).__name__}",
+        ) from None
+    if status == 200 and "error" not in payload:
+        return _renewed(payload)
+    raise _refresh_error(status, payload)
+
+
+def _renewed(payload: dict[str, Any]) -> RenewedCredential:
+    access = payload.get("access_token")
+    if not isinstance(access, str) or not access:
+        raise CredentialRenewalError(
+            error_code="provider_unavailable", message="the provider returned no access token"
+        )
+    rotated = payload.get("refresh_token")
+    scope = payload.get("scope")
+    return RenewedCredential(
+        access_token=Secret(access),
+        expires_in=int(payload.get("expires_in") or 0),
+        refresh_token=Secret(rotated) if isinstance(rotated, str) and rotated else None,
+        scope=scope if isinstance(scope, str) else None,
+    )
+
+
+def _refresh_error(status: int, payload: dict[str, Any]) -> CredentialRenewalError:
+    error = str(payload.get("error") or f"http_{status}")
+    retry_after = payload.get("_retry_after")
+    if status == 429 or status >= 500:
+        code = "rate_limited" if status == 429 else "provider_unavailable"
+        hint = float(retry_after) if isinstance(retry_after, (int, float)) else None
+        return CredentialRenewalError(
+            error_code=code, message=f"token refresh answered {status}", retry_after=hint
+        )
+    if error == "invalid_grant":
+        code = "invalid_grant"
+    elif error == "invalid_client" or status == 401:
+        code = "consent_required"
+    else:
+        code = "auth_required"
+    return CredentialRenewalError(error_code=code, message=f"token refresh refused: {error}")
+
+
 __all__ = [
     "OAuthExchangeError",
     "OAuthTokens",
     "PostForm",
     "build_authorize_url",
     "exchange_authorization_code",
+    "post_form",
+    "refresh_access_token",
 ]

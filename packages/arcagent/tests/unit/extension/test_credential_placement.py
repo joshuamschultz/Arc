@@ -44,6 +44,7 @@ from pathlib import Path
 
 import pytest
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import FakeCredentialHandle
 from pydantic import ValidationError
 
 from arcagent.core.errors import ExtensionError
@@ -70,6 +71,10 @@ _WITNESS = (
     "print(json.dumps({'digest': "
     "hashlib.sha256(os.environ.get('ACME_TOKEN','').encode()).hexdigest()}))"
 )
+
+
+def _handle() -> FakeCredentialHandle:
+    return FakeCredentialHandle({"api_token": _SENTINEL})
 
 
 def _digest_of(value: str) -> str:
@@ -178,14 +183,14 @@ def test_a_credential_with_no_placement_contributes_no_variable() -> None:
 
 def test_a_cli_bundle_whose_credential_is_placed_builds(tmp_path: Path) -> None:
     """The refusal this seam replaces: a ``cli`` bundle could declare no credential."""
-    attachment = build_attachment(_parsed(), tmp_path, {"api_token": Secret(_SENTINEL)})
+    attachment = build_attachment(_parsed(), tmp_path, {}, credential=_handle())
     assert attachment is not None
 
 
 def test_a_cli_bundle_whose_credential_is_not_placed_is_still_refused(tmp_path: Path) -> None:
     """Fails closed and names the field: storing a value delivered nowhere is the bug."""
     with pytest.raises(ExtensionError) as raised:
-        build_attachment(_parsed(placement=""), tmp_path, {"api_token": Secret(_SENTINEL)})
+        build_attachment(_parsed(placement=""), tmp_path, {}, credential=_handle())
     assert "api_token" in raised.value.message
     assert _SENTINEL not in raised.value.message
     assert _SENTINEL not in str(raised.value.details)
@@ -198,7 +203,7 @@ async def test_the_placed_credential_really_reaches_the_child_process(tmp_path: 
     became an environment entry in a process that actually ran, which is the one
     thing a unit test of the mapping cannot show.
     """
-    attachment = build_attachment(_parsed(), tmp_path, {"api_token": Secret(_SENTINEL)})
+    attachment = build_attachment(_parsed(), tmp_path, {}, credential=_handle())
     result = await attachment.invoke("acme_whoami", {})
     assert _digest_of(_SENTINEL) in result.content
 
@@ -212,7 +217,7 @@ async def test_a_credential_placed_under_another_name_stays_out_of_the_child(
     inherit the value from the ambient environment would look like delivery.
     """
     attachment = build_attachment(
-        _parsed(placement='variable = "OTHER_TOKEN"'), tmp_path, {"api_token": Secret(_SENTINEL)}
+        _parsed(placement='variable = "OTHER_TOKEN"'), tmp_path, {}, credential=_handle()
     )
     result = await attachment.invoke("acme_whoami", {})
     assert _digest_of("") in result.content
@@ -230,7 +235,7 @@ async def test_placing_a_credential_is_not_a_verb_the_agent_can_reach(tmp_path: 
     the attachment does not declare is refused rather than dispatched, so guessing at
     one reaches nothing either.
     """
-    attachment = build_attachment(_parsed(), tmp_path, {"api_token": Secret(_SENTINEL)})
+    attachment = build_attachment(_parsed(), tmp_path, {}, credential=_handle())
     assert [spec.name for spec in await attachment.describe_tools()] == ["acme_whoami"]
 
     with pytest.raises(ExtensionError) as raised:
@@ -243,7 +248,7 @@ async def test_placing_a_credential_is_not_a_verb_the_agent_can_reach(tmp_path: 
 
 def test_the_attachment_renders_no_credential(tmp_path: Path) -> None:
     """``repr`` of a built attachment is what lands in a traceback and a log line."""
-    attachment = build_attachment(_parsed(), tmp_path, {"api_token": Secret(_SENTINEL)})
+    attachment = build_attachment(_parsed(), tmp_path, {}, credential=_handle())
     assert _SENTINEL not in repr(attachment)
     assert _SENTINEL not in str(vars(attachment))
 
@@ -265,7 +270,7 @@ async def test_a_binary_that_echoes_the_credential_has_it_taken_back_out(
         ),
         tier=Tier.PERSONAL,
     )
-    attachment = build_attachment(manifest, tmp_path, {"api_token": Secret(_SENTINEL)})
+    attachment = build_attachment(manifest, tmp_path, {}, credential=_handle())
     with caplog.at_level(logging.DEBUG):
         result = await attachment.invoke("acme_whoami", {})
     assert result.outcome == "error"

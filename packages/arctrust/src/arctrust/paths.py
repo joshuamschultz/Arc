@@ -343,6 +343,26 @@ def extensions_dir(base: Base = None) -> Path:
     return arc_state(base) / "extensions"
 
 
+def runtime_extensions_dir() -> Path:
+    """Return the extension bundles the active install ships: ``<arc_runtime>/extensions``.
+
+    Code-bearing connector bundles execute from the install (``~/.arc``), never
+    from the operator tree (``~/arc``), which any process running as the operator
+    can write.
+    """
+    return arc_runtime() / "extensions"
+
+
+def installed_extensions_dir() -> Path:
+    """Return operator-installed, signed code bundles: ``<arc_home>/extensions``.
+
+    Survives an update (only ``runtime/`` is replaced). Written only by
+    ``arc connector install-bundle``, which verifies every file's signature against
+    the operator key first; the loader verifies them again on every load.
+    """
+    return arc_home() / "extensions"
+
+
 def bundles_dir(base: Base = None) -> Path:
     """Return the staged signed-bundle dir: ``<arc_state>/bundles``.
 

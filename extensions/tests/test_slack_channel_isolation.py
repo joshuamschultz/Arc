@@ -24,11 +24,12 @@ import pytest
 from arcagent.connected_data import MappingPlan, SyncError, SyncLimits, SyncStatus
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import load_manifest
-from arcagent.extension.secrets import Secret
 from arcagent.extension.source import SourceDescription
 from arcagent.modules.connected_data import ConnectedDataCoordinator
 from arcagent.modules.connectors.install import build_attachment
 from arcstore.source_sync import InMemorySourceSyncStore
+
+from extensions.tests.fake_credential import FakeCredentialHandle
 
 _BUNDLE = Path(__file__).resolve().parents[1] / "slack"
 _SOURCE = SourceDescription(connection_id="ctgslack", source_kind="slack", account_id="T123")
@@ -95,7 +96,12 @@ async def _run(
     manifest = load_manifest(
         (_BUNDLE / "extension.toml").read_text(encoding="utf-8"), tier=Tier.PERSONAL
     )
-    wrapper: Any = build_attachment(manifest, _BUNDLE, {"user_token": Secret("xoxp-t")})
+    wrapper: Any = build_attachment(
+        manifest,
+        _BUNDLE,
+        {},
+        credential=FakeCredentialHandle(bearer_values=["xoxp-t"]),  # type: ignore[arg-type]  # structural stand-in for AccessTokenHandle
+    )
     adapter = wrapper._delegate
     ingest = Ingest()
     events: list[tuple[str, dict[str, Any]]] = []

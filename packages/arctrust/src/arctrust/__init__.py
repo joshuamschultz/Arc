@@ -126,6 +126,7 @@ from arctrust.classification import (
     dominates,
     parse_classification,
 )
+from arctrust.connector_cipher import ConnectorSecretCipher, CredentialSealError
 from arctrust.control import (
     ControlArtifactRefusedError,
     ControlArtifactUnavailableError,
@@ -170,6 +171,7 @@ from arctrust.operator_resolver import (
     bootstrap_operator_signer,
     machine_security,
     operator_key_file,
+    operator_key_for,
     operator_public_key_for,
     operator_signer_for,
     operator_transit_for,
@@ -452,9 +454,11 @@ __all__ = [
     "Classification",
     "ClassificationLayer",
     "ClearanceContext",
+    "ConnectorSecretCipher",
     "ControlArtifactRefusedError",
     "ControlArtifactUnavailableError",
     "ControlPurpose",
+    "CredentialSealError",
     "Decision",
     "DeploymentAuthorityConfig",
     "DeploymentChallenge",
@@ -581,6 +585,7 @@ __all__ = [
     "open_vault_lease",
     "operator_dir",
     "operator_key_file",
+    "operator_key_for",
     "operator_public_key_for",
     "operator_signer_for",
     "operator_transit_for",

@@ -34,8 +34,8 @@ backend, the ordering, the rollback, the config write — is
 :class:`arcagent.connections.Connections`, so the terminal, the TUI, and the web
 drive one path rather than three copies of it (D-587).
 
-Paths are explicit and overridable — ``--extensions-root``, ``--env-file``,
-``--arc-dir``, ``--data-dir`` — because an operator running more than one
+Paths are explicit and overridable — ``--extensions-root``, ``--arc-dir``,
+``--data-dir`` — because an operator running more than one
 deployment on a box needs to point a command at one without disturbing another.
 """
 
@@ -99,7 +99,6 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
             arc_dir=getattr(args, "arc_dir", None),
             data_dir=getattr(args, "data_dir", None),
             extensions_root=getattr(args, "extensions_root", None),
-            env_file=getattr(args, "env_file", None),
         )
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
@@ -141,7 +140,7 @@ def _add(args: argparse.Namespace) -> None:
     _out(f"Connected {report.extension} as '{report.instance}'.")
     _out(f"  granted to     : {', '.join(agents) or '(no agent yet — run: arc connector grant)'}")
     _out(f"  approval mode  : {plan.approval_mode}")
-    _out(f"  credentials in : {world.env_file}  (owner-only)")
+    _out(f"  credentials in : {world.credential_location}")
     if report.detail:
         _out(f"  probe          : {report.detail}")
     _out(f"  tools          : {', '.join(report.tools) or '(none served)'}")
@@ -210,9 +209,9 @@ def _auth(args: argparse.Namespace) -> None:
         updated = asyncio.run(connections.reauth(plan, _prompt_secrets(plan)))
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    env_file = connections.world.env_file
-    _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {env_file}.")
-    _out("  Every agent granted this connection uses the new value at its next start.")
+    where = connections.world.credential_location
+    _out(f"Updated {len(updated)} credential(s) for '{args.instance}' in {where}.")
+    _out("  Every agent granted this connection uses the new value on its next call.")
 
 
 #: How each sign-in state reads in a terminal. "not known" is its own line rather
@@ -648,6 +647,39 @@ def _roots_line(roots: Sequence[Path]) -> str:
     return ", ".join(str(root) for root in roots) or "(no bundle directory exists)"
 
 
+def _install_bundle(args: argparse.Namespace) -> None:
+    """Verify a signed bundle and install it where code may execute from."""
+    connections = _connections(args)
+    try:
+        target = connections.install_bundle(Path(args.bundle), replace=args.replace)
+    except arcagent.ExtensionError as exc:
+        _fail(exc.message)
+    _out(f"Installed {target.name} at {target} (signature verified; verified again at load).")
+
+
+def _migrate_secrets(args: argparse.Namespace) -> None:
+    """Move the legacy credential file into sealed custody: verify, delete, audit."""
+    connections = _connections(args)
+    try:
+        report = asyncio.run(connections.migrate_secrets(dry_run=args.dry_run))
+    except arcagent.ExtensionError as exc:
+        _fail(f"{exc.message} (the legacy file was kept)")
+    if report.skipped:
+        _out(f"Nothing to migrate: {report.path} does not exist.")
+        return
+    verb = "Would move" if report.dry_run else "Moved"
+    where = connections.world.credential_location
+    _out(f"{verb} {len(report.migrated)} credential(s) into {where}.")
+    for name in report.migrated:
+        _out(f"  moved   : {name}")
+    for name in report.dropped:
+        _out(f"  dropped : {name}  (declared by no connection)")
+    if report.dry_run:
+        _out(f"Nothing was written. {report.path} is unchanged.")
+    elif report.deleted:
+        _out(f"Deleted {report.path}.")
+
+
 # ---------------------------------------------------------------------------
 # Argparse-based dispatcher
 # ---------------------------------------------------------------------------
@@ -659,11 +691,6 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         "--extensions-root",
         default=None,
         help="Use exactly this bundle root (default: the deployment search path).",
-    )
-    parser.add_argument(
-        "--env-file",
-        default=None,
-        help="Owner-only credential store (default: <arc-dir>/connections.env).",
     )
     parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit/state.")
@@ -685,7 +712,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Connect this deployment to an external system — available, add, add-mcp, "
             "sign, grant, revoke, auth, authorize, host-setup, list, tools, probe, "
-            "doctor, approve, remove."
+            "doctor, approve, remove, migrate-secrets."
         ),
         add_help=True,
     )
@@ -777,6 +804,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("instance", help="Connection name.")
     _add_common(p)
 
+    p = subs.add_parser(
+        "install-bundle",
+        help="Install a signed connector bundle that carries code into ~/.arc/extensions.",
+    )
+    p.add_argument("bundle", help="Path to a signed bundle folder holding extension.toml.")
+    p.add_argument("--replace", action="store_true", help="Replace an installed bundle.")
+    _add_common(p)
+
+    p = subs.add_parser(
+        "migrate-secrets",
+        help="Move the legacy plaintext connector credential file into sealed custody.",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show which credentials would move and which leftovers would be dropped.",
+    )
+    _add_common(p)
+
     return parser
 
 
@@ -797,6 +843,8 @@ _SUBCOMMAND_MAP = {
     "doctor": _doctor,
     "approve": _approve,
     "remove": _remove,
+    "migrate-secrets": _migrate_secrets,
+    "install-bundle": _install_bundle,
 }
 
 
