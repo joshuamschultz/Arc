@@ -131,9 +131,8 @@ class TestReactLoop:
         result = await react_loop(model, state, sandbox, max_turns=5)
         error_events = [e for e in bus.events if e.type == "tool.error"]
         assert len(error_events) == 1
-        # Redacted on purpose (6f5f0944): only the exception type is emitted.
         assert error_events[0].data["error"] == "ValueError"
-        assert "tool exploded" not in error_events[0].data["error"]
+        assert error_events[0].data["error_detail"] == "ValueError: tool exploded"
         assert result.content == "Handled error."
 
     @pytest.mark.asyncio

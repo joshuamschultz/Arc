@@ -348,7 +348,7 @@ class TestListTasks:
         await create_task(title="Mine")
         await create_task(title="Bob's", owner="@bob")
 
-        mine = json.loads(await list_tasks(scope="self"))
+        mine = json.loads(await list_tasks(scope="self"))["tasks"]
         assert len(mine) == 1
         assert mine[0]["title"] == "Mine"
 
@@ -358,7 +358,7 @@ class TestListTasks:
         await create_task(title="Mine")
         await create_task(title="Bob's", owner="@bob")
 
-        team = json.loads(await list_tasks(scope="team"))
+        team = json.loads(await list_tasks(scope="team"))["tasks"]
         assert len(team) == 2
 
     async def test_status_filter(self, tasks_state: Any) -> None:
@@ -367,9 +367,85 @@ class TestListTasks:
         await create_task(title="Owned")
         await create_task(title="Unowned", owner="")
 
-        todos = json.loads(await list_tasks(scope="team", status="todo"))
+        todos = json.loads(await list_tasks(scope="team", status="todo"))["tasks"]
         assert len(todos) == 1
         assert todos[0]["title"] == "Owned"
+
+
+@pytest.mark.asyncio
+class TestListTasksBounded:
+    """A model hunting through the task table must never get the whole table back."""
+
+    async def _seed(self, tasks_state: Any, count: int, **extra: Any) -> None:
+        from arcstore.tasks import Task
+
+        from arcagent.modules.tasks import _runtime
+
+        await _runtime.ensure_store()
+        for index in range(count):
+            await tasks_state.store.create(
+                Task(
+                    id=f"seed-{index:03d}",
+                    title=f"Seed {index}",
+                    creator_did=tasks_state.identity.did,
+                    owner_did=tasks_state.identity.did,
+                    **extra,
+                )
+            )
+
+    async def test_list_tasks_bounded(self, tasks_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import list_tasks
+
+        await self._seed(tasks_state, 60)
+
+        result = json.loads(await list_tasks())
+
+        assert len(result["tasks"]) == 50
+        assert result["total"] == 60
+        assert result["truncated"] is True
+
+    async def test_explicit_limit_is_honoured_and_capped(self, tasks_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import list_tasks
+
+        await self._seed(tasks_state, 10)
+
+        assert len(json.loads(await list_tasks(limit=3))["tasks"]) == 3
+        assert len(json.loads(await list_tasks(limit=100000))["tasks"]) == 10
+
+    async def test_default_projection_leaves_out_the_heavy_fields(self, tasks_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import list_tasks
+
+        await self._seed(tasks_state, 3, metadata={"upstream": {"blob": "z" * 50_000}})
+
+        raw = await list_tasks()
+
+        assert "zzzz" not in raw
+        assert "metadata" not in json.loads(raw)["tasks"][0]
+
+    async def test_response_is_byte_capped_even_when_fields_are_requested(
+        self, tasks_state: Any
+    ) -> None:
+        from arcagent.modules.tasks.capabilities import MAX_LIST_TASKS_BYTES, list_tasks
+
+        await self._seed(tasks_state, 30, metadata={"upstream": {"blob": "z" * 50_000}})
+
+        raw = await list_tasks(fields=["metadata"])
+
+        assert len(raw.encode()) <= MAX_LIST_TASKS_BYTES
+        assert json.loads(raw)["truncated"] is True
+
+    async def test_one_task_output_is_readable_by_id(self, tasks_state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import list_tasks
+
+        await self._seed(tasks_state, 3)
+        await tasks_state.store.update(
+            "seed-001", {"output": {"files": ["a", "b"]}}, actor_did=tasks_state.identity.did
+        )
+
+        result = json.loads(await list_tasks(task_id="seed-001", fields=["output"]))
+
+        assert [t["id"] for t in result["tasks"]] == ["seed-001"]
+        assert result["tasks"][0]["output"] == {"files": ["a", "b"]}
 
 
 @pytest.mark.asyncio
@@ -399,7 +475,7 @@ class TestDecomposeTask:
         )
 
         parent = json.loads(await create_task(title="Parent"))
-        before = json.loads(await list_tasks(scope="team"))
+        before = json.loads(await list_tasks(scope="team"))["tasks"]
         result = json.loads(
             await decompose_task(
                 id=parent["id"],
@@ -407,7 +483,7 @@ class TestDecomposeTask:
             )
         )
         assert "error" in result
-        after = json.loads(await list_tasks(scope="team"))
+        after = json.loads(await list_tasks(scope="team"))["tasks"]
         assert len(after) == len(before)  # no orphaned subtask persisted
         reloaded = next(t for t in after if t["id"] == parent["id"])
         assert reloaded["blocked_by"] == []  # parent never wired

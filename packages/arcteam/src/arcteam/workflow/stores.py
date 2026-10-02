@@ -33,7 +33,8 @@ from typing import Any
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import PathEntry, Run, RunStore
-from arcstore.tasks import Task, TaskStore
+from arcstore.tasks import Task, TaskStore, _validate_free_text
+from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
 from .narrator import RunNarrator
@@ -74,6 +75,7 @@ class FlowRun:
     cost_spent: float
     started_at: str | None
     resolution: str | None = None
+    last_error: str | None = None
 
 
 @dataclass
@@ -193,6 +195,7 @@ class WorkflowRunStore:
             cost_spent=0.0,
             started_at=run.created_at,
             resolution=state.get("resolution"),
+            last_error=run.last_error,
         )
 
     async def active_runs(self) -> Sequence[FlowRun]:
@@ -269,6 +272,7 @@ class WorkflowRunStore:
         actor_did: str,
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
+        last_error: str | None = None,
         fence: RunnerFence | None = None,
     ) -> bool:
         current = await self._runs.get(run_id)
@@ -276,7 +280,12 @@ class WorkflowRunStore:
             return False
         expected = expected_status or current.status
         _, outcome = await self._runs.transition(
-            run_id, status, actor_did=actor_did, expected_status=expected, fence=fence
+            run_id,
+            status,
+            actor_did=actor_did,
+            expected_status=expected,
+            last_error=_storable_error(last_error),
+            fence=fence,
         )
         if outcome != "applied":
             return False
@@ -492,10 +501,32 @@ async def build_team_bindings(
         messenger,
         sender_did=identity.did,
         ensure_channel=_channel_admitter(registry, messenger, identity),
+        ensure_registered=_runner_registrar(registry, identity),
     )
     # The raw registry, not a resolver: build_workflow_runner owns the wrapping,
     # and returning a pre-wrapped one double-wraps it.
     return registry, narrator
+
+
+def _runner_registrar(registry: Any, identity: Any) -> Any:
+    """Register the runner as a team entity once; every send needs a known sender."""
+
+    async def register() -> None:
+        from arcteam.types import Entity, EntityType
+
+        if await registry.get(identity.did) is None:
+            await registry.register(
+                Entity(
+                    did=identity.did,
+                    handle="workflow-runner",
+                    id="agent://workflow-runner",
+                    name="Workflow Runner",
+                    type=EntityType.AGENT,
+                    public_key=identity.public_key_hex,
+                )
+            )
+
+    return register
 
 
 def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
@@ -509,20 +540,12 @@ def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
     deployment component, not a participant asking for access.
     """
 
-    async def admit(channel_name: str) -> None:
-        from arcteam.types import Channel, Entity, EntityType
+    register = _runner_registrar(registry, identity)
 
-        if await registry.get(identity.did) is None:
-            await registry.register(
-                Entity(
-                    did=identity.did,
-                    handle="workflow-runner",
-                    id="agent://workflow-runner",
-                    name="Workflow Runner",
-                    type=EntityType.AGENT,
-                    public_key=identity.public_key_hex,
-                )
-            )
+    async def admit(channel_name: str) -> None:
+        from arcteam.types import Channel
+
+        await register()
         channels = await messenger.list_channels()
         existing = next((c for c in channels if c.name == channel_name), None)
         if existing is None:
@@ -531,6 +554,24 @@ def _channel_admitter(registry: Any, messenger: Any, identity: Any) -> Any:
             await messenger.join_channel(channel_name, identity.did)
 
     return admit
+
+
+def _storable_error(reason: str | None) -> str | None:
+    """A failure reason the Run row will accept AND still be readable afterwards.
+
+    ``Run.last_error`` is validated as free text on every read, so a reason the
+    policy rejects (an injection-looking phrase inside a provider error) would
+    not just fail to save: it would make the run unloadable. Redact first, then
+    withhold rather than store anything the policy would refuse.
+    """
+    if reason is None:
+        return None
+    cleaned = sanitize_error_text(reason, limit=500)
+    try:
+        _validate_free_text(cleaned)
+    except ValueError:
+        return "error detail withheld: rejected by the stored-text policy"
+    return cleaned
 
 
 def _same_mapping(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:

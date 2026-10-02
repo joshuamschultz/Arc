@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
@@ -36,8 +37,14 @@ async def dispatch_signed_schedule(
     issuer: RunTriggerIssuer | None,
     prepare: PrepareRun | None,
     run_fn: AgentRunFn | None,
+    start_timeout: float | None = None,
 ) -> Any:
-    """Verify the current signed revision before admitting one immutable due slot."""
+    """Verify the current signed revision before admitting one immutable due slot.
+
+    ``start_timeout`` bounds only the start: verification, trigger issuance and a
+    workflow run's creation. The model run itself is never covered by it; that is
+    bounded by the signed run deadline the issuer returns.
+    """
     occurrence = scheduled_occurrence(entry, now, default_timezone=default_timezone)
     approval = entry.approval
     if approval is None or (
@@ -50,14 +57,17 @@ async def dispatch_signed_schedule(
     ):
         raise ControlArtifactRefusedError("schedule approval does not bind its definition")
     try:
-        await authority.verify_current(
-            tenant_id=tenant_id,
-            agent_did=agent_did,
-            purpose="schedule",
-            artifact_id=entry.id,
-            canonical_definition=occurrence.definition,
-            approval=approval,
-            occurrence_id=occurrence.occurrence_id,
+        await asyncio.wait_for(
+            authority.verify_current(
+                tenant_id=tenant_id,
+                agent_did=agent_did,
+                purpose="schedule",
+                artifact_id=entry.id,
+                canonical_definition=occurrence.definition,
+                approval=approval,
+                occurrence_id=occurrence.occurrence_id,
+            ),
+            start_timeout,
         )
     except ControlArtifactRefusedError:
         raise
@@ -68,21 +78,24 @@ async def dispatch_signed_schedule(
 
         if entry.workflow_id is None:
             raise ControlArtifactRefusedError("workflow schedule has no workflow identity")
-        return await start_workflow_run(
-            entry.workflow_id,
-            entry.workflow_input,
-            run_id=occurrence.run_id,
-            trigger_digest=hashlib.sha256(
-                json.dumps(
-                    {
-                        "domain": "arc.scheduled-workflow.v1",
-                        "occurrence": json.loads(occurrence.evidence),
-                        "approval": approval.model_dump(mode="json"),
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest(),
+        return await asyncio.wait_for(
+            start_workflow_run(
+                entry.workflow_id,
+                entry.workflow_input,
+                run_id=occurrence.run_id,
+                trigger_digest=hashlib.sha256(
+                    json.dumps(
+                        {
+                            "domain": "arc.scheduled-workflow.v1",
+                            "occurrence": json.loads(occurrence.evidence),
+                            "approval": approval.model_dump(mode="json"),
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest(),
+            ),
+            start_timeout,
         )
     if issuer is None or prepare is None or run_fn is None:
         raise ControlArtifactUnavailableError("signed prompt run capability unavailable")
@@ -108,7 +121,7 @@ async def dispatch_signed_schedule(
         separators=(",", ":"),
     ).encode()
     try:
-        authorization, deadline = await issuer(request, evidence)
+        authorization, deadline = await asyncio.wait_for(issuer(request, evidence), start_timeout)
     except ControlArtifactRefusedError:
         raise
     except Exception as exc:

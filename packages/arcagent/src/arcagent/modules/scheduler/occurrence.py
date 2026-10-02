@@ -34,6 +34,36 @@ def canonical_definition(entry: ScheduleEntry) -> bytes:
     return _canonical(entry.model_dump(mode="json", exclude={"metadata", "approval"}))
 
 
+def next_fire_at(
+    entry: ScheduleEntry, now: datetime, *, default_timezone: str = "UTC"
+) -> datetime | None:
+    """When this schedule next becomes due, or ``None`` if it never will.
+
+    A due-but-unfired slot is in the past; that is the signal, not an error.
+    A disabled or finished one-time schedule has no next fire.
+    """
+    if not entry.enabled:
+        return None
+    zone = ZoneInfo(entry.timezone or default_timezone)
+    last = entry.metadata.last_run
+    if entry.type == "interval":
+        if entry.every_seconds is None:
+            return None
+        if not last:
+            return now
+        return datetime.fromisoformat(last) + timedelta(seconds=entry.every_seconds)
+    if entry.type == "cron":
+        if entry.expression is None:
+            return None
+        base = datetime.fromisoformat(last).astimezone(zone) if last else now.astimezone(zone)
+        following = croniter(entry.expression, base).get_next(datetime)
+        return following.astimezone(UTC)
+    if entry.metadata.run_count > 0 or entry.at is None:
+        return None
+    target = datetime.fromisoformat(entry.at)
+    return (target if target.tzinfo is not None else target.replace(tzinfo=zone)).astimezone(UTC)
+
+
 def scheduled_occurrence(
     entry: ScheduleEntry,
     now: datetime,

@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import arcllm
 import jsonschema
+from arctrust import sanitize_error_text
 
 from arcrun._messages import tool_result
 from arcrun.ledger import (
@@ -38,6 +39,11 @@ def _digest_and_size(value: Any) -> tuple[str | None, int | None]:
         else json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     )
     return hashlib.sha256(raw).hexdigest(), len(raw)
+
+
+def _error_detail(exc: BaseException) -> str:
+    """Class and message of a tool failure, redacted and size-capped for the event bus."""
+    return sanitize_error_text(f"{type(exc).__name__}: {exc}")
 
 
 def _mark_outcome_unknown(
@@ -139,6 +145,7 @@ async def execute_tool_call(
                 "tool_call_id": tc.id,
                 "turn_number": turn_number,
                 "error": type(exc).__name__,
+                "error_detail": _error_detail(exc),
             },
         )
         return tool_result(tc.id, f"Error: {type(exc).__name__}"), False
@@ -330,6 +337,7 @@ async def execute_tool_call(
                 "tool_call_id": tc.id,
                 "turn_number": turn_number,
                 "error": type(exc).__name__,
+                "error_detail": _error_detail(exc),
                 "args_digest": args_digest,
                 "args_size": args_size,
             },

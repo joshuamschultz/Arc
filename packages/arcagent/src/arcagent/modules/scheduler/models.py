@@ -120,6 +120,20 @@ class ScheduleMetadata(BaseModel):
     pending_due_at: str | None = None
     pending_definition_digest: str | None = None
     pending_reply_run_id: str | None = None
+    # Why a disabled row is disabled. ``operator`` and ``archived`` are
+    # deliberate and stay put; ``breaker`` is the engine's own trip and is
+    # re-armed automatically, so an outage can never become a permanent off.
+    disabled_reason: Literal["operator", "breaker", "archived"] | None = None
+    disabled_at: str | None = None
+    # What the schedule itself says about its last firing, so a row answers
+    # "did it run, when is it next, and why not" without a log search.
+    next_fire_at: str | None = None
+    last_fired_at: str | None = None
+    last_outcome: Literal["ok", "error", "start_unavailable", "missed"] | None = None
+    last_error: str | None = None
+    # The due slot a missed-fire notice was already sent for, so a stuck row
+    # raises one alarm per slot instead of one per tick.
+    missed_notified_for: str | None = None
 
 
 class ScheduleEntry(BaseModel):

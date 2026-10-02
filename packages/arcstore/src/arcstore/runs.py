@@ -244,6 +244,7 @@ class RunStore:
         *,
         actor_did: str,
         expected_status: RunStatus,
+        last_error: str | None = None,
         fence: RunnerFence | None = None,
     ) -> tuple[Run | None, str]:
         """Advance a run's status, conditional on its current status (REQ-228).
@@ -254,11 +255,16 @@ class RunStore:
         loser's snapshot no longer matches and it gets ``"conflict"`` rather
         than silently clobbering the winner's transition.
 
+        ``last_error`` is written in the same atomic patch as the status, so a
+        failed run can never be observed without the reason it failed.
+
         Returns ``(run, "applied")`` on success, else ``(None, reason)`` where
         ``reason`` is ``"not_found"`` or ``"conflict"``.
         """
         now = _now()
         patch: dict[str, Any] = {"status": new_status, "updated_at": now}
+        if last_error is not None:
+            patch["last_error"] = last_error
         if new_status in _TERMINAL_STATUSES:
             patch["completed_at"] = now
         won = await self._backend.update_if(

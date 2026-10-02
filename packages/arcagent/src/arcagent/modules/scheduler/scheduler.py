@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from arctrust import causal
+from arctrust import causal, sanitize_error_text
 from croniter import croniter
 
 from arcagent.core.control_contract import (
@@ -33,7 +33,11 @@ from arcagent.core.run_contract import (
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ScheduleEntry
-from arcagent.modules.scheduler.occurrence import canonical_definition, scheduled_occurrence
+from arcagent.modules.scheduler.occurrence import (
+    canonical_definition,
+    next_fire_at,
+    scheduled_occurrence,
+)
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
@@ -94,6 +98,7 @@ class SchedulerEngine:
         self._prepare_collected_request = prepare_collected_request
 
         self._in_flight: set[str] = set()
+        self._executions: set[asyncio.Task[Any]] = set()
         self._fire_and_forget: set[asyncio.Task[Any]] = set()
         self._timer_task: asyncio.Task[None] | None = None
         self._running = False
@@ -114,6 +119,11 @@ class SchedulerEngine:
     @property
     def running(self) -> bool:
         return self._running
+
+    @property
+    def in_flight(self) -> set[str]:
+        """Schedule ids whose current occurrence has been started and not yet settled."""
+        return set(self._in_flight)
 
     def set_agent_run_fn(self, fn: AgentRunFn) -> None:
         """Bind or rebind the agent.run() callback.
@@ -144,7 +154,11 @@ class SchedulerEngine:
         _logger.info("Scheduler engine started")
 
     async def stop(self, timeout: float = 10.0) -> None:
-        """Stop the loop. Nothing to drain — a firing runs inline."""
+        """Stop the loop and cancel in-flight firings.
+
+        A cancelled firing keeps its pending due slot, so the same occurrence is
+        reconciled after restart rather than lost or repeated.
+        """
         del timeout
         self._running = False
         self._poller.stop()
@@ -154,16 +168,45 @@ class SchedulerEngine:
                 await self._timer_task
             except asyncio.CancelledError:
                 pass
+        executions = list(self._executions)
+        for execution in executions:
+            execution.cancel()
+        await asyncio.gather(*executions, return_exceptions=True)
         self._in_flight.clear()
         _logger.info("Scheduler engine stopped")
 
-    async def execute(self, entry: ScheduleEntry) -> Any:
-        """Execute a single schedule entry via agent_run_fn.
+    def enqueue(self, entry: ScheduleEntry) -> asyncio.Task[Any]:
+        """Enqueue one due occurrence and return at once (contract C1).
 
-        Handles timeout and updates metadata on success or failure.
+        The tick must never wait on a firing: a slow start used to stall every
+        other schedule behind it and, once counted as a failure, trip the breaker
+        on an outage. The firing runs as its own task; its outcome is recorded on
+        the row when it settles.
+        """
+        self._in_flight.add(entry.id)
+        execution = asyncio.ensure_future(self.execute(entry))
+        self._executions.add(execution)
+
+        def settled(_: asyncio.Task[Any]) -> None:
+            self._executions.discard(execution)
+            self._in_flight.discard(entry.id)
+
+        execution.add_done_callback(settled)
+        return execution
+
+    async def drain(self) -> None:
+        """Wait for every started firing to settle. Tests and shutdown only."""
+        while self._executions or self._fire_and_forget:
+            await asyncio.gather(*self._executions, *self._fire_and_forget, return_exceptions=True)
+
+    async def execute(self, entry: ScheduleEntry) -> Any:
+        """Run one occurrence of a schedule entry to completion.
+
+        ``timeout_seconds`` bounds only how long the start may take (admission
+        and signing, applied inside the dispatch); it never covers the run itself.
+        Records the outcome on the row either way.
         """
         start_time = time.monotonic()
-        timeout = entry.timeout_seconds
         found = self._store.get(entry.id)
         stored = found if isinstance(found, ScheduleEntry) else None
         if stored is not None:
@@ -200,7 +243,7 @@ class SchedulerEngine:
                 on_behalf_of=self._agent_did or None,
             )
             with causal.bind(firing):
-                result = await asyncio.wait_for(self._dispatch(entry), timeout=timeout)
+                result = await self._dispatch(entry)
             elapsed = time.monotonic() - start_time
             self._on_execution_complete(entry, result, elapsed, occurrence.run_id)
             await self._deliver_reply(entry, occurrence.run_id, result)
@@ -214,12 +257,15 @@ class SchedulerEngine:
             )
             # The accepted run may have completed while its response was lost.
             # Preserve the due slot for a same-ID reconciliation after restart.
+            self._record_status(entry, "start_unavailable", "start timed out")
             return None
         except RunOutcomeUnknownError as exc:
             _logger.warning("Schedule %s outcome requires reconciliation: %s", entry.id, exc)
+            self._record_status(entry, "start_unavailable", f"outcome unknown: {exc}")
             return None
         except (ControlArtifactUnavailableError, RunAdmissionUnavailableError) as exc:
             _logger.error("Schedule %s remains pending: %s", entry.id, exc)
+            self._record_status(entry, "start_unavailable", str(exc))
             return None
         except Exception as exc:  # reason: fail-open — log + continue
             elapsed = time.monotonic() - start_time
@@ -273,6 +319,7 @@ class SchedulerEngine:
             issuer=issuer,
             prepare=prepare,
             run_fn=run_fn,
+            start_timeout=float(entry.timeout_seconds),
         )
 
     # --- Evaluation ---
@@ -340,10 +387,15 @@ class SchedulerEngine:
             entry,
             last_result="error",
             consecutive_failures=new_failures,
+            error=str(error),
         )
 
-        if new_failures >= threshold:
+        tripped = new_failures >= threshold
+        if tripped:
             updates["enabled"] = False
+            updates["metadata"]["disabled_reason"] = "breaker"
+            updates["metadata"]["disabled_at"] = datetime.now(tz=UTC).isoformat()
+            updates["metadata"]["next_fire_at"] = None
             _logger.warning(
                 "Circuit breaker tripped for %s after %d failures",
                 entry.id,
@@ -364,6 +416,8 @@ class SchedulerEngine:
                     "schedule_name": entry.label,
                     "error": str(error),
                     "consecutive_failures": new_failures,
+                    "breaker_tripped": tripped,
+                    "deliver_to": entry.deliver_to,
                 },
             )
 
@@ -417,10 +471,17 @@ class SchedulerEngine:
         run_count_increment: int = 0,
         elapsed: float | None = None,
         consecutive_failures: int = 0,
+        error: str | None = None,
     ) -> dict[str, Any]:
         """Build a metadata update dict — single source for metadata mutations."""
         meta_data = entry.metadata.model_dump()
-        meta_data["last_run"] = datetime.now(tz=UTC).isoformat()
+        fired_at = datetime.now(tz=UTC)
+        meta_data["last_run"] = fired_at.isoformat()
+        meta_data["last_fired_at"] = fired_at.isoformat()
+        meta_data["last_outcome"] = "ok" if last_result == "ok" else "error"
+        meta_data["last_error"] = None if error is None else sanitize_error_text(error)
+        meta_data["next_fire_at"] = self._next_fire_iso(entry, fired_at)
+        meta_data["missed_notified_for"] = None
         meta_data["last_result"] = last_result
         meta_data["pending_due_at"] = None
         meta_data["pending_definition_digest"] = None
@@ -574,6 +635,7 @@ class SchedulerEngine:
             pending_reply = entry.metadata.pending_reply_run_id
             if pending_reply is not None:
                 await self._deliver_reply(entry, pending_reply, "pending")
+        self._rearm_tripped_breakers()
         due = [
             entry
             for entry in self._store.load()
@@ -585,6 +647,7 @@ class SchedulerEngine:
         if not due:
             self._unready_ticks = 0
             return
+        self._note_missed(due)
         if self._agent_run_fn is None:
             self._agent_run_fn = self._resolve_run_fn()
         if self._agent_run_fn is None:
@@ -592,11 +655,122 @@ class SchedulerEngine:
             return
         self._unready_ticks = 0
         for entry in due:
-            self._in_flight.add(entry.id)
+            self.enqueue(entry)
+
+    def _next_fire_iso(self, entry: ScheduleEntry, after: datetime) -> str | None:
+        """The row's next due time as stored text, or ``None`` when it has none."""
+        try:
+            following = next_fire_at(
+                entry.model_copy(
+                    update={
+                        "metadata": entry.metadata.model_copy(
+                            update={"last_run": after.isoformat()}
+                        )
+                    }
+                ),
+                after,
+                default_timezone=self._config.timezone or "UTC",
+            )
+        except Exception:  # reason: a status field must never break a firing
+            return None
+        return None if following is None else following.isoformat()
+
+    def _record_status(self, entry: ScheduleEntry, outcome: str, error: str | None) -> None:
+        """Write what happened to a firing that did not complete, leaving the slot pending."""
+        stored = self._store.get(entry.id)
+        base = stored if isinstance(stored, ScheduleEntry) else entry
+        meta = base.metadata.model_copy(
+            update={
+                "last_outcome": outcome,
+                "last_error": None if error is None else sanitize_error_text(error),
+            }
+        )
+        try:
+            self._store.update(entry.id, {"metadata": meta.model_dump()})
+        except KeyError:
+            pass
+
+    def _rearm_tripped_breakers(self) -> None:
+        """Turn a breaker-disabled row back on once its cool-off has passed.
+
+        Only the engine's own trips re-arm. ``operator`` and ``archived`` are
+        deliberate and stay off. The signed definition is unchanged by a breaker
+        trip (metadata is excluded from it), so re-enabling needs no re-signing.
+        """
+        now = datetime.now(tz=UTC)
+        for entry in self._store.load():
+            meta = entry.metadata
+            if entry.enabled or meta.disabled_reason != "breaker" or meta.disabled_at is None:
+                continue
+            tripped_at = datetime.fromisoformat(meta.disabled_at)
+            if (now - tripped_at).total_seconds() < self._config.breaker_rearm_seconds:
+                continue
+            cleared = meta.model_copy(
+                update={
+                    "disabled_reason": None,
+                    "disabled_at": None,
+                    "consecutive_failures": 0,
+                }
+            )
             try:
-                await self.execute(entry)
-            finally:
-                self._in_flight.discard(entry.id)
+                self._store.update(entry.id, {"enabled": True, "metadata": cleared.model_dump()})
+            except KeyError:
+                continue
+            _logger.warning("Schedule %s re-armed after a breaker cool-off", entry.id)
+            if self._bus is not None:
+                self._emit_bus_event(
+                    "schedule:rearmed",
+                    {
+                        "schedule_id": entry.id,
+                        "schedule_name": entry.label,
+                        "deliver_to": entry.deliver_to,
+                    },
+                )
+
+    def _note_missed(self, due: list[ScheduleEntry]) -> None:
+        """Raise one signal per slot for a row that is long past due.
+
+        A schedule can be due and silent for a dozen reasons (no callback, a
+        restart, a stalled loop). The row itself should say so, and the operator
+        should be told once, not find out from a month of absence.
+        """
+        now = datetime.now(tz=UTC)
+        grace = self._config.missed_fire_grace_seconds
+        for entry in due:
+            try:
+                due_at = next_fire_at(entry, now, default_timezone=self._config.timezone or "UTC")
+            except Exception:  # reason: an unreadable row must not break the tick
+                _logger.warning("Schedule %s next fire time unreadable", entry.id, exc_info=True)
+                continue
+            if due_at is None:
+                continue
+            late = (now - due_at).total_seconds()
+            slot = due_at.isoformat()
+            if late <= grace or entry.metadata.missed_notified_for == slot:
+                continue
+            meta = entry.metadata.model_copy(
+                update={
+                    "last_outcome": "missed",
+                    "last_error": f"due {int(late)}s ago and not started",
+                    "missed_notified_for": slot,
+                }
+            )
+            try:
+                self._store.update(entry.id, {"metadata": meta.model_dump()})
+            except KeyError:
+                continue
+            _logger.warning("Schedule %s missed its slot by %ds", entry.id, int(late))
+            if self._bus is not None:
+                self._emit_bus_event(
+                    "schedule:missed",
+                    {
+                        "schedule_id": entry.id,
+                        "schedule_name": entry.label,
+                        "due_at": slot,
+                        "late_seconds": int(late),
+                        "deliver_to": entry.deliver_to,
+                    },
+                )
 
     def _resolve_run_fn(self) -> AgentRunFn | None:
         """Late-bound callback lookup, or None if nothing has bound one yet."""

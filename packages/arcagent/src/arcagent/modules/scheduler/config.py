@@ -23,6 +23,16 @@ class SchedulerConfig(ModuleConfig):
     default_timeout_seconds: int = 300
     max_timeout_seconds: int = 3600
     circuit_breaker_threshold: int = 3
+    # How long a breaker-tripped schedule stays off before it re-arms itself. A
+    # breaker exists to stop a hot loop, not to turn an outage into a permanent
+    # off switch that nobody is told about.
+    breaker_rearm_seconds: int = 900
+    # How far past its due time a schedule may be before it counts as missed.
+    missed_fire_grace_seconds: int = 120
+    # Where operator notices (breaker trip, missed fire, failure) are delivered:
+    # ``platform:chat_id[:thread_id]``. Empty falls back to the schedule's own
+    # ``deliver_to``; with neither the notice is logged loudly, never dropped silently.
+    operator_notify_target: str = ""
     check_interval_seconds: int = 30
     store_path: str = "schedules.json"
     # IANA timezone that cron ("0 8 * * *") and one-time ("at") schedules are

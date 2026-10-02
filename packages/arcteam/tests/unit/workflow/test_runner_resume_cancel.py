@@ -245,6 +245,7 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
         actor_did: str,
         expected_status: str | None = None,
         resolution: str | None = None,
+        last_error: str | None = None,
         fence: Any | None = None,
     ) -> bool:
         if status == "done":
@@ -261,6 +262,7 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
             actor_did=actor_did,
             expected_status=expected_status,
             resolution=resolution,
+            last_error=last_error,
             fence=fence,
         )
 

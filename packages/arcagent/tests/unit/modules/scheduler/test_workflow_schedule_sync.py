@@ -279,3 +279,34 @@ def _derived(workflow_id: str, **overrides: object) -> ScheduleEntry:
     }
     data.update(overrides)
     return ScheduleEntry.model_validate(data)
+
+
+# --- C2: reconcile re-enables a breaker trip, never an operator's off ------
+
+
+def test_full_reconcile_re_enables_a_breaker_disabled_row(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    tripped = ScheduleMetadata(
+        created_by="system",
+        disabled_reason="breaker",
+        disabled_at="2026-09-18T03:00:00+00:00",
+        consecutive_failures=3,
+    )
+    store.add(_derived("nightly", enabled=False, metadata=tripped.model_dump()))
+
+    ws.full_reconcile(store, _cfg(), {"nightly": Trigger(type="cron", expression=_NIGHTLY)})
+
+    row = store.get("wf:nightly")
+    assert row is not None and row.enabled is True
+    assert row.metadata.disabled_reason is None
+    assert row.metadata.consecutive_failures == 0
+
+
+def test_full_reconcile_leaves_an_operator_disabled_row_off(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    off = ScheduleMetadata(created_by="system", disabled_reason="operator")
+    store.add(_derived("nightly", enabled=False, metadata=off.model_dump()))
+
+    ws.full_reconcile(store, _cfg(), {"nightly": Trigger(type="cron", expression=_NIGHTLY)})
+
+    assert store.get("wf:nightly").enabled is False  # type: ignore[union-attr]

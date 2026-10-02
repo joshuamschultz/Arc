@@ -1,0 +1,115 @@
+# nightly-meeting-ingest, corrected for alpha-2 P14-A. Apply by hand on the DGX
+# (edit + sign); nothing here is deployed automatically.
+#
+# Merge rule: the node ids, structure and `needs` below are the change. Keep the
+# live v30 prompts, schemas, tool names and tool args for the nodes marked
+# KEEP-FROM-LIVE (they were not available when this file was written). Every
+# KEEP-FROM-LIVE value below is a placeholder to be replaced by the live one.
+#
+# What changed and why (findings/item14-workflows.md):
+#   1. archive_transcripts is a SCRIPT node, not an agent node. It is mechanical
+#      file copying; a model there only hunted through list_tasks and overflowed
+#      its context (1.0-1.7M tokens) on 14 of 16 failures.
+#   2. Every node now receives all transitive ancestor outputs (runner fix), so no
+#      node needs to look anything up. Prompts must NOT tell a node to call
+#      list_tasks or workflow_run_status.
+#   3. The watermark advances in its own final node, only after notify_summary.
+#      Before, it moved inside ingest_meetings, so one failed night froze it and
+#      the backlog ratcheted (366 files by 09-18).
+#   4. A failed run now notifies the operator with the reason (runner fix); the
+#      old "NEVER call fail_task" prompt rule is no longer needed for alerting.
+
+[workflow]
+id = "nightly-meeting-ingest"
+description = "Archive and ingest new Dropbox meeting transcripts, file Jira tasks, summarize."
+owner = "@sales_agent"                 # KEEP-FROM-LIVE
+channel = "channel://work"             # KEEP-FROM-LIVE
+
+[trigger]
+type = "cron"
+expression = "CRON_TZ=America/Chicago 0 22 * * *"
+
+[[node]]
+id = "list_dropbox"
+kind = "tool"
+agent = "@sales_agent"
+tool = "dropbox_list_folder"           # KEEP-FROM-LIVE
+args = { path = "/Meetings" }          # KEEP-FROM-LIVE
+max_attempts = 2
+timeout_s = 300
+
+[[node]]
+id = "filter_new"
+kind = "agent"
+agent = "@sales_agent"
+needs = ["list_dropbox"]
+prompt = "prompts/filter_new.md"       # KEEP-FROM-LIVE; must emit new_files (list) and count (int)
+output_schema = "schemas/filter_new.json"
+max_attempts = 2
+
+[[node]]
+id = "route_new"
+kind = "router"
+mode = "rules"
+needs = ["filter_new"]
+routes = [
+  { to = "archive_transcripts", when = "$nodes.filter_new.output.count > 0" },
+  { to = "no_new_meetings", default = true },
+]
+
+[[node]]
+id = "no_new_meetings"
+kind = "script"
+agent = "@sales_agent"
+needs = ["route_new"]
+script = "scripts/no_new_meetings.py"   # prints {"status": "nothing_new"}; nothing to advance
+
+[[node]]
+id = "archive_transcripts"
+kind = "script"
+agent = "@sales_agent"
+needs = ["route_new"]
+# Reads filter_new.output.new_files (a transitive ancestor, now delivered) and copies
+# each transcript verbatim to crm/meetings/transcripts/<meeting>/. No model involved.
+script = "scripts/archive_transcripts.py"   # KEEP-FROM-LIVE or write: see header
+output_schema = "schemas/archive_transcripts.json"
+timeout_s = 900
+max_attempts = 2
+
+[[node]]
+id = "ingest_meetings"
+kind = "agent"
+agent = "@sales_agent"
+needs = ["archive_transcripts"]
+prompt = "prompts/ingest_meetings.md"  # KEEP-FROM-LIVE; remove any watermark write from it
+output_schema = "schemas/ingest_meetings.json"
+max_attempts = 2
+
+[[node]]
+id = "create_jira_tasks"
+kind = "agent"
+agent = "@sales_agent"
+needs = ["ingest_meetings"]
+prompt = "prompts/create_jira_tasks.md"   # KEEP-FROM-LIVE
+output_schema = "schemas/create_jira_tasks.json"
+max_attempts = 2
+
+[[node]]
+id = "notify_summary"
+kind = "agent"
+agent = "@sales_agent"
+needs = ["archive_transcripts", "ingest_meetings", "create_jira_tasks"]
+prompt = "prompts/notify_summary.md"   # KEEP-FROM-LIVE
+deliver_to = "telegram:8293394811"
+max_attempts = 2
+
+[[node]]
+id = "advance_watermark"
+kind = "tool"
+agent = "@sales_agent"
+# Final node, only after notify_summary. On a night with nothing new the whole
+# archive branch is skipped, this node is skipped with it, and the watermark stays put.
+needs = ["notify_summary"]
+tool = "meeting_watermark_set"         # KEEP-FROM-LIVE (whatever tool/script ingest_meetings used)
+args = { watermark = "$nodes.filter_new.output.latest_modified" }
+max_attempts = 3

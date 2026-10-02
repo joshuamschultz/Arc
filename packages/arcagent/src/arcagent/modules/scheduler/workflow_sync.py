@@ -169,6 +169,22 @@ def _is_derived(entry: ScheduleEntry) -> bool:
     )
 
 
+def _breaker_rearm(entry: ScheduleEntry) -> dict[str, Any] | None:
+    """The update that switches a breaker-tripped derived row back on, or ``None``.
+
+    Reconcile preserves an operator's deliberate off, but a breaker trip is not a
+    decision: it is an outage's footprint, and leaving it off is how a nightly
+    workflow went dark for two weeks. A trip leaves the signed definition
+    unchanged, so re-enabling needs no re-signing.
+    """
+    if entry.enabled or entry.metadata.disabled_reason != "breaker":
+        return None
+    cleared = entry.metadata.model_copy(
+        update={"disabled_reason": None, "disabled_at": None, "consecutive_failures": 0}
+    )
+    return {"enabled": True, "metadata": cleared.model_dump()}
+
+
 def full_reconcile(
     store: ScheduleStore,
     config: SchedulerConfig,
@@ -194,6 +210,8 @@ def full_reconcile(
         wanted.add(entry.id)
         if entry.id not in existing:
             store.add(entry)
+        elif (rearm := _breaker_rearm(existing[entry.id])) is not None:
+            store.update(entry.id, rearm)
 
     for entry_id, entry in existing.items():
         if _is_derived(entry) and entry_id not in wanted:
@@ -293,9 +311,14 @@ async def reconcile_workflow_schedules() -> None:
         triggers = _owned_triggers(definitions, state.agent_name)
         for workflow_id, trigger in triggers.items():
             entry = desired_entry(workflow_id, trigger, state.config, anchor=_now())
-            if entry is not None and state.store.get(entry.id) is None:
-                approved = await _approve_derived(entry, previous=None)
-                state.store.add(approved)
+            if entry is None:
+                continue
+            current = state.store.get(entry.id)
+            if current is None:
+                state.store.add(await _approve_derived(entry, previous=None))
+            elif (rearm := _breaker_rearm(current)) is not None:
+                state.store.update(entry.id, rearm)
+                _logger.warning("re-armed breaker-disabled schedule %s", entry.id)
         wanted = {
             derived_id(workflow_id)
             for workflow_id, trigger in triggers.items()
@@ -369,7 +392,12 @@ async def _approve_derived(
 
 async def _disable_derived(entry: ScheduleEntry) -> None:
     state = _runtime.state()
-    disabled = await _approve_derived(entry.model_copy(update={"enabled": False}), previous=entry)
+    archived = entry.metadata.model_copy(
+        update={"disabled_reason": "archived", "disabled_at": _now()}
+    )
+    disabled = await _approve_derived(
+        entry.model_copy(update={"enabled": False, "metadata": archived}), previous=entry
+    )
     state.store.update(entry.id, disabled.model_dump())
     state.store.remove(entry.id)
 

@@ -18,11 +18,14 @@ dashboard's workflow screens and removes no capability.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
 
@@ -47,6 +50,40 @@ _NODE_STATUS: dict[str, str] = {
     "done": "done",
     "failed": "failed",
 }
+
+
+# A node's input or output can be megabytes. The run view shows a bounded preview
+# and the true size; the full value stays on the task row.
+NODE_IO_LIMIT_BYTES = 4096
+
+
+def _bounded(value: Any) -> Any:
+    """The value itself when small, else a marked preview with its real size."""
+    rendered = json.dumps(value, default=str, sort_keys=True)
+    size = len(rendered.encode("utf-8"))
+    if size <= NODE_IO_LIMIT_BYTES:
+        return value
+    return {"truncated": True, "size_bytes": size, "preview": rendered[:NODE_IO_LIMIT_BYTES]}
+
+
+def _node_io(task: Any) -> dict[str, Any]:
+    """Per-node failure reason, attempts, and bounded input/output for the run view.
+
+    Anything above UNCLASSIFIED is withheld rather than shown: the run view is
+    an operator surface, but classification bounds where a value may surface.
+    """
+    detail: dict[str, Any] = {
+        "last_error": sanitize_error_text(task.last_error or "", limit=500) or None,
+        "attempts": task.attempts,
+        "max_attempts": task.max_attempts,
+    }
+    if str(task.classification).upper() != "UNCLASSIFIED":
+        detail["input"] = detail["output"] = {"withheld": "classification"}
+        return detail
+    meta = task.metadata
+    detail["input"] = _bounded({"args": meta.get("args"), "upstream": meta.get("upstream") or {}})
+    detail["output"] = _bounded(task.output) if task.output is not None else None
+    return detail
 
 
 def slugify(name: str) -> str:
@@ -137,6 +174,7 @@ class DashboardWorkflowPlane:
         detail = _run_summary(run)
         detail["workflow_id"] = run.workflow_id
         detail["version"] = run.workflow_version
+        detail["last_error"] = run.last_error
         # Per-node state comes from the task rows — they carry the live status,
         # the row id a gate is resolved by, and the per-node run id that opens
         # the existing execution timeline. The Run's trace adds what has no row
@@ -159,6 +197,7 @@ class DashboardWorkflowPlane:
                 "owner_did": task.owner_did,
                 "started_at": task.started_at,
                 "completed_at": task.completed_at,
+                **_node_io(task),
             }
         # A rules router (and any node the runner evaluates inline) never becomes
         # a task row, so it is absent from the loop above. Its outcome lives only
