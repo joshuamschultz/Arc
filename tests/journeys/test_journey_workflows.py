@@ -11,23 +11,21 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcagent.modules.scheduler.config import SchedulerConfig
+from arcagent.modules.scheduler.models import ScheduleEntry
+from arcagent.modules.scheduler.scheduler import SchedulerEngine
+from arcagent.modules.scheduler.store import ScheduleStore
 from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import TaskStore
 from arcteam.workflow.narrator import RunNarrator
 from arcteam.workflow.runner import build_workflow_runner, node_task_id
 from arctrust import OperatorKey
-from freezegun import freeze_time
-
-from arcagent.modules.scheduler.config import SchedulerConfig
-from arcagent.modules.scheduler.models import ScheduleEntry
-from arcagent.modules.scheduler.scheduler import SchedulerEngine
-from arcagent.modules.scheduler.store import ScheduleStore
 from arcui.routes.workflows import OperatorActor
 from arcui.workflow_plane import build_dashboard_plane
 
@@ -177,7 +175,11 @@ async def test_j3_cron_trigger_fires_after_runner_restart_and_lease_renewal(
 
     def engine_over(runner: Any) -> SchedulerEngine:
         engine = SchedulerEngine(
-            store, SchedulerConfig(enabled=True), MagicMock(), None, bus=None  # type: ignore[arg-type]
+            store,
+            SchedulerConfig(enabled=True),
+            MagicMock(),
+            None,
+            bus=None,  # type: ignore[arg-type]
         )
         engine.set_agent_run_fn(lambda *a, **k: asyncio.sleep(0))
 
@@ -194,24 +196,33 @@ async def test_j3_cron_trigger_fires_after_runner_restart_and_lease_renewal(
         engine._dispatch = start_run.__get__(engine)  # type: ignore[method-assign]
         return engine
 
-    with freeze_time(datetime(2026, 10, 1, 12, 0, tzinfo=UTC)):
-        first = engine_over(world.runner)
-        release.set()
-        await first._tick()
-        await first.drain()
+    def a_night_has_passed() -> None:
+        """Move the row's last firing two days back: durable state, no clock patching."""
+        row = store.get("wf:nightly")
+        assert row is not None
+        meta = row.metadata.model_copy(
+            update={"last_run": (datetime.now(UTC) - timedelta(days=2)).isoformat()}
+        )
+        store.update("wf:nightly", {"metadata": meta.model_dump()})
+
+    a_night_has_passed()
+    first = engine_over(world.runner)
+    release.set()
+    await first._tick()
+    await first.drain()
     assert fired == ["wf:nightly"]
     assert store.get("wf:nightly").metadata.last_outcome == "ok"  # type: ignore[union-attr]
 
-    restarted_runner = world.new_runner()
-    with freeze_time(datetime(2026, 10, 2, 4, 0, tzinfo=UTC)):  # 23:00 CDT, after 22:00
-        second = engine_over(restarted_runner)
-        release.clear()
-        await asyncio.wait_for(second._tick(), timeout=5)  # returns while the start is blocked
-        assert second.in_flight == {"wf:nightly"}
-        release.set()
-        await second.drain()
-        await second._tick()  # the slot is spent: no second firing
-        await second.drain()
+    a_night_has_passed()
+    await world.runner.aclose()  # the old process releases its runner lease
+    second = engine_over(world.new_runner())  # a process restart: all new objects
+    release.clear()
+    await asyncio.wait_for(second._tick(), timeout=5)  # returns while the start is blocked
+    assert second.in_flight == {"wf:nightly"}
+    release.set()
+    await second.drain()
+    await second._tick()  # the slot is spent: no third firing
+    await second.drain()
 
     assert fired == ["wf:nightly", "wf:nightly"]
     row = store.get("wf:nightly")
