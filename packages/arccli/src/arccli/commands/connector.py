@@ -419,8 +419,8 @@ def _semantic(args: argparse.Namespace) -> None:
         _out(f"No semantic layer yet for '{args.instance}'.")
         _out(f"  expected at : {path}")
         _out("  It is written the first time the datastore's tables are read —")
-        _out("  open Knowledge → Connections and configure the connection, then")
-        _out("  run this again.")
+        _out("  Run `arc knowledge sources` and `arc knowledge resources`/`select`/`map`")
+        _out("  for this connection, then run this again.")
         return
     try:
         layer = load_semantic_layer(path)
