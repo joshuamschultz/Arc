@@ -37,7 +37,7 @@ def _runner(stores: Any, registry: Any, tier: str, sink: RecordingSink) -> Any:
 
 
 @pytest.mark.parametrize("tier", ["personal", "enterprise", "federal"])
-@pytest.mark.parametrize("initiator", ["agent", "scheduler"])
+@pytest.mark.parametrize("initiator", ["agent", "scheduler", "chat"])
 async def test_agent_and_scheduler_never_start_an_unsigned_workflow(
     stores: Any, registry: Any, tier: str, initiator: str
 ) -> None:
@@ -115,7 +115,7 @@ async def test_store_level_unsigned_refusal_is_audited_as_denied(
 
 
 async def test_a_signed_workflow_runs_for_every_initiator(stores: Any, registry: Any) -> None:
-    for initiator in ("operator", "agent", "scheduler"):
+    for initiator in ("operator", "agent", "scheduler", "chat"):
         runner = build(stores, registry, onboarding(), tier="federal")
         run = await runner.start_run(
             "customer-onboarding", input={}, initiator=initiator, initiator_did=ACTOR

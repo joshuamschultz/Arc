@@ -92,7 +92,7 @@ def _plane(env: Any, tier: str) -> tuple[WorkflowControlPlane, _Sink]:
 
 
 @pytest.mark.parametrize("tier", ["personal", "enterprise", "federal"])
-@pytest.mark.parametrize("initiator", ["agent", "scheduler"])
+@pytest.mark.parametrize("initiator", ["agent", "scheduler", "chat"])
 async def test_agent_or_schedule_cannot_run_its_own_unsigned_workflow(
     agent_authored: Any, tier: str, initiator: str
 ) -> None:

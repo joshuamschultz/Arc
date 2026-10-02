@@ -95,7 +95,7 @@ class GatewayWorkflowProvider:
         )
         run_input = {"text": args} if args else {}
         result = await plane.run(
-            workflow_id, input=run_input, initiator="operator", actor_did=actor_did
+            workflow_id, input=run_input, initiator="chat", actor_did=actor_did
         )
         if result.ok and result.run is not None:
             return f"Started {workflow_id} (run {result.run.run_id})."
