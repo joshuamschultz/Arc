@@ -63,6 +63,8 @@ import type {
   SourcesResponse,
   EventsResponse,
   PromptDetail,
+  PromptHistoryDiffResponse,
+  PromptHistoryResponse,
   PromptListResponse,
   SharedKnowledgeResponse,
   SharedKnowledgeSearchResponse,
@@ -1156,6 +1158,38 @@ export const useAgentPromptDetail = (
         signal,
       ),
     enabled: !!prompt,
+  })
+
+// J2 F3 — signed version history of a prompt override, and a server-computed diff
+// between two of its versions (a version number, `stock` or `current`).
+const promptPath = (agentId: string, p: { package: string; name: string }) =>
+  `/api/agents/${agentId}/prompts/${encodeURIComponent(p.package)}/${encodeURIComponent(p.name)}`
+
+export const useAgentPromptHistory = (
+  agentId: string,
+  prompt: { package: string; name: string } | null,
+  enabled: boolean,
+) =>
+  useQuery<PromptHistoryResponse>({
+    queryKey: ['agent', agentId, 'prompt-history', prompt?.package, prompt?.name],
+    queryFn: ({ signal }) => apiGet(`${promptPath(agentId, prompt!)}/history`, signal),
+    enabled: !!prompt && enabled,
+  })
+
+export const useAgentPromptHistoryDiff = (
+  agentId: string,
+  prompt: { package: string; name: string } | null,
+  from: string,
+  to: string,
+) =>
+  useQuery<PromptHistoryDiffResponse>({
+    queryKey: ['agent', agentId, 'prompt-history-diff', prompt?.package, prompt?.name, from, to],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `${promptPath(agentId, prompt!)}/history/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        signal,
+      ),
+    enabled: !!prompt && !!from && !!to,
   })
 
 // COMP-010 — structured rubric editor. The arcskill/judge_rubric prompt's body

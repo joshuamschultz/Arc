@@ -412,6 +412,40 @@ export interface PromptWriteResponse {
   message: string
 }
 
+export interface PromptVersion {
+  version: number
+  sha256: string
+  signer_did: string
+  signed_at: string | null
+  /** True when this version's bytes are what is live on disk now. */
+  current: boolean
+}
+
+export interface PromptHistoryResponse {
+  package: string
+  name: string
+  /** Newest first. */
+  versions: PromptVersion[]
+}
+
+export interface PromptHistoryDiffResponse {
+  package: string
+  name: string
+  from_label: string
+  to_label: string
+  diff: string
+}
+
+export interface PromptRevertResponse {
+  package: string
+  name: string
+  reverted_from: number
+  new_version: number
+  signer_did: string
+  sha256: string
+  message: string
+}
+
 export interface PromptResetResponse {
   package: string
   name: string

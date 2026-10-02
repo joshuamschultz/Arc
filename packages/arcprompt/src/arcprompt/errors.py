@@ -33,9 +33,14 @@ class PromptMissing(PromptError):
         )
 
 
+class PromptVersionMissing(PromptError):
+    """A history reference names no stored version (or an ambiguous digest prefix)."""
+
+
 __all__ = [
     "PromptError",
     "PromptMissing",
     "PromptUnparseable",
     "PromptUnsigned",
+    "PromptVersionMissing",
 ]

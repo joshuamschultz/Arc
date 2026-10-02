@@ -27,6 +27,12 @@ from arcprompt.errors import (
     PromptMissing,
     PromptUnparseable,
     PromptUnsigned,
+    PromptVersionMissing,
+)
+from arcprompt.history import (
+    PromptHistory,
+    PromptVersion,
+    record_if_unseen,
 )
 from arcprompt.resolver import PromptResolver
 from arcprompt.snapshot import PromptSnapshot, snapshot
@@ -41,6 +47,7 @@ __all__ = [
     "PromptDocument",
     "PromptError",
     "PromptFrontmatter",
+    "PromptHistory",
     "PromptMissing",
     "PromptRef",
     "PromptResolver",
@@ -48,6 +55,8 @@ __all__ = [
     "PromptSource",
     "PromptUnparseable",
     "PromptUnsigned",
+    "PromptVersion",
+    "PromptVersionMissing",
     "ResolverPromptSource",
     "SignatureVerifier",
     "StockPromptSource",
@@ -56,6 +65,7 @@ __all__ = [
     "load_stock",
     "load_stock_document",
     "parse_prompt",
+    "record_if_unseen",
     "render_prompt",
     "snapshot",
 ]

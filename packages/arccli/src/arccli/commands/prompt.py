@@ -17,6 +17,9 @@ Subcommands::
     arc prompt diff  <package> <name> --agent <dir>
     arc prompt edit  <package> <name> --agent <dir> (--file <path> | --stdin)
     arc prompt reset <package> <name> --agent <dir>
+    arc prompt history <package> <name> --agent <dir>
+    arc prompt diff    <package> <name> --agent <dir> --from <ver|stock> [--to <ver|stock|current>]
+    arc prompt revert  <package> <name> <version> --agent <dir>
     arc prompt sign-workspace --agent <dir>
 
 Stock bodies are always read from the packaged resources
@@ -36,13 +39,18 @@ from pathlib import Path
 import arcagent
 from arcprompt import (
     PromptCatalog,
+    PromptHistory,
     PromptMissing,
     PromptUnparseable,
     PromptUnsigned,
+    PromptVersionMissing,
+    SignatureVerifier,
     load_stock_document,
+    parse_prompt,
+    record_if_unseen,
     render_prompt,
 )
-from arctrust.artifact import sign_artifact
+from arctrust.artifact import content_sha256, sign_artifact
 from arctrust.policy import read_agent_tier
 
 from arccli.commands._shared import dispatch, err, print_table
@@ -126,6 +134,43 @@ def _effective_body(agent_root: Path, package: str, name: str) -> str:
         sys.exit(1)
 
 
+def _sign_and_record(
+    agent_root: Path, package: str, name: str, overlay: Path, data: bytes
+) -> tuple[str, str, int]:
+    """Sign ``data``, write it as the live overlay and append it to the version history.
+
+    The overlay that was live before is captured first, so a pre-history edit is
+    never lost to this save. Returns ``(signer_did, sha256, version)``.
+    """
+    signer_did, seed = _operator_signer()
+    signature = sign_artifact(data, signer_did=signer_did, private_key=seed)
+    history = PromptHistory(agent_root, package, name)
+    sidecar = Path(f"{overlay}{_SIDECAR_SUFFIX}")
+    if overlay.is_file() and sidecar.is_file():
+        record_if_unseen(history, overlay.read_bytes(), sidecar.read_text(encoding="utf-8"))
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(data)
+    sidecar.write_text(signature.to_json(), encoding="utf-8")
+    version = history.record(data, signature.to_json())
+    return signer_did, signature.artifact_sha256, version.version
+
+
+def _history_or_exit(agent_root: Path, package: str, name: str) -> PromptHistory:
+    try:
+        return PromptHistory(agent_root, package, name)
+    except PromptMissing as exc:
+        err(f"arc prompt: {exc}")
+        sys.exit(1)
+
+
+def _verifier(agent_root: Path) -> SignatureVerifier:
+    """The verifier pinned to the same operator key the agent's resolver trusts."""
+    resolver = arcagent.build_prompt_resolver(
+        agent_root / "arcagent.toml", read_agent_tier(agent_root)
+    )
+    return resolver.verifier
+
+
 def _read_body(args: argparse.Namespace) -> str:
     """Read the new prompt body from ``--stdin`` or ``--file``, or exit 1."""
     if getattr(args, "stdin", False):
@@ -176,9 +221,94 @@ def _show(args: argparse.Namespace) -> None:
     _out(_effective_body(agent_root, package, name))
 
 
-def _diff(args: argparse.Namespace) -> None:
-    """Print a unified diff of stock vs the effective (overlay-resolved) body."""
+def _version_body(
+    agent_root: Path, history: PromptHistory, package: str, name: str, ref: str
+) -> str:
+    """Body for a diff side: ``stock``, ``current`` (effective) or a stored version."""
+    if ref == "stock":
+        return load_stock_document(package, name).body
+    if ref == "current":
+        return _effective_body(agent_root, package, name)
+    number = history.resolve_ref(ref)
+    data = history.read_verified(number, _verifier(agent_root))
+    return parse_prompt(data, source="overlay").body
+
+
+def _diff_versions(args: argparse.Namespace, agent_root: Path) -> None:
+    """Print a unified diff between two stored versions (``--from`` / ``--to``)."""
+    package, name = args.package, args.name
+    history = _history_or_exit(agent_root, package, name)
+    left_ref, right_ref = args.from_ref or "stock", args.to_ref or "current"
+    try:
+        left = _version_body(agent_root, history, package, name, left_ref)
+        right = _version_body(agent_root, history, package, name, right_ref)
+    except (PromptMissing, PromptUnsigned, PromptUnparseable, PromptVersionMissing) as exc:
+        err(f"arc prompt: {exc}")
+        sys.exit(1)
+    diff = "".join(
+        difflib.unified_diff(
+            left.splitlines(keepends=True),
+            right.splitlines(keepends=True),
+            fromfile=f"{left_ref}/{package}/{name}",
+            tofile=f"{right_ref}/{package}/{name}",
+        )
+    )
+    sys.stdout.write(diff if diff else f"No difference between {left_ref} and {right_ref}.\n")
+
+
+def _history(args: argparse.Namespace) -> None:
+    """List every signed version of an overlay, oldest first."""
     agent_root = _require_agent_root(args)
+    versions = _history_or_exit(agent_root, args.package, args.name).versions()
+    if not versions:
+        _out(f"No saved versions for {args.package}/{args.name}.")
+        return
+    overlay = _confine(agent_root / _OVERLAY_DIRNAME, args.package, args.name)
+    live = content_sha256(overlay.read_bytes()) if overlay and overlay.is_file() else None
+    rows = [
+        [
+            str(v.version),
+            v.signed_at or "",
+            v.signer_did,
+            v.sha256[:19],
+            "current" if v.sha256 == live else "",
+        ]
+        for v in versions
+    ]
+    print_table(["VERSION", "SIGNED", "SIGNER", "SHA256", ""], rows)
+
+
+def _revert(args: argparse.Namespace) -> None:
+    """Re-sign an earlier stored version as a NEW version (operator action)."""
+    agent_root = _require_agent_root(args)
+    package, name = args.package, args.name
+    overlay = _confine(agent_root / _OVERLAY_DIRNAME, package, name)
+    if overlay is None:
+        err(f"arc prompt: invalid prompt path {package}/{name} (escapes the context root).")
+        sys.exit(1)
+    history = _history_or_exit(agent_root, package, name)
+    try:
+        number = history.resolve_ref(args.version)
+        data = history.read_verified(number, _verifier(agent_root))
+        parse_prompt(data, source="overlay")
+    except (PromptUnsigned, PromptUnparseable, PromptVersionMissing) as exc:
+        err(f"arc prompt: {exc}")
+        sys.exit(1)
+    signer_did, sha256, new_version = _sign_and_record(agent_root, package, name, overlay, data)
+    _out(f"Reverted {package}/{name} to version {number} as new version {new_version}.")
+    _out(f"  signer: {signer_did}")
+    _out(f"  sha256: {sha256}")
+
+
+def _diff(args: argparse.Namespace) -> None:
+    """Print a unified diff of stock vs the effective (overlay-resolved) body.
+
+    With ``--from`` / ``--to`` it compares stored versions instead.
+    """
+    agent_root = _require_agent_root(args)
+    if args.from_ref or args.to_ref:
+        _diff_versions(args, agent_root)
+        return
     package, name = args.package, args.name
     try:
         stock_body = load_stock_document(package, name).body
@@ -225,17 +355,15 @@ def _edit(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    signer_did, seed = _operator_signer()
     overlay_bytes = render_prompt(body, name=name, description=stock_doc.description)
-    signature = sign_artifact(overlay_bytes, signer_did=signer_did, private_key=seed)
-
-    overlay.parent.mkdir(parents=True, exist_ok=True)
-    overlay.write_bytes(overlay_bytes)
-    Path(f"{overlay}{_SIDECAR_SUFFIX}").write_text(signature.to_json(), encoding="utf-8")
+    signer_did, sha256, version = _sign_and_record(
+        agent_root, package, name, overlay, overlay_bytes
+    )
 
     _out(f"Override saved for {package}/{name}. It takes effect on the agent's next run.")
+    _out(f"  version: {version}")
     _out(f"  signer: {signer_did}")
-    _out(f"  sha256: {signature.artifact_sha256}")
+    _out(f"  sha256: {sha256}")
 
 
 def _reset(args: argparse.Namespace) -> None:
@@ -303,6 +431,29 @@ def _build_parser() -> argparse.ArgumentParser:
     diff_p.add_argument("package")
     diff_p.add_argument("name")
     diff_p.add_argument("--agent", metavar="<dir>", help="Agent root directory to target.")
+    diff_p.add_argument(
+        "--from",
+        dest="from_ref",
+        metavar="<ver|stock>",
+        help="Compare stored versions: the older side (version, sha prefix, stock, current).",
+    )
+    diff_p.add_argument(
+        "--to",
+        dest="to_ref",
+        metavar="<ver|current>",
+        help="Compare stored versions: the newer side (default: current).",
+    )
+
+    history_p = subs.add_parser("history", help="List every signed saved version of an override.")
+    history_p.add_argument("package")
+    history_p.add_argument("name")
+    history_p.add_argument("--agent", metavar="<dir>", help="Agent root directory to target.")
+
+    revert_p = subs.add_parser("revert", help="Re-sign an earlier version as a new version.")
+    revert_p.add_argument("package")
+    revert_p.add_argument("name")
+    revert_p.add_argument("version", help="Version number or sha256 prefix from 'history'.")
+    revert_p.add_argument("--agent", metavar="<dir>", help="Agent root directory to target.")
 
     edit_p = subs.add_parser("edit", help="Author + sign an operator overlay from a body.")
     edit_p.add_argument("package")
@@ -331,6 +482,8 @@ _SUBCOMMANDS = {
     "diff": _diff,
     "edit": _edit,
     "reset": _reset,
+    "history": _history,
+    "revert": _revert,
     "sign-workspace": _sign_workspace,
 }
 
