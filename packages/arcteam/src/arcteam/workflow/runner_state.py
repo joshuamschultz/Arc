@@ -31,7 +31,7 @@ NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped", "cancel
 
 @dataclass(frozen=True)
 class NodeInstance:
-    """One materialized attempt of a node at one iteration (a gate revision or an operator retry)."""
+    """One materialized attempt of a node: iteration 0, or a revision or retry of it."""
 
     node_id: str
     iteration: int

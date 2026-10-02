@@ -383,20 +383,26 @@ class WorkflowControlPlane:
         )
         return ControlPlaneResult(ok=True, run=record)
 
-    async def retry_node(
-        self, run_id: str, node_id: str, *, actor_did: str
-    ) -> ControlPlaneResult:
+    async def retry_node(self, run_id: str, node_id: str, *, actor_did: str) -> ControlPlaneResult:
         """Re-run one failed node of a failed run; completed nodes are kept (J3 G3)."""
         target = f"{run_id}/{node_id}"
         try:
             record = await self._runner.retry_node(run_id, node_id, actor_did=actor_did)
         except NodeRetryRefusedError as exc:
-            self._emit(_Operation("workflow.node.retried", target, "refused", {"error": str(exc)}), actor_did)
+            self._emit(
+                _Operation("workflow.node.retried", target, "refused", {"error": str(exc)}),
+                actor_did,
+            )
             return ControlPlaneResult(ok=False, errors=(OperationIssue(node_id, None, str(exc)),))
         except Exception as exc:
-            self._emit(_Operation("workflow.node.retried", target, "error", {"error": str(exc)}), actor_did)
+            self._emit(
+                _Operation("workflow.node.retried", target, "error", {"error": str(exc)}),
+                actor_did,
+            )
             return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
-        self._emit(_Operation("workflow.node.retried", target, "retried", {"run_id": run_id}), actor_did)
+        self._emit(
+            _Operation("workflow.node.retried", target, "retried", {"run_id": run_id}), actor_did
+        )
         return ControlPlaneResult(ok=True, run=record)
 
     # -- internals ----------------------------------------------------------

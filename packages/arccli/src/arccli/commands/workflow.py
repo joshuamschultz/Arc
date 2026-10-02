@@ -764,7 +764,9 @@ def _cancel(args: argparse.Namespace) -> None:
 
 def _retry(args: argparse.Namespace) -> None:
     async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
-        result = _ok_or_exit(await plane.retry_node(args.run_id, args.node_id, actor_did=actor_did))
+        result = _ok_or_exit(
+            await plane.retry_node(args.run_id, args.node_id, actor_did=actor_did)
+        )
         record = result.run
         assert record is not None  # noqa: S101 — ok=True always carries the run
         write(f"Retrying node {args.node_id} of {args.run_id} (status={record.status}).")

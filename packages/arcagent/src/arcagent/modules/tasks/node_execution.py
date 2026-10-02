@@ -297,7 +297,9 @@ def render_node_section(
     else:
         lines.append("(none)")
     if node.upstream_failed:
-        lines.extend(["", "### Upstream failures (these nodes failed; you were not handed their output)"])
+        lines.extend(
+            ["", "### Upstream failures (these nodes failed; you were not handed their output)"]
+        )
         for failed_id, reason in sorted(node.upstream_failed.items()):
             lines.append(f"- `{failed_id}`: {reason or 'no reason recorded'}")
     effective = schema if schema is not None else node.output_schema

@@ -13,8 +13,13 @@ def _document() -> dict[str, Any]:
         "workflow": {"id": "prose", "owner": "@a"},
         "node": [
             {"id": "first", "kind": "agent", "agent": "@a", "prompt": "prompts/first.md"},
-            {"id": "second", "kind": "agent", "agent": "@a", "needs": ["first"],
-             "prompt": "prompts/second.md"},
+            {
+                "id": "second",
+                "kind": "agent",
+                "agent": "@a",
+                "needs": ["first"],
+                "prompt": "prompts/second.md",
+            },
             {"id": "side", "kind": "agent", "agent": "@a", "prompt": "prompts/side.md"},
         ],
     }

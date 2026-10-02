@@ -908,7 +908,11 @@ class WorkflowRunner:
             target=f"{run.workflow_id}/{node_id}",
             outcome="retried",
             actor_did=actor_did,
-            extra={"run_id": run_id, "iteration": iteration, "previous_error": latest.task.last_error},
+            extra={
+                "run_id": run_id,
+                "iteration": iteration,
+                "previous_error": latest.task.last_error,
+            },
         )
         return await self._require_run(run_id)
 

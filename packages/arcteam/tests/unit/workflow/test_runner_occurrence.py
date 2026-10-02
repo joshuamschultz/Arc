@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 from typing import Any
 
-from .conftest import RecordingSink, Definition, Node
+from .conftest import Definition, Node, RecordingSink
 from .test_runner_frontier import build
 
 # The id the scheduler derives for an occurrence (arcagent scheduler/occurrence.py:

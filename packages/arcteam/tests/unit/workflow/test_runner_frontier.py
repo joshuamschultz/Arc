@@ -596,7 +596,9 @@ async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any)
     )
     record = await runner.advance(run.run_id)
 
-    assert record.status == "done", "the run resumes once the human answers; qa follows the untaken branch"
+    assert record.status == "done", (
+        "the run resumes once the human answers; qa follows the untaken branch"
+    )
     gate = next(e for e in record.path_taken if e["kind"] == "gate")
     assert gate["decision"] == "approved"
 

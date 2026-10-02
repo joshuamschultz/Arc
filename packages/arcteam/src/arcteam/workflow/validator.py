@@ -487,7 +487,10 @@ def _check_cycles(definition: WorkflowDefinition, graph: _Graph) -> Iterable[Val
     """A workflow is a DAG: any cycle, however small, is refused."""
     del definition
     for component in _strongly_connected(graph.forward):
-        if len(component) == 1 and next(iter(component)) not in graph.forward[next(iter(component))]:
+        if (
+            len(component) == 1
+            and next(iter(component)) not in graph.forward[next(iter(component))]
+        ):
             continue
         members = sorted(component)
         yield ValidationIssue(
@@ -502,7 +505,9 @@ def _check_cycles(definition: WorkflowDefinition, graph: _Graph) -> Iterable[Val
 # --- exclusive routes --------------------------------------------------------
 
 
-def _check_exclusive_needs(definition: WorkflowDefinition, graph: _Graph) -> Iterable[ValidationIssue]:
+def _check_exclusive_needs(
+    definition: WorkflowDefinition, graph: _Graph
+) -> Iterable[ValidationIssue]:
     """Reject the deadlock: needs spanning exclusive router routes."""
     exclusive = _exclusive_regions(definition, graph)
     for node in definition.nodes:

@@ -88,7 +88,9 @@ def test_each_kind_parses_to_its_own_typed_model(example_document: dict[str, Any
     assert script.script == "scripts/provision.py"
 
 
-@pytest.mark.parametrize("removed", [{"join": "any"}, {"loop_back_to": "provision", "max_iterations": 3}])
+@pytest.mark.parametrize(
+    "removed", [{"join": "any"}, {"loop_back_to": "provision", "max_iterations": 3}]
+)
 def test_removed_join_and_loop_fields_are_refused(
     example_document: dict[str, Any], removed: dict[str, Any]
 ) -> None:
