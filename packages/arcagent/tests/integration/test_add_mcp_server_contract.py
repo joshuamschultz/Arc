@@ -158,6 +158,8 @@ async def test_fake_stdio_server_registers_declared_tools_only(world: _World) ->
     added = await world.connections().add_mcp_server(_spec(), agents=[_AGENT], secret_values={})
 
     assert set(added.report.tools) >= {"fixture__echo", "fixture__bash"}
+    # What the operator is told is exposed is what they chose, not everything the server lists.
+    assert added.exposed == ("fixture__echo", "fixture__bash")
     registry = await world.start_agent()
 
     assert {"fixture__echo", "fixture__bash"} <= set(registry.tools)

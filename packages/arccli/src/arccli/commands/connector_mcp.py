@@ -120,7 +120,7 @@ def add_mcp(
     _out(f"Added MCP server '{added.report.instance}' (signed by {added.signed_by}).")
     _out(f"  spec sha256    : {added.spec_sha256}")
     _out(f"  granted to     : {', '.join(agents) or '(no agent yet — run: arc connector grant)'}")
-    _out(f"  tools          : {', '.join(added.report.tools) or '(none served)'}")
+    _out(f"  tools          : {', '.join(added.exposed) or '(none served)'}")
     if added.report.detail:
         _out(f"  probe          : {added.report.detail}")
     if agents:

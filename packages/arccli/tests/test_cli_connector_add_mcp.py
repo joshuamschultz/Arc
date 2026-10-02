@@ -39,6 +39,17 @@ def arc_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_deployment(arc_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the operator key, machine config and audit chain inside this test's tree.
+
+    The adversarial battery runs every suite in one process with its own deployment
+    exported, so a command that resolved any path from the environment would read that.
+    """
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(arc_dir))
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(arc_dir))
+
+
+@pytest.fixture(autouse=True)
 def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     from arcstore.backends.memory import FakeBackend
 

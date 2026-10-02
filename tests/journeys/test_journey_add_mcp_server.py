@@ -53,6 +53,7 @@ async def _open(backend: FakeBackend) -> FakeBackend:
 def deployment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[TestClient, Path, FakeBackend]:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)

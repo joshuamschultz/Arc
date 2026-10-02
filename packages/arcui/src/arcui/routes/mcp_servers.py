@@ -176,7 +176,7 @@ async def post_mcp_server(request: Request) -> JSONResponse:
         McpServerAddedResponse(
             instance=added.report.instance,
             extension=added.report.extension,
-            tools=list(added.report.tools),
+            tools=list(added.exposed),
             detail=added.report.detail,
             agents=agents,
             spec_sha256=added.spec_sha256,

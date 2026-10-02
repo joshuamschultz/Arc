@@ -247,6 +247,9 @@ class McpServerAdded:
     spec_sha256: str
     bundle: Path
     signed_by: str
+    #: The namespaced tools the operator chose AND the server offered. ``report.tools``
+    #: is everything the probe saw, which is the server's list and not the operator's.
+    exposed: tuple[str, ...] = ()
 
 
 #: Recorded as the actor when a deployment has no operator key to derive a DID
@@ -1730,8 +1733,17 @@ class Connections:
                 agents=",".join(agents),
                 tools=",".join(report.tools),
             )
+        offered = set(report.tools)
         return McpServerAdded(
-            report=report, spec_sha256=spec_digest(checked), bundle=folder, signed_by=signer_did
+            report=report,
+            spec_sha256=spec_digest(checked),
+            bundle=folder,
+            signed_by=signer_did,
+            exposed=tuple(
+                checked.namespaced(verb)
+                for verb in checked.tools
+                if checked.namespaced(verb) in offered
+            ),
         )
 
     def _checked_mcp_spec(

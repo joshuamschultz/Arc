@@ -36,6 +36,10 @@ _SECRET = "route-s3cr3t-77aa"
 
 @pytest.fixture
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # ARC_TEAM_ROOT wins over ARC_CONFIG_DIR, and the adversarial battery sets it for the
+    # whole process, so a test that only relocated ARC_CONFIG_DIR would read the
+    # battery's own hardened deployment instead of its own.
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
