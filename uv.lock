@@ -282,7 +282,9 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "arcllm", extra = ["jev"] },
     { name = "freezegun" },
+    { name = "httpx2" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pytest" },
@@ -322,7 +324,9 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "arcllm", extras = ["jev"], editable = "packages/arcllm" },
     { name = "freezegun", specifier = ">=1.5.5" },
+    { name = "httpx2", specifier = ">=2.13.1" },
     { name = "mypy", specifier = ">=1.8" },
     { name = "pip-audit", specifier = ">=2.7" },
     { name = "pytest", specifier = ">=9.0.2" },
