@@ -109,6 +109,9 @@ class LastNotice(BaseModel):
     delivered: bool
     channel: str
     at: str
+    #: The key the operator was told under. Persisted the moment a channel took the
+    #: notice, so a second process that claims it after a crash does not re-send.
+    idempotency_key: str | None = None
 
 
 class ConnectionRecord(BaseModel):

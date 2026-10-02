@@ -617,3 +617,22 @@ async def test_operator_relay_reports_none_when_no_agent_reached_the_operator() 
     relay.bind(lambda: [_Agent(), _Agent(boom=True)])
 
     assert await relay.notify("run failed", "k") is None
+
+
+async def test_operator_relay_appends_the_run_link_only_when_a_public_base_url_is_bound() -> None:
+    from arcgateway.workflow_runner_host import OperatorNoticeRelay
+
+    agent = _Agent("telegram")
+    relay = OperatorNoticeRelay()
+    relay.bind(lambda: [agent])
+
+    await relay.notify("run failed", "k1", "/workflows/nightly?run=r1")
+    relay.bind_public_base_url("https://arc.example.com")
+    await relay.notify("run failed", "k2", "/workflows/nightly?run=r1")
+    await relay.notify("run failed", "k3", None)
+
+    assert [text for text, _ in agent.seen] == [
+        "run failed",
+        "run failed https://arc.example.com/workflows/nightly?run=r1",
+        "run failed",
+    ]

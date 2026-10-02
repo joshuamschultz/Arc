@@ -108,3 +108,41 @@ def test_runtime_dir_default_falls_back_to_home_without_arc_config_dir(
     # Under the operator root, not the install home: runtime state must
     # survive replacing ~/.arc.
     assert cfg.gateway.runtime_dir == gateway_runtime_dir(Path.home() / "arc")
+
+
+# --- [ui] public_base_url (alpha-2 item 75b) --------------------------------
+
+
+def test_ui_public_base_url_defaults_unset() -> None:
+    assert GatewayConfig.from_toml_str("[gateway]\n").ui.public_base_url is None
+
+
+def test_ui_public_base_url_https_is_accepted_and_normalised() -> None:
+    cfg = GatewayConfig.from_toml_str('[ui]\npublic_base_url = "https://arc.example.com/"\n')
+    assert cfg.ui.public_base_url == "https://arc.example.com"
+
+
+@pytest.mark.parametrize(
+    "url", ["http://127.0.0.1:8420", "http://localhost:8420", "http://[::1]:8420"]
+)
+def test_ui_public_base_url_allows_loopback_http_at_personal(url: str) -> None:
+    cfg = GatewayConfig.from_toml_str(f'[ui]\npublic_base_url = "{url}"\n')
+    assert cfg.ui.public_base_url == url
+
+
+@pytest.mark.parametrize(
+    "toml",
+    [
+        '[ui]\npublic_base_url = "http://arc.example.com"\n',
+        '[gateway]\ntier = "enterprise"\n[ui]\npublic_base_url = "http://127.0.0.1:8420"\n',
+        '[gateway]\ntier = "federal"\n[ui]\npublic_base_url = "http://localhost"\n',
+        '[ui]\npublic_base_url = "ftp://arc.example.com"\n',
+        '[ui]\npublic_base_url = "https://user:pw@arc.example.com"\n',
+        '[ui]\npublic_base_url = "https://arc.example.com/?token=x"\n',
+        '[ui]\npublic_base_url = "https://arc.example.com/#auth=x"\n',
+        '[ui]\npublic_base_url = "arc.example.com"\n',
+    ],
+)
+def test_ui_public_base_url_rejects_insecure_or_credentialed_urls(toml: str) -> None:
+    with pytest.raises(ValueError):
+        GatewayConfig.from_toml_str(toml)

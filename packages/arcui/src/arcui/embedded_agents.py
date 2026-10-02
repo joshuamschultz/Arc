@@ -145,6 +145,7 @@ def install_embedded_agent_hooks(app: Any, *, cache_maxsize: int = _DEFAULT_CACH
     from arcgateway.workflow_runner_host import OPERATOR_NOTICES
 
     OPERATOR_NOTICES.bind(cache.values)
+    OPERATOR_NOTICES.bind_public_base_url(getattr(app.state, "public_base_url", None))
 
 
 def adopt_agent(app: Any, agent_did: str, agent: Any) -> None:
