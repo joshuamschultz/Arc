@@ -3,17 +3,35 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from arctrust.audit import AuditEvent, emit
+from arctrust.identity import did_from_public_key
 
-from arcteam.shared_knowledge.backend import FleetSharedKnowledgeBackend
+from arcteam.shared_knowledge.backend import (
+    FleetSharedKnowledgeBackend,
+    SharedKnowledgeDemotion,
+    SharedKnowledgeProvenance,
+    SharedKnowledgeReference,
+    SharedKnowledgeSummary,
+)
+
+_logger = logging.getLogger(__name__)
 
 _CLASSIFIER_DECISION = "classifier_promote"
+#: An operator shared the card by hand (alpha-2 item 16): no classifier verdict,
+#: a named operator DID, and the same durable decision record.
+_OPERATOR_DECISION = "operator_promote"
+#: Provenance decision for a promotion made with no recorded decision (the
+#: agent's own ``shared_knowledge_promote`` tool path).
+_DIRECT_DECISION = "direct"
 _MIN_CONFIDENCE = 0.90
+_MAX_DID_CHARS = 256
 
 
 class _Access(Protocol):
@@ -70,6 +88,14 @@ class _Draft:
     document_type: str
 
 
+@dataclass(frozen=True)
+class _OperatorAccess:
+    """The operator's read context for a demote: the anchored DID at a clearance."""
+
+    caller_did: str
+    clearance: str
+
+
 class SharedKnowledgeUnavailableError(RuntimeError):
     """The optional ArcMemory collection mechanics are not installed."""
 
@@ -114,9 +140,12 @@ class FleetSharedKnowledgeService:
         base: Path | str | None = None,
         *,
         promotable_document_types: frozenset[str] | set[str] | None = None,
+        operator_public_key: bytes | None = None,
     ) -> FleetSharedKnowledgeService:
         return cls(
-            FleetSharedKnowledgeBackend.for_arc_team(base=base),
+            FleetSharedKnowledgeBackend.for_arc_team(
+                base=base, operator_public_key=operator_public_key
+            ),
             promotable_document_types=promotable_document_types,
         )
 
@@ -126,16 +155,19 @@ class FleetSharedKnowledgeService:
         team_root: Path | str,
         *,
         promotable_document_types: frozenset[str] | set[str] | None = None,
+        operator_public_key: bytes | None = None,
     ) -> FleetSharedKnowledgeService:
         """Bind the collection to a concrete operator team root (``<root>/shared/knowledge``).
 
         The always-on fleet writes and the dashboard reads through the SAME root,
         so a custom ``--team-root`` deployment keeps its shared knowledge beside the
-        agents that produced it instead of the default home.
+        agents that produced it instead of the default home. ``operator_public_key``
+        is the deployment operator's trust anchor for demotions; without it no
+        demote is accepted and no tombstone counts as one.
         """
         root = Path(team_root) / "shared" / "knowledge"
         return cls(
-            FleetSharedKnowledgeBackend(root),
+            FleetSharedKnowledgeBackend(root, operator_public_key=operator_public_key),
             promotable_document_types=promotable_document_types,
         )
 
@@ -154,16 +186,20 @@ class FleetSharedKnowledgeService:
         decision: str | None = None,
         confidence: float | None = None,
         classifier_version: str | None = None,
+        decided_by: str | None = None,
     ) -> object:
         """Promote one owned personal export through the fleet's authorization gate.
 
-        A classifier-driven promotion passes ``decision="classifier_promote"`` with
-        the classifier's ``confidence`` and ``classifier_version``; that decision is
-        written durably BEFORE the shared write so an automated promotion can never
-        land without its audit record, and only AFTER the write's owner, clearance,
+        Two recorded decisions exist. ``decision="classifier_promote"`` carries the
+        classifier's ``confidence`` and ``classifier_version``;
+        ``decision="operator_promote"`` carries the operator's DID in ``decided_by``
+        and no classifier verdict at all (alpha-2 item 16). Either is written
+        durably BEFORE the shared write, so a decided promotion can never land
+        without its audit record, and only AFTER the write's owner, clearance,
         signer and pin checks pass, so a refused promotion records no decision.
         Entities merge into the shared canonical entity as this contributor's
-        signed provenance block.
+        signed provenance block. After the write, a contributor-signed provenance
+        record names the source card, the decision and the time.
 
         Raises:
             SharedKnowledgePromotionRefusedError: any failure before the shared
@@ -171,18 +207,19 @@ class FleetSharedKnowledgeService:
             SharedKnowledgePromotionOutcomeUnknownError: the save failed or returned
                 a reference to other bytes — the write may have landed.
         """
-        classified = (
-            decision is not None or confidence is not None or classifier_version is not None
+        decided = any(
+            value is not None for value in (decision, confidence, classifier_version, decided_by)
         )
         decision_extra = {
             "item_id": reference,
             "confidence": confidence,
             "classifier_version": classifier_version,
             "decision": decision,
+            "decided_by": decided_by,
         }
         try:
             source, collection, draft = await self._authorize_promotion(
-                personal, reference, access, signer, audit_sink, classified, decision_extra
+                personal, reference, access, signer, audit_sink, decided, decision_extra
             )
         except Exception as error:  # reason: nothing is written before the save — a refusal
             raise SharedKnowledgePromotionRefusedError(str(error)) from error
@@ -196,7 +233,8 @@ class FleetSharedKnowledgeService:
             raise SharedKnowledgePromotionOutcomeUnknownError(
                 "fleet shared backend returned an invalid reference"
             )
-        if classified:
+        await self._record_provenance(result, signer, access, source, reference, decision_extra)
+        if decided:
             emit(
                 AuditEvent(
                     actor_did=access.caller_did,
@@ -217,20 +255,15 @@ class FleetSharedKnowledgeService:
         access: _Access,
         signer: _Signer,
         audit_sink: Any,
-        classified: bool,
+        decided: bool,
         decision_extra: dict[str, Any],
     ) -> tuple[Any, Any, _Draft]:
         """Every pre-write step: decision shape, export, validation, authorize, decision audit.
 
         Returns the verified source, the collection and the draft to save.
         """
-        if classified:
-            _require_classifier_decision(
-                decision_extra["decision"],
-                decision_extra["confidence"],
-                decision_extra["classifier_version"],
-                audit_sink,
-            )
+        if decided:
+            _require_decision(decision_extra, audit_sink)
         source: Any = await personal.export_for_promotion(reference, access)
         self._validate_promotion(source)
         self._enforce_promotable_type(source)
@@ -242,11 +275,12 @@ class FleetSharedKnowledgeService:
             tags=source.tags,
             document_type=source.document_type,
         )
-        # Owner, clearance, signer-vs-DID and TOFU pin are checked BEFORE the
-        # decision is recorded, so a refused promotion never leaves an "allow"
-        # decision behind. The save re-checks everything (no trust across the gap).
+        # Owner, clearance, signer-vs-DID, TOFU pin and "not demoted" are checked
+        # BEFORE the decision is recorded, so a refused promotion never leaves an
+        # "allow" decision behind. The save re-checks everything (no trust across
+        # the gap).
         await collection.authorize_save(draft, access)
-        if classified:
+        if decided:
             audit_sink.write_durable(
                 AuditEvent(
                     actor_did=access.caller_did,
@@ -259,18 +293,86 @@ class FleetSharedKnowledgeService:
             )
         return source, collection, draft
 
+    async def _record_provenance(
+        self,
+        result: SharedKnowledgeReference,
+        signer: _Signer,
+        access: _Access,
+        source: Any,
+        reference: str,
+        decision_extra: dict[str, Any],
+    ) -> None:
+        """Best-effort signed provenance; the write already landed and was audited.
+
+        Provenance is display metadata — the durable decision audit is the record
+        of authority — so a failure here is logged and never reported as an
+        unknown outcome (which would stop the item from ever being retried).
+        """
+        fields = {
+            "contributor_did": access.caller_did,
+            "source_ref": reference,
+            "kind": source.document_type,
+            "decision": decision_extra["decision"] or _DIRECT_DECISION,
+            "confidence": decision_extra["confidence"],
+            "classifier_version": decision_extra["classifier_version"],
+            "decided_by": decision_extra["decided_by"],
+            "promoted_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            await self._backend.record_provenance(result, signer, fields)
+        except Exception as error:  # reason: metadata only; never undo or mislabel the write
+            _logger.warning("shared knowledge provenance not recorded (%s)", type(error).__name__)
+
     async def read(self, reference: str, access: _Access) -> Any:
         return await self._backend.read(reference, access)
 
-    async def list_documents(self, access: _Access) -> list[Any]:
-        """Every promoted document the caller may read, attributed to its owner DID."""
-        return await self._backend.list_documents(access)
+    async def list_documents(
+        self, access: _Access, *, include_demoted: bool = False
+    ) -> list[SharedKnowledgeSummary]:
+        """Every promoted document the caller may read, with kind, contributors and time.
+
+        ``include_demoted`` adds the operator-demoted documents, each carrying its
+        demotion (the dashboard's "show demoted" view).
+        """
+        return await self._backend.list_documents(access, include_demoted=include_demoted)
 
     async def search(self, query: str, access: _Access) -> list[Any]:
         return await self._backend.search(query, access)
 
     async def revoke(self, reference: str, access: _Access) -> None:
         await self._backend.revoke(reference, access)
+
+    async def provenance(
+        self, reference: str, access: _Access
+    ) -> tuple[SharedKnowledgeProvenance, ...]:
+        """The verified provenance of a live document's bytes (who, when, what decision)."""
+        return await self._backend.provenance(reference, access)
+
+    async def demote(
+        self,
+        reference: str,
+        *,
+        operator_signer: _Signer,
+        reason: str,
+        clearance: str,
+    ) -> SharedKnowledgeDemotion:
+        """Demote one shared document under the operator's signed tombstone.
+
+        Only the anchored deployment operator key may demote, and only a document
+        it can read at ``clearance``. The bytes are retired, never erased; every
+        contributing agent's next sweep turns the verified tombstone into its own
+        sticky ``demoted_by_operator`` decision, so the card never re-promotes.
+
+        Raises ``PermissionError`` (not the operator, or above clearance),
+        ``FileNotFoundError`` (unknown or already revoked) and ``ValueError``
+        (bad identifier or reason).
+        """
+        access = _OperatorAccess(_operator_did(operator_signer), clearance)
+        return await self._backend.demote(reference, access, operator_signer, reason)
+
+    async def demotions(self) -> dict[str, SharedKnowledgeDemotion]:
+        """Every verified operator demotion, keyed by shared identifier."""
+        return await self._backend.demotions()
 
     def _collection(self, owner_did: str, signer: _Signer, audit_sink: Any) -> Any:
         try:
@@ -307,30 +409,54 @@ class FleetSharedKnowledgeService:
             raise ValueError("knowledge promotion digest mismatch")
 
 
-def _require_classifier_decision(
-    decision: str | None,
-    confidence: float | None,
-    classifier_version: str | None,
-    audit_sink: Any,
-) -> None:
-    """Refuse any automated promotion decision outside the classifier contract.
+def _operator_did(signer: _Signer) -> str:
+    return did_from_public_key(signer.public_key, org="operator", agent_type="approver")
 
-    ``confidence`` must be a real finite float (``bool``/``int``/``str`` refused)
-    at or above the 0.90 promotion floor, and the decision must be recordable
-    durably — an unauditable automated promotion fails closed.
+
+def _require_decision(extra: dict[str, Any], audit_sink: Any) -> None:
+    """Refuse any recorded promotion decision outside its contract.
+
+    ``classifier_promote``: ``confidence`` a real finite float (``bool``/``int``/
+    ``str`` refused) in [0.90, 1.0], a non-empty ``classifier_version``, and no
+    operator named. ``operator_promote``: a DID in ``decided_by`` and no
+    classifier verdict — an operator cannot smuggle a fake confidence. Either
+    must be recordable durably: an unauditable decided promotion fails closed.
     """
-    if decision != _CLASSIFIER_DECISION:
+    decision = extra["decision"]
+    if decision == _CLASSIFIER_DECISION:
+        _require_classifier_verdict(extra)
+    elif decision == _OPERATOR_DECISION:
+        _require_operator_decider(extra)
+    else:
         raise ValueError("unknown promotion decision")
+    if not callable(getattr(audit_sink, "write_durable", None)):
+        raise ValueError("promotion decision requires a durable audit sink")
+
+
+def _require_classifier_verdict(extra: dict[str, Any]) -> None:
+    confidence, version = extra["confidence"], extra["classifier_version"]
     if (
         not isinstance(confidence, float)
         or not math.isfinite(confidence)
         or not _MIN_CONFIDENCE <= confidence <= 1.0
     ):
         raise ValueError("classifier confidence must be a finite float in [0.90, 1.0]")
-    if not isinstance(classifier_version, str) or not classifier_version.strip():
+    if not isinstance(version, str) or not version.strip():
         raise ValueError("classifier promotion requires a classifier version")
-    if not callable(getattr(audit_sink, "write_durable", None)):
-        raise ValueError("promotion decision requires a durable audit sink")
+    if extra["decided_by"] is not None:
+        raise ValueError("a classifier promotion names no operator")
+
+
+def _require_operator_decider(extra: dict[str, Any]) -> None:
+    decider = extra["decided_by"]
+    if extra["confidence"] is not None or extra["classifier_version"] is not None:
+        raise ValueError("an operator promotion carries no classifier verdict")
+    if (
+        not isinstance(decider, str)
+        or not decider.startswith("did:")
+        or len(decider) > _MAX_DID_CHARS
+    ):
+        raise ValueError("an operator promotion requires the operator's DID")
 
 
 __all__ = [
