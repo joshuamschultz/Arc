@@ -1,6 +1,5 @@
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './sidebar'
-import { OperatorAvatarMenu } from './operator-avatar-menu'
 import { ApprovalNotificationListener } from '@/components/approval-notification-listener'
 import { CommandPalette } from '@/components/command-palette'
 
@@ -8,7 +7,7 @@ import { CommandPalette } from '@/components/command-palette'
  * App frame: a slim icon rail plus the routed screen. Each screen renders its
  * own header (see PageHeader), so there is no global top bar — the rail
  * carries the brand and theme toggle; operator identity and the view/operator
- * mode toggle live in the fixed top-right avatar menu instead (H-035).
+ * mode toggle live in the avatar menu inside each screen header (H-035).
  *
  * The frame is fully keyboard-drivable (H-036): a skip link jumps straight to
  * the routed screen, and the command palette (Cmd/Ctrl-K) reaches every
@@ -29,7 +28,6 @@ export function AppShell() {
       <main id="main-content" tabIndex={-1} className="flex flex-1 flex-col overflow-auto outline-none">
         <Outlet />
       </main>
-      <OperatorAvatarMenu />
       <ApprovalNotificationListener />
       <CommandPalette />
     </div>

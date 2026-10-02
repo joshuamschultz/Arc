@@ -647,6 +647,23 @@ class TestFleetToolsSkills:
         )
         assert all("alpha" in t["agents"] for t in tools)
 
+    def test_denied_tool_is_not_listed_as_available_on_that_agent(self, tmp_path):
+        """A tool an agent's policy denies is not "available on" that agent, so
+        the fleet page's Agent filter can narrow the matrix. Every row also
+        carries a real source bucket, never the empty string."""
+        team = _build_team(tmp_path, [("alpha", ""), ("beta", "")])
+        toml = team / "beta_agent" / "arcagent.toml"
+        toml.write_text(
+            toml.read_text(encoding="utf-8") + '[tools.policy]\ndeny = ["bash"]\n',
+            encoding="utf-8",
+        )
+        app, auth, _registry = _make_app(team_root=team)
+        client = TestClient(app)
+        tools = client.get("/api/team/tools-skills", headers=_viewer(auth)).json()["tools"]
+        bash = next(t for t in tools if t["name"] == "bash")
+        assert bash["agents"] == ["alpha"]
+        assert all(t["source"] in {"builtin", "agent", "extension", "module"} for t in tools)
+
 
 # ---------------------------------------------------------------------------
 # /api/team/audit

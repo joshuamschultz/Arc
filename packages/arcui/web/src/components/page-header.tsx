@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { ScreenHelp } from '@/components/help'
+import { OperatorAvatarMenu } from '@/components/shell/operator-avatar-menu'
 
 interface PageHeaderProps {
   title: ReactNode
@@ -24,6 +25,7 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
       <div className="flex shrink-0 items-center gap-2">
         {actions}
         <ScreenHelp />
+        <OperatorAvatarMenu />
       </div>
     </div>
   )
