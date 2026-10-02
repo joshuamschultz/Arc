@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -53,6 +54,54 @@ class SourceError(RuntimeError):
         self.code = code
         self.detail = detail
         self.retry_after = retry_after
+
+
+#: What a vendor CLI says when nobody is signed in. Each vendor says it in prose,
+#: not in a code the wrapper passes through, so the words are the only signal.
+#: "keyring" and "tty" are here because a headless box that cannot unlock the
+#: vendor's credential store is signed out for every practical purpose: only a
+#: person at a terminal can fix it, and retrying changes nothing.
+_AUTH_MARKERS = (
+    "invalid_grant",
+    "expired or revoked",
+    "token has been expired",
+    "no auth for",
+    "not authenticated",
+    "authentication failed",
+    "authentication required",
+    "requires authentication",
+    "failed to authenticate",
+    "not logged in",
+    "login required",
+    "bad credentials",
+    "unauthorized",
+    "keyring",
+    "no tty",
+    "not a tty",
+    "without a terminal",
+)
+
+#: A bare status number is only a status when nothing word-like touches it:
+#: ``PROJ-401`` is an issue key, not an authorization failure.
+_AUTH_STATUS = re.compile(r"(?<![\w-])401(?![\w-])")
+_RATE_STATUS = re.compile(r"(?<![\w-])429(?![\w-])")
+_RATE_MARKERS = ("rate limit", "ratelimitexceeded", "secondary rate")
+
+
+def classify_cli_failure(detail: str) -> SourceFailureCode:
+    """Classify a vendor-CLI failure so the orchestrator can act on it.
+
+    Credential trouble is terminal (only a person can fix it), a rate limit means
+    wait, and anything else is TRANSIENT: a bounded retry, and now a bounded run of
+    consecutive failures, rather than a list of network phrasings to keep current.
+    Judge the WHOLE message; a vendor puts the reason at the end, after a URL.
+    """
+    lowered = detail.lower()
+    if any(marker in lowered for marker in _AUTH_MARKERS) or _AUTH_STATUS.search(lowered):
+        return SourceFailureCode.AUTH_REQUIRED
+    if any(marker in lowered for marker in _RATE_MARKERS) or _RATE_STATUS.search(lowered):
+        return SourceFailureCode.RATE_LIMITED
+    return SourceFailureCode.TRANSIENT
 
 
 class InspectSource(_Contract):
@@ -191,4 +240,5 @@ __all__ = [
     "SourceResource",
     "SyncSource",
     "SyncSourcePage",
+    "classify_cli_failure",
 ]

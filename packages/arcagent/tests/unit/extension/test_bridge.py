@@ -154,6 +154,22 @@ def _bridge(registry: ToolRegistry, attachment: _RecordingAttachment) -> Any:
     )
 
 
+# --- a tool may declare how long it legitimately takes ----------------------
+
+
+def test_a_tool_declaring_a_longer_timeout_is_registered_with_it(
+    registry: ToolRegistry, attachment: _RecordingAttachment
+) -> None:
+    """``dropbox_upload`` died at the registry's 30 s default while its transport
+    allows five minutes: the bound that matters must be the tool's own."""
+    _bridge(registry, attachment).register(
+        [_spec("upload", timeout_seconds=300), _spec("list_issues")]
+    )
+
+    assert registry.tools["upload"].timeout_seconds == 300
+    assert registry.tools["list_issues"].timeout_seconds == 30
+
+
 # --- REQ-266: one named capability per tool ---------------------------------
 
 

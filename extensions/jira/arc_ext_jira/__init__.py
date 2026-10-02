@@ -23,6 +23,7 @@ from arcagent.extension.source import (
     SourceResource,
     SyncSource,
     SyncSourcePage,
+    classify_cli_failure,
 )
 
 
@@ -160,7 +161,7 @@ class JiraSourceAdapter:
     async def _call(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         result = await self._attachment.invoke(tool, args)
         if result.outcome is not ToolOutcome.OK:
-            raise SourceError(SourceFailureCode.TRANSIENT, result.content)
+            raise SourceError(classify_cli_failure(result.content), result.content[:256])
         try:
             payload = json.loads(result.content)
         except json.JSONDecodeError as exc:

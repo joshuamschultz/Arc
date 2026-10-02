@@ -292,27 +292,37 @@ class SQLiteAttachment:
         await self.introspect()
         return self
 
-    async def introspect(self) -> Any:
+    async def introspect(self, *, sample_limit: int = 0) -> Any:
         """The schema as the operator describes it, narrowed to approved tables.
 
         Approval is applied BEFORE the semantic layer, so a description of a
         table nobody approved cannot put that table back in front of an agent.
+        ``sample_limit`` is the port's contract (``DatastorePort``): up to that many
+        example values per column. A sampled read is never cached, because the
+        bare calls every query makes must not inherit a sample nobody asked them for.
         """
         await self._ensure_local()
         self._invalidate_if_moved(self._fingerprint)
-        if self._ontology is not None:
+        if sample_limit == 0 and self._ontology is not None:
             return self._ontology
-        raw = await asyncio.to_thread(self._introspect_blocking)
+        raw = await asyncio.to_thread(self._introspect_blocking, sample_limit)
         if self._selected:
             from arcmemory.datastore import DatastoreOntology
 
             kept = {n: i for n, i in raw.tables.items() if n in self._selected}
             raw = DatastoreOntology(tables=kept, entity_map={})
-        self._ontology = _overlay(self._connection_id, raw)
-        return self._ontology
+        ontology = _overlay(self._connection_id, raw)
+        if sample_limit == 0:
+            self._ontology = ontology
+        return ontology
 
-    async def persist_ontology(self, store: Any) -> None:
-        """Write table SHAPE into memory — never a row, and never the path."""
+    async def persist_ontology(self, store: Any, *, source_id: str) -> None:
+        """Write table SHAPE into memory — never a row, and never the path.
+
+        ``source_id`` is the port's contract; the facts are keyed by the table, as
+        before, so it is accepted and not needed.
+        """
+        del source_id
         ontology = await self.introspect()
         layer = _layer_for(self._connection_id)
         for name, info in ontology.tables.items():
@@ -462,11 +472,11 @@ class SQLiteAttachment:
             raise SourceError(SourceFailureCode.AUTH_REQUIRED, f"{self._host}: {detail}")
         return stdout
 
-    def _introspect_blocking(self) -> Any:
+    def _introspect_blocking(self, sample_limit: int = 0) -> Any:
         from arcmemory.datastore import SqliteDatastore
 
         with self._connection() as conn:
-            return SqliteDatastore(conn).introspect()
+            return SqliteDatastore(conn).introspect(sample_limit=sample_limit)
 
     def _query_blocking(self, op: str, table: str, args: dict[str, object]) -> object:
         from arcmemory.datastore import SqliteDatastore

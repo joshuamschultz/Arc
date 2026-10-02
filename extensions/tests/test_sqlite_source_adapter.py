@@ -311,7 +311,7 @@ class TestSemanticLayer:
             def write_fact(self, slug: str, key: str, value: str, **kwargs: object) -> None:
                 written.append((slug, key, value))
 
-        await _attachment(database).persist_ontology(_Store())
+        await _attachment(database).persist_ontology(_Store(), source_id="source-shop")
 
         facts = {(key, value) for _, key, value in written}
         assert ("entity", "invoice") in facts

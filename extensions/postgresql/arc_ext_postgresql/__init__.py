@@ -227,8 +227,14 @@ class PostgreSQLAttachment:
         await self.introspect()
         return self
 
-    async def introspect(self) -> Any:
-        """Build the typed ontology from information_schema, constrained to selected tables."""
+    async def introspect(self, *, sample_limit: int = 0) -> Any:
+        """Build the typed ontology from information_schema, constrained to selected tables.
+
+        ``sample_limit`` is the port's contract. This adapter reads schema only, never a
+        row, so it has no example values to give: the argument is accepted, and the
+        ontology is the same either way.
+        """
+        del sample_limit
         if self._ontology is not None:
             return self._ontology
         rows = await self._execute(
@@ -286,8 +292,13 @@ class PostgreSQLAttachment:
         self._ontology = semantic.overlay(self._connection_id, raw)
         return self._ontology
 
-    async def persist_ontology(self, store: Any) -> None:
-        """Persist safe table shape facts without copying database rows into memory."""
+    async def persist_ontology(self, store: Any, *, source_id: str) -> None:
+        """Persist safe table shape facts without copying database rows into memory.
+
+        ``source_id`` is the port's contract; facts are keyed by the table, so it is
+        accepted and not needed.
+        """
+        del source_id
         ontology = await self.introspect()
         layer = importlib.import_module("arcmemory.semantic_layer").layer_for(self._connection_id)
         for name, info in ontology.tables.items():

@@ -61,6 +61,12 @@ from arcagent.extension.source import (
 #: ceiling still bounds the run as a whole.
 _TIMEOUT: Final = httpx.Timeout(connect=10.0, read=300.0, write=120.0, pool=10.0)
 
+#: A verb that moves file bytes may legitimately run as long as the transport lets
+#: it. The tool registry's 30 second default cut ``dropbox_upload`` off ("TOOL_TIMEOUT")
+#: long before this transport gave up, so the tool bound is the transport's own,
+#: read from it rather than restated.
+_TRANSFER_TOOL_TIMEOUT: Final = int(max(_TIMEOUT.read or 0.0, _TIMEOUT.write or 0.0))
+
 #: Where a refresh token is exchanged for a short-lived access token.
 _OAUTH_ENDPOINT: Final = "https://api.dropbox.com/oauth2/token"
 
@@ -166,6 +172,7 @@ class DropboxAttachment:
                 description="Read a file's text content by path.",
                 input_schema=_schema({"path": _STRING}, required=["path"]),
                 classification="read_only",
+                timeout_seconds=_TRANSFER_TOOL_TIMEOUT,
             ),
             ToolSpec(
                 name="dropbox_account",
@@ -183,6 +190,7 @@ class DropboxAttachment:
                 ),
                 classification="state_modifying",
                 capability_tags=["network_egress"],
+                timeout_seconds=_TRANSFER_TOOL_TIMEOUT,
             ),
             ToolSpec(
                 name="dropbox_create_folder",
@@ -665,6 +673,8 @@ def _source_http_failure(response: httpx.Response) -> SourceError:
     status = response.status_code
     if status in (400, 401, 403):
         return SourceError(SourceFailureCode.AUTH_REQUIRED, "Dropbox authorization was refused")
+    if status == 404:
+        return SourceError(SourceFailureCode.NOT_FOUND, "Dropbox object was not found")
     if status == 429:
         return SourceError(
             SourceFailureCode.RATE_LIMITED,

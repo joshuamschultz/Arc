@@ -22,6 +22,7 @@ from arcagent.extension.source import (
     SourceResource,
     SyncSource,
     SyncSourcePage,
+    classify_cli_failure,
 )
 
 #: Extensions worth indexing as text. A repository is mostly code and prose;
@@ -373,33 +374,16 @@ def _is_empty_blob(result: Any) -> bool:
     return "exited 0" in str(result.content)
 
 
-#: Rate limiting, which means "wait", not "reconnect".
-_RATE_MARKERS = ("rate limit", "secondary rate", "429")
-
-#: A credential no retry will fix.
-_AUTH_MARKERS = ("bad credentials", "401", "requires authentication", "must be logged in")
-
-
 def _github_failure_code(detail: str) -> SourceFailureCode:
     """Classify a `gh` failure so the coordinator can act on it.
 
     Everything used to be an untyped ``RuntimeError``, which the coordinator
     treats as a hard failure — so one TLS handshake timeout, a single call into a
-    crawl of every repository in an account, threw the whole run away. A crawl
-    that long WILL hit one.
-
-    Anything not clearly a credential or a rate limit is TRANSIENT, which is a
-    deliberate default rather than a list of network phrasings to keep current:
-    the coordinator retries a bounded number of times and then fails, so a truly
-    permanent error still ends the run — a few seconds later, having cost some
-    retries. Losing a whole account's crawl to a blip is the worse trade.
+    crawl of every repository in an account, threw the whole run away. The shared
+    classifier keeps the deliberate default: anything not clearly a credential or
+    a rate limit is TRANSIENT, retried a bounded number of times.
     """
-    lowered = detail.lower()
-    if any(marker in lowered for marker in _AUTH_MARKERS):
-        return SourceFailureCode.AUTH_REQUIRED
-    if any(marker in lowered for marker in _RATE_MARKERS):
-        return SourceFailureCode.RATE_LIMITED
-    return SourceFailureCode.TRANSIENT
+    return classify_cli_failure(detail)
 
 
 def _repository_simply_lacks_it(detail: str) -> bool:

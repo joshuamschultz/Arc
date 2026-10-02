@@ -21,6 +21,7 @@ from arcagent.extension.source import (
     SourceResource,
     SyncSource,
     SyncSourcePage,
+    classify_cli_failure,
 )
 
 _CURSOR_VERSION = 1
@@ -29,6 +30,8 @@ _CURSOR_VERSION = 1
 #: translated to the ``in:anywhere`` search term, which is how Gmail expresses
 #: "everything, including archived and sent".
 _ALL_MAIL = "__all_mail__"
+
+_NOT_FOUND = re.compile(r"(?<![\w-])404(?![\w-])|not\s?found", re.IGNORECASE)
 
 
 class GmailSourceAdapter:
@@ -173,7 +176,10 @@ class GmailSourceAdapter:
         if token := cursor.get("page_token"):
             arguments["page_token"] = token
         result = await self._attachment.invoke("google_gmail_history", arguments)
-        payload = _payload(result)
+        try:
+            payload = _payload(result)
+        except SourceError as error:
+            raise _history_failure(error) from error
         objects = await self._history_objects(payload.get("history", []))
         next_history = _revision(payload) if payload.get("historyId") else cursor["history_id"]
         page_token = str(payload.get("nextPageToken") or "")
@@ -344,29 +350,19 @@ def _unwrap_message(payload: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-#: Substrings in a ``gog`` failure that mean the account must be re-authorized.
-#: Google says this in prose, not in a code the CLI passes through, so the words
-#: are the only signal there is.
-_AUTH_MARKERS = ("invalid_grant", "expired or revoked", "token has been expired")
+def _history_failure(error: SourceError) -> SourceError:
+    """An aged-out history cursor is a dead checkpoint, not a passing blip.
 
-#: Substrings that mean "ask again later" rather than "reconnect".
-_RATE_MARKERS = ("rate limit", "rateLimitExceeded", "userRateLimitExceeded", "429")
-
-
-def _failure_code(detail: str) -> SourceFailureCode:
-    """Classify a ``gog`` failure so the orchestrator can act on it.
-
-    A revoked or expired refresh token was reported as TRANSIENT, so the
-    coordinator retried it every cycle forever and the UI said "temporary
-    problem" about a connection that needed a person to run ``gog auth add``.
-    Only re-authorization fixes it, so it must say so.
+    Gmail keeps history for about a week. A cursor older than that answers ``404
+    notFound`` and always will; classified TRANSIENT it was retried every cycle for
+    33 days while the mailbox went stale. Only the history call carries a cursor,
+    so only here does a 404 mean "start over from a snapshot".
     """
-    lowered = detail.lower()
-    if any(marker.lower() in lowered for marker in _AUTH_MARKERS):
-        return SourceFailureCode.AUTH_REQUIRED
-    if any(marker.lower() in lowered for marker in _RATE_MARKERS):
-        return SourceFailureCode.RATE_LIMITED
-    return SourceFailureCode.TRANSIENT
+    if error.code is SourceFailureCode.TRANSIENT and _NOT_FOUND.search(error.detail):
+        return SourceError(
+            SourceFailureCode.CHECKPOINT_INVALID, f"Gmail history cursor expired: {error.detail}"
+        )
+    return error
 
 
 def _payload(result: Any) -> dict[str, Any]:
@@ -383,7 +379,7 @@ def _payload(result: Any) -> dict[str, Any]:
         # detail cut "invalid_grant" off — so a revoked token classified as
         # transient and was retried every cycle forever.
         full = str(result.content)
-        raise SourceError(_failure_code(full), full[:256])
+        raise SourceError(classify_cli_failure(full), full[:256])
     try:
         parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:
