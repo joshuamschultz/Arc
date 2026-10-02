@@ -89,7 +89,7 @@ async def test_repeated_tick_failure_is_escalated_via_audit_and_narration(
     # channel learned from real activity, not a hardcoded one. ``start_run``
     # itself only calls ``advance``, never ``tick``, so this needs an explicit
     # tick to populate the cache.
-    await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    await runner.start_run("wired", input={}, initiator="operator", initiator_did="did:arc:x/1")
     await runner.tick()
     assert runner._last_known_channels == [CHANNEL]
 
@@ -174,7 +174,7 @@ async def test_one_poisoned_run_still_does_not_stop_the_tick(stores: Any, regist
     async def always_raise(run_id: str) -> Any:
         raise RuntimeError("this run is poisoned")
 
-    await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    await runner.start_run("wired", input={}, initiator="operator", initiator_did="did:arc:x/1")
     runner.advance = always_raise  # type: ignore[method-assign]
 
     task = asyncio.create_task(runner.run_forever(interval=0.005))
@@ -192,7 +192,9 @@ async def test_poisoned_run_is_terminalized_after_bounded_advance_failures(
     _, runs, _ = stores
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=3)
-    started = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    started = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     async def poisoned(_: str) -> Any:
         raise NodeDecisionError("only", "corrupt companion state")
@@ -216,8 +218,12 @@ async def test_poisoned_run_failure_budget_survives_runner_restart(
     """Restarting the runner cannot grant a poisoned run endless new attempts."""
     _, runs, _ = stores
     first = build(stores, registry, WIRED, advance_failure_threshold=3)
-    poisoned = await first.start_run("wired", input={}, initiator_did="did:arc:x/1")
-    healthy = await first.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    poisoned = await first.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
+    healthy = await first.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     async def fail_one(run_id: str) -> Any:
         if run_id == poisoned.run_id:
@@ -303,7 +309,9 @@ async def test_uncertain_advance_errors_never_claim_known_terminal_failure(
     _, runs, _ = stores
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=2)
-    started = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    started = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     async def unknown(_: str) -> Any:
         raise RuntimeError("database response lost after task materialization")
@@ -325,8 +333,12 @@ async def test_tracking_error_on_poisoned_run_does_not_starve_peer(
     _, runs, _ = stores
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink)
-    poisoned = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
-    healthy = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    poisoned = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
+    healthy = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     original_advance = runner.advance
     original_record = runs.record_advance_failure
     seen: list[str] = []
@@ -354,7 +366,9 @@ async def test_lost_materialization_response_restarts_without_duplicate_node(
 ) -> None:
     tasks, runs, _ = stores
     first = build(stores, registry, WIRED)
-    started = await first.start_run("wired", input={}, initiator_did="did:arc:x/1", detached=True)
+    started = await first.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1", detached=True
+    )
     original_create = tasks.create_batch
     lost = False
 
@@ -384,8 +398,12 @@ async def test_real_missing_companion_state_does_not_starve_peer(
     backend = tasks._backend
     runs = WorkflowRunStore(backend)
     runner = build((tasks, runs, task_store), registry, WIRED)
-    poisoned = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
-    healthy = await runner.start_run("wired", input={}, initiator_did="did:arc:x/1")
+    poisoned = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
+    healthy = await runner.start_run(
+        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     await backend.mutable_delete("workflow_run_state", poisoned.run_id, actor_did=RUNNER_DID)
     seen: list[str] = []
     original = runner.advance

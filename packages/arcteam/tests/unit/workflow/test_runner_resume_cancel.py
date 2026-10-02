@@ -58,7 +58,11 @@ async def test_restart_mid_materialization_re_derives_instead_of_duplicating(
     flow_tasks.create_batch = crash_after_first  # type: ignore[method-assign]
     with pytest.raises(RuntimeError):
         await runner.start_run(
-            "fanout", input={}, initiator_did="did:arc:x/1", run_id="run-resume"
+            "fanout",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:x/1",
+            run_id="run-resume",
         )
 
     flow_tasks.create_batch = original  # type: ignore[method-assign]
@@ -85,7 +89,9 @@ async def test_materialization_is_idempotent_across_repeated_ticks(
 ) -> None:
     flow_tasks, _, _ = stores
     runner = build(stores, registry, FANOUT)
-    run = await runner.start_run("fanout", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     before = list(flow_tasks.created_keys)
     for _ in range(3):
@@ -105,7 +111,9 @@ async def test_the_path_taken_records_each_node_instance_exactly_once(
     """The Run's path IS the honest record — a re-tick must not inflate it."""
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     for _ in range(3):
         await runner.advance(run.run_id)
@@ -127,7 +135,9 @@ async def test_the_path_taken_records_each_node_instance_exactly_once(
 async def test_completed_node_is_replayed_never_re_executed(stores: Any, registry: Any) -> None:
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     first_id = task_id(run.run_id, "first", 0)
     await complete_node(tasks, first_id, SALES_DID, {"company_domain": "acme.example"})
@@ -151,7 +161,9 @@ async def test_cancel_marks_the_run_before_fanning_out_node_cancels(
 ) -> None:
     flow_tasks, runs, _ = stores
     runner = build(stores, registry, FANOUT)
-    run = await runner.start_run("fanout", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     async def observe() -> str | None:
         record = await runs.get(run.run_id)
@@ -173,7 +185,9 @@ async def test_a_node_completing_during_the_sweep_cannot_extend_the_frontier(
 ) -> None:
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     await runner.cancel(run.run_id, actor_did="did:arc:local:user/9", reason="operator stop")
     await complete_node(
@@ -189,7 +203,9 @@ async def test_a_node_completing_during_the_sweep_cannot_extend_the_frontier(
 async def test_cancel_of_a_terminal_run_is_refused(stores: Any, registry: Any) -> None:
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     await complete_node(
         tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
     )
@@ -211,7 +227,9 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
     """
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     await complete_node(
         tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
     )
@@ -259,7 +277,9 @@ async def test_one_failing_node_cancel_does_not_abort_the_sweep(
     """Per-step try/except on cleanup: one bad row must not strand the others."""
     flow_tasks, _, _ = stores
     runner = build(stores, registry, FANOUT)
-    run = await runner.start_run("fanout", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     original = flow_tasks.request_cancel
     seen: list[str] = []
 

@@ -643,7 +643,9 @@ async def workflow_run(workflow_id: str = "", input: dict[str, Any] | None = Non
     except ValueError as exc:
         return _errors(issue(field="input", error=str(exc), observed=input))
     try:
-        result = await plane.run(workflow_id, input=run_input, actor_did=st.identity.did)
+        result = await plane.run(
+            workflow_id, input=run_input, initiator="agent", actor_did=st.identity.did
+        )
     except Exception as exc:  # reason: a tool returns JSON, it never crashes the loop
         return _from_exception(exc)
     return _result(result, "run")

@@ -44,12 +44,14 @@ from arcstore.tasks import Task
 from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
+from .errors import UnsignedWorkflowError
 from .narrator import RunNarrator, assert_channel_binding
 from .runner_budget import RunBudget
 from .runner_contracts import (
     TERMINAL_RUN_STATUSES,
     ArgsResolver,
     DefinitionStoreLike,
+    Initiator,
     NodeSpec,
     OwnerResolver,
     PredicateEvaluator,
@@ -77,7 +79,7 @@ class WorkflowRunNotFoundError(WorkflowRunError):
 
 
 class UnsignedWorkflowRefusedError(WorkflowRunError):
-    """An unsigned definition was asked to run above personal tier."""
+    """An unsigned definition was asked to run by an initiator or tier that may not."""
 
 
 class NodeDecisionError(WorkflowRunError):
@@ -240,6 +242,7 @@ class WorkflowRunner:
         workflow_id: str,
         *,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
+        initiator: Initiator,
         initiator_did: str,
         run_id: str | None = None,
         trigger_digest: str | None = None,
@@ -251,6 +254,10 @@ class WorkflowRunner:
         holder's next tick materializes the frontier. Without it, a CLI or
         dashboard start would need the singleton lease the live service owns
         for its whole lifetime — no operator could ever start a run.
+
+        ``initiator`` is stated by the caller, never inferred. An unsigned
+        definition runs only as an operator-initiated draft test at personal
+        tier; an agent or a schedule can never start one, at any tier.
         """
         if not detached:
             await self._require_lease()
@@ -258,15 +265,16 @@ class WorkflowRunner:
         # directory. The store refuses a traversal id itself — this is the
         # boundary check that means that backstop is never the thing that fires.
         _assert_safe_name("workflow id", workflow_id)
-        bundle = self._definitions.load_for_run(workflow_id)
+        try:
+            bundle = self._definitions.load_for_run(workflow_id)
+        except UnsignedWorkflowError as exc:
+            self._deny_unsigned(workflow_id, initiator, initiator_did)
+            raise UnsignedWorkflowRefusedError(str(exc)) from exc
         # Trust is `is_verified`, never `status`: status carries lifecycle, and
         # an archived bundle can be validly signed. Keying the gate off status
         # would refuse a definition that is in fact trusted.
-        if self._tier != "personal" and not bundle.is_verified:
-            raise UnsignedWorkflowRefusedError(
-                f"workflow {workflow_id!r} carries no verified operator signature; "
-                f"refused at {self._tier} tier"
-            )
+        if not bundle.is_verified:
+            self._admit_unsigned(workflow_id, initiator, initiator_did)
         definition = bundle.definition
         assert_channel_binding(definition.channel)
         budget = definition.budget
@@ -301,6 +309,7 @@ class WorkflowRunner:
                 # run started, but not under whose signature — and "who signed
                 # the definition behind run 17" stops being reconstructible.
                 "signer_did": bundle.signer_did,
+                "initiator": initiator,
             },
         )
         if self._narrator is not None:
@@ -313,6 +322,39 @@ class WorkflowRunner:
         if detached:
             return run
         return await self.advance(run_id)
+
+    def _admit_unsigned(self, workflow_id: str, initiator: Initiator, initiator_did: str) -> None:
+        """Allow an unsigned run only as an operator draft test at personal tier.
+
+        An agent authors drafts, so letting it (or a schedule it set) run one
+        would make authoring self-approval. Enterprise and federal never run
+        unsigned. Everything else raises after an audited denial.
+        """
+        if initiator != "operator" or self._tier != "personal":
+            self._deny_unsigned(workflow_id, initiator, initiator_did)
+            raise UnsignedWorkflowRefusedError(
+                f"workflow {workflow_id!r} carries no verified operator signature; "
+                f"refused for a {initiator}-initiated run at {self._tier} tier"
+            )
+        self._audit(
+            "workflow.run.unsigned_draft",
+            target=workflow_id,
+            outcome="warning",
+            actor_did=initiator_did,
+            extra={
+                "initiator": initiator,
+                "warning": "unsigned draft run: no operator signature verified",
+            },
+        )
+
+    def _deny_unsigned(self, workflow_id: str, initiator: Initiator, initiator_did: str) -> None:
+        self._audit(
+            "workflow.run.started",
+            target=workflow_id,
+            outcome="denied",
+            actor_did=initiator_did,
+            extra={"initiator": initiator, "reason": "unsigned_workflow"},
+        )
 
     async def advance(self, run_id: str) -> RunRecord:
         """One deterministic tick: settle, decide, materialize, roll up."""

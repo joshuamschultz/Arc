@@ -32,6 +32,7 @@ from .runner_contracts import (
     DefinitionParser,
     DefinitionStoreLike,
     DefinitionValidator,
+    Initiator,
     RunRecord,
     RunStoreLike,
     Tier,
@@ -242,12 +243,14 @@ class WorkflowControlPlane:
         workflow_id: str,
         *,
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
+        initiator: Initiator,
         actor_did: str,
         run_id: str | None = None,
         trigger_digest: str | None = None,
         detached: bool = False,
     ) -> ControlPlaneResult:
-        """Start a run. The dashboard, the CLI, and an agent all land here.
+        """Start a run. The dashboard, the CLI, an agent and a schedule all land here;
+        ``initiator`` names which, and gates unsigned drafts.
 
         ``detached=True`` creates the run without the singleton lease; the
         lease-holding service runner advances it on its next tick.
@@ -256,6 +259,7 @@ class WorkflowControlPlane:
             record = await self._runner.start_run(
                 workflow_id,
                 input=input,
+                initiator=initiator,
                 initiator_did=actor_did,
                 run_id=run_id,
                 trigger_digest=trigger_digest,

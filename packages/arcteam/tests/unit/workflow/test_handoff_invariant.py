@@ -54,7 +54,9 @@ async def test_a_run_completes_with_every_outbound_message_dropped(
     _, runs, tasks = stores
     runner = build(stores, registry, THREE_AGENTS, narrator=narrator)
 
-    run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "handoff", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     await complete_node(
         tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
     )
@@ -78,7 +80,9 @@ async def test_every_row_carries_exactly_the_owner_named_by_the_definition(
         THREE_AGENTS,
         narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID),
     )
-    run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "handoff", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     await complete_node(
         tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}
@@ -98,7 +102,9 @@ async def test_two_agents_racing_one_row_produce_exactly_one_claim(
 ) -> None:
     _, _, tasks = stores
     runner = build(stores, registry, THREE_AGENTS)
-    run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "handoff", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
     collect_id = task_id(run.run_id, "collect", 0)
 
     # The row names one owner, so a foreign agent cannot take it at all.
@@ -125,7 +131,9 @@ async def test_a_nodes_inputs_come_from_task_rows_never_from_a_message_body(
         THREE_AGENTS,
         narrator=RunNarrator(DroppingSender(), sender_did=RUNNER_DID),
     )
-    run = await runner.start_run("handoff", input={}, initiator_did="did:arc:x/1")
+    run = await runner.start_run(
+        "handoff", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
 
     await complete_node(
         tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "acme.example"}

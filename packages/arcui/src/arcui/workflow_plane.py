@@ -336,7 +336,9 @@ class DashboardWorkflowPlane:
     async def run_workflow(
         self, workflow_id: str, run_input: dict[str, Any], *, actor: OperatorActor
     ) -> ControlPlaneResult:
-        result = await self._plane.run(workflow_id, input=run_input, actor_did=actor.did)
+        result = await self._plane.run(
+            workflow_id, input=run_input, initiator="operator", actor_did=actor.did
+        )
         if not result.ok or result.run is None:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))

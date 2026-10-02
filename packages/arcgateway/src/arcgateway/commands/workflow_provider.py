@@ -94,7 +94,9 @@ class GatewayWorkflowProvider:
             tier=runner.tier,
         )
         run_input = {"text": args} if args else {}
-        result = await plane.run(workflow_id, input=run_input, actor_did=actor_did)
+        result = await plane.run(
+            workflow_id, input=run_input, initiator="operator", actor_did=actor_did
+        )
         if result.ok and result.run is not None:
             return f"Started {workflow_id} (run {result.run.run_id})."
         return self._refusal(workflow_id, result)

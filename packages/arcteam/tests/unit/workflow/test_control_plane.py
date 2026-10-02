@@ -267,7 +267,9 @@ async def test_run_refuses_an_archived_workflow(stores: Any, registry: Any) -> N
     await control.create(VALID, actor_did=OPERATOR)
     await control.archive("customer-onboarding", actor_did=OPERATOR)
 
-    result = await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+    result = await control.run(
+        "customer-onboarding", input={}, initiator="operator", actor_did=OPERATOR
+    )
 
     assert not result.ok
     assert sink.events[-1].outcome in ("refused", "error")
@@ -284,7 +286,9 @@ async def test_run_and_cancel_delegate_to_the_runner(stores: Any, registry: Any)
     )
     control, _, sink = plane(stores, registry, definitions=definitions)
 
-    started = await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+    started = await control.run(
+        "customer-onboarding", input={}, initiator="operator", actor_did=OPERATOR
+    )
     assert started.ok
     assert started.run.status == "running"
     assert started.run.initiator_did == OPERATOR
@@ -393,7 +397,9 @@ async def test_a_traversal_workflow_id_is_a_typed_refusal_not_a_crash(
 
     control, _, sink = plane(stores, registry, definitions=TraversalRefusingStore())
 
-    started = await control.run("../../bob/workflows/secretflow", input={}, actor_did=OPERATOR)
+    started = await control.run(
+        "../../bob/workflows/secretflow", input={}, initiator="operator", actor_did=OPERATOR
+    )
     archived = await control.archive("../../bob/workflows/secretflow", actor_did=OPERATOR)
 
     assert not started.ok and not archived.ok
@@ -438,7 +444,7 @@ class WorkflowValidationError(RuntimeError):
 
 async def test_an_unknown_workflow_is_a_typed_refusal(stores: Any, registry: Any) -> None:
     control, _, _ = plane(stores, registry)
-    result = await control.run("nope", input={}, actor_did=OPERATOR)
+    result = await control.run("nope", input={}, initiator="operator", actor_did=OPERATOR)
     assert not result.ok
 
 
@@ -489,7 +495,7 @@ async def test_purge_is_refused_while_a_run_references_the_workflow(
             nodes=(Node(id="collect", kind="agent", agent="@sales"),),
         )
     )
-    await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+    await control.run("customer-onboarding", input={}, initiator="operator", actor_did=OPERATOR)
 
     result = await control.purge("customer-onboarding", actor_did=OPERATOR)
 
@@ -511,7 +517,7 @@ async def test_a_forced_purge_records_that_history_is_now_unrenderable(
             nodes=(Node(id="collect", kind="agent", agent="@sales"),),
         )
     )
-    await control.run("customer-onboarding", input={}, actor_did=OPERATOR)
+    await control.run("customer-onboarding", input={}, initiator="operator", actor_did=OPERATOR)
 
     result = await control.purge(
         "customer-onboarding", actor_did=OPERATOR, force=True, reason="GDPR request"

@@ -146,7 +146,9 @@ async def test_a_live_runner_progresses_a_real_run_end_to_end(deployment: Any) -
     )
     tasks = TaskStore(backend)
 
-    run = await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9999")
+    run = await runner.start_run(
+        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
+    )
     assert run.status == "running"
 
     # The first node materialized as a real task row owned by the named agent.
@@ -186,7 +188,9 @@ async def test_the_run_gets_a_shared_workspace(deployment: Any) -> None:
         registry=Registry({"sales": SALES_DID, "ops": OPS_DID}),
     )
 
-    run = await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9")
+    run = await runner.start_run(
+        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+    )
 
     assert (root / "shared" / "runs" / run.run_id).is_dir()
 
@@ -330,7 +334,9 @@ async def test_the_default_factory_narrates_to_the_bound_channel(wired: Any) -> 
     assert host is not None
     runner = host._runner
 
-    run = await runner.start_run("narrated", input={}, initiator_did="did:arc:local:user/9999")
+    run = await runner.start_run(
+        "narrated", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
+    )
 
     messenger = runner._narrator._sender
     posted = await messenger.list_channel_messages("onboarding")
@@ -366,7 +372,7 @@ async def test_two_runs_of_one_workflow_take_the_identical_path(deployment: Any)
 
     async def drive_one_run() -> tuple[list[tuple[str, str | None]], int, str]:
         run = await runner.start_run(
-            "onboarding", input={}, initiator_did="did:arc:local:user/9999"
+            "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
         )
         # Node rows are keyed wf/<run>/<node>/<iteration>; Task.run_id is the
         # arcrun correlation id, a different thing from the flow run id.
@@ -475,7 +481,9 @@ async def test_the_definition_stores_events_reach_the_audit_chain(
         audit_sink=Sink(),
     )
 
-    await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9")
+    await runner.start_run(
+        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+    )
 
     actions = [e.action for e in events]
     assert "workflow.unsigned_run_permitted" in actions, (
@@ -607,4 +615,6 @@ async def test_a_foreign_signature_is_not_trusted_through_the_real_factory(
     # Fail-closed at the store's own gate, before the runner's tier check even
     # runs — two independent refusals, and the foreign key clears neither.
     with pytest.raises(Exception, match="not signed by the deployment operator key"):
-        await runner.start_run("onboarding", input={}, initiator_did="did:arc:local:user/9")
+        await runner.start_run(
+            "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+        )
