@@ -684,10 +684,10 @@ class ArcRunConfig(BaseModel):
         description=(
             "Operator ceiling on strategy names a run may use. None = every "
             "registered strategy is permitted. This bounds an explicit request "
-            "(a workflow node pinning 'code'); it is NOT the default an ordinary "
-            "message takes — an un-pinned turn runs 'react' alone so it never pays "
-            "a model-selection call. Widen this to opt basic turns into "
-            "model-selected control flow. Federal floors to ['react']."
+            "(a workflow node pinning 'code'). An un-pinned turn is offered every "
+            "auto-selectable strategy within this ceiling and the model picks one "
+            "each turn, at the cost of one short selection call. Narrow this to "
+            "restrict model-selected control flow. Federal floors to ['react']."
         ),
     )
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)

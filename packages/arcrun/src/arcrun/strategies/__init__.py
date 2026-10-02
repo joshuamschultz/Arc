@@ -108,7 +108,10 @@ def use_strategy_guidance(state: RunState, name: str) -> None:
     """
     from arcrun._messages import content_text, system_message
 
-    guidance = strategy_guidance(name, state.prompt_source)
+    raw = strategy_guidance(name, state.prompt_source)
+    # Tagged like every other assembled prompt section, so a trace viewer groups
+    # it under "Strategies" and an edited playbook is visibly the one that ran.
+    guidance = f"<strategy_{name}>\n{raw}\n</strategy_{name}>" if raw else ""
     stale = {state.strategy_guidance, guidance} - {""}
     kept = [
         m

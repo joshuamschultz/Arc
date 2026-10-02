@@ -119,6 +119,11 @@ def _provider() -> StaticProvider:
     )
 
 
+def _tagged(name: str) -> str:
+    """The chosen strategy's guidance as it reaches the wire: a ``<strategy_NAME>`` block."""
+    return f"<strategy_{name}>\n{_marker('arcrun', f'strategy_{name}')}\n</strategy_{name}>"
+
+
 def _system_text(call: dict[str, Any]) -> str:
     return "\n".join(
         content_text(m.content) for m in call["messages"] if getattr(m, "role", "") == "system"
@@ -244,7 +249,8 @@ async def test_chosen_code_strategy_turns_carry_code_guidance_from_source() -> N
 
     assert result.strategy_used == "code"
     [task_call] = model.task_calls()
-    assert _marker("arcrun", "strategy_code") in _system_text(task_call)
+    # Tagged, so a trace viewer can attribute the block to the chosen strategy.
+    assert _tagged("code") in _system_text(task_call)
 
 
 @pytest.mark.asyncio
@@ -256,7 +262,7 @@ async def test_chosen_react_strategy_turns_carry_react_not_code_guidance() -> No
     assert result.strategy_used == "react"
     [task_call] = model.task_calls()
     system = _system_text(task_call)
-    assert _marker("arcrun", "strategy_react") in system
+    assert _tagged("react") in system
     # Narrowness: the strategy that was NOT chosen does not steer this run.
     assert _marker("arcrun", "strategy_code") not in system
 

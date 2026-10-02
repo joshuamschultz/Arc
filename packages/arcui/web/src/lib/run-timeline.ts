@@ -54,6 +54,7 @@ const EVENT_DESCRIPTIONS: Record<string, string> = {
   'turn.end': 'Turn ended',
   'strategy.selected': 'Chose a strategy',
   'strategy.select': 'Chose a strategy',
+  'strategy.selection.complete': 'Chose a strategy',
 }
 
 /** A human title + one-line description for a trace step, for the operator who
@@ -75,6 +76,10 @@ export function describeAction(item: Item): { title: string; description: string
       if (strategy) {
         return { title: prettifyName(item.name), description: `Chose the "${strategy}" strategy` }
       }
+    }
+    if (key === 'strategy.selection.complete') {
+      const selected = typeof item.extra?.selected === 'string' ? item.extra.selected : null
+      if (selected) return { title: prettifyName(item.name), description: `Selected: ${selected}` }
     }
     return { title: prettifyName(item.name), description: EVENT_DESCRIPTIONS[key] ?? 'Run event' }
   }

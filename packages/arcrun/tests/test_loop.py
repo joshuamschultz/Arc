@@ -147,7 +147,8 @@ class TestRunWithMessages:
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
         assert invoke_msgs[1].role == "system"
-        assert invoke_msgs[1].content == load_stock("arcrun", "strategy_react")
+        react = load_stock("arcrun", "strategy_react")
+        assert invoke_msgs[1].content == f"<strategy_react>\n{react}\n</strategy_react>"
         assert invoke_msgs[2].role == "user"
         assert invoke_msgs[2].content == "Say hello"
 
@@ -177,7 +178,8 @@ class TestRunWithMessages:
         assert invoke_msgs[0].role == "system"
         assert invoke_msgs[0].content == "Be helpful."
         assert invoke_msgs[1].role == "system"
-        assert invoke_msgs[1].content == load_stock("arcrun", "strategy_react")
+        react = load_stock("arcrun", "strategy_react")
+        assert invoke_msgs[1].content == f"<strategy_react>\n{react}\n</strategy_react>"
         # History messages follow the system messages
         assert invoke_msgs[2].role == "user"
         assert invoke_msgs[2].content == "hello"
