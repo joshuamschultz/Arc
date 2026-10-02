@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.paths import config_file
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.grants import ConnectionRegistry
@@ -40,9 +41,9 @@ _LEGACY_PREFIX = "ARC_SECRET"
 DeclaredFields = Callable[[str, str], tuple[str, ...] | None]
 
 
-def legacy_env_path(connections_file: Path) -> Path:
+def legacy_env_path(arc_dir: Path) -> Path:
     """Where the pre-P18-2 credential file lived for a deployment."""
-    return connections_file.parent / LEGACY_ENV_FILENAME
+    return config_file(LEGACY_ENV_FILENAME, arc_dir)
 
 
 def _legacy_key(connection: str, field_name: str) -> str:

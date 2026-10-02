@@ -2109,7 +2109,7 @@ class Connections:
             ExtensionError: The migration could not complete (no custody cipher,
                 a read-back mismatch, a symlinked or loose file). The file is kept.
         """
-        env_path = legacy_env_path(self._world.connections_file)
+        env_path = legacy_env_path(self._world.arc_dir)
         if not os.path.lexists(env_path):
             return MigrationReport(skipped=True, path=str(env_path))
         with self._audit.open() as sink:
