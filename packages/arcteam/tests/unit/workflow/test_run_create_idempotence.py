@@ -24,7 +24,7 @@ async def _create(
     input: Mapping[str, Any] | None = None,  # noqa: A002
     trigger_digest: str | None = "schedule-revision-a",
 ) -> Any:
-    return await store.create_run(
+    run, _ = await store.create_run(
         run_id=_RUN_ID,
         workflow_id=_WORKFLOW_ID,
         version=1,
@@ -37,6 +37,7 @@ async def _create(
         budget_cost_usd=None,
         budget_wall_clock_s=None,
     )
+    return run
 
 
 @pytest.mark.asyncio

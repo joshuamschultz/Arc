@@ -135,7 +135,7 @@ async def test_new_signed_revision_same_due_slot_cannot_reuse_workflow_run(
         run_id: str,
         trigger_digest: str,
     ) -> Any:
-        return await store.create_run(
+        run, _ = await store.create_run(
             run_id=run_id,
             workflow_id=workflow_id,
             version=1,
@@ -148,6 +148,7 @@ async def test_new_signed_revision_same_due_slot_cannot_reuse_workflow_run(
             budget_cost_usd=None,
             budget_wall_clock_s=None,
         )
+        return run
 
     monkeypatch.setattr(
         "arcagent.modules.workflows.run_entry.start_workflow_run", start_workflow_run

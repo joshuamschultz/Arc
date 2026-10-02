@@ -277,13 +277,13 @@ class FlowRunStore:
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
         fence: Any | None = None,
-    ) -> RunRow:
+    ) -> tuple[RunRow, bool]:
         del trigger_digest
         # Idempotent on the run id, like the real store: a repeated occurrence
         # returns the existing run and never erases its progress.
         existing = await self.get(run_id)
         if existing is not None:
-            return existing
+            return existing, False
         row = RunRow(
             run_id=run_id,
             workflow_id=workflow_id,
@@ -304,7 +304,7 @@ class FlowRunStore:
         await self._backend.mutable_write(
             self._COLLECTION, run_id, row.__dict__, actor_did=initiator_did
         )
-        return row
+        return row, True
 
     async def active_runs(self) -> list[RunRow]:
         rows = await self._backend.mutable_query(self._COLLECTION, where={})

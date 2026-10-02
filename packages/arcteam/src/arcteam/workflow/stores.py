@@ -31,6 +31,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState, PathEntry, Run, RunStore
@@ -113,7 +114,13 @@ class WorkflowRunStore:
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
         fence: RunnerFence | None = None,
-    ) -> FlowRun:
+    ) -> tuple[FlowRun, bool]:
+        """Create the run, or return the one that exists. ``created`` says who won.
+
+        The companion row is insert-if-absent, so the creation token it holds
+        is the arbiter: only the caller whose token survived is the creator.
+        Two racing first starts therefore cannot both announce the run.
+        """
         request_digest = hashlib.sha256(
             json.dumps(
                 {
@@ -146,9 +153,11 @@ class WorkflowRunStore:
             ),
             fence=fence,
         )
+        creation_token = uuid4().hex
         state: dict[str, Any] = {
             "run_id": run_id,
             "request_digest": request_digest,
+            "creation_token": creation_token,
             "trigger_digest": trigger_digest,
             "channel": channel,
             "input": dict(input),
@@ -174,7 +183,7 @@ class WorkflowRunStore:
         loaded = await self.get(run_id)
         if loaded is None:  # pragma: no cover — the row was just written
             raise RuntimeError(f"run {run_id} vanished immediately after creation")
-        return loaded
+        return loaded, rows[0].get("creation_token") == creation_token
 
     async def get(self, run_id: str) -> FlowRun | None:
         run = await self._runs.get(run_id)

@@ -377,7 +377,9 @@ class RunStoreLike(Protocol):
         budget_cost_usd: float | None,
         budget_wall_clock_s: float | None,
         fence: RunnerFence | None = None,
-    ) -> RunRecord: ...
+    ) -> tuple[RunRecord, bool]:
+        """The run, and whether THIS call created it (False: an existing run)."""
+        ...
 
     async def get(self, run_id: str) -> RunRecord | None: ...
 
