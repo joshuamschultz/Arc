@@ -100,16 +100,17 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 
 class AcmeAttachment:
-    """Reachable exactly when Arc handed it the credential the manifest declares."""
+    """Reachable exactly when its credential handle serves the declared credential."""
 
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context.get("credential")
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        token = await self._credential.maybe_field("api_token") if self._credential else None
+        if token is None or not token.reveal():
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(
             reachable=True, tools=await self.describe_tools(), detail="acme is authenticated"
@@ -225,9 +226,21 @@ def _connections(agent_dir: Path) -> dict[str, Any]:
     return table
 
 
-def _env_file(agent_dir: Path) -> Path:
-    """Where a connector credential is written — one owner-only file per deployment."""
-    return config_file("connections.env", _arc_dir(agent_dir))
+async def _stored(agent_dir: Path, backend: FakeBackend) -> str:
+    """The credential as sealed custody holds it, opened with the deployment's key.
+
+    Also proves the stored row itself holds no plaintext.
+    """
+    from arcagent.core.tier import Tier
+    from arcagent.extension.custody import CREDENTIAL_COLLECTION, CredentialRowStore
+    from arcagent.extension.custody_select import deployment_cipher
+
+    raw = str(await backend.mutable_query(CREDENTIAL_COLLECTION))
+    assert _SENTINEL not in raw, "a sealed row never holds the plaintext"
+    rows = CredentialRowStore(backend, deployment_cipher(_arc_dir(agent_dir), tier=Tier.PERSONAL))
+    row = await rows.read(_INSTANCE)
+    found = rows.open_field(row, "api_token") if row is not None else None
+    return found.reveal() if found is not None else ""
 
 
 async def _open_connect(pilot: Any) -> Any:
@@ -322,8 +335,9 @@ async def test_the_flow_installs_through_the_real_install_path(
     assert defined[_INSTANCE]["approval"] == "outbound"
     assert defined[_INSTANCE]["agents"] == ["acme_agent"]
     assert not (agent_dir / "connections.toml").exists(), "nothing is written into the agent"
-    env = _env_file(agent_dir).read_text(encoding="utf-8")
-    assert _SENTINEL in env, "the credential belongs in the owner-only env file"
+    assert await _stored(agent_dir, state_backend) == _SENTINEL, (
+        "the credential belongs in sealed custody"
+    )
 
 
 async def test_the_credential_never_reaches_the_transcript(
@@ -340,7 +354,7 @@ async def test_the_credential_never_reaches_the_transcript(
         text = _rendered(transcript)
 
     # The value really did flow — so its absence above is a redaction, not a no-op.
-    assert _SENTINEL in _env_file(agent_dir).read_text(encoding="utf-8")
+    assert await _stored(agent_dir, state_backend) == _SENTINEL
     assert _SENTINEL not in text
     assert _INSTANCE in text, "the report itself must still reach the transcript"
 
@@ -365,7 +379,7 @@ async def test_an_unmet_host_prerequisite_ends_the_flow_and_installs_nothing(
 
     assert "brew install definitely-not-installed-xyz" in text
     assert _connections(agent_dir) == {}
-    assert not _env_file(agent_dir).exists()
+    assert not list(_arc_dir(agent_dir).rglob("*.env"))
 
 
 async def test_connections_lists_what_the_agent_already_has(

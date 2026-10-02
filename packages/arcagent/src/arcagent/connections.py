@@ -394,7 +394,7 @@ def _root(arc_dir: Path | str | None) -> Path:
     """The deployment root every connection path is resolved against.
 
     The OPERATOR root, not the install home. Everything reached from here is
-    config or state — ``connections.toml``, ``connections.env``, the operator
+    config or state — ``connections.toml``, the operator
     key, installed extensions — and all of it moved beside the fleet so an
     update can replace the install without touching it. Answering ``arc_home()``
     left the registry reading ``~/.arc/config/connections.toml`` after the
@@ -2033,7 +2033,7 @@ class Connections:
         return outcome
 
     async def migrate_secrets(self, *, dry_run: bool = False) -> MigrationReport:
-        """Move the legacy ``connections.env`` into sealed custody, once (P18-2).
+        """Move the legacy plaintext credential file into sealed custody, once (P18-2).
 
         Every declared credential is stored, read back through a fresh store and
         compared, and only then is the file deleted; undeclared keys are dropped
