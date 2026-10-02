@@ -27,6 +27,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_trust_route.py",
         "packages/arccli/tests/test_cli_trust.py",
         "packages/arccli/tests/test_capability_signing_authority.py",
+        # `arc skill evals promote/edit` on an installed skill commit an operator-signed
+        # anchored revision, or stop with "activation unavailable" — never an unsigned
+        # eval file the improver gate would score.
+        "packages/arccli/tests/test_skill_evals_activation.py",
         "tests/architecture/test_agent_key_never_signs_capabilities.py",
     ),
     "connected-source routing index tampering (memory poisoning)": (

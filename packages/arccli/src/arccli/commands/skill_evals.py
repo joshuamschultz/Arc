@@ -18,8 +18,10 @@ Dispatched from ``arc skill``:
   ``--agent`` it previews and explains that regeneration needs agent context.
 * ``arc skill evals promote <skill_path> <spec.json>`` — the operator-facing golden
   curation loop (H-041). Reads a curation spec (gate_type + ideal/assertions/rubric),
-  and emits a SIGNED + REDACTED golden case under ``evals/curated/`` via the ONE
-  ``arcskill.improver.emit_golden_case`` operation the arcui surface also wraps. A
+  and emits a REDACTED golden case under ``evals/curated/`` via the ONE
+  ``arcskill.improver.emit_golden_case`` operation the arcui surface also wraps. For a
+  skill installed under an agent it lands as a new operator-signed, anchored revision
+  (``edit`` does the same); a working copy outside any agent is written in place. A
   ``judge_rubric`` spec without a pinned judge id + rubric sha256 is rejected.
 * ``arc skill evals judge <skill_path> <candidate_output>`` — score a candidate's
   produced output against the skill's ``judge_rubric`` curated cases with the REAL
@@ -47,6 +49,11 @@ from typing import TYPE_CHECKING
 from arccli.commands._shared import err
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
+from arccli.commands.skill_evals_activation import (
+    ActivationUnavailableError,
+    SkillActivation,
+    skill_activation,
+)
 from arccli.commands.skill_improve import confirm as _confirm
 from arccli.commands.skill_improve import evals_regen, evals_run
 
@@ -132,7 +139,21 @@ def _provenance(case: EvalCase) -> str:
 
 
 def _edit(skill_dir: Path, filename: str, *, force: bool) -> None:
-    """Edit one eval file through $VISUAL/$EDITOR with validate-on-save."""
+    """Edit one eval file through $VISUAL/$EDITOR with validate-on-save.
+
+    An agent-installed skill is changed as a new operator-signed anchored revision;
+    a working copy outside any agent is written in place (see skill_evals_activation).
+    """
+    try:
+        with skill_activation(skill_dir, _WorkingCopyWriter(skill_dir)) as activation:
+            _edit_in(activation, filename, force=force)
+    except ActivationUnavailableError as exc:
+        err(f"Error: skill revision activation unavailable: {exc}")
+        sys.exit(1)
+
+
+def _edit_in(activation: SkillActivation, filename: str, *, force: bool) -> None:
+    skill_dir = activation.read_dir
     evals_dir = skill_dir / "evals"
     target = evals_dir / filename
     if not target.is_file():
@@ -149,8 +170,17 @@ def _edit(skill_dir: Path, filename: str, *, force: bool) -> None:
     if warnings and not force:
         err("Edit rejected; re-run with --force to commit anyway.")
         sys.exit(1)
-    _commit(target, edited)
+    _commit_files(activation, {f"evals/{filename}": edited}, reason="evals edit")
     _write(f"Committed {filename}.")
+
+
+def _commit_files(activation: SkillActivation, files: Mapping[str, bytes], *, reason: str) -> None:
+    """Commit through the activation path; any refusal is "activation unavailable"."""
+    try:
+        activation.writer.commit(activation.skill_name, files, reason=reason)
+    except (OSError, ValueError, RuntimeError) as exc:
+        err(f"Error: skill revision activation unavailable: {exc}")
+        sys.exit(1)
 
 
 def _resolve_editor() -> list[str]:
@@ -313,19 +343,19 @@ def _promote(skill_dir: Path, spec_path: Path) -> None:
     except (ValueError, OSError) as exc:
         err(f"Error: invalid curation spec: {exc}")
         sys.exit(1)
-    if ".skill-revisions" in skill_dir.resolve().parts:
-        err(
-            "Error: an active skill revision is immutable and operator-signed; promote the "
-            "golden through arcui (Skills > Evals > Promote), which commits a new revision."
-        )
-        sys.exit(1)
     try:
-        # Same operation the arcui "promote to golden" surface wraps. Here the operator
-        # authors into their own working copy of a skill folder; arcui commits the same
-        # files as an operator-signed anchored revision instead.
-        emitted = emit_golden_case(skill_dir, case, writer=_WorkingCopyWriter(skill_dir))
+        with skill_activation(skill_dir, _WorkingCopyWriter(skill_dir)) as activation:
+            # Same operation the arcui "promote to golden" surface wraps; for an
+            # installed skill the files land as an operator-signed anchored revision.
+            emitted = emit_golden_case(activation.read_dir, case, writer=activation.writer)
+    except ActivationUnavailableError as exc:
+        err(f"Error: skill revision activation unavailable: {exc}")
+        sys.exit(1)
     except CurationError as exc:
         err(f"Error: {exc}")
+        sys.exit(1)
+    except (OSError, ValueError, RuntimeError) as exc:
+        err(f"Error: skill revision activation unavailable: {exc}")
         sys.exit(1)
     _write(f"Emitted curated golden {emitted.nodeid} (gate_type={emitted.case.gate_type}).")
 
