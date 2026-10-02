@@ -39,6 +39,7 @@ question each module would actually be reported broken for.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sys
@@ -47,6 +48,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -70,6 +72,7 @@ from arcagent.core.config import (
     SecurityConfig,
     TelemetryConfig,
 )
+from arcagent.core.control_contract import SignedControlRevision
 
 # The repository source tree modules are bundled FROM. Resolved from the repo
 # layout, never from ``arcagent.__file__``: SPEC-066 removes ``modules/`` from
@@ -278,12 +281,49 @@ async def _one_token_turn(*args: Any, **kwargs: Any) -> Any:
     return _events()
 
 
+class _ScheduleAuthority:
+    """Stands in for the externally custodied revision authority (8377010e).
+
+    Schedules are signed control artifacts: without an injected authority the
+    scheduler refuses to register one, by design. Production supplies a real
+    custodian; this offline suite supplies one that echoes the digest back.
+    """
+
+    async def register_revision(self, **kwargs: Any) -> SignedControlRevision:
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def verify_current(self, **kwargs: Any) -> None:
+        assert (
+            kwargs["approval"].definition_digest
+            == hashlib.sha256(kwargs["canonical_definition"]).hexdigest()
+        )
+
+
+async def _schedule_proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+    return b"authenticated-test-proof"
+
+
+async def _schedule_issuer(request: Any, evidence: bytes) -> tuple[bytes, datetime]:
+    return request.digest().encode(), datetime.now(UTC) + timedelta(minutes=1)
+
+
 @asynccontextmanager
 async def _booted(
     deployment: Deployment,
     config: ArcAgentConfig,
     *,
     audit_spy: list[tuple[str, dict[str, Any]]] | None = None,
+    signed_control: bool = False,
 ) -> AsyncIterator[ArcAgent]:
     """Start a real agent over ``deployment`` and shut it down afterwards.
 
@@ -319,7 +359,17 @@ async def _booted(
     async def open_test_backend() -> FakeBackend:
         return backend
 
-    agent = ArcAgent(config=config, config_path=deployment.config_path)
+    control: dict[str, Any] = (
+        {
+            "control_artifact_authority": _ScheduleAuthority(),
+            "control_tenant_id": "tenant-test",
+            "control_actor_proof_source": _schedule_proof,
+            "trigger_issuer": _schedule_issuer,
+        }
+        if signed_control
+        else {}
+    )
+    agent = ArcAgent(config=config, config_path=deployment.config_path, **control)
     try:
         with patch.object(agent, "_make_arcstore_opener", return_value=open_test_backend):
             await agent.startup()
@@ -764,7 +814,7 @@ async def test_scheduler_fires_a_due_schedule(
     _install(deployment, ("scheduler",), tmp_path)
     config = _config(deployment, ("scheduler",))
 
-    async with _booted(deployment, config) as agent:
+    async with _booted(deployment, config, signed_control=True) as agent:
         state = _runtime_of("scheduler").state()
         assert state.engine is not None, "the scheduler capability never built its engine"
         assert state.engine.running

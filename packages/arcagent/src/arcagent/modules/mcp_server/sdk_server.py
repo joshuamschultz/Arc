@@ -26,8 +26,8 @@ pre-empted by the SDK's JSON-Schema check.
 from __future__ import annotations
 
 import base64
-from collections.abc import Collection
-from typing import Any
+from collections.abc import Awaitable, Callable, Collection
+from typing import Any, cast
 
 import mcp.types as mcp_types
 from arctrust import AuditSink, ReplayCache
@@ -46,6 +46,12 @@ _META_PUBLIC_KEY = "arc/publicKey"
 _META_SIGNATURE = "arc/signature"
 _META_NONCE = "arc/nonce"
 _META_TS = "arc/ts"
+
+# The SDK's ``list_tools`` / ``call_tool`` registrars carry no annotations, so
+# calling them as written leaves the handlers untyped. These aliases state the
+# contract the SDK documents, and ``cast`` applies it at the one place it is used.
+_ListToolsHandler = Callable[[], Awaitable[list[mcp_types.Tool]]]
+_CallToolHandler = Callable[[str, dict[str, Any]], Awaitable[mcp_types.CallToolResult]]
 
 #: The JSON-RPC method whose canonical content the door reconstructs and verifies.
 _CALL_METHOD = "tools/call"
@@ -70,7 +76,14 @@ def build_sdk_server(
     """
     server: Server[Any, Any] = Server(name=server_name, version=__version__)
 
-    @server.list_tools()
+    register_list_tools = cast(
+        "Callable[[], Callable[[_ListToolsHandler], _ListToolsHandler]]", server.list_tools
+    )
+    register_call_tool = cast(
+        "Callable[..., Callable[[_CallToolHandler], _CallToolHandler]]", server.call_tool
+    )
+
+    @register_list_tools()
     async def _list_tools() -> list[mcp_types.Tool]:
         entries = _catalog(mcp_server)
         if allowlist is not None:
@@ -85,7 +98,7 @@ def build_sdk_server(
             for entry in entries
         ]
 
-    @server.call_tool(validate_input=False)
+    @register_call_tool(validate_input=False)
     async def _call_tool(name: str, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
         if provider is None or allowlist is None or replay_cache is None or audit_sink is None:
             return _error_result("tools/call is not enabled on this door")

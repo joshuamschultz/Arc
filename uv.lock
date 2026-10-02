@@ -282,6 +282,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "arcgateway", extra = ["mattermost", "slack"] },
     { name = "arcllm", extra = ["jev"] },
     { name = "freezegun" },
     { name = "httpx2" },
@@ -293,6 +294,7 @@ dev = [
     { name = "python-dotenv" },
     { name = "ruff" },
     { name = "types-croniter" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 test = [
@@ -324,6 +326,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "arcgateway", extras = ["mattermost", "slack"], editable = "packages/arcgateway" },
     { name = "arcllm", extras = ["jev"], editable = "packages/arcllm" },
     { name = "freezegun", specifier = ">=1.5.5" },
     { name = "httpx2", specifier = ">=2.13.1" },
@@ -335,6 +338,7 @@ dev = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "ruff", specifier = ">=0.4" },
     { name = "types-croniter", specifier = ">=6.2.2.20260408" },
+    { name = "types-jsonschema", specifier = ">=4.23" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260408" },
 ]
 test = [
@@ -5920,6 +5924,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c5/e4/89a0101471d6fe4e912dad24c54ae7afd90a9eaa5c74adef2c81f383f8da/types_croniter-6.2.2.20260408.tar.gz", hash = "sha256:a28a18908db371654990d30a3fd99856adc5137e475a23dbda4b10dce85525da", size = 12040, upload-time = "2026-04-08T04:27:20.068Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/05/b32e67944ff33e83c181cadf5835858d63f4292a2f2ff5bf6a1edb7f6fed/types_croniter-6.2.2.20260408-py3-none-any.whl", hash = "sha256:242087a5b6e201b7004e55f71ed34f466951b74551c64ef1c6a8a08c47d3cc0d", size = 9732, upload-time = "2026-04-08T04:27:19.229Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
 ]
 
 [[package]]

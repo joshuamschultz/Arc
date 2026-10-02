@@ -344,7 +344,10 @@ def test_a_run_completes_end_to_end_with_no_dashboard(
             )
             tasks = TaskStore(backend)
             run = await runner.start_run(
-                "onboarding", input={}, initiator_did="did:arc:local:operator/test"
+                "onboarding",
+                input={},
+                initiator="operator",
+                initiator_did="did:arc:local:operator/test",
             )
             for node_id, did in (("collect", SALES_DID), ("verify", OPS_DID)):
                 row = f"wf/{run.run_id}/{node_id}/0"

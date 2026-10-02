@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import Deployment, ScriptedLLM, ScriptedTurn
+from .conftest import Deployment, ScriptedLLM, ScriptedTurn, signed_control
 from .test_journey_modules import _SOURCE_CATALOG, install_modules, start_agent
 
 
@@ -36,7 +36,8 @@ async def _with_modules(
     enable_modules(*modules, config=config)
     rows = install_modules(deployment)
     assert not [row for row in rows if "REFUSED" in row], f"install refused: {rows}"
-    return await start_agent(deployment)
+    control = signed_control() if "scheduler" in modules else {}
+    return await start_agent(deployment, **control)
 
 
 async def _drive(agent: Any, text: str, *, key: str = "journey") -> str:

@@ -73,7 +73,7 @@ async def test_reachable_but_no_token_anywhere_raises_needs_token() -> None:
 async def test_spawns_when_unreachable_then_attaches_when_healthy() -> None:
     # Not healthy on the first two probes, healthy on the third.
     health = iter([False, False, True])
-    spawn_calls: list[tuple] = []
+    spawn_calls: list[tuple[Path, str, int, str]] = []
 
     def _spawn(team_root: Path, host: str, port: int, token: str) -> str:
         spawn_calls.append((team_root, host, port, token))

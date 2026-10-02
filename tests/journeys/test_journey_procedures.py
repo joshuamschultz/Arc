@@ -29,7 +29,13 @@ def _module_source(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def seed_procedures(deployment: Deployment) -> Path:
-    """Write two procedure cards the way consolidation would."""
+    """Write two procedure cards the way consolidation would.
+
+    Call this AFTER the agent has started. The first build binds an empty
+    workspace to the agent's identity; cards already on disk before that bind
+    have no attributable owner, and the isolation guard (5b6c8ec8) fails closed
+    on them by design.
+    """
     cards = deployment.agent_dir / "workspace" / "memory" / "procedures"
     cards.mkdir(parents=True, exist_ok=True)
     (cards / "quote-a-customer.md").write_text(
@@ -83,8 +89,8 @@ async def test_the_agent_has_tools_to_reach_its_procedures(
     deployment: Deployment, enable_modules: Any, scripted_llm: ScriptedLLM
 ) -> None:
     """The gap that made 36 live procedures invisible: no tool to reach them."""
-    seed_procedures(deployment)
     agent = await _with_memory(deployment, enable_modules)
+    seed_procedures(deployment)
     try:
         tools = set(agent._tool_registry.tools)
         assert {"procedure_list", "procedure_get"} <= tools, (
@@ -102,8 +108,8 @@ async def test_listing_shows_triggers_and_withholds_steps(
     Withholding steps is the point: a mature store's full playbooks do not fit in a
     turn, so a listing that carried them would simply never be called.
     """
-    seed_procedures(deployment)
     agent = await _with_memory(deployment, enable_modules)
+    seed_procedures(deployment)
     try:
         scripted_llm.replies.extend([ScriptedTurn(tool="procedure_list"), "Here they are."])
         assert "Here they are." in await _drive(agent, "what procedures do we have?")
@@ -129,8 +135,8 @@ async def test_reading_a_procedure_returns_its_steps_and_counts_the_use(
     follow them) and the count moves on disk (otherwise nothing ever learns which
     playbooks earn their keep — the live state, where 36 cards showed no uses).
     """
-    cards = seed_procedures(deployment)
     agent = await _with_memory(deployment, enable_modules)
+    cards = seed_procedures(deployment)
     try:
         scripted_llm.replies.extend(
             [
@@ -154,8 +160,8 @@ async def test_using_one_procedure_does_not_touch_the_others(
     deployment: Deployment, enable_modules: Any, scripted_llm: ScriptedLLM
 ) -> None:
     """Use counts only mean something if they are attributed to what was used."""
-    cards = seed_procedures(deployment)
     agent = await _with_memory(deployment, enable_modules)
+    cards = seed_procedures(deployment)
     try:
         scripted_llm.replies.extend(
             [ScriptedTurn(tool="procedure_get", args={"slug": "quote-a-customer"}), "Done."]

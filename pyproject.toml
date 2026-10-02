@@ -62,6 +62,9 @@ Issues = "https://github.com/joshuamschultz/Arc/issues"
 [dependency-groups]
 dev = [
     "arcllm[jev]",
+    # Platform-adapter tests import each client library; extras are not
+    # installed by `uv sync --all-packages`, so the test env pins them here.
+    "arcgateway[mattermost,slack]",
     "ruff>=0.4",
     "mypy>=1.8",
     "pip-audit>=2.7",
@@ -71,6 +74,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "types-pyyaml>=6.0.12.20260408",
     "types-croniter>=6.2.2.20260408",
+    "types-jsonschema>=4.23",
     "freezegun>=1.5.5",
     "python-dotenv>=1.2.2",
 ]

@@ -37,12 +37,14 @@ def install_modules(deployment: Deployment) -> list[list[str]]:
     return bootstrap_modules(agent_states(deployment.team_root))
 
 
-async def start_agent(deployment: Deployment) -> Any:
+async def start_agent(deployment: Deployment, **agent_kwargs: Any) -> Any:
     """Build and start the agent from its config, the way the gateway does."""
     import arcagent
 
     config_path = deployment.agent_dir / "arcagent.toml"
-    arc_agent = arcagent.ArcAgent(arcagent.load_config(config_path), config_path=config_path)
+    arc_agent = arcagent.ArcAgent(
+        arcagent.load_config(config_path), config_path=config_path, **agent_kwargs
+    )
     await arc_agent.startup()
     return arc_agent
 

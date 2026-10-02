@@ -257,6 +257,8 @@ class _StubAgent:
         self._active_runs = self._run_coordinator.active_runs
         self._config = SimpleNamespace(security=SimpleNamespace(tier=tier))
         self.started_runs: list[tuple[str, str]] = []
+        # No durable accepted-run owner in this stub (f4835435 branches on it).
+        self._accepted_run_owner = None
 
     def _ensure_started(self) -> None:
         """No-op guard: the run subsystem is stubbed, not started."""

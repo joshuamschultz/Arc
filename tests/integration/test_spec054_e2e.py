@@ -408,8 +408,9 @@ async def test_stage5_classifier_label_lands_in_persisted_trace(workspace: Path)
         )
     )
     await skills_ready(_Ctx(skill_registry=registry))
-    await skills_post_tool(_Ctx(tool="read", args={"file_path": str(skill_md)}))
-    await skills_post_tool(_Ctx(tool="bash", args={"cmd": "python totals.py"}))
+    # Tool outcomes are ordered per call (6f5f0944): each carries its own call_id.
+    await skills_post_tool(_Ctx(tool="read", call_id="c1", args={"file_path": str(skill_md)}))
+    await skills_post_tool(_Ctx(tool="bash", call_id="c2", args={"cmd": "python totals.py"}))
     await skills_post_plan(_Ctx(turn_number=1, messages=_CORRECTION_TURN))
 
     classify_calls = [p for p in cls_llm.calls if p.startswith("Classify the outcome")]

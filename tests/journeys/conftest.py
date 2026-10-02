@@ -18,10 +18,12 @@ never run once. A test that cannot run is not coverage. These run by default.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -321,3 +323,51 @@ async def agent(deployment: Deployment, scripted_llm: ScriptedLLM) -> AsyncItera
 def _is_strategy_selection(tools: list[Any] | None) -> bool:
     """True when this call is the loop asking which strategy to run."""
     return bool(tools) and any(getattr(t, "name", "") == "select_strategy" for t in tools or [])
+
+
+class _EchoControlAuthority:
+    """Stands in for the externally custodied revision authority (8377010e).
+
+    Schedules are signed control artifacts, so the scheduler refuses to register
+    one unless the deployment injects an authority. Production supplies a real
+    custodian; the journeys supply one that echoes the digest back.
+    """
+
+    async def register_revision(self, **kwargs: Any) -> Any:
+        from arcagent.core.control_contract import SignedControlRevision
+
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=(kwargs["expected_revision"] or 0) + 1,
+            definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def verify_current(self, **kwargs: Any) -> None:
+        assert (
+            kwargs["approval"].definition_digest
+            == hashlib.sha256(kwargs["canonical_definition"]).hexdigest()
+        )
+
+
+async def _echo_proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+    return b"authenticated-test-proof"
+
+
+async def _echo_issuer(request: Any, evidence: bytes) -> tuple[bytes, datetime]:
+    return request.digest().encode(), datetime.now(UTC) + timedelta(minutes=1)
+
+
+def signed_control() -> dict[str, Any]:
+    """``ArcAgent`` keyword arguments that let it register and fire schedules."""
+    return {
+        "control_artifact_authority": _EchoControlAuthority(),
+        "control_tenant_id": "tenant-test",
+        "control_actor_proof_source": _echo_proof,
+        "trigger_issuer": _echo_issuer,
+    }

@@ -174,6 +174,19 @@ def model_provider_keys() -> tuple[ProviderKey, ...]:
     return arcllm.list_provider_keys() + classifier_keys
 
 
+def classifier_models(name: str) -> tuple[str, ...] | None:
+    """Return the pinned model names classifier drop-in ``name`` offers.
+
+    ``None`` means the name is malformed or no such drop-in is installed, so a
+    layer above this facade can answer "unknown" without importing arcllm.
+    """
+    try:
+        models: tuple[str, ...] = arcllm.list_classifier_models(name)
+    except (arcllm.ArcLLMClassifierUnavailableError, arcllm.ArcLLMConfigError):
+        return None
+    return models
+
+
 def model_config_path() -> Path:
     """Return the canonical model-runtime configuration file."""
     return arcllm.model_config_path()

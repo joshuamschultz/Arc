@@ -164,7 +164,8 @@ async def test_send_turn_before_connect_raises() -> None:
 async def test_aclose_closes_socket_and_is_idempotent() -> None:
     client, _ = _client([json.dumps({"type": "ready", "chat_id": "sk"})])
     await client.connect()
-    ws = client._ws  # type: ignore[union-attr]
+    ws = client._ws
+    assert ws is not None
     await client.aclose()
     await client.aclose()
     assert ws.closed is True
