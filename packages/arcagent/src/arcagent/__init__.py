@@ -78,7 +78,7 @@ from arcagent.core.tool_policy import (
 )
 from arcagent.extension import ProbeResult, ToolOutcome, ToolResult
 from arcagent.extension.inspect import inspect_extensions
-from arcagent.keys import KeyStatus, KeyStore, default_env_file
+from arcagent.keys import KeyStatus, KeyStore, classifier_models, default_env_file
 from arcagent.knowledge import (
     KnowledgeAccess,
     KnowledgeDocument,
@@ -355,6 +355,7 @@ __all__ = [
     "build_prompt_resolver",
     "builtin_capabilities_path",
     "catalog",
+    "classifier_models",
     "collect_agent_capability_inventory",
     "config_render",
     "deep_merge",

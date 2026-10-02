@@ -152,4 +152,9 @@ class KeyStore:
         )
 
 
-__all__ = ["ExtensionError", "KeyStatus", "KeyStore", "default_env_file"]
+def classifier_models(name: str) -> tuple[str, ...] | None:
+    """Pinned model names classifier drop-in ``name`` offers; ``None`` if unknown."""
+    return arcrun.classifier_models(name)
+
+
+__all__ = ["ExtensionError", "KeyStatus", "KeyStore", "classifier_models", "default_env_file"]
