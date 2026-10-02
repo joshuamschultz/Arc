@@ -35,7 +35,7 @@ async def test_live_handshake_and_turn_roundtrip() -> None:
     from websockets.asyncio.server import serve
 
     async with serve(_chat_handler, "127.0.0.1", 0) as server:
-        port = server.sockets[0].getsockname()[1]
+        port = next(iter(server.sockets)).getsockname()[1]
         client = GatewayChatClient(f"http://127.0.0.1:{port}", "employee", "tok")
         await client.connect()
         try:

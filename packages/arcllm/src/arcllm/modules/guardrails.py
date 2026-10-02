@@ -160,12 +160,15 @@ class GuardrailsModule(BaseModule):
     def _check_schema(self, text: str) -> list[Violation]:
         import jsonschema
 
+        schema = self._json_schema
+        if schema is None:
+            return []
         try:
             parsed = json.loads(text) if text else None
         except json.JSONDecodeError:
             return [Violation(rule="json_schema", detail="response content is not valid JSON")]
         try:
-            jsonschema.validate(instance=parsed, schema=self._json_schema)
+            jsonschema.validate(instance=parsed, schema=schema)
         except jsonschema.ValidationError as e:
             return [Violation(rule="json_schema", detail=str(e.message))]
         return []

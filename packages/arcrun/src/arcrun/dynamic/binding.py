@@ -442,13 +442,16 @@ class RunHost:
         honest failure — a model that misses the shape twice will usually miss
         it a third time, and the loop is not the place to keep paying for that.
         """
-        violation = _contract_violation(result.content, spec.output_schema)
+        schema = spec.output_schema
+        if schema is None:
+            return result
+        violation = _contract_violation(result.content, schema)
         if violation is None:
             return result
         child.messages.append(
             user_message(
                 f"Your reply did not satisfy the output contract: {violation}\n\n"
-                f"{_output_contract(spec.output_schema)}"
+                f"{_output_contract(schema)}"
             )
         )
         self._state.event_bus.emit(
@@ -500,7 +503,7 @@ def _output_contract(schema: dict[str, Any] | None) -> str:
     )
 
 
-def _contract_violation(content: str | None, schema: dict[str, Any] | None) -> str | None:
+def _contract_violation(content: str | None, schema: dict[str, Any]) -> str | None:
     """Describe how the reply broke the output contract, or ``None`` if it held."""
     match = _JSON_FENCE.search(content or "")
     if match is None:

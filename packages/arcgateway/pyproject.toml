@@ -135,6 +135,8 @@ module = [
     "piper.*",
     "ctranslate2",
     "ctranslate2.*",
+    "kokoro_onnx",
+    "kokoro_onnx.*",
     "onnxruntime",
     "onnxruntime.*",
     "aiortc",
