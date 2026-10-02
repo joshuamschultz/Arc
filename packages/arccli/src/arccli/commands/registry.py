@@ -136,6 +136,13 @@ def _connector_handler(args: list[str]) -> None:
     connector_handler(args)
 
 
+def _knowledge_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.knowledge import knowledge_handler
+
+    knowledge_handler(args)
+
+
 def _keys_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.keys import keys_handler
@@ -620,6 +627,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_connector_handler,
+    ),
+    CommandDef(
+        name="knowledge",
+        description="Connected-source knowledge — sources, status, select, map, sync, revoke",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_knowledge_handler,
     ),
     CommandDef(
         name="keys",
