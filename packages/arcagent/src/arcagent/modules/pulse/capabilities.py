@@ -63,6 +63,11 @@ class Pulse:
             config=st.config,
             agent_run_fn=run_fn,
             bus=st.bus,
+            control_artifact_authority=st.control_artifact_authority,
+            control_tenant_id=st.control_tenant_id,
+            agent_did=st.agent_did,
+            trigger_issuer=st.trigger_issuer,
+            prepare_collected_request=st.prepare_collected_request,
         )
         # Prime the readiness gate now if a real run_fn was supplied at
         # configure time so the timer loop doesn't wait unnecessarily.

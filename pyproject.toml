@@ -61,9 +61,11 @@ Issues = "https://github.com/joshuamschultz/Arc/issues"
 
 [dependency-groups]
 dev = [
+    "arcllm[jev]",
     "ruff>=0.4",
     "mypy>=1.8",
     "pip-audit>=2.7",
+    "httpx2>=2.13.1",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",

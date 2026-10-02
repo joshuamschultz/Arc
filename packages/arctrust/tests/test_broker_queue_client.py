@@ -382,3 +382,125 @@ def test_record_cipher_uses_same_lease_sequence_as_queue_anchor() -> None:
     assert cipher.open("vault:v1:sealed") == b"record"
     assert anchor.compare_and_advance(None, "d" * 64, "accepted").version == 1
     assert sequence == 4
+
+
+def test_record_seal_reconciles_lost_response_with_fresh_signed_operation() -> None:
+    now = 1000
+    machine = InProcessSigner(b"a" * 32)
+    broker = InProcessSigner(b"b" * 32)
+    lease = _lease(machine, now)
+    sequence = 1
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sequence
+        operation = json.loads(
+            base64.urlsafe_b64decode(request.headers["X-Arc-Machine-Operation"] + "=" * 3)
+        )
+        if request.method == "GET":
+            assert operation["sequence"] == 0
+            return _json_response(
+                {
+                    "head": None,
+                    "lease": sign_broker_queue_lease(
+                        lease.model_copy(update={"next_sequence": sequence}), broker.sign
+                    ),
+                }
+            )
+        assert operation["sequence"] == sequence
+        attempts.append(sequence)
+        sequence += 1
+        if len(attempts) == 1:
+            raise httpx.ReadError("response lost", request=request)
+        return _json_response(
+            {
+                "ciphertext": "vault:v1:sealed",
+                "lease": sign_broker_queue_lease(
+                    lease.model_copy(update={"next_sequence": sequence}), broker.sign
+                ),
+            }
+        )
+
+    client = httpx.Client(
+        base_url="https://broker.example", transport=httpx.MockTransport(handler)
+    )
+    anchor = QueueBrokerAnchor(
+        client,
+        tenant_id="tenant-a",
+        journal_scope="queue/tenant-a",
+        machine_id="machine-a",
+        tls_fingerprint="c" * 64,
+        signer=machine,
+        broker_public_key=broker.public_key,
+        lease_envelope=sign_broker_queue_lease(lease, broker.sign),
+        clock=lambda: now,
+    )
+    assert anchor.seal_record(b"record") == "vault:v1:sealed"
+    assert attempts == [1, 2]
+
+
+def test_record_seal_does_not_retry_after_owner_changes_during_reconciliation() -> None:
+    now = 1000
+    machine = InProcessSigner(b"a" * 32)
+    broker = InProcessSigner(b"b" * 32)
+    lease = _lease(machine, now)
+    writes = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal writes
+        if request.method == "POST":
+            writes += 1
+            raise httpx.ReadError("response lost", request=request)
+        changed = lease.model_copy(update={"lease_id": "replacement", "next_sequence": 2})
+        return _json_response(
+            {"head": None, "lease": sign_broker_queue_lease(changed, broker.sign)}
+        )
+
+    client = httpx.Client(
+        base_url="https://broker.example", transport=httpx.MockTransport(handler)
+    )
+    anchor = QueueBrokerAnchor(
+        client,
+        tenant_id="tenant-a",
+        journal_scope="queue/tenant-a",
+        machine_id="machine-a",
+        tls_fingerprint="c" * 64,
+        signer=machine,
+        broker_public_key=broker.public_key,
+        lease_envelope=sign_broker_queue_lease(lease, broker.sign),
+        clock=lambda: now,
+    )
+    with pytest.raises(QueueBrokerError, match="owner changed"):
+        anchor.seal_record(b"record")
+    assert writes == 1
+
+
+def test_record_seal_refuses_empty_plaintext_before_broker_call() -> None:
+    now = 1000
+    machine = InProcessSigner(b"a" * 32)
+    broker = InProcessSigner(b"b" * 32)
+    lease = _lease(machine, now)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    client = httpx.Client(
+        base_url="https://broker.example", transport=httpx.MockTransport(handler)
+    )
+    anchor = QueueBrokerAnchor(
+        client,
+        tenant_id="tenant-a",
+        journal_scope="queue/tenant-a",
+        machine_id="machine-a",
+        tls_fingerprint="c" * 64,
+        signer=machine,
+        broker_public_key=broker.public_key,
+        lease_envelope=sign_broker_queue_lease(lease, broker.sign),
+        clock=lambda: now,
+    )
+    with pytest.raises(QueueBrokerError, match="plaintext exceeds limit"):
+        anchor.seal_record(b"")
+    assert calls == 0

@@ -1049,7 +1049,8 @@ def test_module_capacity_conflict_with_shared_owner_is_rejected() -> None:
         )
 
 
-def test_shared_owner_limits_override_module_defaults() -> None:
+def test_shared_owner_limits_override_module_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     coordinator = CallQueueCoordinator(limits=QueueLimits(max_concurrent=3, max_queued=4))
     model = load_model("anthropic", queue_coordinator=coordinator)
     assert isinstance(model, QueueModule)

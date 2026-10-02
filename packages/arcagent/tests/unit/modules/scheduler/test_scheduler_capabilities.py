@@ -218,7 +218,7 @@ class TestAgentReadyHook:
         st = _runtime.state()
         assert st.agent_run_fn is None
 
-    async def test_binds_channel_deliver_fn_to_engine(self, configured: Path) -> None:
+    async def test_binds_durable_reply_to_engine(self, configured: Path) -> None:
         from arcagent.modules.scheduler.capabilities import (
             Scheduler,
             bind_agent_run_fn,
@@ -227,16 +227,24 @@ class TestAgentReadyHook:
         cap = Scheduler()
         await cap.setup(None)
         try:
-            deliver_fn = AsyncMock()
+            deliver_fn = AsyncMock(return_value="sent")
+            send = AsyncMock()
+            lookup = AsyncMock()
             ctx = SimpleNamespace(
-                data={"run_fn": AsyncMock(), "channel_deliver_fn": deliver_fn},
+                data={
+                    "run_fn": AsyncMock(),
+                    "accepted_reply_fn": deliver_fn,
+                    "scheduled_reply_send": send,
+                    "scheduled_reply_lookup": lookup,
+                },
             )
             await bind_agent_run_fn(ctx)
 
             st = _runtime.state()
-            assert st.channel_deliver_fn is deliver_fn
+            assert st.accepted_reply_fn is deliver_fn
             assert st.engine is not None
-            assert st.engine._channel_deliver_fn is deliver_fn
+            assert st.engine._reply_send is send
+            assert st.engine._reply_lookup is lookup
         finally:
             await cap.teardown()
 

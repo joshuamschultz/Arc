@@ -117,6 +117,9 @@ class ScheduleMetadata(BaseModel):
     last_tokens_used: int | None = None
     last_cost_usd: float | None = None
     consecutive_failures: int = 0
+    pending_due_at: str | None = None
+    pending_definition_digest: str | None = None
+    pending_reply_run_id: str | None = None
 
 
 class ScheduleEntry(BaseModel):

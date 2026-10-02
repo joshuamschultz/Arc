@@ -7,6 +7,7 @@ for timestamps, and calls agent_run_fn with focused prompts.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -18,8 +19,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcagent.core.control_contract import (
+    ControlArtifactAuthority,
+    ControlArtifactRefusedError,
+    ControlArtifactUnavailableError,
+)
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    RunAdmissionUnavailableError,
+    RunOutcomeUnknownError,
+    RunTriggerIssuer,
+)
 from arcagent.modules.pulse import PulseCheck, PulseCheckState, PulseState
 from arcagent.modules.pulse.config import PulseConfig
+from arcagent.modules.pulse.signed_dispatch import (
+    canonical_definition,
+    dispatch_signed_pulse,
+)
 from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
 if TYPE_CHECKING:
@@ -37,6 +53,7 @@ _CHECK_CIRCUIT_BREAKER_THRESHOLD = 5
 _SECTION_RE = re.compile(r"^##\s+(\S+)", re.MULTILINE)
 _INTERVAL_RE = re.compile(r"-\s+\*\*Interval:\*\*\s*(\d+)\s*min", re.IGNORECASE)
 _ACTION_RE = re.compile(r"-\s+\*\*Action:\*\*\s*(.*)", re.IGNORECASE)
+_APPROVAL_RE = re.compile(r"-\s+\*\*Approval:\*\*\s*(\{[^\n]+\})", re.IGNORECASE)
 
 
 def parse_pulse_file(content: str) -> list[PulseCheck]:
@@ -75,13 +92,18 @@ def parse_pulse_file(content: str) -> list[PulseCheck]:
 
         action = " ".join(parts)
         if action:
-            checks.append(
-                PulseCheck(
+            approval_match = _APPROVAL_RE.search(body)
+            try:
+                check = PulseCheck(
                     name=match.group(1),
                     interval_minutes=int(interval_m.group(1)),
                     action=action,
+                    approval=json.loads(approval_match.group(1)) if approval_match else None,
                 )
-            )
+            except ValueError:
+                _logger.warning("Pulse check %s has invalid signed metadata", match.group(1))
+                continue
+            checks.append(check)
 
     return checks
 
@@ -95,11 +117,21 @@ class PulseEngine:
         config: PulseConfig,
         agent_run_fn: AgentRunFn,
         bus: ModuleBus | None = None,
+        control_artifact_authority: ControlArtifactAuthority | None = None,
+        control_tenant_id: str | None = None,
+        agent_did: str = "",
+        trigger_issuer: RunTriggerIssuer | None = None,
+        prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None,
     ) -> None:
         self._workspace = workspace
         self._config = config
         self._agent_run_fn = agent_run_fn
         self._bus = bus
+        self._control_artifact_authority = control_artifact_authority
+        self._control_tenant_id = control_tenant_id
+        self._agent_did = agent_did
+        self._trigger_issuer = trigger_issuer
+        self._prepare_collected_request = prepare_collected_request
 
         self._pulse_file = workspace / config.pulse_file
         self._state_file = workspace / config.state_file
@@ -178,9 +210,14 @@ class PulseEngine:
             _logger.debug("No pulse.md found at %s", self._pulse_file)
             return
 
-        checks = parse_pulse_file(self._pulse_file.read_text(encoding="utf-8"))
+        source = self._pulse_file.read_text(encoding="utf-8")
+        checks = parse_pulse_file(source)
         if not checks:
-            self._emit_event("pulse:no_checks", {})
+            if _SECTION_RE.search(source):
+                _logger.error("Pulse definitions unavailable: no valid checks")
+                self._emit_event("pulse:unavailable", {"reason": "invalid_definitions"})
+            else:
+                self._emit_event("pulse:no_checks", {})
             return
 
         state = self._read_state()
@@ -210,14 +247,27 @@ class PulseEngine:
 
         prompt = (
             f"Scheduled task: {check.name} "
-            f"(runs every {check.interval_minutes} min, last run: {elapsed_str})\n\n"
+            f"(runs every {check.interval_minutes} min)\n\n"
             f"{check.action}"
         )
         start = time.monotonic()
+        current = state.checks.get(check.name, PulseCheckState())
+        digest = hashlib.sha256(canonical_definition(check)).hexdigest()
+        if current.pending_due_at is not None:
+            if current.pending_definition_digest != digest:
+                _logger.error("Pulse %s pending definition changed", check.name)
+                return
+            due_at = datetime.fromisoformat(current.pending_due_at)
+        else:
+            due_at = datetime.now(UTC)
+            current.pending_due_at = due_at.isoformat()
+            current.pending_definition_digest = digest
+            state.checks[check.name] = current
+            self._write_state(state)
 
         try:
             await asyncio.wait_for(
-                self._agent_run_fn(prompt, session_key=f"pulse:{check.name}"),
+                self._dispatch(check, prompt, due_at),
                 timeout=self._config.timeout_seconds,
             )
             duration = time.monotonic() - start
@@ -231,7 +281,6 @@ class PulseEngine:
             )
             _logger.info("Pulse: '%s' completed in %.1fs", check.name, duration)
         except TimeoutError:
-            self._update_state(check.name, "timeout")
             _logger.warning("Pulse: '%s' timed out", check.name)
             self._emit_event(
                 "pulse:check_failed",
@@ -240,8 +289,14 @@ class PulseEngine:
                     "error": "timeout",
                 },
             )
-        except Exception as exc:  # reason: fail-open — log + continue
-            self._update_state(check.name, "error")
+        except (
+            ControlArtifactRefusedError,
+            ControlArtifactUnavailableError,
+            RunAdmissionUnavailableError,
+            RunOutcomeUnknownError,
+        ) as exc:
+            _logger.error("Pulse '%s' remains pending: %s", check.name, exc)
+        except Exception as exc:
             _logger.error("Pulse: '%s' failed: %s", check.name, exc)
             self._emit_event(
                 "pulse:check_failed",
@@ -250,6 +305,25 @@ class PulseEngine:
                     "error": str(exc),
                 },
             )
+
+    async def _dispatch(self, check: PulseCheck, prompt: str, due_at: datetime) -> Any:
+        authority = self._control_artifact_authority
+        tenant_id = self._control_tenant_id
+        issuer = self._trigger_issuer
+        prepare = self._prepare_collected_request
+        if authority is None or tenant_id is None or issuer is None or prepare is None:
+            raise ControlArtifactUnavailableError("signed pulse capability unavailable")
+        return await dispatch_signed_pulse(
+            check,
+            prompt=prompt,
+            due_at=due_at,
+            tenant_id=tenant_id,
+            agent_did=self._agent_did,
+            authority=authority,
+            issuer=issuer,
+            prepare=prepare,
+            run_fn=self._agent_run_fn,
+        )
 
     # --- Check selection ---
 
@@ -264,6 +338,9 @@ class PulseEngine:
 
         for check in checks:
             cs = state.checks.get(check.name, PulseCheckState())
+            if cs.pending_due_at is not None:
+                overdue.append((365 * 24 * 3600, check))
+                continue
             if cs.consecutive_failures >= _CHECK_CIRCUIT_BREAKER_THRESHOLD:
                 _logger.warning(
                     "Pulse: skipping check '%s' - %d consecutive failures (circuit breaker)",
@@ -297,9 +374,8 @@ class PulseEngine:
             return PulseState()
         try:
             return PulseState(**json.loads(self._state_file.read_text(encoding="utf-8")))
-        except Exception:  # reason: fail-open — log + continue
-            _logger.warning("Failed to parse %s, using empty state", self._state_file)
-            return PulseState()
+        except Exception as exc:
+            raise ControlArtifactUnavailableError("pulse progress state unavailable") from exc
 
     def _update_state(self, name: str, result: str) -> None:
         """Update pulse-state.json for a completed check (atomic write)."""
@@ -308,7 +384,14 @@ class PulseEngine:
         cs.consecutive_failures = 0 if result == "ok" else cs.consecutive_failures + 1
         cs.last_run = datetime.now(tz=UTC).isoformat()
         cs.last_result = result
+        cs.pending_due_at = None
+        cs.pending_definition_digest = None
         state.checks[name] = cs
+
+        self._write_state(state)
+
+    def _write_state(self, state: PulseState) -> None:
+        """Atomically persist pulse progress in the agent workspace."""
 
         data = json.dumps(state.model_dump(), indent=2)
         fd, tmp = tempfile.mkstemp(dir=str(self._state_file.parent), suffix=".tmp")
