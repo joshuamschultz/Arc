@@ -48,6 +48,7 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, ProbeResult
 from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
+from arcagent.extension.connection_health import custody_of
 from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
@@ -262,8 +263,12 @@ async def install_connector(
         plan.instance,
         Connection(extension=plan.extension, approval=plan.approval_mode, agents=tuple(agents)),
     )
+    # Unknown until something has actually checked it: the probe above proved the
+    # credential works once, but the card's chip is the health authority's to set,
+    # not an install's to assert. ``Connections.install`` checks it right after.
     await state.create(
-        ConnectionRecord(connection=plan.instance, health="healthy"), actor_did=caller_did
+        ConnectionRecord(connection=plan.instance, custody=custody_of(plan.manifest)),
+        actor_did=caller_did,
     )
     # Connecting IS approving (REQ-291). An operator who supplied this account's
     # credentials and completed its probe has consented to the contract it just

@@ -45,9 +45,6 @@ class _State:
             )
         )
         self.service: ConnectedDataService | None = None
-        #: The agent's module bus: how a dead connection asks whichever module owns the
-        #: operator's channel to say so. None outside a fully wired agent.
-        self.bus: Any = kwargs.get("bus")
         #: The agent's prompt lookup — the catalog preamble an operator may override.
         self.prompt_source: PromptSource = kwargs.get("prompt_source") or StockPromptSource()
 
@@ -68,7 +65,6 @@ def configure(
     telemetry: Any = None,
     ingest_port_factory: IngestPortFactory | None = None,
     prompt_source: PromptSource | None = None,
-    bus: Any = None,
     **kwargs: Any,
 ) -> None:
     del kwargs
@@ -88,7 +84,6 @@ def configure(
             telemetry=telemetry,
             ingest_port_factory=ingest_port_factory,
             prompt_source=prompt_source,
-            bus=bus,
         )
     )
 

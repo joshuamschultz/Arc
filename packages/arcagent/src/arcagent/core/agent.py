@@ -374,6 +374,34 @@ class ArcAgent:
             )
         return await reconcile()
 
+    async def notify_operator(self, text: str, *, idempotency_key: str) -> str | None:
+        """Put one notice in front of the operator, on the channel they last used.
+
+        The narrow public seam for anything that must reach a human with no turn
+        behind it: a connection that needs reconnecting, a workflow that failed.
+        The caller owns the wording and the once-only guarantee; this only delivers.
+        ``idempotency_key`` lets the delivering module refuse a redelivery.
+
+        Returns:
+            The channel kind that took the notice (``"telegram"``), or ``None`` when
+            this agent is not started, has no module answering, or has never been
+            reached on any channel — never a claim that somebody was told.
+        """
+        if not self._started or self._bus is None:
+            return None
+        event = await self._bus.emit(
+            "agent:operator_notice",
+            {
+                "text": text,
+                "idempotency_key": idempotency_key,
+                "delivered": False,
+                "channel": "",
+            },
+        )
+        if not event.data.get("delivered"):
+            return None
+        return str(event.data.get("channel") or "unknown")
+
     async def run_memory_promotion(self, *, max_items: int | None = None) -> Mapping[str, object]:
         """Run memory promotion once now on this started agent (SPEC-083 REQ-512).
 

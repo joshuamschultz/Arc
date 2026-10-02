@@ -5,13 +5,14 @@ DGX evidence behind each test:
 * Gmail ``blackarc`` was dead for 33 days: the history cursor aged out (404) and a
   dead cursor was retried forever. The coordinator now restarts from a snapshot.
 * One Dropbox file answering 500 aborted its whole page, 307 times.
-* Unknown failures defaulted to TRANSIENT and never escalated; the operator
-  notifier was never wired, so a dead account stayed silent.
+* Unknown failures defaulted to TRANSIENT and never escalated, and nothing told
+  the operator, so a dead account stayed silent. The sync loop now reports every
+  outcome to the shared health record, which owns the one notice per outage.
 * Jira sat durably ``running`` for nine days because a stalled run only touched
   in-memory status, so the card could not tell "stuck" from "idle".
 
 Nothing here fakes the service, the coordinator or the sync store; only the
-provider (the source) and the operator's delivery channel are doubles.
+provider (the source) and the health record the service reports to are doubles.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from arcagent.connected_data import (
     SyncStatus,
     TransientSyncError,
 )
+from arcagent.extension.connection_health import HealthSignal
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
@@ -44,6 +46,7 @@ from arcagent.extension.source import (
     SyncSourcePage,
 )
 from arcagent.extension.source_catalog import SourceCatalog
+from arcagent.extension.state import ConnectionStatus
 from arcagent.modules.connected_data import ConnectedDataCoordinator
 from arcagent.modules.connected_data.service import ConnectedDataService
 
@@ -289,18 +292,31 @@ class _Provider:
         return None
 
 
-class _Notifications:
-    def __init__(self) -> None:
-        self.sent: list[tuple[str, str]] = []
+class _Health:
+    """The shared health record, as the service sees it: reports in, statuses out."""
 
-    async def __call__(self, connection_id: str, reason: str) -> None:
-        self.sent.append((connection_id, reason))
+    def __init__(self) -> None:
+        self.signals: list[tuple[str, HealthSignal]] = []
+
+    async def report(self, connection: str, signal: HealthSignal) -> None:
+        self.signals.append((connection, signal))
+
+    async def statuses(self) -> dict[str, ConnectionStatus]:
+        return {}
+
+    def reasons(self, *codes: str) -> list[str]:
+        """The failing reports whose reason is one of ``codes``, in order."""
+        return [
+            str(signal.reason_code)
+            for _, signal in self.signals
+            if not signal.ok and signal.reason_code in codes
+        ]
 
 
 async def _service(
     provider: _Provider,
     store: InMemorySourceSyncStore,
-    notifier: _Notifications,
+    health: _Health,
     events: list[tuple[str, dict[str, Any]]] | None = None,
     **options: Any,
 ) -> ConnectedDataService:
@@ -328,7 +344,7 @@ async def _service(
         sync_store_opener=open_store,
         ingest_factory=lambda _: _Ingest(),
         global_concurrency=2,
-        operator_notifier=notifier,
+        health=health,
         audit=audit,
         **settings,
     )
@@ -350,10 +366,10 @@ async def _status(service: ConnectedDataService) -> str:
 
 
 @pytest.mark.parametrize("behaviour", ["weird", "transient"])
-async def test_an_unknown_failure_that_never_clears_escalates_and_tells_the_operator_once(
+async def test_an_unknown_failure_that_never_clears_escalates_and_is_reported_once(
     behaviour: str,
 ) -> None:
-    provider, store, notes = _Provider(behaviour), InMemorySourceSyncStore(), _Notifications()
+    provider, store, notes = _Provider(behaviour), InMemorySourceSyncStore(), _Health()
     service = await _service(provider, store, notes)
     try:
 
@@ -368,13 +384,13 @@ async def test_an_unknown_failure_that_never_clears_escalates_and_tells_the_oper
 
     assert provider.syncs == syncs_at_escalation, "an escalated source must stop being hammered"
     assert provider.syncs >= 3
-    assert len(notes.sent) == 1
-    assert notes.sent[0][0] == "mail"
+    assert notes.reasons("repeated_failures") == ["repeated_failures"]
+    assert {connection for connection, _ in notes.signals} == {"mail"}
 
 
 async def test_a_blip_that_clears_never_escalates() -> None:
     provider = _Provider("weird", "weird", "ok")
-    store, notes = InMemorySourceSyncStore(), _Notifications()
+    store, notes = InMemorySourceSyncStore(), _Health()
     service = await _service(provider, store, notes)
     try:
 
@@ -385,13 +401,14 @@ async def test_a_blip_that_clears_never_escalates() -> None:
     finally:
         await service.close()
 
-    assert notes.sent == []
+    assert notes.reasons("repeated_failures", "auth_required") == []
+    assert notes.signals[-1][1].ok is True, "the recovery was not reported"
 
 
 async def test_transient_then_invalid_grant_escalates_once_and_survives_a_restart() -> None:
     """J1 gate G5: a dead source escalates once, and a restart does not forget it."""
     provider = _Provider("transient", "transient", "auth")
-    store, notes = InMemorySourceSyncStore(), _Notifications()
+    store, notes = InMemorySourceSyncStore(), _Health()
     first = await _service(provider, store, notes)
     try:
 
@@ -401,7 +418,7 @@ async def test_transient_then_invalid_grant_escalates_once_and_survives_a_restar
         assert await _until(escalated)
     finally:
         await first.close()
-    assert [reason for _, reason in notes.sent] == ["auth_required"]
+    assert notes.reasons("auth_required") == ["auth_required"]
 
     second = await _service(provider, store, notes)
     try:
@@ -416,12 +433,12 @@ async def test_transient_then_invalid_grant_escalates_once_and_survives_a_restar
         await second.close()
 
     assert provider.syncs == syncs, "a restarted service re-hammered a dead credential"
-    assert len(notes.sent) == 1, "a restart must not page the operator again"
+    assert len(notes.reasons("auth_required")) == 1, "a restart must not report it again"
 
 
 async def test_an_escalation_by_repeated_failure_also_survives_a_restart() -> None:
     provider = _Provider("weird")
-    store, notes = InMemorySourceSyncStore(), _Notifications()
+    store, notes = InMemorySourceSyncStore(), _Health()
     first = await _service(provider, store, notes)
     try:
 
@@ -441,13 +458,13 @@ async def test_an_escalation_by_repeated_failure_also_survives_a_restart() -> No
         assert await _until(still_escalated)
     finally:
         await second.close()
-    assert len(notes.sent) == 1
+    assert len(notes.reasons("repeated_failures")) == 1
 
 
 async def test_a_stalled_run_leaves_a_durable_failure_and_keeps_the_last_good_sync() -> None:
     """J1 gate G6 / F5: Jira sat ``running`` for nine days after a stall."""
     provider = _Provider("ok", "hang")
-    store, notes, events = InMemorySourceSyncStore(), _Notifications(), []
+    store, notes, events = InMemorySourceSyncStore(), _Health(), []
     service = await _service(
         provider,
         store,

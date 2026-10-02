@@ -982,7 +982,63 @@ class ConnectorCatalogResponse(BaseModel):
     unreadable: list[ConnectorUnreadableBundle]
 
 
-class ConnectorInstance(BaseModel):
+ConnectionStatusName = Literal["unknown", "healthy", "needs_you", "error"]
+ConnectionDisplayStatus = Literal["unknown", "healthy", "needs_you", "error", "syncing"]
+ConnectionActionName = Literal["none", "reconnect", "approve", "install_host", "wait"]
+ConnectKind = Literal["oauth", "token", "host_login", "remote_login", "none"]
+
+
+class LastNoticeView(BaseModel):
+    """The last operator notice a connection earned, delivered or given up on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["needs_you", "error", "recovered"]
+    delivered: bool
+    channel: str
+    at: str
+
+
+class KnowledgeSyncRow(BaseModel):
+    """One agent's connected-knowledge sync of a connection, read from the durable row.
+
+    ``running`` is true only while the row's lease is live: a crashed run leaves
+    ``state == "running"`` behind forever and must not read as syncing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent: str
+    source_id: str
+    state: str
+    running: bool
+    last_synced_at: str | None = None
+    pages: int = 0
+    error_code: str | None = None
+
+
+class ConnectionHealthView(BaseModel):
+    """The one truthful health answer for a connection (the card's chip and button).
+
+    Everything here is read from the connection's health record and the durable sync
+    rows. Nothing is probed and no credential is read to produce it, so a page view
+    costs no provider call and writes no ``secret.read`` row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ConnectionStatusName = "unknown"
+    display_status: ConnectionDisplayStatus = "unknown"
+    reason_code: str | None = None
+    reason_text: str | None = None
+    action: ConnectionActionName = "none"
+    action_label: str = ""
+    last_checked_at: str | None = None
+    last_success_at: str | None = None
+    last_notice: LastNoticeView | None = None
+
+
+class ConnectorInstance(ConnectionHealthView):
     """One connected account, as a listing row — including who may use it.
 
     ``agents`` is the grant list and the only thing that decides access, so it
@@ -1003,6 +1059,9 @@ class ConnectorInstance(BaseModel):
     knowledge_reason: str = ""
     approval: str
     agents: list[str]
+    #: How the operator reconnects it, read from the manifest alone.
+    connect_kind: ConnectKind = "none"
+    knowledge_sync: list[KnowledgeSyncRow] = Field(default_factory=list)
 
 
 class ConnectionsResponse(BaseModel):
@@ -1015,15 +1074,13 @@ class ConnectionsResponse(BaseModel):
 
 
 class AgentConnectorInstance(ConnectorInstance):
-    """One connected account on the per-agent panel, plus its sync health.
+    """One connected account on the per-agent panel, plus whether it waits on a person.
 
-    ``needs_attention`` (SPEC-082 COMP-008) is True when THIS agent's
-    connected-data sync backed the source off after a terminal credential
-    failure — a revoked/expired token no retry can clear, waiting on a human.
-    Absent a health record it is False: a connection with no sync trouble reads
-    as healthy, never as an error. It rides only the agent-scoped view because
-    sync health is per-agent; the deployment listing keeps the leaner
-    :class:`ConnectorInstance` shape.
+    ``needs_attention`` is the connection's own health record saying ``needs_you``:
+    a revoked or expired credential no retry can clear. It is the same fact the card's
+    chip shows (the row also carries the full health fields), so the two panels cannot
+    disagree. A connection with no record reads as not needing attention: "unknown" is
+    never rendered as an error.
     """
 
     needs_attention: bool = False
@@ -1189,10 +1246,12 @@ class ConnectorAuthorizationResponse(BaseModel):
     sign_in: Literal["signed_in", "signed_out", "expired", "not_installed", "unknown"] = "unknown"
 
 
-class ConnectorProbeResponse(BaseModel):
-    """Body of ``POST /api/connections/{instance}/probe``."""
+class ConnectorProbeResponse(ConnectionHealthView):
+    """Body of ``POST /api/connections/{instance}/probe``.
 
-    model_config = ConfigDict(extra="forbid")
+    The health fields are the record the check just wrote; ``reachable``, ``detail``
+    and ``tools`` are what the doctor panel reads.
+    """
 
     reachable: bool
     detail: str

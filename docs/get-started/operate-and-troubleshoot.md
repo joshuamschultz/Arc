@@ -40,7 +40,7 @@ clean teardown ("disconnect = delete the pool").
 | Source stuck in **`awaiting_mapping`** | mapping never approved, or a changed proposal needs a fresh approval | Approve the exact mapping under **Knowledge → Connections** (a changed proposal re-gates by design) |
 | **`activation_pending`** after a grant | the owning agent isn't in this process; it reconciles at startup / on a bounded cycle | Verify the agent is running and can reach ArcStore; it converges without editing files |
 | **`last_synced_at` shows "Never"** / counters read 0 | the status object has no `last_synced_at` yet, so the wire falls back to `None` (`connected_data.py:110`, safe default) | Run one **Sync now**; if it persists after a successful sync, the index-count wiring across the two-DB split is a known gap — **needs confirmation** whether your build reads it |
-| **Probe fails** | wrong attachment kind, missing host binary/MCP command, timeout, or vault secret | Check the declared attachment and its external command/secret — not the display name (`arc connector probe <id>`, `arc connector doctor <id>`) |
+| **Check now fails** | wrong attachment kind, missing host binary/MCP command, timeout, or vault secret | Check the declared attachment and its external command/secret — not the display name (`arc connector probe <id>`, `arc connector doctor <id>`) |
 | **ArcStore unavailable** | the operational store is down | Connector startup stays usable from its grant snapshot and emits a degraded audit event; restore the store before relying on cross-process convergence |
 | **Index health: degraded semantic channel** | no embedder configured, or `sqlite-vec` missing | Configure an embedder ([tune memory](tune-knowledge-and-memory.md)); keyword + graph retrieval keep working meanwhile |
 | **Unsupported media / expired credential / rate limit** | surfaced as a source error, not silently skipped | Re-auth the credential, or narrow the resource selection; back-off does not advance the cursor, so no data is lost |
@@ -80,7 +80,7 @@ UV_CACHE_DIR=/tmp/arc-uv-cache uv run python tests/run_connected_data_release_ga
 
 It does **not** claim a live call to a real Dropbox / Microsoft / Google / AWS /
 Supabase account. For those, exercise each deployment's own credentials with
-**Probe**, sync one restricted resource, search/query it, then revoke it before
+**Check now**, sync one restricted resource, search/query it, then revoke it before
 widening access.
 
 ---

@@ -89,6 +89,11 @@ format = "api_token"
 [secrets.placement]
 variable = "MS365_MCP_CLIENT_SECRET"
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# The MCP server answers a tool listing only when signed in.
+[health]
+probe = "attachment"
+
 [tools]
 # Nine names out of 324. Every one of them is a name this manifest chose; a verb
 # the server starts serving that is not on this list can never register.

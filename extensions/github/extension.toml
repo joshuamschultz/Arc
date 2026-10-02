@@ -89,6 +89,11 @@ Grant the narrowest scopes the agent needs. These tools only read, so a
 read-only fine-grained token is enough.
 """
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# gh auth status proves the signed-in account.
+[health]
+probe = "host_verify"
+
 [tools]
 allow = [
   "github_file_content",

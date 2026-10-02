@@ -134,6 +134,11 @@ begin = "gog auth add {account} --client={client} --readonly={read_only} --remot
 complete = "gog auth add {account} --client={client} --readonly={read_only} --remote --step 2 --force-consent --services gmail,calendar,drive --drive-scope readonly --no-input --auth-url {redirect_url}"
 consent_host = "accounts.google.com"
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# A real INBOX read proves the account works.
+[health]
+probe = "host_verify"
+
 [tools]
 allow = [
   "google_gmail_labels",

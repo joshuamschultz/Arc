@@ -1600,7 +1600,12 @@ export const useConnectorCatalog = () =>
 
 // Every connection and who holds it — the whole "who can reach what" question.
 export const useConnections = () =>
-  useApiQuery<ConnectionsResponse>(CONNECTIONS_KEY, '/api/connections')
+  useQuery<ConnectionsResponse>({
+    queryKey: CONNECTIONS_KEY,
+    queryFn: ({ signal }) => apiGet<ConnectionsResponse>('/api/connections', signal),
+    // A stored-row read: no probe, no secret read, so polling is cheap.
+    refetchInterval: 30_000,
+  })
 
 // The other direction: what one agent can reach. Same rows, its grants only.
 export const useAgentConnectors = (agentId: string | null) =>
@@ -1680,10 +1685,14 @@ export const useReauthConnector = (instance: string) => {
 
 // Opens a live connection, so it is a mutation (and operator-only server side).
 // Its result is the row's live status — deliberately not cached.
-export const useProbeConnector = (instance: string) =>
-  useMutation<ConnectorProbeResponse, Error, void>({
+export const useProbeConnector = (instance: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<ConnectorProbeResponse, Error, void>({
     mutationFn: () => apiPost(connectionPath(instance, '/probe')),
+    // The probe records the health row, so the card's chip must re-read it.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY }),
   })
+}
 
 export const useConnectorDoctor = (instance: string, enabled: boolean) =>
   useQuery<ConnectorDoctorResponse>({

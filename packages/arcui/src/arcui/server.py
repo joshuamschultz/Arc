@@ -47,6 +47,7 @@ from starlette.staticfiles import StaticFiles
 from arcui.approval_notifications import ApprovalNotificationHub
 from arcui.audit import UIAuditLogger, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
+from arcui.connection_health import build_connection_health_monitor
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
@@ -661,6 +662,12 @@ def create_app(
             )
             await approval_dispatcher.start()
             starlette_app.state.approval_notification_dispatcher = approval_dispatcher
+        # P18-1: one probe loop per process keeps every connection's health record
+        # true and delivers the one operator notice an outage earns.
+        connection_health = build_connection_health_monitor(starlette_app)
+        if connection_health is not None:
+            connection_health.start()
+            starlette_app.state.connection_health_monitor = connection_health
         try:
             yield
         finally:
@@ -677,6 +684,8 @@ def create_app(
                 with contextlib.suppress(asyncio.CancelledError):
                     await workflow_refresh_task
             await messaging_lifecycle.aclose()
+            if connection_health is not None:
+                await connection_health.stop()
             if approval_dispatcher is not None:
                 await approval_dispatcher.stop()
             try:

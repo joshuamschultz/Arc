@@ -17,6 +17,11 @@ name = "database_dsn"
 prompt = "A read-only PostgreSQL/Supabase connection URL. Arc keeps it in the vault and never exposes it to agents."
 format = "api_token"
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Opening the database proves the connection string.
+[health]
+probe = "attachment"
+
 [tools]
 allow = ["postgres_schema", "postgres_get", "postgres_find", "postgres_list"]
 

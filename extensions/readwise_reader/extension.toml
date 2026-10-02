@@ -82,6 +82,12 @@ write verbs, and turning it back off logs the session out and forces
 re-authentication — an agent cannot silently re-enable writes.
 """
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Listing one document proves the token.
+[health]
+probe = "tool:readwise_list_documents"
+args = { limit = "1" }
+
 [tools]
 allow = [
   "readwise_search_documents",

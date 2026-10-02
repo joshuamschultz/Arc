@@ -67,6 +67,11 @@ prompt = "Your Composio MCP server URL. In the Composio dashboard create an MCP 
 format = "https_url"
 sensitive = false
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# The MCP server answers a tool listing only with a valid key.
+[health]
+probe = "attachment"
+
 [tools]
 # Read-only discovery verbs. Equality with [[tools.declared]] is enforced by the
 # bundle suite: a declared verb missing here can never register, and an allowed

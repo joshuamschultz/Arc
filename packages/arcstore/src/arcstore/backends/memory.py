@@ -18,7 +18,7 @@ from arcstore.mutation_fence import (
     MutationFenceRejectedError,
     RunnerFence,
 )
-from arcstore.source_sync import SourceSyncBackend, SourceSyncState
+from arcstore.source_sync import SourceSyncBackend, SourceSyncState, source_belongs_to
 
 #: The durable columns of a source-sync row, mirroring postgres's explicit
 #: SELECT. Derived from the model so a new field cannot drift out of the fake.
@@ -171,6 +171,21 @@ class FakeBackend(SourceSyncBackend):
             return {
                 key: copy.deepcopy(row[key]) for key in _SOURCE_SYNC_STATE_COLUMNS if key in row
             }
+
+    async def source_sync_list_for_connection(self, connection: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            return [
+                {
+                    **{
+                        key: copy.deepcopy(row[key])
+                        for key in _SOURCE_SYNC_STATE_COLUMNS
+                        if key in row
+                    },
+                    "lease_expires_at": row.get("lease_expires_at"),
+                }
+                for row in self._tables.setdefault("connected_source_sync", {}).values()
+                if source_belongs_to(str(row["source_id"]), connection)
+            ]
 
     async def source_sync_acquire_lease(
         self, agent_did: str, source_id: str, owner_id: str, ttl_seconds: float

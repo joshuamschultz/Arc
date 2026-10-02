@@ -118,6 +118,11 @@ this connection makes carries the service-account token in its own environment,
 which is what keeps the agent's reach to the one vault you granted in step 3.
 """
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# op whoami proves the signed-in account.
+[health]
+probe = "host_verify"
+
 [tools]
 allow = ["onepassword_list_items", "onepassword_get_item", "onepassword_resolve_secret"]
 

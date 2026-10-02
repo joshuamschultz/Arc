@@ -34,7 +34,41 @@ arc connector probe <agent> <connector>
 `add` validates that the target agent exists before prompting or writing.
 `auth` passes credentials through the connector's secret boundary; secrets must
 remain vault-backed and must not be written to manifests, logs or agent
-workspaces. `probe` exercises the real native, CLI or MCP attachment.
+workspaces. `probe` runs the connection's declared health check once and
+records the result (the same check the background loop runs), so what it prints
+is what the card and the next notice say. `list` shows each connection's
+`Status`, `Reason` and `Checked` columns from that record.
+
+## Health
+
+Every connection has one durable health record. Its stored status is `unknown`,
+`healthy`, `needs_you` or `error`; the card adds a derived `syncing` while an
+agent's sync holds a live lease (a crash cannot leave it stuck).
+
+- **Who writes it.** Only the health authority, from five sources: the
+  scheduled probe, the end of a sync run, the credential lifecycle, an operator
+  action (connect, re-auth, approve, Check now) and the tool-contract ledger.
+- **What the probe is.** Each bundle declares `[health]` in its
+  `extension.toml`: `probe = "attachment"` (the attachment's own probe),
+  `"host_verify"` (the host sign-in check) or `"tool:<name>"` (one read-only
+  tool). A bundle without it gets the default for its shape; a bare CLI with no
+  sign-in check stays "Not checked yet" rather than guessed healthy.
+- **Schedule.** ArcUI runs one probe loop: 30 minutes (with jitter) for
+  `healthy`/`unknown`, 10 for `error`, 5 for `needs_you`.
+- **When something breaks.** A credential the provider rejects moves the
+  connection to `needs_you` at once; failures that may be a blip (timeouts, 5xx,
+  rate limits) move it to `error` only after three failures over at least ten
+  minutes, or 24 hours without a success. A changed tool contract is `needs_you`
+  with **Approve changed tools**, and a working probe does not clear it.
+- **Notices.** One message per outage, delivered through the first granted agent
+  that can reach you (`notify_operator`), claimed with a lease on the record so a
+  restart or several agents cannot send it twice. Retries are bounded (three
+  tries), then the card shows **Could not notify you**. Changes you cause
+  yourself send no notice.
+
+Notices need a granted agent loaded in the ArcUI process and a channel you have
+used with it; without both the notice is recorded as undeliverable and the card
+is the only signal.
 
 ## Grant and activation
 
@@ -246,5 +280,5 @@ uv run python tests/run_connected_data_release_gate.py
 The repository gate uses deterministic provider doubles plus a live PostgreSQL
 contract when requested. It does not claim a live call to a real Dropbox,
 Microsoft, Google, AWS or Supabase account; exercise each deployment's own
-credentials with **Probe**, sync one restricted resource, search/query it, then
+credentials with **Check now**, sync one restricted resource, search/query it, then
 revoke it before widening access.

@@ -36,10 +36,14 @@ credential by writing a config block.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 import tomllib
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -53,8 +57,22 @@ from arcagent.connector_control import ConnectorControl, ConnectorReconcileResul
 from arcagent.connector_reconcile import ConnectorReconcileQueue
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
-from arcagent.extension.attachment import ExtensionAttachment, ProbeResult, ToolSpec
+from arcagent.extension.attachment import (
+    ExtensionAttachment,
+    ProbeResult,
+    ToolOutcome,
+    ToolSpec,
+)
 from arcagent.extension.catalog import BUNDLES_DIRNAME, resolve_extension_roots
+from arcagent.extension.connection_health import (
+    AUTH_REASONS,
+    ConnectionHealthAuthority,
+    HealthSignal,
+    SignalSource,
+    classify,
+    custody_of,
+    effective_probe,
+)
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.grants import (
@@ -86,7 +104,11 @@ from arcagent.extension.remote_login import (
     checked_account,
 )
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
-from arcagent.extension.state import ConnectionStateStore, open_connection_state
+from arcagent.extension.state import (
+    ConnectionRecord,
+    ConnectionStateStore,
+    open_connection_state,
+)
 from arcagent.modules.connectors.install import (
     AttachmentFactory,
     ConnectorPlan,
@@ -101,6 +123,8 @@ from arcagent.modules.connectors.install import (
     resolve_secrets,
     shape_supplied,
 )
+
+_logger = logging.getLogger("arcagent.connections")
 
 #: Refusal code for a verb aimed at a connection this deployment has not made.
 #: Re-exported from :mod:`arcagent.extension.grants` so a surface branches on one
@@ -678,6 +702,7 @@ class Connections:
         connector_control: ConnectorControl | None = None,
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._world = world
         self._audit = audit if audit is not None else AuditChain()
@@ -690,6 +715,9 @@ class Connections:
         # one-shot surface (a CLI verb) whose begin and complete are one process.
         self._remote_logins = remote_logins if remote_logins is not None else RemoteLoginLedger()
         self._host_step_timeout = host_step_timeout
+        # The time a health check is stamped with. Injectable so a test can walk the
+        # ten-minute and 24-hour escalation bounds without waiting for them.
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
 
     @classmethod
     def for_deployment(
@@ -706,6 +734,7 @@ class Connections:
         connector_control: ConnectorControl | None = None,
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -723,6 +752,7 @@ class Connections:
             connector_control=connector_control,
             remote_logins=remote_logins,
             host_step_timeout=host_step_timeout,
+            clock=clock,
         )
 
     @property
@@ -795,6 +825,236 @@ class Connections:
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return await attachment.probe()
+
+    async def check_health(
+        self,
+        instance: str,
+        *,
+        checked_by: str,
+        source: Literal["probe", "operator"] = "probe",
+        timeout: float = 20.0,
+    ) -> ConnectionRecord:
+        """Run the connection's declared ``[health]`` probe and record what it found.
+
+        The one writer of "does this connection work": the scheduled probe loop and
+        an operator's "Check now" both come here, so a card, a notice and a CLI row
+        cannot disagree. The record is the answer; nothing is returned that a page
+        view could not read from it afterwards.
+
+        A bundle declares its probe in ``[health]``; one that does not gets the
+        honest default for its shape (:func:`effective_probe`), and a bare CLI with
+        no sign-in check is left unchecked rather than guessed healthy — the lie
+        this packet exists to remove.
+
+        Raises:
+            ExtensionError: Nothing is connected under that name.
+        """
+        started = time.monotonic()
+        with self._audit.open() as sink:
+            plan = self._plan_for(instance, sink)
+            state = await self._connection_state()
+            authority = ConnectionHealthAuthority(state, sink=sink)
+            await self._ensure_record(state, plan, checked_by)
+            health = effective_probe(plan.manifest)
+            if health is None:
+                return await self._record_of(authority, instance)
+            generation = await self._credential_generation(instance)
+            skipped = await self._skip_dead_credential(authority, instance, generation)
+            if skipped:
+                authority.audit_checked(
+                    instance,
+                    checked_by=checked_by,
+                    ok=False,
+                    reason_code=None,
+                    duration_ms=0,
+                    probe=health.probe,
+                    skipped="credential_unchanged",
+                )
+                return await self._record_of(authority, instance)
+            signal = await self._probe_signal(
+                plan, sink, checked_by=checked_by, source=source, timeout=timeout
+            )
+            signal = replace(signal, credential_generation=generation)
+            await authority.record(instance, signal, now=self._clock())
+            authority.audit_checked(
+                instance,
+                checked_by=checked_by,
+                ok=signal.ok,
+                reason_code=signal.reason_code,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                probe=health.probe,
+            )
+            return await self._record_of(authority, instance)
+
+    async def health_records(self) -> dict[str, ConnectionRecord]:
+        """Every connection's stored health record, read once and read-only.
+
+        What a listing surface shows beside each connection. Reads the shared record
+        and nothing else: no credential, no provider, no process.
+        """
+        state = await self._connection_state()
+        return {record.connection: record for record in await state.list()}
+
+    async def ensure_health_records(self) -> None:
+        """Give every defined connection a health record, so the probe loop sees it.
+
+        A connection defined in config with no record (a wiped store, a row from
+        before this existed) would otherwise sit at "Not checked yet" forever,
+        because the loop schedules from the records it can list.
+        """
+        state = await self._connection_state()
+        have = {record.connection for record in await state.list()}
+        missing = [instance for instance in self.registry.all() if instance not in have]
+        if not missing:
+            # The common tick plans nothing: planning a bundle writes an audit row,
+            # and one per connection per minute would be its own flood.
+            return
+        with self._audit.open() as sink:
+            for instance in missing:
+                try:
+                    plan = self._plan_for(instance, sink)
+                except ExtensionError:
+                    continue
+                await self._ensure_record(state, plan, causal.actor_did())
+
+    async def _operator_check(self, instance: str) -> None:
+        """Look at a connection once after an operator verb that should have fixed it.
+
+        Never fails the verb: the operator's act succeeded, and the check is what
+        turns the card truthful afterwards. A check that cannot run is logged and
+        the next scheduled probe picks the connection up.
+        """
+        try:
+            await self.check_health(instance, checked_by=causal.actor_did(), source="operator")
+        except Exception:  # reason: bookkeeping after a verb that already succeeded
+            _logger.warning("health check after operator verb failed: %s", instance, exc_info=True)
+
+    @staticmethod
+    async def _ensure_record(
+        state: ConnectionStateStore, plan: ConnectorPlan, actor_did: str
+    ) -> None:
+        """Insert-if-absent the record, and keep ``custody`` in step with the manifest."""
+        custody = custody_of(plan.manifest)
+        record = await state.create(
+            ConnectionRecord(connection=plan.instance, custody=custody), actor_did=actor_did
+        )
+        if record.custody != custody:
+            await state.set_custody(plan.instance, custody, actor_did=actor_did)
+
+    @staticmethod
+    async def _record_of(authority: ConnectionHealthAuthority, instance: str) -> ConnectionRecord:
+        record = await authority.get(instance)
+        if record is None:
+            raise _refuse(
+                NOT_INSTALLED, f"{instance!r} has no connection record", instance=instance
+            )
+        return record
+
+    async def _credential_generation(self, instance: str) -> int | None:
+        """The custody generation the credential is at. Arc custody (P18-2) fills this in.
+
+        Until a credential lives in Arc custody there is no generation to compare,
+        so every check really probes.
+        """
+        return None
+
+    @staticmethod
+    async def _skip_dead_credential(
+        authority: ConnectionHealthAuthority, instance: str, generation: int | None
+    ) -> bool:
+        """True when a dead Arc-held credential is unchanged, so a probe would only hammer it.
+
+        A refresh token the provider already rejected is not made live by asking
+        again; only a new credential generation (the operator reconnecting) is worth
+        a provider call. A host-held credential is always probed, because signing in
+        out of band is its only way back.
+        """
+        record = await authority.get(instance)
+        return (
+            record is not None
+            and record.custody == "arc"
+            and record.status == "needs_you"
+            and record.reason_code in AUTH_REASONS
+            and record.credential_generation is not None
+            and record.credential_generation == generation
+        )
+
+    async def _probe_signal(
+        self,
+        plan: ConnectorPlan,
+        sink: AuditSink,
+        *,
+        checked_by: str,
+        source: SignalSource,
+        timeout: float,
+    ) -> HealthSignal:
+        """Run the declared probe and turn what happened into one signal."""
+        provider = plan.manifest.extension.label
+
+        def failure(code: str | None, detail: str) -> HealthSignal:
+            return HealthSignal(
+                ok=False,
+                source=source,
+                checked_by=checked_by,
+                reason_code=classify(code, detail),
+                detail=detail,
+                provider=provider,
+            )
+
+        if plan.unsatisfied_host:
+            missing = HealthSignal(
+                ok=False,
+                source=source,
+                checked_by=checked_by,
+                reason_code="host_missing",
+                detail=plan.unsatisfied_host[0].name,
+                provider=provider,
+            )
+            return missing
+        health = effective_probe(plan.manifest)
+        if health is None or health.mode == "none":
+            return HealthSignal(ok=True, source=source, checked_by=checked_by, provider=provider)
+        try:
+            async with asyncio.timeout(timeout):
+                verdict = await self._run_probe(plan, sink)
+        except TimeoutError:
+            return failure("provider_unavailable", f"did not answer within {timeout:g} s")
+        except ExtensionError as exc:
+            missing_credential = exc.details.get("step") == "secrets"
+            return failure("credential_missing" if missing_credential else exc.code, exc.message)
+        if verdict is None:
+            return HealthSignal(ok=True, source=source, checked_by=checked_by, provider=provider)
+        code, detail = verdict
+        return failure(code, detail)
+
+    async def _run_probe(
+        self, plan: ConnectorPlan, sink: AuditSink
+    ) -> tuple[str | None, str] | None:
+        """``None`` when the probe passed, else ``(reason code or None, provider text)``."""
+        health = effective_probe(plan.manifest)
+        if health is None:
+            return None
+        if health.probe == "host_verify":
+            return await self._host_verify_verdict(plan, sink)
+        attachment = await self._attachment(plan, sink)
+        tool = health.tool
+        if tool is not None:
+            result = await attachment.invoke(tool, dict(health.args))
+            return None if result.outcome is ToolOutcome.OK else (None, result.content)
+        probe = await attachment.probe()
+        return None if probe.reachable else (None, probe.detail)
+
+    async def _host_verify_verdict(
+        self, plan: ConnectorPlan, sink: AuditSink
+    ) -> tuple[str | None, str] | None:
+        state, detail = await self._sign_in_state(plan, sink)
+        if state == "signed_in":
+            return None
+        if state in ("expired", "signed_out"):
+            return ("auth_required", detail)
+        if state == "not_installed":
+            return ("host_missing", detail)
+        return ("provider_unavailable", detail)
 
     async def authorization(self, instance: str) -> Authorization:
         """How this connection is authorised — the answer both surfaces render.
@@ -874,6 +1134,7 @@ class Connections:
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
             authorize_url = await self._oauth_authorize_url(plan, sink)
+        await self._operator_check(instance)
         return _authorization(
             instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
         )
@@ -932,6 +1193,8 @@ class Connections:
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
+        if token:
+            await self._operator_check(instance)
         return _authorization(instance, plan, probe, sign_in, supplied, note=note)
 
     async def setup_host(self, extension: str) -> HostSetupReport:
@@ -1171,6 +1434,7 @@ class Connections:
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
+        await self._operator_check(instance)
         return _authorization(instance, plan, probe, sign_in, supplied, note=step.detail)
 
     @contextmanager
@@ -1311,7 +1575,7 @@ class Connections:
             _check_agent(agent)
         self._refuse_lax_plan(plan, agents)
         with self._audit.open() as sink:
-            return await install_connector(
+            report = await install_connector(
                 plan,
                 connections=self.registry,
                 agents=agents,
@@ -1323,6 +1587,8 @@ class Connections:
                 audit_sink=sink,
                 trusted_public_key=self._pinned_key(),
             )
+        await self._operator_check(plan.instance)
+        return report
 
     def grant(self, instance: str, agents: Sequence[str]) -> Connection:
         """Permit ``agents`` to use one connected account.
@@ -1423,6 +1689,8 @@ class Connections:
                 ref = SecretRef(connection=plan.instance, field=required.name)
                 await store.put(ref, value, caller_did=causal.actor_did())
                 written.append(required.name)
+        if written:
+            await self._operator_check(plan.instance)
         return tuple(written)
 
     async def approve(self, instance: str) -> tuple[str, ...]:
@@ -1453,6 +1721,11 @@ class Connections:
                 await self._connection_state(), connection=instance, sink=sink
             )
             await ledger.approve(specs, actor_did=causal.actor_did())
+            authority = ConnectionHealthAuthority(await self._connection_state(), sink=sink)
+            await authority.record(
+                instance,
+                HealthSignal(ok=True, source="contract", checked_by=causal.actor_did()),
+            )
         return tuple(spec.name for spec in specs)
 
     async def remove(self, instance: str) -> RemovalReport:
