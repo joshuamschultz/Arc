@@ -1,0 +1,69 @@
+# morning-briefing, corrected for alpha-2 P14-A. Apply by hand on the DGX
+# (edit + sign); nothing here is deployed automatically.
+#
+# Merge rule: the structure and `needs` below are the change. Keep the live v5
+# prompts, schemas and owner/agent handles for every node marked KEEP-FROM-LIVE;
+# the live file was not available when this was written.
+#
+# What changed and why (findings/item14-workflows.md):
+#   1. deliver now needs BOTH compose and validate. Before, it did not receive the
+#      composed briefing, so its model hunted via list_tasks(scope="team",
+#      status="done") (3.4 MB) and overflowed its context on 4 runs.
+#   2. Nodes receive all transitive ancestor outputs (runner fix); prompts must not
+#      call list_tasks or workflow_run_status.
+#   3. Add a trigger. morning-briefing-cron was a hand-made schedule row that the
+#      breaker turned off on 09-16. A trigger in the signed bundle is reconciled
+#      back on automatically (breaker trips re-arm; reconcile re-enables them).
+
+[workflow]
+id = "morning-briefing"
+description = "Gather calendar, mail and tasks, compose, validate, deliver the morning briefing."
+owner = "@josh_agent"                  # KEEP-FROM-LIVE
+
+[trigger]
+type = "cron"
+expression = "CRON_TZ=America/Chicago 30 6 * * *"   # KEEP-FROM-LIVE: the live cron time
+
+[[node]]
+id = "gather"
+kind = "agent"
+agent = "@josh_agent"                  # KEEP-FROM-LIVE
+prompt = "prompts/gather.md"           # KEEP-FROM-LIVE
+output_schema = "schemas/gather.json"
+max_attempts = 2
+
+[[node]]
+id = "review_clients"
+kind = "agent"
+agent = "@josh_agent"
+needs = ["gather"]
+prompt = "prompts/review_clients.md"   # KEEP-FROM-LIVE
+output_schema = "schemas/review_clients.json"
+max_attempts = 2
+
+[[node]]
+id = "compose"
+kind = "agent"
+agent = "@josh_agent"
+needs = ["gather", "review_clients"]
+prompt = "prompts/compose.md"          # KEEP-FROM-LIVE; must emit briefing (string)
+output_schema = "schemas/compose.json"
+max_attempts = 2
+
+[[node]]
+id = "validate"
+kind = "agent"
+agent = "@josh_agent"
+needs = ["compose"]
+prompt = "prompts/validate.md"         # KEEP-FROM-LIVE; reads compose output, emits ok + notes
+output_schema = "schemas/validate.json"
+max_attempts = 2
+
+[[node]]
+id = "deliver"
+kind = "agent"
+agent = "@josh_agent"
+needs = ["compose", "validate"]        # the fix: deliver gets the briefing itself
+prompt = "prompts/deliver.md"          # KEEP-FROM-LIVE; sends $nodes.compose.output.briefing
+deliver_to = "telegram:8293394811"     # KEEP-FROM-LIVE
+max_attempts = 2
