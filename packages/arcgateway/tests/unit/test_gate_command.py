@@ -17,6 +17,11 @@ from arcgateway.executor import InboundEvent
 _USER = "did:arc:local:user/paired01"
 
 
+def _runner_with_roles(*roles: str) -> SimpleNamespace:
+    """The live runner's registry lookup: the ONLY source of the decider's roles."""
+    return SimpleNamespace(member_roles=AsyncMock(return_value=frozenset(roles)))
+
+
 def _ctx(args: str) -> CommandContext:
     event = InboundEvent(
         platform="telegram",
@@ -64,7 +69,8 @@ async def test_the_provider_maps_words_onto_control_plane_decisions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plane = SimpleNamespace(
-        resolve_gate=AsyncMock(return_value=SimpleNamespace(ok=True, errors=()))
+        resolve_gate=AsyncMock(return_value=SimpleNamespace(ok=True, errors=())),
+        runner=_runner_with_roles("reviewer"),
     )
     provider = GatewayWorkflowProvider()
     monkeypatch.setattr(provider, "_control_plane", lambda: plane)
@@ -72,8 +78,13 @@ async def test_the_provider_maps_words_onto_control_plane_decisions(
     reply = await provider.resolve_gate("t1", decision="reject", notes="no", actor_did=_USER)
 
     plane.resolve_gate.assert_awaited_once_with(
-        "t1", decision="fail_run", notes="no", actor_did=_USER
+        "t1",
+        decision="fail_run",
+        notes="no",
+        actor_did=_USER,
+        actor_roles=frozenset({"reviewer"}),
     )
+    plane.runner.member_roles.assert_awaited_once_with(_USER)
     assert reply == "Gate t1 rejected."
 
 
@@ -81,7 +92,9 @@ async def test_the_provider_reports_a_refusal_instead_of_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refused = SimpleNamespace(ok=False, errors=(SimpleNamespace(error="not a workflow gate"),))
-    plane = SimpleNamespace(resolve_gate=AsyncMock(return_value=refused))
+    plane = SimpleNamespace(
+        resolve_gate=AsyncMock(return_value=refused), runner=_runner_with_roles()
+    )
     provider = GatewayWorkflowProvider()
     monkeypatch.setattr(provider, "_control_plane", lambda: plane)
 

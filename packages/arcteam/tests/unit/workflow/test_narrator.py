@@ -19,7 +19,13 @@ async def narrate_everything(narrator: RunNarrator) -> None:
     await narrator.node_started(channel=CHANNEL, run_id="r1", node_id="collect", owner="@sales")
     await narrator.node_completed(channel=CHANNEL, run_id="r1", node_id="collect")
     await narrator.handoff(channel=CHANNEL, run_id="r1", node_id="verify", owner="@ops")
-    await narrator.gate_waiting(channel=CHANNEL, run_id="r1", node_id="manual_review")
+    await narrator.gate_waiting(
+        channel=CHANNEL,
+        run_id="r1",
+        node_id="manual_review",
+        task_id="wf/r1/manual_review/0",
+        workflow_id="wf",
+    )
     await narrator.gate_resolved(
         channel=CHANNEL, run_id="r1", node_id="manual_review", decision="approved", by="@josh"
     )

@@ -93,6 +93,15 @@ _NETWORK_BACKOFF_CAP_SECONDS = 60.0
 # keeping the poll loop alive) before escalating to a fatal-retryable reconnect.
 _MAX_CONSECUTIVE_UPDATE_ERRORS = 5
 
+# ── Gate-card buttons (alpha-2 #67) ──────────────────────────────────────────
+# A workflow approval card carries one ``/gate <task_id> <verb>`` line per verb.
+# Each becomes an inline button whose callback data IS that line, and a press is
+# re-entered as that typed command from the pressing user — so a button takes
+# exactly the authorized ``/gate`` path. Callback data is client-supplied, so it
+# is matched against this grammar and is never anything but a command line.
+_GATE_LINE_RE = re.compile(r"^/gate (wf/[A-Za-z0-9._:/-]+) (approve|reject|revise)$")
+_CALLBACK_DATA_MAX_BYTES = 64
+
 # ── Audit event names (SDD §4.2) ─────────────────────────────────────────────
 _EVENT_CONNECT = "gateway.adapter.connect"
 _EVENT_DISCONNECT = "gateway.adapter.disconnect"
@@ -100,6 +109,7 @@ _EVENT_FAIL = "gateway.adapter.fail"
 _EVENT_AUTH_REJECTED = "gateway.adapter.auth_rejected"
 _EVENT_MSG_RECEIVED = "gateway.message.received"
 _EVENT_MSG_SENT = "gateway.message.sent"
+_EVENT_CALLBACK_REJECTED = "gateway.adapter.callback_rejected"
 
 
 class TelegramAdapter:
@@ -408,9 +418,22 @@ class TelegramAdapter:
         )
 
     async def _send_text(self, chat_id: int | str, text: str, reply_to_id: int | None) -> int:
-        """Put words on the chat, split by the gateway at Telegram's limit."""
+        """Put words on the chat, split by the gateway at Telegram's limit.
+
+        A gate approval card's command lines also become inline buttons on the
+        last chunk; every other message is sent exactly as before.
+        """
         chunks = split_for_platform(self, text)
-        for chunk in chunks:
+        markup = _gate_buttons(text)
+        for index, chunk in enumerate(chunks):
+            if markup is not None and index == len(chunks) - 1:
+                await self._application.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    reply_to_message_id=reply_to_id,
+                    reply_markup=markup,
+                )
+                continue
             await self._application.bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
@@ -584,11 +607,14 @@ class TelegramAdapter:
             raise RuntimeError(msg)
 
         from telegram.ext import (
+            CallbackQueryHandler,
             MessageHandler,
             filters,
         )
 
         self._application.add_handler(MessageHandler(filters.ALL, self._handle_update))
+        # Gate-card buttons: a press re-enters as the typed ``/gate`` line.
+        self._application.add_handler(CallbackQueryHandler(self._handle_callback))
         # Error handler so update errors are logged rather than silently swallowed.
         self._application.add_error_handler(self._on_error)
 
@@ -744,44 +770,90 @@ class TelegramAdapter:
         # Skip our own bot messages to prevent self-talk loops.
         if self._bot_id is not None and user_id == self._bot_id:
             return
-
-        # Auth: static allowed_user_ids OR approved-paired.
-        #
-        # Static check first (empty allowlist = deny all, fail-closed). On
-        # failure: require_pairing=False preserves the original silent-drop
-        # behaviour (no reply — avoids confirming bot existence to an
-        # attacker). require_pairing=True forwards to on_message instead —
-        # SessionRouter's PairingInterceptor makes the final call (mint+DM a
-        # pairing code, or route through if `arc gateway pair approve` has
-        # already approved this user in the gateway's pairing records).
-        if not self._is_authorized(user_id):
-            if not self._require_pairing:
-                _logger.warning(
-                    "TelegramAdapter: auth rejected for user_id=%d (allowed_user_ids count=%d)",
-                    user_id,
-                    len(self._allowed_user_ids),
-                )
-                self._audit(
-                    _EVENT_AUTH_REJECTED,
-                    {
-                        "platform": "telegram",
-                        "user_id": user_id,
-                        "chat_id": chat_id,
-                        "agent_did": self._agent_did,
-                    },
-                )
-                # Silent ignore — no reply (avoids confirming bot existence to attacker)
-                return
-            _logger.info(
-                "TelegramAdapter: user_id=%d not in static allowlist — forwarding for "
-                "pairing check (require_pairing=true)",
-                user_id,
-            )
+        if not self._admit(user_id, chat_id):
+            return
 
         parts = self.to_parts(update.effective_message)
         if not parts:
             return
+        await self._forward(update.update_id, update.effective_user, chat_id, parts)
 
+    async def _handle_callback(self, update: Any, context: Any) -> None:
+        """A gate-card button press, re-entered as the typed ``/gate`` line.
+
+        The press is the pressing user's message: same admission as a typed
+        message (static allowlist, else forwarded to pairing), same router, same
+        command and the same authorization. Callback data is client-supplied, so
+        anything that is not exactly a ``/gate`` command line is dropped and
+        audited — it never becomes a message.
+        """
+        self._consecutive_update_errors = 0
+        query = getattr(update, "callback_query", None)
+        if query is None or query.from_user is None:
+            return
+        try:
+            await query.answer()
+        except Exception:  # reason: an unanswered spinner must not drop the press
+            _logger.debug("TelegramAdapter: callback answer failed", exc_info=True)
+        user_id: int = query.from_user.id
+        message = getattr(query, "message", None)
+        chat = getattr(message, "chat", None)
+        chat_id = str(chat.id) if chat is not None else str(user_id)
+        data = query.data if isinstance(query.data, str) else ""
+        if not _GATE_LINE_RE.fullmatch(data):
+            self._audit(
+                _EVENT_CALLBACK_REJECTED,
+                {"platform": "telegram", "user_id": user_id, "agent_did": self._agent_did},
+            )
+            return
+        if self._bot_id is not None and user_id == self._bot_id:
+            return
+        if not self._admit(user_id, chat_id):
+            return
+        await self._forward(update.update_id, query.from_user, chat_id, [TextPart(text=data)])
+
+    def _admit(self, user_id: int, chat_id: str) -> bool:
+        """Static allowlist, else forward for the router's pairing check.
+
+        Static check first (empty allowlist = deny all, fail-closed). On
+        failure: require_pairing=False preserves the original silent-drop
+        behaviour (no reply — avoids confirming bot existence to an
+        attacker). require_pairing=True forwards to on_message instead —
+        SessionRouter's PairingInterceptor makes the final call (mint+DM a
+        pairing code, or route through once the operator has approved this
+        user in the gateway's pairing records).
+        """
+        if self._is_authorized(user_id):
+            return True
+        if not self._require_pairing:
+            _logger.warning(
+                "TelegramAdapter: auth rejected for user_id=%d (allowed_user_ids count=%d)",
+                user_id,
+                len(self._allowed_user_ids),
+            )
+            self._audit(
+                _EVENT_AUTH_REJECTED,
+                {
+                    "platform": "telegram",
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "agent_did": self._agent_did,
+                },
+            )
+            # Silent ignore — no reply (avoids confirming bot existence to attacker)
+            return False
+        _logger.info(
+            "TelegramAdapter: user_id=%d not in static allowlist — forwarding for "
+            "pairing check (require_pairing=true)",
+            user_id,
+        )
+        return True
+
+    async def _forward(
+        self, update_id: Any, user: Any, chat_id: str, parts: list[DraftPart]
+    ) -> None:
+        """Hand one admitted inbound to the router as the sending user."""
+        user_id: int = user.id
         # Build normalised user DID from Telegram user_id.
         # Full cross-platform identity graph resolution is T1.3;
         # for now we derive a stable platform-scoped DID.
@@ -795,13 +867,13 @@ class TelegramAdapter:
             agent_did=self._agent_did,
             parts=parts,
             raw_payload={
-                "update_id": update.update_id,
+                "update_id": update_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
                 # Friendly name for arcui's delivery-target dropdown (no PII is
                 # persisted elsewhere — pairings/sessions store only hashes).
-                "first_name": update.effective_user.first_name,
-                "username": update.effective_user.username,
+                "first_name": user.first_name,
+                "username": user.username,
             },
         )
 
@@ -1019,6 +1091,34 @@ class TelegramAdapter:
 
 
 # ── Error classification helpers ──────────────────────────────────────────────
+
+
+def _gate_buttons(text: str) -> Any | None:
+    """Inline buttons for a gate card's ``/gate`` lines, or ``None``.
+
+    One row per gate, one button per verb, each carrying its command line as
+    callback data. A line too long for Telegram's 64-byte callback limit gets no
+    button — the typed line in the text still works. ``None`` when the text has
+    no gate lines or python-telegram-bot is absent.
+    """
+    rows: dict[str, list[tuple[str, str]]] = {}
+    for line in text.splitlines():
+        match = _GATE_LINE_RE.fullmatch(line.strip())
+        if match is None or len(match.group(0).encode()) > _CALLBACK_DATA_MAX_BYTES:
+            continue
+        rows.setdefault(match.group(1), []).append((match.group(2), match.group(0)))
+    if not rows:
+        return None
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    except ImportError:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(verb.capitalize(), callback_data=line) for verb, line in verbs]
+            for verbs in rows.values()
+        ]
+    )
 
 
 def _is_conflict_error(exc: Exception) -> bool:

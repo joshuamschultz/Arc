@@ -50,6 +50,7 @@ export interface NodeDraft {
   script: string
   // gate
   gate: string
+  approvers: string
   // router
   mode: 'rules' | 'llm'
   routes: RouteDraft[]
@@ -89,6 +90,7 @@ export function toDraft(node: WorkflowNode): NodeDraft {
     args: raw.args && Object.keys(raw.args as object).length > 0 ? JSON.stringify(raw.args, null, 2) : '',
     script: asText(raw.script),
     gate: asText(raw.gate),
+    approvers: asList(raw.approvers),
     mode: raw.mode === 'llm' ? 'llm' : 'rules',
     routes: routes.map((r) => ({
       to: asText(r.to),
@@ -127,7 +129,12 @@ export function fromDraft(draft: NodeDraft): Record<string, unknown> {
     if (draft.args.trim()) node.args = JSON.parse(draft.args) as Record<string, unknown>
   }
   if (draft.kind === 'script') put('script', draft.script)
-  if (draft.kind === 'gate') put('gate', draft.gate)
+  if (draft.kind === 'gate') {
+    put('gate', draft.gate)
+    // Who may decide: DIDs or role:<name>. Empty = the operator only. The
+    // control plane validates the syntax; arcui relays it verbatim.
+    if (splitList(draft.approvers).length > 0) node.approvers = splitList(draft.approvers)
+  }
   if (draft.kind === 'router') {
     node.mode = draft.mode
     node.routes = draft.routes

@@ -25,6 +25,22 @@ class NarrationSender(Protocol):
     async def send(self, message: Message) -> Message: ...
 
 
+GATE_VERBS: tuple[str, ...] = ("approve", "reject", "revise")
+"""The reviewer's words on a gate card, in display order."""
+
+
+def gate_card_text(workflow_id: str, run_id: str, node_id: str, task_id: str) -> str:
+    """The approval card: what is waiting, and one ``/gate`` line per verb.
+
+    The command lines ARE the card's contract — a platform with buttons turns
+    each into a button that sends exactly that line, so a button press and a
+    typed command take the same authorized path.
+    """
+    lines = [f"Workflow {workflow_id} (run {run_id}) is waiting on gate {node_id}."]
+    lines += [f"/gate {task_id} {verb}" for verb in GATE_VERBS]
+    return "\n".join(lines)
+
+
 class RunNarrator:
     """Posts run transitions to the workflow's bound group channel."""
 
@@ -86,13 +102,17 @@ class RunNarrator:
             node_id=node_id,
         )
 
-    async def gate_waiting(self, *, channel: str | None, run_id: str, node_id: str) -> None:
+    async def gate_waiting(
+        self, *, channel: str | None, run_id: str, node_id: str, task_id: str, workflow_id: str
+    ) -> None:
+        """The approval card, on the run's channel: same text the operator gets."""
         await self._post(
             channel,
-            f"Waiting on gate {node_id}",
+            gate_card_text(workflow_id, run_id, node_id, task_id),
             run_id=run_id,
             event="gate.waiting",
             node_id=node_id,
+            task_id=task_id,
         )
 
     async def gate_resolved(
@@ -186,4 +206,10 @@ def assert_channel_binding(channel: str | None) -> None:
     parse_uri(channel)
 
 
-__all__ = ["NarrationSender", "RunNarrator", "assert_channel_binding"]
+__all__ = [
+    "GATE_VERBS",
+    "NarrationSender",
+    "RunNarrator",
+    "assert_channel_binding",
+    "gate_card_text",
+]

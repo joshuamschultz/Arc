@@ -71,7 +71,12 @@ other field, and nothing to look up anywhere else.
 | `tool`, `args` | `tool` | required tool name; arguments, wired with `$nodes.<id>.output.<field>` |
 | `script` | `script` | required bundle path to the script |
 | `gate` | `gate` | label for the human decision |
+| `approvers` | `gate` | who may decide: DIDs or `role:<name>`; empty = the operator only |
 | `mode`, `routes` | `router` | `rules` or `llm`; `[{to, when}, {to, default=true}]` |
+
+**Gate approvers are authority, not a hint.** Leave `approvers` empty unless the
+operator asked for someone else to decide. Every `role:<name>` must be a role a
+registered team member holds, or the run is refused at start with that reason.
 
 **Prompt and schema files travel WITH the definition.** `prompt`,
 `output_schema`, and `script` name bundle-relative paths; you supply their
@@ -164,7 +169,7 @@ await workflow_create(
             ],
         },
         {"id": "manual_review", "kind": "gate", "gate": "human:approve_high_risk",
-         "needs": ["risk_router"]},
+         "approvers": ["role:reviewer"], "needs": ["risk_router"]},
         {"id": "provision", "kind": "script", "script": "scripts/provision.py",
          "agent": "@ops", "needs": ["risk_router"]},
     ],

@@ -557,6 +557,33 @@ class RegistryOwnerResolver:
         entity = await self._registry.get(handle.lstrip("@"))
         return None if entity is None else str(entity.did)
 
+    async def declared_roles(self) -> frozenset[str]:
+        """Every role an ACTIVE registered member holds."""
+        return frozenset(
+            role
+            for entity in await self._registry.list_entities()
+            if _is_active(entity)
+            for role in entity.roles
+        )
+
+    async def roles_of(self, did: str) -> frozenset[str]:
+        """The roles the registry gives ``did`` — exact DID only, never a handle.
+
+        A gate decider is named by an authenticated DID; resolving it through a
+        handle or alias would let a chat user who controls a matching handle
+        borrow another member's roles. Unknown or inactive → no roles.
+        """
+        if not did.startswith("did:"):
+            return frozenset()
+        entity = await self._registry.get(did)
+        if entity is None or str(entity.did) != did or not _is_active(entity):
+            return frozenset()
+        return frozenset(entity.roles)
+
+
+def _is_active(entity: Any) -> bool:
+    return str(getattr(entity.status, "value", entity.status)) == "active"
+
 
 async def build_team_bindings(
     *, backend: Any, operator_signer: Any, identity: Any

@@ -1,8 +1,9 @@
-"""A waiting gate resolves from the CLI and from a chat card (J3 F8, G7).
+"""A waiting gate resolves from the CLI and from a chat card (J3 F8, G7, alpha-2 #67).
 
 Both callers land on ``WorkflowControlPlane.resolve_gate`` and name the deciding
 human: the operator's DID from the CLI, the paired user's DID from the chat. The
-runner then acts on the decision written on the row.
+runner then acts on the decision written on the row. From chat only a listed
+approver decides; any other paired user is refused.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from arcgateway.commands.base import CommandContext
 from arcgateway.commands.gate import GateCommand
 from arcgateway.executor import InboundEvent
 from arcteam.workflow.control_plane import GATE_WORDS
+from arcteam.workflow.errors import GateNotAuthorizedError
 from arcteam.workflow.runner import node_task_id
 
 from arccli.commands import workflow as wf_cmd
@@ -33,9 +35,11 @@ owner = "@sales"
 id = "ok"
 kind = "gate"
 gate = "human:approve_release"
+approvers = ["did:arc:local:user/paired01"]
 """
 
 _PAIRED_USER = "did:arc:local:user/paired01"
+_OTHER_PAIRED_USER = "did:arc:local:user/paired02"
 
 
 @pytest.fixture(autouse=True)
@@ -113,9 +117,16 @@ class _PlaneResolver:
         async def _go() -> str:
             plane, aclose = await wf_cmd._resolve_control_plane(self.arc_dir)
             try:
-                result = await plane.resolve_gate(
-                    task_id, decision=GATE_WORDS[decision], notes=notes, actor_did=actor_did
-                )
+                try:
+                    result = await plane.resolve_gate(
+                        task_id,
+                        decision=GATE_WORDS[decision],
+                        notes=notes,
+                        actor_did=actor_did,
+                        actor_roles=await plane.runner.member_roles(actor_did),
+                    )
+                except GateNotAuthorizedError:
+                    return "not an approver"
                 return f"gate {decision} recorded" if result.ok else result.errors[0].error
             finally:
                 await aclose()
@@ -125,18 +136,18 @@ class _PlaneResolver:
     arc_dir: Path
 
 
-def _chat(args: str) -> CommandContext:
+def _chat(args: str, user_did: str = _PAIRED_USER) -> CommandContext:
     event = InboundEvent(
         platform="telegram",
         chat_id="1",
-        user_did=_PAIRED_USER,
+        user_did=user_did,
         agent_did="did:arc:local:agent/one",
         message=f"/gate {args}",
     )
     return CommandContext(
         event=event,
         agent_did=event.agent_did,
-        user_did=_PAIRED_USER,
+        user_did=user_did,
         args=args,
         router=MagicMock(),
     )
@@ -158,10 +169,19 @@ def test_gate_resolved_via_cli_and_gateway_card(
     assert settled.metadata["gate_actor_did"] == wf_cmd._actor_did(arc_dir)
     assert "approved" in capsys.readouterr().out.lower()
 
-    # Chat card: a paired user rejects a second run, and their DID is the actor.
+    # Chat card: a paired user the gate does not list is refused; the row waits.
     second = _start_run_with_waiting_gate(arc_dir)
     resolver = _PlaneResolver()
     resolver.arc_dir = arc_dir
+    denied = asyncio.run(
+        GateCommand(resolver).handle(
+            _chat(f"{node_task_id(second, 'ok', 0)} approve", user_did=_OTHER_PAIRED_USER)
+        )
+    )
+    assert denied == "not an approver"
+    assert _gate_row(arc_dir, second).status == "review"
+
+    # The listed paired user rejects, and their DID is the actor.
     reply = asyncio.run(
         GateCommand(resolver).handle(_chat(f"{node_task_id(second, 'ok', 0)} reject too risky"))
     )

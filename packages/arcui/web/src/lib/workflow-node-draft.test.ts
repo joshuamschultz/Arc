@@ -25,3 +25,12 @@ it('no longer emits loop or join fields', () => {
   const node = fromDraft(toDraft(base))
   expect('join' in node || 'loop_back_to' in node || 'max_iterations' in node).toBe(false)
 })
+
+it('gate approvers round-trip as a list and drop out when empty', () => {
+  const gate = { id: 'review', kind: 'gate', gate: 'human:approve' } as WorkflowNode
+  expect('approvers' in fromDraft(toDraft(gate))).toBe(false)
+  const listed = { ...gate, approvers: ['role:reviewer', 'did:arc:telegram:1'] } as WorkflowNode
+  const draft = toDraft(listed)
+  expect(draft.approvers).toBe('role:reviewer, did:arc:telegram:1')
+  expect(fromDraft(draft).approvers).toEqual(['role:reviewer', 'did:arc:telegram:1'])
+})

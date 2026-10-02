@@ -54,6 +54,7 @@ from arcteam.workflow import (
 )
 from arcteam.workflow.control_plane import (
     GATE_WORDS,
+    OPERATOR_ROLE,
     ControlPlaneResult,
     OperationIssue,
     WorkflowControlPlane,
@@ -863,7 +864,11 @@ def _test_workflow(args: argparse.Namespace) -> None:
 
 
 def _gate(args: argparse.Namespace) -> None:
-    """Approve, reject, or send back a waiting gate, as the operator."""
+    """Approve, reject, or send back a waiting gate, as the operator.
+
+    The CLI acts with the operator key it just loaded, so it carries the
+    operator role — the authority that decides every gate.
+    """
 
     async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
         _ok_or_exit(
@@ -872,6 +877,7 @@ def _gate(args: argparse.Namespace) -> None:
                 decision=GATE_WORDS[args.decision],
                 notes=args.notes or "",
                 actor_did=actor_did,
+                actor_roles=frozenset({OPERATOR_ROLE}),
             )
         )
         past = {"approve": "approved", "reject": "rejected", "revise": "sent back for revision"}

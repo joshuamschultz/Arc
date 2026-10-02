@@ -692,6 +692,12 @@
         "description": "Gate identifier used for a gated step."
       },
       {
+        "key": "workflow.node.approvers",
+        "label": "Approvers",
+        "description": "Who may resolve this gate: DIDs, or role:<name> for any team member the registry gives that role. Leave empty so only the operator decides. A chat user's roles come from the team registry, never from the message.",
+        "example": "role:reviewer, did:arc:telegram:12345"
+      },
+      {
         "key": "workflow.node.condition",
         "label": "Condition",
         "description": "Expression controlling a conditional edge; reference node outputs as shown in the editor.",
