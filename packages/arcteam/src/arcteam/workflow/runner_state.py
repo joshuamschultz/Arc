@@ -240,8 +240,9 @@ _ROW_TO_NODE: dict[str, SnapshotStatus] = {
 }
 
 # On a tie at one iteration: a route is the most specific fact about a node,
-# then its row, then a skip.
-_RANK_SKIP, _RANK_ROW, _RANK_ROUTE = 0, 1, 2
+# then its row, then a skip. A cancel outranks them all: it says the run
+# ended before that attempt finished, whatever its row still claims.
+_RANK_SKIP, _RANK_ROW, _RANK_ROUTE, _RANK_CANCEL = 0, 1, 2, 3
 
 
 def derive_node_states(
@@ -292,7 +293,7 @@ def derive_node_states(
             cancelled = NodeState(
                 status="cancelled", iteration=iteration, reason=str(entry.get("reason", ""))
             )
-            offer(node_id, iteration, _RANK_SKIP, cancelled)
+            offer(node_id, iteration, _RANK_CANCEL, cancelled)
         elif kind == "route":
             base = rows.get((node_id, iteration)) or NodeState(
                 status="routed", iteration=iteration

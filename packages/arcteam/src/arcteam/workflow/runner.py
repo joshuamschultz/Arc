@@ -951,6 +951,7 @@ class WorkflowRunner:
 
         # Cancellation is an operator control-plane action, not runner progress:
         # it intentionally bypasses the runner lease fence.
+        await self._cancel_open_nodes(run, reason, operator_did=actor_did)
         await self._runs.append_path(
             run_id,
             {"kind": "outcome", "status": "cancelled", "detail": reason},
@@ -1375,7 +1376,9 @@ class WorkflowRunner:
                 )
         return True
 
-    async def _reconcile_node_states(self, run: RunRecord) -> RunRecord:
+    async def _reconcile_node_states(
+        self, run: RunRecord, *, operator_did: str | None = None
+    ) -> RunRecord:
         """Bring ``node_states`` level with the rows and journal; write only the diff.
 
         The single writer of the snapshot. It never feeds a decision — the next
@@ -1391,19 +1394,19 @@ class WorkflowRunner:
         }
         if not diffs:
             return run
-        return await self._write_node_states(run, diffs)
+        return await self._write_node_states(run, diffs, operator_did=operator_did)
 
     async def _write_node_states(
-        self, run: RunRecord, updates: Mapping[str, NodeState]
+        self, run: RunRecord, updates: Mapping[str, NodeState], *, operator_did: str | None = None
     ) -> RunRecord:
         """CAS the snapshot on the run's revision; on conflict re-read and retry."""
         for _ in range(3):
             updated, outcome = await self._runs.set_node_states(
                 run.run_id,
                 updates,
-                actor_did=self._runner_did,
+                actor_did=operator_did or self._runner_did,
                 expected_revision=run.revision,
-                fence=self._mutation_fence(),
+                fence=None if operator_did else self._mutation_fence(),
             )
             if outcome == "applied" and updated is not None:
                 return updated
@@ -1743,6 +1746,53 @@ class WorkflowRunner:
             )
         return await self._terminate(run.run_id, "done", "all nodes complete")
 
+    async def _cancel_open_nodes(
+        self, run: RunRecord, reason: str, *, operator_did: str | None = None
+    ) -> None:
+        """Journal every node the run ended without finishing as ``cancelled``.
+
+        Journaled, not written straight to ``node_states``: the snapshot is
+        re-derived from rows and journal on every reconcile, so only a journal
+        entry survives it. ``operator_did`` marks an operator action, which
+        carries no runner fence.
+        """
+        fresh = await self._require_run(run.run_id)
+        state = RunState(await self._tasks.query_by_flow_run(run.run_id), fresh.path_taken)
+        for node_id in self._known_node_ids(run, state):
+            status, iteration = state.terminal_state(node_id)
+            if status not in ("absent", "in_flight"):
+                continue
+            entry = {"kind": "cancelled", "node_id": node_id, "iteration": iteration, "reason": reason}
+            if operator_did is None:
+                await self._append(run.run_id, entry)
+            else:
+                await self._runs.append_path(run.run_id, entry, actor_did=operator_did)
+            state.record_cancel(node_id, iteration, reason)
+            self._audit(
+                "workflow.node.cancelled",
+                target=f"{run.workflow_id}/{node_id}",
+                outcome="cancelled",
+                actor_did=operator_did,
+                extra={"run_id": run.run_id, "reason": reason},
+            )
+        await self._reconcile_node_states(
+            await self._require_run(run.run_id), operator_did=operator_did
+        )
+
+    def _known_node_ids(self, run: RunRecord, state: RunState) -> list[str]:
+        """The run's nodes: its pinned definition's when still served, else those seen.
+
+        A definition that changed under the run is no longer the run's, so its
+        node list is not trusted; only nodes the run itself materialized count.
+        """
+        try:
+            bundle = self._bundle_for_dispatch(run)
+        except Exception:  # reason: a refusing definition store must not strand the sweep
+            bundle = None
+        if bundle is not None and bundle.content_hash == run.content_hash:
+            return list(bundle.definition.node_ids)
+        return list(state.instances)
+
     async def _cancel_unreached(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState, failed: NodeInstance
     ) -> None:
@@ -1801,6 +1851,7 @@ class WorkflowRunner:
         )
         if not flipped:
             return await self._require_run(run_id)
+        await self._cancel_open_nodes(run, resolution)
         await self._append(run_id, {"kind": "outcome", "status": status, "detail": resolution})
         self._audit(
             "workflow.run.finished",
