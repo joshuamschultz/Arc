@@ -344,13 +344,19 @@ async def test_local_embedder_serializes_concurrent_encodes(
 
     state = {"active": 0, "max_active": 0, "loads": 0}
     guard = threading.Lock()
+    in_encode = threading.Event()
+    others_queued = threading.Event()
 
     class _SlowModel:
         def encode(self, texts: list[str], **_: object) -> np.ndarray:
             with guard:
                 state["active"] += 1
                 state["max_active"] = max(state["max_active"], state["active"])
-            time.sleep(0.05)
+            # Hold the first encode open until every other caller is queued, so
+            # an unserialized implementation MUST overlap here.
+            in_encode.set()
+            others_queued.wait(5)
+            time.sleep(0.02)
             with guard:
                 state["active"] -= 1
             return np.zeros((len(texts), 4))
@@ -362,6 +368,10 @@ async def test_local_embedder_serializes_concurrent_encodes(
 
     monkeypatch.setattr(emb, "_load_sentence_transformer", _load)
     embedder = emb.LocalEmbedder("m")
-    await asyncio.gather(*(embedder.embed(["a"]) for _ in range(6)))
+    tasks = [asyncio.create_task(embedder.embed(["a"])) for _ in range(6)]
+    await asyncio.to_thread(in_encode.wait, 5)
+    await asyncio.sleep(0.05)
+    others_queued.set()
+    await asyncio.gather(*tasks)
     assert state["max_active"] == 1
     assert state["loads"] == 1

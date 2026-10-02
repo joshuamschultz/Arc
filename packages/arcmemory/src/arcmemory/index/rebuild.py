@@ -172,10 +172,11 @@ class IndexRebuilder:
         vector cannot outlive the rebuild meant to fix it.
         """
         # The per-folder indexes are derived routing artifacts, so their owning
-        # maintainer heals them (missing, tampered, stale folders only, off the
-        # loop) before this disposable SQLite cache is rebuilt. Retrieval never
-        # repairs an index on its own.
-        await asyncio.to_thread(memory_maintainer(self._mem_dir).sync_all)
+        # maintainer heals them before this disposable SQLite cache is rebuilt.
+        # A rebuild trusts nothing on disk: every folder is regenerated from the
+        # documents (no reuse of prior index lines) and re-signed by the agent,
+        # off the loop. Retrieval never repairs an index on its own.
+        await asyncio.to_thread(memory_maintainer(self._mem_dir).sync_all, force=True)
         conn = self._db.connect()
         scope = self._scope.key
         # Snapshot existing vectors keyed by content hash BEFORE the wipe, so a

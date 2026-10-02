@@ -54,6 +54,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcmemory/tests/unit/test_connected_layout.py",
         "packages/arcmemory/tests/unit/index/test_okf_log.py",
         "packages/arcokf/tests/test_log.py",
+        # Item 62 F4/F6: index and log sidecars are agent-signed (.okf.seal). A forged
+        # index or log with a recomputed sidecar, an older signed pair, a replayed
+        # lower-generation seal, a seal from another collection or key, and unsigned
+        # legacy sidecars all fail closed and heal from the documents; routing labels
+        # come from the documents; a symlink swapped in between verify and read is
+        # never served; a crash between the index and log writes loses no log line.
+        "packages/arcmemory/tests/security/test_okf_signed_sidecars.py",
+        "packages/arcokf/tests/test_safe_read.py",
+        # The operator's repository-index view walks folders, verified deep, and
+        # refuses a folder argument outside the source.
+        "packages/arcui/tests/integration/test_doc_repo_index_route.py",
     ),
     "prompt replacement and instruction-boundary attacks": (
         "packages/arcprompt/tests/unit/test_verifier.py",
@@ -464,6 +475,22 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/security/test_connections_card_abuse.py",
         "packages/arcagent/tests/unit/extension/test_connection_health_cas.py",
         "tests/architecture/test_connection_health_single_writer.py",
+    ),
+    # P12: an operator-added MCP server is third-party code on a wire or a child process.
+    # The generated bundle is the trust boundary: stdio commands launch only an allowed,
+    # absolute, shell-free executable; http is https-only with an SSRF guard (link-local,
+    # metadata and numeric-trick hosts refused); tools are namespaced so none shadows a
+    # built-in and classified by the operator, never by the server's annotations; a server
+    # that rewrites an approved tool is suspended and one that grows new tools exposes
+    # none; a swapped origin, an edited or added file, a symlinked bundle directory and a
+    # name collision are all refused; and the credential never reaches the spec, the
+    # bundle, argv, a log, an audit event, an error or a response.
+    "operator-added MCP server: launch, egress, shadowing, rug-pull, leakage (alpha-2 P12)": (
+        "packages/arcagent/tests/modules/connectors/test_mcp_bundle.py",
+        "packages/arcagent/tests/integration/test_add_mcp_server_contract.py",
+        "packages/arcagent/tests/security/test_mcp_server_abuse.py",
+        "packages/arcui/tests/test_mcp_server_routes.py",
+        "packages/arccli/tests/test_cli_connector_add_mcp.py",
     ),
 }
 

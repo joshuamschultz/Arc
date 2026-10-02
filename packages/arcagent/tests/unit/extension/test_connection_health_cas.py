@@ -314,3 +314,84 @@ async def test_a_flapping_connection_is_capped_per_hour() -> None:
     record = await authority.get("gmail")
     assert record is not None
     assert record.last_notice is not None
+
+
+class _CrashBeforeFinish(ConnectionHealthAuthority):
+    """A process that dies after the operator was told but before the notice finished."""
+
+    async def finish_notice(self, *args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("process died between deliver and finish_notice")
+
+
+async def test_redelivery_after_crash_within_ttl_sends_nothing_when_key_recorded() -> None:
+    inner = FakeBackend()
+    await _seed(inner, "gmail")
+    crashing = _CrashBeforeFinish(ConnectionStateStore(inner))
+    await _needs_you(crashing)
+    sent: list[str] = []
+
+    async def deliver(pending: PendingNotice, text: str) -> str | None:
+        sent.append(pending.idempotency_key)
+        return "telegram"
+
+    try:
+        await crashing.dispatch_notices(deliver, owner="arcui:a", now=NOW)
+    except RuntimeError:
+        pass
+    survivor = ConnectionHealthAuthority(ConnectionStateStore(inner))
+    await survivor.dispatch_notices(
+        deliver, owner="arcui:b", now=NOW + NOTICE_CLAIM_TTL + timedelta(seconds=1)
+    )
+
+    record = await survivor.get("gmail")
+    assert record is not None and record.last_notice is not None
+    assert sent == ["connection-health:gmail:1"], "the operator is told exactly once"
+    assert record.notified_seq == 1
+    assert (record.last_notice.delivered, record.last_notice.channel) == (True, "telegram")
+    assert record.last_notice.idempotency_key == "connection-health:gmail:1"
+
+
+class _ParkAtFinish(ConnectionHealthAuthority):
+    """Holds both owners between 'told the operator' and 'finished', so they overlap."""
+
+    barrier = asyncio.Barrier(2)
+    recorded = asyncio.Event()
+
+    async def record_delivery(self, *args: Any, **kwargs: Any) -> None:
+        await super().record_delivery(*args, **kwargs)
+        self.recorded.set()
+
+    async def finish_notice(self, *args: Any, **kwargs: Any) -> bool:
+        await self.barrier.wait()
+        return await super().finish_notice(*args, **kwargs)
+
+
+async def test_two_owners_overlapping_at_finish_tell_the_operator_once() -> None:
+    inner = FakeBackend()
+    await _seed(inner, "gmail")
+    _ParkAtFinish.barrier = asyncio.Barrier(2)
+    _ParkAtFinish.recorded = asyncio.Event()
+    first = _ParkAtFinish(ConnectionStateStore(inner))
+    second = _ParkAtFinish(ConnectionStateStore(inner))
+    await _needs_you(first)
+    sent: list[str] = []
+
+    async def deliver(pending: PendingNotice, text: str) -> str | None:
+        sent.append(pending.owner)
+        return "telegram"
+
+    async def late_owner() -> None:
+        await _ParkAtFinish.recorded.wait()
+        await second.dispatch_notices(
+            deliver, owner="arcui:b", now=NOW + NOTICE_CLAIM_TTL + timedelta(seconds=1)
+        )
+
+    async with asyncio.timeout(5):  # a hung barrier is a failure, not a stuck suite
+        await asyncio.gather(
+            first.dispatch_notices(deliver, owner="arcui:a", now=NOW), late_owner()
+        )
+
+    record = await first.get("gmail")
+    assert record is not None
+    assert sent == ["arcui:a"]
+    assert record.notified_seq == 1

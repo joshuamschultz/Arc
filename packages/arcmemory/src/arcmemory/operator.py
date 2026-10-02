@@ -30,8 +30,9 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
-from arcokf import listable_dir, read_folder_digest, validate_folder_index
+from arcokf import IndexEntry, listable_dir, validate_folder_index
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
@@ -246,19 +247,23 @@ class ChunkSearchResult(BaseModel):
 
 
 class CollectionIndexEntry(BaseModel):
-    """One authorized document as the verified collection index lists it (H-026).
+    """One line of a verified collection index: a document or a child folder (H-026).
 
-    A projection of arcokf's ``IndexEntry`` — the document's path within its folder,
-    its human title, a one-line purpose summary, the SHA-256 the index sidecar
-    committed for it, and its classification label (every valid document is listed;
-    the label is what a reader gates on).
+    A projection of arcokf's ``IndexEntry``. ``path`` is source-relative, so a
+    folder's ``path`` is exactly the ``folder`` argument that opens it. A document
+    carries its human title, a one-line purpose summary, the SHA-256 the index
+    sidecar committed for it, and its classification label (every valid document
+    is listed; the label is what a reader gates on). A folder carries its
+    recursive document ``count``.
     """
 
+    kind: Literal["document", "folder"] = "document"
     path: str
     title: str
     summary: str = ""
     classification: str = ""
-    digest: str
+    digest: str = ""
+    count: int = 0
 
 
 class CollectionIndexView(BaseModel):
@@ -277,6 +282,8 @@ class CollectionIndexView(BaseModel):
     """
 
     source_id: str
+    #: The source-relative folder this view lists (``""`` is the source root).
+    folder: str = ""
     present: bool = False
     verified: bool = False
     document_count: int = 0
@@ -292,6 +299,22 @@ class CollectionIndexView(BaseModel):
 #: The one recovery an operator can take for a fail-closed index: a re-sync rebuilds
 #: it from the source. Stable string so the UI never has to invent the instruction.
 _INDEX_UNVERIFIED_GUIDANCE = "Re-sync this source to restore its repository index."
+
+
+def _collection_entry(entry: IndexEntry, prefix: str) -> CollectionIndexEntry:
+    """One verified index line as the operator view shows it, with a source-relative path."""
+    if entry.is_folder:
+        name = entry.path.split("/", 1)[0]
+        return CollectionIndexEntry(
+            kind="folder", path=prefix + name, title=entry.title, count=entry.count
+        )
+    return CollectionIndexEntry(
+        path=prefix + entry.path,
+        title=entry.title,
+        summary=entry.description,
+        classification=entry.classification,
+        digest=entry.digest,
+    )
 
 
 #: A connector source id names a workspace subfolder, so it must be a single safe
@@ -569,6 +592,7 @@ class MemoryOperator:
         parts = [part for part in folder.split("/") if part]
         if not all(listable_dir(part) and part != ".." for part in parts):
             return CollectionIndexView(source_id=source_id, error="invalid folder")
+        folder = "/".join(parts)
         base = (self._workspace / "memory" / "connected").resolve()
         root = (base / source_id).resolve()
         # Defense in depth: a source id that survived the regex must still resolve
@@ -578,47 +602,31 @@ class MemoryOperator:
         root = root.joinpath(*parts)
         if not root.resolve().is_relative_to(base / source_id):
             return CollectionIndexView(source_id=source_id, error="invalid folder")
-        index_path = root / "index.md"
-        if not index_path.is_file():
-            return CollectionIndexView(source_id=source_id, present=False)
+        if not (root / "index.md").is_file():
+            return CollectionIndexView(source_id=source_id, folder=folder, present=False)
+        # Deep: every listed line is re-derived from its document, so nothing an
+        # attacker writes into the index can be shown. The body is the exact text
+        # that was verified, never a second read of the file.
         validation = validate_folder_index(root, deep=True)
-        if not validation.valid:
+        if not validation.valid or validation.digest is None:
             return CollectionIndexView(
                 source_id=source_id,
+                folder=folder,
                 present=True,
                 verified=False,
-                error=validation.error,
+                error=validation.error or "index sidecar missing",
                 guidance=_INDEX_UNVERIFIED_GUIDANCE,
             )
-        try:
-            markdown = index_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            return CollectionIndexView(
-                source_id=source_id,
-                present=True,
-                verified=False,
-                error=str(exc),
-                guidance=_INDEX_UNVERIFIED_GUIDANCE,
-            )
-        digest = read_folder_digest(root)
-        entries = [
-            CollectionIndexEntry(
-                path=entry.path,
-                title=entry.title,
-                summary=entry.description,
-                classification=entry.classification,
-                digest=entry.digest,
-            )
-            for entry in validation.entries
-            if not entry.is_folder
-        ]
+        prefix = f"{folder}/" if folder else ""
+        entries = [_collection_entry(entry, prefix) for entry in validation.entries]
         return CollectionIndexView(
             source_id=source_id,
+            folder=folder,
             present=True,
             verified=True,
-            document_count=digest.count if digest is not None else len(entries),
+            document_count=validation.digest.count,
             entries=entries,
-            markdown=markdown,
+            markdown=validation.text,
         )
 
     def list_provenances(self, item_id: str) -> list[Provenance]:

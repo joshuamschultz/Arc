@@ -58,6 +58,7 @@ import {
   useWriteWorkflowFile,
 } from '@/lib/queries'
 import { NodeDetail, RunError } from '@/components/workflows-view/node-detail'
+import { ScheduleStatus } from '@/components/workflows-view/schedule-status'
 import { ApiError } from '@/lib/api'
 import { fmtTime, shortId } from '@/lib/format'
 import { asWorkflowFieldErrors } from '@/lib/types'
@@ -1114,6 +1115,9 @@ export function WorkflowDetailPage() {
             <span className="flex items-center gap-2">
               <StatusPill status={workflow.data.status} />
               <span>v{workflow.data.version}</span>
+              {workflow.data.schedule && (
+                <ScheduleStatus workflowId={id} schedule={workflow.data.schedule} />
+              )}
             </span>
           ) : (
             'Loading…'

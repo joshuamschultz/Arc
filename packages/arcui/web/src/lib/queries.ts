@@ -9,6 +9,10 @@ import type {
   ConnectorSignInStartResponse,
   ConnectorAuthorizationResponse,
   ConnectorCatalogResponse,
+  McpPreviewResponse,
+  McpServerAddedResponse,
+  McpServerForm,
+  McpToolChoice,
   ConnectorDoctorResponse,
   ConnectorInstallResponse,
   ConnectorMutationResponse,
@@ -773,12 +777,13 @@ export const useDocuments = (agentId: string | null, source: string, q: string) 
 
 /** One document source's verified OKF `index.md` — what's inside + purpose
  *  (H-026). Operator-gated + audited server-side; fail-closed on tamper. */
-export const useSourceIndex = (agentId: string | null, source: string) =>
+export const useSourceIndex = (agentId: string | null, source: string, folder = '') =>
   useQuery<CollectionIndexView>({
-    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index'],
+    queryKey: ['agent', agentId, 'knowledge', 'sources', source, 'index', folder],
     queryFn: ({ signal }) =>
       apiGet(
-        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index`,
+        `/api/agents/${agentId}/knowledge/sources/${encodeURIComponent(source)}/index` +
+          (folder ? `?folder=${encodeURIComponent(folder)}` : ''),
         signal,
       ),
     enabled: !!agentId && !!source,
@@ -1484,6 +1489,30 @@ export const useRetryWorkflowNode = (runId: string) => {
   })
 }
 
+/**
+ * Turn a workflow's schedule back on. This is the existing operator-gated
+ * schedule update on the owner agent, not a workflow route: the row belongs to
+ * the agent's scheduler, so the write goes where every other schedule edit goes.
+ */
+export const useEnableWorkflowSchedule = (
+  workflowId: string,
+  schedule: { agent_id: string; schedule_id: string },
+) => {
+  const queryClient = useQueryClient()
+  return useMutation<unknown, Error, void>({
+    mutationFn: () =>
+      apiPatch(
+        `/api/agents/${encodeURIComponent(schedule.agent_id)}/schedules/${encodeURIComponent(schedule.schedule_id)}`,
+        { enabled: true },
+      ),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+      ]),
+  })
+}
+
 /** Start a throwaway test run of a workflow; resolves with the new run. */
 export const useTestRunWorkflow = (id: string) => {
   const queryClient = useQueryClient()
@@ -1690,6 +1719,26 @@ export const useInstallConnector = () => {
     }
   >({
     mutationFn: (body) => apiPost('/api/connections', body),
+    onSuccess: invalidate,
+  })
+}
+
+// Ask an MCP server what it offers. Writes nothing; the secrets ride in the request and
+// are dropped by the route, so the response and the cache never hold one.
+export const usePreviewMcpServer = () =>
+  useMutation<McpPreviewResponse, Error, McpServerForm>({
+    mutationFn: (body) => apiPost('/api/mcp-servers/preview', body),
+  })
+
+// Generate, sign, install and grant an operator's MCP server.
+export const useAddMcpServer = () => {
+  const invalidate = useGrantInvalidator()
+  return useMutation<
+    McpServerAddedResponse,
+    Error,
+    McpServerForm & { tools: Record<string, McpToolChoice>; agents: string[] }
+  >({
+    mutationFn: (body) => apiPost('/api/mcp-servers', body),
     onSuccess: invalidate,
   })
 }

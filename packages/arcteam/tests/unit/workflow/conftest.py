@@ -549,9 +549,13 @@ class RecordingNotifier:
     def __init__(self, channel: str | None = "telegram") -> None:
         self.channel = channel
         self.notices: list[tuple[str, str]] = []
+        self.links: list[str | None] = []
 
-    async def __call__(self, text: str, idempotency_key: str) -> str | None:
+    async def __call__(
+        self, text: str, idempotency_key: str, link_path: str | None = None
+    ) -> str | None:
         self.notices.append((text, idempotency_key))
+        self.links.append(link_path)
         return self.channel
 
 

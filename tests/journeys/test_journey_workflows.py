@@ -78,7 +78,9 @@ class _Notices:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
 
-    async def notify(self, text: str, idempotency_key: str) -> str | None:
+    async def notify(
+        self, text: str, idempotency_key: str, link_path: str | None = None
+    ) -> str | None:
         self.sent.append((text, idempotency_key))
         return "telegram"
 

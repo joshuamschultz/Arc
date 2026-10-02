@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import quote
 from uuid import uuid4
 
 import arcstore
@@ -819,6 +820,7 @@ class WorkflowRunner:
                 "retrying every tick; no further notice until it advances."
             ),
             f"workflow-run:{run.run_id}:stuck:{len(run.path_taken)}",
+            run,
         )
         self._audit(
             "workflow.run.operator_notified",
@@ -1742,7 +1744,7 @@ class WorkflowRunner:
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
 
-    async def _tell_operator(self, text: str, idempotency_key: str) -> bool:
+    async def _tell_operator(self, text: str, idempotency_key: str, run: RunRecord) -> bool:
         """Hand one notice to the host's operator seam. Never raises; reports delivery.
 
         The key is stable per run and kind, so a retried or restarted runner that
@@ -1752,7 +1754,10 @@ class WorkflowRunner:
         if self._operator_notifier is None:
             return False
         try:
-            channel = await self._operator_notifier(text, idempotency_key)
+            link_path = (
+                f"/workflows/{quote(run.workflow_id, safe='')}?run={quote(run.run_id, safe='')}"
+            )
+            channel = await self._operator_notifier(text, idempotency_key, link_path)
         except Exception:  # reason: the run is already terminal; report, do not raise
             logger.warning("operator notice %s not delivered", idempotency_key, exc_info=True)
             return False
@@ -1769,6 +1774,7 @@ class WorkflowRunner:
         delivered = await self._tell_operator(
             f"Workflow {run.workflow_id} v{run.version} failed (run {run.run_id}): {reason}",
             f"workflow-run:{run.run_id}:failed:{len(run.path_taken)}",
+            run,
         )
         self._audit(
             "workflow.run.operator_notified",

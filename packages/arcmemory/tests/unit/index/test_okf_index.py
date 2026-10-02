@@ -291,10 +291,10 @@ def test_ingesting_n_objects_does_linear_index_work(
     reads = 0
     real = collection_index.folder_entry
 
-    def counting(path: Path):  # type: ignore[no-untyped-def]
+    def counting(path: Path, **kwargs: object):  # type: ignore[no-untyped-def]
         nonlocal reads
         reads += 1
-        return real(path)
+        return real(path, **kwargs)  # type: ignore[arg-type]  # forwards expect=
 
     monkeypatch.setattr(collection_index, "folder_entry", counting)
     maintainer = memory_maintainer(memory)

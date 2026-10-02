@@ -273,6 +273,40 @@ async def test_mcp_connector_honours_the_contract() -> None:
 This test ensures tool classification, revision monotonicity, error typing, and
 other invariants hold before your connector is shipped.
 
+## Adding your own MCP server (no bundle to hand-write)
+
+An operator who wants an MCP server that Arc does not ship does not write a bundle.
+They describe the server and Arc generates, signs and installs one:
+
+```bash
+# A hosted server (the credential is prompted for; it is never put on the command line)
+arc connector add-mcp acme --http https://mcp.acme.example/v1/mcp \
+    --auth-header Authorization --agents olivia --allow search_tickets:read_only
+
+# A local server started as a child process (environment credentials by name)
+arc connector add-mcp localfs --agents olivia --secret-env api_key=ACME_API_KEY \
+    --stdio -- /usr/local/bin/mcp-server-filesystem /srv/docs
+```
+
+The web does the same from **Connections, Add MCP server**: name, transport, auth,
+**Discover tools** (a preview that writes nothing), choose the tools, choose the agents.
+
+What the generator guarantees, and where it is enforced (`modules/connectors/mcp_bundle.py`):
+
+| Rule | Behaviour |
+|---|---|
+| What may launch | A stdio command resolves to one absolute executable. No shell metacharacters, relative paths, shells or wrappers, or `-c`/`-e` inline code. Above personal tier the program must be on `[tools.policy] mcp_stdio_allow`. |
+| Where it may connect | https only (plain http to loopback is a personal-tier convenience). No userinfo, no credential-looking query keys. Link-local, metadata, multicast and unspecified addresses are refused, whether typed as a literal, a numeric trick, or reached by name. |
+| What it may expose | The operator picks the tools after discovery. They register as `<name>__<verb>`, so a server cannot shadow a built-in. Classification and capability tags are the operator's; the server's own annotations are ignored. |
+| Who vouched | Every generated file is signed by the operator key. A signed bundle is signed as a whole: an edited byte or an added file makes it refuse to load, at every tier. |
+| Credentials | Never in the spec, the bundle, the audit chain, a log or a response. Values go to `install` and the existing secret path only. |
+| Federal | Refused. Federal connects vetted, signed bundles only. |
+| Knowledge | Declared `non_indexable`: an MCP server exposes tools only, so there is nothing to sync into Knowledge. The card says so. |
+
+The generated manifest carries `[health] probe = "attachment"` (the health authority
+runs a real tool listing) and no `[oauth]`. Every step is audited (`mcp_server.preview`,
+`spec_validated`, `bundle_written`, `bundle_signed`, `add`) with the SHA-256 of the spec.
+
 ### Example: Composio
 
 Composio is a first-party, vendor-hosted MCP server that fronts hundreds of

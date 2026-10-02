@@ -53,6 +53,7 @@ import arcagent
 from arctrust import causal
 from arctrust.paths import arc_team
 
+from arccli.commands import connector_mcp
 from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
 from arccli.commands._shared import print_table as _print_table
@@ -515,6 +516,19 @@ def _doctor(args: argparse.Namespace) -> None:
     )
 
 
+def _add_mcp(args: argparse.Namespace) -> None:
+    """Add an MCP server: discover, choose tools, generate, sign, install, grant."""
+    connections = _connections(args)
+    agents = _agents(args)
+    _require_deployment_agents(connections, agents)
+    connector_mcp.add_mcp(args, connections, agents, _fail)
+
+
+def _sign(args: argparse.Namespace) -> None:
+    """Sign a hand-written bundle with the operator key."""
+    connector_mcp.sign(args, _connections(args), _fail)
+
+
 def _approve(args: argparse.Namespace) -> None:
     """Record the tool contract this instance serves right now as approved (REQ-291)."""
     connections = _connections(args)
@@ -669,9 +683,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc connector",
         description=(
-            "Connect this deployment to an external system — available, add, grant, "
-            "revoke, auth, authorize, host-setup, list, tools, probe, doctor, "
-            "approve, remove."
+            "Connect this deployment to an external system — available, add, add-mcp, "
+            "sign, grant, revoke, auth, authorize, host-setup, list, tools, probe, "
+            "doctor, approve, remove."
         ),
         add_help=True,
     )
@@ -691,6 +705,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True, help="Name for this connected account.")
     _add_agents(p, required=False)
     _add_common(p)
+
+    p = subs.add_parser(
+        "add-mcp", help="Add your own MCP server: discover tools, sign a bundle, connect, grant."
+    )
+    connector_mcp.add_mcp_arguments(p)
+
+    p = subs.add_parser("sign", help="Sign a hand-written bundle with the operator key.")
+    connector_mcp.add_sign_arguments(p)
 
     p = subs.add_parser("grant", help="Let more agents use a connected account.")
     p.add_argument("instance", help="Connection name.")
@@ -761,6 +783,8 @@ def _build_parser() -> argparse.ArgumentParser:
 _SUBCOMMAND_MAP = {
     "available": _available,
     "add": _add,
+    "add-mcp": _add_mcp,
+    "sign": _sign,
     "grant": _grant,
     "revoke": _revoke,
     "auth": _auth,
@@ -784,7 +808,7 @@ def connector_handler(args: list[str]) -> None:
     is recorded separately as its signer.
     """
     with causal.bind(causal.root("operator", _cli_actor())):
-        dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
+        dispatch(_build_parser(), _SUBCOMMAND_MAP, connector_mcp.rewrite_command(args))
 
 
 def _cli_actor() -> str:

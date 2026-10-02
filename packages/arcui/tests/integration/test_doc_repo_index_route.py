@@ -28,8 +28,10 @@ from arcmemory.connected_data import (
     SourceContent,
     SourceMappingPendingError,
 )
+from arcmemory.okf_seal import bind_memory_identity, release_memory_identity
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.memory import FakeBackend
+from arctrust.identity import AgentIdentity
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
@@ -58,7 +60,19 @@ def _source() -> ConnectedSource:
 
 
 async def _seed_index(workspace: Path) -> str:
-    """Ingest one document through the real path; return the source id."""
+    """Ingest one document through the real path; return the source id.
+
+    The sync runs as it does inside the agent process: the agent's identity is
+    pinned for its workspace, so the index it writes is agent-signed.
+    """
+    bind_memory_identity(workspace, AgentIdentity.generate(org="test", agent_type="doc-repo"))
+    try:
+        return await _ingest_one(workspace)
+    finally:
+        release_memory_identity(workspace)
+
+
+async def _ingest_one(workspace: Path) -> str:
     approval = ApprovalStore(FakeBackend())
     service = ConnectedDataService(
         workspace, _DID, approval_store=approval, config=MemoryConfig(doc_chunk_tokens=32)
@@ -155,6 +169,37 @@ def test_operator_reads_verified_index(app_with_index: tuple[Any, str]) -> None:
     assert body["present"] and body["verified"]
     assert body["document_count"] == 1 and body["entries"]
     assert body["markdown"].startswith("# ")
+    # A source mirrors its remote tree: the root lists the folder it holds, which
+    # the operator opens to see the documents.
+    assert [(e["kind"], e["path"], e["count"]) for e in body["entries"]] == [
+        ("folder", "reports", 1)
+    ]
+
+
+def test_operator_opens_a_folder_and_sees_its_documents(
+    app_with_index: tuple[Any, str],
+) -> None:
+    app, source_id = app_with_index
+    with TestClient(app) as client:
+        resp = client.get(
+            _url("repo-agent", source_id), params={"folder": "reports"}, headers=_operator()
+        )
+    body = resp.json()
+    assert resp.status_code == 200 and body["verified"] and body["folder"] == "reports"
+    documents = [e for e in body["entries"] if e["kind"] == "document"]
+    assert len(documents) == 1 and documents[0]["path"].startswith("reports/")
+    assert documents[0]["digest"]
+
+
+def test_folder_argument_never_escapes_the_source(app_with_index: tuple[Any, str]) -> None:
+    app, source_id = app_with_index
+    with TestClient(app) as client:
+        resp = client.get(
+            _url("repo-agent", source_id), params={"folder": "../.."}, headers=_operator()
+        )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert not body["verified"] and body["markdown"] == "" and body["error"]
 
 
 def test_viewer_is_forbidden(app_with_index: tuple[Any, str]) -> None:

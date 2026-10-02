@@ -106,6 +106,48 @@ describe('NodeDetail route, reason and retry', () => {
     expect(!!screen.queryByRole('button', { name: /retry node/i })).toBe(visible)
   })
 
+  it('failed non-idempotent node warns and gates retry on operator acknowledgement', async () => {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: RequestInfo | URL) => {
+        calls.push(String(path))
+        return new Response(JSON.stringify({}))
+      }),
+    )
+    wrap(
+      <NodeDetail
+        node={node({ status: 'failed', last_error: 'timeout', idempotent: false })}
+        runId="r1"
+        runStatus="failed"
+        canRetry
+      />,
+    )
+    expect(screen.getByText(/repeat is not safe/i)).toBeTruthy()
+    const retry = screen.getByRole('button', { name: /retry node/i })
+    expect((retry as HTMLButtonElement).disabled).toBe(true)
+    await userEvent.click(screen.getByRole('checkbox', { name: /accept.*repeat/i }))
+    expect((retry as HTMLButtonElement).disabled).toBe(false)
+    await userEvent.click(retry)
+    expect(calls).toEqual(['/api/workflow-runs/r1/nodes/ingest/retry'])
+  })
+
+  it('an idempotent node keeps the plain retry button', () => {
+    wrap(
+      <NodeDetail
+        node={node({ status: 'failed', last_error: 'x', idempotent: true })}
+        runId="r1"
+        runStatus="failed"
+        canRetry
+      />,
+    )
+    expect(screen.queryByText(/repeat is not safe/i)).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect((screen.getByRole('button', { name: /retry node/i }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+  })
+
   it('retry posts to the node retry route and shows errors inline', async () => {
     const calls: string[] = []
     vi.stubGlobal(

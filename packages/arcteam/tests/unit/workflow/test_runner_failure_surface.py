@@ -67,6 +67,15 @@ async def test_failed_run_notifies_operator_with_reason(stores: Any, registry: A
     assert [e.outcome for e in notified] == ["delivered"]
 
 
+async def test_failed_run_notice_names_the_run_page_for_a_deep_link(
+    stores: Any, registry: Any
+) -> None:
+    notifier = RecordingNotifier()
+    _, _, run = await _fail_collect(stores, registry, operator_notifier=notifier)
+
+    assert notifier.links == [f"/workflows/{run.workflow_id}?run={run.run_id}"]
+
+
 async def test_operator_notice_reaches_operator_even_with_no_channel_bound(
     stores: Any, registry: Any
 ) -> None:

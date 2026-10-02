@@ -20,6 +20,7 @@ import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
 import { RemoteSignInPanel } from '@/components/remote-sign-in-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
+import { AddMcpServerDialog } from '@/components/add-mcp-server-dialog'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { Button } from '@/components/ui/button'
 import {
@@ -176,7 +177,9 @@ function statusLine(inst: ConnectorInstance): string {
 function noticeLine(notice: ConnectionNotice): string {
   return notice.delivered
     ? `Told you on ${notice.channel} at ${fmtTime(notice.at)}`
-    : 'Could not notify you'
+    : notice.channel === 'undeliverable'
+      ? 'Could not notify you: no agent is running'
+      : 'Could not notify you'
 }
 
 function ConnectionStatusChip({ status }: { status: ConnectionDisplayStatus }) {
@@ -587,6 +590,10 @@ export function ConnectionsPage() {
     instance?: string
   } | null>(null)
 
+  // Its own dialog, opened from the page header: adding a server nobody shipped a bundle
+  // for is not an action on any one card.
+  const [addingMcp, setAddingMcp] = useState(false)
+
   const bundles = catalog.data?.available ?? []
   const instances = connections.data?.connections ?? []
   const bundleFor = (name: string) => bundles.find((b) => b.name === name)
@@ -596,7 +603,16 @@ export function ConnectionsPage() {
       <PageHeader
         title="Connections"
         description="Every connected account on this computer, and which agents can use each one. Credentials are stored once and never displayed here."
-        actions={<OperatorModeToggle />}
+        actions={
+          <>
+            {operatorMode && (
+              <Button size="sm" variant="outline" onClick={() => setAddingMcp(true)}>
+                <Plug /> Add MCP server
+              </Button>
+            )}
+            <OperatorModeToggle />
+          </>
+        }
       />
       <div className="flex-1 space-y-8 overflow-auto p-6">
         <section className="space-y-3">
@@ -692,6 +708,9 @@ export function ConnectionsPage() {
           </QueryState>
         </section>
       </div>
+      {addingMcp && (
+        <AddMcpServerDialog agents={agents} open onOpenChange={(o) => !o && setAddingMcp(false)} />
+      )}
       {sheet && (
         <ConnectorSecretsSheet
           // Remount per target so no credential state survives a switch.

@@ -167,6 +167,7 @@ from arctrust.monotonic import (
 )
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
 from arctrust.operator_resolver import (
+    bootstrap_operator_signer,
     machine_security,
     operator_key_file,
     operator_public_key_for,
@@ -537,6 +538,7 @@ __all__ = [
     "assert_fips_if_required",
     "audit_dir",
     "blueprints_dir",
+    "bootstrap_operator_signer",
     "build_pipeline",
     "build_signer",
     "bundles_dir",

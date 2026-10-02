@@ -50,6 +50,7 @@ from arcmemory.doc_index import DocHit, DocIndex
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
+from arcmemory.okf_seal import bind_memory_identity
 from arcmemory.promotion.classifier import PromotionClassifier
 from arcmemory.promotion.config import PromotionConfig, is_federal_tier
 from arcmemory.promotion.ledger import LedgerRow, PromotionLedger
@@ -191,6 +192,10 @@ class ArcMemoryBrain:
         # consolidation runs, so memory costs no provider key at startup.
         self._model_factory = model_factory
         self._identity = identity
+        if identity is not None and identity.can_sign:
+            # The agent signs its own memory indexes and logs (ADR-029); readers
+            # verify against this pinned key and fail closed without it.
+            bind_memory_identity(self._workspace, identity)
         self._policy = policy_pipeline
         self._react_loop = react_loop
         self._store_raw_bodies = store_raw_bodies
@@ -490,7 +495,10 @@ class ArcMemoryBrain:
         """Settle every per-folder ``index.md``: drain pending folders, heal missing ones.
 
         Off the loop and deterministic. The first call on a pre-existing workspace
-        is also its backfill: folders that never had an index get one.
+        is also its backfill: folders that never had an index get one, and folders
+        whose sidecar is not signed by this agent (forged, replayed, or written
+        before sidecars were signed) are regenerated from the documents with no
+        reuse of their index lines, then signed.
         """
         await asyncio.to_thread(memory_maintainer(self._workspace / "memory").sync_all)
 

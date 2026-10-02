@@ -543,13 +543,31 @@ function SourcesSection({
  *  contents. Operator-gated + audited server-side. */
 function RepoIndexSection({ agentId }: { agentId: string }) {
   const [source, setSource] = useState('')
-  const index = useSourceIndex(agentId, source)
+  // A source mirrors its remote tree: the root lists folders, each opened in place.
+  const [folder, setFolder] = useState('')
+  const index = useSourceIndex(agentId, source, folder)
   const ready = !!source
+  const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
+        <SourceSelect
+          agentId={agentId}
+          value={source}
+          onChange={(next) => {
+            setSource(next)
+            setFolder('')
+          }}
+        />
+        {folder && (
+          <>
+            <MonoChip>{folder}/</MonoChip>
+            <Button size="sm" variant="ghost" onClick={() => setFolder(parent)}>
+              Up
+            </Button>
+          </>
+        )}
       </div>
       {!ready ? (
         <EmptyState
@@ -605,8 +623,24 @@ function RepoIndexSection({ agentId }: { agentId: string }) {
                         className="space-y-1 rounded-lg border border-border bg-muted/20 px-3 py-2"
                       >
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">{entry.title}</span>
-                          <MonoChip>{entry.path}</MonoChip>
+                          {entry.kind === 'folder' ? (
+                            <button
+                              type="button"
+                              className="text-sm font-medium text-foreground underline-offset-2 hover:underline"
+                              onClick={() => setFolder(entry.path)}
+                            >
+                              {entry.title}
+                            </button>
+                          ) : (
+                            <span className="text-sm font-medium text-foreground">{entry.title}</span>
+                          )}
+                          {entry.kind === 'folder' ? (
+                            <Chip>
+                              {entry.count} document{entry.count === 1 ? '' : 's'}
+                            </Chip>
+                          ) : (
+                            <MonoChip>{entry.path}</MonoChip>
+                          )}
                         </div>
                         {entry.summary && (
                           <p className="text-sm text-muted-foreground">{entry.summary}</p>

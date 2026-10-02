@@ -157,7 +157,7 @@ class TestVaultConfig:
 class TestToolsConfig:
     def test_defaults(self) -> None:
         cfg = ToolsConfig()
-        assert cfg.mcp_servers == {}
+        assert not hasattr(cfg, "mcp_servers")
         assert cfg.http == {}
         assert cfg.process == {}
 
@@ -383,9 +383,8 @@ class TestFullConfig:
             deny = ["shell_exec"]
             timeout_seconds = 60
 
-            [tools.mcp_servers.filesystem]
-            command = "npx"
-            args = ["-y", "@modelcontextprotocol/server-filesystem"]
+            [tools.http.lookup]
+            url = "https://lookup.example/"
             timeout_seconds = 30
 
             [telemetry]
@@ -418,7 +417,7 @@ class TestFullConfig:
         assert cfg.vault.backend == "my_vault:HashicorpBackend"
         assert cfg.tools.policy.allow == ["read_file", "write_file"]
         assert cfg.tools.policy.deny == ["shell_exec"]
-        assert "filesystem" in cfg.tools.mcp_servers
+        assert "lookup" in cfg.tools.http
         assert cfg.telemetry.log_level == "DEBUG"
         assert cfg.context.max_tokens == 200000
         assert "memory" in cfg.modules

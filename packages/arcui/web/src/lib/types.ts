@@ -931,6 +931,8 @@ export interface WorkflowNode {
   on_failure?: 'fail_run' | 'continue' | 'skip_dependents'
   when?: string | null
   agent?: string | null
+  /** Tool nodes only: `false` when the tool's repeat call duplicates its effect. */
+  idempotent?: boolean
 }
 
 export interface WorkflowEdge {
@@ -954,9 +956,24 @@ export interface WorkflowLastRun {
   ended_at?: string | null
 }
 
+/** The owner agent's scheduler row for a workflow's trigger. */
+export interface WorkflowSchedule {
+  agent_id: string
+  schedule_id: string
+  enabled: boolean
+  disabled_reason?: 'operator' | 'breaker' | 'archived' | null
+  disabled_at?: string | null
+  next_fire_at?: string | null
+  last_fired_at?: string | null
+  last_outcome?: 'ok' | 'error' | 'start_unavailable' | 'missed' | null
+  last_error?: string | null
+}
+
 export interface WorkflowSummary {
   [key: string]: unknown
   id: string
+  /** `null` when the workflow has no schedule row on its owner agent. */
+  schedule?: WorkflowSchedule | null
   // Display name; may be null when the definition has none — fall back to `id`
   // wherever the workflow is titled.
   name: string | null
@@ -1024,6 +1041,8 @@ export interface WorkflowRunNodeStatus {
   reason?: string | null
   attempts?: number | null
   max_attempts?: number | null
+  /** Tool nodes only: `false` when repeating the tool duplicates its side effect. */
+  idempotent?: boolean
   /** Bounded value, a `{truncated, size_bytes, preview}` marker, or `{withheld}`. */
   input?: unknown
   output?: unknown
@@ -1242,6 +1261,51 @@ export interface ConnectorInstallResponse {
   tools: string[]
   detail: string
   agents: string[]
+}
+
+/** One tool an MCP server advertised. The description is the server's own, untrusted text. */
+export interface McpToolView {
+  name: string
+  description: string
+  usable: boolean
+  reason: string
+}
+
+/** What an MCP server offers (`POST /api/mcp-servers/preview`). Nothing was written. */
+export interface McpPreviewResponse {
+  tools: McpToolView[]
+  suggested_tags: string[]
+}
+
+/** The operator's choice for one tool they are exposing. */
+export interface McpToolChoice {
+  classification: 'read_only' | 'state_modifying'
+  capability_tags: string[]
+  description?: string
+}
+
+/** How to reach an MCP server. Secrets are values typed here, never echoed back. */
+export interface McpServerForm {
+  name: string
+  display?: string
+  description?: string
+  transport: 'http' | 'stdio'
+  url?: string
+  auth_header?: string
+  auth_scheme?: string
+  argv?: string[]
+  env_refs?: Record<string, string>
+  secrets: Record<string, string>
+}
+
+/** `POST /api/mcp-servers` result: names and a digest, never a credential. */
+export interface McpServerAddedResponse {
+  instance: string
+  extension: string
+  tools: string[]
+  detail: string
+  agents: string[]
+  spec_sha256: string
 }
 
 /** Rotation result — field names only, never values. */
@@ -1508,13 +1572,18 @@ export interface DocumentsResponse {
   items: DocHitItem[]
 }
 
-/** One authorized document in a verified collection index (mirror of
- *  `arcmemory.operator.CollectionIndexEntry`). */
+/** One line of a verified collection index: a document or a child folder
+ *  (mirror of `arcmemory.operator.CollectionIndexEntry`). `path` is
+ *  source-relative; a folder's `path` is the `folder` argument that opens it. */
 export interface CollectionIndexEntry {
+  kind: 'document' | 'folder'
   path: string
   title: string
   summary: string
+  classification: string
   digest: string
+  /** Recursive document count (folders only). */
+  count: number
 }
 
 /** A connected document source's verified OKF `index.md` — what's inside +
@@ -1522,6 +1591,8 @@ export interface CollectionIndexEntry {
  *  `markdown`/`entries` are populated ONLY when `verified` is true. */
 export interface CollectionIndexView {
   source_id: string
+  /** Source-relative folder this view lists (`''` is the source root). */
+  folder: string
   present: boolean
   verified: boolean
   document_count: number

@@ -74,6 +74,7 @@ from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
 from arcui.routes import mcp as mcp_routes
+from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
@@ -274,6 +275,7 @@ def create_app(
     hosted: bool = False,
     hosted_claim: HostedClaimService | None = None,
     hosted_origin: str | None = None,
+    public_base_url: str | None = None,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -331,6 +333,9 @@ def create_app(
         workspace_dir: Agent workspace root for the Observe ingest's arcskill
             candidate-store + skills-WORM scan (SPEC-054 REQ-120). ``None``
             keeps the mirror on spool + audit WORM only.
+        public_base_url: The operator-configured public origin of this dashboard
+            (``[ui] public_base_url``, already validated). Notices carry deep
+            links built from it; it is never derived from a request's Host header.
         allow_external_task_refs: Ingest policy for operator-authored task text
             (ADR-019 tier = stringency). Federal → False (default): URLs/emails
             in a task title/description are rejected as an external-comms
@@ -408,6 +413,7 @@ def create_app(
         *keys_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
+        *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,
         *gateway_routes.routes,
         *stack_routes.routes,
@@ -792,6 +798,7 @@ def create_app(
     app.state.hosted = hosted
     app.state.hosted_claim = hosted_claim
     app.state.hosted_origin = hosted_origin
+    app.state.public_base_url = public_base_url
     app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
     app.state.hosted_claim_pending = set()
     app.state.hosted_claim_executor = (
@@ -940,11 +947,22 @@ def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
         logger.info("no workflow runner hosted here; workflow screens stay unavailable")
         return
     try:
-        from arcui.workflow_plane import build_dashboard_plane
+        from arcui.workflow_plane import (
+            build_dashboard_plane,
+            roster_schedule_reader,
+            roster_tool_idempotency,
+        )
+
+        def roster() -> Any:
+            # Looked up per call: the roster provider is attached after this runs.
+            provider = getattr(app.state, "roster_provider", None)
+            return [] if provider is None else provider()
 
         plane = build_dashboard_plane(
             runner=runner,
             approvals=getattr(app.state, "approval_store", None),
+            schedule_reader=roster_schedule_reader(roster),
+            tool_idempotent=roster_tool_idempotency(roster),
         )
         app.state.workflow_control_plane = plane
         # The same object answers both Protocols: one control plane, one

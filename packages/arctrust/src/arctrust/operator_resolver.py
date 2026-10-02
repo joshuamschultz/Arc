@@ -143,3 +143,16 @@ def operator_public_key_for(security: Any = None, *, base: Base = None) -> bytes
         return operator_signer_for(security, base=base).public_key
     except FileNotFoundError:
         return None
+
+
+def bootstrap_operator_signer(security: Any = None, *, base: Base = None) -> Signer:
+    """Mint the on-disk operator key if absent (personal tier), then sign with it.
+
+    The only bootstrap path outside the CLI. ``vault_transit`` custody never
+    mints: there is no key file to create, so an unservable transit still raises.
+    """
+    sec = security if security is not None else machine_security(base)
+    if sec.custody == VAULT_TRANSIT:
+        return operator_signer_for(sec, base=base)
+    key = OperatorKey.load(operator_key_file(sec, base), generate_if_absent=True)
+    return key.into_signer(sec.signing_algorithm)

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api'
 import { useRetryWorkflowNode } from '@/lib/queries'
 import type { WorkflowRunNodeStatus } from '@/lib/types'
+import { RepeatUnsafeChip } from './repeat-warning'
 
 /** A bounded wire value: small values arrive as-is, large ones as a marked preview. */
 interface TruncatedValue {
@@ -47,9 +48,19 @@ function IoBlock({ label, value }: { label: string; value: unknown }) {
 }
 
 /** Re-run one failed node; the server answers with the refreshed run view. */
-function RetryNodeButton({ runId, nodeId }: { runId: string; nodeId: string }) {
+function RetryNodeButton({
+  runId,
+  nodeId,
+  repeatUnsafe,
+}: {
+  runId: string
+  nodeId: string
+  repeatUnsafe: boolean
+}) {
   const retry = useRetryWorkflowNode(runId)
   const [error, setError] = useState<string | null>(null)
+  // A tool that cannot dedupe its effect is re-run only on the operator's say-so.
+  const [accepted, setAccepted] = useState(false)
   const submit = async () => {
     setError(null)
     try {
@@ -59,8 +70,23 @@ function RetryNodeButton({ runId, nodeId }: { runId: string; nodeId: string }) {
     }
   }
   return (
-    <div className="mt-1.5 flex items-center gap-2">
-      <Button size="sm" variant="outline" disabled={retry.isPending} onClick={submit}>
+    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+      {repeatUnsafe && (
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={accepted}
+            onChange={(e) => setAccepted(e.target.checked)}
+          />
+          I accept a repeat of the side effect
+        </label>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={retry.isPending || (repeatUnsafe && !accepted)}
+        onClick={submit}
+      >
         {retry.isPending ? 'Retrying…' : 'Retry node'}
       </Button>
       {error && <span className="text-[11px] text-status-error">{error}</span>}
@@ -84,7 +110,16 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
   const showReason = !!node.reason && (node.status === 'skipped' || node.status === 'cancelled')
   const showRetry =
     !!canRetry && !!runId && runStatus === 'failed' && node.status === 'failed'
-  if (!node.last_error && !hasAttempts && !hasIo && !showRoute && !showReason && !showRetry) {
+  const repeatUnsafe = node.idempotent === false && node.status === 'failed'
+  if (
+    !node.last_error &&
+    !hasAttempts &&
+    !hasIo &&
+    !showRoute &&
+    !showReason &&
+    !showRetry &&
+    !repeatUnsafe
+  ) {
     return null
   }
   return (
@@ -96,6 +131,12 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
       )}
       {showReason && <p className="text-muted-foreground">{node.reason}</p>}
       {node.last_error && <p className="text-status-error">{node.last_error}</p>}
+      {repeatUnsafe && (
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <RepeatUnsafeChip />
+          Retrying runs this tool&apos;s side effect again, such as a second send or upload.
+        </p>
+      )}
       {hasAttempts && (
         <span className="mt-1 inline-flex rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
           {`${node.attempts}/${node.max_attempts} attempts`}
@@ -103,7 +144,9 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
       )}
       <IoBlock label="Input" value={node.input} />
       <IoBlock label="Output" value={node.output} />
-      {showRetry && <RetryNodeButton runId={runId} nodeId={node.node_id} />}
+      {showRetry && (
+        <RetryNodeButton runId={runId} nodeId={node.node_id} repeatUnsafe={repeatUnsafe} />
+      )}
     </div>
   )
 }

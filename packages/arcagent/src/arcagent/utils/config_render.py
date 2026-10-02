@@ -60,7 +60,7 @@ def _direct_nested_model(annotation: Any) -> type[BaseModel] | None:
     Deliberately narrower than "any BaseModel reachable from this
     annotation": ``dict[str, ModuleEntry]``/``dict[str, AgentRoute]``-style
     fields are dynamic, operator-populated collections (``routes``,
-    ``modules``, ``mcp_servers``, ...) — they render as an empty table/array,
+    ``modules``, ``http``, ...) — they render as an empty table/array,
     never as one fixed sub-section shaped like their value type.
     """
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):

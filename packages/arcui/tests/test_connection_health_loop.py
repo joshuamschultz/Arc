@@ -64,6 +64,8 @@ def _monitor(
     connections: _Connections,
     clock: _Clock,
     agents: Any = None,
+    fallback: Any = None,
+    ui_base: str = "",
 ) -> ConnectionHealthMonitor:
     async def opener() -> FakeBackend:
         return backend
@@ -72,6 +74,8 @@ def _monitor(
         lambda: connections,  # type: ignore[arg-type,return-value] # reason: test double
         store_opener=opener,
         agents_resolver=agents or (lambda instance: []),
+        fallback_agents=fallback or (lambda: []),
+        ui_base=ui_base,
         clock=clock,
         rng=lambda: 0.5,
         initial_delay_seconds=0,
@@ -239,3 +243,85 @@ async def test_no_agent_able_to_deliver_gives_up_after_three_tries_and_says_so()
     record = await arcagent.ConnectionStateStore(backend).get("gmail")
     assert record is not None and record.last_notice is not None
     assert record.last_notice.delivered is False
+
+
+async def _broken_gmail(backend: FakeBackend) -> None:
+    await _seed(backend, gmail="healthy")
+    await arcagent.ConnectionHealthAuthority(arcagent.ConnectionStateStore(backend)).record(
+        "gmail",
+        arcagent.HealthSignal(
+            ok=False, source="probe", checked_by=arcagent.PROBE_DID, reason_code="invalid_grant"
+        ),
+        now=START,
+    )
+
+
+async def test_notice_falls_back_to_any_embedded_agent_then_undeliverable() -> None:
+    backend, clock = FakeBackend(), _Clock()
+    await _broken_gmail(backend)
+    ungranted = _Agent("slack")
+    monitor = _monitor(
+        backend, _Connections(("gmail",)), clock, agents=lambda i: [], fallback=lambda: [ungranted]
+    )
+
+    await monitor.tick()
+
+    record = await arcagent.ConnectionStateStore(backend).get("gmail")
+    assert record is not None and record.last_notice is not None
+    assert len(ungranted.calls) == 1, "an agent with no grant still carries the notice"
+    assert (record.last_notice.delivered, record.last_notice.channel) == (True, "slack")
+
+    nobody_backend = FakeBackend()
+    await _broken_gmail(nobody_backend)
+    nobody = _monitor(nobody_backend, _Connections(("gmail",)), clock)
+    for minutes in (0, 2, 8, 20):
+        clock.now = START + timedelta(minutes=minutes)
+        await nobody.tick()
+
+    record = await arcagent.ConnectionStateStore(nobody_backend).get("gmail")
+    assert record is not None and record.last_notice is not None
+    assert (record.last_notice.delivered, record.last_notice.channel) == (False, "undeliverable")
+
+
+async def test_notice_link_uses_public_base_url_when_set() -> None:
+    backend, clock = FakeBackend(), _Clock()
+    await _broken_gmail(backend)
+    agent = _Agent("telegram")
+    monitor = _monitor(
+        backend,
+        _Connections(("gmail",)),
+        clock,
+        agents=lambda i: [agent],
+        ui_base="https://arc.example.com/",
+    )
+
+    await monitor.tick()
+
+    assert agent.calls[0][0].endswith("https://arc.example.com/connections?focus=gmail")
+
+
+async def test_notice_carries_no_link_when_public_base_url_is_unset() -> None:
+    backend, clock = FakeBackend(), _Clock()
+    await _broken_gmail(backend)
+    agent = _Agent("telegram")
+    monitor = _monitor(backend, _Connections(("gmail",)), clock, agents=lambda i: [agent])
+
+    await monitor.tick()
+
+    assert "http" not in agent.calls[0][0]
+
+
+async def test_built_monitor_links_to_the_apps_public_base_url_and_never_a_host_header() -> None:
+    from types import SimpleNamespace
+
+    from arcui.connection_health import build_connection_health_monitor
+
+    state = SimpleNamespace(
+        arcstore_backend=FakeBackend(), public_base_url="https://arc.example.com"
+    )
+    monitor = build_connection_health_monitor(SimpleNamespace(state=state))
+    assert monitor is not None and monitor._ui_base == "https://arc.example.com"
+
+    state.public_base_url = None
+    unset = build_connection_health_monitor(SimpleNamespace(state=state))
+    assert unset is not None and unset._ui_base == ""
