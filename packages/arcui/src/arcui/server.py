@@ -74,6 +74,7 @@ from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
 from arcui.routes import mcp as mcp_routes
+from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
@@ -412,6 +413,7 @@ def create_app(
         *keys_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
+        *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,
         *gateway_routes.routes,
         *stack_routes.routes,

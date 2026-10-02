@@ -81,7 +81,7 @@ def _json_safe(value: Any) -> Any:
 
     A leaf field's runtime value can still be a tuple (``ValidatorsConfig``'s
     immutable collections) or a dict of nested pydantic models
-    (``tools.mcp_servers``) even though the field itself is not walked as a
+    (``tools.http``) even though the field itself is not walked as a
     section — coerce those into plain list/dict data for the read model, the
     same JSON-safety contract ``config_schema.emit_form_schema`` upholds.
     """

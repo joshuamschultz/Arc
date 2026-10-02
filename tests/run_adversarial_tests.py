@@ -465,6 +465,22 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_connection_health_cas.py",
         "tests/architecture/test_connection_health_single_writer.py",
     ),
+    # P12: an operator-added MCP server is third-party code on a wire or a child process.
+    # The generated bundle is the trust boundary: stdio commands launch only an allowed,
+    # absolute, shell-free executable; http is https-only with an SSRF guard (link-local,
+    # metadata and numeric-trick hosts refused); tools are namespaced so none shadows a
+    # built-in and classified by the operator, never by the server's annotations; a server
+    # that rewrites an approved tool is suspended and one that grows new tools exposes
+    # none; a swapped origin, an edited or added file, a symlinked bundle directory and a
+    # name collision are all refused; and the credential never reaches the spec, the
+    # bundle, argv, a log, an audit event, an error or a response.
+    "operator-added MCP server: launch, egress, shadowing, rug-pull, leakage (alpha-2 P12)": (
+        "packages/arcagent/tests/modules/connectors/test_mcp_bundle.py",
+        "packages/arcagent/tests/integration/test_add_mcp_server_contract.py",
+        "packages/arcagent/tests/security/test_mcp_server_abuse.py",
+        "packages/arcui/tests/test_mcp_server_routes.py",
+        "packages/arccli/tests/test_cli_connector_add_mcp.py",
+    ),
 }
 
 

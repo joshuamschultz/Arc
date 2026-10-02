@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
 import tomllib
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
@@ -51,6 +52,7 @@ import httpx
 from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_team, config_file, default_operator_key_path
+from arctrust.signer import Signer
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
 from arcagent.connector_control import ConnectorControl, ConnectorReconcileResult
@@ -63,7 +65,7 @@ from arcagent.extension.attachment import (
     ToolOutcome,
     ToolSpec,
 )
-from arcagent.extension.catalog import BUNDLES_DIRNAME, resolve_extension_roots
+from arcagent.extension.catalog import BUNDLES_DIRNAME, MANIFEST_NAME, resolve_extension_roots
 from arcagent.extension.connection_health import (
     AUTH_REASONS,
     ConnectionHealthAuthority,
@@ -94,6 +96,7 @@ from arcagent.extension.manifest import (
     DeclaredTool,
     HostRequirement,
     SecretRequirement,
+    load_manifest,
 )
 from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
 from arcagent.extension.remote_login import (
@@ -122,6 +125,17 @@ from arcagent.modules.connectors.install import (
     remove_connector,
     resolve_secrets,
     shape_supplied,
+)
+from arcagent.modules.connectors.mcp_bundle import (
+    DiscoveredTool,
+    McpServerSpec,
+    discover_tools,
+    is_generated_bundle,
+    require_exactly,
+    sign_bundle,
+    spec_digest,
+    validate_spec,
+    write_bundle,
 )
 
 _logger = logging.getLogger("arcagent.connections")
@@ -203,6 +217,12 @@ class ConnectionWorld:
     extension_roots: tuple[Path, ...]
     env_file: Path
     egress_allow: tuple[str, ...] = ()
+    #: ``[tools.policy] mcp_stdio_allow`` — the programs an operator-added MCP server
+    #: may launch above personal tier.
+    mcp_stdio_allow: tuple[str, ...] = ()
+    #: True when the caller named exactly one bundle root, so a generated bundle goes
+    #: there rather than into ``<arc_dir>/extensions``.
+    extensions_override: bool = False
 
     @property
     def connections_file(self) -> Path:
@@ -217,6 +237,19 @@ class ConnectorMutation:
     activations: tuple[ConnectorReconcileResult, ...]
     connection: Connection | None = None
     removal: RemovalReport | None = None
+
+
+@dataclass(frozen=True)
+class McpServerAdded:
+    """What adding an MCP server produced. Names and a digest, never a credential."""
+
+    report: InstallReport
+    spec_sha256: str
+    bundle: Path
+    signed_by: str
+    #: The namespaced tools the operator chose AND the server offered. ``report.tools``
+    #: is everything the probe saw, which is the server's list and not the operator's.
+    exposed: tuple[str, ...] = ()
 
 
 #: Recorded as the actor when a deployment has no operator key to derive a DID
@@ -257,6 +290,8 @@ def resolve_deployment(
         extension_roots=resolve_roots(root, extensions_root=extensions_root),
         env_file=(Path(env_file).expanduser().resolve() if env_file else connector_env_file(root)),
         egress_allow=deployment_egress_allow(root),
+        mcp_stdio_allow=deployment_mcp_stdio_allow(root),
+        extensions_override=extensions_root is not None,
     )
 
 
@@ -309,6 +344,19 @@ def deployment_egress_allow(arc_dir: Path | str | None = None) -> tuple[str, ...
     tools = raw.get("tools", {})
     policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
     allow = policy.get("egress_allow", []) if isinstance(policy, dict) else []
+    return tuple(str(name) for name in allow) if isinstance(allow, list) else ()
+
+
+def deployment_mcp_stdio_allow(arc_dir: Path | str | None = None) -> tuple[str, ...]:
+    """``[tools.policy] mcp_stdio_allow`` at deployment scope.
+
+    The programs an operator-added stdio MCP server may launch above personal tier.
+    Empty by default: above personal, no arbitrary binary becomes a server.
+    """
+    raw = _read_toml(config_file(_FLEET_CONFIG, _root(arc_dir)))
+    tools = raw.get("tools", {})
+    policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
+    allow = policy.get("mcp_stdio_allow", []) if isinstance(policy, dict) else []
     return tuple(str(name) for name in allow) if isinstance(allow, list) else ()
 
 
@@ -1590,6 +1638,247 @@ class Connections:
         await self._operator_check(plan.instance)
         return report
 
+    async def preview_mcp_server(
+        self, spec: McpServerSpec, *, secret_values: Mapping[str, str], timeout: float = 30.0
+    ) -> tuple[DiscoveredTool, ...]:
+        """List what an MCP server offers. Writes nothing and keeps no credential.
+
+        The operator reads this list to choose which tools to expose; the spec the
+        choice goes into is then handed to :meth:`add_mcp_server`.
+        """
+        tier = self._tier_for(())
+        with self._audit.open() as sink:
+            try:
+                found = await discover_tools(
+                    spec,
+                    tier=tier,
+                    secret_values=secret_values,
+                    stdio_allow=self._world.mcp_stdio_allow,
+                    builder=self._factory,
+                    timeout=timeout,
+                )
+            except ExtensionError as exc:
+                self._mcp_audit(sink, "mcp_server.preview", spec, "deny", reason=exc.code)
+                raise
+            self._mcp_audit(sink, "mcp_server.preview", spec, "allow", tools=str(len(found)))
+        return found
+
+    async def add_mcp_server(
+        self,
+        spec: McpServerSpec,
+        *,
+        instance: str | None = None,
+        agents: Sequence[str] = (),
+        secret_values: Mapping[str, str],
+        replace: bool = False,
+    ) -> McpServerAdded:
+        """Generate, sign and install a connector bundle for an operator's MCP server.
+
+        The steps, in the order that makes each one safe: the spec is refused if it is
+        unsafe, the credential fields are checked, the bundle is written and signed by
+        the operator key, and only then is it installed through :meth:`install` — so
+        the signature gate, the credential custody, the probe and the contract
+        approval are the ones every other connection uses. ``secret_values`` go to
+        :meth:`install` and nowhere else: they are never written beside the bundle,
+        never put in an audit event, and never returned. A refused install removes
+        the bundle this call wrote.
+
+        Raises:
+            ExtensionError: A step refused; nothing is left behind.
+        """
+        for agent in agents:
+            _check_agent(agent)
+        name = instance or spec.name
+        tier = self._tier_for(agents)
+        with self._audit.open() as sink:
+            checked, signer, signer_did = self._checked_mcp_spec(
+                sink, spec, name, tier, secret_values
+            )
+            folder = self._write_mcp_bundle(sink, checked, replace=replace)
+            try:
+                sign_bundle(folder, signer=signer, signer_did=signer_did)
+                self._mcp_audit(
+                    sink, "mcp_server.bundle_signed", checked, "allow", signer=signer_did
+                )
+                # The bundle's root may not have existed when this deployment was resolved.
+                # Everything after this call (the health check inside install) reads the
+                # world's roots, so the world has to learn about the one just created.
+                roots = self._bundle_roots()
+                self._learn_roots(roots)
+                plan = plan_connector(
+                    extensions_root=roots,
+                    extension=checked.name,
+                    instance=name,
+                    tier=tier,
+                    audit_sink=sink,
+                    egress_allow=self._world.egress_allow,
+                )
+            except BaseException:
+                self._discard_bundle(folder)
+                raise
+        try:
+            report = await self.install(plan, secret_values, agents=agents)
+        except ExtensionError as exc:
+            self._discard_bundle(folder)
+            with self._audit.open() as sink:
+                self._mcp_audit(sink, "mcp_server.add", checked, "deny", reason=exc.code)
+            raise
+        with self._audit.open() as sink:
+            self._mcp_audit(
+                sink,
+                "mcp_server.add",
+                checked,
+                "allow",
+                instance=name,
+                agents=",".join(agents),
+                tools=",".join(report.tools),
+            )
+        offered = set(report.tools)
+        return McpServerAdded(
+            report=report,
+            spec_sha256=spec_digest(checked),
+            bundle=folder,
+            signed_by=signer_did,
+            exposed=tuple(
+                checked.namespaced(verb)
+                for verb in checked.tools
+                if checked.namespaced(verb) in offered
+            ),
+        )
+
+    def _checked_mcp_spec(
+        self,
+        sink: AuditSink,
+        spec: McpServerSpec,
+        name: str,
+        tier: Tier,
+        secret_values: Mapping[str, str],
+    ) -> tuple[McpServerSpec, Signer, str]:
+        """Everything that can be refused before a byte is written."""
+        try:
+            checked = validate_spec(spec, tier=tier, stdio_allow=self._world.mcp_stdio_allow)
+            require_exactly(checked, secret_values)
+            if name in self.registry.all():
+                raise _refuse("MCP_NAME_TAKEN", f"a connection named {name!r} already exists")
+            signer, signer_did = self._bundle_signer(tier)
+        except ExtensionError as exc:
+            self._mcp_audit(sink, "mcp_server.add", spec, "deny", reason=exc.code)
+            raise
+        self._mcp_audit(sink, "mcp_server.spec_validated", checked, "allow")
+        return checked, signer, signer_did
+
+    def sign_bundle(self, folder: Path) -> tuple[Path, ...]:
+        """Sign a hand-written bundle with the operator key, so it verifies at load.
+
+        The manifest has to parse at this deployment's tier first: the operator key
+        must never vouch for a file Arc would refuse to read.
+
+        Raises:
+            ExtensionError: Not a bundle, or the manifest is refused at this tier.
+        """
+        manifest = Path(folder) / MANIFEST_NAME
+        if not manifest.is_file() or manifest.is_symlink():
+            raise _refuse("MCP_NOT_A_BUNDLE", f"{folder} holds no {MANIFEST_NAME}")
+        try:
+            load_manifest(manifest.read_text(encoding="utf-8"), tier=self._world.tier)
+        except Exception as exc:  # reason: any parse or tier refusal means do not sign
+            raise _refuse("MCP_NOT_A_BUNDLE", f"{manifest} would not load: {exc}") from exc
+        signer, signer_did = self._bundle_signer(self._world.tier)
+        signed = tuple(sign_bundle(Path(folder), signer=signer, signer_did=signer_did))
+        with self._audit.open() as sink:
+            emit(
+                AuditEvent(
+                    actor_did=causal.actor_did(),
+                    action="connector.bundle_signed",
+                    target=f"bundle:{Path(folder).name}",
+                    outcome="allow",
+                    tier=self._world.tier.value,
+                    extra={"files": str(len(signed)), "signer": signer_did},
+                ),
+                sink,
+            )
+        return signed
+
+    def _learn_roots(self, roots: tuple[Path, ...]) -> None:
+        self._world = replace(self._world, extension_roots=roots)
+
+    def _bundle_roots(self) -> tuple[Path, ...]:
+        """The search path as it is NOW — a generated bundle's root may not have existed."""
+        if self._world.extensions_override:
+            return self._world.extension_roots
+        return resolve_extension_roots(self._world.arc_dir)
+
+    def _write_mcp_bundle(self, sink: AuditSink, spec: McpServerSpec, *, replace: bool) -> Path:
+        override = self._world.extensions_override
+        first = self._world.extension_roots[0] if self._world.extension_roots else None
+        base = first.parent if override and first is not None else self._world.arc_dir
+        dirname = first.name if override and first is not None else BUNDLES_DIRNAME
+        # A bundle this module wrote, whose connection has since been removed, is
+        # leftover: adding the same server again rewrites it. A hand-written bundle
+        # of that name is never touched without an explicit ``replace``.
+        leftover = is_generated_bundle(base / dirname / spec.name) and not any(
+            held.extension == spec.name for held in self.registry.all().values()
+        )
+        try:
+            folder = write_bundle(
+                spec,
+                base,
+                replace=replace or leftover,
+                other_roots=self._world.extension_roots,
+                bundles_dirname=dirname,
+            )
+        except ExtensionError as exc:
+            self._mcp_audit(sink, "mcp_server.add", spec, "deny", reason=exc.code)
+            raise
+        self._mcp_audit(sink, "mcp_server.bundle_written", spec, "allow")
+        return folder
+
+    @staticmethod
+    def _discard_bundle(folder: Path) -> None:
+        """Remove the bundle this call wrote, never following a symlink."""
+        if not folder.is_symlink():
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def _bundle_signer(self, tier: Tier) -> tuple[Signer, str]:
+        """The operator key as a signer. Minted at personal tier only, never above it."""
+        from arctrust import OperatorKey
+        from arctrust.policy import OperatorApprovalAuthority
+
+        key = _operator_key(self._world.arc_dir)
+        if key is None:
+            if tier is not Tier.PERSONAL:
+                raise _refuse(
+                    "MCP_NO_OPERATOR_KEY",
+                    "this deployment has no operator key to sign the bundle with; "
+                    "create one with `arc init` first",
+                )
+            key = OperatorKey.load(
+                default_operator_key_path(self._world.arc_dir), generate_if_absent=True
+            )
+        signer = key.into_signer()
+        return signer, str(OperatorApprovalAuthority(signer).did)
+
+    def _mcp_audit(
+        self, sink: AuditSink, action: str, spec: McpServerSpec, outcome: str, **extra: str
+    ) -> None:
+        """One audit event per step. The spec holds no secret, so its digest is safe."""
+        emit(
+            AuditEvent(
+                actor_did=causal.actor_did(),
+                action=action,
+                target=f"connector:{spec.name}",
+                outcome=outcome,
+                tier=self._world.tier.value,
+                extra={
+                    "name": spec.name,
+                    "transport": spec.transport,
+                    "spec_sha256": spec_digest(spec),
+                    **extra,
+                },
+            ),
+            sink,
+        )
+
     def grant(self, instance: str, agents: Sequence[str]) -> Connection:
         """Permit ``agents`` to use one connected account.
 
@@ -2087,6 +2376,7 @@ __all__ = [
     "HostSetupReport",
     "HostVerdict",
     "InstallReport",
+    "McpServerAdded",
     "ProbeResult",
     "RemoteLoginLedger",
     "RemoteLoginStart",
@@ -2099,6 +2389,7 @@ __all__ = [
     "agent_tier",
     "catalog",
     "deployment_egress_allow",
+    "deployment_mcp_stdio_allow",
     "deployment_tier",
     "resolve_deployment",
     "resolve_roots",

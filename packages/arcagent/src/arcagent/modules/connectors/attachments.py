@@ -83,6 +83,7 @@ class _McpStdioConfig(BaseModel):
     transport: Literal["stdio"] = "stdio"
     argv: list[str] = Field(min_length=1)
     client_name: str = "arc"
+    namespace: str = ""
     install_instruction: str = ""
     resilience: McpResilience = Field(default_factory=McpResilience)
     tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
@@ -116,6 +117,7 @@ class _McpHttpConfig(BaseModel):
     url_secret_field: str = ""
     url_origin: str = ""
     client_name: str = "arc"
+    namespace: str = ""
     resilience: McpResilience = Field(default_factory=McpResilience)
     tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
 
@@ -290,7 +292,9 @@ def build_attachment(
                 client_name=http_config.client_name,
                 requirements=requirements,
             )
-            return _with_source_adapter(manifest, bundle, mcp_attachment)
+            return _with_source_adapter(
+                manifest, bundle, _namespaced(mcp_attachment, http_config.namespace)
+            )
 
         unplaced = unplaced_secrets(manifest)
         if unplaced:
@@ -329,8 +333,48 @@ def build_attachment(
                 )
             ],
         )
-        return _with_source_adapter(manifest, bundle, mcp_attachment)
+        return _with_source_adapter(
+            manifest, bundle, _namespaced(mcp_attachment, stdio_config.namespace)
+        )
     raise _refuse(f"unknown attachment kind {kind!r}", attachment=kind)
+
+
+class _NamespacedAttachment:
+    """Serve a server's tools as ``<namespace>__<verb>``, so none can shadow a built-in.
+
+    An MCP server names its own tools, and a bare ``bash`` or ``write`` from a server
+    an operator added would otherwise compete with the built-in of that name. The
+    prefix is applied at this one seam: the manifest declares, allows and classifies
+    the prefixed names, and the call is stripped back to the server's own verb on the
+    way out. A call for a name outside the namespace never reaches the server.
+    """
+
+    def __init__(self, delegate: ExtensionAttachment, namespace: str) -> None:
+        self._delegate = delegate
+        self._prefix = f"{namespace}__"
+
+    def requirements(self) -> Any:
+        return self._delegate.requirements()
+
+    async def probe(self) -> Any:
+        result = await self._delegate.probe()
+        return result.model_copy(update={"tools": self._renamed(result.tools)})
+
+    async def describe_tools(self) -> Any:
+        return self._renamed(await self._delegate.describe_tools())
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> Any:
+        if not tool.startswith(self._prefix):
+            raise _refuse(f"{tool!r} is outside this server's namespace", tool=tool)
+        result = await self._delegate.invoke(tool.removeprefix(self._prefix), args)
+        return result.model_copy(update={"tool": tool})
+
+    def _renamed(self, specs: Any) -> list[Any]:
+        return [spec.model_copy(update={"name": f"{self._prefix}{spec.name}"}) for spec in specs]
+
+
+def _namespaced(attachment: ExtensionAttachment, namespace: str) -> ExtensionAttachment:
+    return _NamespacedAttachment(attachment, namespace) if namespace else attachment
 
 
 def _with_source_adapter(

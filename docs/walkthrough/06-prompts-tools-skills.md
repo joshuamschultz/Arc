@@ -244,7 +244,6 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 | Transport | Enum value | Status |
 |---|---|---|
 | Native (in-process, `@tool`-decorated) | `NATIVE` | **Wired.** Every real registration path (`builtins`, capability-loaded tools) constructs `RegisteredTool(transport=ToolTransport.NATIVE, ...)`. |
-| MCP | `MCP` | **Enum + config only — but MCP itself is not missing.** `MCPServerEntry` exists in `ToolsConfig` (`core/config.py:152-194`), and nothing reads `mcp_servers` to spawn a connection or dispatch a call through *this* enum. Arc reaches MCP servers by a different route — see the note below. |
 | HTTP | `HTTP` | **Enum + config only.** `HTTPToolEntry` is declared (`core/config.py:161`); no dispatch path constructs `transport=ToolTransport.HTTP`. |
 | Process | `PROCESS` | **Enum + config only.** Same pattern — `ProcessToolEntry` is declared, never wired. |
 
@@ -253,8 +252,8 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 > registry. Building an HTTP- or process-backed tool means writing the wiring,
 > not configuring it.
 
-> **MCP is a live capability, reached through extensions — not through the
-> `ToolTransport.MCP` enum.** ADR-018 originally excluded an MCP client from
+> **MCP is a live capability, reached through extensions — there is no `ToolTransport.MCP`
+> enum value and no `tools.mcp_servers` config (both were dead and are deleted).** ADR-018 originally excluded an MCP client from
 > scope, and older documentation still reads that way, but ADR-030
 > reversed exactly that exclusion (leaving the migration-tooling and ACP
 > exclusions standing). An MCP client ships today as an *extension attachment*:
@@ -596,7 +595,7 @@ not `improver/evaluator.py` (that's the ranker, not the gate).
  `[modules.skills] adapter = "arcskill"` was not checked; this doc
  describes the mechanism, not current deployment state.
 - HTTP/process/MCP transport wiring was confirmed absent by exhaustive grep
- for `ToolTransport.HTTP` / `.PROCESS` / `.MCP` construction sites as of
+ for `ToolTransport.HTTP` / `.PROCESS` construction sites as of
  this writing; a future change could add one without updating this doc.
 
 ---

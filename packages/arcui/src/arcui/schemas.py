@@ -1114,6 +1114,39 @@ class ConnectorInstallResponse(BaseModel):
     agents: list[str]
 
 
+class McpToolView(BaseModel):
+    """One tool an MCP server advertised. The description is the server's own, untrusted text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str
+    usable: bool
+    reason: str = ""
+
+
+class McpPreviewResponse(BaseModel):
+    """Body of ``POST /api/mcp-servers/preview`` — what the server offers, nothing written."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tools: list[McpToolView]
+    suggested_tags: list[str]
+
+
+class McpServerAddedResponse(BaseModel):
+    """Body of ``POST /api/mcp-servers`` — names and a digest, never a credential."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance: str
+    extension: str
+    tools: list[str]
+    detail: str
+    agents: list[str]
+    spec_sha256: str
+
+
 class ConnectorHostBlockedResponse(BaseModel):
     """400 body when the host lacks a prerequisite: the error plus what to install."""
 

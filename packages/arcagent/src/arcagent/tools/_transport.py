@@ -28,7 +28,6 @@ class ToolTransport(Enum):
     """Transport type for tool execution."""
 
     NATIVE = "native"
-    MCP = "mcp"
     HTTP = "http"
     PROCESS = "process"
 

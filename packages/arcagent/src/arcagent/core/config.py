@@ -212,6 +212,10 @@ class ToolConfig(BaseModel):
     # may reach, this names the verbs allowed to send at all. Composes with
     # ``allow``/``deny`` and can only subtract — deny still wins.
     egress_allow: list[str] = []
+    # Programs an operator-added stdio MCP server may launch above personal tier
+    # (``arc connector add-mcp``). Absolute paths or bare program names; empty means
+    # no arbitrary binary becomes a server. Federal accepts no operator-added server.
+    mcp_stdio_allow: list[str] = []
     # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
     # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
     # Unlabeled tools default to UNCLASSIFIED (no gating).
@@ -219,15 +223,6 @@ class ToolConfig(BaseModel):
     # SPEC-038 REQ-025 — per-origin destination clearance (no-exfil). Allowlisted
     # origin → clearance string. Missing → UNCLASSIFIED (external = lowest).
     egress_clearances: dict[str, str] = {}
-
-
-class MCPServerEntry(BaseModel):
-    """MCP server tool entry."""
-
-    command: str
-    args: list[str] = []
-    env: dict[str, str] = {}
-    timeout_seconds: int = 30
 
 
 class HTTPToolEntry(BaseModel):
@@ -268,7 +263,6 @@ class HumanGatePolicy(BaseModel):
 class ToolsConfig(BaseModel):
     """All tool configurations by transport."""
 
-    mcp_servers: dict[str, MCPServerEntry] = {}
     http: dict[str, HTTPToolEntry] = {}
     process: dict[str, ProcessToolEntry] = {}
     policy: ToolConfig = ToolConfig()

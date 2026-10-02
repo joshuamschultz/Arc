@@ -47,6 +47,7 @@ from arcagent.connections import (
     HostPrerequisiteDirector,
     HostVerdict,
     InstallReport,
+    McpServerAdded,
     RemoteLoginLedger,
     RemoteLoginStart,
     Tier,
@@ -126,6 +127,14 @@ from arcagent.modules.capability_import.pack_signing import (
 )
 from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
+from arcagent.modules.connectors.mcp_bundle import (
+    DEFAULT_HTTP_TAGS,
+    DEFAULT_STDIO_TAGS,
+    DiscoveredTool,
+    McpServerSpec,
+    McpToolChoice,
+)
+from arcagent.modules.connectors.mcp_bundle import spec_digest as mcp_spec_digest
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.modules.session.identity_graph import IdentityGraph
@@ -272,6 +281,8 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "DEFAULT_HTTP_TAGS",
+    "DEFAULT_STDIO_TAGS",
     "MEMORY_PROMOTION_MAX_ITEMS",
     "NOTICE_CLAIM_TTL",
     "NOT_INSTALLED",
@@ -324,6 +335,7 @@ __all__ = [
     "DeliveryTextEvent",
     "DeliveryToolEvent",
     "DeliveryUnavailableError",
+    "DiscoveredTool",
     "ExtensionError",
     "GatedItem",
     "HealthSignal",
@@ -341,6 +353,9 @@ __all__ = [
     "KnowledgeRef",
     "LedgerRunOwner",
     "LiveSkillRevisionResolver",
+    "McpServerAdded",
+    "McpServerSpec",
+    "McpToolChoice",
     "MemoryConfig",
     "MemoryPromotionConfig",
     "ModuleBusError",
@@ -410,6 +425,7 @@ __all__ = [
     "load_signature",
     "make_spawn_tool",
     "manifest_dict",
+    "mcp_spec_digest",
     "model_config_path",
     "module_root",
     "modules_path",
