@@ -129,7 +129,15 @@ Key fields:
   schedule**; the runner ticks the frontier and narrates progress to the team
   channel.
 - **`needs`** — a node's dependency list. A node runs once every named upstream
-  reaches `done` (or `skipped`). `join = "all"` (default) or `"any"` sets fan-in.
+  reaches `done` (or `skipped`). A skipped upstream skips the node too. A workflow
+  is a DAG: there are no loops and no `join = "any"`, and a node may not need
+  nodes from two exclusive routes of one router. Retry a failed node with
+  `arc workflow retry <run> <node>`; finished nodes never run again.
+- **`on_failure`** — what a failed node does to the run: `fail_run` (default:
+  the run fails with the node's error and every node that never ran is marked
+  `cancelled` with the reason), `continue` (dependents run and are told what
+  failed; not allowed on a gate or router), or `skip_dependents` (descendants are
+  `skipped` with the reason and the run ends `done_with_failures`).
 - **Node kinds** — `agent` (a bounded agent run with a file-referenced `prompt`),
   `tool`, `script`, `router`, `gate`.
 - **`deliver_to`** — the important one for scheduled work. A cron run arrives on
