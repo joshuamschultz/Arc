@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "brief": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "brief"
+  ],
+  "additionalProperties": true
+}

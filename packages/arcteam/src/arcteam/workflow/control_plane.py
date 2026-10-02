@@ -26,7 +26,8 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .runner import WorkflowRunner
+from .errors import WorkflowError
+from .runner import TEST_RUN_MAX_COST_USD, WorkflowRunner
 from .runner_contracts import (
     BundleSpec,
     DefinitionParser,
@@ -38,6 +39,7 @@ from .runner_contracts import (
     Tier,
     ValidationIssueLike,
 )
+from .templates import load_template
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +238,75 @@ class WorkflowControlPlane:
         )
         return ControlPlaneResult(ok=True)
 
+    async def create_from_template(
+        self,
+        template: str,
+        workflow_id: str,
+        *,
+        actor_did: str,
+        owner: str | None = None,
+    ) -> ControlPlaneResult:
+        """Start a new draft from a shipped starter template (J3 F6, G5).
+
+        Goes through :meth:`create`, so a template is validated, versioned,
+        audited and left unsigned exactly like any other authored definition —
+        a template confers no trust, it only saves the blank page.
+        """
+        try:
+            document, files = load_template(template, workflow_id=workflow_id, owner=owner)
+        except WorkflowError as exc:
+            self._emit(
+                _Operation("workflow.created", workflow_id, "invalid", {"template": template}),
+                actor_did,
+            )
+            return ControlPlaneResult(
+                ok=False, errors=(OperationIssue(None, "template", str(exc)),)
+            )
+        return await self._write(
+            document,
+            actor_did=actor_did,
+            expected_version=None,
+            action="workflow.created",
+            reason=f"from template {template}",
+            files=files,
+        )
+
     # -- initiation ---------------------------------------------------------
+
+    async def test_run(self, workflow_id: str, *, actor_did: str) -> ControlPlaneResult:
+        """Try a draft at any tier without trusting it (J3 F6, G8).
+
+        The one unsigned run allowed above personal tier, and only in test mode:
+        the run id is in the reserved test namespace, every node row is flagged
+        so the executing agent stubs state-modifying tools with a recorded echo,
+        agent nodes run under a small cost cap, and nothing a schedule or an agent
+        does can start it. Audited as ``workflow.test_run``. Callers are
+        operator-authenticated surfaces; this method does not itself check a role.
+        """
+        try:
+            record = await self._runner.start_run(
+                workflow_id,
+                input={},
+                initiator="operator",
+                initiator_did=actor_did,
+                mode="test",
+            )
+        except Exception as exc:
+            self._emit(
+                _Operation("workflow.test_run", workflow_id, "refused", {"error": str(exc)}),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+        self._emit(
+            _Operation(
+                "workflow.test_run",
+                f"{workflow_id}/{record.run_id}",
+                "started",
+                {"run_id": record.run_id, "max_cost_usd": TEST_RUN_MAX_COST_USD},
+            ),
+            actor_did,
+        )
+        return ControlPlaneResult(ok=True, run=record)
 
     async def run(
         self,

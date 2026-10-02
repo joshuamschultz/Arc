@@ -52,6 +52,7 @@ from .runner_budget import RunBudget
 from .runner_contracts import (
     TERMINAL_RUN_STATUSES,
     ArgsResolver,
+    BundleSpec,
     DefinitionStoreLike,
     Initiator,
     NodeSpec,
@@ -70,6 +71,21 @@ from .runner_state import NodeInstance, RunState, derive_node_states
 from .stores import RunStateMissingError
 
 logger = logging.getLogger(__name__)
+
+
+#: Run ids in this namespace are test runs: unsigned drafts an operator is trying
+#: out. A live start can never claim it, so the id alone says what a run is.
+TEST_RUN_PREFIX = "test-"
+
+#: The most a test run may spend. A draft nobody has read yet gets a small purse.
+TEST_RUN_MAX_COST_USD = 0.50
+
+RunMode = Literal["live", "test"]
+
+
+def is_test_run(run_id: str) -> bool:
+    """Whether ``run_id`` names a test run (see :data:`TEST_RUN_PREFIX`)."""
+    return run_id.startswith(TEST_RUN_PREFIX)
 
 
 class WorkflowRunError(RuntimeError):
@@ -335,8 +351,15 @@ class WorkflowRunner:
         run_id: str | None = None,
         trigger_digest: str | None = None,
         detached: bool = False,
+        mode: RunMode = "live",
     ) -> RunRecord:
         """Create the Run record, then materialize the first frontier.
+
+        ``mode="test"`` is the one way an unsigned draft runs above personal
+        tier: the run id is minted in the reserved test namespace, trust is not
+        asked, the run's spend is capped, and every node row is flagged so the
+        agent executing it stubs state-modifying work. A live start can never
+        claim a test id.
 
         ``detached=True`` only creates the Run row and returns: the lease
         holder's next tick materializes the frontier. Without it, a CLI or
@@ -353,15 +376,27 @@ class WorkflowRunner:
         # directory. The store refuses a traversal id itself — this is the
         # boundary check that means that backstop is never the thing that fires.
         _assert_safe_name("workflow id", workflow_id)
-        try:
-            bundle = self._definitions.load_for_run(workflow_id)
-        except UnsignedWorkflowError as exc:
-            self._deny_unsigned(workflow_id, initiator, initiator_did)
-            raise UnsignedWorkflowRefusedError(str(exc)) from exc
+        test_mode = mode == "test"
+        if test_mode:
+            run_id = run_id or f"{TEST_RUN_PREFIX}{uuid4().hex[:12]}"
+        if test_mode != (run_id is not None and is_test_run(run_id)):
+            raise WorkflowRunError(
+                f"run ids starting with {TEST_RUN_PREFIX!r} are reserved for test runs"
+            )
+        if test_mode:
+            bundle = self._definitions.load(workflow_id)
+            if bundle.status == "archived":
+                raise WorkflowRunError(f"workflow {workflow_id!r} is archived")
+        else:
+            try:
+                bundle = self._definitions.load_for_run(workflow_id)
+            except UnsignedWorkflowError as exc:
+                self._deny_unsigned(workflow_id, initiator, initiator_did)
+                raise UnsignedWorkflowRefusedError(str(exc)) from exc
         # Trust is `is_verified`, never `status`: status carries lifecycle, and
         # an archived bundle can be validly signed. Keying the gate off status
         # would refuse a definition that is in fact trusted.
-        if not bundle.is_verified:
+        if not bundle.is_verified and not test_mode:
             self._admit_unsigned(workflow_id, initiator, initiator_did)
         definition = bundle.definition
         assert_channel_binding(definition.channel)
@@ -380,7 +415,7 @@ class WorkflowRunner:
             channel=definition.channel,
             input=dict(input),
             budget_tokens=None if budget is None else budget.tokens,
-            budget_cost_usd=None,
+            budget_cost_usd=TEST_RUN_MAX_COST_USD if test_mode else None,
             budget_wall_clock_s=None if budget is None else budget.wall_clock_s,
             fence=self._mutation_fence(),
         )
@@ -398,6 +433,7 @@ class WorkflowRunner:
                 # the definition behind run 17" stops being reconstructible.
                 "signer_did": bundle.signer_did,
                 "initiator": initiator,
+                "mode": mode,
             },
         )
         if self._narrator is not None:
@@ -508,7 +544,7 @@ class WorkflowRunner:
         # Dispatch re-reads through the integrity + tier gate on every tick, but
         # NOT the archived refusal: archiving a workflow must not break the runs
         # already moving through it.
-        bundle = self._definitions.load_for_dispatch(run.workflow_id)
+        bundle = self._bundle_for_dispatch(run)
         if bundle.content_hash != run.content_hash:
             return await self._terminate(run_id, "failed", "definition changed under a live run")
         definition = bundle.definition
@@ -529,6 +565,13 @@ class WorkflowRunner:
             if not changed:
                 break
         return await self._finalize(run, definition, last_state)
+
+    def _bundle_for_dispatch(self, run: RunRecord) -> BundleSpec:
+        """The bundle to dispatch ``run`` from. A test run is trusted by no one, so
+        the signature gate is not asked of it; it never reaches a live path."""
+        if is_test_run(run.run_id):
+            return self._definitions.load(run.workflow_id)
+        return self._definitions.load_for_dispatch(run.workflow_id)
 
     async def run_forever(self, *, interval: float = 5.0) -> None:
         """Tick until cancelled — the host's entry point (COMP-009).
@@ -1004,6 +1047,11 @@ class WorkflowRunner:
             # could complete stays unreachable by splitting it across nodes.
             "accumulated_legs": list(legs),
         }
+        if is_test_run(run.run_id):
+            # The executing agent reads these two: it alone knows a tool's
+            # classification (to stub state-modifying work) and enforces the cap.
+            metadata["mode"] = "test"
+            metadata["max_cost_usd"] = TEST_RUN_MAX_COST_USD
         revision_notes = state.revisions.get((node.id, iteration))
         if revision_notes:
             metadata["revision_notes"] = revision_notes

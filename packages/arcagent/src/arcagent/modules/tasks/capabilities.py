@@ -76,6 +76,7 @@ from arcagent.modules.tasks._dispatch_helpers import (
 )
 from arcagent.modules.tasks.models import Priority, Task
 from arcagent.modules.tasks.node_execution import (
+    TEST_MODE,
     WorkflowNode,
     _confined,
     allowed_strategies,
@@ -821,6 +822,17 @@ async def _run_tool_node(
     if declared is None:
         await _fail_node_attempt(st, task, f"declared tool {node.tool!r} is unavailable")
         return
+    if node.mode == TEST_MODE and declared.classification != "read_only":
+        # A test run records what WOULD have happened. Only an explicitly
+        # read-only tool runs; an unclassified one is treated as state-modifying.
+        await _complete_stubbed_node(
+            st,
+            task,
+            node,
+            {"stubbed": True, "tool": node.tool, "args": node.args},
+            self_did,
+        )
+        return
     context = arcrun.ToolContext(
         run_id=node.run_id,
         tool_call_id=node.idempotency_key,
@@ -843,6 +855,29 @@ async def _run_tool_node(
     )
 
 
+async def _complete_stubbed_node(
+    st: _runtime._State,
+    task: Task,
+    node: WorkflowNode,
+    output: dict[str, Any],
+    self_did: str,
+) -> None:
+    """Finish a test-run node with a recorded echo instead of its real effect.
+
+    Exactly once per attempt, like the real thing, and deliberately NOT held to
+    the node's output schema: the echo says what would have run, it is not what
+    the node would have produced.
+    """
+    await _complete_node_attempt(
+        st,
+        task,
+        attempt_key=_node_attempt_key(task, node),
+        output=output,
+        resolution="stubbed in test run",
+        self_did=self_did,
+    )
+
+
 async def _run_script_node(
     st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
 ) -> None:
@@ -858,6 +893,12 @@ async def _run_script_node(
     """
     key = _node_attempt_key(task, node)
     if await _attempt_already_recorded(st, task, key):
+        return
+    if node.mode == TEST_MODE:
+        # An unsigned draft's code is what a test run has not been trusted with.
+        await _complete_stubbed_node(
+            st, task, node, {"stubbed": True, "script": node.script}, self_did
+        )
         return
     bundle = _bundle_root(st, node)
     if bundle is None:
@@ -1052,6 +1093,8 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     run_kwargs: dict[str, Any] = {}
     if node is not None:
         run_kwargs["allowed_strategies"] = allowed_strategies(node)
+        if node.max_cost_usd is not None:
+            run_kwargs["max_cost_usd"] = node.max_cost_usd
         # A node may pin where its human-facing notification goes. Threaded as
         # the turn's reply target, it becomes what ``notify_user`` delivers to —
         # so a cron run's summary lands on the pinned channel instead of falling

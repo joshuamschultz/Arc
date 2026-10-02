@@ -1,0 +1,24 @@
+[workflow]
+id = "scheduled_watcher"
+name = "Scheduled watcher"
+description = "Check something on a schedule and speak up only when it changed."
+owner = "@operator"
+
+[trigger]
+type = "interval"
+interval_s = 3600
+
+[[node]]
+id = "check"
+kind = "agent"
+prompt = "prompts/check.md"
+output_schema = "schemas/check.json"
+timeout_s = 300
+
+[[node]]
+id = "notify"
+kind = "agent"
+prompt = "prompts/notify.md"
+needs = ["check"]
+when = "$nodes.check.output.changed == true"
+timeout_s = 300

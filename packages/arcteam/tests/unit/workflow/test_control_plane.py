@@ -476,6 +476,8 @@ def test_the_operation_set_is_the_shared_eight(stores: Any) -> None:
         "run",
         "cancel",
         "resolve_gate",
+        "create_from_template",
+        "test_run",
     }
 
 
