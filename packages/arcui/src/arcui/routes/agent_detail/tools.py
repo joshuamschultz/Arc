@@ -316,6 +316,27 @@ def _load_tool_policy(
     return allowlist, denylist, enabled_modules
 
 
+def declared_idempotency(agent_root: Path) -> dict[str, bool]:
+    """``tool name -> idempotent`` from every installed extension manifest.
+
+    A manifest's ``[[tools.declared]]`` ``idempotent = false`` marks a verb whose
+    repeat call duplicates an external effect it cannot dedupe. Only declared
+    tools appear here; every other tool is treated as safe to repeat by the
+    caller. An unreadable or malformed manifest contributes nothing — this is a
+    display hint, and the engine's own gate does not depend on it.
+    """
+    declared: dict[str, bool] = {}
+    for manifest in sorted((agent_root / "extensions").glob("*/extension.toml")):
+        try:
+            tools = tomllib.loads(manifest.read_text(encoding="utf-8")).get("tools", {})
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        for item in tools.get("declared", []) if isinstance(tools, dict) else []:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                declared[item["name"]] = bool(item.get("idempotent", True))
+    return declared
+
+
 def agent_tool_rows(
     agent_id: str, agent_root: Path, live_tools: list[str]
 ) -> tuple[list[dict[str, Any]], list[str], list[str], arcagent.ToolPolicySummary]:
@@ -347,7 +368,7 @@ def agent_tool_rows(
     def _add(name: str, **fields: Any) -> None:
         if not name or name in seen:
             return
-        row = {
+        row: dict[str, Any] = {
             "name": name,
             "transport": "",
             "classification": "",
@@ -380,6 +401,10 @@ def agent_tool_rows(
         _add(row["name"], transport=row["transport"])
     for t in allowlist:
         _add(t, transport="config")
+
+    declared = declared_idempotency(agent_root)
+    for entry in seen.values():
+        entry["idempotent"] = declared.get(entry["name"], True)
 
     return list(seen.values()), allowlist, denylist, policy_summary
 
@@ -453,7 +478,9 @@ async def _merge_loader_verdicts(
         if not target.get("description"):
             target["description"] = cap.get("description") or ""
 
+    declared = declared_idempotency(agent_root)
     for row in tools:
+        row.setdefault("idempotent", declared.get(str(row["name"]), True))
         row.setdefault("version", "")
         row.setdefault("source_root", "")
         row.setdefault("loader_status", "")

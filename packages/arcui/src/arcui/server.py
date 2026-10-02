@@ -940,11 +940,22 @@ def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:
         logger.info("no workflow runner hosted here; workflow screens stay unavailable")
         return
     try:
-        from arcui.workflow_plane import build_dashboard_plane
+        from arcui.workflow_plane import (
+            build_dashboard_plane,
+            roster_schedule_reader,
+            roster_tool_idempotency,
+        )
+
+        def roster() -> Any:
+            # Looked up per call: the roster provider is attached after this runs.
+            provider = getattr(app.state, "roster_provider", None)
+            return [] if provider is None else provider()
 
         plane = build_dashboard_plane(
             runner=runner,
             approvals=getattr(app.state, "approval_store", None),
+            schedule_reader=roster_schedule_reader(roster),
+            tool_idempotent=roster_tool_idempotency(roster),
         )
         app.state.workflow_control_plane = plane
         # The same object answers both Protocols: one control plane, one

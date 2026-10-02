@@ -24,7 +24,7 @@ import re
 import stat
 import tempfile
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -123,6 +123,22 @@ def _validate_edits(edits: dict[str, Any]) -> str | None:
         except ValueError:
             return "at must be an ISO 8601 datetime"
     return None
+
+
+def _stamp_enabled_change(entry: dict[str, Any], enabled: bool) -> None:
+    """Record WHY the row is on or off, in the metadata the dashboard reads.
+
+    Without this an operator's re-enable left ``disabled_reason = "breaker"`` on
+    an enabled row (the page kept saying "paused"), and an operator's disable
+    carried no reason (so the engine could mistake it for its own trip).
+    Metadata is outside the signed definition, so this never touches the approval.
+    """
+    meta = dict(entry.get("metadata") or {})
+    if enabled:
+        meta.update(disabled_reason=None, disabled_at=None, consecutive_failures=0)
+    else:
+        meta.update(disabled_reason="operator", disabled_at=datetime.now(UTC).isoformat())
+    entry["metadata"] = meta
 
 
 def _atomic_write_json(path: Path, data: list[Any]) -> None:
@@ -244,6 +260,8 @@ async def patch_schedule(request: Request) -> JSONResponse:
         return _error(str(exc), 400)
 
     entries[index] = approved.model_dump(mode="json")
+    if "enabled" in edits and edits["enabled"] != previous.enabled:
+        _stamp_enabled_change(entries[index], edits["enabled"])
     try:
         _atomic_write_json(path, entries)
     except OSError as exc:

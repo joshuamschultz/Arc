@@ -11,7 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useAgentCapabilities, useRoster } from '@/lib/queries'
+import { useAgentCapabilities, useAgentTools, useRoster } from '@/lib/queries'
+import { RepeatUnsafeChip } from '@/components/workflows-view/repeat-warning'
 import {
   KIND_HELP,
   NODE_KINDS,
@@ -144,7 +145,18 @@ export function WorkflowNodeForm({
     [roster.data],
   )
   const agentId = draft.agent.replace(/^@/, '')
-  const capabilities = useAgentCapabilities(agentId || (roster.data?.agents ?? [])[0]?.agent_id || '')
+  const toolAgentId = agentId || (roster.data?.agents ?? [])[0]?.agent_id || ''
+  const capabilities = useAgentCapabilities(toolAgentId)
+  const agentTools = useAgentTools(toolAgentId)
+  const repeatUnsafeTools = useMemo(
+    () =>
+      new Set(
+        (agentTools.data?.tools ?? [])
+          .filter((row) => row.idempotent === false)
+          .map((row) => String(row.name)),
+      ),
+    [agentTools.data],
+  )
   const skills = useMemo(
     () =>
       (capabilities.data?.items ?? [])
@@ -263,6 +275,12 @@ export function WorkflowNodeForm({
               onChange={(v) => set('tool', v)}
             />
           </Field>
+          {repeatUnsafeTools.has(draft.tool) && (
+            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <RepeatUnsafeChip />
+              A retry or reclaimed attempt runs this tool&apos;s side effect again.
+            </p>
+          )}
           <Field
             label="Arguments (JSON)"
             hint='Wire upstream values with "$nodes.<id>.output.<field>".'
