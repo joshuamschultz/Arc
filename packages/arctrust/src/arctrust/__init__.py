@@ -113,6 +113,7 @@ from arctrust.audit import (
     worm_policy_sink,
 )
 from arctrust.audit_cipher import RecordCipher, derive_record_key
+from arctrust.connector_cipher import ConnectorSecretCipher, CredentialSealError
 from arctrust.authority_config import (
     AuthorityConfigError,
     DeploymentAuthorityConfig,
@@ -170,6 +171,7 @@ from arctrust.operator_resolver import (
     bootstrap_operator_signer,
     machine_security,
     operator_key_file,
+    operator_key_for,
     operator_public_key_for,
     operator_signer_for,
     operator_transit_for,
@@ -435,6 +437,8 @@ __all__ = [
     "AppendOnlyMediumWitness",
     "ApprovalGrant",
     "ArcTrustFipsError",
+    "ConnectorSecretCipher",
+    "CredentialSealError",
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
@@ -581,6 +585,7 @@ __all__ = [
     "open_vault_lease",
     "operator_dir",
     "operator_key_file",
+    "operator_key_for",
     "operator_public_key_for",
     "operator_signer_for",
     "operator_transit_for",
