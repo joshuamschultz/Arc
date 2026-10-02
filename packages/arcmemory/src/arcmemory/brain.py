@@ -22,7 +22,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -836,12 +836,13 @@ class ArcMemoryBrain:
         query: str,
         *,
         source_id: str | None = None,
+        source_ids: Sequence[str] | None = None,
         clearance: str = "unclassified",
         top_k: int | None = None,
         caller_did: str = "",
         session_id: str | None = None,
     ) -> list[DocHit]:
-        """Envelope + per-source doc-pool search, classification-gated (no-read-up)."""
+        """Envelope + doc-pool search (one, several, or every pool), no-read-up gated."""
         if not await self._guard(
             "memory.document_search", caller_did=caller_did, target=source_id or ""
         ):
@@ -850,7 +851,9 @@ class ArcMemoryBrain:
             return []
         hits = await DocIndex(
             self._db, self._workspace, self._cfg, embedder=self._embedder, audit_sink=self._audit
-        ).document_search(query, self._agent_did, source_id=source_id, top_k=top_k)
+        ).document_search(
+            query, self._agent_did, source_id=source_id, source_ids=source_ids, top_k=top_k
+        )
         strict = self._cfg.tier == "federal"
         clr = parse_classification(clearance, strict=strict)
         kept: list[DocHit] = []

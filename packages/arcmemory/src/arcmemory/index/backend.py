@@ -131,6 +131,10 @@ class IndexBackend(Protocol):
         """Distinct labels of ``scope``'s content chunks, collection indexes excluded."""
         ...
 
+    async def scopes_with_prefix(self, prefix: str) -> list[str]:
+        """Every distinct scope key that starts with ``prefix``, sorted."""
+        ...
+
 
 class SqliteIndexBackend:
     """The default ``IndexBackend`` — the existing per-agent ``MemoryDB`` SQLite."""
@@ -363,6 +367,14 @@ class SqliteIndexBackend:
             (scope,),
         ).fetchall()
         return {str(row[0] or "") for row in rows}
+
+    async def scopes_with_prefix(self, prefix: str) -> list[str]:
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT DISTINCT scope FROM chunks WHERE substr(scope, 1, ?) = ? ORDER BY scope",
+            (len(prefix), prefix),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
 
 
 # Module-level pool cache keyed by DSN, guarded by a lock: per-op backend
@@ -646,6 +658,16 @@ class PostgresIndexBackend:
                 scope,
             )
         return {str(row["classification"] or "") for row in rows}
+
+    async def scopes_with_prefix(self, prefix: str) -> list[str]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT scope FROM chunks WHERE left(scope, $1) = $2 ORDER BY scope",
+                len(prefix),
+                prefix,
+            )
+        return [str(row["scope"]) for row in rows]
 
 
 def _parse_fts_tokens(query: str) -> list[str]:

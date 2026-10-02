@@ -116,6 +116,8 @@ async def inject_recall(ctx: Any) -> None:
 
     query = (ctx.data.get("query") or "").strip()
     text = await _query_recall(st, ctx, query) if query else ""
+    if query:
+        text = _merge_recall(text, await _connected_doc_recall(st, query, text))
 
     # Drain the proactive buffer once, regardless of the query path — its text
     # already passed the Brain's gate when it was buffered at on_moment time.
@@ -128,6 +130,36 @@ async def inject_recall(ctx: Any) -> None:
     profile = await _approved_profile_context(st)
     if profile:
         sections["profile"] = profile
+
+
+#: Connected documents recalled per turn. Small on purpose: the prompt budget is
+#: shared with memory recall, and the agent can always call ``document_search``.
+_DOC_RECALL_TOP_K = 3
+
+
+async def _connected_doc_recall(st: _runtime._State, query: str, memory_text: str) -> list[str]:
+    """Top connected documents for this turn's query, once per turn, bounded.
+
+    Skips any document the memory recall already surfaced, and degrades to nothing
+    (logged) rather than failing prompt assembly when the document index is down.
+    """
+    search = getattr(st.brain, "document_search", None)
+    if search is None:
+        return []
+    key = hash(("connected-docs", query))
+    cached = st.recall_cache.get(key)
+    if cached is not None:
+        return [cached] if cached else []
+    seen = {m.group(1) for m in _CARD_RE.finditer(memory_text)}
+    try:
+        hits = await search(query, top_k=_DOC_RECALL_TOP_K, caller_did=st.agent_did)
+    except Exception:  # recall is best-effort; never block prompt assembly
+        _logger.warning("connected-document recall failed", exc_info=True)
+        return []
+    fresh = [hit for hit in hits if getattr(hit, "pointer", "") not in seen]
+    text = _frame_untrusted(_doc_blocks(fresh[:_DOC_RECALL_TOP_K])) if fresh else ""
+    _cache_recall(st, key, text)
+    return [text] if text else []
 
 
 async def _approved_profile_context(st: _runtime._State) -> str:
@@ -709,7 +741,7 @@ async def knowledge_search(query: str) -> str:
     ),
 )
 async def document_search(query: str, source: str | None = None, top_k: int | None = None) -> str:
-    """Query a connected document source, boundary-marked. Graceful when none is wired."""
+    """Query connected document sources, boundary-marked. Graceful when none is wired."""
     st = _runtime.state()
     if not st.active:
         return "Memory is not enabled for this agent."
@@ -718,12 +750,53 @@ async def document_search(query: str, source: str | None = None, top_k: int | No
         return "Document search is not available for this agent."
     if not await _acl_allows("memory.search", st.agent_did):
         return "No document results found."
-    hits = await search(query, source_id=source, top_k=top_k, caller_did=st.agent_did)
+    scope: dict[str, Any] = {}
+    if source:
+        resolved, available = await _resolve_document_sources(source)
+        if resolved is None and available:
+            return f"No connected source is named {source!r}. Connected sources: {available}."
+        scope = {"source_ids": resolved} if resolved is not None else {"source_id": source}
+    hits = await search(query, top_k=top_k, caller_did=st.agent_did, **scope)
     await _audit(
         "memory.document_search",
         {"query_len": len(query), "source": source or "", "hit": bool(hits), "tool": True},
     )
     return _render_doc_hits(query, hits)
+
+
+_SOURCE_ID = re.compile(r"^[0-9a-f]{64}$")
+
+
+async def _resolve_document_sources(name: str) -> tuple[list[str] | None, str]:
+    """Map a display name, kind or connection name to its document-pool source ids.
+
+    The model only ever sees names; pools are keyed by a sha256 source id. Returns
+    ``(ids, "")`` on a match (several when two accounts share a kind), ``(None, "")``
+    when no connected-data service is wired (the caller then passes the value
+    through), and ``(None, names)`` when a service exists but nothing matches.
+    """
+    if _SOURCE_ID.match(name):
+        return [name], ""
+    try:
+        runtime = __import__("arcagent.modules.connected_data._runtime", fromlist=["state"])
+        service = runtime.state().service
+    except RuntimeError:
+        return None, ""
+    if service is None:
+        return None, ""
+    wanted = name.strip().casefold()
+    ids: list[str] = []
+    names: list[str] = []
+    for status in await service.list_sources():
+        described = status.description
+        if described is None or not status.source_id:
+            continue
+        label = described.display_name or described.source_kind
+        names.append(f"{label} ({described.source_kind})")
+        keys = (described.display_name, described.source_kind, status.connection_id)
+        if wanted in {str(key).casefold() for key in keys if key}:
+            ids.append(status.source_id)
+    return (ids, "") if ids else (None, ", ".join(names) or "none")
 
 
 def _frame_untrusted(blocks: list[tuple[str, str]]) -> str:
@@ -747,12 +820,32 @@ def _frame_untrusted(blocks: list[tuple[str, str]]) -> str:
     return render_recalls([Recall(source=src, content=text, score=0.0) for src, text in blocks])
 
 
+def _citation_line(hit: Any) -> str:
+    """One provenance line a model can cite: title, source, link, last update."""
+    parts = [
+        ("Title", getattr(hit, "title", "")),
+        ("Source", getattr(hit, "source_kind", "")),
+        ("Link", getattr(hit, "url", "")),
+        ("Updated", getattr(hit, "updated_at", "")),
+    ]
+    return " | ".join(f"{label}: {value}" for label, value in parts if value)
+
+
+def _doc_blocks(hits: list[Any]) -> list[tuple[str, str]]:
+    """``(pointer, text)`` pairs with each hit's citation line ahead of its text."""
+    blocks: list[tuple[str, str]] = []
+    for hit in hits:
+        citation = _citation_line(hit)
+        text = getattr(hit, "text", "")
+        blocks.append((getattr(hit, "pointer", ""), f"{citation}\n{text}" if citation else text))
+    return blocks
+
+
 def _render_doc_hits(query: str, hits: list[Any]) -> str:
     """Render document hits as boundary-marked, provenance-carrying DATA."""
     if not hits:
         return f"No document results found for {query!r}."
-    blocks = [(getattr(h, "pointer", ""), getattr(h, "text", "")) for h in hits]
-    return _frame_untrusted(blocks)
+    return _frame_untrusted(_doc_blocks(hits))
 
 
 @tool(
