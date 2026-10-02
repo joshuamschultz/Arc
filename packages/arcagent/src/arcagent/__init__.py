@@ -99,6 +99,7 @@ from arcagent.modules.capability_import.models import (
     CapabilityImportReview,
     CapabilityImportStatus,
 )
+from arcagent.modules.capability_import.pack_signing import SkillPackError, sign_skill_folder
 from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
@@ -338,6 +339,7 @@ __all__ = [
     "SharedKnowledgePort",
     "SignedControlRevision",
     "SkillArtifactResolver",
+    "SkillPackError",
     "SkillRuntime",
     "SourceRefusedError",
     "SourceUnreachableError",
@@ -391,6 +393,7 @@ __all__ = [
     "set_workflow_runner",
     "sidecar_path",
     "sign_capability",
+    "sign_skill_folder",
     "skill_revision_scope",
     "stream_token_text",
     "stricter_tier",

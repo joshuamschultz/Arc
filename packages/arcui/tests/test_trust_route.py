@@ -823,3 +823,114 @@ def test_the_servers_chain_verifies_and_holds_no_key_material(
     raw = _chain_path(tmp_path).read_text(encoding="utf-8")
     assert key.seed.hex() not in raw
     assert key.public_key.hex() not in raw
+
+
+# ---------------------------------------------------------------------------
+# J4 G8 — re-sign covers the whole skill folder as one pack approval
+# ---------------------------------------------------------------------------
+
+
+def _add_skill_resources(team_root: Path, name: str) -> dict[str, bytes]:
+    """Give ``reporter`` a reference, a nested reference, a script and a binary asset."""
+    folder = _skill_md(team_root, name).parent
+    files = {
+        "references/guide.md": b"# Guide\nRead me.\n",
+        "references/nested/deep.md": b"deep\n",
+        "scripts/run.py": b"print('hi')\n",
+        "assets/logo.bin": bytes(range(256)),
+    }
+    for relative, content in files.items():
+        target = folder / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return files
+
+
+def test_trust_approve_signs_skill_folder(tmp_path: Path) -> None:
+    """Re-sign signs EVERY file in the skill folder, not only ``SKILL.md`` (J4 M2).
+
+    Each resource gets an operator sidecar and an approval pin under the same
+    name capability import uses, and the operator action stays one audit record.
+    """
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    files = _add_skill_resources(team_root, "olivia")
+    client = _make_client(team_root)
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["signed_files"] == len(files) + 1
+
+    folder = _skill_md(team_root, "olivia").parent
+    operator_public = OperatorKey.load(default_operator_key_path()).public_key
+    approved = {
+        item.name for item in load_validators(team_root / "olivia" / "arcagent.toml").approved
+    }
+    for relative, content in files.items():
+        target = folder / relative
+        assert artifact_signing.verify_file(target, content, trusted_public_key=operator_public)
+        assert f"skill-resource/reporter/{relative}" in approved
+    skill_md = folder / "SKILL.md"
+    assert artifact_signing.verify_file(
+        skill_md, skill_md.read_bytes(), trusted_public_key=operator_public
+    )
+    assert _audit(client).outcomes_for("trust.approve") == ["applied"]
+
+
+def test_trust_approve_refuses_a_symlink_in_the_skill_folder(tmp_path: Path) -> None:
+    """A link inside the pack could sign bytes outside it — refuse, sign nothing."""
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    _add_skill_resources(team_root, "olivia")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("not part of the pack", encoding="utf-8")
+    folder = _skill_md(team_root, "olivia").parent
+    (folder / "references" / "link.md").symlink_to(outside)
+    client = _make_client(team_root)
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "skill_pack_unsafe"
+    assert not list(tmp_path.rglob(f"*{artifact_signing.SIDECAR_SUFFIX}"))
+    assert _pinned_keys(team_root, "olivia") == ()
+    assert _audit(client).outcomes_for("trust.approve") == ["denied"]
+
+
+def test_trust_approve_resolves_the_signer_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow vault/transit signer resolution must never stall arcui (J4 M1)."""
+    import asyncio
+
+    import arcui.routes.trust as trust_module
+
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    client = _make_client(team_root)
+    real = trust_module.operator_signer_for_request
+    on_loop: list[bool] = []
+
+    def spy(request: Any) -> Signer:
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real(request)
+
+    monkeypatch.setattr(trust_module, "operator_signer_for_request", spy)
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+    assert resp.status_code == 200
+    assert on_loop == [False]
