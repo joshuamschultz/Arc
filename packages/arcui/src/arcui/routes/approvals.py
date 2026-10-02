@@ -74,22 +74,22 @@ def _sign_requested_workflow(request: Request, row: Any) -> str | None:
     if definitions is None:
         return "workflow_control_plane_unavailable"
     try:
-        from arcteam.workflow import sign_definition
+        from arcteam.workflow import sign_definition_with_signer
 
         bundle = definitions.load(workflow_id)
         if row.call_hash and bundle.content_hash != row.call_hash:
             # The whole point of binding the request to a hash: what the
             # operator read is not what they would be signing.
             return "workflow_changed_since_the_request"
-        operator = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
-        seed = getattr(operator, "seed", None)
-        if not seed:
-            return "operator_key_has_no_in_process_seed"
-        sign_definition(
+        # A signer handle, never the seed, so a vault-held key signs here too.
+        signer = OperatorKey.load(
+            default_operator_key_path(), generate_if_absent=False
+        ).into_signer()
+        sign_definition_with_signer(
             definitions,
             workflow_id,
-            signer_did=f"operator:{operator.public_key.hex()[:16]}",
-            private_key=seed,
+            signer_did=f"operator:{signer.public_key.hex()[:16]}",
+            signer=signer,
         )
     except Exception as exc:  # reason: a refusal is reported, never a 500 page
         logger.exception("signing workflow %s from approval failed", workflow_id)

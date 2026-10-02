@@ -103,6 +103,7 @@ from arcteam.workflow.store import (
     WorkflowBundle,
     load_sidecar,
     sign_definition,
+    sign_definition_with_signer,
 )
 from arcteam.workflow.validator import KnownReferences, confine, validate_definition
 
@@ -177,5 +178,6 @@ __all__ = [
     "resolve_args",
     "resolve_value",
     "sign_definition",
+    "sign_definition_with_signer",
     "validate_definition",
 ]

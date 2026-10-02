@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import tomllib
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -48,10 +49,11 @@ from arcteam.workflow import (
     confine,
     parse_definition,
     referenced_files,
-    sign_definition,
+    sign_definition_with_signer,
     validate_definition,
 )
 from arcteam.workflow.control_plane import ControlPlaneResult, OperationIssue, WorkflowControlPlane
+from arcteam.workflow.models import WORKFLOW_ID_PATTERN
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
 from arcteam.workflow.service import WorkflowRunnerService
 from arctrust import WormSink
@@ -59,7 +61,12 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_state, config_file, workflows_dir
 
 from arccli.commands._shared import dispatch, err, print_json, print_table, write
-from arccli.commands.operator import load_operator_key, operator_key_path, operator_public_key
+from arccli.commands.operator import (
+    load_operator_key,
+    operator_key_path,
+    operator_public_key,
+    resolve_operator_signer,
+)
 
 
 def _backend_factory() -> Any:
@@ -138,7 +145,7 @@ def _audit_sink() -> WormSink:
     from arcstore import resolve_data_dir
     from arcstore.ingest import WORM_ACTIVE_FILENAME
 
-    from arccli.commands.operator import resolve_operator_signer, resolve_record_cipher
+    from arccli.commands.operator import resolve_record_cipher
 
     worm_dir = resolve_data_dir(None) / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
@@ -464,48 +471,57 @@ def _store(args: argparse.Namespace) -> DefinitionStore:
 # ---------------------------------------------------------------------------
 
 
-def _sign(args: argparse.Namespace) -> None:
-    """Operator-sign a workflow bundle: writes ``workflow.toml.arcsig``.
+_LEGAL_ID = re.compile(WORKFLOW_ID_PATTERN)
 
-    Signing key resolution happens ONLY here, in this CLI process — it never
-    enters an agent process (REQ-224), mirroring ``arc blueprint sign``
-    exactly: same ``load_operator_key``, same in-process-seed requirement (a
-    vault_transit federal key has no in-process seed and must sign
-    out-of-band), same ``operator:<pubkey-prefix>`` signer DID convention.
-    This function never resolves the control plane — signing never touches the
-    agent-shared operation set, by construction.
 
-    The bundle is addressed as ``<parent>/<id>`` so an operator can sign a
-    bundle wherever it sits, not only under ``~/.arc/workflows``.
+def _registered_bundle(arc_dir: Path, target: str) -> tuple[Path, Path]:
+    """Resolve ``target`` to ``(bundle_dir, workflow.toml)`` INSIDE the registered dir.
+
+    ``target`` is a workflow id, or a path that resolves to one bundle directly
+    under :func:`_workflows_root`. Anything else is refused: signing a copy the
+    runner never reads reports "signed" while the registered bundle stays a draft
+    (J3 F7), and a symlink or ``..`` path is the same mistake made sneakily, so
+    resolution follows links before the containment check.
     """
-    bundle_dir, toml_path = _workflow_dir_and_toml(args.path)
+    root = _workflows_root(arc_dir).resolve()
+    chosen = root / target if _LEGAL_ID.fullmatch(target) else Path(target).expanduser()
+    resolved = chosen.resolve()
+    bundle_dir = resolved.parent if resolved.is_file() else resolved
+    if bundle_dir.parent != root:
+        err(
+            f"Error: {target!r} is not a registered workflow. Use a workflow id; "
+            f"bundles live under {root}"
+        )
+        sys.exit(1)
+    toml_path = bundle_dir / "workflow.toml"
     if not toml_path.is_file():
         err(f"Error: workflow.toml not found: {toml_path}")
         sys.exit(1)
+    return bundle_dir, toml_path
 
+
+def _sign(args: argparse.Namespace) -> None:
+    """Operator-sign a REGISTERED workflow bundle: writes ``workflow.toml.arcsig``.
+
+    The key is resolved only here, in this CLI process, as a signer HANDLE — never
+    a seed (REQ-224) — so an in-process key and a vault- or notary-held one sign the
+    same way and no deployment is told to "sign out-of-band". This function never
+    resolves the control plane: signing never touches the agent-shared operation
+    set, by construction.
+    """
     arc_dir = _arc_dir(args)
-    operator = load_operator_key(arc_dir)
-    # DC-4 known limitation (shared with `arc blueprint sign`): signing needs the
-    # raw seed; a vault_transit (federal) operator key has no in-process seed and
-    # must sign out-of-band.
-    seed = getattr(operator, "seed", None)
-    if not seed:
-        err(
-            "Error: the operator key has no in-process seed (vault_transit custody). "
-            "`arc workflow sign` needs an in-process operator/author key; a vault-held "
-            "federal key must sign out-of-band."
-        )
-        sys.exit(1)
+    bundle_dir, toml_path = _registered_bundle(arc_dir, args.target)
+    signer = resolve_operator_signer(arc_dir)
 
     sink = _audit_sink()
     try:
-        bundle = sign_definition(
+        bundle = sign_definition_with_signer(
             _resolve_bundle_signer(
                 bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir), sink=sink
             ),
             bundle_dir.name,
-            signer_did=f"operator:{operator.public_key.hex()[:16]}",
-            private_key=seed,
+            signer_did=f"operator:{signer.public_key.hex()[:16]}",
+            signer=signer,
         )
     except WorkflowError as exc:
         err(f"Error: {exc}")
@@ -516,7 +532,7 @@ def _sign(args: argparse.Namespace) -> None:
 
 
 def _verify(args: argparse.Namespace) -> None:
-    """Report a workflow bundle's signature validity, pinned to the operator key.
+    """Report a registered workflow bundle's signature validity, pinned to the operator key.
 
     Pinned (not TOFU): ``is_verified`` is true only when the sidecar verifies
     against THIS deployment's operator key, so an attacker who self-signs with
@@ -524,12 +540,8 @@ def _verify(args: argparse.Namespace) -> None:
     SPEC-047 HIGH-1). Trust is read from ``is_verified``, never from
     ``status`` — an archived bundle can still be validly signed.
     """
-    bundle_dir, toml_path = _workflow_dir_and_toml(args.path)
-    if not toml_path.is_file():
-        err(f"Error: workflow.toml not found: {toml_path}")
-        sys.exit(1)
-
     arc_dir = _arc_dir(args)
+    bundle_dir, _ = _registered_bundle(arc_dir, args.target)
     store = _resolve_bundle_signer(bundle_dir.parent, arc_dir, tier=_deployment_tier(arc_dir))
     try:
         bundle = store.load(bundle_dir.name)
@@ -856,14 +868,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", default=None)
     _add_dir_arg(p)
 
-    p = subs.add_parser("sign", help="Operator-sign a workflow bundle (writes .arcsig sidecar).")
-    p.add_argument("path")
+    p = subs.add_parser(
+        "sign", help="Operator-sign a registered workflow by id (writes .arcsig sidecar)."
+    )
+    p.add_argument("target", metavar="id", help="Workflow id under the registered directory.")
     _add_dir_arg(p)
 
     p = subs.add_parser(
         "verify", help="Verify a workflow bundle's signature against the pinned operator key."
     )
-    p.add_argument("path")
+    p.add_argument("target", metavar="id", help="Workflow id under the registered directory.")
     _add_dir_arg(p)
 
     return parser

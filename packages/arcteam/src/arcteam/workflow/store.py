@@ -44,7 +44,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from arctrust import ArtifactSignature, sign_artifact, verify_artifact
+from arctrust import (
+    ArtifactSignature,
+    Signer,
+    sign_artifact,
+    sign_artifact_with_signer,
+    verify_artifact,
+)
 from pydantic import BaseModel, ConfigDict
 
 from arcteam.types import normalize_channel
@@ -641,7 +647,34 @@ def sign_definition(
         signer_did=signer_did,
         private_key=private_key,
     )
+    return _record_signature(store, bundle, signature, signer_did)
+
+
+def sign_definition_with_signer(
+    store: DefinitionStore, workflow_id: str, *, signer_did: str, signer: Signer
+) -> WorkflowBundle:
+    """Sign a bundle through a custody-agnostic :class:`~arctrust.Signer` handle.
+
+    The seed-free sibling of :func:`sign_definition`: a vault- or notary-held
+    operator key signs by reference and never enters this process, so a federal
+    deployment signs the same way a personal one does. Same canonical bytes, same
+    sidecar, same audit event.
+    """
+    bundle = store.load(workflow_id)
+    signature = sign_artifact_with_signer(
+        canonical_bytes(bundle.definition, bundle.manifest),
+        signer_did=signer_did,
+        signer=signer,
+    )
+    return _record_signature(store, bundle, signature, signer_did)
+
+
+def _record_signature(
+    store: DefinitionStore, bundle: WorkflowBundle, signature: ArtifactSignature, signer_did: str
+) -> WorkflowBundle:
+    """Write the detached sidecar, reload, and emit the one ``workflow.signed`` event."""
     _atomic_write(bundle.root / SIDECAR_FILE, signature.to_json().encode("utf-8"))
+    workflow_id = bundle.definition.id
     signed = store.load(workflow_id)
     store.emit_audit(
         "workflow.signed",
@@ -715,4 +748,5 @@ __all__ = [
     "file_manifest",
     "load_sidecar",
     "sign_definition",
+    "sign_definition_with_signer",
 ]
