@@ -20,6 +20,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from arcstore.runs import NodeState
+from arcstore.runs import NodeStatus as SnapshotStatus
 from arcstore.tasks import Task
 
 from .runner_contracts import IN_FLIGHT_TASK_STATUSES
@@ -205,4 +207,74 @@ class RunState:
         group.sort(key=lambda instance: instance.iteration)
 
 
-__all__ = ["NodeInstance", "NodeStatus", "RunState"]
+#: A node row's status in the durable per-node vocabulary.
+_ROW_TO_NODE: dict[str, SnapshotStatus] = {
+    "backlog": "materialized",
+    "todo": "materialized",
+    "in_progress": "in_progress",
+    "review": "review",
+    "done": "done",
+    "failed": "failed",
+}
+
+# On a tie at one iteration: a route is the most specific fact about a node,
+# then its row, then a skip.
+_RANK_SKIP, _RANK_ROW, _RANK_ROUTE = 0, 1, 2
+
+
+def derive_node_states(
+    tasks: Sequence[Task], path: Sequence[Mapping[str, Any]]
+) -> dict[str, NodeState]:
+    """The per-node snapshot the task rows and the journal imply. Pure.
+
+    Each node reports its latest iteration. A row gives status, attempts and
+    timing; the journal gives what has no row — a skip and why, a route and
+    where it went. ``started_at`` falls back to the row's creation time so a
+    node that is materialized but not yet claimed still says when it began.
+    """
+    best: dict[str, tuple[int, int, NodeState]] = {}
+    rows: dict[tuple[str, int], NodeState] = {}
+
+    def offer(node_id: str, iteration: int, rank: int, state: NodeState) -> None:
+        held = best.get(node_id)
+        if held is None or (iteration, rank) > (held[0], held[1]):
+            best[node_id] = (iteration, rank, state)
+
+    for task in tasks:
+        node_id = str(task.metadata.get("node_id", ""))
+        if not node_id:
+            continue
+        iteration = int(task.metadata.get("iteration", 0))
+        state = NodeState(
+            status=_ROW_TO_NODE[task.status],
+            iteration=iteration,
+            task_id=task.id,
+            attempts=task.attempts,
+            max_attempts=task.max_attempts,
+            last_error=task.last_error,
+            started_at=task.started_at or task.created_at,
+            finished_at=task.completed_at,
+        )
+        rows[(node_id, iteration)] = state
+        offer(node_id, iteration, _RANK_ROW, state)
+    for entry in path:
+        node_id = str(entry.get("node_id", ""))
+        iteration = int(entry.get("iteration", 0))
+        kind = entry.get("kind")
+        if kind == "skipped":
+            skipped = NodeState(
+                status="skipped", iteration=iteration, reason=str(entry.get("reason", ""))
+            )
+            offer(node_id, iteration, _RANK_SKIP, skipped)
+        elif kind == "route":
+            base = rows.get((node_id, iteration)) or NodeState(
+                status="routed", iteration=iteration
+            )
+            routed = base.model_copy(
+                update={"status": "routed", "route": str(entry.get("chosen", ""))}
+            )
+            offer(node_id, iteration, _RANK_ROUTE, routed)
+    return {node_id: state for node_id, (_, _, state) in best.items()}
+
+
+__all__ = ["NodeInstance", "NodeStatus", "RunState", "derive_node_states"]

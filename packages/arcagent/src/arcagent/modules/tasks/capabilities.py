@@ -81,11 +81,13 @@ from arcagent.modules.tasks.node_execution import (
     allowed_strategies,
     artifact_escape_failure,
     artifact_failure,
+    attempt_key_for,
     bind_node,
     current_node,
     escaping_artifacts,
     missing_artifacts,
     node_from_task,
+    pinned_run_id,
     render_node_section,
     reset_node,
     resolve_schema,
@@ -281,6 +283,20 @@ async def complete_task(
                 updates["output"] = output
             updated = await st.store.update(id, updates, actor_did=st.identity.did)
             await _notify_operator(st, f"needs review: {current.title}", current.classification)
+        elif current.metadata.get("attempt_key"):
+            # A claimed workflow attempt: its result is recorded under its key,
+            # and only while that attempt still holds the row.
+            updated = await st.store.complete_attempt(
+                id,
+                attempt_key=str(current.metadata["attempt_key"]),
+                attempts=current.attempts,
+                resolution=resolution,
+                output=output,
+                actor_did=st.identity.did,
+            )
+            if updated is None:
+                return json.dumps({"error": f"Task '{id}' is no longer held by this attempt"})
+            await _notify_operator(st, f"done: {current.title}", current.classification)
         else:
             updated = await st.store.finish(
                 id, status="done", resolution=resolution, output=output, actor_did=st.identity.did
@@ -661,11 +677,71 @@ async def _fail_node_attempt(st: _runtime._State, task: Task, reason: str) -> st
 
     Never a pass-forward and never a terminal failure by itself: the refusal
     feeds the existing retry engine, so the node gets its declared attempts to
-    produce a conforming result and only then dead-letters.
+    produce a conforming result and only then dead-letters. Pinned to the
+    attempt that failed: a stale executor cannot fail a newer attempt.
     """
     _logger.warning("Workflow node task %s refused completion: %s", task.id, reason)
-    await _handle_attempt_failure(st, task.id, st.identity.did, reason)
+    await _handle_attempt_failure(
+        st, task.id, st.identity.did, reason, expected_attempts=task.attempts
+    )
     return json.dumps({"error": reason, "retryable": True})
+
+
+def _node_attempt_key(task: Task, node: WorkflowNode) -> str:
+    """The claimed attempt's key: stamped by the claim, else derived from the row."""
+    return node.attempt_key or attempt_key_for(node, task.attempts)
+
+
+async def _attempt_still_live(st: _runtime._State, task: Task, node: WorkflowNode) -> bool:
+    """Whether the attempt ``task`` was claimed as still owns its row, unrecorded."""
+    current = await st.store.get(task.id)
+    return (
+        current is not None
+        and current.status == "in_progress"
+        and current.attempts == task.attempts
+        and current.metadata.get("attempt_result_key") != _node_attempt_key(task, node)
+    )
+
+
+async def _attempt_already_recorded(st: _runtime._State, task: Task, key: str) -> bool:
+    """Replay guard: this attempt's result is already on the row (exactly once per key).
+
+    Reached when the dispatcher hands the same claimed attempt to an executor a
+    second time — a crash between the result write and its acknowledgement.
+    No side effect may run again for a key that already has a result.
+    """
+    current = await st.store.get(task.id)
+    return current is not None and current.metadata.get("attempt_result_key") == key
+
+
+async def _complete_node_attempt(
+    st: _runtime._State,
+    task: Task,
+    *,
+    attempt_key: str,
+    output: dict[str, Any] | None,
+    resolution: str,
+    self_did: str,
+) -> None:
+    """Record a deterministic node's result, only while its attempt holds the row."""
+    await _seal_run_legs(st, task)
+    done = await st.store.complete_attempt(
+        task.id,
+        attempt_key=attempt_key,
+        attempts=task.attempts,
+        resolution=resolution,
+        output=output,
+        actor_did=self_did,
+    )
+    if done is None:
+        # The attempt was reclaimed under us; the live attempt owns the row now.
+        _logger.warning(
+            "Workflow node task %s: attempt %s no longer holds the row; result dropped",
+            task.id,
+            attempt_key,
+        )
+        return
+    await _notify_operator(st, f"done: {task.title}", task.classification)
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +804,15 @@ def _parse_tool_output(raw: str) -> dict[str, Any]:
 async def _run_tool_node(
     st: _runtime._State, task: Task, node: WorkflowNode, self_did: str
 ) -> None:
-    """Execute one declared tool through the agent's governed tool projection."""
+    """Execute one declared tool through the agent's governed tool projection.
+
+    Exactly once per attempt key: a replay of a recorded attempt runs nothing,
+    the result is recorded only while this attempt holds the row, and the key
+    rides to the tool as its idempotency key for remote dedupe.
+    """
+    key = _node_attempt_key(task, node)
+    if await _attempt_already_recorded(st, task, key):
+        return
     registry = st.tool_registry
     if registry is None or node.tool is None:
         await _fail_node_attempt(st, task, "tool node has no governed tool registry")
@@ -743,6 +827,7 @@ async def _run_tool_node(
         turn_number=node.attempt,
         event_bus=None,
         cancelled=asyncio.Event(),
+        idempotency_key=key,
     )
     try:
         output = _parse_tool_output(await declared.execute(node.args, context))
@@ -753,11 +838,9 @@ async def _run_tool_node(
     if refusal is not None:
         await _fail_node_attempt(st, task, refusal)
         return
-    await _seal_run_legs(st, task)
-    await st.store.finish(
-        task.id, status="done", resolution="tool executed", output=output, actor_did=self_did
+    await _complete_node_attempt(
+        st, task, attempt_key=key, output=output, resolution="tool executed", self_did=self_did
     )
-    await _notify_operator(st, f"done: {task.title}", task.classification)
 
 
 async def _run_script_node(
@@ -770,8 +853,12 @@ async def _run_script_node(
     the SAME schema and artifact gates an agent node's output is
     (``_node_completion_refusal``): a script node is a first-class, verified step
     and not a trapdoor around the contract. A non-zero exit or a failed gate is a
-    retryable attempt, exactly like an agent node's refusal.
+    retryable attempt, exactly like an agent node's refusal. Exactly once per
+    attempt key, like a tool node.
     """
+    key = _node_attempt_key(task, node)
+    if await _attempt_already_recorded(st, task, key):
+        return
     bundle = _bundle_root(st, node)
     if bundle is None:
         await _fail_node_attempt(st, task, f"script node '{node.node_id}' has no reachable bundle")
@@ -823,11 +910,14 @@ async def _run_script_node(
     if refusal is not None:
         await _fail_node_attempt(st, task, refusal)
         return
-    await _seal_run_legs(st, task)
-    await st.store.finish(
-        task.id, status="done", resolution="script executed", output=output, actor_did=self_did
+    await _complete_node_attempt(
+        st,
+        task,
+        attempt_key=key,
+        output=output,
+        resolution="script executed",
+        self_did=self_did,
     )
-    await _notify_operator(st, f"done: {task.title}", task.classification)
 
 
 # ---------------------------------------------------------------------------
@@ -901,8 +991,14 @@ async def _dispatch_tick() -> None:
     # Pin the run id up front and stamp it in the same atomic write that claims
     # the task, then hand the SAME id to the run so the loop's spooled events
     # share it — the arcui activity timeline joins task.run_id to those events.
-    run_id = str(uuid.uuid4())
-    started, _reason = await st.store.start_task(picked.id, self_did, run_id=run_id)
+    # A workflow node's claim also stamps its attempt key, and its run id is
+    # DERIVED from that key, so a replayed dispatch of one attempt is one run.
+    node = node_from_task(picked)
+    attempt_key = None if node is None else attempt_key_for(node, picked.attempts + 1)
+    run_id = str(uuid.uuid4()) if attempt_key is None else pinned_run_id(attempt_key)
+    started, _reason = await st.store.start_task(
+        picked.id, self_did, run_id=run_id, attempt_key=attempt_key
+    )
     if started is None or started.status != "in_progress":
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
         return
@@ -943,10 +1039,16 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     unhandled error is a failed attempt fed to the retry engine; an operator
     cancel (the watcher cancelled the run, recorded in ``st.cancelling``) is a
     terminal dead-letter — process shutdown re-raises instead.
+
+    A workflow node runs only while the claimed attempt still holds its row
+    with no recorded result: a dispatch replayed for an attempt that already
+    finished, or was reclaimed, starts no second turn.
     """
+    node = node_from_task(task)
+    if node is not None and not await _attempt_still_live(st, task, node):
+        return
     await _announce_task_moment(st, task)
     timeout = _resolve_timeout(task, st.config)
-    node = node_from_task(task)
     run_kwargs: dict[str, Any] = {}
     if node is not None:
         run_kwargs["allowed_strategies"] = allowed_strategies(node)
@@ -1143,7 +1245,12 @@ def _is_non_retryable(error: str) -> bool:
 
 
 async def _handle_attempt_failure(
-    st: _runtime._State, task_id: str, self_did: str, error: str
+    st: _runtime._State,
+    task_id: str,
+    self_did: str,
+    error: str,
+    *,
+    expected_attempts: int | None = None,
 ) -> None:
     """Retry (with exponential backoff) or dead-letter a failed attempt (P1).
 
@@ -1151,9 +1258,13 @@ async def _handle_attempt_failure(
     Below the ceiling -> requeue to ``todo`` gated by an exponential backoff;
     at/above it -> terminal ``failed`` (dead letter). Both writes are status-
     conditional in the store, so a concurrent stuck-reclaim can't double-apply.
+    ``expected_attempts`` pins both writes to the failing attempt, so a stale
+    executor can never requeue or dead-letter an attempt that started after it.
     """
     current = await st.store.get(task_id)
     if current is None:
+        return
+    if expected_attempts is not None and current.attempts != expected_attempts:
         return
     error = sanitize_text(error, max_length=500)
     if _is_non_retryable(error):
@@ -1164,6 +1275,7 @@ async def _handle_attempt_failure(
             actor_did=self_did,
             resolution=f"failed on attempt {current.attempts} — error is not retryable",
             last_error=error,
+            expected_attempts=expected_attempts,
         )
         await _notify_operator(
             st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
@@ -1175,6 +1287,7 @@ async def _handle_attempt_failure(
             actor_did=self_did,
             resolution=f"failed after {current.attempts} attempt(s) — retries exhausted",
             last_error=error,
+            expected_attempts=expected_attempts,
         )
         await _notify_operator(
             st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
@@ -1182,7 +1295,13 @@ async def _handle_attempt_failure(
         return
     backoff = st.config.retry_backoff_seconds * (2 ** (current.attempts - 1))
     next_at = (datetime.now(UTC) + timedelta(seconds=backoff)).isoformat()
-    await st.store.requeue(task_id, actor_did=self_did, last_error=error, next_attempt_at=next_at)
+    await st.store.requeue(
+        task_id,
+        actor_did=self_did,
+        last_error=error,
+        next_attempt_at=next_at,
+        expected_attempts=expected_attempts,
+    )
 
 
 async def _reliability_tick() -> None:

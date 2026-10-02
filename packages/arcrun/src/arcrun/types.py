@@ -79,6 +79,10 @@ class ToolContext:
     event_bus: EventBus | None
     cancelled: asyncio.Event
     parent_state: ParentRunContext | None = None
+    # The caller's dedupe key for this exact invocation, when it has one (a
+    # workflow tool node passes its attempt key). A tool whose remote API takes
+    # a dedupe token forwards it, so a replay of the same attempt is one effect.
+    idempotency_key: str | None = None
 
     @property
     def parent_run(self) -> ParentRunContext | None:

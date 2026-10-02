@@ -14,7 +14,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from arcteam.types import Message, MsgType, Priority, parse_uri
+from arcteam.types import DeliveryKind, Message, MsgType, Priority, parse_uri
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,50 @@ class RunNarrator:
             logger.warning(
                 "operator failure notice not delivered for run %s", run_id, exc_info=True
             )
+            return False
+        return True
+
+    async def operator_stuck_notice(
+        self,
+        *,
+        run_id: str,
+        workflow_id: str,
+        error_class: str,
+        consecutive_failures: int,
+    ) -> bool:
+        """Mail the operator that a run has stopped advancing. Never raises.
+
+        The run is NOT failed — infrastructure errors never fail a run — so this
+        is the one signal that it is stuck. One mail, addressed to the operator
+        inbox whatever the workflow's channel; the caller sends it once per
+        stuck streak and audits whether it was delivered.
+        """
+        if self._sender is None:
+            return False
+        body = (
+            f"Workflow {workflow_id} run {run_id} has not advanced for "
+            f"{consecutive_failures} consecutive ticks ({error_class}). The run is "
+            "still live and retrying every tick; no further mail until it advances."
+        )
+        try:
+            if self._ensure_registered is not None:
+                await self._ensure_registered()
+            await self._sender.send(
+                Message(
+                    sender=self._sender_did,
+                    to=[OPERATOR_TARGET],
+                    delivery_kind=DeliveryKind.MAIL,
+                    subject=f"Workflow run {run_id} cannot advance",
+                    msg_type=MsgType.ALERT,
+                    priority=Priority.HIGH,
+                    action_required=True,
+                    mentions=[],
+                    body=body,
+                    meta={"class": "operator_alert", "event": "run.stuck", "run_id": run_id},
+                )
+            )
+        except Exception:  # reason: an undelivered notice is audited by the caller
+            logger.warning("operator stuck notice not delivered for run %s", run_id, exc_info=True)
             return False
         return True
 

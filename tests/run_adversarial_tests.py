@@ -260,6 +260,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/integration/test_schedule_write_routes.py",
         "packages/arcteam/tests/unit/workflow/test_run_create_idempotence.py",
     ),
+    # P14-B: a workflow node runs exactly once per attempt key. A replayed
+    # attempt runs no second side effect or agent turn; a forged attempt key or
+    # a reclaimed (stale) attempt cannot record a result; a writer holding a
+    # stale node-state revision cannot overwrite the run's snapshot; a crash at
+    # any durable write resumes without a duplicate row, journal entry or run.
+    "workflow attempt replay and node-state forgery (P14-B)": (
+        "packages/arcstore/tests/unit/test_task_attempts.py",
+        "packages/arcstore/tests/unit/test_runs_node_states.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_attempt_keys.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_resume.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_infra_failures.py",
+    ),
     # SPEC-081 open skill packages: a loose skill ZIP may carry any reviewable
     # subtree, but never an auto-run/opaque artifact, never load-time execution,
     # and a promoted script that is swapped or unsigned must not run at

@@ -227,3 +227,45 @@ async def test_j3_cron_trigger_fires_after_runner_restart_and_lease_renewal(
     assert fired == ["wf:nightly", "wf:nightly"]
     row = store.get("wf:nightly")
     assert row is not None and row.metadata.run_count == 2
+
+
+async def test_restart_between_fire_and_tick_yields_exactly_one_completed_run(
+    world: _World,
+) -> None:
+    """G-B: the trigger fires, the process dies before any tick, and the restarted
+    process re-fires the same occurrence. One run exists, and it completes once.
+    """
+    run_id = "run-nightly-occ1"
+
+    async def fire(runner: Any) -> None:
+        await runner.start_run(
+            "nightly",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:ui:operator",
+            run_id=run_id,
+            detached=True,
+        )
+
+    await fire(world.runner)
+    # The process dies here: no tick ran, nothing was closed or released.
+    restarted = world.new_runner()
+    await restarted.resume()
+    await fire(restarted)  # the scheduler retries the occurrence it never saw acknowledged
+
+    await restarted.tick()
+    for node in ("collect", "archive"):
+        row = node_task_id(run_id, node, 0)
+        await world.tasks.start_task(row, SALES)
+        await world.tasks.finish(row, status="done", resolution="ok", actor_did=SALES, output={})
+        await restarted.tick()
+
+    runs = await restarted.runs.list_for_workflow("nightly")
+    assert [run.id for run in runs] == [run_id]
+    assert runs[0].status == "done"
+    assert {state.status for state in runs[0].node_states.values()} == {"done"}
+    rows = await world.backend.mutable_query("tasks", where={"metadata.flow_run_id": run_id})
+    assert sorted(r["id"] for r in rows) == sorted(
+        node_task_id(run_id, node, 0) for node in ("collect", "archive")
+    )
+    assert not [m for m in world.gateway.sent if "user://operator" in m.to]

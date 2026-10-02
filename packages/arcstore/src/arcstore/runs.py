@@ -13,6 +13,7 @@ the same run, and an optional audit sink.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
@@ -25,6 +26,9 @@ from arcstore.tasks import _validate_free_text
 RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
 NodeKind = Literal["agent", "tool", "script", "router", "gate"]
 NodeOutcome = Literal["done", "failed", "skipped"]
+NodeStatus = Literal[
+    "materialized", "in_progress", "review", "done", "failed", "skipped", "cancelled", "routed"
+]
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
 
@@ -50,6 +54,33 @@ class PathEntry(BaseModel):
     router_choice: str | None = None
     loop_iteration: int | None = None
     recorded_at: str | None = None
+
+
+class NodeState(BaseModel):
+    """One node's durable state on its Run (P14-B step 1).
+
+    The UI- and resume-facing snapshot of a node. The runner derives it from
+    the node's task row and the run journal and writes it under the Run's
+    ``revision`` compare-and-swap; nothing decides the next step from it.
+    Closed (``extra="forbid"``) so a stray key is a validation error, not a
+    silently carried field.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: NodeStatus
+    iteration: int = 0
+    task_id: str | None = None
+    attempts: int = 0
+    max_attempts: int = 0
+    # Already redacted by the tasks engine before it reached the row.
+    last_error: str | None = None
+    # Routers: the chosen route id.
+    route: str | None = None
+    # Skipped / cancelled: why.
+    reason: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 class RunBudget(BaseModel):
@@ -95,6 +126,10 @@ class Run(BaseModel):
     settled: list[str] = Field(default_factory=list)
     settled_len: int = 0
     last_error: str | None = None
+    # Per-node snapshot and its compare-and-swap counter. ``revision`` guards
+    # ``node_states`` only; no other field of the Run moves it.
+    node_states: dict[str, NodeState] = Field(default_factory=dict)
+    revision: int = 0
     created_at: str | None = None
     updated_at: str | None = None
     completed_at: str | None = None
@@ -281,6 +316,82 @@ class RunStore:
             return None, ("not_found" if current is None else "conflict")
         return await self.get(run_id), "applied"
 
+    async def set_node_states(
+        self,
+        run_id: str,
+        updates: Mapping[str, NodeState],
+        *,
+        actor_did: str,
+        expected_revision: int,
+        fence: RunnerFence | None = None,
+    ) -> tuple[Run | None, str]:
+        """Merge ``updates`` into ``node_states``, conditional on ``revision``.
+
+        The whole merged dict is written under ``where={"revision": expected}``
+        and the revision is bumped in the same patch: that is the CAS. Two
+        writers holding the same snapshot resolve to one ``"applied"`` and one
+        ``"conflict"``; the loser re-reads and decides again. A whole-dict patch
+        stays within what every backend's ``update_if`` offers (a top-level
+        merge), so no nested-key patch support is assumed.
+
+        Returns ``(run, "applied")``, or ``(None, "conflict" | "not_found")``.
+        """
+        raw = await self._backend.mutable_read(self._COLLECTION, run_id)
+        if raw is None:
+            return None, "not_found"
+        if "revision" not in raw and not await self._stamp_first_revision(
+            run_id, raw, actor_did=actor_did, fence=fence
+        ):
+            return None, "conflict"
+        current = self._load(raw)
+        if current.revision != expected_revision:
+            return None, "conflict"
+        merged = {**current.node_states, **updates}
+        snapshot = {key: state.model_dump(mode="json") for key, state in merged.items()}
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            run_id,
+            {
+                "node_states": snapshot,
+                "revision": expected_revision + 1,
+                "updated_at": _now(),
+            },
+            where={"revision": expected_revision},
+            actor_did=actor_did,
+            sink=self._sink,
+            fence=fence,
+        )
+        if not won:
+            return None, "conflict"
+        return await self.get(run_id), "applied"
+
+    async def _stamp_first_revision(
+        self,
+        run_id: str,
+        raw: dict[str, Any],
+        *,
+        actor_did: str,
+        fence: RunnerFence | None,
+    ) -> bool:
+        """Give a row stored before ``revision`` existed its first CAS anchor.
+
+        A ``where`` cannot match an absent key, so without this such a run could
+        never record a node state. It writes only ``revision`` (never the
+        states), conditional on the status just read. Node-state writers are the
+        lease holder alone (every write carries its fence), so two stamps can
+        only race inside one runner's retry, and each CAS after it merges into a
+        fresh read rather than the stale snapshot.
+        """
+        return await self._backend.update_if(
+            self._COLLECTION,
+            run_id,
+            {"revision": 0},
+            where={"status": raw.get("status")},
+            actor_did=actor_did,
+            sink=self._sink,
+            fence=fence,
+        )
+
     async def append_path_entry(
         self, run_id: str, entry: PathEntry, *, actor_did: str, fence: RunnerFence | None = None
     ) -> Run | None:
@@ -414,6 +525,8 @@ __all__ = [
     "MutableRunBackend",
     "NodeKind",
     "NodeOutcome",
+    "NodeState",
+    "NodeStatus",
     "PathEntry",
     "Run",
     "RunBudget",

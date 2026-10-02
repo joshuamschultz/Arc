@@ -36,8 +36,15 @@ class _FakeRunner:
 
     def __init__(self) -> None:
         self.ticks = 0
+        self.resumes = 0
+        self.ticks_at_resume: list[int] = []
         self.closed = False
         self._stop = asyncio.Event()
+
+    async def resume(self) -> int:
+        self.resumes += 1
+        self.ticks_at_resume.append(self.ticks)
+        return 0
 
     async def run_forever(self) -> None:
         while not self._stop.is_set():
@@ -73,6 +80,58 @@ async def test_start_runs_the_runner_and_registers_the_singleton() -> None:
     await host.stop()
     assert RunnerHost.active() is None
     assert runner.closed is True
+
+
+async def test_every_start_and_rebuild_resumes_before_the_first_tick() -> None:
+    """P14-B step 3: a (re)built runner picks up what its predecessor abandoned."""
+
+    class _CrashOnce(_FakeRunner):
+        async def run_forever(self) -> None:
+            raise RuntimeError("runner crashed")
+
+    first = _CrashOnce()
+    replacement = _FakeRunner()
+    built = iter([first, replacement])
+
+    async def _factory() -> _FakeRunner:
+        return next(built)
+
+    host = await RunnerHost.start(_factory)
+    try:
+        for _ in range(200):
+            if replacement.ticks:
+                break
+            await asyncio.sleep(0.01)
+        assert first.resumes == 1
+        assert replacement.resumes == 1
+        assert replacement.ticks_at_resume == [0], "resume runs before the first tick"
+    finally:
+        await host.stop()
+
+
+async def test_a_failing_resume_rebuilds_instead_of_stopping_the_host() -> None:
+    class _ResumeFails(_FakeRunner):
+        async def resume(self) -> int:
+            raise ConnectionError("store unreachable")
+
+    broken = _ResumeFails()
+    replacement = _FakeRunner()
+    built = iter([broken, replacement])
+
+    async def _factory() -> _FakeRunner:
+        return next(built)
+
+    host = await RunnerHost.start(_factory)
+    try:
+        for _ in range(200):
+            if replacement.ticks:
+                break
+            await asyncio.sleep(0.01)
+        assert broken.ticks == 0 and broken.closed
+        assert replacement.ticks > 0
+        assert RunnerHost.active() is host
+    finally:
+        await host.stop()
 
 
 async def test_second_start_refuses_rather_than_racing_the_frontier() -> None:
@@ -448,6 +507,9 @@ async def test_a_started_runner_reaches_the_agent_tool_surface() -> None:
     from arcgateway.workflow_runner_host import start_runner_host
 
     class _Runner:
+        async def resume(self) -> int:
+            return 0
+
         async def run_forever(self) -> None:
             import asyncio
 
