@@ -23,6 +23,7 @@ from arcagent.core.control_contract import (
     ControlArtifactAuthority,
     ControlArtifactRefusedError,
     ControlArtifactUnavailableError,
+    SignedControlRevision,
 )
 from arcagent.core.run_contract import (
     CanonicalRunRequest,
@@ -35,6 +36,7 @@ from arcagent.modules.pulse.config import PulseConfig
 from arcagent.modules.pulse.signed_dispatch import (
     canonical_definition,
     dispatch_signed_pulse,
+    is_approved,
 )
 from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
@@ -220,6 +222,9 @@ class PulseEngine:
                 self._emit_event("pulse:no_checks", {})
             return
 
+        checks = self._approved_checks(checks)
+        if not checks:
+            return
         state = self._read_state()
         overdue = self._find_overdue(checks, state)
         if not overdue:
@@ -230,6 +235,20 @@ class PulseEngine:
         for check in overdue:
             await self._execute_check(check, state)
             state = self._read_state()
+
+    def _approved_checks(self, checks: list[PulseCheck]) -> list[PulseCheck]:
+        """Checks whose approval binds their current text; the rest wait for the operator."""
+        runnable: list[PulseCheck] = []
+        for check in checks:
+            if is_approved(check):
+                runnable.append(check)
+                continue
+            _logger.warning("Pulse: '%s' is awaiting operator approval", check.name)
+            self._emit_event(
+                "pulse:pending_approval",
+                {"check": check.name, "changed": check.approval is not None},
+            )
+        return runnable
 
     async def _execute_check(self, check: PulseCheck, state: PulseState) -> None:
         """Execute a single pulse check."""
@@ -242,6 +261,7 @@ class PulseEngine:
             {
                 "check": check.name,
                 "elapsed_minutes": elapsed,
+                "revision": None if check.approval is None else check.approval.revision,
             },
         )
 
@@ -271,7 +291,7 @@ class PulseEngine:
                 timeout=self._config.timeout_seconds,
             )
             duration = time.monotonic() - start
-            self._update_state(check.name, "ok")
+            self._update_state(check.name, "ok", check.approval)
             self._emit_event(
                 "pulse:check_completed",
                 {
@@ -377,7 +397,9 @@ class PulseEngine:
         except Exception as exc:
             raise ControlArtifactUnavailableError("pulse progress state unavailable") from exc
 
-    def _update_state(self, name: str, result: str) -> None:
+    def _update_state(
+        self, name: str, result: str, approval: SignedControlRevision | None = None
+    ) -> None:
         """Update pulse-state.json for a completed check (atomic write)."""
         state = self._read_state()
         cs = state.checks.get(name, PulseCheckState())
@@ -386,6 +408,8 @@ class PulseEngine:
         cs.last_result = result
         cs.pending_due_at = None
         cs.pending_definition_digest = None
+        if approval is not None:
+            cs.last_revision = approval.revision
         state.checks[name] = cs
 
         self._write_state(state)

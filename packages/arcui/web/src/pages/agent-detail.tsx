@@ -39,6 +39,7 @@ import { RubricEditor } from '@/components/rubric-editor'
 import { isRubricPrompt } from '@/lib/rubric'
 import { ToolDrawer } from '@/components/tool-drawer'
 import { ScheduleDrawer } from '@/components/schedule-drawer'
+import { PulsePanel } from '@/components/pulse-panel'
 import { scheduleTiming, scheduleTitle } from '@/lib/schedule-format'
 import { TaskBoard } from '@/components/task-board'
 import { TaskDrawer } from '@/components/task-drawer'
@@ -1139,7 +1140,8 @@ function SchedulesTab({ agentId }: { agentId: string }) {
   }, [searchParams, rows, setSearchParams])
 
   return (
-    <>
+    <div className="space-y-4">
+      <PulsePanel agentId={agentId} operatorMode={operatorMode} />
       <QueryState
         query={q}
         isEmpty={() => rows.length === 0}
@@ -1163,7 +1165,7 @@ function SchedulesTab({ agentId }: { agentId: string }) {
         agentId={agentId}
         operatorMode={operatorMode}
       />
-    </>
+    </div>
   )
 }
 

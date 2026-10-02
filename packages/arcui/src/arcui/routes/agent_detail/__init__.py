@@ -87,6 +87,7 @@ from arcui.routes.agent_detail.prompts import (
     put_prompt,
     put_rubric,
 )
+from arcui.routes.agent_detail.pulse import get_pulse, post_pulse_approve
 from arcui.routes.agent_detail.report_preview import get_report_preview
 from arcui.routes.agent_detail.schedules_write import patch_schedule
 from arcui.routes.agent_detail.sessions import (
@@ -208,6 +209,8 @@ routes = [
     Route("/api/agents/{id}/tasks", get_tasks, methods=["GET"]),
     Route("/api/agents/{id}/schedules", get_schedules, methods=["GET"]),
     Route("/api/agents/{id}/schedules/{sid}", patch_schedule, methods=["PATCH"]),
+    Route("/api/agents/{id}/pulse", get_pulse, methods=["GET"]),
+    Route("/api/agents/{id}/pulse/approve", post_pulse_approve, methods=["POST"]),
     Route("/api/agents/{id}/channels", get_channels, methods=["GET"]),
     Route("/api/agents/{id}/connect-telegram", connect_telegram_route, methods=["POST"]),
     Route("/api/agents/{id}/connect-voice", connect_voice_route, methods=["POST"]),

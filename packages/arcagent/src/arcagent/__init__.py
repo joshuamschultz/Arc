@@ -235,6 +235,10 @@ def __getattr__(name: str) -> Any:
         from arcagent.modules.memory import config as memory_config
 
         return getattr(memory_config, name)
+    if name in {"approve_pulse_check", "pulse_status"}:
+        from arcagent.modules.pulse import approval as pulse_approval
+
+        return getattr(pulse_approval, name)
     if name == "register_schedule_revision":
         from arcagent.modules.scheduler.registration import register_schedule_revision
 
@@ -360,6 +364,7 @@ __all__ = [
     "ToolVetoedError",
     "VerifiedRunAuthorization",
     "append_module_scan_roots",
+    "approve_pulse_check",
     "audit_tier_relaxations",
     "build_control_artifact_authority",
     "build_mcp_door",
@@ -391,6 +396,7 @@ __all__ = [
     "modules_path",
     "operator_key_path",
     "pin_name_for",
+    "pulse_status",
     "read_capability_source",
     "register_schedule_revision",
     "resolve_deployment",

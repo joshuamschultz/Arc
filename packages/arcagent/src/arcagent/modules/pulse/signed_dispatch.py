@@ -34,6 +34,23 @@ def canonical_definition(check: PulseCheck) -> bytes:
     ).encode()
 
 
+def definition_digest(check: PulseCheck) -> str:
+    """SHA-256 of the exact definition an approval covers."""
+    return hashlib.sha256(canonical_definition(check)).hexdigest()
+
+
+def is_approved(check: PulseCheck) -> bool:
+    """True when the approval slot binds the current text (dispatch still re-verifies)."""
+    approval = check.approval
+    return (
+        approval is not None
+        and not approval.revoked
+        and approval.purpose == "pulse"
+        and approval.artifact_id == check.name
+        and approval.definition_digest == definition_digest(check)
+    )
+
+
 def pulse_occurrence(check: PulseCheck, due_at: datetime) -> tuple[str, str]:
     """Bind a due slot and check identity to one deterministic accepted run."""
     if due_at.tzinfo is None or due_at.utcoffset() is None:

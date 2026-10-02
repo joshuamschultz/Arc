@@ -32,6 +32,7 @@ class PulseCheckState(BaseModel):
     consecutive_failures: int = 0
     pending_due_at: str | None = None
     pending_definition_digest: str | None = None
+    last_revision: int | None = None
 
 
 class PulseState(BaseModel):
