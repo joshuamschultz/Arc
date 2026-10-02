@@ -61,7 +61,7 @@ from typing import Any, NoReturn
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.identity import did_matches_pubkey
 
-from arcmemory.collection_index import DERIVED_INDEX_FILES
+from arcmemory.collection_index import is_derived_file
 
 _logger = logging.getLogger("arcmemory.isolation")
 
@@ -231,8 +231,11 @@ def _has_memory_data(memory_dir: Path) -> bool:
     than the owner marker, its write-replace temp, and the derived root index files)."""
     if not memory_dir.exists():
         return False
-    ignore = {_OWNER_MARKER, f".{_OWNER_MARKER}.tmp", *DERIVED_INDEX_FILES}
-    return any(entry.name not in ignore for entry in memory_dir.iterdir())
+    ignore = {_OWNER_MARKER, f".{_OWNER_MARKER}.tmp"}
+    return any(
+        entry.name not in ignore and not is_derived_file(entry.name)
+        for entry in memory_dir.iterdir()
+    )
 
 
 def _recorded_scopes(memory_dir: Path) -> set[str]:
