@@ -43,6 +43,7 @@ async def start_workflow_run(
     result = await st.control_plane.run(
         workflow_id,
         input=workflow_input or {},
+        initiator="scheduler",
         actor_did=st.identity.did,
         run_id=run_id,
         trigger_digest=trigger_digest,

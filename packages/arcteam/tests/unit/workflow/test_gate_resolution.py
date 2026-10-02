@@ -87,7 +87,9 @@ async def reach_the_gate(stores: Any, registry: Any) -> tuple[Any, Any, str]:
     _, _, tasks = stores
     sink = RecordingSink()
     runner, plane = build(stores, registry, sink)
-    run = await runner.start_run("reviewed", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "reviewed", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
     await complete_node(tasks, task_id(run.run_id, "draft", 0), SALES_DID, {"draft": "v1"})
     await runner.advance(run.run_id)
     return runner, plane, run.run_id

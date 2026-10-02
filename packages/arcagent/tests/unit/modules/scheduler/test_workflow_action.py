@@ -43,10 +43,12 @@ class _RecordingPlane:
         self.gate = asyncio.Event()
         self.hold = False
         self.fail = False
+        self.initiators: list[str] = []
 
     async def run(self, workflow_id: str, **kwargs: Any) -> SimpleNamespace:
         if self.fail:
             raise RuntimeError("workflow engine is down")
+        self.initiators.append(kwargs["initiator"])
         self.started.append((workflow_id, dict(kwargs.get("input") or {})))
         if self.hold:
             await self.gate.wait()
@@ -171,6 +173,8 @@ class TestTypedTriggerThroughTheRealTick:
         await _tick_until(lambda: bool(plane.started), engine)
 
         assert plane.started == [("customer-onboarding", {"account": "acme"})]
+        # A schedule names itself, so an unsigned draft can never ride it.
+        assert plane.initiators == ["scheduler"]
         # No model in the decision path: the prompt callback was never touched.
         assert prompts == []
 

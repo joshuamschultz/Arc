@@ -666,7 +666,13 @@ def _run_workflow(args: argparse.Namespace) -> None:
         try:
             if args.detach:
                 result = _ok_or_exit(
-                    await plane.run(args.id, input=run_input, actor_did=actor_did, detached=True)
+                    await plane.run(
+                        args.id,
+                        input=run_input,
+                        initiator="operator",
+                        actor_did=actor_did,
+                        detached=True,
+                    )
                 )
                 record = result.run
                 assert record is not None  # noqa: S101 — ok=True always carries the run
@@ -702,7 +708,11 @@ async def _run_attached(
     service = WorkflowRunnerService(plane.runner, interval=interval)
     await service.start()
     try:
-        result = _ok_or_exit(await plane.run(workflow_id, input=run_input, actor_did=actor_did))
+        result = _ok_or_exit(
+            await plane.run(
+                workflow_id, input=run_input, initiator="operator", actor_did=actor_did
+            )
+        )
         record = result.run
         assert record is not None  # noqa: S101 — ok=True always carries the run
         on_started(record)

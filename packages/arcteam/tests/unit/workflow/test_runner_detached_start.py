@@ -40,7 +40,9 @@ async def test_attached_start_requires_the_lease(stores: Any, registry: Any) -> 
     runner = build(stores, registry, FLOW, lease=_LeaseHeldElsewhere())
 
     with pytest.raises(WorkflowRunnerLeaseUnavailableError):
-        await runner.start_run("detached-flow", input={}, initiator_did="did:arc:local:user/9")
+        await runner.start_run(
+            "detached-flow", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+        )
 
 
 async def test_detached_start_creates_the_run_without_the_lease(
@@ -50,7 +52,11 @@ async def test_detached_start_creates_the_run_without_the_lease(
     runner = build(stores, registry, FLOW, lease=_LeaseHeldElsewhere())
 
     run = await runner.start_run(
-        "detached-flow", input={}, initiator_did="did:arc:local:user/9", detached=True
+        "detached-flow",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/9",
+        detached=True,
     )
 
     assert run.status == "running"

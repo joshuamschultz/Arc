@@ -82,3 +82,30 @@ async def test_run_without_active_runner_reports_no_runner(
     reply = await GatewayWorkflowProvider().run("briefing", actor_did="did:arc:user:x", args="")
 
     assert reply == "Workflows aren't running on this deployment yet."
+
+
+@pytest.mark.asyncio
+async def test_slash_command_run_is_labelled_chat_never_operator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A chat user is not an authenticated operator session: it may run only signed bundles."""
+    from types import SimpleNamespace
+
+    from arcteam.workflow.control_plane import ControlPlaneResult, WorkflowControlPlane
+
+    from arcgateway.workflow_runner_host import RunnerHost
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    runner = SimpleNamespace(definitions=object(), runs=object(), tier="personal")
+    monkeypatch.setattr(RunnerHost, "active", staticmethod(lambda: SimpleNamespace(runner=runner)))
+    seen: list[str] = []
+
+    async def spy(self: Any, workflow_id: str, **kwargs: Any) -> ControlPlaneResult:
+        seen.append(kwargs["initiator"])
+        return ControlPlaneResult(ok=False)
+
+    monkeypatch.setattr(WorkflowControlPlane, "run", spy)
+
+    await GatewayWorkflowProvider().run("briefing", actor_did="did:arc:user:x", args="")
+
+    assert seen == ["chat"]

@@ -84,7 +84,9 @@ async def test_next_node_is_stamped_with_what_the_previous_node_lit(
 ) -> None:
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, two_node_chain())
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {"ok": True})
     await light_legs(tasks, task_id(run.run_id, "read", 0), ["private_data"])
@@ -98,7 +100,9 @@ async def test_a_node_that_lit_nothing_stamps_an_empty_set(stores: Any, registry
     """Threading must not invent legs: an empty run stays empty and unblocked."""
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, two_node_chain())
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {"ok": True})
     await runner.advance(run.run_id)
@@ -120,7 +124,9 @@ async def test_accumulation_unions_across_every_completed_node(stores: Any, regi
     )
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, definition)
-    run = await runner.start_run("fan", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "fan", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
 
     for node_id, leg in (("a", "private_data"), ("b", "untrusted_input")):
         await complete_node(tasks, task_id(run.run_id, node_id, 0), SALES_DID, {})
@@ -138,7 +144,9 @@ async def test_accumulation_is_bounded_and_the_truncation_is_audited(
     flow_tasks, _, tasks = stores
     sink = RecordingSink()
     runner = build(stores, registry, two_node_chain(), audit_sink=sink, max_capability_legs=2)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {})
     await light_legs(tasks, task_id(run.run_id, "read", 0), ["c", "a", "d", "b"])
@@ -156,7 +164,9 @@ async def test_materialization_audit_records_the_legs_the_node_starts_with(
     flow_tasks, _, tasks = stores
     sink = RecordingSink()
     runner = build(stores, registry, two_node_chain(), audit_sink=sink)
-    run = await runner.start_run("chain", input={}, initiator_did="did:arc:local:user/1")
+    run = await runner.start_run(
+        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+    )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {})
     await light_legs(tasks, task_id(run.run_id, "read", 0), ["private_data"])

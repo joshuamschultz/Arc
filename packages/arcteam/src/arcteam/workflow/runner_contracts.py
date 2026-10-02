@@ -25,6 +25,10 @@ from arcstore.mutation_fence import RunnerFence
 from arcstore.tasks import Task
 
 Tier = Literal["personal", "enterprise", "federal"]
+
+# Who asked for a run. Named by the caller, never inferred: it decides whether an
+# unsigned definition may run at all (S-wf-unsigned).
+Initiator = Literal["operator", "agent", "scheduler", "chat"]
 """Deployment stringency. Handed to the runner at CONSTRUCTION, never resolved
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
@@ -450,6 +454,7 @@ __all__ = [
     "DefinitionParser",
     "DefinitionStoreLike",
     "DefinitionValidator",
+    "Initiator",
     "NodeKind",
     "NodeSpec",
     "OwnerResolver",

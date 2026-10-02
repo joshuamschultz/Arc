@@ -61,6 +61,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "forged, unauthorized and replayed control actions": (
         "packages/arcui/tests/test_workflow_routes.py",
+        # An agent writes then runs its own workflow: unsigned runs are refused
+        # for agent/scheduler at every tier; operator draft test is personal-only.
+        "packages/arcteam/tests/security/test_agent_cannot_run_unsigned_workflow.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_unsigned_initiator.py",
         "packages/arcui/tests/test_approvals_route.py",
         "packages/arcgateway/tests/platform/slack/test_slack_socket_replay_dedup.py",
         "packages/arcgateway/tests/integration/test_end_to_end_federal_tier.py",
