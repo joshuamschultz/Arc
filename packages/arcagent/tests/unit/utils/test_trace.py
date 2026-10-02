@@ -7,18 +7,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arctrust import causal
 
 from arcagent.utils import trace
 
 
 def test_spool_auto_tool_writes_a_start_and_end_pair(monkeypatch: pytest.MonkeyPatch) -> None:
     """One implicit op becomes two tool_events (start, end), marked implicit."""
-    import arcstore.spool as spool
 
     captured: list[Any] = []
     monkeypatch.setattr(trace, "_spool", lambda rec: captured.append(rec))
 
-    with spool.request_context("run-1"):
+    with causal.run_scope("run-1"):
         trace.spool_auto_tool(
             "memory_search",
             actor_did="did:arc:test/agent",
@@ -59,7 +59,7 @@ def test_spool_auto_tool_inherits_the_ambient_run_id(
     spool_file = tmp_path / "spool.jsonl"
     monkeypatch.setattr(spool, "spool_path", lambda **_: spool_file)
 
-    with spool.request_context("run-abc"):
+    with causal.run_scope("run-abc"):
         trace.spool_auto_tool("memory_search", actor_did="did:arc:test/agent")
 
     rows = [json.loads(line) for line in spool_file.read_text().splitlines()]

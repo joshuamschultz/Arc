@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import logging
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from arcprompt import PromptSource, StockPromptSource
-from arcstore.spool import request_context
+from arctrust import causal
 
 from arcrun._messages import ContentBlock, SystemPrompt, system_messages, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
+from arcrun.causality import llm_call_scope
 from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
 from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
@@ -34,23 +33,12 @@ from arcrun.types import LoopResult, SandboxConfig
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_CALLER_DID = "did:arc:unknown"
-_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "arcrun_current_run_id", default=None
-)
 
 
 def current_run_id() -> str | None:
     """Return the identity of the ArcRun call in the current async context."""
-    return _current_run_id.get()
-
-
-@contextmanager
-def _run_context(run_id: str) -> Iterator[None]:
-    token = _current_run_id.set(run_id)
-    try:
-        yield
-    finally:
-        _current_run_id.reset(token)
+    ctx = causal.current()
+    return ctx.run_id if ctx is not None else None
 
 
 def _build_state(
@@ -294,7 +282,7 @@ async def run_oneshot(
         strategy_name="oneshot",
     )
     call = available_strategies()["oneshot"](model, state, Sandbox(config=None, event_bus=bus), 1)
-    with _run_context(run_id):
+    with causal.run_scope(run_id):
         if timeout is None:
             return await call
         return await asyncio.wait_for(call, timeout=timeout)
@@ -327,13 +315,14 @@ async def run_structured(
     scope, so it lands in the caller's trace.
     """
     cap: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
-    call = model.invoke(
-        messages,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool.name},
-        **cap,
-    )
-    response = await (asyncio.wait_for(call, timeout=timeout) if timeout is not None else call)
+    with llm_call_scope():
+        call = model.invoke(
+            messages,
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool.name},
+            **cap,
+        )
+        response = await (asyncio.wait_for(call, timeout=timeout) if timeout is not None else call)
     calls = getattr(response, "tool_calls", None) or []
     if not calls:
         raise StructuredCallError(f"model emitted no '{tool.name}' tool call")
@@ -420,7 +409,7 @@ async def run_async(
     # RunHandle — so an operator cancel or a teammate's interrupt arriving
     # during that call would have nothing to reach (ASI09/ASI10). Creating the
     # task first makes the run steerable from the moment it is started.
-    with request_context(state.run_id), _run_context(state.run_id):
+    with causal.run_scope(state.run_id):
         loop_task = asyncio.create_task(
             _select_then_run(allowed_strategies, model, state, sandbox_obj, max_turns)
         )

@@ -23,6 +23,7 @@ from typing import Any
 import arcllm
 
 from arcrun._messages import content_text, system_messages, user_message
+from arcrun.causality import llm_call_scope
 from arcrun.dynamic.binding import RunHost
 from arcrun.dynamic.host import DEFAULT_AGENT_CALLS, ScriptOutcome
 from arcrun.dynamic.interpreter import execute_script
@@ -174,7 +175,8 @@ class DynamicStrategy(Strategy):
             )
 
         try:
-            response = await model.invoke(messages, tools=[_EMIT_SCRIPT])
+            with llm_call_scope(state.turn_count):
+                response = await model.invoke(messages, tools=[_EMIT_SCRIPT])
         except Exception as exc:  # reason: fail-open — the ReAct fallback covers it
             bus.emit("dynamic.author.error", {"attempt": attempt, "error": str(exc)})
             return ""

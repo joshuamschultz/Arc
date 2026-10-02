@@ -314,7 +314,7 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
             handle = await agent.start_tracked_run("Second task", session_key="chat-thread")
             await handle.result()
             await asyncio.sleep(0)
-            from arcstore.spool import request_context
+            from arctrust.causal import run_scope
 
             from arcagent.core.session_internal.capability_ledger import (
                 bind_session_id,
@@ -323,7 +323,7 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
 
             session_token = bind_session_id(session.session_id)
             try:
-                with request_context("parent-run"):
+                with run_scope("parent-run"):
                     await agent.run_oneshot(system="Evaluate", user="One decision")
             finally:
                 reset_session_id(session_token)

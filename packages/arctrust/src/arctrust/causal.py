@@ -148,6 +148,22 @@ def refine(**ids: Any) -> Iterator[CausalContext]:
 
 
 @contextlib.contextmanager
+def run_scope(run_id: str) -> Iterator[CausalContext]:
+    """Enter a run: refine ``run_id`` onto the bound context.
+
+    With nothing bound, installs an :data:`UNATTRIBUTED` ``system`` root so the
+    run's records are still correlated while the missing binding stays loud in
+    the ledger (the actor reads as unattributed, never as someone else).
+    """
+    if _causal.get() is None:
+        with bind(root("system", UNATTRIBUTED, run_id=run_id)) as ctx:
+            yield ctx
+        return
+    with refine(run_id=run_id) as ctx:
+        yield ctx
+
+
+@contextlib.contextmanager
 def delegate(initiator: Initiator, initiator_id: str, **ids: Any) -> Iterator[CausalContext]:
     """Hand the act to ``initiator_id`` acting on behalf of the current initiator.
 
@@ -199,5 +215,6 @@ __all__ = [
     "delegate",
     "refine",
     "root",
+    "run_scope",
     "spawn_detached",
 ]

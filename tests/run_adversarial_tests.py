@@ -90,6 +90,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # in for a UI session, a scheduler or an unbound caller.
     "forged audit attribution, forged signer and replayed audit records": (
         "packages/arctrust/tests/test_causal.py",
+        "packages/arcrun/tests/test_causal_binding.py",
         "packages/arctrust/tests/test_audit_signer_verifier.py",
         "packages/arcstore/tests/integration/test_ingest_verify.py",
         "packages/arcui/tests/unit/test_audit_causality.py",

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from arcrun.causality import llm_call_scope
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
@@ -70,7 +71,8 @@ class OneShotStrategy(Strategy):
             if state.max_tokens is not None
             else {}
         )
-        response = await model.invoke(state.messages, **cap)
+        with llm_call_scope(state.turn_count):
+            response = await model.invoke(state.messages, **cap)
         accumulate_usage(state, response)
         state.turn_count = 1
         state.event_bus.emit("turn.end", {"turn_number": 1})

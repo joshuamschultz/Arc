@@ -248,14 +248,14 @@ async def test_messaging_send_to_a_did_takes_the_mail_path(
 async def test_messaging_send_back_to_the_sender_in_a_mail_turn_is_the_one_reply(
     tmp_path: Path, alice: AgentIdentity
 ) -> None:
-    from arcstore.spool import request_context
+    from arctrust.causal import run_scope
 
     st = _configure(tmp_path, alice, _FakeMail())
     mail = _FakeMail(participants=(alice.did, st.identity.did))
     st.mail_service = mail
     turn_context.set_inbound_channel(f"mail://{_CONVERSATION}")
 
-    with request_context("run-7"):
+    with run_scope("run-7"):
         result = json.loads(await messaging_send(to="agent://alice", body="4.2M"))
 
     assert result["thread_id"] == _CONVERSATION
