@@ -22,6 +22,7 @@ import pytest
 from arcagent.brain import NullBrain
 from arcagent.core.errors import CapabilityUnavailableError
 from arcagent.modules.connected_data import _runtime as connected_runtime
+from arcagent.modules.connected_data.service import CatalogEntry
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
     MemoryPromotionRun,
@@ -178,6 +179,23 @@ class _ConnectedService:
 
     async def get_mapping_proposal(self, connection_id: str) -> Any:
         return self._proposals.get(connection_id)
+
+    async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
+        """The service's own view: described sources with the homes they are mapped to."""
+        entries = []
+        for source in await self.list_sources():
+            if source.description is None:
+                continue
+            proposal = self._proposals.get(source.connection_id)
+            entries.append(
+                CatalogEntry(
+                    name=source.description.display_name or source.description.source_kind,
+                    kind=source.description.source_kind,
+                    status=source.status,
+                    homes=tuple(proposal.homes) if proposal else (),
+                )
+            )
+        return tuple(entries)
 
 
 def _connect(service: Any, monkeypatch: pytest.MonkeyPatch) -> None:

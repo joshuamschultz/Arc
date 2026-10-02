@@ -65,6 +65,9 @@ _FATAL_SYNC_CODES = frozenset(
 )
 
 
+_CHECKPOINT_INVALID = SourceFailureCode.CHECKPOINT_INVALID.value
+
+
 class ConnectedDataCoordinator:
     """Run pages through mapping and ingest before advancing a checkpoint."""
 
@@ -156,6 +159,7 @@ class ConnectedDataCoordinator:
             # fresh crawl (cursor None) starts False so a full pass can reconcile;
             # this also resets a stale durable True once a full crawl completes.
             budget_reached = current.budget_reached if current.cursor is not None else False
+            reset_done = False
             while True:
                 self._check_cancel(cancel_event)
                 # The time budget, like the page and byte budgets, ends a run at
@@ -170,7 +174,17 @@ class ConnectedDataCoordinator:
                 if pages >= chosen.max_pages:
                     budget_reached = self._stopped_at_ceiling = True
                     break
-                page = await self._fetch_with_retry(source, cursor, chosen, run, cancel_event)
+                try:
+                    page = await self._fetch_with_retry(source, cursor, chosen, run, cancel_event)
+                except SyncError as exc:
+                    # A cursor the provider no longer honours is not an outage: start
+                    # over from a snapshot, once. A second rejection, or a reject of
+                    # a snapshot that has no cursor to drop, is a real failure.
+                    if exc.code != _CHECKPOINT_INVALID or cursor is None or reset_done:
+                        raise
+                    await self._reset_checkpoint(source, run, cursor)
+                    cursor, reset_done = None, True
+                    continue
                 snapshot_ids.update(
                     item.object_id
                     for item in page.objects
@@ -295,6 +309,30 @@ class ConnectedDataCoordinator:
                 )
         return await self._state.get_state(agent_did, source_id)
 
+    async def _reset_checkpoint(self, source: SourceDescription, run: _Run, cursor: str) -> None:
+        """Drop a dead cursor durably, so the snapshot that follows is what is resumed.
+
+        Committed through the same fenced path as a page, with a page id unique to
+        this reset: a crash between the reset and the first snapshot page resumes
+        from the snapshot, not from the dead cursor again. The index is kept, not
+        wiped: a snapshot re-offers every object and the monotonic revision rule
+        makes the unchanged ones no-ops, so search keeps working through the rebuild.
+        """
+        reset_id = _safe_id(f"reset\0{run.source_id}\0{cursor}\0{run.fencing_token}")
+        if not await self._state.commit_page(
+            run.agent_did,
+            run.source_id,
+            expected_cursor=cursor,
+            next_cursor=None,
+            page_id=reset_id,
+            page_count=0,
+            page_bytes=0,
+            owner_id=run.owner_id,
+            fencing_token=run.fencing_token,
+        ):
+            raise LeaseLostError()
+        await self._emit("checkpoint_reset", source, {})
+
     async def _fetch_with_retry(
         self,
         source: SourceDescription,
@@ -340,6 +378,8 @@ class ConnectedDataCoordinator:
     ) -> int:
         mappings: list[tuple[SourceObject, SourceContent | None, MappingPlan]] = []
         page_bytes = 0
+        fetched = 0
+        fetch_failure: TransientSyncError | None = None
         for source_object in page.objects:
             self._check_cancel(cancel_event)
             self._check_deadline(run, limits)
@@ -387,13 +427,25 @@ class ConnectedDataCoordinator:
                     # of skippable files. Read the typed verdict, not the message.
                     cause = exc.__cause__
                     code = cause.code if isinstance(cause, SourceError) else None
+                    if isinstance(exc, TransientSyncError):
+                        # A file that kept answering 5xx through every retry. Charged to
+                        # that file: one bad object aborting its page is how a single
+                        # file cost an account 307 failed runs. If NOTHING on
+                        # the page could be fetched it is the source that is down, and
+                        # the run still fails below.
+                        await self._emit_skip(source, source_object, "object_transient")
+                        fetch_failure = fetch_failure or exc
+                        continue
                     if code not in _OBJECT_SKIP_CODES:
                         raise
                     await self._emit_skip(source, source_object, f"object_{code.value}")
                     continue
+                fetched += 1
                 page_bytes += _content_bytes(content)
             page_bytes += _metadata_bytes(source_object)
             mappings.append((source_object, content, mapping))
+        if fetch_failure is not None and not fetched:
+            raise fetch_failure
         semaphore = asyncio.Semaphore(limits.max_concurrency)
         outcomes = {"ok": 0, "failed": 0}
         # An account-wide denial short-circuits every sibling still waiting on the

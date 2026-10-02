@@ -41,6 +41,7 @@ from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
 from arcagent.extension.state import ConnectionHealth
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
 from arcagent.modules.connected_data.health import (
+    REPEATED_FAILURES,
     ConnectionHealthTracker,
     is_terminal_sync_failure,
 )
@@ -52,8 +53,13 @@ _CATALOG_RETRY_MAX_SECONDS = 30.0
 IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
 
 #: Called once when a connection needs a human — connection id + reason. The
-#: health tracker guarantees it fires exactly once per outage.
-OperatorNotifier = Callable[[str, str], Awaitable[None]]
+#: health tracker guarantees it fires exactly once per outage. Returns whether the
+#: notice reached a channel, so the audit trail can say "undeliverable" rather than
+#: pretending an operator was told.
+OperatorNotifier = Callable[[str, str], Awaitable[bool]]
+
+#: How long the short-lived lease that stamps a terminal status may be held.
+_TERMINAL_LEASE_SECONDS = 30.0
 
 
 class _NullSecretBackend:
@@ -193,6 +199,22 @@ class SourceRuntimeStatus:
 
 
 @dataclass(frozen=True)
+class CatalogEntry:
+    """One connected source as the agent's prompt and tools describe it."""
+
+    name: str
+    kind: str
+    status: str
+    #: Where the operator mapped this source's knowledge; empty until staged.
+    homes: tuple[KnowledgeHome, ...]
+
+    @property
+    def homes_text(self) -> str:
+        """The homes as a prompt/tool line shows them."""
+        return ", ".join(home.value for home in self.homes) or "not mapped"
+
+
+@dataclass(frozen=True)
 class SourceOperationResult:
     """Typed, safe outcome for one operator lifecycle request."""
 
@@ -238,6 +260,7 @@ class ConnectedDataService:
         restart_backoff_max_seconds: float = 1800.0,
         stall_grace_seconds: float = 120.0,
         terminal_recheck_seconds: float = 3600.0,
+        failure_ceiling: int = 5,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -278,6 +301,7 @@ class ConnectedDataService:
             backoff_max_seconds=restart_backoff_max_seconds,
         )
         self._stall_grace = stall_grace_seconds
+        self._failure_ceiling = failure_ceiling
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -337,6 +361,39 @@ class ConnectedDataService:
                 self._start_inspection(registration)
         return tuple(self._statuses[registration.connection_id] for registration in registrations)
 
+    async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
+        """Describe every connected source from what is already known.
+
+        The agent's prompt reads this on EVERY turn, so it answers from the cache
+        and the durable mapping row only and never calls an adapter: a vendor CLI
+        that hangs must not stall every turn of every granted
+        agent. ``refresh`` is for a tool the agent chose to call, which may start the
+        usual background inspection of anything not yet described.
+        """
+        if refresh:
+            statuses: tuple[SourceRuntimeStatus, ...] = await self.list_sources()
+        else:
+            registrations = sorted(
+                await self._catalog.snapshot(), key=lambda entry: entry.connection_id
+            )
+            known = (self._statuses.get(entry.connection_id) for entry in registrations)
+            statuses = tuple(status for status in known if status is not None)
+        entries: list[CatalogEntry] = []
+        for status in statuses:
+            source = status.description
+            if source is None:
+                continue
+            staged = await self._staged_proposal(status.connection_id)
+            entries.append(
+                CatalogEntry(
+                    name=source.display_name or source.source_kind,
+                    kind=source.source_kind,
+                    status=status.status,
+                    homes=staged.homes if staged is not None else (),
+                )
+            )
+        return tuple(entries)
+
     def _start_inspection(self, registration: SourceRegistration) -> None:
         """Describe a source out of band, at most one attempt in flight."""
         connection_id = registration.connection_id
@@ -348,7 +405,13 @@ class ConnectedDataService:
             name=f"connected-data-inspect:{connection_id}",
         )
         self._inspections[connection_id] = task
-        task.add_done_callback(lambda _: self._inspections.pop(connection_id, None))
+
+        def _inspected(_: asyncio.Task[None]) -> None:
+            self._inspections.pop(connection_id, None)
+            # The monitor waits for a source's first description before its first run.
+            self._wake.set()
+
+        task.add_done_callback(_inspected)
 
     async def sync_now(self, connection_id: str) -> SourceOperationResult:
         """Schedule one source immediately; unknown or paused sources are refused."""
@@ -637,14 +700,23 @@ class ConnectedDataService:
             connection_id = registration.connection_id
             if connection_id in self._paused or not self._timing.is_due(connection_id):
                 continue
+            # Describe a source before its first run. The description reads the
+            # durable record, and a connection that already needs a human must be
+            # backed off BEFORE it is run again, not noticed after a restart has
+            # hammered its dead credential one more time. The finished inspection
+            # wakes this loop.
+            if connection_id in self._inspections:
+                continue
+            if connection_id not in self._statuses:
+                self._statuses[connection_id] = SourceRuntimeStatus(
+                    connection_id=connection_id, status="idle", detail="inspecting"
+                )
+                self._start_inspection(registration)
+                continue
             # A source that needs a human is backed off: re-running it every
             # tick just hammers a dead credential and floods the audit log.
             if self._health.is_backed_off(connection_id):
                 continue
-            self._statuses.setdefault(
-                connection_id,
-                SourceRuntimeStatus(connection_id=connection_id, status="inspecting"),
-            )
             self._schedule(registration)
 
     def _schedule(self, registration: SourceRegistration) -> None:
@@ -690,21 +762,79 @@ class ConnectedDataService:
     async def _run_failed(
         self, connection_id: str, event: str, detail: str, exc: Exception | None = None
     ) -> None:
-        """Mark, audit and back off one failed run; the next try comes on the timer."""
+        """Mark, audit and back off one failed run; the next try comes on the timer.
+
+        Past the consecutive-failure ceiling the source is handed to a human: an
+        unknown error otherwise means "retry", and retrying one for a month is a
+        silent outage. The failure is also made durable: a stall or a lost lease
+        never reached the store's own end-of-run write, which left a tracker
+        ``running`` for nine days.
+        """
         _logger.warning("connected-data source %s: %s", event, connection_id, exc_info=exc)
+        state = await self._record_failure(connection_id, detail)
         self._statuses[connection_id] = SourceRuntimeStatus(
-            connection_id=connection_id, status="failed", detail=detail
+            connection_id=connection_id, status="failed", detail=detail, state=state
         )
         delay = self._timing.failed(connection_id)
+        failures = self._timing.failures(connection_id)
         await self._emit(
             f"connected_data.sync.{event}",
             {
                 "source": _safe_id(connection_id),
                 "error": detail if exc is None else _name(exc),
-                "failures": self._timing.failures(connection_id),
+                "failures": failures,
                 "retry_in_seconds": round(delay, 3),
             },
         )
+        if failures >= self._failure_ceiling:
+            await self._mark_needs_attention(connection_id, REPEATED_FAILURES)
+
+    async def _record_failure(
+        self, connection_id: str, code: str, *, force: bool = False
+    ) -> SyncState | None:
+        """Leave a terminal status behind when the run could not.
+
+        A coordinator that ended its own run has already written ``failed`` with a
+        reason. One that was cut off (a stall) or lost its lease could not, and its
+        row still says ``running`` or ``cancelled``: this stamps ``failed`` with the
+        reason, leaving ``last_synced_at`` (the last GOOD sync) untouched. It runs
+        under a short lease of its own so it can never overwrite a live run. ``force``
+        replaces the coordinator's own reason, for the one the service decides itself
+        (a ceiling of repeated failures), which a restart must be able to read.
+        """
+        state = await self._persisted_state(connection_id)
+        failed = state is not None and state.status is SyncStatus.FAILED
+        if self._store is None or (
+            failed and (not force or (state is not None and state.error_code == code))
+        ):
+            return state
+        owner = f"{self._agent_did}:terminal:{uuid.uuid4().hex}"
+        try:
+            lease = await self._store.acquire_lease(
+                self._agent_did, connection_id, owner, ttl_seconds=_TERMINAL_LEASE_SECONDS
+            )
+            if lease is None:
+                return state
+            try:
+                await self._store.set_status(
+                    self._agent_did,
+                    connection_id,
+                    SyncStatus.FAILED,
+                    owner_id=owner,
+                    fencing_token=lease.fencing_token,
+                    error_code=code,
+                )
+            finally:
+                await self._store.release_lease(
+                    self._agent_did,
+                    connection_id,
+                    owner_id=owner,
+                    fencing_token=lease.fencing_token,
+                )
+        except Exception:  # reason: a failed status write must not mask the run's own failure
+            _logger.warning("connected-data terminal status unwritable: %s", connection_id)
+            return state
+        return await self._persisted_state(connection_id)
 
     def _stall_seconds(self) -> float:
         """How long one run may take before it is treated as hung.
@@ -975,11 +1105,15 @@ class ConnectedDataService:
         if row is None:
             return None
         try:
+            # The durable row holds plain strings; every reader calls ``.value`` on a
+            # home, so they are restored as the enum they were staged as. Left as
+            # strings they crashed ``connected_sources`` and the prompt catalog after
+            # every restart (J1 F2).
             restored = MappingProposalStatus(
                 connection_id=connection_id,
                 source_id=str(row.get("source_id", "")),
-                allowed_homes=tuple(row.get("allowed_homes", ())),
-                homes=tuple(row.get("homes", ())),
+                allowed_homes=tuple(KnowledgeHome(home) for home in row.get("allowed_homes", ())),
+                homes=tuple(KnowledgeHome(home) for home in row.get("homes", ())),
                 approval_id=str(row.get("approval_id", "")),
             )
         except (TypeError, ValueError):
@@ -1002,8 +1136,14 @@ class ConnectedDataService:
     async def _mark_needs_attention(self, connection_id: str, reason: str) -> None:
         """Back a source off, surface needs_attention, and notify once."""
         first = self._health.note_terminal_failure(connection_id)
+        if is_terminal_sync_failure(reason):
+            # Durable, so the next process knows without being told again.
+            await self._record_failure(connection_id, reason, force=True)
         self._statuses[connection_id] = SourceRuntimeStatus(
-            connection_id=connection_id, status="needs_attention", detail=reason or ""
+            connection_id=connection_id,
+            status="needs_attention",
+            detail=reason or "",
+            state=await self._persisted_state(connection_id),
         )
         if first:
             await self._notify_operator(connection_id, reason)
@@ -1024,8 +1164,16 @@ class ConnectedDataService:
         _logger.warning(
             "connected-data connection needs attention: %s (%s)", connection_id, reason
         )
+        delivered = False
         if self._operator_notifier is not None:
-            await self._operator_notifier(connection_id, reason)
+            try:
+                delivered = await self._operator_notifier(connection_id, reason)
+            except Exception:  # reason: an undeliverable notice must not break the sync loop
+                _logger.warning("connected-data operator notice failed: %s", connection_id)
+        await self._emit(
+            "connection.operator.notified",
+            {"source": _safe_id(connection_id), "reason": reason, "delivered": delivered},
+        )
 
     async def _inspect(self, registration: SourceRegistration) -> Any:
         """Inspect a source, turning a provider failure into a typed refusal.
@@ -1101,6 +1249,7 @@ def _safe_id(value: str) -> str:
 
 
 __all__ = [
+    "CatalogEntry",
     "ConnectedDataService",
     "IngestPortFactory",
     "MappingProposalStatus",

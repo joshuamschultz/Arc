@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from arcagent.modules.connected_data import _runtime
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.tools._decorator import capability, hook
+
+_logger = logging.getLogger("arcagent.modules.connected_data.capabilities")
 
 # After recall (which is the query answer); the catalog is standing context.
 _CATALOG_PRIORITY = 60
@@ -38,6 +41,8 @@ class ConnectedData:
             restart_backoff_seconds=state.config.restart_backoff_seconds,
             restart_backoff_max_seconds=state.config.restart_backoff_max_seconds,
             stall_grace_seconds=state.config.stall_grace_seconds,
+            failure_ceiling=state.config.consecutive_failure_ceiling,
+            operator_notifier=_operator_notifier(state),
         )
         await state.service.start()
         self._service = state.service
@@ -74,20 +79,44 @@ async def inject_connections_catalog(ctx: Any) -> None:
     sections = ctx.data.get("sections")
     if not isinstance(sections, dict):
         return
-    lines: list[str] = []
-    for status in await service.list_sources():
-        source = status.description
-        if source is None:
-            continue
-        proposal = await service.get_mapping_proposal(status.connection_id)
-        homes = ", ".join(home.value for home in proposal.homes) if proposal else "not mapped"
-        name = source.display_name or source.source_kind
-        lines.append(f"- {name} ({source.source_kind}): status={status.status}; homes={homes}")
+    lines = [
+        f"- {entry.name} ({entry.kind}): status={entry.status}; homes={entry.homes_text}"
+        for entry in await service.catalog_entries()
+    ]
     if not lines:
         return
     prompts = ctx.data.get("prompt_source") or st.prompt_source
     preamble = prompts.resolve("arcagent", "connected_data_catalog")
     sections["connections"] = preamble + "\n" + "\n".join(lines)
+
+
+#: Emitted when a connection needs a human. The module that owns the operator's
+#: channel answers it and sets ``delivered``; this module names no channel.
+OPERATOR_ATTENTION_EVENT = "connected_data:operator_attention"
+
+
+def _operator_notifier(state: Any) -> Any:
+    """Ask the module bus to tell the operator, once, that a connection needs them.
+
+    A source dies in the background with no turn behind it, so nothing else would
+    ever say so. This module owns no channel (and may not import the core that
+    knows them): it emits an event, and whichever module delivers to the operator
+    answers it. Never the agent's own chat. Nobody answering (a standalone agent,
+    no known channel) returns False, which the service audits as undeliverable
+    instead of pretending somebody was told.
+    """
+
+    async def notify(connection_id: str, reason: str) -> bool:
+        bus = state.bus
+        if bus is None:
+            return False
+        event = await bus.emit(
+            OPERATOR_ATTENTION_EVENT,
+            {"connection_id": connection_id, "reason": reason, "delivered": False},
+        )
+        return bool(event.data.get("delivered"))
+
+    return notify
 
 
 def _audit(telemetry: Any) -> Any:
@@ -100,4 +129,8 @@ def _audit(telemetry: Any) -> Any:
     return emit
 
 
-__all__ = ["ConnectedData", "inject_connections_catalog"]
+__all__ = [
+    "OPERATOR_ATTENTION_EVENT",
+    "ConnectedData",
+    "inject_connections_catalog",
+]

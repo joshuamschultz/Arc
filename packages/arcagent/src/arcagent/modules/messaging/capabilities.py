@@ -386,6 +386,30 @@ async def messaging_bind_run_fn(ctx: Any) -> None:
     _logger.info("Bound agent run/deliver callbacks for message processing")
 
 
+@hook(event="connected_data:operator_attention", priority=100)
+async def deliver_connection_attention(ctx: Any) -> None:
+    """Tell the operator a connected source needs them, on the channel they last used.
+
+    Answers the connected-data module's event: a dead credential has no turn to
+    report itself in. Sets ``delivered`` only when a channel actually took the
+    notice, so the audit trail never claims an operator was told when nobody was.
+    """
+    st = _runtime.state()
+    target = _notify_target(st)
+    if not target:
+        return
+    connection = str(ctx.data.get("connection_id", ""))
+    reason = str(ctx.data.get("reason", ""))
+    message = (
+        f"Connection '{connection}' needs you: {reason}. "
+        "Open Connections in ArcUI to reconnect it."
+    )
+    try:
+        ctx.data["delivered"] = await _deliver_to_user(st, target, message)
+    except Exception:  # reason: an undeliverable notice must not break the sync loop
+        _logger.warning("operator notice for connection %s failed", connection)
+
+
 # Only these capture kinds describe something the agent was *given*. Tool output
 # and the agent's own replies are working noise, and a digest that indexes them
 # ranks its owner for having been busy rather than for holding anything.
@@ -495,6 +519,23 @@ async def messaging_shutdown(ctx: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _deliver_to_user(st: Any, target: str, message: str) -> bool:
+    """Put one notice on the human's channel; False when no channel is wired.
+
+    The one delivery both ``notify_user`` (the agent chose to speak) and a
+    background notice (a connection died with no turn behind it) go through.
+    """
+    if turn_context.is_team_target(target):
+        # The turn came from an arcteam channel — answer in that channel so the
+        # reply lands where the operator posted, not on a gateway platform.
+        await _send_to_team(st, target, message)
+        return True
+    if st.channel_deliver_fn is None:
+        return False
+    await st.channel_deliver_fn(target, message)
+    return True
+
+
 def _notify_target(st: Any) -> str | None:
     """Where a proactive user notification should go.
 
@@ -594,13 +635,7 @@ async def notify_user(message: str = "") -> str:
     if not target:
         return json.dumps({"error": "no known channel to notify the user on"})
     try:
-        if turn_context.is_team_target(target):
-            # The turn came from an arcteam channel — answer in that channel so the
-            # reply lands where the operator posted, not on a gateway platform.
-            await _send_to_team(st, target, message)
-        elif st.channel_deliver_fn is not None:
-            await st.channel_deliver_fn(target, message)
-        else:
+        if not await _deliver_to_user(st, target, message):
             return json.dumps({"error": "no delivery channel is wired (standalone agent)"})
     except Exception as exc:  # reason: surface a tool error, don't crash the turn
         _logger.warning("notify_user delivery to %s failed: %s", target, exc)
@@ -1025,6 +1060,7 @@ async def messaging_sweep_loop(_ctx: Any) -> None:
 
 __all__ = [
     "deliver_channel_reply",
+    "deliver_connection_attention",
     "inject_messaging_sections",
     "list_team_files",
     "messaging_bind_run_fn",
