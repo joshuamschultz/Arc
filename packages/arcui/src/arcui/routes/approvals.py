@@ -151,7 +151,39 @@ async def list_approvals(request: Request) -> JSONResponse:
     except Exception:  # reason: a saturated pool must degrade, not 500 the panel
         logger.exception("approvals read failed")
         return _error("approvals temporarily unavailable", 503)
-    return JSONResponse({"approvals": [a.model_dump(mode="json") for a in pending]})
+    definitions = getattr(
+        getattr(request.app.state, "workflow_control_plane", None), "definitions", None
+    )
+    return JSONResponse({"approvals": [_approval_row(a, definitions) for a in pending]})
+
+
+def _approval_row(approval: Any, definitions: Any) -> dict[str, Any]:
+    """One pending approval as the panel's row.
+
+    A workflow-sign request also carries why it was raised and what the operator
+    would be signing: a node and file diff against the last signed version
+    (J3 F10). Without it the card asks for a signature on a name alone.
+    """
+    row: dict[str, Any] = approval.model_dump(mode="json")
+    if approval.tool != WORKFLOW_SIGN_TOOL:
+        return row
+    arguments = approval.arguments or {}
+    row["reason"] = str(arguments.get("reason") or "")
+    row["diff"] = _workflow_diff(definitions, str(arguments.get("workflow_id", "")))
+    return row
+
+
+def _workflow_diff(definitions: Any, workflow_id: str) -> dict[str, Any] | None:
+    """The draft-vs-last-signed diff, or None when it cannot be computed."""
+    if definitions is None or not workflow_id:
+        return None
+    try:
+        from arcteam.workflow.diff import diff_against_last_signed
+
+        return dict(diff_against_last_signed(definitions, workflow_id))
+    except Exception:  # reason: a missing diff must not hide the approval itself
+        logger.warning("workflow diff for %s unavailable", workflow_id, exc_info=True)
+        return None
 
 
 async def list_notifications(request: Request) -> JSONResponse:
