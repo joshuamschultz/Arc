@@ -220,9 +220,26 @@ class OperatorKey:
             os.link(tmp, path)  # atomic exclusive publish; FileExistsError if lost
         finally:
             tmp.unlink(missing_ok=True)
-        pub = _pub_path(path)
-        pub.write_bytes(self.public_key)
-        pub.chmod(0o644)
+        _publish_pubkey(_pub_path(path), self.public_key)
+
+
+def _publish_pubkey(pub: Path, public_key: bytes) -> None:
+    """Record the public key so a racing loader sees it absent or complete, never partial.
+
+    The key file is already visible when this runs, so a loser of the bootstrap
+    race can read ``pub`` at any moment. A plain ``write_bytes`` truncates first,
+    and a loader that lands in that window compares an empty file against the
+    real key and (correctly, but wrongly here) reports an out-of-band swap.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(pub.parent), prefix=f".{pub.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(public_key)
+        tmp.chmod(0o644)
+        tmp.replace(pub)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _read_secure_seed(path: Path) -> bytes:
