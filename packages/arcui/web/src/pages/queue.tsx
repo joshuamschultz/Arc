@@ -5,7 +5,8 @@ import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ErrorState } from '@/components/states'
-import { ApiError } from '@/lib/api'
+import { ApiError, apiPost } from '@/lib/api'
+import { clearToken } from '@/lib/auth'
 import {
   cancelQueueJob,
   getQueueControl,
@@ -20,6 +21,35 @@ const states: QueueState[] = [
   'queued', 'running', 'cancel_requested', 'completed', 'failed',
   'cancelled', 'timed_out', 'outcome_unknown',
 ]
+
+const needsNamedOperator = (error: unknown) =>
+  error instanceof ApiError && error.status === 403 && error.message === 'operator_account_required'
+
+async function signInWithAccount() {
+  try {
+    await apiPost('/api/auth/logout')
+  } catch {
+    /* the token is cleared client-side regardless */
+  }
+  clearToken()
+  window.location.reload()
+}
+
+/** Queue controls act on shared capacity, so they need a named operator. */
+function NamedOperatorPrompt() {
+  return (
+    <section className="max-w-xl space-y-3 rounded border border-border p-4" aria-label="Sign in required">
+      <h2 className="font-semibold">Sign in as a named operator</h2>
+      <p className="text-sm text-muted-foreground">
+        You are connected with the shared operator token, which names no one. Queue changes
+        are recorded against a person, so they need an operator account. If none exists yet,
+        run <code className="rounded bg-muted px-1 py-0.5 text-xs">arc user add you@example.com</code> on
+        the server first.
+      </p>
+      <Button size="sm" onClick={signInWithAccount}>Sign in with an account</Button>
+    </section>
+  )
+}
 
 export function QueuePage() {
   const queryClient = useQueryClient()
@@ -89,7 +119,8 @@ export function QueuePage() {
           run at once, or cancel a call. Most days you do not need to touch it.
         </p>
         {notice && <p role="status" className="rounded border border-border p-3">{notice}</p>}
-        {control.error && <ErrorState error={control.error} />}
+        {needsNamedOperator(control.error) && <NamedOperatorPrompt />}
+        {control.error && !needsNamedOperator(control.error) && <ErrorState error={control.error} />}
         {control.data && limits && (
           <section className="space-y-4 rounded border border-border p-4" aria-label="Queue controls">
             <div className="flex items-center gap-3">
@@ -176,7 +207,7 @@ export function QueuePage() {
             <FieldHelp helpKey="queue.jobs.state" route="queue" />
             <Button size="sm" variant="outline" onClick={() => jobs.refetch()}>Refresh</Button>
           </div>
-          {jobs.error && <ErrorState error={jobs.error} />}
+          {jobs.error && !needsNamedOperator(jobs.error) && <ErrorState error={jobs.error} />}
           {jobs.error && cursors.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => setCursors([])}>
               Reset to first page
