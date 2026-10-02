@@ -397,3 +397,40 @@ class TestLocalAuthority:
         (agent_dir / "workspace" / "schedules.json").write_text(json.dumps(entries))
         resp = client.patch(_URL, headers=_op(), json={"enabled": True})
         assert resp.status_code == 403
+
+
+class TestReenableAfterBreaker:
+    def test_reenable_clears_the_breaker_stamp_and_failure_count(
+        self, ctx: tuple[TestClient, Path]
+    ) -> None:
+        client, agent_dir = ctx
+        sched = agent_dir / "workspace" / "schedules.json"
+        rows = json.loads(sched.read_text(encoding="utf-8"))
+        rows[0]["enabled"] = False
+        rows[0]["metadata"].update(
+            {
+                "disabled_reason": "breaker",
+                "disabled_at": "2026-10-01T22:00:05+00:00",
+                "consecutive_failures": 5,
+            }
+        )
+        sched.write_text(json.dumps(rows), encoding="utf-8")
+
+        resp = client.patch(_URL, headers=_op(), json={"enabled": True})
+
+        assert resp.status_code == 200
+        entry = _entry(agent_dir, "sched_ffa77e980f06")
+        assert entry["enabled"] is True
+        assert entry["metadata"]["disabled_reason"] is None
+        assert entry["metadata"]["disabled_at"] is None
+        assert entry["metadata"]["consecutive_failures"] == 0
+        assert entry["metadata"]["run_count"] == 3
+
+    def test_operator_disable_is_stamped_as_operator(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+
+        client.patch(_URL, headers=_op(), json={"enabled": False})
+
+        meta = _entry(agent_dir, "sched_ffa77e980f06")["metadata"]
+        assert meta["disabled_reason"] == "operator"
+        assert meta["disabled_at"]

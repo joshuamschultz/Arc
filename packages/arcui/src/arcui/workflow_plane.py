@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -34,6 +35,11 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from arcteam.workflow.control_plane import WorkflowControlPlane as TeamControlPlane
 
 logger = logging.getLogger("arcui.workflow_plane")
+
+#: ``(owner handle, workflow id) -> the owner's schedule row`` or ``None``.
+ScheduleReader = Callable[[str, str], dict[str, Any] | None]
+#: ``(agent handle, tool name) -> idempotent`` or ``None`` when the tool is undeclared.
+ToolIdempotency = Callable[[str, str], bool | None]
 
 _SLUG = re.compile(r"[^a-z0-9._-]+")
 
@@ -139,7 +145,11 @@ class DashboardWorkflowPlane:
         tasks: Any,
         approvals: Any = None,
         default_owner: str = "@operator",
+        schedule_reader: ScheduleReader | None = None,
+        tool_idempotent: ToolIdempotency | None = None,
     ) -> None:
+        self._schedule_reader = schedule_reader
+        self._tool_idempotent = tool_idempotent
         self._plane = plane
         self._definitions = definitions
         self._runs = runs
@@ -176,7 +186,11 @@ class DashboardWorkflowPlane:
         detail = await self._summary(bundle)
         definition = bundle.definition
         detail["nodes"] = [
-            node.model_dump(mode="json", exclude_none=True) for node in definition.nodes
+            {
+                **node.model_dump(mode="json", exclude_none=True),
+                **self._idempotent_field(bundle, node),
+            }
+            for node in definition.nodes
         ]
         detail["edges"] = _edges(definition)
         detail["channel"] = definition.channel
@@ -268,6 +282,7 @@ class DashboardWorkflowPlane:
                 "status": "skipped" if entry.outcome == "skipped" else "done",
                 "iteration": entry.loop_iteration,
             }
+        self._flag_unsafe_repeats(run.workflow_id, nodes)
         detail["nodes"] = list(nodes.values())
         return detail
 
@@ -504,8 +519,41 @@ class DashboardWorkflowPlane:
             "trigger": (
                 None if trigger is None else trigger.model_dump(mode="json", exclude_none=True)
             ),
+            "schedule": self._schedule_row(definition),
             "last_run": None if latest is None else _run_summary(latest),
         }
+
+    def _schedule_row(self, definition: Any) -> dict[str, Any] | None:
+        """The owner agent's schedule row for this workflow, or ``None``.
+
+        The trigger in the toml says when the workflow SHOULD run; only the
+        owner's scheduler row says whether it still will (a breaker may have
+        paused it) and when it last did.
+        """
+        if self._schedule_reader is None:
+            return None
+        return self._schedule_reader(str(definition.owner), str(definition.id))
+
+    def _idempotent_field(self, bundle: Any, node: Any) -> dict[str, bool]:
+        """``{"idempotent": bool}`` for a tool node, else nothing.
+
+        Unknown means safe: only a tool whose manifest says ``idempotent = false``
+        is flagged, because the flag warns about a duplicated side effect.
+        """
+        if self._tool_idempotent is None or node.kind != "tool" or not node.tool:
+            return {}
+        handle = str(node.agent or bundle.definition.owner)
+        return {"idempotent": self._tool_idempotent(handle, str(node.tool)) is not False}
+
+    def _flag_unsafe_repeats(self, workflow_id: str, nodes: dict[str, dict[str, Any]]) -> None:
+        """Mark run-view node rows whose tool must not be blindly re-run."""
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return
+        for node in bundle.definition.nodes:
+            row = nodes.get(node.id)
+            if row is not None:
+                row.update(self._idempotent_field(bundle, node))
 
     async def _relay(self, result: Any, *, workflow_id: str) -> ControlPlaneResult:
         if not result.ok:
@@ -592,12 +640,83 @@ def _apply_patch(document: dict[str, Any], patch: dict[str, Any]) -> None:
         document["workflow"]["description"] = patch["name"]
 
 
+_SCHEDULE_META_FIELDS = (
+    "disabled_reason",
+    "disabled_at",
+    "next_fire_at",
+    "last_fired_at",
+    "last_outcome",
+    "last_error",
+)
+
+
+def _agent_root_for(roster_provider: Callable[[], Any], handle: str) -> tuple[str, Path] | None:
+    """``(agent_id, root)`` of the roster agent a ``@handle`` names."""
+    agent_id = handle.lstrip("@")
+    for entry in roster_provider():
+        if entry.agent_id == agent_id:
+            return agent_id, Path(entry.workspace_path)
+    return None
+
+
+def _load_schedule_rows(root: Path) -> list[Any]:
+    """The agent's ``schedules.json`` rows; unreadable or malformed means none."""
+    try:
+        rows = json.loads((root / "workspace" / "schedules.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def roster_schedule_reader(roster_provider: Callable[[], Any]) -> ScheduleReader:
+    """Read a workflow's derived ``wf:<id>`` row from its owner agent's ``schedules.json``.
+
+    The scheduler engine re-reads that same file each tick, so this is the row
+    the engine itself acts on. Any read problem answers ``None``: the page
+    simply shows no schedule rather than failing the whole workflow view.
+    """
+
+    def read(owner: str, workflow_id: str) -> dict[str, Any] | None:
+        located = _agent_root_for(roster_provider, owner)
+        if located is None:
+            return None
+        agent_id, root = located
+        schedule_id = f"wf:{workflow_id}"
+        for row in _load_schedule_rows(root):
+            if isinstance(row, dict) and row.get("id") == schedule_id:
+                meta = row.get("metadata") or {}
+                return {
+                    "agent_id": agent_id,
+                    "schedule_id": schedule_id,
+                    "enabled": bool(row.get("enabled", True)),
+                    **{key: meta.get(key) for key in _SCHEDULE_META_FIELDS},
+                }
+        return None
+
+    return read
+
+
+def roster_tool_idempotency(roster_provider: Callable[[], Any]) -> ToolIdempotency:
+    """Look a tool's ``idempotent`` flag up in its agent's installed extension manifests."""
+    from arcui.routes.agent_detail.tools import declared_idempotency
+
+    def lookup(handle: str, tool: str) -> bool | None:
+        located = _agent_root_for(roster_provider, handle)
+        if located is None:
+            return None
+        return declared_idempotency(located[1]).get(tool)
+
+    return lookup
+
+
 def build_dashboard_plane(
     *,
     runner: Any,
     workflows_root: Path | None = None,
     approvals: Any = None,
     default_owner: str = "@operator",
+    schedule_reader: ScheduleReader | None = None,
+    tool_idempotent: ToolIdempotency | None = None,
 ) -> DashboardWorkflowPlane:
     """Wire the dashboard plane from the runner the fleet service already hosts.
 
@@ -637,7 +756,15 @@ def build_dashboard_plane(
         tasks=runner.tasks,
         approvals=approvals,
         default_owner=default_owner,
+        schedule_reader=schedule_reader,
+        tool_idempotent=tool_idempotent,
     )
 
 
-__all__ = ["DashboardWorkflowPlane", "build_dashboard_plane", "slugify"]
+__all__ = [
+    "DashboardWorkflowPlane",
+    "build_dashboard_plane",
+    "roster_schedule_reader",
+    "roster_tool_idempotency",
+    "slugify",
+]

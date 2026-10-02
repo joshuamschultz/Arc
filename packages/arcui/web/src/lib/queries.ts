@@ -1484,6 +1484,30 @@ export const useRetryWorkflowNode = (runId: string) => {
   })
 }
 
+/**
+ * Turn a workflow's schedule back on. This is the existing operator-gated
+ * schedule update on the owner agent, not a workflow route: the row belongs to
+ * the agent's scheduler, so the write goes where every other schedule edit goes.
+ */
+export const useEnableWorkflowSchedule = (
+  workflowId: string,
+  schedule: { agent_id: string; schedule_id: string },
+) => {
+  const queryClient = useQueryClient()
+  return useMutation<unknown, Error, void>({
+    mutationFn: () =>
+      apiPatch(
+        `/api/agents/${encodeURIComponent(schedule.agent_id)}/schedules/${encodeURIComponent(schedule.schedule_id)}`,
+        { enabled: true },
+      ),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+      ]),
+  })
+}
+
 /** Start a throwaway test run of a workflow; resolves with the new run. */
 export const useTestRunWorkflow = (id: string) => {
   const queryClient = useQueryClient()

@@ -931,6 +931,8 @@ export interface WorkflowNode {
   on_failure?: 'fail_run' | 'continue' | 'skip_dependents'
   when?: string | null
   agent?: string | null
+  /** Tool nodes only: `false` when the tool's repeat call duplicates its effect. */
+  idempotent?: boolean
 }
 
 export interface WorkflowEdge {
@@ -954,9 +956,24 @@ export interface WorkflowLastRun {
   ended_at?: string | null
 }
 
+/** The owner agent's scheduler row for a workflow's trigger. */
+export interface WorkflowSchedule {
+  agent_id: string
+  schedule_id: string
+  enabled: boolean
+  disabled_reason?: 'operator' | 'breaker' | 'archived' | null
+  disabled_at?: string | null
+  next_fire_at?: string | null
+  last_fired_at?: string | null
+  last_outcome?: 'ok' | 'error' | 'start_unavailable' | 'missed' | null
+  last_error?: string | null
+}
+
 export interface WorkflowSummary {
   [key: string]: unknown
   id: string
+  /** `null` when the workflow has no schedule row on its owner agent. */
+  schedule?: WorkflowSchedule | null
   // Display name; may be null when the definition has none — fall back to `id`
   // wherever the workflow is titled.
   name: string | null
@@ -1024,6 +1041,8 @@ export interface WorkflowRunNodeStatus {
   reason?: string | null
   attempts?: number | null
   max_attempts?: number | null
+  /** Tool nodes only: `false` when repeating the tool duplicates its side effect. */
+  idempotent?: boolean
   /** Bounded value, a `{truncated, size_bytes, preview}` marker, or `{withheld}`. */
   input?: unknown
   output?: unknown
