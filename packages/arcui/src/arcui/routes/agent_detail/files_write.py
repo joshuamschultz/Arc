@@ -40,16 +40,23 @@ Every write/delete (applied, denied, or errored) is recorded through the
 COMP-010 ``emit_mutation_audit`` helper, and once the target has been
 resolved the audit ``target`` field carries the RESOLVED path — not the raw
 request string — so a symlink attempt shows in the audit trail as what it
-actually pointed at. The UI never signs: if a saved file has an ``.arcsig``
-sidecar, the write response flags the signature as stale so the agent knows
-it must re-sign — arcui holds no agent identity.
+actually pointed at.
+
+Signed workspace documents (``identity.md``, ``policy_pinned.md``) are control-plane
+text the agent verifies against the operator key at run start, so saving one signs
+it: the route goes through :func:`~arcui.routes.agent_detail.signed_write.sign_and_write`
+(operator key, policy gate, atomic text+sidecar write, audited signer). Any OTHER
+file that happens to have an ``.arcsig`` sidecar is flagged stale on save — arcui
+holds no agent identity to re-sign it with.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
+import arcagent
 import arctrust
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -58,10 +65,12 @@ from arcui.audit import emit_mutation_audit
 from arcui.query_validators import safe_choice
 from arcui.routes.agent_detail._common import (
     _VALID_ROOTS,
+    _agent_did,
     _agent_root,
     _is_key_material,
     _resolve_root_path,
 )
+from arcui.routes.agent_detail.signed_write import sign_and_write
 from arcui.schemas import ErrorResponse, FileDeleteResponse, FileWriteResponse
 
 # Detached-signature sidecar convention (arcagent.capabilities.artifact_signing
@@ -127,6 +136,7 @@ _BLOCKED_EXACT: frozenset[str] = frozenset(
     {
         "workspace/identity.md",
         "workspace/policy.md",
+        "workspace/policy_pinned.md",
         "arcagent.toml",
         "arcllm.toml",
         "arcrun.toml",
@@ -250,6 +260,64 @@ async def _content_from_body(request: Request) -> str | None:
     return content if isinstance(content, str) else None
 
 
+def _signed_document_key(agent_root: Path, canonical: Path) -> tuple[str, str] | None:
+    """The ``(package, name)`` key (``workspace``/``identity`` ...) ``canonical`` is, or None.
+
+    These workspace files are control-plane text the agent verifies against the
+    operator key at run start, so a save must re-sign them (J2 F2). Compared on the
+    RESOLVED path, so a symlink alias is judged by what it truly points at.
+    """
+    for key, path in arcagent.signed_workspace_files(agent_root / "workspace").items():
+        if canonical == Path(os.path.realpath(path)):
+            return key
+    return None
+
+
+async def _save_signed_document(
+    request: Request,
+    *,
+    agent_root: Path,
+    agent_id: str,
+    signed_key: tuple[str, str],
+    canonical: Path,
+    content: str,
+    rel: str,
+    target: str,
+) -> JSONResponse:
+    """Save a signed workspace document through the operator signing path.
+
+    The text lands in the workspace and its detached signature under the agent's
+    ``context/workspace/`` overlay root — outside the workspace subtree the agent's
+    own tools reach — via the same envelope as a prompt override.
+    """
+    package, name = signed_key
+    sidecar = agent_root / "context" / package / f"{name}.md{_SIDECAR_SUFFIX}"
+    written = await sign_and_write(
+        request,
+        agent_root=agent_root,
+        agent_did=_agent_did(request, agent_id) or "did:arc:unknown",
+        package=package,
+        name=name,
+        target=target,
+        operation="file_write",
+        path=canonical,
+        data=content.encode("utf-8"),
+        sidecar=sidecar,
+    )
+    if isinstance(written, JSONResponse):
+        return written
+    stat = canonical.stat()
+    return JSONResponse(
+        FileWriteResponse(
+            path=rel,
+            size=stat.st_size,
+            mtime=stat.st_mtime,
+            signature_stale=False,
+            message="Saved and signed. It takes effect on the agent's next run.",
+        ).model_dump(mode="json")
+    )
+
+
 async def put_file_write(request: Request) -> JSONResponse:
     """PUT /api/agents/{id}/files/read — save a workspace file (operator only)."""
     agent_id = request.path_params["id"]
@@ -321,6 +389,19 @@ async def put_file_write(request: Request) -> JSONResponse:
             f"Refusing to save '{rel}': content looks like a live credential "
             f"({secret_type}). Credentials never touch the filesystem.",
             400,
+        )
+
+    signed_key = _signed_document_key(agent_root, canonical)
+    if signed_key is not None:
+        return await _save_signed_document(
+            request,
+            agent_root=agent_root,
+            agent_id=agent_id,
+            signed_key=signed_key,
+            canonical=canonical,
+            content=content,
+            rel=rel,
+            target=target,
         )
 
     try:

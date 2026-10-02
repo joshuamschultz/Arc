@@ -172,3 +172,41 @@ def test_selection_call_is_labelled_strategy_selection() -> None:
     sections = {s["key"]: s for s in build_prompt_sections(body)}
     assert sections["strategy_selection"]["label"] == "Strategy selection"
     assert "Pick the best strategy" in sections["strategy_selection"]["body"]
+
+
+def test_untagged_system_message_is_preserved() -> None:
+    """J2 F4/G5: bare system text (no XML wrapper) is shown, never dropped."""
+    body = {
+        "messages": [
+            {"role": "system", "content": "<base>\nbase text\n</base>"},
+            {"role": "system", "content": "REACT GUIDANCE MARKER: think then act"},
+        ]
+    }
+    sections = {s["key"]: s for s in build_prompt_sections(body)}
+    assert "REACT GUIDANCE MARKER" in sections["untagged_system"]["body"]
+    assert sections["untagged_system"]["label"] == "Untagged system text"
+    assert sections["untagged_system"]["tokens"] > 0
+    assert "base text" not in sections["untagged_system"]["body"]
+
+
+def test_list_shaped_system_content_is_preserved() -> None:
+    """A provider block list (``[{"type": "text", ...}]``) is read like a string."""
+    body = {
+        "messages": [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "<policy>\nlist rule\n</policy>"},
+                    {"type": "text", "text": "loose guidance"},
+                ],
+            }
+        ]
+    }
+    sections = {s["key"]: s for s in build_prompt_sections(body)}
+    assert sections["policies"]["body"] == "list rule"
+    assert sections["untagged_system"]["body"] == "loose guidance"
+
+
+def test_fully_tagged_prompt_has_no_untagged_section() -> None:
+    sections = {s["key"] for s in build_prompt_sections(_request_body())}
+    assert "untagged_system" not in sections

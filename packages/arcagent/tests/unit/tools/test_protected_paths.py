@@ -72,6 +72,14 @@ class TestIsProtectedPath:
         assert is_protected_path((tmp_path / "IDENTITY.md"), protected)
 
 
+class TestPinnedPolicyIsProtected:
+    """policy_pinned.md holds the operator's signed rules: the agent must not rewrite them."""
+
+    def test_pinned_policy_resolves_protected_even_when_absent(self, tmp_path: Path) -> None:
+        protected = resolve_protected_paths(tmp_path, [])
+        assert is_protected_path((tmp_path / "policy_pinned.md").resolve(), protected)
+
+
 class TestPulseIsProtected:
     """pulse.md auto-runs as agent prompts: agent-writable means a planted standing order."""
 

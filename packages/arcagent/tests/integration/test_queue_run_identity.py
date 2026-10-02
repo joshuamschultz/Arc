@@ -30,6 +30,8 @@ from arcagent.core.config import (
     TelemetryConfig,
 )
 
+from ._signed_documents import sign_workspace_documents
+
 
 @pytest.mark.asyncio
 async def test_shutdown_cancels_stream_waiting_for_session_turn(
@@ -182,6 +184,7 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
     workspace.mkdir()
     (workspace / "identity.md").write_text("Agent: queue-integrated")
     (workspace / "context.md").write_text("Context marker: complete work.")
+    sign_workspace_documents(workspace, tmp_path / "arcagent.toml")
     key = AESGCM.generate_key(bit_length=256)
     monkeypatch.setenv("ARCLLM_TRACE_WRAP_KEY", base64.b64encode(key).decode("ascii"))
     config = ArcAgentConfig(
@@ -203,7 +206,12 @@ async def test_stream_and_tracked_runs_join_wire_prompt_encrypted_trace_and_spoo
         context=ContextConfig(max_tokens=10000),
     )
     coordinator = CallQueueCoordinator()
-    agent = ArcAgent(config, queue_coordinator=coordinator, queue_tenant_id="tenant-verified")
+    agent = ArcAgent(
+        config,
+        config_path=tmp_path / "arcagent.toml",
+        queue_coordinator=coordinator,
+        queue_tenant_id="tenant-verified",
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     import arcstore.spool as spool
 

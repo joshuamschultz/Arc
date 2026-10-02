@@ -55,6 +55,7 @@ def _is_strategy_tag(tag: str) -> bool:
     return tag.startswith("strategy") or tag.endswith("_guidance")
 
 
+_UNTAGGED_LABEL = "Untagged system text"
 _SELECTION_LABEL = "Strategy selection"
 _SELECTION_TOOL = "select_strategy"
 _STRATEGY_PREFIX = "strategy_"
@@ -89,6 +90,27 @@ def _prettify(tag: str) -> str:
     return tag.replace("-", " ").replace("_", " ").strip().title()
 
 
+def _content_text(content: Any) -> str:
+    """A message's text, whether a plain string or a provider block list
+    (``[{"type": "text", "text": ...}]``). Non-text blocks carry no prompt text."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    texts = [
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    return "\n\n".join(texts)
+
+
+def _untagged_system_text(system_text: str) -> str:
+    """System text left once every ``<tag>…</tag>`` section is removed — guidance
+    a package injected without a wrapper (arcrun's strategy guidance is one)."""
+    return _TOP_SECTION_RE.sub("", system_text).strip()
+
+
 def _collect_system_text(messages: list[Any]) -> str:
     """Concatenate every ``role:"system"`` message's string content.
 
@@ -99,8 +121,8 @@ def _collect_system_text(messages: list[Any]) -> str:
     parts: list[str] = []
     for msg in messages:
         if isinstance(msg, dict) and msg.get("role") == "system":
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
+            content = _content_text(msg.get("content"))
+            if content.strip():
                 parts.append(content)
     return "\n\n".join(parts)
 
@@ -213,5 +235,6 @@ def build_prompt_sections(request_body: Any) -> list[dict[str, Any]]:
         if tag in consumed or _is_strategy_tag(tag):
             continue
         add(tag, _prettify(tag), body)
+    add("untagged_system", _UNTAGGED_LABEL, _untagged_system_text(system_text))
 
     return ordered

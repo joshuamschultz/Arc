@@ -40,6 +40,16 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # run's snapshot froze) never changes that run — TOCTOU on the prompt set.
         "tests/integration/test_prompt_edit_conformance.py",
     ),
+    "control-plane document tampering (identity.md, pinned policy rules)": (
+        # identity.md and policy_pinned.md are operator-signed: an on-disk edit, a
+        # self-signed replacement, a replayed signature and an agent rewrite of a
+        # pinned rule are all refused; the curator never re-scores or prunes a
+        # pinned rule; a tampered identity.md refuses the whole run.
+        "packages/arcprompt/tests/unit/test_signed_files.py",
+        "packages/arcagent/tests/security/test_signed_workspace_documents.py",
+        "packages/arcui/tests/integration/test_file_write_routes.py",
+        "tests/journeys/test_journey_prompts.py",
+    ),
     "standing-instruction planting via agent-writable pulse.md": (
         # pulse.md auto-runs as agent prompts; the agent's own write/edit/bash
         # must be denied so an injected turn cannot schedule instructions.

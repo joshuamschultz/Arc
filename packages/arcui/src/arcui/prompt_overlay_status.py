@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 import arcagent
-from arcprompt import PromptResolver, PromptUnparseable, PromptUnsigned
+from arcprompt import PromptCatalog, PromptResolver, PromptUnparseable, PromptUnsigned
 from arcprompt.resolver import SIGNATURE_SUFFIX
 from arctrust.artifact import ArtifactSignature, content_sha256
 from arctrust.policy import read_agent_tier
@@ -83,4 +83,63 @@ def _unsigned_reason(overlay: Path) -> str:
     return "The override is not signed by this deployment's operator key."
 
 
-__all__ = ["OverlayState", "OverlayStatus", "agent_prompt_resolver", "overlay_state"]
+@dataclass(frozen=True)
+class RejectedPrompt:
+    """One prompt or signed document the agent refuses to run with, and why."""
+
+    package: str
+    name: str
+    reason: str
+
+
+def rejected_prompts(agent_root: Path) -> list[RejectedPrompt]:
+    """Every override or signed workspace document the agent would refuse at run start.
+
+    One bad signature stops ALL of the agent's runs (fail-closed, by design), so the
+    fleet view must surface it before the operator finds out by a silent failure
+    (J2 F7). Only files that exist are checked — a prompt with no override is stock
+    and cannot be rejected — so this stays cheap enough for a per-card poll.
+    """
+    resolver = agent_prompt_resolver(agent_root)
+    rejected: list[RejectedPrompt] = []
+    for ref in PromptCatalog().catalog():
+        if not resolver.overlay_path(ref.package, ref.name).is_file():
+            continue
+        state = overlay_state(resolver, ref.package, ref.name, stock_body="")
+        if state.status == "rejected":
+            rejected.append(RejectedPrompt(ref.package, ref.name, state.reason))
+    for (package, name), path in arcagent.signed_workspace_files(agent_root / "workspace").items():
+        try:
+            resolver.resolve_signed_file(package, name, path)
+        except PromptUnsigned:
+            overlay = resolver.overlay_path(package, name)
+            sidecar = overlay.with_name(overlay.name + SIGNATURE_SUFFIX)
+            rejected.append(RejectedPrompt(package, name, _document_reason(path, sidecar)))
+        except OSError:
+            reason = f"{path.name} cannot be read."
+            rejected.append(RejectedPrompt(package, name, reason))
+    return rejected
+
+
+def _document_reason(path: Path, sidecar: Path) -> str:
+    """Why a signed workspace document was refused: unsigned, edited, or wrong key."""
+    if not sidecar.is_file():
+        return f"{path.name} has no operator signature."
+    try:
+        manifest = ArtifactSignature.from_json(sidecar.read_text(encoding="utf-8"))
+        digest = content_sha256(path.read_bytes())
+    except (ValueError, OSError):
+        return f"{path.name} has an unreadable signature file."
+    if digest != manifest.artifact_sha256:
+        return f"{path.name} was edited after it was signed."
+    return f"{path.name} is not signed by this deployment's operator key."
+
+
+__all__ = [
+    "OverlayState",
+    "OverlayStatus",
+    "RejectedPrompt",
+    "agent_prompt_resolver",
+    "overlay_state",
+    "rejected_prompts",
+]

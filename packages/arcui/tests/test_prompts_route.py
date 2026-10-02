@@ -451,3 +451,76 @@ def test_put_rubric_policy_deny_refuses_write(
     assert resp.status_code == 403
     assert "policy" in resp.json()["error"].lower()
     assert not (agent_dir / "context" / _RUBRIC_PKG / f"{_RUBRIC_NAME}.md").exists()
+
+
+# --- J2 F7: a rejected prompt is visible, and a write is atomic ------------
+
+
+def _health(client: TestClient, agent: str) -> dict:
+    resp = _get(client, f"/api/agents/{agent}/prompts/health")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_health_is_clean_with_no_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    assert _health(client, agent) == {"rejected": []}
+
+
+def test_health_names_a_tampered_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    assert _put(client, agent, pkg, name, "a good override").status_code == 200
+    overlay = agent_dir / "context" / pkg / f"{name}.md"
+    overlay.write_text(overlay.read_text().replace("a good override", "edited on disk"))
+    rejected = _health(client, agent)["rejected"]
+    assert [(r["package"], r["name"]) for r in rejected] == [(pkg, name)]
+    assert rejected[0]["reason"]
+
+
+def test_health_names_a_tampered_identity_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    url = f"/api/agents/{agent}/files/read?root=workspace&path=identity.md"
+    resp = client.put(
+        url, json={"content": "# Persona\n"}, headers={"Authorization": "Bearer operator"}
+    )
+    assert resp.status_code == 200
+    assert _health(client, agent) == {"rejected": []}
+    (agent_dir / "workspace" / "identity.md").write_text("# tampered\n")
+    rejected = _health(client, agent)["rejected"]
+    assert [(r["package"], r["name"]) for r in rejected] == [("workspace", "identity")]
+
+
+def test_failed_sidecar_write_leaves_the_previous_override_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """J2 F7: text and signature are replaced together; a failure between them rolls back."""
+    from arcui.routes.agent_detail import signed_write
+
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    assert _put(client, agent, pkg, name, "first version").status_code == 200
+    overlay = agent_dir / "context" / pkg / f"{name}.md"
+    before = (overlay.read_bytes(), Path(f"{overlay}{_SIDECAR}").read_bytes())
+
+    real_replace = signed_write.os.replace
+
+    def flaky_replace(src: object, dst: object) -> None:
+        if str(dst).endswith(_SIDECAR):
+            raise OSError("disk full")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(signed_write.os, "replace", flaky_replace)
+    resp = _put(client, agent, pkg, name, "second version")
+    assert resp.status_code == 400
+    monkeypatch.setattr(signed_write.os, "replace", real_replace)
+
+    assert (overlay.read_bytes(), Path(f"{overlay}{_SIDECAR}").read_bytes()) == before
+    assert not list(overlay.parent.glob("*.tmp"))

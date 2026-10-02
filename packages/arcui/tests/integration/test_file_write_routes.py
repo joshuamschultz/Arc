@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from arcgateway import team_roster
+from arctrust import OperatorKey, default_operator_key_path
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -59,7 +60,11 @@ def _build_app(team_root: Path) -> tuple[Starlette, AuthConfig]:
 
 
 @pytest.fixture
-def ctx(tmp_path: Path) -> tuple[TestClient, Path]:
+def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Path]:
+    # identity.md is signed on save, so the deployment needs its operator key.
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc-team"))
+    OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
     team_root = _build_team_dir(tmp_path)
     app, _ = _build_app(team_root)
     return TestClient(app), team_root / "alpha_agent"
@@ -83,8 +88,24 @@ class TestSave:
         assert resp.status_code == 200
         body = resp.json()
         assert body["signature_stale"] is False
-        assert body["message"] == "Saved."
+        assert body["message"].startswith("Saved and signed")
         assert (agent_dir / "workspace" / "identity.md").read_text() == "# new persona\n"
+        sidecar = agent_dir / "context" / "workspace" / "identity.md.arcsig"
+        assert sidecar.is_file()
+
+    def test_save_without_an_operator_key_refuses_and_changes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fail closed: unsigned control-plane text is never written."""
+        monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "no-key-home"))
+        monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "no-key-team"))
+        team_root = _build_team_dir(tmp_path)
+        app, _ = _build_app(team_root)
+        resp = TestClient(app).put(_URL, headers=_op(), json={"content": "# new persona\n"})
+        assert resp.status_code == 500
+        agent_dir = team_root / "alpha_agent"
+        assert (agent_dir / "workspace" / "identity.md").read_text() == "# original persona\n"
+        assert not (agent_dir / "context").exists()
 
     def test_operator_cannot_write_a_private_key(self, ctx: tuple[TestClient, Path]) -> None:
         # A private key is non-exportable by principle (LLM07); the file editor must

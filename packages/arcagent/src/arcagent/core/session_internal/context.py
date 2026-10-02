@@ -36,6 +36,7 @@ import arcrun
 
 from arcagent.core import midloop_recall
 from arcagent.core.config import ContextConfig
+from arcagent.core.prompt_context import IDENTITY_DOC, signed_workspace_text
 from arcagent.core.telemetry import AgentTelemetry
 
 if TYPE_CHECKING:
@@ -45,8 +46,10 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.context_manager")
 
-# Core workspace files that compose the system prompt
-_CORE_PROMPT_FILES = ["identity.md", "context.md"]
+# Workspace files read raw into the system prompt. ``identity.md`` is NOT one of
+# them: it is operator-signed control-plane text, read only through the run's
+# verified snapshot (``signed_workspace_text``).
+_CORE_PROMPT_FILES = ["context.md"]
 
 # Approximate characters per token for estimation
 _CHARS_PER_TOKEN = 4
@@ -357,11 +360,13 @@ class ContextManager:
         ``_TURN_SECTIONS`` are returned separately for the caller to attach to the
         user's message. Within a tier: fixed head, then alphabetical, then fixed tail.
 
-        ``workspace/identity.md`` re-read every call (hot-reload contract):
-            The file content is read from disk on every invocation, so an
-            edit between turns shows up in the next turn's system prompt
-            without an agent restart. This is the public contract — see
-            ``tests/integration/test_identity_hot_reload.py``. Note this
+        ``workspace/identity.md`` is operator-signed (J2 F2):
+            It is read through the run's verified prompt snapshot, so a
+            signed edit shows up in the next RUN's system prompt without an
+            agent restart, and a tampered or unsigned file never reaches the
+            model (the run refuses before assembly). With no snapshot (a bare
+            agent that has no operator key to verify against) the file is read
+            as-is. Note this
             is the *content* of identity.md only; the agent's DID and
             keypair are loaded once from ``arcagent.toml [identity]`` at
             ``agent.startup()`` and frozen for the agent's lifetime.
@@ -382,6 +387,9 @@ class ContextManager:
                 run; a handler then uses its configured source.
         """
         sections: dict[str, str] = {}
+        identity = signed_workspace_text(prompt_source, workspace, IDENTITY_DOC)
+        if identity:
+            sections["identity"] = identity
         for filename in _CORE_PROMPT_FILES:
             filepath = workspace / filename
             if filepath.exists():

@@ -19,8 +19,11 @@ from typing import Any
 
 from arcprompt import (
     PromptCatalog,
+    PromptMissing,
     PromptResolver,
     PromptSnapshot,
+    PromptSource,
+    StockPromptSource,
     TrustPosture,
 )
 from arcprompt import snapshot as _build_snapshot
@@ -84,14 +87,59 @@ class _TelemetryAuditSink:
         )
 
 
+#: Snapshot key for operator-signed workspace documents (no catalog package owns them).
+WORKSPACE_PACKAGE = "workspace"
+IDENTITY_DOC = "identity"
+PINNED_POLICY_DOC = "policy_pinned"
+
+#: The workspace documents that are control-plane text: signed by the operator,
+#: verified at run start, never trusted from a raw file read (J2 F2). The learned
+#: ``policy.md`` is deliberately absent — it is the agent's own curated state.
+SIGNED_WORKSPACE_DOCS: dict[str, str] = {
+    IDENTITY_DOC: "identity.md",
+    PINNED_POLICY_DOC: "policy_pinned.md",
+}
+
+
+def signed_workspace_files(workspace: Path) -> dict[tuple[str, str], Path]:
+    """The ``(package, name) -> path`` map of signed workspace documents for ``workspace``."""
+    return {
+        (WORKSPACE_PACKAGE, name): workspace / fname
+        for name, fname in SIGNED_WORKSPACE_DOCS.items()
+    }
+
+
+def signed_workspace_text(prompt_source: PromptSource | None, workspace: Path, name: str) -> str:
+    """The verified text of a signed workspace document, or ``""`` when it does not exist.
+
+    In a run, ``prompt_source`` is the frozen snapshot, so the text was verified at
+    run start and cannot shift under a mid-run on-disk edit. With no source — or the
+    stock source, which a bare/test agent without a resolver gets — there is no
+    operator key to verify against, so the file is read as-is; every deployed agent
+    builds a resolver in capability setup and never takes that path.
+    """
+    if prompt_source is None or isinstance(prompt_source, StockPromptSource):
+        path = workspace / SIGNED_WORKSPACE_DOCS[name]
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+    try:
+        return prompt_source.resolve(WORKSPACE_PACKAGE, name).strip()
+    except PromptMissing:
+        return ""
+
+
 def snapshot_run_prompts(
     resolver: PromptResolver,
     *,
     actor_did: str,
     audit_event: AuditEmit,
     request_id: str | None = None,
+    workspace: Path | None = None,
 ) -> PromptSnapshot:
-    """Freeze the complete prompt set for a run and emit one provenance event."""
+    """Freeze the complete prompt set for a run and emit one provenance event.
+
+    With ``workspace`` the operator-signed documents (identity, pinned policy) are
+    verified and frozen too: a tampered or unsigned one raises here, before the run.
+    """
     refs = PromptCatalog().catalog()
     return _build_snapshot(
         resolver,
@@ -99,11 +147,18 @@ def snapshot_run_prompts(
         actor_did=actor_did,
         sink=_TelemetryAuditSink(audit_event),
         request_id=request_id,
+        signed_files=signed_workspace_files(workspace) if workspace is not None else None,
     )
 
 
 __all__ = [
+    "IDENTITY_DOC",
+    "PINNED_POLICY_DOC",
+    "SIGNED_WORKSPACE_DOCS",
+    "WORKSPACE_PACKAGE",
     "AuditEmit",
     "build_prompt_resolver",
+    "signed_workspace_files",
+    "signed_workspace_text",
     "snapshot_run_prompts",
 ]

@@ -24,7 +24,15 @@ _logger = logging.getLogger("arcagent.tools.validation")
 # ``pulse.md`` is included because its checks auto-run as agent prompts on an
 # interval: an agent-writable copy is a standing instruction an injected turn can
 # plant (ASI01/ASI06). Operators edit it through the audited arcui file route.
-DEFAULT_PROTECTED_NAMES: tuple[str, ...] = ("identity.md", "policy.md", "context.md", "pulse.md")
+# ``policy_pinned.md`` is the operator-signed half of the policy: the agent must
+# not rewrite a rule the operator pinned (J2 F6).
+DEFAULT_PROTECTED_NAMES: tuple[str, ...] = (
+    "identity.md",
+    "policy.md",
+    "policy_pinned.md",
+    "context.md",
+    "pulse.md",
+)
 
 ProtectedAuditSink = Callable[[str, dict[str, Any]], None]
 

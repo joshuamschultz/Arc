@@ -27,6 +27,8 @@ from arcagent.core.config import (
 from arcagent.core.errors import ToolVetoedError
 from arcagent.core.module_bus import EventContext
 
+from ._signed_documents import sign_workspace_documents
+
 
 def _mock_tool_context() -> ToolContext:
     """Create a minimal ToolContext for integration tests."""
@@ -136,10 +138,14 @@ class TestRunWithMockLLM:
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
         workspace: Path,
+        tmp_path: Path,
     ) -> None:
         # Setup workspace files (policy.md is injected by memory module, not read directly)
         (workspace / "identity.md").write_text("Agent: integration-agent")
         (workspace / "context.md").write_text("Context: test-only")
+        # identity.md is operator-signed control-plane text: unsigned, the run refuses.
+        config_path = tmp_path / "arcagent.toml"
+        sign_workspace_documents(workspace, config_path)
 
         mock_load_model.return_value = MagicMock()
         captured: dict[str, Any] = {}
@@ -153,7 +159,7 @@ class TestRunWithMockLLM:
 
             return _gen()
 
-        agent = ArcAgent(config=agent_config)
+        agent = ArcAgent(config=agent_config, config_path=config_path)
         await agent.startup()
         with patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_fake_run_stream):
             session = await agent.session("itest")

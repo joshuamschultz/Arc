@@ -318,6 +318,54 @@ async def agent(deployment: Deployment, scripted_llm: ScriptedLLM) -> AsyncItera
         await arc_agent.shutdown()
 
 
+@pytest.fixture
+def install_modules(deployment: Deployment, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Install the agent's enabled modules the way ``arc install`` / ``arc up`` do.
+
+    A module in ``arcagent.toml`` is only loaded once the signed bootstrap has copied
+    it into the agent folder; call the returned function AFTER ``enable_modules``.
+    """
+
+    def _install() -> None:
+        import arcagent
+        from arccli.commands.up import agent_states, bootstrap_modules
+
+        monkeypatch.setenv("ARC_MODULE_SOURCE", str(Path(arcagent.__file__).parent / "modules"))
+        rows = bootstrap_modules(agent_states(deployment.team_root))
+        refused = [row for row in rows if "REFUSED" in row or "UNREADABLE" in row]
+        assert not refused, f"module bootstrap refused: {refused}"
+
+    return _install
+
+
+@pytest.fixture
+def operator_ui(deployment: Deployment) -> Any:
+    """ArcUI's real agent-detail routes behind its real auth middleware, as the operator.
+
+    The same wiring the operator's browser reaches: the file and prompt write
+    routes sign through the operator key the ``deployment`` fixture created.
+    """
+    from arcgateway import team_roster
+    from arcui.auth import AuthConfig, AuthMiddleware
+    from arcui.registry import AgentRegistry
+    from arcui.routes.agent_detail import routes as agent_routes
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN})
+    app = Starlette(routes=agent_routes)
+    app.add_middleware(AuthMiddleware, auth_config=auth)
+    app.state.auth_config = auth
+    app.state.agent_registry = AgentRegistry()
+    app.state.embedded_agent_cache = None
+    app.state.roster_provider = lambda: team_roster.list_team(
+        team_root=deployment.team_root, online_ids=set()
+    )
+    client = TestClient(app)
+    client.headers.update({"Authorization": f"Bearer {OPERATOR_TOKEN}"})
+    return client
+
+
 def _is_strategy_selection(tools: list[Any] | None) -> bool:
     """True when this call is the loop asking which strategy to run."""
     return bool(tools) and any(getattr(t, "name", "") == "select_strategy" for t in tools or [])

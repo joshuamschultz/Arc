@@ -17,6 +17,7 @@ Subcommands::
     arc prompt diff  <package> <name> --agent <dir>
     arc prompt edit  <package> <name> --agent <dir> (--file <path> | --stdin)
     arc prompt reset <package> <name> --agent <dir>
+    arc prompt sign-workspace --agent <dir>
 
 Stock bodies are always read from the packaged resources
 (:func:`arcprompt.load_stock_document`) — never from a user-supplied path. The
@@ -253,6 +254,23 @@ def _reset(args: argparse.Namespace) -> None:
     _out(f"Override removed for {package}/{name}. Resolves to stock on the agent's next run.")
 
 
+def _sign_workspace(args: argparse.Namespace) -> None:
+    """Sign the agent's identity.md / policy_pinned.md with the operator key.
+
+    The one-time step for an agent that predates signed workspace documents, and
+    the way to re-sign after editing one of them by hand on the box.
+    """
+    from arccli.workspace_signing import sign_workspace_documents
+
+    agent_root = _require_agent_root(args)
+    signed = sign_workspace_documents(agent_root, _operator_signer())
+    if not signed:
+        _out("Nothing to sign: no identity.md or policy_pinned.md in the agent workspace.")
+        return
+    for name in signed:
+        _out(f"Signed {name}. It takes effect on the agent's next run.")
+
+
 # ---------------------------------------------------------------------------
 # Parser + dispatch
 # ---------------------------------------------------------------------------
@@ -299,6 +317,11 @@ def _build_parser() -> argparse.ArgumentParser:
     reset_p.add_argument("name")
     reset_p.add_argument("--agent", metavar="<dir>", help="Agent root directory to target.")
 
+    sign_p = subs.add_parser(
+        "sign-workspace", help="Sign identity.md / policy_pinned.md with the operator key."
+    )
+    sign_p.add_argument("--agent", metavar="<dir>", help="Agent root directory to target.")
+
     return parser
 
 
@@ -308,6 +331,7 @@ _SUBCOMMANDS = {
     "diff": _diff,
     "edit": _edit,
     "reset": _reset,
+    "sign-workspace": _sign_workspace,
 }
 
 

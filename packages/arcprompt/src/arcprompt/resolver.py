@@ -76,20 +76,52 @@ class PromptResolver:
             raise PromptMissing(package, name)
         return parse_prompt(stock.read_bytes(), source="stock")
 
+    def resolve_signed_file(self, package: str, name: str, path: Path) -> PromptDocument | None:
+        """Verify a signed workspace document (``identity.md``, pinned policy) in place.
+
+        The document stays where the operator and agent expect it; its detached
+        signature lives under the overlay root at ``<package>/<name>.md.arcsig`` —
+        outside the workspace subtree agent tools reach — and is checked against the
+        same pinned operator key as a catalog overlay. Returns ``None`` when the file
+        does not exist (nothing to verify). A present file that is unsigned, edited
+        after signing, or signed by another key raises :class:`PromptUnsigned`: a
+        control-plane document is never used on trust (J2 F2).
+        """
+        _ensure_safe(package, name)
+        if not path.is_file():
+            return None
+        raw = path.read_bytes()
+        sidecar = self.overlay_path(package, name)
+        manifest = self._verified_manifest(
+            raw, sidecar.with_name(sidecar.name + SIGNATURE_SUFFIX), path
+        )
+        return PromptDocument(
+            name=name,
+            description="operator-signed workspace document",
+            tunable=False,
+            body=raw.decode("utf-8", errors="replace").strip(),
+            sha256=manifest.artifact_sha256,
+            source="overlay",
+            signer_did=manifest.signer_did,
+        )
+
     def _load_overlay(self, path: Path) -> PromptDocument:
         raw = path.read_bytes()
         sig_path = path.with_name(path.name + SIGNATURE_SUFFIX)
+        manifest = self._verified_manifest(raw, sig_path, path)
+        return parse_prompt(raw, source="overlay", signer_did=manifest.signer_did)
+
+    def _verified_manifest(self, raw: bytes, sig_path: Path, subject: Path) -> ArtifactSignature:
+        """Read the sidecar and verify ``raw`` against the pinned key, or raise."""
         if not sig_path.is_file():
-            raise PromptUnsigned(f"overlay {path} has no {SIGNATURE_SUFFIX} signature sidecar")
+            raise PromptUnsigned(f"{subject} has no {SIGNATURE_SUFFIX} signature sidecar")
         try:
             manifest = ArtifactSignature.from_json(sig_path.read_text(encoding="utf-8"))
         except ValueError as exc:
-            raise PromptUnsigned(f"overlay {path} has an unparseable signature sidecar") from exc
+            raise PromptUnsigned(f"{subject} has an unparseable signature sidecar") from exc
         if not self._verifier.verify(raw, manifest):
-            raise PromptUnsigned(
-                f"overlay {path} failed signature verification against the pinned key"
-            )
-        return parse_prompt(raw, source="overlay", signer_did=manifest.signer_did)
+            raise PromptUnsigned(f"{subject} failed signature verification against the pinned key")
+        return manifest
 
 
 __all__ = [

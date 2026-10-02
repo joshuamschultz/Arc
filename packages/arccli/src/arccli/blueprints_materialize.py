@@ -71,6 +71,7 @@ def materialize_blueprint(
     result = MaterializeResult(agent_dir=agent_dir)
     merged = _merge_configs(bp, agent_dir, deployment_tier=deployment_tier)
     _write_persona(bp, agent_dir, result)
+    _sign_persona(agent_dir, operator_signer, result)
     _author_prompt_overlays(bp, agent_dir, operator_signer, result)
     _install_capabilities(bp, agent_dir, agent_signer, result)
     _install_skills(bp, agent_dir, agent_signer, result)
@@ -135,6 +136,28 @@ def _write_persona(bp: ResolvedBlueprint, agent_dir: Path, result: MaterializeRe
     identity.parent.mkdir(parents=True, exist_ok=True)
     identity.write_text(bp.persona.rstrip() + "\n", encoding="utf-8")
     result.wrote_identity = True
+
+
+def _sign_persona(
+    agent_dir: Path, operator_signer: Signer | None, result: MaterializeResult
+) -> None:
+    """Operator-sign the persona just written: an unsigned ``identity.md`` is refused at run start.
+
+    Without an operator key the persona cannot be signed, and the scaffold's earlier
+    signature no longer matches the new text — say so, so the operator runs the one
+    command that fixes it rather than meeting a refused run.
+    """
+    if not result.wrote_identity:
+        return
+    if operator_signer is None:
+        result.unsigned_warnings.append(
+            "identity.md was changed but no operator key is available to sign it; the agent "
+            "will refuse to run until you run 'arc prompt sign-workspace --agent <dir>'."
+        )
+        return
+    from arccli.workspace_signing import sign_workspace_documents
+
+    sign_workspace_documents(agent_dir, operator_signer)
 
 
 def _is_scaffold_default_identity(path: Path) -> bool:
