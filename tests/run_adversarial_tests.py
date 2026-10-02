@@ -519,6 +519,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_renewal_planner.py",
         "tests/architecture/test_no_connector_secret_on_disk.py",
     ),
+    # P18-2: nothing executes from the operator tree. A code-bearing bundle planted
+    # in ~/arc/extensions is refused by name (audited) and one in
+    # ~/arc/state/extensions is not on the search path, at every tier; a config-only
+    # MCP bundle there must verify; install-bundle verifies before copying into
+    # ~/.arc/extensions and the loader verifies again, so a post-install edit fails.
+    "planted extension code in the operator tree (alpha-2 P18-2)": (
+        "packages/arcagent/tests/security/test_operator_tree_extensions.py",
+    ),
 }
 
 

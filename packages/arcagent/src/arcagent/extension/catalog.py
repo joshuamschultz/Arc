@@ -19,11 +19,15 @@ Every verdict — allow, warn, refuse — goes through the single
 records nothing is not a control.
 
 Bundles resolve from an ORDERED search path (D-584), not from one directory:
-``<arc_dir>/extensions``, then ``$ARC_EXTENSIONS_ROOT``, then
-``<arc_home>/extensions``. First hit wins **by name**, so an operator pointing a
-deployment at its own directory overrides a user-wide bundle of the same name
-without hiding the rest — a deployment ships its bundles once instead of once
-per agent.
+``$ARC_EXTENSIONS_ROOT``, then the install's shipped bundles
+(``~/.arc/runtime/current/extensions``), then operator-installed signed bundles
+(``~/.arc/extensions``), then ``<arc_dir>/extensions``. First hit wins **by name**.
+
+**Nothing executes from the operator tree** (``~/arc``, P18-2). Any process
+running as the operator can write there, so a bundle found under it may only be
+an operator-signed, CONFIG-ONLY ``attachment = "mcp"`` bundle (an
+``extension.toml`` and its signature, nothing else). A code-bearing bundle there
+is refused and audited at every tier, never imported or spawned.
 
 The catalog names no upstream: the shipping allowlist is populated by the
 deployment, not by this module.
@@ -40,9 +44,10 @@ from pathlib import Path
 from typing import NoReturn
 
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.paths import extensions_dir
+from arctrust.paths import installed_extensions_dir, operator_root, runtime_extensions_dir
 from pydantic import ValidationError
 
+from arcagent.capabilities.artifact_signing import SIDECAR_SUFFIX as _SIDECAR_SUFFIX
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.manifest import ExtensionHeader, ExtensionManifest, load_manifest
@@ -70,10 +75,11 @@ EXTENSIONS_ROOT_ENV = "ARC_EXTENSIONS_ROOT"
 def resolve_extension_roots(base_dir: Path | None = None) -> tuple[Path, ...]:
     """Return the ordered bundle search path, dropping roots that do not exist (D-584).
 
-    Order is the deployment's own directory, then the environment override, then
-    user-wide: ``<base_dir>/extensions``, ``$ARC_EXTENSIONS_ROOT``,
-    ``<arc_home>/extensions``. Every surface — CLI, TUI, web, and the running
-    agent — calls this rather than composing its own order, because two orders
+    Order: ``$ARC_EXTENSIONS_ROOT``, the install's shipped bundles, the
+    operator-installed signed bundles, then ``<base_dir>/extensions`` (which may
+    hold only config-only MCP bundles; see :func:`in_operator_tree`). Every
+    surface — CLI, TUI, web, and the running agent — calls this rather than
+    composing its own order, because two orders
     would mean an operator installing through one surface and an agent reading
     through another disagree about which directory a given bundle name refers to.
 
@@ -90,12 +96,13 @@ def resolve_extension_roots(base_dir: Path | None = None) -> tuple[Path, ...]:
         Existing directories, in search order, without duplicates.
     """
     candidates = []
-    if base_dir is not None:
-        candidates.append(Path(base_dir).expanduser() / BUNDLES_DIRNAME)
     override = os.environ.get(EXTENSIONS_ROOT_ENV)
     if override:
         candidates.append(Path(override).expanduser())
-    candidates.append(extensions_dir())
+    candidates.append(runtime_extensions_dir())
+    candidates.append(installed_extensions_dir())
+    if base_dir is not None:
+        candidates.append(Path(base_dir).expanduser() / BUNDLES_DIRNAME)
 
     roots: list[Path] = []
     seen: set[Path] = set()
@@ -105,6 +112,38 @@ def resolve_extension_roots(base_dir: Path | None = None) -> tuple[Path, ...]:
         seen.add(candidate.resolve())
         roots.append(candidate)
     return tuple(roots)
+
+
+def in_operator_tree(path: Path) -> bool:
+    """Whether ``path`` lies in the operator's writable tree (``~/arc``).
+
+    The environment override is the operator's explicit choice and the install
+    home is Arc's own, so neither counts even if configured beneath it.
+    """
+    resolved = Path(path).resolve()
+    trusted = [runtime_extensions_dir(), installed_extensions_dir()]
+    override = os.environ.get(EXTENSIONS_ROOT_ENV)
+    if override:
+        trusted.append(Path(override).expanduser())
+    for root in trusted:
+        anchor = root.resolve()
+        if resolved == anchor or anchor in resolved.parents:
+            return False
+    operator = operator_root().resolve()
+    return resolved == operator or operator in resolved.parents
+
+
+def is_config_only_bundle(bundle: Path, tier: Tier) -> bool:
+    """An ``attachment = "mcp"`` bundle holding only its manifest (plus signatures)."""
+    files = [path for path in Path(bundle).rglob("*") if path.is_file() or path.is_symlink()]
+    shipped = [path for path in files if not path.name.endswith(_SIDECAR_SUFFIX)]
+    if [path.name for path in shipped] != [MANIFEST_NAME] or shipped[0].is_symlink():
+        return False
+    try:
+        manifest = _read_manifest(Path(bundle), tier)
+    except (OSError, ValueError, ValidationError, ExtensionError):
+        return False
+    return manifest.extension.attachment == "mcp"
 
 
 #: Vetted upstream extensions → their expected distribution package name.
@@ -248,6 +287,15 @@ class ExtensionCatalog:
                 self._refuse(
                     name, reason="escapes_root", message=f"{name!r} escapes the root {root}"
                 )
+            if in_operator_tree(path) and not is_config_only_bundle(path, self._tier):
+                self._refuse(
+                    name,
+                    reason="code_in_operator_tree",
+                    message=(
+                        f"{name!r} at {path} carries code, and nothing executes from the "
+                        "operator tree; install it with `arc connector install-bundle`"
+                    ),
+                )
             return path
         self._refuse(
             name, reason="not_found", message=f"no bundle for {name!r} on the search path"
@@ -371,6 +419,8 @@ __all__ = [
     "OFFICIAL_EXTENSIONS",
     "ExtensionCatalog",
     "ExtensionResolution",
+    "in_operator_tree",
+    "is_config_only_bundle",
     "resolve_extension_roots",
     "validate_extension_name",
 ]

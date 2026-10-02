@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.paths import installed_extensions_dir
 
 from arcagent.capabilities import artifact_signing
 from arcagent.capabilities.capability_loader import (
@@ -46,7 +47,7 @@ from arcagent.capabilities.inventory import append_capability_scan_roots
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Requirement, RequirementKind
-from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog
+from arcagent.extension.catalog import MANIFEST_NAME, ExtensionCatalog, in_operator_tree
 from arcagent.extension.manifest import ExtensionManifest, load_manifest
 from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
 from arcagent.tools._egress_policy import first_forbidden_egress
@@ -195,7 +196,10 @@ class ExtensionLoader:
         a clean install fails here (REQ-282). A read that raises propagates to the
         fail-closed handler in :meth:`load`, which denies.
         """
-        required = self._tier is not Tier.PERSONAL
+        # Above personal every bundle must verify. At every tier, so must one that sits
+        # in the operator tree (only signed config-only bundles may live there) or in
+        # the operator-installed root (verified at install, and again here).
+        required = self._tier is not Tier.PERSONAL or _signature_required_at(bundle)
         if required and self._trusted_public_key is None:
             self._refuse(
                 name,
@@ -316,6 +320,13 @@ class ExtensionLoader:
             ),
             self._sink,
         )
+
+
+def _signature_required_at(bundle: Path) -> bool:
+    """Whether this bundle's location demands a verified signature at every tier."""
+    installed = installed_extensions_dir().resolve()
+    resolved = bundle.resolve()
+    return in_operator_tree(bundle) or installed in resolved.parents
 
 
 def _carries_signature(bundle: Path) -> bool:

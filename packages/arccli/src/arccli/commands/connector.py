@@ -647,6 +647,16 @@ def _roots_line(roots: Sequence[Path]) -> str:
     return ", ".join(str(root) for root in roots) or "(no bundle directory exists)"
 
 
+def _install_bundle(args: argparse.Namespace) -> None:
+    """Verify a signed bundle and install it where code may execute from."""
+    connections = _connections(args)
+    try:
+        target = connections.install_bundle(Path(args.bundle), replace=args.replace)
+    except arcagent.ExtensionError as exc:
+        _fail(exc.message)
+    _out(f"Installed {target.name} at {target} (signature verified; verified again at load).")
+
+
 def _migrate_secrets(args: argparse.Namespace) -> None:
     """Move the legacy credential file into sealed custody: verify, delete, audit."""
     connections = _connections(args)
@@ -795,6 +805,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common(p)
 
     p = subs.add_parser(
+        "install-bundle",
+        help="Install a signed connector bundle that carries code into ~/.arc/extensions.",
+    )
+    p.add_argument("bundle", help="Path to a signed bundle folder holding extension.toml.")
+    p.add_argument("--replace", action="store_true", help="Replace an installed bundle.")
+    _add_common(p)
+
+    p = subs.add_parser(
         "migrate-secrets",
         help="Move the legacy plaintext connector credential file into sealed custody.",
     )
@@ -826,6 +844,7 @@ _SUBCOMMAND_MAP = {
     "approve": _approve,
     "remove": _remove,
     "migrate-secrets": _migrate_secrets,
+    "install-bundle": _install_bundle,
 }
 
 

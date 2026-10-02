@@ -1812,6 +1812,72 @@ class Connections:
             )
         return signed
 
+    def install_bundle(self, folder: Path, *, replace: bool = False) -> Path:
+        """Install a signed, code-bearing bundle into ``~/.arc/extensions`` (P18-2).
+
+        Nothing executes from the operator tree, so a third-party or hand-written
+        connector with code is installed here instead. Every file must verify
+        against the deployment's operator key NOW (sign it first with
+        ``arc connector sign``); the loader verifies it again on every load.
+
+        Raises:
+            ExtensionError: Not a bundle, a symlink inside it, a file that does
+                not verify, no pinned operator key, or the name already installed.
+        """
+        from arctrust.paths import installed_extensions_dir
+
+        from arcagent.capabilities import artifact_signing
+
+        source = Path(folder)
+        manifest_path = source / MANIFEST_NAME
+        if source.is_symlink() or not manifest_path.is_file() or manifest_path.is_symlink():
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", f"{folder} holds no {MANIFEST_NAME}")
+        manifest = load_manifest(manifest_path.read_text(encoding="utf-8"), tier=self._world.tier)
+        name = manifest.extension.name
+        key = self._pinned_key()
+        if key is None:
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", "no operator key is pinned to verify against")
+        files = sorted(path for path in source.rglob("*") if path.is_file() or path.is_symlink())
+        if any(path.is_symlink() for path in files):
+            raise _refuse("BUNDLE_NOT_INSTALLABLE", f"{name!r} contains a symlink")
+        shipped = [p for p in files if p.suffix != artifact_signing.SIDECAR_SUFFIX]
+        unverified = [
+            p
+            for p in shipped
+            if not artifact_signing.verify_file(p, p.read_bytes(), trusted_public_key=key)
+        ]
+        if unverified:
+            raise _refuse(
+                "BUNDLE_UNSIGNED",
+                f"{len(unverified)} file(s) in {name!r} are unsigned or fail verification; "
+                "sign it with `arc connector sign` first",
+            )
+        root = installed_extensions_dir()
+        target = root / name
+        if (target.exists() or target.is_symlink()) and not replace:
+            raise _refuse("BUNDLE_EXISTS", f"{name!r} is already installed at {target}")
+        root.mkdir(parents=True, exist_ok=True)
+        staging = root / f".{name}.staging-{os.getpid()}"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(source, staging, symlinks=True)
+        if target.exists():
+            shutil.rmtree(target)
+        staging.replace(target)
+        with self._audit.open() as sink:
+            emit(
+                AuditEvent(
+                    actor_did=causal.actor_did(),
+                    action="connector.bundle_installed",
+                    target=f"bundle:{name}",
+                    outcome="allow",
+                    tier=self._world.tier.value,
+                    extra={"files": str(len(shipped))},
+                ),
+                sink,
+            )
+        self._learn_roots(self._bundle_roots())
+        return target
+
     def _learn_roots(self, roots: tuple[Path, ...]) -> None:
         self._world = replace(self._world, extension_roots=roots)
 
