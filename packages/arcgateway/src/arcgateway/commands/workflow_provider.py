@@ -20,10 +20,12 @@ from typing import TYPE_CHECKING, Any, cast
 from arcgateway.commands.base import CommandSpec
 
 if TYPE_CHECKING:
-    from arcteam.workflow.control_plane import ControlPlaneResult
+    from arcteam.workflow.control_plane import ControlPlaneResult, WorkflowControlPlane
     from arcteam.workflow.store import DefinitionStore
 
 _logger = logging.getLogger("arcgateway.commands.workflow_provider")
+
+_DECISION_PAST = {"approve": "approved", "reject": "rejected", "revise": "sent back for revision"}
 
 
 class GatewayWorkflowProvider:
@@ -60,12 +62,57 @@ class GatewayWorkflowProvider:
 
     # -- internals ----------------------------------------------------------
 
+    async def resolve_gate(
+        self, task_id: str, *, decision: str, notes: str, actor_did: str
+    ) -> str:
+        """Resolve a waiting gate as the paired human; return the reply line.
+
+        Goes through the one ``resolve_gate`` the dashboard and CLI use, naming
+        ``actor_did`` as the decider. Never raises: a chat turn must survive a
+        missing runner or a refused decision.
+        """
+        try:
+            return await self._resolve_gate(task_id, decision, notes, actor_did)
+        except Exception:  # reason: a slash command must never take down the turn
+            _logger.warning("gate %r resolution failed unexpectedly", task_id, exc_info=True)
+            return "Couldn't resolve that gate: an unexpected error occurred."
+
+    async def _resolve_gate(self, task_id: str, decision: str, notes: str, actor_did: str) -> str:
+        from arcteam.workflow.control_plane import GATE_WORDS
+
+        plane = self._control_plane()
+        if plane is None:
+            return "Workflows aren't running on this deployment yet."
+        result = await plane.resolve_gate(
+            task_id, decision=GATE_WORDS[decision], notes=notes, actor_did=actor_did
+        )
+        if not result.ok:
+            return f"Couldn't resolve that gate: {result.errors[0].error}"
+        return f"Gate {task_id} {_DECISION_PAST[decision]}."
+
     async def _run(self, workflow_id: str, *, actor_did: str, args: str) -> str:
+        plane = self._control_plane()
+        if plane is None:
+            return "Workflows aren't running on this deployment yet."
+        run_input = {"text": args} if args else {}
+        result = await plane.run(
+            workflow_id, input=run_input, initiator="chat", actor_did=actor_did
+        )
+        if result.ok and result.run is not None:
+            return f"Started {workflow_id} (run {result.run.run_id})."
+        return self._refusal(workflow_id, result)
+
+    def _control_plane(self) -> WorkflowControlPlane | None:
+        """The control plane composed onto the live runner, or None when none runs.
+
+        Composed onto the runner's own store, run plane and tier — never a second
+        set — so a chat-initiated action enforces exactly what the engine does.
+        """
         from arcgateway.workflow_runner_host import RunnerHost
 
         host = RunnerHost.active()
         if host is None:
-            return "Workflows aren't running on this deployment yet."
+            return None
 
         from arcteam.workflow import parse_definition, validate_definition
         from arcteam.workflow.control_plane import WorkflowControlPlane
@@ -83,9 +130,7 @@ class GatewayWorkflowProvider:
                 definition, bundle_root=root / definition.id, pending_files=pending_files
             )
 
-        # Compose onto the runner's own store/run-plane/tier — never a second
-        # set — so a slash-command run enforces exactly what the engine does.
-        plane = WorkflowControlPlane(
+        return WorkflowControlPlane(
             definitions=runner.definitions,
             parse=_parse,
             validate=_validate,
@@ -93,13 +138,6 @@ class GatewayWorkflowProvider:
             runs=runner.runs,
             tier=runner.tier,
         )
-        run_input = {"text": args} if args else {}
-        result = await plane.run(
-            workflow_id, input=run_input, initiator="chat", actor_did=actor_did
-        )
-        if result.ok and result.run is not None:
-            return f"Started {workflow_id} (run {result.run.run_id})."
-        return self._refusal(workflow_id, result)
 
     @staticmethod
     def _refusal(workflow_id: str, result: ControlPlaneResult) -> str:

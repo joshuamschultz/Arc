@@ -691,6 +691,10 @@ def test_every_subcommand_is_reachable() -> None:
         "cancel",
         "sign",
         "verify",
+        "templates",
+        "new",
+        "test",
+        "gate",
     }
 
 

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from arcgateway.attachment_scanner import AttachmentScanner, CleanScanner
 from arcgateway.broker_bootstrap import BrokerHandle, start_broker
-from arcgateway.commands import build_default_registry
+from arcgateway.commands import GateCommand, build_default_registry
 from arcgateway.executor import AsyncioExecutor, Executor
 from arcgateway.media_store import MediaStore
 from arcgateway.parts import MediaPart, Part
@@ -469,7 +469,11 @@ async def _compose_embedded(
     # the live runner lazily via RunnerHost.active() at call time.
     from arcgateway.commands.workflow_provider import GatewayWorkflowProvider
 
-    command_registry.set_workflow_provider(GatewayWorkflowProvider())
+    workflow_provider = GatewayWorkflowProvider()
+    command_registry.set_workflow_provider(workflow_provider)
+    # A waiting gate is decided from chat as well as the dashboard: /gate calls
+    # the same control-plane resolve_gate with the paired user's DID.
+    command_registry.register(GateCommand(workflow_provider))
 
     attachments_enabled = gateway_config.platforms.web.enabled or bool(
         gateway_config.platforms.remote_blocks()

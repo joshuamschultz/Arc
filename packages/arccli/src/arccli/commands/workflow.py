@@ -52,10 +52,16 @@ from arcteam.workflow import (
     sign_definition_with_signer,
     validate_definition,
 )
-from arcteam.workflow.control_plane import ControlPlaneResult, OperationIssue, WorkflowControlPlane
+from arcteam.workflow.control_plane import (
+    GATE_WORDS,
+    ControlPlaneResult,
+    OperationIssue,
+    WorkflowControlPlane,
+)
 from arcteam.workflow.models import WORKFLOW_ID_PATTERN
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
 from arcteam.workflow.service import WorkflowRunnerService
+from arcteam.workflow.templates import list_templates
 from arctrust import WormSink
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import arc_state, config_file, workflows_dir
@@ -775,6 +781,94 @@ def _cancel(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Starting points and trying things out — templates, test runs, gates
+# ---------------------------------------------------------------------------
+
+
+def _templates(args: argparse.Namespace) -> None:
+    """List the starter templates ``new --from`` can copy."""
+    del args
+    print_table(
+        ["ID", "TITLE", "DESCRIPTION"], [[t.id, t.title, t.description] for t in list_templates()]
+    )
+
+
+def _new(args: argparse.Namespace) -> None:
+    """Create a draft from a starter template, then say what comes next."""
+
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        result = _ok_or_exit(
+            await plane.create_from_template(
+                args.template, args.id, actor_did=actor_did, owner=args.owner
+            )
+        )
+        bundle = result.bundle
+        assert bundle is not None  # noqa: S101 — ok=True always carries the bundle
+        write(
+            f"Created draft workflow {bundle.definition.id} from template {args.template} "
+            f"(status={bundle.status}).\n"
+            f"Next: read it with `arc workflow show {args.id}`, try it with "
+            f"`arc workflow test {args.id}`, then sign it with `arc workflow sign {args.id}`."
+        )
+
+    _with_plane(args, _run)
+
+
+def _test_workflow(args: argparse.Namespace) -> None:
+    """Try a draft with state-modifying work stubbed; it never needs a signature."""
+    arc_dir = _arc_dir(args)
+
+    async def _run() -> None:
+        actor_did = _actor_did(arc_dir)
+        plane, aclose = await _resolve_control_plane(arc_dir, tier=_deployment_tier(arc_dir))
+        service = WorkflowRunnerService(plane.runner, interval=args.interval)
+        await service.start()
+        try:
+            result = _ok_or_exit(await plane.test_run(args.id, actor_did=actor_did))
+            record = result.run
+            assert record is not None  # noqa: S101 — ok=True always carries the run
+            write(
+                f"Started TEST run {record.run_id} for {args.id}: state-modifying tools "
+                f"and scripts are stubbed, spend is capped."
+            )
+            try:
+                terminal = await asyncio.wait_for(
+                    service.wait_for_terminal(record.run_id), timeout=args.timeout
+                )
+            except TimeoutError:
+                await plane.cancel(record.run_id, actor_did=actor_did, reason="test run timed out")
+                err(
+                    f"Test run {record.run_id} did not finish in {args.timeout:.0f}s "
+                    f"(is it waiting at a gate?). Cancelled."
+                )
+                sys.exit(1)
+            write(f"Test run {record.run_id} finished (status={terminal.status})")
+        finally:
+            await service.stop()
+            await aclose()
+
+    _run_or_report(_run)
+
+
+def _gate(args: argparse.Namespace) -> None:
+    """Approve, reject, or send back a waiting gate, as the operator."""
+
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        _ok_or_exit(
+            await plane.resolve_gate(
+                args.task_id,
+                decision=GATE_WORDS[args.decision],
+                notes=args.notes or "",
+                actor_did=actor_did,
+            )
+        )
+        past = {"approve": "approved", "reject": "rejected", "revise": "sent back for revision"}
+        write(f"Gate {args.task_id} {past[args.decision]}.")
+
+    _with_plane(args, _run)
+
+
+# ---------------------------------------------------------------------------
 # Argparse dispatcher
 # ---------------------------------------------------------------------------
 
@@ -854,6 +948,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_dir_arg(p)
 
+    p = subs.add_parser("templates", help="List the starter workflow templates.")
+    _add_dir_arg(p)
+
+    p = subs.add_parser("new", help="Create a draft workflow from a starter template.")
+    p.add_argument("id", help="Id for the new workflow (a bare name).")
+    p.add_argument("--from", dest="template", required=True, help="Template id (see `templates`).")
+    p.add_argument("--owner", default=None, help="Agent handle that owns the workflow.")
+    _add_dir_arg(p)
+
+    p = subs.add_parser(
+        "test", help="Test-run a draft: state-modifying tools stubbed, spend capped, no signature."
+    )
+    p.add_argument("id")
+    p.add_argument(
+        "--timeout", type=float, default=600.0, help="Seconds to wait before cancelling (600)."
+    )
+    p.add_argument("--interval", type=float, default=1.0, help="Runner tick seconds (1.0).")
+    _add_dir_arg(p)
+
+    p = subs.add_parser("gate", help="Resolve a waiting gate: approve, reject, or revise.")
+    p.add_argument("task_id", help="The gate's task id.")
+    p.add_argument("decision", choices=sorted(GATE_WORDS))
+    p.add_argument("--notes", default=None, help="Why, recorded with the decision.")
+    _add_dir_arg(p)
+
     p = subs.add_parser("serve", help="Run ArcFlow headlessly until interrupted.")
     p.add_argument(
         "--interval",
@@ -892,6 +1011,10 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "unarchive": _unarchive,
     "purge": _purge,
     "run": _run_workflow,
+    "templates": _templates,
+    "new": _new,
+    "test": _test_workflow,
+    "gate": _gate,
     "serve": _serve,
     "cancel": _cancel,
     "sign": _sign,

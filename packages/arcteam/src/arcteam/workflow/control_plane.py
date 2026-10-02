@@ -50,6 +50,14 @@ _GATE_DECISIONS: dict[str, str] = {
     "return_for_revision": "returned_for_revision",
 }
 
+#: The words a human reviewer uses (CLI, chat card) mapped to the decision the
+#: control plane takes. One table, so every caller means the same thing by "reject".
+GATE_WORDS: dict[str, str] = {
+    "approve": "approve",
+    "reject": "fail_run",
+    "revise": "return_for_revision",
+}
+
 
 @dataclass(frozen=True)
 class OperationIssue:
@@ -550,6 +558,7 @@ class WorkflowControlPlane:
 
 
 __all__ = [
+    "GATE_WORDS",
     "ControlPlaneResult",
     "OperationIssue",
     "WorkflowControlPlane",
