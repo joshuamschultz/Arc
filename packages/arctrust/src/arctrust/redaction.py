@@ -368,3 +368,26 @@ def redact_text(text: str, matches: list[PiiMatch]) -> str:
         tag = f"[{match.namespace}:{match.pii_type}]"
         result = result[: match.start] + tag + result[match.end :]
     return result
+
+
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_WHITESPACE_RE = re.compile(r"\s+")
+_ERROR_DETECTOR = RegexPiiDetector()
+
+
+def sanitize_error_text(text: str, *, limit: int = 300) -> str:
+    """Make an exception message safe to store, show, and send to an operator.
+
+    Secrets, emails and other PII are replaced with placeholders, URLs are
+    dropped (they carry query-string credentials), whitespace is collapsed, and
+    the result is capped at ``limit`` characters. The cap is the point: a raw
+    provider error can be megabytes, and a failure reason has to stay readable.
+    """
+    if not text:
+        return ""
+    bounded = text[:MAX_REGEX_SCAN_LENGTH]
+    redacted = redact_text(bounded, _ERROR_DETECTOR.detect(bounded))
+    flat = _WHITESPACE_RE.sub(" ", _URL_RE.sub("[URL]", redacted)).strip()
+    if len(flat) <= limit:
+        return flat
+    return flat[: max(limit - 1, 0)].rstrip() + "…"

@@ -249,6 +249,7 @@ class RunRow:
     cost_spent: float
     started_at: str | None = None
     resolution: str | None = None
+    last_error: str | None = None
     advance_failure_count: int = 0
     advance_failure_basis: str | None = None
 
@@ -355,11 +356,14 @@ class FlowRunStore:
         actor_did: str,
         expected_status: str | None = None,
         resolution: str | None = None,
+        last_error: str | None = None,
         fence: Any | None = None,
     ) -> bool:
         patch: dict[str, Any] = {"status": status}
         if resolution is not None:
             patch["resolution"] = resolution
+        if last_error is not None:
+            patch["last_error"] = last_error
         if expected_status is None:
             return await self._backend.mutable_merge(
                 self._COLLECTION, run_id, patch, actor_did=actor_did

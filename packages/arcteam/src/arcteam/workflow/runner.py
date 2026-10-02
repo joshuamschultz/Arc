@@ -30,6 +30,7 @@ event the runner emits names the deployment's true posture.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -93,6 +94,47 @@ class NodeDecisionError(WorkflowRunError):
 
 class WorkflowRunnerLeaseUnavailableError(WorkflowRunError):
     """Another process currently owns the fenced ArcFlow runner lease."""
+
+
+# A node's inherited outputs ride on its task row, so one huge upstream result
+# would make every descendant's prompt huge too. Past this size it is a ref.
+UPSTREAM_INLINE_LIMIT_BYTES = 16_384
+
+
+def _ancestors(node: NodeSpec, definition: WorkflowSpec) -> set[str]:
+    """Every node reachable backwards through ``needs``, excluding the node itself."""
+    seen: set[str] = set()
+    pending = list(node.needs)
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(definition.node_by_id(current).needs)
+    seen.discard(node.id)
+    return seen
+
+
+def _inline_or_ref(value: Any, producer_task_id: str) -> Any:
+    """The output itself when small, else a pointer a node can read on demand."""
+    size = len(json.dumps(value, default=str).encode("utf-8"))
+    if size <= UPSTREAM_INLINE_LIMIT_BYTES or not producer_task_id:
+        return value
+    return {
+        "artifact_ref": {
+            "task_id": producer_task_id,
+            "size_bytes": size,
+            "read_with": f"list_tasks(task_id={producer_task_id!r}, fields=['output'])",
+        }
+    }
+
+
+def _failure_reason(failed: NodeInstance) -> str:
+    """Why a run failed: the failing node and the reason the node itself recorded."""
+    detail = (failed.task.last_error or "").strip()
+    if not detail:
+        return f"node failed: {failed.node_id}"
+    return f"node {failed.node_id} failed: {detail}"
 
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -761,8 +803,7 @@ class WorkflowRunner:
             raise NodeDecisionError(node.id, str(exc)) from exc
         self._assert_contained_artifacts(node)
         owner_did = await self._owner_for(node, definition)
-        outputs = state.outputs()
-        upstream = {need: outputs[need] for need in node.needs if need in outputs}
+        upstream = self._upstream_for(node, definition, state)
         blocked_by = [
             instance.task.id
             for need in node.needs
@@ -823,6 +864,27 @@ class WorkflowRunner:
             max_attempts=node.max_attempts or 3,
             timeout_seconds=node.timeout_s,
         )
+
+    @staticmethod
+    def _upstream_for(node: NodeSpec, definition: WorkflowSpec, state: RunState) -> dict[str, Any]:
+        """Every transitive ancestor's output, the set the validator permits a node to read.
+
+        Handing over only direct ``needs`` left a node that depends on a router
+        with no data at all, so its model went hunting through the task table.
+        An output too large to inline travels as a reference to the task that
+        holds it, never as a megabyte of prompt.
+        """
+        outputs = state.outputs()
+        upstream: dict[str, Any] = {}
+        for ancestor in sorted(_ancestors(node, definition)):
+            if ancestor not in outputs:
+                continue
+            value = outputs[ancestor]
+            producer = state.latest(ancestor)
+            upstream[ancestor] = _inline_or_ref(
+                value, producer.task.id if producer is not None else ""
+            )
+        return upstream
 
     def _bundle_root(self, workflow_id: str) -> str:
         """The directory this run's definition was loaded from, as a string."""
@@ -1188,9 +1250,7 @@ class WorkflowRunner:
             return run
         failures = state.failures()
         if failures:
-            return await self._terminate(
-                run.run_id, "failed", f"node failed: {failures[0].node_id}"
-            )
+            return await self._terminate(run.run_id, "failed", _failure_reason(failures[0]))
         # A task that settled between the decide pass and this roll-up moved the
         # frontier AFTER the pass decided against it — not a stall. The decide pass
         # and this roll-up read the store separately, so a predecessor committing
@@ -1244,6 +1304,7 @@ class WorkflowRunner:
             actor_did=self._runner_did,
             expected_status=run.status,
             resolution=resolution,
+            last_error=resolution if status == "failed" else None,
             fence=self._mutation_fence(),
         )
         if not flipped:
@@ -1259,7 +1320,32 @@ class WorkflowRunner:
             await self._narrator.run_outcome(
                 channel=run.channel, run_id=run_id, status=status, detail=resolution
             )
+        if status == "failed":
+            await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
+
+    async def _notify_operator_of_failure(self, run: RunRecord, reason: str) -> None:
+        """Every terminal failure reaches a human, with the reason, whatever the channel.
+
+        Narration goes only to a bound channel and many workflows have none, so a
+        nightly run could fail for weeks unseen. This is addressed to the operator
+        and its outcome is audited either way: a notice that could not be sent is
+        a recorded fact, not silence.
+        """
+        delivered = False
+        if self._narrator is not None:
+            delivered = await self._narrator.operator_failure_notice(
+                run_id=run.run_id,
+                workflow_id=run.workflow_id,
+                version=run.version,
+                reason=reason,
+            )
+        self._audit(
+            "workflow.run.operator_notified",
+            target=f"{run.workflow_id}/{run.run_id}",
+            outcome="delivered" if delivered else "undelivered",
+            extra={"run_id": run.run_id, "reason": reason},
+        )
 
     # -- budget --------------------------------------------------------------
 

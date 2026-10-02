@@ -317,6 +317,8 @@ class RunRecord(Protocol):
     def started_at(self) -> str | None: ...
     @property
     def resolution(self) -> str | None: ...
+    @property
+    def last_error(self) -> str | None: ...
 
 
 class RunStoreLike(Protocol):
@@ -355,6 +357,7 @@ class RunStoreLike(Protocol):
         actor_did: str,
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
+        last_error: str | None = None,
         fence: RunnerFence | None = None,
     ) -> bool:
         """Conditional transition. ``False`` means another writer won the race."""

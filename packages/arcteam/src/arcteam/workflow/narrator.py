@@ -18,6 +18,11 @@ from arcteam.types import Message, MsgType, Priority, parse_uri
 
 logger = logging.getLogger(__name__)
 
+# Where a terminal run failure is reported. One address, so the operator inbox
+# (and any channel relay bound to it) is the single seam, never a per-workflow
+# channel that may not exist.
+OPERATOR_TARGET = "user://operator"
+
 
 class NarrationSender(Protocol):
     """The one messenger method narration needs. There is no receive half."""
@@ -34,10 +39,12 @@ class RunNarrator:
         *,
         sender_did: str,
         ensure_channel: Callable[[str], Awaitable[None]] | None = None,
+        ensure_registered: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._sender = sender
         self._sender_did = sender_did
         self._ensure_channel = ensure_channel
+        self._ensure_registered = ensure_registered
         self._admitted: set[str] = set()
 
     async def run_started(
@@ -120,6 +127,46 @@ class RunNarrator:
             event="run.outcome",
         )
 
+    async def operator_failure_notice(
+        self,
+        *,
+        run_id: str,
+        workflow_id: str,
+        version: int,
+        reason: str,
+    ) -> bool:
+        """Tell the operator a run failed, and why. Never raises; reports delivery.
+
+        Unlike narration this is addressed to a person, goes out whether or not
+        the workflow has a channel bound, and is an ALERT. A failure to deliver
+        is logged loudly and returned as ``False`` so the caller can audit it;
+        it still cannot fail the run, which has already terminated.
+        """
+        if self._sender is None:
+            return False
+        body = f"Workflow {workflow_id} v{version} failed (run {run_id}): {reason}"
+        try:
+            if self._ensure_registered is not None:
+                await self._ensure_registered()
+            await self._sender.send(
+                Message(
+                    sender=self._sender_did,
+                    to=[OPERATOR_TARGET],
+                    msg_type=MsgType.ALERT,
+                    priority=Priority.HIGH,
+                    action_required=False,
+                    mentions=[],
+                    body=body,
+                    meta={"class": "operator_alert", "event": "run.failed", "run_id": run_id},
+                )
+            )
+        except Exception:  # reason: the run is already terminal; report, do not raise
+            logger.warning(
+                "operator failure notice not delivered for run %s", run_id, exc_info=True
+            )
+            return False
+        return True
+
     async def runner_degraded(
         self, *, channel: str | None, consecutive_failures: int, last_error: str
     ) -> None:
@@ -184,4 +231,4 @@ def assert_channel_binding(channel: str | None) -> None:
     parse_uri(channel)
 
 
-__all__ = ["NarrationSender", "RunNarrator", "assert_channel_binding"]
+__all__ = ["OPERATOR_TARGET", "NarrationSender", "RunNarrator", "assert_channel_binding"]

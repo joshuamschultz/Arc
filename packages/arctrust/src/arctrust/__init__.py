@@ -224,6 +224,7 @@ from arctrust.redaction import (
     iban_mod97_valid,
     luhn_valid,
     redact_text,
+    sanitize_error_text,
 )
 from arctrust.replay import ReplayCache
 from arctrust.secrets import SECRET_PATTERNS
@@ -559,6 +560,7 @@ __all__ = [
     "register_operator",
     "runtime_bin",
     "runtime_venv",
+    "sanitize_error_text",
     "scenario_key",
     "sign",
     "sign_artifact",
