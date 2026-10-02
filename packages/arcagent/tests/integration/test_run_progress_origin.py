@@ -91,14 +91,22 @@ async def test_the_turns_own_origin_reaches_the_progress_stream(
     assert len(bridges) == 2
     on_channel, off_channel = bridges
 
-    phase = Event(
-        type="dynamic.phase", timestamp=0.0, run_id="r1", data={"title": "Read the filings"}
-    )
-    on_channel(phase)
-    off_channel(phase)
-    # The bridge schedules each emission as a detached task; let them run.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    # Two different runs, so two ordered lanes (the bridge orders per run_id, 6f5f0944).
+    def _phase(run_id: str) -> Event:
+        return Event(
+            type="dynamic.phase",
+            timestamp=0.0,
+            run_id=run_id,
+            data={"title": "Read the filings"},
+        )
+
+    on_channel(_phase("r1"))
+    off_channel(_phase("r2"))
+    # The bridge publishes through supervised per-run tasks; wait for both.
+    async with asyncio.timeout(5):
+        while len(progress) < 2:
+            await asyncio.sleep(0)
+    progress.sort(key=lambda entry: entry["reply_target"] is None)
 
     assert [entry["reply_target"] for entry in progress] == ["telegram:44", None]
     assert progress[0]["event"] == "dynamic.phase"
