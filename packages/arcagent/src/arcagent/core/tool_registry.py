@@ -357,6 +357,7 @@ class ToolRegistry:
                     # decide concurrency; unclassified stays state_modifying (the
                     # arcrun default), i.e. sequential (fail-closed).
                     classification=tool.classification,
+                    idempotent=tool.idempotent,
                 )
             )
         return result

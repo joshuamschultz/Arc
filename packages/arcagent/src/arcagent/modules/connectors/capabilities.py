@@ -715,6 +715,8 @@ def _annotated(specs: list[ToolSpec], policy: ToolPolicy) -> list[ToolSpec]:
                 update={
                     "classification": tool.classification if tool else "state_modifying",
                     "capability_tags": list(tool.capability_tags) if tool else [],
+                    # An undeclared verb is judged restrictively: not idempotent.
+                    "idempotent": tool.idempotent if tool else False,
                 }
             )
         )

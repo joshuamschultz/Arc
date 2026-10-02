@@ -453,6 +453,10 @@ class DeclaredTool(_ManifestModel):
     description: str = ""
     classification: Classification = "state_modifying"
     capability_tags: list[str] = Field(default_factory=list)
+    # ``idempotent = false`` marks a verb whose repeat call duplicates an external
+    # effect it cannot dedupe (a send, an upload, a create). A workflow node will
+    # not re-run it for a retried or reclaimed attempt without an operator's OK.
+    idempotent: bool = True
 
 
 class ToolRouting(_ManifestModel):

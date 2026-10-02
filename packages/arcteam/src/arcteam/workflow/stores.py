@@ -34,7 +34,7 @@ from typing import Any
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState, PathEntry, Run, RunStore
-from arcstore.tasks import Task, TaskStore, _validate_free_text
+from arcstore.tasks import Task, TaskStore, _validate_free_text, reclaim_allowance_s
 from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
@@ -521,6 +521,9 @@ class WorkflowTaskStore:
         self, row: Task, *, now: datetime, actor_did: str, fence: RunnerFence | None
     ) -> Task | None:
         reason = "attempt abandoned: its process stopped mid-run (reclaimed on resume)"
+        # A node executor reads this to refuse a blind re-run of a tool that
+        # cannot dedupe its effect (the first attempt may have half-run).
+        stamp = {"reclaimed_at": now.isoformat()}
         if row.attempts >= row.max_attempts:
             return await self._tasks.dead_letter(
                 row.id,
@@ -529,6 +532,7 @@ class WorkflowTaskStore:
                 last_error=reason,
                 expected_attempts=row.attempts,
                 fence=fence,
+                metadata_patch=stamp,
             )
         return await self._tasks.requeue(
             row.id,
@@ -537,6 +541,7 @@ class WorkflowTaskStore:
             next_attempt_at=now.isoformat(),
             expected_attempts=row.attempts,
             fence=fence,
+            metadata_patch=stamp,
         )
 
 
@@ -662,7 +667,7 @@ def _attempt_expired(row: Task, now: datetime, stale_after_s: float) -> bool:
         return True
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
-    allowance = max(float(row.timeout_seconds or 0.0), stale_after_s)
+    allowance = reclaim_allowance_s(row.timeout_seconds, stale_after_s)
     return (now - started).total_seconds() >= allowance
 
 

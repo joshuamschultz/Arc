@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
@@ -344,6 +344,22 @@ class MutableTaskBackend(Protocol):
         sink: Any | None = None,
         fence: RunnerFence | None = None,
     ) -> list[dict[str, Any]]: ...
+
+
+# A live attempt may run to its own timeout; the reclaimer waits this much longer
+# so a turn finishing at its timeout is never reclaimed and double-run.
+RECLAIM_MARGIN_S = 60.0
+
+
+def reclaim_allowance_s(timeout_seconds: float | None, floor_s: float) -> float:
+    """How long an in-flight attempt may sit before it is presumed dead.
+
+    The one place the reclaim lease is derived from the dispatch timeout: the
+    attempt's own timeout plus a margin, never below the configured floor.
+    """
+    if not timeout_seconds or timeout_seconds <= 0:
+        return floor_s
+    return max(floor_s, float(timeout_seconds) + RECLAIM_MARGIN_S)
 
 
 def _attempt_where(expected_attempts: int | None) -> dict[str, Any]:
@@ -854,6 +870,58 @@ class TaskStore:
         )
         return await self.get(task_id) if won else None
 
+    async def _merge_metadata(
+        self, task_id: str, patch: dict[str, Any], metadata_patch: Mapping[str, Any] | None
+    ) -> None:
+        """Fold ``metadata_patch`` into ``patch`` over the row's current metadata.
+
+        The store merges top-level keys only, so the whole metadata block is
+        carried; the surrounding write is conditional on the attempt, so a
+        claim that lands between this read and the write makes it a no-op.
+        """
+        if not metadata_patch:
+            return
+        current = await self.get(task_id)
+        if current is not None:
+            patch["metadata"] = {**current.metadata, **metadata_patch}
+
+    async def fail_attempt(
+        self,
+        task_id: str,
+        *,
+        attempt_key: str,
+        attempts: int,
+        resolution: str,
+        actor_did: str,
+        last_error: str | None = None,
+    ) -> Task | None:
+        """Terminally fail one attempt — only while that attempt still holds the row.
+
+        The mirror of :meth:`complete_attempt`: conditional on ``in_progress``,
+        the attempt number and the claim's attempt key. A stale executor whose
+        attempt was reclaimed (and possibly re-claimed) gets ``None`` and writes
+        nothing, so it can never fail the live attempt's row.
+        """
+        current = await self.get(task_id)
+        if current is None or current.status != "in_progress" or current.attempts != attempts:
+            return None
+        now = _now()
+        patch: dict[str, Any] = {
+            "status": "failed",
+            "resolution": resolution,
+            "completed_at": now,
+            "duration_seconds": _duration_seconds(current.started_at, now),
+        }
+        if last_error is not None:
+            patch["last_error"] = last_error
+        where: dict[str, Any] = {"status": "in_progress", "attempts": attempts}
+        if current.metadata.get("attempt_key") is not None:
+            where["metadata.attempt_key"] = attempt_key
+        won = await self._backend.update_if(
+            self._COLLECTION, task_id, patch, where=where, actor_did=actor_did, sink=self._sink
+        )
+        return await self.get(task_id) if won else None
+
     async def requeue(
         self,
         task_id: str,
@@ -863,6 +931,7 @@ class TaskStore:
         next_attempt_at: str,
         expected_attempts: int | None = None,
         fence: RunnerFence | None = None,
+        metadata_patch: Mapping[str, Any] | None = None,
     ) -> Task | None:
         """Return a failed in_progress attempt to the ready pool for retry (P1).
 
@@ -875,16 +944,20 @@ class TaskStore:
 
         ``expected_attempts`` pins the requeue to one attempt: a reclaimer that
         read attempt N cannot requeue attempt N+1 that started since.
+        ``metadata_patch`` is merged into the row's metadata in the same write
+        (a reclaim stamps ``reclaimed_at``); the rest of the node block survives.
         """
+        patch: dict[str, Any] = {
+            "status": "todo",
+            "last_error": last_error,
+            "next_attempt_at": next_attempt_at,
+            "started_at": None,
+        }
+        await self._merge_metadata(task_id, patch, metadata_patch)
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
-            {
-                "status": "todo",
-                "last_error": last_error,
-                "next_attempt_at": next_attempt_at,
-                "started_at": None,
-            },
+            patch,
             where=_attempt_where(expected_attempts),
             actor_did=actor_did,
             sink=self._sink,
@@ -901,6 +974,7 @@ class TaskStore:
         last_error: str,
         expected_attempts: int | None = None,
         fence: RunnerFence | None = None,
+        metadata_patch: Mapping[str, Any] | None = None,
     ) -> Task | None:
         """Terminally fail an in_progress task (retries exhausted or cancelled).
 
@@ -912,17 +986,19 @@ class TaskStore:
         if current is None:
             return None
         now = _now()
+        patch: dict[str, Any] = {
+            "status": "failed",
+            "resolution": resolution,
+            "last_error": last_error,
+            "completed_at": now,
+            "duration_seconds": _duration_seconds(current.started_at, now),
+            "cancel_requested": False,
+        }
+        await self._merge_metadata(task_id, patch, metadata_patch)
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
-            {
-                "status": "failed",
-                "resolution": resolution,
-                "last_error": last_error,
-                "completed_at": now,
-                "duration_seconds": _duration_seconds(current.started_at, now),
-                "cancel_requested": False,
-            },
+            patch,
             where=_attempt_where(expected_attempts),
             actor_did=actor_did,
             sink=self._sink,

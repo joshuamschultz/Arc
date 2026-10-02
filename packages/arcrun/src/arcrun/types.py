@@ -53,6 +53,12 @@ class Tool:
         ``"state_modifying"`` — fail-closed so an unclassified tool never
         runs concurrently by accident (SPEC-043 REQ-034). The owning
         deployment host sets the real value when it builds the tool.
+
+    idempotent:
+        False when a second execution repeats an external effect the tool
+        cannot dedupe from ``ToolContext.idempotency_key``. A workflow node
+        executor refuses to re-run such a tool for a retried or reclaimed
+        attempt without an operator's explicit OK. Default True.
     """
 
     name: str
@@ -62,6 +68,7 @@ class Tool:
     timeout_seconds: float | None = None
     signals_completion: bool = False
     classification: str = "state_modifying"
+    idempotent: bool = True
 
 
 @dataclass

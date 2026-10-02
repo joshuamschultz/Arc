@@ -316,6 +316,32 @@ def test_a_tool_with_no_declared_tags_registers_with_an_empty_tag_list(
     assert registry.tools["create_issue"].capability_tags == []
 
 
+def test_idempotent_false_survives_registration_to_the_arcrun_tool(
+    registry: ToolRegistry, attachment: _RecordingAttachment
+) -> None:
+    """A workflow tool node reads this to refuse a blind re-run of a side effect."""
+    _bridge(registry, attachment).register(
+        [_spec("create_issue", idempotent=False), _spec("list_issues")]
+    )
+
+    by_name = {tool.name: tool for tool in registry.to_arcrun_tools()}
+    assert by_name["create_issue"].idempotent is False
+    assert by_name["list_issues"].idempotent is True
+
+
+def test_manifest_declaration_sets_idempotent_and_undeclared_verbs_are_not() -> None:
+    from arcagent.extension.attachment import ToolSpec
+    from arcagent.extension.manifest import DeclaredTool, ToolPolicy
+    from arcagent.modules.connectors.capabilities import _annotated
+
+    policy = ToolPolicy(
+        declared=[DeclaredTool(name="a", idempotent=False), DeclaredTool(name="b")]
+    )
+    specs = _annotated([ToolSpec(name="a"), ToolSpec(name="b"), ToolSpec(name="c")], policy)
+
+    assert [spec.idempotent for spec in specs] == [False, True, False]
+
+
 def test_each_tool_keeps_its_own_classification_and_tags(
     registry: ToolRegistry, attachment: _RecordingAttachment
 ) -> None:
