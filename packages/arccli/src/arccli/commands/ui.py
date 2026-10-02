@@ -300,7 +300,7 @@ def _start(args: argparse.Namespace) -> None:
         # Personal/enterprise operators may put URLs/emails in task text (e.g.
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
-        public_base_url=_public_base_url(gateway_config),
+        public_base_url=_public_base_url(args, gateway_config),
         skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
         # The schedule/pulse authority shared by the dashboard and every agent it
         # serves (item 52). None at federal: schedule writes stay closed (503).
@@ -458,11 +458,22 @@ def _deployment_tier(gateway_config: Any | None) -> str:
     return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal"))
 
 
-def _public_base_url(gateway_config: Any | None) -> str | None:
-    """The validated ``[ui] public_base_url`` from the gateway config, if any."""
-    if gateway_config is None:
-        return None
-    return cast("str | None", gateway_config.ui.public_base_url)
+def _public_base_url(args: argparse.Namespace, gateway_config: Any | None) -> str | None:
+    """The validated public dashboard origin: ``--public-base-url``, else ``[ui]`` in gateway.toml.
+
+    The default start builds an in-memory gateway config that never read the file,
+    so the deployment's ``gateway.toml`` is loaded here through the one Arc-home
+    resolver (``GatewayConfig.load``); a missing file leaves the setting unset.
+    """
+    from arcgateway.config import GatewayConfig, validate_public_base_url
+
+    flag: str | None = getattr(args, "public_base_url", None)
+    if flag:
+        return validate_public_base_url(flag, _deployment_tier(gateway_config))
+    configured = gateway_config.ui.public_base_url if gateway_config is not None else None
+    if configured is None:
+        configured = GatewayConfig.load().ui.public_base_url
+    return cast("str | None", configured)
 
 
 def _fleet_enabled(gateway_config: Any | None) -> bool:
@@ -708,6 +719,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "auto-built with [platforms.web].enabled=true so /ws/chat/{agent_id} "
         "works out of the box. Pass an explicit file to enable Slack/Telegram "
         "or set tier=federal.",
+    )
+    p_start.add_argument(
+        "--public-base-url",
+        dest="public_base_url",
+        default=None,
+        help="Public https origin of this dashboard, used for deep links in operator "
+        "notices. Overrides [ui] public_base_url in gateway.toml. http is allowed "
+        "only for a loopback host at personal tier.",
     )
     p_start.add_argument(
         "--no-chat",

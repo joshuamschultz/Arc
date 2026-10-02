@@ -143,6 +143,13 @@ describe('ConnectionCard health row', () => {
     expect(within(card).getByText('Could not notify you')).toBeTruthy()
   })
 
+  it('says no agent is running when the notice was undeliverable', async () => {
+    const { card } = await renderCard([
+      row({ last_notice: { kind: 'needs_you', delivered: false, channel: 'undeliverable', at: new Date().toISOString() } }),
+    ])
+    expect(within(card).getByText('Could not notify you: no agent is running')).toBeTruthy()
+  })
+
   it('card never requests /auth on mount', async () => {
     const { urls } = await renderCard([needsYou({ agents: ['olivia'] })])
     await new Promise((resolve) => setTimeout(resolve, 50))
