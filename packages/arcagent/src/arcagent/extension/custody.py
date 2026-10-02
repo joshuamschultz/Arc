@@ -280,6 +280,47 @@ class CredentialRowStore:
                 return generation
         raise _busy(connection)
 
+    async def put_grant(
+        self,
+        connection: str,
+        *,
+        refresh_field: str,
+        refresh_token: str,
+        access_token: str,
+        issued_at: datetime,
+        expires_at: datetime,
+        scope: str | None,
+        actor_did: str,
+    ) -> int:
+        """Store a fresh OAuth grant (refresh + access) in ONE write. Returns the generation.
+
+        Used right after an authorization-code exchange, so the access token the
+        exchange already issued is used instead of spending a refresh at once.
+        """
+        _check_coordinate("connection", connection)
+        _check_coordinate("field", refresh_field)
+        sealed_refresh = self._seal(connection, refresh_field, refresh_token)
+        sealed_access = self._seal(connection, ACCESS_SLOT, access_token)
+        for _ in range(_CAS_ATTEMPTS):
+            row = await self._read_or_create(connection, actor_did)
+            self._require_cipher(row)
+            fields = {name: value.model_dump() for name, value in row.fields.items()}
+            fields[refresh_field] = {"sealed": sealed_refresh, "updated_at": _iso(issued_at)}
+            generation = row.generation + 1
+            patch = {
+                "fields": fields,
+                "access": {
+                    "sealed": sealed_access,
+                    "issued_at": _iso(issued_at),
+                    "expires_at": _iso(expires_at),
+                    "scope": scope,
+                },
+                "generation": generation,
+            }
+            if await self._cas(row, patch, actor_did=actor_did):
+                return generation
+        raise _busy(connection)
+
     async def delete_fields(
         self, connection: str, names: Sequence[str], *, actor_did: str
     ) -> tuple[str, ...]:
@@ -370,9 +411,15 @@ class CredentialRowStore:
         scope: str | None,
         rotated_refresh: str | None,
         refresh_field: str,
+        expected_generation: int,
         actor_did: str = CUSTODY_DID,
     ) -> bool:
         """Commit a renewal in ONE ``update_if``: access, rotated refresh, lease release.
+
+        ``expected_generation`` is the generation of the row the refresh token was
+        read from. If an operator reconnected meanwhile (new refresh token, new
+        generation), this renewal was made with a superseded credential and is
+        refused, so it can never overwrite the operator's new one.
 
         Re-reads immediately before the write (no await between that read and the
         CAS except the CAS itself) and builds the patch from it, so a field an
@@ -388,7 +435,7 @@ class CredentialRowStore:
             else None
         )
         row = await self.read(connection)
-        if row is None or not _holds(row, lease):
+        if row is None or not _holds(row, lease) or row.generation != expected_generation:
             return False
         self._require_cipher(row)
         fields = {name: value.model_dump() for name, value in row.fields.items()}
@@ -405,7 +452,9 @@ class CredentialRowStore:
             "generation": row.generation + (1 if sealed_refresh is not None else 0),
             "lease": None,
         }
-        return await self._cas(row, patch, actor_did=actor_did, lease=lease)
+        return await self._cas(
+            row, patch, actor_did=actor_did, lease=lease, generation=expected_generation
+        )
 
     # --- internals ---------------------------------------------------------
 
@@ -436,8 +485,11 @@ class CredentialRowStore:
         *,
         actor_did: str,
         lease: RefreshLease | None = None,
+        generation: int | None = None,
     ) -> bool:
         where: dict[str, Any] = {"revision": row.revision}
+        if generation is not None:
+            where["generation"] = generation
         if lease is not None:
             where["lease.owner"] = lease.owner
             where["lease.fence"] = lease.fence

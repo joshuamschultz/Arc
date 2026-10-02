@@ -368,6 +368,23 @@ async def test_retry_budget_is_bounded_at_twenty_seconds(world: World) -> None:
     assert record is not None and record.status != "needs_you"  # counted, not terminal
 
 
+async def test_reconnect_during_a_renewal_is_never_overwritten(world: World) -> None:
+    """An operator reconnect mid-renewal wins; the stale renewal commit is refused."""
+    provider = Provider(rotate=True)
+    provider.pause = asyncio.Event()
+    renewing = asyncio.create_task(world.planner("proc-a", provider).ensure_fresh(CONN, flow=FLOW))
+    await provider.entered.wait()
+    await world.rows().put_fields(CONN, {"refresh_token": "operator-new"}, actor_did=ACTOR)
+    provider.pause.set()
+
+    with pytest.raises(CredentialRenewalError) as caught:
+        await renewing
+    assert caught.value.error_code == "renewal_commit_lost"
+    assert await world.refresh_token() == "operator-new"
+    row = await world.rows().read(CONN)
+    assert row is not None and row.access is None and row.lease is None
+
+
 async def test_refresh_maps_provider_answers() -> None:
     request = RefreshRequest(
         flow=FLOW, refresh_token=Secret("r"), client_id="id", client_secret=Secret("s")

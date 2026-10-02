@@ -307,6 +307,7 @@ class RenewalPlanner:
             scope=renewed.scope,
             rotated_refresh=rotated,
             refresh_field=flow.refresh_token_secret,
+            expected_generation=row.generation,
             actor_did=self.actor_did,
         )
         if not committed:

@@ -172,6 +172,7 @@ async def test_replayed_refresh_commit_is_refused(world: World) -> None:
         "expires_at": world.clock.now + timedelta(hours=1),
         "scope": None,
         "refresh_field": "refresh_token",
+        "expected_generation": 1,
     }
     assert await rows.commit_renewal(lease_b, access_token="b", rotated_refresh="rb", **kwargs)
     before = await world.backend.mutable_read(CREDENTIAL_COLLECTION, "blackarc")
