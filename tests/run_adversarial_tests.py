@@ -177,6 +177,19 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcteam/tests/unit/workflow/test_run_create_idempotence.py",
         "packages/arcteam/tests/unit/workflow/test_runner_occurrence.py",
     ),
+    # Workflow gate approvers (alpha-2 #67): an unpaired user never reaches a
+    # gate; a paired non-approver is denied and audited; a role typed into the
+    # message or forged into Telegram callback data is ignored (roles come from
+    # the team registry for the authenticated DID only); approvers written onto
+    # the mutable row grant nothing; a replayed approve is refused; a gate naming
+    # an undeclared role refuses the run at start.
+    "workflow gate approver forgery, role injection and replayed decisions": (
+        "packages/arcteam/tests/unit/workflow/test_gate_approvers.py",
+        "packages/arcteam/tests/unit/workflow/test_registry_role_roster.py",
+        "packages/arcgateway/tests/unit/test_gate_authorization.py",
+        "packages/arcgateway/tests/platform/telegram/test_telegram_gate_buttons.py",
+        "packages/arccli/tests/test_gate_cli.py",
+    ),
     "report read authority and provenance refusal": (
         "packages/arcui/tests/test_report_preview.py",
     ),
