@@ -15,7 +15,7 @@ per-scope budget as completions, and emits an ``llm_call`` telemetry record
 
 from __future__ import annotations
 
-import asyncio
+import contextvars
 import logging
 import threading
 import time
@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 from pydantic import BaseModel
 
+from arcllm.embed_worker import get_worker, shutdown_worker
 from arcllm.exceptions import ArcLLMConfigError, ArcLLMEmbeddingUnavailableError
 from arcllm.modules.call_budget import budget_pre_check, count_tokens, emit_telemetry, parse_budget
 from arcllm.modules.telemetry_cost import calculate_cost
@@ -36,6 +37,12 @@ if TYPE_CHECKING:  # keep httpx + arcstore off the module-import hot path
     from arcstore.records import SpoolRecord
 
 logger = logging.getLogger(__name__)
+
+# Caller label for the embed in flight; the local worker serves "retrieve*"
+# ahead of background indexing. Set by ``embed()``, read by LocalEmbedder.
+_embed_operation: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "arcllm_embed_operation", default="embed"
+)
 
 DEFAULT_EMBED_MODEL = "all-MiniLM-L6-v2"
 _MINILM_DIMS = 384
@@ -114,14 +121,6 @@ def _load_sentence_transformer(model: str) -> Any:
     return SentenceTransformer(model, local_files_only=True)
 
 
-# One lock for every local torch encode in the process. A shared
-# SentenceTransformer is not thread-safe: concurrent ``encode`` calls from
-# ``asyncio.to_thread`` workers race inside transformers/torch native code and
-# intermittently SIGSEGV the interpreter. Model load is guarded by the same lock
-# so two first-callers never construct (and race on) two copies.
-_encode_lock = threading.Lock()
-
-
 class LocalEmbedder(EmbeddingProvider):
     """Offline ``sentence-transformers`` backend (default all-MiniLM-L6-v2).
 
@@ -151,16 +150,17 @@ class LocalEmbedder(EmbeddingProvider):
                 ) from e
         return self._st
 
-    def _encode_serialized(self, texts: list[str]) -> Any:
-        """Load (once) and encode under the process-wide lock; runs in a worker thread."""
-        with _encode_lock:
-            model = self._ensure_model()
-            # normalize_embeddings -> unit vectors, so downstream cosine == dot.
-            return model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-
     async def embed(self, texts: list[str]) -> EmbeddingResponse:
-        # Offload the CPU-bound load + encode so the event loop is never blocked.
-        raw = await asyncio.to_thread(self._encode_serialized, texts)
+        # The shared worker thread loads the model and runs the encode, so the
+        # event loop is never blocked and torch never sees two threads.
+        future = get_worker().submit(
+            key=self,
+            model_name=self._model,
+            load_model=self._ensure_model,
+            texts=texts,
+            priority=_embed_operation.get().startswith("retrieve"),
+        )
+        raw = await future
         vectors = [[float(x) for x in row] for row in raw]
         dims = len(vectors[0]) if vectors else _MINILM_DIMS
         tokens = count_tokens(texts)
@@ -255,6 +255,7 @@ def clear_embedder_cache() -> None:
     """Drop cached local backends (test isolation / config reload)."""
     with _cache_lock:
         _local_cache.clear()
+    shutdown_worker()
 
 
 def resolve_embedder(
@@ -345,7 +346,11 @@ async def embed(
         span.set_attribute("arcllm.embed.model", model)
         span.set_attribute("arcllm.embed.count", len(texts))
         t0 = time.monotonic()
-        response = await embedder.embed(texts)
+        token = _embed_operation.set(operation)
+        try:
+            response = await embedder.embed(texts)
+        finally:
+            _embed_operation.reset(token)
         latency_ms = round((time.monotonic() - t0) * 1000, 1)
 
         cost = calculate_cost(response.usage, input_per_1m=cost_input_per_1m, output_per_1m=0.0)
