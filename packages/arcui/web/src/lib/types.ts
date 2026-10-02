@@ -912,7 +912,18 @@ export type WorkflowRunStatus =
 // with lazy materialization there are no task rows for unreached nodes, so
 // this status is NEVER read from a task row for those two states.
 export type WorkflowNodeStatus =
-  'pending' | 'running' | 'waiting_gate' | 'done' | 'failed' | 'skipped' | 'looping'
+  | 'pending'
+  | 'running'
+  | 'waiting_gate'
+  | 'done'
+  | 'failed'
+  | 'skipped'
+  | 'looping'
+  | 'cancelled'
+  | 'routed'
+  | 'materialized'
+  | 'in_progress'
+  | 'review'
 
 export interface WorkflowNode {
   [key: string]: unknown
@@ -1013,6 +1024,10 @@ export interface WorkflowRunNodeStatus {
   started_at?: string | null
   completed_at?: string | null
   last_error?: string | null
+  /** The router's chosen route id, on a `routed` node. */
+  route?: string | null
+  /** Why a node was skipped or cancelled (e.g. "upstream X failed: ..."). */
+  reason?: string | null
   attempts?: number | null
   max_attempts?: number | null
   /** Bounded value, a `{truncated, size_bytes, preview}` marker, or `{withheld}`. */

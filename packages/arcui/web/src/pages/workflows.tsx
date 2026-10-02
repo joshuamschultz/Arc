@@ -16,7 +16,12 @@ import {
 import { QueryState, EmptyState } from '@/components/states'
 import { WorkflowCard, WorkflowSummaryStrip } from '@/components/workflows-view/workflow-card'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
-import { useCreateWorkflow, useWorkflows } from '@/lib/queries'
+import {
+  useCreateWorkflow,
+  useCreateWorkflowFromTemplate,
+  useWorkflows,
+  useWorkflowTemplates,
+} from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 
 /** Operator-only create-workflow form — a name + optional trigger JSON.
@@ -29,21 +34,27 @@ import { ApiError } from '@/lib/api'
 function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const navigate = useNavigate()
   const createWorkflow = useCreateWorkflow()
+  const fromTemplate = useCreateWorkflowFromTemplate()
+  const templates = useWorkflowTemplates(open)
   const [name, setName] = useState('')
+  const [template, setTemplate] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
     setName('')
+    setTemplate('')
     setError(null)
   }
 
   const submit = async () => {
     setError(null)
     try {
-      const created = await createWorkflow.mutateAsync({ name: name.trim() })
+      const id = template
+        ? (await fromTemplate.mutateAsync({ template, workflow_id: name.trim() })).workflow_id
+        : (await createWorkflow.mutateAsync({ name: name.trim() })).id
       reset()
       onOpenChange(false)
-      navigate(`/workflows/${encodeURIComponent(created.id)}`)
+      navigate(`/workflows/${encodeURIComponent(id)}`)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to create workflow')
     }
@@ -76,8 +87,40 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <FieldHelp helpKey="workflow.search" route="workflows" />
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="onboarding" />
           </div>
-          <Button className="w-full" disabled={createWorkflow.isPending || !name.trim()} onClick={submit}>
-            {createWorkflow.isPending ? 'Creating…' : 'Create draft'}
+          {(templates.data?.templates.length ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="workflow-template"
+                className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+              >
+                Start from template
+              </label>
+              <select
+                id="workflow-template"
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+              >
+                <option value="">Empty draft</option>
+                {templates.data!.templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+              {template && (
+                <p className="text-xs text-muted-foreground">
+                  {templates.data!.templates.find((t) => t.id === template)?.description}
+                </p>
+              )}
+            </div>
+          )}
+          <Button
+            className="w-full"
+            disabled={createWorkflow.isPending || fromTemplate.isPending || !name.trim()}
+            onClick={submit}
+          >
+            {createWorkflow.isPending || fromTemplate.isPending ? 'Creating…' : 'Create draft'}
           </Button>
         </div>
       </SheetContent>

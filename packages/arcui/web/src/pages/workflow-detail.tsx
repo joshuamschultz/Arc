@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Archive,
   ArchiveRestore,
   Check,
   ChevronLeft,
   Pencil,
+  FlaskConical,
   Play,
   Plus,
   ShieldCheck,
@@ -46,6 +47,7 @@ import {
   useRequestSignature,
   useRoster,
   useRunWorkflow,
+  useTestRunWorkflow,
   useTeamChannels,
   useTeamGateways,
   useUnarchiveWorkflow,
@@ -713,12 +715,18 @@ const NODE_STATUS_TONE: Record<string, string> = {
   failed: 'border-status-error/30 bg-status-error/10 text-status-error',
   waiting_gate: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
   skipped: 'border-border bg-muted/30 text-muted-foreground',
+  cancelled: 'border-border bg-muted/30 text-muted-foreground line-through',
+  routed: 'border-status-info/30 bg-status-info/10 text-status-info',
+  in_progress: 'border-status-info/30 bg-status-info/10 text-status-info',
+  review: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
+  materialized: 'border-border bg-muted/20 text-muted-foreground',
   pending: 'border-border bg-muted/20 text-muted-foreground',
 }
 
 function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string }) {
   const run = useWorkflowRun(runId, 4000)
   const rosterQ = useRoster()
+  const [operatorMode] = useOperatorMode()
   const liveStatus = useWorkflowRunLiveStatus(workflow.channel ?? null, runId)
   const [timelineRun, setTimelineRun] = useState<RunSummary | null>(null)
 
@@ -861,7 +869,14 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
                 </span>
                 {canOpen && <span className="shrink-0 text-[11px] text-primary">trace →</span>}
               </div>
-              {rec && <NodeDetail node={rec} />}
+              {rec && (
+                <NodeDetail
+                  node={rec}
+                  runId={runId}
+                  runStatus={run.data?.status}
+                  canRetry={operatorMode}
+                />
+              )}
               </div>
             )
           })}
@@ -879,7 +894,10 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
 
 function RunsTab({ workflow }: { workflow: WorkflowDetail }) {
   const runs = useWorkflowRuns(workflow.id)
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  // `?run=` deep-links a run (the Test run button navigates here).
+  const [searchParams] = useSearchParams()
+  const linkedRun = searchParams.get('run')
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(linkedRun)
   const cancelRun = useCancelWorkflowRun(selectedRunId ?? '')
 
   return (
@@ -1038,10 +1056,12 @@ function WorkflowTitle({
 export function WorkflowDetailPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const workflow = useWorkflow(id)
   const archiveWorkflow = useArchiveWorkflow(id)
   const unarchiveWorkflow = useUnarchiveWorkflow(id)
   const runWorkflow = useRunWorkflow(id)
+  const testRun = useTestRunWorkflow(id)
   const requestSignature = useRequestSignature(id)
   const [tab, setTab] = useState('graph')
   const [actionError, setActionError] = useState<string | null>(null)
@@ -1061,6 +1081,17 @@ export function WorkflowDetailPage() {
     try {
       await runWorkflow.mutateAsync(undefined)
       setTab('runs')
+    } catch (e) {
+      setActionError(describeError(e).message)
+    }
+  }
+
+  const runTest = async () => {
+    setActionError(null)
+    try {
+      const started = await testRun.mutateAsync()
+      setTab('runs')
+      if (started?.run_id) navigate(`/workflows/${encodeURIComponent(id)}?run=${encodeURIComponent(started.run_id)}`)
     } catch (e) {
       setActionError(describeError(e).message)
     }
@@ -1122,6 +1153,15 @@ export function WorkflowDetailPage() {
             >
               <Play className="size-3.5" /> Run
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={runTest}
+              disabled={testRun.isPending}
+              title="Runs this workflow once as a test, without its trigger"
+            >
+              <FlaskConical className="size-3.5" /> Test run
+            </Button>
             <Button size="sm" variant="ghost" onClick={toggleArchive}>
               {workflow.data?.status === 'archived' ? (
                 <>
@@ -1156,7 +1196,7 @@ export function WorkflowDetailPage() {
                 <VersionsTab workflow={data} />
               </TabsContent>
               <TabsContent value="runs">
-                <RunsTab workflow={data} />
+                <RunsTab key={searchParams.get('run') ?? ''} workflow={data} />
               </TabsContent>
             </Tabs>
           )}

@@ -172,6 +172,14 @@ export interface PendingApproval {
   arguments?: Record<string, string>
   provenance?: ApprovalProvenance[]
   session_id?: string
+  /** Why this approval was requested (workflow approvals). */
+  reason?: string
+  /** What the approval changes: node-level and per-file diffs. */
+  diff?: ApprovalDiffData
+}
+export interface ApprovalDiffData {
+  nodes?: { added?: string[]; removed?: string[]; changed?: string[] }
+  files?: Array<{ path: string; status: string; diff: string }>
 }
 export interface ApprovalsResponse {
   approvals: PendingApproval[]
@@ -1461,6 +1469,48 @@ export const useRunWorkflow = (id: string) => {
   return useMutation<{ run_id: string }, Error, Dict | undefined>({
     mutationFn: (input) => apiPost(`/api/workflows/${encodeURIComponent(id)}/run`, input ?? {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow', id, 'runs'] }),
+  })
+}
+
+/** Retry one failed node of a terminal-failed run (operator). */
+export const useRetryWorkflowNode = (runId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowRunDetail, Error, string>({
+    mutationFn: (nodeId) =>
+      apiPost(
+        `/api/workflow-runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/retry`,
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow-run', runId] }),
+  })
+}
+
+/** Start a throwaway test run of a workflow; resolves with the new run. */
+export const useTestRunWorkflow = (id: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<{ run_id: string }, Error, void>({
+    mutationFn: () => apiPost(`/api/workflows/${encodeURIComponent(id)}/test-run`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow', id, 'runs'] }),
+  })
+}
+
+export interface WorkflowTemplate {
+  id: string
+  title: string
+  description: string
+}
+
+export const useWorkflowTemplates = (enabled = true) =>
+  useApiQuery<{ templates: WorkflowTemplate[] }>(
+    ['workflow-templates'],
+    '/api/workflow-templates',
+    enabled,
+  )
+
+export const useCreateWorkflowFromTemplate = () => {
+  const queryClient = useQueryClient()
+  return useMutation<{ workflow_id: string }, Error, { template: string; workflow_id: string }>({
+    mutationFn: (body) => apiPost('/api/workflows/from-template', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflows'] }),
   })
 }
 

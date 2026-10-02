@@ -61,6 +61,10 @@ const STATUS_TONE: Record<string, string> = {
   failed: 'border-status-error/60 bg-status-error/10 text-status-error',
   skipped: 'border-border bg-muted/10 text-muted-foreground/50 opacity-60',
   looping: 'border-status-info/60 bg-status-info/10 text-status-info',
+  in_progress: 'border-status-info/60 bg-status-info/10 text-status-info animate-pulse',
+  review: 'border-status-warning/60 bg-status-warning/10 text-status-warning',
+  routed: 'border-status-info/60 bg-status-info/10 text-status-info',
+  cancelled: 'border-border bg-muted/10 text-muted-foreground line-through opacity-60',
 }
 
 // Color-coded type tag per node kind (the user's ask: agent=emerald,

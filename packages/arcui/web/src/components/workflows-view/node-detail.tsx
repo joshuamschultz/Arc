@@ -1,3 +1,7 @@
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api'
+import { useRetryWorkflowNode } from '@/lib/queries'
 import type { WorkflowRunNodeStatus } from '@/lib/types'
 
 /** A bounded wire value: small values arrive as-is, large ones as a marked preview. */
@@ -42,13 +46,55 @@ function IoBlock({ label, value }: { label: string; value: unknown }) {
   )
 }
 
-/** Per-node failure reason, attempt count and bounded input/output for the run feed. */
-export function NodeDetail({ node }: { node: WorkflowRunNodeStatus }) {
+/** Re-run one failed node; the server answers with the refreshed run view. */
+function RetryNodeButton({ runId, nodeId }: { runId: string; nodeId: string }) {
+  const retry = useRetryWorkflowNode(runId)
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    setError(null)
+    try {
+      await retry.mutateAsync(nodeId)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not retry node')
+    }
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <Button size="sm" variant="outline" disabled={retry.isPending} onClick={submit}>
+        {retry.isPending ? 'Retrying…' : 'Retry node'}
+      </Button>
+      {error && <span className="text-[11px] text-status-error">{error}</span>}
+    </div>
+  )
+}
+
+interface NodeDetailProps {
+  node: WorkflowRunNodeStatus
+  /** Needed (with `runStatus` and `canRetry`) to offer "Retry node". */
+  runId?: string
+  runStatus?: string
+  canRetry?: boolean
+}
+
+/** Per-node route, skip reason, failure reason, attempts and bounded input/output. */
+export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps) {
   const hasAttempts = node.attempts != null && node.max_attempts != null
   const hasIo = node.input != null || node.output != null
-  if (!node.last_error && !hasAttempts && !hasIo) return null
+  const showRoute = node.status === 'routed' && !!node.route
+  const showReason = !!node.reason && (node.status === 'skipped' || node.status === 'cancelled')
+  const showRetry =
+    !!canRetry && !!runId && runStatus === 'failed' && node.status === 'failed'
+  if (!node.last_error && !hasAttempts && !hasIo && !showRoute && !showReason && !showRetry) {
+    return null
+  }
   return (
     <div className="px-2.5 pb-2 text-xs">
+      {showRoute && (
+        <span className="inline-flex rounded-md border border-status-info/30 bg-status-info/10 px-1.5 py-0.5 text-[10px] text-status-info">
+          {`chose route: ${node.route}`}
+        </span>
+      )}
+      {showReason && <p className="text-muted-foreground">{node.reason}</p>}
       {node.last_error && <p className="text-status-error">{node.last_error}</p>}
       {hasAttempts && (
         <span className="mt-1 inline-flex rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -57,6 +103,7 @@ export function NodeDetail({ node }: { node: WorkflowRunNodeStatus }) {
       )}
       <IoBlock label="Input" value={node.input} />
       <IoBlock label="Output" value={node.output} />
+      {showRetry && <RetryNodeButton runId={runId} nodeId={node.node_id} />}
     </div>
   )
 }
