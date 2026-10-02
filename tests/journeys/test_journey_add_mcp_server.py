@@ -21,12 +21,15 @@ from unittest.mock import MagicMock
 import pytest
 from arcagent.core.config import ToolConfig, ToolsConfig
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.custody_select import deployment_cipher
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
 from arcagent.tools.human_gate import HumanGate
 from arcgateway import team_roster
 from arcstore.backends.memory import FakeBackend
+from arctrust import operator_signer_for
 from arctrust.identity import AgentIdentity
 from arctrust.paths import arc_team
 from arctrust.signer import InProcessSigner
@@ -108,6 +111,10 @@ async def _start_agent(root: Path, backend: FakeBackend) -> ToolRegistry:
         tool_registry=registry,
         tier="personal",
         human_gate=gate,
+        # The agent opens custody with the same operator-derived key arcui sealed with.
+        credential_cipher=deployment_cipher(root / "arc", tier=Tier.PERSONAL),
+        # Bundles in the operator tree verify at every tier, against the operator key.
+        operator_signer=operator_signer_for(base=root / "arc"),
     )
     await Connectors().setup(None)
     return registry
