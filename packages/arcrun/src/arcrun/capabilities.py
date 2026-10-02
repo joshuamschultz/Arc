@@ -27,6 +27,10 @@ from arcrun.types import Tool, ToolContext
 
 # Built-in meta-tool the model calls to pull a skill's body into context.
 USE_SKILL_TOOL = "use_skill"
+# Tools a provider exposes so the model can reach a skill's bundled files. arcrun
+# names them in the use_skill result only; the provider owns and gates them.
+READ_SKILL_FILE_TOOL = "read_skill_file"
+RUN_SKILL_SCRIPT_TOOL = "run_skill_script"
 
 
 @dataclass
@@ -65,6 +69,40 @@ class CapabilityResult:
     extra: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class SkillDocument:
+    """What ``use_skill`` hands the model: a skill's body plus where its files live.
+
+    Progressive disclosure (J4 B4): a body that says "see references/x.md" must be
+    reachable. ``root`` is a LOGICAL root (``skill://<name>/``), never a host
+    path — the model reaches the files only through the provider's jailed,
+    signature-verified ``read_skill_file`` / ``run_skill_script`` tools, so a
+    host path would only invite the unverified generic file tools. ``files`` is
+    the bundle inventory relative to that root (no signature sidecars).
+    """
+
+    name: str
+    body: str
+    files: tuple[str, ...] = ()
+
+    @property
+    def root(self) -> str:
+        return f"skill://{self.name}/"
+
+    def render(self) -> str:
+        """The model-visible text: the body, then the file inventory if any."""
+        if not self.files:
+            return self.body
+        listing = "\n".join(f"- {path}" for path in self.files)
+        return (
+            f'<skill name="{self.name}" root="{self.root}">\n{self.body}\n</skill>\n\n'
+            f"Files in this skill (paths relative to its root). Read one with "
+            f'{READ_SKILL_FILE_TOOL}(skill="{self.name}", path=...); run a scripts/*.py '
+            f'with {RUN_SKILL_SCRIPT_TOOL}(skill="{self.name}", path=..., args=[...]):\n'
+            f"{listing}"
+        )
+
+
 @runtime_checkable
 class CapabilityProvider(Protocol):
     """The contract arcrun's loop runs against (ADR-023).
@@ -80,13 +118,25 @@ class CapabilityProvider(Protocol):
         """Lean manifest for the model: name · kind · "use when" · schema."""
         ...
 
-    async def load(self, name: str, *, caller_did: str) -> str | None:
-        """Lazily fetch the heavy body for one capability (a skill's full
-        instructions). ``None`` for plain tools or unknown names."""
+    async def load(self, name: str, *, caller_did: str) -> SkillDocument | None:
+        """Lazily fetch one skill: its full instructions plus its file inventory.
+        ``None`` for plain tools or unknown names."""
         ...
 
-    async def invoke(self, name: str, args: dict[str, Any], *, caller_did: str) -> CapabilityResult:
-        """Dispatch a call — runs through the provider's trust/policy layer."""
+    async def invoke(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        caller_did: str,
+        context: ToolContext | None = None,
+    ) -> CapabilityResult:
+        """Dispatch a call — runs through the provider's trust/policy layer.
+
+        ``context`` is the loop's live :class:`ToolContext` for this call (run id,
+        parent run state, cancellation). A provider passes it on to the tool so a
+        policy that meters the run sees the run; ``None`` only outside a loop.
+        """
         ...
 
 
@@ -140,14 +190,21 @@ class StaticProvider:
             for t in self._tools.values()
         ]
 
-    async def load(self, name: str, *, caller_did: str) -> str | None:
+    async def load(self, name: str, *, caller_did: str) -> SkillDocument | None:
         return None
 
-    async def invoke(self, name: str, args: dict[str, Any], *, caller_did: str) -> CapabilityResult:
+    async def invoke(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        caller_did: str,
+        context: ToolContext | None = None,
+    ) -> CapabilityResult:
         tool = self._tools.get(name)
         if tool is None:
             return CapabilityResult(content=f"tool '{name}' not found", is_error=True)
-        out = await tool.execute(args, detached_context())
+        out = await tool.execute(args, context or detached_context())
         return CapabilityResult(content=out)
 
 
@@ -193,7 +250,7 @@ def provider_tools(provider: CapabilityProvider, *, caller_did: str) -> list[Too
 
 def _invoke_tool(spec: CapabilitySpec, provider: CapabilityProvider, *, caller_did: str) -> Tool:
     async def _execute(args: dict[str, Any], ctx: ToolContext, _name: str = spec.name) -> str:
-        result = await provider.invoke(_name, args, caller_did=caller_did)
+        result = await provider.invoke(_name, args, caller_did=caller_did, context=ctx)
         # Pass the provider's opaque annotation onto this call's lifecycle event
         # so it reaches the tool_event spool (the executor reads ctx.tool_extra).
         if result.extra:
@@ -218,10 +275,10 @@ def _use_skill_tool(
 ) -> Tool:
     async def _execute(args: dict[str, Any], ctx: ToolContext) -> str:
         name = str(args.get("name", ""))
-        body = await provider.load(name, caller_did=caller_did)
-        if body is None:
+        document = await provider.load(name, caller_did=caller_did)
+        if document is None:
             return f"Error: skill '{name}' not found"
-        return body
+        return document.render()
 
     return Tool(
         name=USE_SKILL_TOOL,
@@ -236,10 +293,13 @@ def _use_skill_tool(
 
 
 __all__ = [
+    "READ_SKILL_FILE_TOOL",
+    "RUN_SKILL_SCRIPT_TOOL",
     "USE_SKILL_TOOL",
     "CapabilityProvider",
     "CapabilityResult",
     "CapabilitySpec",
+    "SkillDocument",
     "StaticProvider",
     "provider_tools",
 ]

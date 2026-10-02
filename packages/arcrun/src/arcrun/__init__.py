@@ -16,9 +16,12 @@ from arcrun.builtins import (
     run_shell,
 )
 from arcrun.capabilities import (
+    READ_SKILL_FILE_TOOL,
+    RUN_SKILL_SCRIPT_TOOL,
     CapabilityProvider,
     CapabilityResult,
     CapabilitySpec,
+    SkillDocument,
     StaticProvider,
     detached_context,
     provider_tools,
@@ -115,6 +118,8 @@ from arcrun.types import (
 
 __all__ = [
     "GENESIS_PREV_HASH",
+    "READ_SKILL_FILE_TOOL",
+    "RUN_SKILL_SCRIPT_TOOL",
     "CallJob",
     "CallQueueContext",
     "CallQueueCoordinator",
@@ -164,6 +169,7 @@ __all__ = [
     "SandboxUnavailableError",
     "SealBroken",
     "SealSigner",
+    "SkillDocument",
     "StaticProvider",
     "StopReason",
     "Strategy",
