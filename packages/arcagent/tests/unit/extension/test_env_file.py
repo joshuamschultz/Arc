@@ -1,12 +1,11 @@
 """SPEC-064 T-002 — ``EnvFile``, the one owner-only env-file recipe.
 
-``LocalFileSecretBackend`` had this recipe inline: 0600 from creation, an owner +
-mode check before every read, ``O_NOFOLLOW``, a private temp file, ``fsync``, and
-``os.replace``. The provider-key store needs exactly the same guarantees over
-``~/.arc/.env``, and a second implementation of a credential file is a second
-place to get a permission bit wrong (D-582). These tests hold the primitive to the
-properties the backend was already trusted for — the backend's own suite in
-``test_secrets.py`` proves nothing regressed above it.
+The plaintext connector backend (since replaced by sealed custody) had this recipe
+inline: 0600 from creation, an owner + mode check before every read, ``O_NOFOLLOW``,
+a private temp file, ``fsync``, and ``os.replace``. The provider-key store needs
+exactly the same guarantees over ``~/.arc/.env``, and a second implementation of a
+credential file is a second place to get a permission bit wrong (D-582). These
+tests hold the primitive to those properties.
 """
 
 from __future__ import annotations

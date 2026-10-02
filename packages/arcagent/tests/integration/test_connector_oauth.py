@@ -18,16 +18,19 @@ from typing import Any
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
+from arcagent.extension.connection_health import StoreHealthReporter
+from arcagent.extension.credential_broker import credential_plan
+from arcagent.extension.custody import CredentialRowStore
+from arcagent.extension.custody_select import Custody, open_custody
 from arcagent.extension.grants import ConnectionRegistry
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import (
     ConnectorPlan,
-    connector_env_file,
     install_connector,
     plan_connector,
 )
@@ -60,8 +63,13 @@ def _arc_dir(tmp_path: Path) -> Path:
     return root
 
 
-def _store(arc_dir: Path) -> SecretStore:
-    return SecretStore(LocalFileSecretBackend(connector_env_file(arc_dir)))
+def _custody(backend: FakeBackend) -> Custody:
+    """Sealed custody over the test's operational plane — the same rows the façade uses."""
+
+    async def opener() -> FakeBackend:
+        return backend
+
+    return open_custody(backend, make_cipher(), health=StoreHealthReporter(opener))
 
 
 def _plan(root: Path) -> ConnectorPlan:
@@ -89,26 +97,35 @@ def _connections(tmp_path: Path, root: Path, backend: FakeBackend) -> Connection
         extensions_root=root,
         audit=AuditChain.held(_Sink()),
         state_opener=lambda: _open_fake(backend),
+        credential_cipher=make_cipher(),
     )
 
 
 async def _install_with_app_creds(tmp_path: Path, root: Path, backend: FakeBackend) -> None:
     """Install the connection holding only the app key/secret — no refresh token yet."""
+    arc_dir = _arc_dir(tmp_path)
+    custody = _custody(backend)
+    plan = _plan(root)
+    broker = custody.broker(registry=lambda: ConnectionRegistry(arc_dir))
     await install_connector(
-        _plan(root),
-        connections=ConnectionRegistry(_arc_dir(tmp_path)),
+        plan,
+        connections=ConnectionRegistry(arc_dir),
         agents=[_AGENT],
         secret_values={"app_key": "ak-123", "app_secret": "as-456"},
-        store=_store(_arc_dir(tmp_path)),
+        store=custody.store,
         caller_did=_CALLER,
         state=await _state(backend),
+        credential=broker.operator_handle(
+            _INSTANCE, actor_did=_CALLER, plan=credential_plan(plan.manifest)
+        ),
     )
 
 
-async def _refresh_token(arc_dir: Path) -> str | None:
-    found = await _store(arc_dir).get(
-        SecretRef(connection=_INSTANCE, field="refresh_token"), caller_did=_CALLER
-    )
+async def _refresh_token(backend: FakeBackend) -> str | None:
+    """The refresh token as custody holds it: a sealed field, opened with the cipher."""
+    rows = CredentialRowStore(backend, make_cipher())
+    row = await rows.read(_INSTANCE)
+    found = rows.open_field(row, "refresh_token") if row is not None else None
     return found.reveal() if found is not None else None
 
 
@@ -136,15 +153,28 @@ async def test_complete_oauth_stores_a_durable_refresh_token_and_connects(
     root = _bundle_root(tmp_path)
     backend = FakeBackend()
     await _install_with_app_creds(tmp_path, root, backend)
-    monkeypatch.setattr("arcagent.connections._oauth_post", _ok_post)
+    monkeypatch.setattr("arcagent.connections.post_form", _ok_post)
+    refreshed_with: list[str] = []
+
+    async def _refresh_post(
+        url: str, data: dict[str, str], auth: tuple[str, str]
+    ) -> tuple[int, dict[str, Any]]:
+        assert data["grant_type"] == "refresh_token"
+        refreshed_with.append(data["refresh_token"])
+        return 200, {"access_token": "at-renewed", "expires_in": 14400}
+
+    # The rebuilt attachment reads a bearer through its handle, which renews from the
+    # STORED refresh token: the provider endpoint is the one boundary faked here.
+    monkeypatch.setattr("arcagent.extension.custody_select.post_form", _refresh_post)
 
     auth = await _connections(tmp_path, root, backend).complete_oauth(
         _INSTANCE, code="one-time-code"
     )
 
-    assert await _refresh_token(_arc_dir(tmp_path)) == "rt-durable-xyz", (
+    assert await _refresh_token(backend) == "rt-durable-xyz", (
         "the durable refresh token the exchange returned must be persisted"
     )
+    assert refreshed_with == ["rt-durable-xyz"], "the stored refresh token drove the renewal"
     assert "ak-123" in auth.authorize_url
     assert "token_access_type=offline" in auth.authorize_url
     # The rebuilt attachment was handed the stored refresh token, so it probes authenticated —
@@ -178,10 +208,10 @@ async def test_a_dead_code_refuses_and_stores_nothing(
     root = _bundle_root(tmp_path)
     backend = FakeBackend()
     await _install_with_app_creds(tmp_path, root, backend)
-    monkeypatch.setattr("arcagent.connections._oauth_post", _dead_code_post)
+    monkeypatch.setattr("arcagent.connections.post_form", _dead_code_post)
 
     with pytest.raises(ExtensionError) as exc:
         await _connections(tmp_path, root, backend).complete_oauth(_INSTANCE, code="expired")
 
     assert "invalid_grant" in str(exc.value)
-    assert await _refresh_token(_arc_dir(tmp_path)) is None, "a failed exchange stores nothing"
+    assert await _refresh_token(backend) is None, "a failed exchange stores nothing"

@@ -15,12 +15,25 @@ class OAuthReferenceAttachment:
     """Reachable iff it was built holding a refresh token (what connect must store)."""
 
     def __init__(self, context: dict[str, Any] | None = None) -> None:
-        self.refresh_token = str((context or {}).get("refresh_token", ""))
+        self._credential = (context or {}).get("credential")
+        self.refresh_token = ""
+
+    async def _hydrate(self) -> None:
+        """The refresh token is never handed over; a usable bearer proves it is held."""
+        if self._credential is None:
+            return
+        try:
+            await self._credential.bearer()
+        except Exception:  # reason: any refusal means no usable credential
+            self.refresh_token = ""
+        else:
+            self.refresh_token = "held"
 
     def requirements(self) -> list[Requirement]:
         return []
 
     async def probe(self) -> ProbeResult:
+        await self._hydrate()
         held = "authenticated" if self.refresh_token else "unauthenticated"
         return ProbeResult(
             reachable=True,
@@ -39,6 +52,7 @@ class OAuthReferenceAttachment:
         ]
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        await self._hydrate()
         return ToolResult(tool=tool, content="authenticated" if self.refresh_token else "no token")
 
 

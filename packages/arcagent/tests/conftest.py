@@ -9,6 +9,10 @@ import freezegun
 import pytest
 from arcstore.backends import ArcStoreBackend
 from arcstore.backends.memory import FakeBackend
+from packages.arcagent.tests.custody_fakes import make_cipher
+
+from arcagent.extension.custody import CredentialRowStore, SealedCredentialBackend
+from arcagent.extension.secrets import SecretStore
 
 # freezegun patches datetime references by walking every module in sys.modules.
 # Once a memory test has imported the arcmemory brain, sentence-transformers has
@@ -20,6 +24,12 @@ from arcstore.backends.memory import FakeBackend
 # Nothing under `transformers` holds a datetime freezegun needs to patch, so
 # skipping it is the correct fix rather than a workaround.
 freezegun.configure(extend_ignore_list=["transformers"])
+
+
+@pytest.fixture
+def sealed_secret_store() -> SecretStore:
+    """A SecretStore over sealed custody rows held in an in-memory backend."""
+    return SecretStore(SealedCredentialBackend(CredentialRowStore(FakeBackend(), make_cipher())))
 
 
 @pytest.fixture

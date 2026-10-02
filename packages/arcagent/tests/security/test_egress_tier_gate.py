@@ -25,8 +25,10 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from arctrust.identity import AgentIdentity
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.capabilities import artifact_signing
 from arcagent.capabilities.capability_registry import CapabilityRegistry, ToolEntry
@@ -50,9 +52,10 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.bridge import CapabilityBridge
+from arcagent.extension.custody import CredentialRowStore, SealedCredentialBackend
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretStore
+from arcagent.extension.secrets import SecretStore
 from arcagent.extension.state import open_connection_state
 from arcagent.modules.connectors.install import install_connector, plan_connector
 from arcagent.tools._decorator import ToolMetadata
@@ -286,10 +289,12 @@ async def _install(
         connections=ConnectionRegistry(tmp_path / "arc"),
         agents=["sales_agent"],
         secret_values={},
-        store=SecretStore(LocalFileSecretBackend(tmp_path / "arc.env")),
+        store=SecretStore(
+            SealedCredentialBackend(CredentialRowStore(FakeBackend(), make_cipher()))
+        ),
         caller_did="did:arc:example:org:agent:abc",
         state=await open_connection_state(opener=arcstore_opener),
-        attachment_factory=lambda _m, _b, _s: FakeAttachment(tool, tags),
+        attachment_factory=lambda _m, _b, _s, *, credential=None: FakeAttachment(tool, tags),
         trusted_public_key=operator.public_key,
     )
 

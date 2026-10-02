@@ -61,13 +61,14 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 class Acme:
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context["credential"]
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        return ProbeResult(reachable=bool(self._token), tools=await self.describe_tools(), detail="ok")
+        token = (await self._credential.field("api_token")).reveal()
+        return ProbeResult(reachable=bool(token), tools=await self.describe_tools(), detail="ok")
 
     async def describe_tools(self) -> list[ToolSpec]:
         return [ToolSpec(name="ping", description="Ping Acme.")]

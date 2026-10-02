@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, once_per_task
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.custody import (
@@ -14,7 +15,6 @@ from arcagent.extension.custody import (
     SealedCredentialBackend,
 )
 from arcagent.extension.secrets import SecretRef, SecretStore
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, once_per_task
 
 ACTOR = "did:arc:operator:test"
 

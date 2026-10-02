@@ -37,6 +37,7 @@ from arcstore.backends.memory import FakeBackend
 
 from arcagent.connections import Connections
 from arcagent.core.tier import Tier
+from arcagent.extension.custody import CREDENTIAL_COLLECTION
 from arcagent.extension.manifest import load_manifest
 
 _SENSITIVE = "zzz-sensitive-value-5501"
@@ -88,13 +89,14 @@ from arcagent.extension.attachment import ProbeResult, ToolResult, ToolSpec
 
 class AcmeFieldsAttachment:
     def __init__(self, context: dict[str, Any]) -> None:
-        self._token = str(context.get("api_token") or "")
+        self._credential = context["credential"]
 
     def requirements(self) -> list[Any]:
         return []
 
     async def probe(self) -> ProbeResult:
-        if not self._token:
+        token = await self._credential.maybe_field("api_token")
+        if token is None:
             return ProbeResult(reachable=False, detail="acme has no credential for api_token")
         return ProbeResult(reachable=True, tools=await self.describe_tools(), detail="ok")
 
@@ -140,15 +142,18 @@ def test_a_field_that_says_nothing_is_treated_as_a_credential() -> None:
 
 
 @pytest.fixture
-def connected(tmp_path: Path) -> Connections:
+def backend() -> FakeBackend:
+    return FakeBackend()
+
+
+@pytest.fixture
+def connected(tmp_path: Path, backend: FakeBackend) -> Connections:
     """One deployment with the acme bundle available and both fields supplied."""
     arc_dir = tmp_path / "arc"
     bundle = arc_dir / "extensions" / _EXTENSION
     bundle.mkdir(parents=True)
     (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
     (bundle / "acme_fields_attachment.py").write_text(_ADAPTER, encoding="utf-8")
-
-    backend = FakeBackend()
 
     async def open_backend() -> FakeBackend:
         return backend
@@ -204,7 +209,7 @@ async def test_the_credential_beside_it_has_no_route_out_of_the_store(
 
 
 async def test_every_declared_field_is_still_offered_even_with_nothing_stored(
-    connected: Connections,
+    connected: Connections, backend: FakeBackend
 ) -> None:
     """A first-time connection must still draw a complete form.
 
@@ -213,8 +218,10 @@ async def test_every_declared_field_is_still_offered_even_with_nothing_stored(
     most on the connection that has never been configured.
     """
     await _install(connected)
-    (connected.world.env_file).write_text("", encoding="utf-8")
-    (connected.world.env_file).chmod(0o600)
+    removed = await backend.mutable_delete(
+        CREDENTIAL_COLLECTION, _INSTANCE, actor_did="did:arc:operator:test"
+    )
+    assert removed, "the stored credential row was not found under the instance key"
 
     auth = await connected.authorization(_INSTANCE)
 

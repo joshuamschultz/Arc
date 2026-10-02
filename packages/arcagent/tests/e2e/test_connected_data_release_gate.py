@@ -457,11 +457,18 @@ def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
 @pytest.mark.asyncio
 async def test_dropbox_native_connection_is_enrollable_as_a_knowledge_source() -> None:
     """The working tool attachment itself must also satisfy the source catalog seam."""
+    from packages.arcagent.tests.custody_fakes import FakeCredentialHandle
+
     from arcagent.extension.native_attachment import NativeAttachment
 
     attachment = NativeAttachment(
         "extensions.dropbox.arc_ext_dropbox",
-        {"app_key": "app", "app_secret": "secret", "refresh_token": "refresh"},
+        {
+            "app_key": "app",
+            "credential": FakeCredentialHandle(
+                {"app_secret": "secret", "refresh_token": "refresh"}
+            ),
+        },
     )
     source = attachment.source_adapter()
 

@@ -15,6 +15,8 @@ from typing import Any
 from arcstore.backends.memory import FakeBackend
 from arctrust.connector_cipher import ConnectorSecretCipher
 
+from arcagent.extension.secrets import Secret
+
 
 def make_cipher(label: str = "test") -> ConnectorSecretCipher:
     """A deterministic in-process custody cipher for tests (never a real operator key)."""
@@ -71,4 +73,24 @@ def once_per_task(gate: Callable[[], Awaitable[None]], *, collection: str) -> Ho
     return hook
 
 
-__all__ = ["InterleavingBackend", "make_cipher", "once_per_task"]
+class FakeCredentialHandle:
+    """A duck-typed ``AccessTokenHandle`` serving fixed sensitive fields by name."""
+
+    def __init__(self, fields: dict[str, str]) -> None:
+        self._fields = dict(fields)
+        self.connection = "fake-connection"
+
+    async def field(self, name: str) -> Secret:
+        if name not in self._fields:
+            raise KeyError(name)
+        return Secret(self._fields[name])
+
+    async def maybe_field(self, name: str) -> Secret | None:
+        value = self._fields.get(name)
+        return None if value is None else Secret(value)
+
+    def __repr__(self) -> str:
+        return f"FakeCredentialHandle({self.connection})"
+
+
+__all__ = ["FakeCredentialHandle", "InterleavingBackend", "make_cipher", "once_per_task"]

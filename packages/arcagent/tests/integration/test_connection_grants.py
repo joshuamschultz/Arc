@@ -23,18 +23,23 @@ the same credential — and land in different places.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import shutil
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcrun import ToolContext
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from arctrust.paths import arc_team, config_file
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.connections import (
     PLAN_TIER_TOO_LOW,
@@ -47,11 +52,10 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.extension.custody import CREDENTIAL_COLLECTION
 from arcagent.extension.grants import NO_SUCH_CONNECTION, Connection, ConnectionRegistry
-from arcagent.extension.secrets import SecretRef
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
-from arcagent.modules.connectors.install import connector_env_file
 from arcagent.tools.human_gate import HumanGate
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "reference_extension"
@@ -149,6 +153,7 @@ class _Deployment:
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
             state_opener=self.open_arcstore,
+            credential_cipher=make_cipher(),
         )
 
     async def connect(self, *, agents: tuple[str, ...] = _GRANTED) -> None:
@@ -185,6 +190,7 @@ class _Deployment:
             tier="personal",
             human_gate=_gate(self.did(agent)),
             arcstore_opener=self.open_arcstore if with_arcstore else None,
+            credential_cipher=make_cipher(),
         )
         capability = Connectors()
         await capability.setup(None)
@@ -264,21 +270,36 @@ async def test_exactly_the_granted_agents_serve_the_connection(
             )
 
 
+async def _call_echo(registry: ToolRegistry) -> None:
+    """Use the connection once, through the agent's own dispatch envelope."""
+    tools = {tool.name: tool for tool in registry.to_arcrun_tools()}
+    context = ToolContext(
+        run_id=str(uuid.uuid4()),
+        tool_call_id=str(uuid.uuid4()),
+        turn_number=1,
+        event_bus=None,
+        cancelled=asyncio.Event(),
+    )
+    await tools[_SERVED[0]].execute({"message": "ping"}, context)
+
+
 async def test_an_ungranted_agent_never_reads_the_credential(
     deployment: _Deployment,
 ) -> None:
     """Deny by default reaches the credential, not just the tool list.
 
-    Measured where a credential is actually read: the secret store audits every
-    read, so an ungranted agent that touched this connection's credential would
-    leave a ``secret.read`` event naming it. Zero events is the claim; an empty
-    tool registry alone would not distinguish "was refused" from "read the token
-    and then failed to attach".
+    Measured where a credential is actually read: the sealed custody broker
+    audits every read, and a native attachment reads its credential at call time,
+    so a granted agent that uses the connection leaves a ``secret.read`` event.
+    An ungranted agent that touched this connection's credential would leave one
+    too. Zero events is the claim; an empty tool registry alone would not
+    distinguish "was refused" from "read the token and then failed to attach".
     """
     await deployment.connect()
     granted_sink, ungranted_sink = _RecordingSink(), _RecordingSink()
 
-    await deployment.start_agent(_GRANTED[0], sink=granted_sink)
+    granted = await deployment.start_agent(_GRANTED[0], sink=granted_sink)
+    await _call_echo(granted)
     registry = await deployment.start_agent(_UNGRANTED[0], sink=ungranted_sink)
 
     # The control. Without it the assertion below passes on a deployment where
@@ -316,10 +337,11 @@ async def test_one_credential_serves_both_granted_agents(deployment: _Deployment
     """
     await deployment.connect()
 
-    entries = _env_entries(connector_env_file(deployment.arc_dir))
-    assert list(entries) == [SecretRef(connection=_CONNECTION, field=_FIELD).env_key], (
-        f"the credential is stored more than once: {sorted(entries)}"
-    )
+    rows = await _custody_rows(deployment)
+    assert [(row["connection"], sorted(row["fields"])) for row in rows] == [
+        (_CONNECTION, [_FIELD])
+    ], f"the credential is stored more than once: {rows}"
+    assert _TOKEN not in json.dumps(rows), "the stored row holds the credential in plaintext"
 
     for agent in _GRANTED:
         registry = await deployment.start_agent(agent)
@@ -527,9 +549,10 @@ async def test_revoking_leaves_the_credential_for_the_agents_that_keep_it(
 
     deployment.connections().revoke(_CONNECTION, [_GRANTED[0]])
 
-    assert SecretRef(connection=_CONNECTION, field=_FIELD).env_key in _env_entries(
-        connector_env_file(deployment.arc_dir)
-    )
+    rows = await _custody_rows(deployment)
+    assert [(row["connection"], sorted(row["fields"])) for row in rows] == [
+        (_CONNECTION, [_FIELD])
+    ]
 
 
 # --- refusals ------------------------------------------------------------------
@@ -582,13 +605,9 @@ async def test_granting_a_third_agent_adds_it_without_disturbing_the_others(
     assert _SERVED[0] in (await deployment.start_agent(_UNGRANTED[0])).tools
 
 
-def _env_entries(path: Path) -> dict[str, str]:
-    """Read the deployment credential file the way the store writes it."""
-    if not path.is_file():
-        return {}
-    return dict(
-        line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines() if "=" in line
-    )
+async def _custody_rows(deployment: _Deployment) -> list[dict[str, Any]]:
+    """The sealed credential rows exactly as the store persists them."""
+    return await deployment.arcstore_backend.mutable_query(CREDENTIAL_COLLECTION)
 
 
 # --- stringency: a grant may not quietly change what a connection claims -------

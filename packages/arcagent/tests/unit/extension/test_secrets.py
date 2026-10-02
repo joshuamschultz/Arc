@@ -1,47 +1,33 @@
-"""SecretStore seam — one interface, tier-selected backing store (SPEC-062 COMP-010).
+"""SecretStore seam over sealed custody rows (SPEC-062 COMP-010, P18-2).
 
-Covers REQ-265 (a connector secret is written only to the per-agent secret store,
-owner-only, and never into a config file, a log, a prompt, or model context) and
-REQ-294 (one interface whose backing store is chosen by tier, defaulting to the
-local per-agent store and supporting an external vault with no change to calling
-code).
+Covers REQ-265 (a connector secret reaches only the secret store and never a config
+file, a log, a prompt, or model context). The store is the sealed custody row, so
+the artifacts searched for a leak are the agent-home files, every log record, every
+audit event, every exception rendering, and the raw stored row JSON.
 
 The leak tests are the point of this file, so they are written as *searches over
-artifacts* rather than as assertions about one call: after a write, every file
-under the agent home, every log record captured at DEBUG, every audit event, and
-every exception rendering is scanned for the secret value. A store that leaks
-through a path nobody thought to assert on still fails here.
-
-``test_calling_code_is_identical_across_backends`` is the REQ-294 governing test:
-one helper function is run against the local backend and against a vault backend
-and is not allowed to know which it got.
+artifacts* rather than as assertions about one call.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import os
-import stat
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import pytest
+from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.core.errors import ExtensionError
-from arcagent.core.tier import Tier
-from arcagent.extension.secrets import (
-    LocalFileSecretBackend,
-    Secret,
-    SecretRef,
-    SecretStore,
-    VaultSecretBackend,
-    select_secret_backend,
+from arcagent.extension.custody import (
+    CREDENTIAL_COLLECTION,
+    CredentialRowStore,
+    SealedCredentialBackend,
 )
-
-if TYPE_CHECKING:
-    from arcagent.extension.secrets import SecretBackend
+from arcagent.extension.secrets import Secret, SecretBackend, SecretRef, SecretStore
 
 SECRET_VALUE = "atlassian-refresh-tok-9f2c4e7a1b8d6"
 CALLER = "did:arc:agent:coder"
@@ -57,34 +43,6 @@ class RecordingSink:
         self.events.append(event)
 
 
-class FakeVault:
-    """An in-memory stand-in for an external vault (reads and writes)."""
-
-    def __init__(self) -> None:
-        self.items: dict[str, str] = {}
-        self.reads: list[str] = []
-
-    async def get_secret(self, path: str) -> str | None:
-        self.reads.append(path)
-        return self.items.get(path)
-
-    async def set_secret(self, path: str, value: str) -> None:
-        self.items[path] = value
-
-    async def delete_secret(self, path: str) -> bool:
-        return self.items.pop(path, None) is not None
-
-
-class ReadOnlyVault:
-    """A vault that can only be read — the shape that must refuse a write loudly."""
-
-    def __init__(self, items: dict[str, str] | None = None) -> None:
-        self.items = items or {}
-
-    async def get_secret(self, path: str) -> str | None:
-        return self.items.get(path)
-
-
 @pytest.fixture
 def agent_home(tmp_path: Path) -> Path:
     """An agent home holding the config files a secret must never reach."""
@@ -97,8 +55,13 @@ def agent_home(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def env_file(agent_home: Path) -> Path:
-    return agent_home / "arc.env"
+def backend() -> FakeBackend:
+    return FakeBackend()
+
+
+@pytest.fixture
+def rows(backend: FakeBackend) -> CredentialRowStore:
+    return CredentialRowStore(backend, make_cipher())
 
 
 @pytest.fixture
@@ -107,19 +70,22 @@ def ref() -> SecretRef:
 
 
 @pytest.fixture
-def local_store(env_file: Path) -> SecretStore:
-    return SecretStore(LocalFileSecretBackend(env_file))
+def sealed_store(rows: CredentialRowStore) -> SecretStore:
+    return SecretStore(SealedCredentialBackend(rows))
 
 
 def _files_containing(root: Path, needle: str) -> list[Path]:
     """Every file under ``root`` whose bytes contain ``needle``."""
-    hits: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if needle.encode("utf-8") in path.read_bytes():
-            hits.append(path)
-    return hits
+    return [
+        path
+        for path in root.rglob("*")
+        if path.is_file() and needle.encode("utf-8") in path.read_bytes()
+    ]
+
+
+async def _raw_row_json(backend: FakeBackend, connection: str) -> str:
+    raw = await backend.mutable_read(CREDENTIAL_COLLECTION, connection)
+    return json.dumps(raw, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------
@@ -128,34 +94,40 @@ def _files_containing(root: Path, needle: str) -> list[Path]:
 
 
 async def test_value_is_written_only_to_the_secret_store(
-    local_store: SecretStore, agent_home: Path, env_file: Path, ref: SecretRef
+    sealed_store: SecretStore, agent_home: Path, ref: SecretRef
 ) -> None:
-    """No config file, and no other artifact in the agent home, holds the value."""
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    """No file in the agent home holds the value; the store opens it back."""
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
 
-    hits = _files_containing(agent_home, SECRET_VALUE)
-    assert hits == [env_file], f"secret leaked into {[str(p) for p in hits]}"
+    assert _files_containing(agent_home, SECRET_VALUE) == []
+    resolved = await sealed_store.get(ref, caller_did=CALLER)
+    assert resolved is not None
+    assert resolved.reveal() == SECRET_VALUE
 
 
-async def test_store_file_is_owner_only(
-    local_store: SecretStore, env_file: Path, ref: SecretRef
+async def test_stored_row_is_sealed_never_plaintext(
+    sealed_store: SecretStore, backend: FakeBackend, rows: CredentialRowStore, ref: SecretRef
 ) -> None:
-    """0600 on the file and 0700 on its directory (REQ-265)."""
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    """The raw row exists in custody, opens through the row store, and holds no plaintext."""
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
 
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
-    assert stat.S_IMODE(env_file.parent.stat().st_mode) == 0o700
+    row = await rows.read(ref.connection)
+    assert row is not None
+    opened = rows.open_field(row, ref.field)
+    assert opened is not None
+    assert opened.reveal() == SECRET_VALUE
+    assert SECRET_VALUE not in await _raw_row_json(backend, ref.connection)
 
 
 async def test_nothing_logs_the_value(
-    local_store: SecretStore, ref: SecretRef, caplog: pytest.LogCaptureFixture
+    sealed_store: SecretStore, ref: SecretRef, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A full write/read/delete cycle at DEBUG never emits the value to a log."""
     caplog.set_level(logging.DEBUG)
 
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    await local_store.get(ref, caller_did=CALLER)
-    await local_store.delete(ref, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.get(ref, caller_did=CALLER)
+    await sealed_store.delete(ref, caller_did=CALLER)
 
     for record in caplog.records:
         assert SECRET_VALUE not in record.getMessage()
@@ -163,11 +135,11 @@ async def test_nothing_logs_the_value(
 
 
 async def test_audit_events_record_coordinates_never_the_value(
-    env_file: Path, ref: SecretRef
+    rows: CredentialRowStore, ref: SecretRef
 ) -> None:
     """The credential carve-out: store, item, field, caller, outcome — no value."""
     sink = RecordingSink()
-    store = SecretStore(LocalFileSecretBackend(env_file), sink=sink)
+    store = SecretStore(SealedCredentialBackend(rows), sink=sink)
 
     await store.put(ref, SECRET_VALUE, caller_did=CALLER)
     await store.get(ref, caller_did=CALLER)
@@ -191,27 +163,27 @@ def test_secret_is_opaque_to_every_rendering() -> None:
 
 
 async def test_rejected_value_is_absent_from_the_error(
-    local_store: SecretStore, ref: SecretRef
+    sealed_store: SecretStore, ref: SecretRef
 ) -> None:
     """A refusal names the coordinate, never the rejected material."""
     poisoned = f"{SECRET_VALUE}\nARC_SECRET_CODER_OTHER_TOKEN=injected"
 
     with pytest.raises(ExtensionError) as excinfo:
-        await local_store.put(ref, poisoned, caller_did=CALLER)
+        await sealed_store.put(ref, poisoned, caller_did=CALLER)
 
     rendered = f"{excinfo.value}{excinfo.value.details}"
     assert SECRET_VALUE not in rendered
     assert "injected" not in rendered
 
 
-async def test_a_newline_cannot_forge_a_second_entry(
-    local_store: SecretStore, env_file: Path, ref: SecretRef
+async def test_a_refused_value_is_never_stored(
+    sealed_store: SecretStore, backend: FakeBackend, ref: SecretRef
 ) -> None:
-    """Line-oriented storage means an unchecked newline is a write to another key."""
+    """A control character is refused before anything reaches custody."""
     with pytest.raises(ExtensionError):
-        await local_store.put(ref, "tok\nARC_SECRET_CODER_OTHER_TOKEN=stolen", caller_did=CALLER)
+        await sealed_store.put(ref, "tok\nARC_SECRET_CODER_OTHER_TOKEN=stolen", caller_did=CALLER)
 
-    assert not env_file.exists() or "stolen" not in env_file.read_text(encoding="utf-8")
+    assert await backend.mutable_read(CREDENTIAL_COLLECTION, ref.connection) is None
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +192,7 @@ async def test_a_newline_cannot_forge_a_second_entry(
 
 
 async def test_secrets_are_keyed_by_connection_and_field(
-    local_store: SecretStore, ref: SecretRef
+    sealed_store: SecretStore, ref: SecretRef
 ) -> None:
     """Two coordinates, distinct slots — nothing shares a cell.
 
@@ -231,32 +203,41 @@ async def test_secrets_are_keyed_by_connection_and_field(
         SecretRef(connection="atlassian_personal", field="refresh_token"),
         SecretRef(connection="atlassian_work", field="client_secret"),
     ]
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
     for index, other in enumerate(others):
-        await local_store.put(other, f"other-{index}", caller_did=CALLER)
+        await sealed_store.put(other, f"other-{index}", caller_did=CALLER)
 
-    resolved = await local_store.get(ref, caller_did=CALLER)
+    resolved = await sealed_store.get(ref, caller_did=CALLER)
     assert resolved is not None
     assert resolved.reveal() == SECRET_VALUE
     for index, other in enumerate(others):
-        stored = await local_store.get(other, caller_did=CALLER)
+        stored = await sealed_store.get(other, caller_did=CALLER)
         assert stored is not None
         assert stored.reveal() == f"other-{index}"
 
 
-async def test_missing_secret_resolves_to_none(local_store: SecretStore, ref: SecretRef) -> None:
-    assert await local_store.get(ref, caller_did=CALLER) is None
+async def test_missing_secret_resolves_to_none(sealed_store: SecretStore, ref: SecretRef) -> None:
+    assert await sealed_store.get(ref, caller_did=CALLER) is None
+
+
+async def test_present_names_stored_fields_without_opening_them(
+    sealed_store: SecretStore, ref: SecretRef
+) -> None:
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+
+    assert await sealed_store.present(ref.connection) == frozenset({ref.field})
+    assert await sealed_store.present("nothing_here") == frozenset()
 
 
 async def test_delete_removes_the_value_from_the_store(
-    local_store: SecretStore, env_file: Path, ref: SecretRef
+    sealed_store: SecretStore, backend: FakeBackend, ref: SecretRef
 ) -> None:
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
 
-    assert await local_store.delete(ref, caller_did=CALLER) is True
-    assert await local_store.get(ref, caller_did=CALLER) is None
-    assert SECRET_VALUE not in env_file.read_text(encoding="utf-8")
-    assert await local_store.delete(ref, caller_did=CALLER) is False
+    assert await sealed_store.delete(ref, caller_did=CALLER) is True
+    assert await sealed_store.get(ref, caller_did=CALLER) is None
+    assert SECRET_VALUE not in await _raw_row_json(backend, ref.connection)
+    assert await sealed_store.delete(ref, caller_did=CALLER) is False
 
 
 @pytest.mark.parametrize(
@@ -272,55 +253,36 @@ async def test_delete_removes_the_value_from_the_store(
     ],
 )
 def test_coordinates_that_could_escape_their_cell_are_refused(connection: str, field: str) -> None:
-    """A coordinate becomes a filesystem path and an env key — it is untrusted input."""
+    """A coordinate is bound into the ciphertext and a row key — it is untrusted input."""
     with pytest.raises(ExtensionError):
         SecretRef(connection=connection, field=field)
 
 
 def test_case_variants_cannot_collide_into_one_cell() -> None:
-    """Uppercase would fold onto the same env key and read another connection's secret."""
+    """Uppercase would fold onto the same cell and read another connection's secret."""
     with pytest.raises(ExtensionError):
         SecretRef(connection="Atlassian_Work", field="refresh_token")
 
 
 # ---------------------------------------------------------------------------
-# Durability — an interrupted write cannot destroy or tear the store
+# Durability — concurrent writers cannot lose each other
 # ---------------------------------------------------------------------------
 
 
 async def test_a_second_write_preserves_the_first(
-    local_store: SecretStore, ref: SecretRef
+    sealed_store: SecretStore, ref: SecretRef
 ) -> None:
     other = SecretRef(connection="atlassian_work", field="client_secret")
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    await local_store.put(other, "client-secret-value", caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(other, "client-secret-value", caller_did=CALLER)
 
-    first = await local_store.get(ref, caller_did=CALLER)
+    first = await sealed_store.get(ref, caller_did=CALLER)
     assert first is not None
     assert first.reveal() == SECRET_VALUE
 
 
-async def test_a_failed_write_leaves_the_previous_store_intact(
-    local_store: SecretStore, env_file: Path, ref: SecretRef, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A crash mid-write leaves the old file, never a truncated one (REQ-288's sibling)."""
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    before = env_file.read_bytes()
-
-    def boom(src: Any, dst: Any) -> None:
-        raise OSError("interrupted before the rename landed")
-
-    monkeypatch.setattr(os, "replace", boom)
-    other = SecretRef(connection="atlassian_work", field="client_secret")
-    with pytest.raises(OSError, match="interrupted"):
-        await local_store.put(other, "client-secret-value", caller_did=CALLER)
-
-    assert env_file.read_bytes() == before
-    assert list(env_file.parent.glob("*.tmp*")) == [], "a partial write was left behind"
-
-
 async def test_concurrent_writes_do_not_lose_each_other(
-    local_store: SecretStore, ref: SecretRef
+    sealed_store: SecretStore, ref: SecretRef
 ) -> None:
     """Two writers forced to the same instant both land (read-modify-write hazard).
 
@@ -333,119 +295,36 @@ async def test_concurrent_writes_do_not_lose_each_other(
 
     async def write(target: SecretRef, value: str) -> None:
         await barrier.wait()
-        await local_store.put(target, value, caller_did=CALLER)
+        await sealed_store.put(target, value, caller_did=CALLER)
 
     await asyncio.gather(write(ref, SECRET_VALUE), write(other, "client-secret-value"))
 
-    first = await local_store.get(ref, caller_did=CALLER)
-    second = await local_store.get(other, caller_did=CALLER)
+    first = await sealed_store.get(ref, caller_did=CALLER)
+    second = await sealed_store.get(other, caller_did=CALLER)
     assert first is not None and first.reveal() == SECRET_VALUE
     assert second is not None and second.reveal() == "client-secret-value"
 
 
-async def test_a_loose_permission_store_is_refused(
-    local_store: SecretStore, env_file: Path, ref: SecretRef
+async def test_a_ciphertext_moved_to_another_field_does_not_open(
+    sealed_store: SecretStore, backend: FakeBackend
 ) -> None:
-    """A world-readable store is a misconfiguration, not something to read from."""
-    await local_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    env_file.chmod(0o644)
+    """The coordinate is bound into the seal: a swapped value is unreadable, not leaked."""
+    first = SecretRef(connection="atlassian_work", field="refresh_token")
+    second = SecretRef(connection="atlassian_work", field="client_secret")
+    await sealed_store.put(first, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(second, "client-secret-value", caller_did=CALLER)
+    raw = await backend.mutable_read(CREDENTIAL_COLLECTION, "atlassian_work")
+    assert raw is not None
+    swapped = {**raw["fields"], "client_secret": raw["fields"]["refresh_token"]}
+    await backend.mutable_merge(
+        CREDENTIAL_COLLECTION, "atlassian_work", {"fields": swapped}, actor_did=CALLER
+    )
 
-    with pytest.raises(ExtensionError) as excinfo:
-        await local_store.get(ref, caller_did=CALLER)
-
-    assert SECRET_VALUE not in f"{excinfo.value}{excinfo.value.details}"
-
-
-# ---------------------------------------------------------------------------
-# REQ-294 — the backing store is tier configuration, not a branch at the call site
-# ---------------------------------------------------------------------------
-
-
-async def resolve_a_connector_credential(store: SecretStore, ref: SecretRef) -> str:
-    """The calling code under test: it must not be able to tell which backend it got."""
-    await store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    resolved = await store.get(ref, caller_did=CALLER)
-    assert resolved is not None
-    return resolved.reveal()
+    with pytest.raises(ExtensionError):
+        await sealed_store.get(second, caller_did=CALLER)
 
 
-async def test_calling_code_is_identical_across_backends(env_file: Path, ref: SecretRef) -> None:
-    """REQ-294's governing test: same function, two stores, no branch."""
-    vault = FakeVault()
-    local = SecretStore(select_secret_backend(Tier.PERSONAL, env_file=env_file))
-    hosted = SecretStore(select_secret_backend(Tier.FEDERAL, env_file=env_file, vault=vault))
-
-    assert await resolve_a_connector_credential(local, ref) == SECRET_VALUE
-    assert await resolve_a_connector_credential(hosted, ref) == SECRET_VALUE
-    assert vault.items, "the federal store must have gone to the vault"
-
-
-def test_personal_defaults_to_the_local_per_agent_store(env_file: Path) -> None:
-    backend = select_secret_backend(Tier.PERSONAL, env_file=env_file)
-    assert isinstance(backend, LocalFileSecretBackend)
-
-
-def test_a_vault_is_used_whenever_one_is_configured(env_file: Path) -> None:
-    backend = select_secret_backend(Tier.ENTERPRISE, env_file=env_file, vault=FakeVault())
-    assert isinstance(backend, VaultSecretBackend)
-
-
-def test_federal_without_a_vault_refuses_rather_than_falling_back(env_file: Path) -> None:
-    """Fail closed: silently writing a federal credential to a local file is the bug."""
-    with pytest.raises(ExtensionError) as excinfo:
-        select_secret_backend(Tier.FEDERAL, env_file=env_file)
-
-    assert "vault" in excinfo.value.message.lower()
-
-
-async def test_vault_backend_keeps_both_coordinates_in_its_path(
-    ref: SecretRef,
-) -> None:
-    vault = FakeVault()
-    store = SecretStore(VaultSecretBackend(vault))
-
-    await store.put(ref, SECRET_VALUE, caller_did=CALLER)
-
-    (path,) = list(vault.items)
-    assert "atlassian_work" in path
-    assert "refresh_token" in path
-
-
-async def test_a_read_only_vault_refuses_the_write_instead_of_downgrading(
-    ref: SecretRef,
-) -> None:
-    """Falling back to a local file here would quietly undo the operator's hardening."""
-    store = SecretStore(VaultSecretBackend(ReadOnlyVault()))
-
-    with pytest.raises(ExtensionError) as excinfo:
-        await store.put(ref, SECRET_VALUE, caller_did=CALLER)
-
-    assert excinfo.value.code == "SECRET_STORE_READ_ONLY"
-
-
-async def test_an_unreachable_vault_surfaces_rather_than_resolving_to_none(
-    ref: SecretRef,
-) -> None:
-    """ "Not found" and "could not ask" must not look the same to a caller."""
-
-    class UnreachableVault:
-        async def get_secret(self, path: str) -> str | None:
-            from arcagent.core.vault import VaultUnreachable
-
-            raise VaultUnreachable(path)
-
-    store = SecretStore(VaultSecretBackend(UnreachableVault()))
-
-    with pytest.raises(ExtensionError) as excinfo:
-        await store.get(ref, caller_did=CALLER)
-
-    assert excinfo.value.code == "SECRET_STORE_UNREACHABLE"
-
-
-def test_every_backend_satisfies_the_one_interface(env_file: Path) -> None:
-    """Structural conformance, so a new backend cannot be wired in half-implemented."""
-    backends: list[SecretBackend] = [
-        LocalFileSecretBackend(env_file),
-        VaultSecretBackend(FakeVault()),
-    ]
-    assert len(backends) == 2
+def test_the_sealed_backend_satisfies_the_one_interface(rows: CredentialRowStore) -> None:
+    """Structural conformance, so a backend cannot be wired in half-implemented."""
+    backend: SecretBackend = SealedCredentialBackend(rows)
+    assert backend is not None

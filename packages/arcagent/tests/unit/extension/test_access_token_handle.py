@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -26,7 +27,6 @@ from arcagent.extension.manifest import load_manifest
 from arcagent.extension.native_attachment import NATIVE_ENTRYPOINT_ATTR
 from arcagent.extension.secrets import Secret
 from arcagent.modules.connectors.attachments import build_attachment
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher
 
 ACTOR = "did:arc:operator:test"
 AGENT, AGENT_DID = "josh", "did:arc:agent:josh"
@@ -115,7 +115,9 @@ class Provider:
 
     async def __call__(self, request: RefreshRequest) -> RenewedCredential:
         self.calls += 1
-        return RenewedCredential(access_token=Secret(f"from-provider-{self.calls}"), expires_in=3600)
+        return RenewedCredential(
+            access_token=Secret(f"from-provider-{self.calls}"), expires_in=3600
+        )
 
 
 class World:
@@ -181,7 +183,11 @@ async def test_agent_gets_short_lived_handle_and_never_refresh_token(
 ) -> None:
     built: list[_Captured] = []
     module = ModuleType("fakebox_entry")
-    setattr(module, NATIVE_ENTRYPOINT_ATTR, lambda context: built.append(_Captured(context)) or built[-1])
+    setattr(
+        module,
+        NATIVE_ENTRYPOINT_ATTR,
+        lambda context: built.append(_Captured(context)) or built[-1],
+    )
     monkeypatch.setitem(sys.modules, "fakebox_entry", module)
     manifest, plan = _plan(OAUTH_MANIFEST)
     handle = world.broker().handle("blackarc", agent=AGENT, agent_did=AGENT_DID, plan=plan)
@@ -279,6 +285,8 @@ async def test_broker_issues_only_for_its_own_agent(world: World) -> None:
 def test_bearer_must_name_a_sensitive_secret() -> None:
     with pytest.raises(ValueError, match="sensitive"):
         load_manifest(
-            SLACK_MANIFEST.replace('name = "user_token"\n', 'name = "user_token"\nsensitive = false\n'),
+            SLACK_MANIFEST.replace(
+                'name = "user_token"\n', 'name = "user_token"\nsensitive = false\n'
+            ),
             tier=Tier.PERSONAL,
         )

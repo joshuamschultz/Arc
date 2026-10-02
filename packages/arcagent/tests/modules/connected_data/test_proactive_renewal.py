@@ -1,26 +1,19 @@
 """SPEC-082 COMP-007 (T-1089 RED) — the sync path renews credentials proactively.
 
 REQ-426: while a connection has a renewable credential, the system SHALL
-proactively renew it via ``CredentialLifecycle.ensure_fresh`` before expiry
-(single-writer, per-account lock) FROM THE SYNC/MONITOR LOOP — not only
+proactively renew it via the credential renewals' ``ensure_fresh`` before expiry
+(single-writer, per-connection lease) FROM THE SYNC/MONITOR LOOP — not only
 reactively on a 401.
 
-``CredentialLifecycle.ensure_fresh`` exists and is fully unit-tested in
-``tests/unit/extension/test_credentials.py``, but it has NO production caller:
-nothing on the connected-data sync/monitor path invokes it. So a token silently
-ages out mid-sync and every connection breaks at least once per credential
-lifetime.
+Without a caller on the sync/monitor path a token silently ages out mid-sync and
+every connection breaks at least once per credential lifetime.
 
-These tests spy on ``CredentialLifecycle.ensure_fresh`` and drive a real sync
-through ``ConnectedDataService``. They fail RED because the sync path never
-touches the renewal seam.
+These tests hand ``ConnectedDataService`` a spy renewals seam (an object with
+``async ensure_fresh(connection) -> bool``) and drive a real sync through it.
 
-BUILDER NOTE (RED-wave handoff): the contract asserted here is "a real sync of a
-registered source consults ``CredentialLifecycle.ensure_fresh``, and a terminal
-renewal failure stops the sync before it runs against a dead credential." If the
-GREEN wiring gates renewal on a per-connection credential account, the wiring
-must derive that account from the registered source so this minimal source still
-triggers it — do not weaken these assertions to make them pass.
+The contract asserted here is "a real sync of a registered source consults
+``ensure_fresh`` with its connection, and a terminal renewal failure stops the
+sync before it runs against a dead credential."
 """
 
 from __future__ import annotations
@@ -30,7 +23,6 @@ import asyncio
 import pytest
 from arcstore.source_sync import InMemorySourceSyncStore
 
-import arcagent.extension.credentials as credmod
 from arcagent.connected_data import KnowledgeHome, MappingPlan, SyncLimits
 from arcagent.extension.credentials import CredentialRenewalError
 from arcagent.extension.source import (
@@ -127,7 +119,9 @@ async def _ready(value: InMemorySourceSyncStore) -> InMemorySourceSyncStore:
     return value
 
 
-def _service(catalog: SourceCatalog, ingest: _ApprovedIngest) -> ConnectedDataService:
+def _service(
+    catalog: SourceCatalog, ingest: _ApprovedIngest, renewals: _SpyRenewals
+) -> ConnectedDataService:
     return ConnectedDataService(
         catalog,
         agent_did="did:agent",
@@ -136,6 +130,7 @@ def _service(catalog: SourceCatalog, ingest: _ApprovedIngest) -> ConnectedDataSe
         limits=SyncLimits(),
         global_concurrency=1,
         interval_seconds=60,
+        renewals=renewals,
     )
 
 
@@ -148,59 +143,64 @@ async def _wait_for_status(service: ConnectedDataService, expected: str) -> None
     raise AssertionError(f"source did not reach {expected!r}: {await service.list_sources()!r}")
 
 
-@pytest.mark.asyncio
-async def test_sync_path_consults_proactive_credential_renewal(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A real sync of a registered source must invoke ``ensure_fresh`` (REQ-426)."""
-    calls: list[str] = []
+class _SpyRenewals:
+    """The renewal seam ``ConnectedDataService`` is handed: ``ensure_fresh(connection)``."""
 
-    async def spy(self, account, *, renew, caller_did):  # type: ignore[no-untyped-def]
-        calls.append(getattr(account, "connection", getattr(account, "key", "unknown")))
+    def __init__(self, failure: CredentialRenewalError | None = None) -> None:
+        self.calls: list[str] = []
+        self._failure = failure
+
+    async def ensure_fresh(self, connection: str) -> bool:
+        self.calls.append(connection)
+        if self._failure is not None:
+            raise self._failure
         return False
 
-    monkeypatch.setattr(credmod.CredentialLifecycle, "ensure_fresh", spy)
 
+@pytest.mark.asyncio
+async def test_sync_path_consults_proactive_credential_renewal() -> None:
+    """A real sync of a registered source must invoke ``ensure_fresh`` (REQ-426)."""
+    renewals = _SpyRenewals()
     catalog = SourceCatalog()
     await catalog.register("mail", _CountingSource())
-    service = _service(catalog, _ApprovedIngest())
+    service = _service(catalog, _ApprovedIngest(), renewals)
     await service.start()
     await _wait_for_status(service, "complete")
     await service.close()
 
-    assert calls, (
-        "the connected-data sync path never invoked CredentialLifecycle.ensure_fresh; "
-        "credentials are only renewed reactively on a 401 (REQ-426 unmet)"
+    assert renewals.calls == ["mail"], (
+        "the connected-data sync path never asked the credential renewals to "
+        "ensure_fresh the connection; credentials are only renewed reactively "
+        "on a 401 (REQ-426 unmet)"
     )
 
 
 @pytest.mark.asyncio
-async def test_terminal_renewal_failure_stops_the_sync_before_it_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_terminal_renewal_failure_stops_the_sync_before_it_runs() -> None:
     """A dead credential must abort the sync, not run against a rotted token.
 
     When proactive renewal fails terminally (``invalid_grant`` — only a human can
     fix it), the sync must not proceed to hammer the source with a credential the
     authorization server has already rejected.
     """
-
-    async def terminal(self, account, *, renew, caller_did):  # type: ignore[no-untyped-def]
-        raise CredentialRenewalError(
-            error_code="invalid_grant", message="operator must re-consent"
-        )
-
-    monkeypatch.setattr(credmod.CredentialLifecycle, "ensure_fresh", terminal)
-
+    renewals = _SpyRenewals(
+        CredentialRenewalError(error_code="invalid_grant", message="operator must re-consent")
+    )
     catalog = SourceCatalog()
     source = _CountingSource()
     await catalog.register("mail", source)
-    service = _service(catalog, _ApprovedIngest())
+    service = _service(catalog, _ApprovedIngest(), renewals)
     await service.start()
     # Let the monitor loop run its first pass over the registered source.
     for _ in range(200):
-        if source.sync_attempts or (await service.list_sources())[0].status != "inspecting":
+        if source.sync_attempts or renewals.calls:
             break
         await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    for _ in range(20):
+        await asyncio.sleep(0)
     await service.close()
 
+    assert renewals.calls, "the sync never consulted the renewal seam"
     assert source.sync_attempts == 0, (
         "the sync ran against a credential whose proactive renewal failed terminally; "
         f"sync_source was called {source.sync_attempts} times"

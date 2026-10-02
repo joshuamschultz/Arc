@@ -19,12 +19,14 @@ code the CLI drives instead of reimplementing the order of operations.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -36,10 +38,15 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.custody import (
+    CREDENTIAL_COLLECTION,
+    CredentialRowStore,
+    SealedCredentialBackend,
+)
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.mcp_attachment import SdkMcpClient
-from arcagent.extension.secrets import LocalFileSecretBackend, SecretRef, SecretStore
+from arcagent.extension.secrets import SecretRef, SecretStore
 from arcagent.extension.source import SourceAdapter
 from arcagent.extension.state import ConnectionStateStore
 from arcagent.modules.connectors.attachments import build_attachment
@@ -219,9 +226,36 @@ def _connections(tmp_path: Path) -> ConnectionRegistry:
     return ConnectionRegistry(tmp_path / "arc")
 
 
-def _store(tmp_path: Path) -> tuple[SecretStore, Path]:
-    env_file = tmp_path / "arc.env"
-    return SecretStore(LocalFileSecretBackend(env_file)), env_file
+class Custody:
+    """The sealed credential store an install writes to, and the raw rows beneath it."""
+
+    def __init__(self) -> None:
+        self.backend = FakeBackend()
+        self.rows = CredentialRowStore(self.backend, make_cipher())
+        self.store = SecretStore(SealedCredentialBackend(self.rows))
+
+    async def raw_row_text(self, instance: str) -> str:
+        """The stored row exactly as persisted — what a disk reader would see."""
+        raw = await self.backend.mutable_read(CREDENTIAL_COLLECTION, instance)
+        return "" if raw is None else json.dumps(raw, sort_keys=True)
+
+    async def holds_row(self, instance: str) -> bool:
+        return await self.rows.read(instance) is not None
+
+
+def _custody() -> Custody:
+    return Custody()
+
+
+def _factory_of(attachment: FakeAttachment) -> Any:
+    """An injected attachment factory; it accepts the ``credential`` keyword the seam passes."""
+
+    def build(
+        _manifest: object, _bundle: object, _secrets: object, *, credential: object = None
+    ) -> FakeAttachment:
+        return attachment
+
+    return build
 
 
 def _plan(
@@ -339,7 +373,8 @@ class TestInstall:
     ) -> None:
         connections = _connections(tmp_path)
         state = _state()
-        store, env_file = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
 
         report = await install_connector(
             _plan(tmp_path),
@@ -349,7 +384,7 @@ class TestInstall:
             store=store,
             caller_did=_CALLER,
             state=state,
-            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+            attachment_factory=_factory_of(FakeAttachment()),
         )
 
         assert report.instance == _INSTANCE
@@ -370,15 +405,18 @@ class TestInstall:
             "install proved the credential once; only a check says healthy"
         )
         assert list(record.approved_tool_hashes) == ["create_issue"]
-        # The secret is in the store and nowhere else.
+        # The secret is in sealed custody and nowhere else: the persisted row
+        # holds a ciphertext, never the value, and the config file never sees it.
         assert "s3cr3t" not in connections.path.read_text(encoding="utf-8")
-        assert "s3cr3t" in env_file.read_text(encoding="utf-8")
+        assert await custody.holds_row(_INSTANCE)
+        assert "s3cr3t" not in await custody.raw_row_text(_INSTANCE)
 
     async def test_the_written_block_is_readable_back(self, tmp_path: Path) -> None:
         # A write nothing can read is dead wiring; the reader ships with the writer.
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
         await install_connector(
             _plan(tmp_path),
             connections=connections,
@@ -387,7 +425,7 @@ class TestInstall:
             store=store,
             caller_did=_CALLER,
             state=state,
-            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+            attachment_factory=_factory_of(FakeAttachment()),
         )
         defined = connections.all()
         assert defined[_INSTANCE].extension == _EXTENSION
@@ -404,12 +442,15 @@ class TestInstall:
         # and still have executed the bundle, which makes a broken gate look shut.
         connections = _connections(tmp_path)
         state = _state()
-        store, env_file = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
         root = tmp_path / "extensions"
         _bundle(root)
         built: list[str] = []
 
-        def _factory(_manifest: object, bundle: Path, _secrets: object) -> FakeAttachment:
+        def _factory(
+            _manifest: object, bundle: Path, _secrets: object, *, credential: object = None
+        ) -> FakeAttachment:
             built.append(str(bundle))
             return FakeAttachment()
 
@@ -434,7 +475,7 @@ class TestInstall:
 
         assert caught.value.details["step"] == "verify"
         assert built == [], "an unverified bundle's code was executed"
-        assert not env_file.exists()
+        assert not await custody.holds_row(_INSTANCE)
         assert _defined(connections) == {}
         assert await state.get(_INSTANCE) is None
 
@@ -443,7 +484,8 @@ class TestInstall:
     ) -> None:
         connections = _connections(tmp_path)
         state = _state()
-        store, env_file = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
@@ -454,11 +496,11 @@ class TestInstall:
                 store=store,
                 caller_did=_CALLER,
                 state=state,
-                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+                attachment_factory=_factory_of(FakeAttachment()),
             )
 
         assert caught.value.details["step"] == "secrets"
-        assert not env_file.exists()
+        assert not await custody.holds_row(_INSTANCE)
         assert _defined(connections) == {}
         assert await state.get(_INSTANCE) is None
 
@@ -468,7 +510,8 @@ class TestInstall:
         manifest = _MANIFEST + '\n[[host_requires]]\nname = "definitely_not_installed_xyz"\n'
         connections = _connections(tmp_path)
         state = _state()
-        store, env_file = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
@@ -479,12 +522,12 @@ class TestInstall:
                 store=store,
                 caller_did=_CALLER,
                 state=state,
-                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+                attachment_factory=_factory_of(FakeAttachment()),
             )
 
         assert caught.value.details["step"] == "host"
         assert "definitely_not_installed_xyz" in str(caught.value)
-        assert not env_file.exists()
+        assert not await custody.holds_row(_INSTANCE)
         assert _defined(connections) == {}
         assert await state.get(_INSTANCE) is None
 
@@ -493,7 +536,8 @@ class TestInstall:
         # written, so this is the rollback that actually has to work.
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
 
         with pytest.raises(ExtensionError) as caught:
             await install_connector(
@@ -504,8 +548,8 @@ class TestInstall:
                 store=store,
                 caller_did=_CALLER,
                 state=state,
-                attachment_factory=lambda _m, _b, _s: FakeAttachment(
-                    reachable=False, detail="acme: command not found"
+                attachment_factory=_factory_of(
+                    FakeAttachment(reachable=False, detail="acme: command not found")
                 ),
             )
 
@@ -523,9 +567,12 @@ class TestInstall:
     ) -> None:
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
 
-        def explode(_manifest: object, _bundle: object, _secrets: object) -> FakeAttachment:
+        def explode(
+            _manifest: object, _bundle: object, _secrets: object, *, credential: object = None
+        ) -> FakeAttachment:
             raise RuntimeError("bad entrypoint")
 
         with pytest.raises(ExtensionError) as caught:
@@ -553,7 +600,8 @@ class TestInstall:
         # the second must not disturb the first's block or its credential.
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
         root = tmp_path / "extensions"
         _bundle(root)
 
@@ -573,7 +621,7 @@ class TestInstall:
                 store=store,
                 caller_did=_CALLER,
                 state=state,
-                attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+                attachment_factory=_factory_of(FakeAttachment()),
             )
 
         assert set(_defined(connections)) == {"sales", "support"}
@@ -591,7 +639,8 @@ class TestRemove:
     async def test_remove_drops_the_secret_and_the_block(self, tmp_path: Path) -> None:
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
+        store = custody.store
         plan = _plan(tmp_path)
         await install_connector(
             plan,
@@ -601,16 +650,15 @@ class TestRemove:
             store=store,
             caller_did=_CALLER,
             state=state,
-            attachment_factory=lambda _m, _b, _s: FakeAttachment(),
+            attachment_factory=_factory_of(FakeAttachment()),
         )
 
         report = await remove_connector(
             connections=connections,
             instance=_INSTANCE,
-            store=store,
+            credentials=custody.rows,
             caller_did=_CALLER,
             state=state,
-            secret_fields=[secret.name for secret in plan.secrets],
         )
 
         assert report.removed_secrets == ("api_token",)
@@ -627,14 +675,13 @@ class TestRemove:
     async def test_removing_an_unknown_instance_is_not_an_error(self, tmp_path: Path) -> None:
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
         report = await remove_connector(
             connections=connections,
             instance="never_installed",
-            store=store,
+            credentials=custody.rows,
             caller_did=_CALLER,
             state=state,
-            secret_fields=[],
         )
         assert report.removed_config is False
 
@@ -655,7 +702,7 @@ class TestRemove:
         """
         connections = _connections(tmp_path)
         state = _state()
-        store, _env = _store(tmp_path)
+        custody = _custody()
         connections.path.parent.mkdir(parents=True, exist_ok=True)
         connections.path.write_text(
             f'[connections."{_ILLEGAL_INSTANCE}"]\nextension = "{_EXTENSION}"\n',
@@ -665,11 +712,8 @@ class TestRemove:
         report = await remove_connector(
             connections=connections,
             instance=_ILLEGAL_INSTANCE,
-            store=store,
+            credentials=custody.rows,
             caller_did=_CALLER,
-            # What Connections._declared_secret_fields resolves to when the planner
-            # refuses the name: nothing to delete, because nothing could be stored.
-            secret_fields=[],
             state=state,
         )
 

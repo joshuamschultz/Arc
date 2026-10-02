@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from arctrust.audit import AuditEvent
+from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, once_per_task
 
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.extension.credentials import (
@@ -27,7 +28,6 @@ from arcagent.extension.manifest import OAuthFlow
 from arcagent.extension.oauth import refresh_access_token
 from arcagent.extension.secrets import Secret
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, once_per_task
 
 FLOW = OAuthFlow(
     authorize_url="https://auth.example/authorize",
