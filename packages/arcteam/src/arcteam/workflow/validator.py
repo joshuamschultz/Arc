@@ -25,6 +25,7 @@ the whole list comes back at once so a repair pass sees every problem.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,7 @@ def validate_definition(
 
     issues += _check_exclusive_needs(definition, graph)
     issues += _check_output_references(definition, graph)
+    issues += _check_prompt_references(definition, graph, bundle_root)
     return tuple(issues)
 
 
@@ -557,6 +559,36 @@ def _check_output_references(
             yield from _check_reference(node, field, referenced, ancestors, ids, exclusive)
         if isinstance(node, ToolNode):
             yield from _check_arg_strings(node)
+
+
+_PROSE_REFERENCE = re.compile(r"\$nodes\.([A-Za-z][A-Za-z0-9_-]*)\.output\b")
+
+
+def _check_prompt_references(
+    definition: WorkflowDefinition, graph: _Graph, bundle_root: Path | None
+) -> Iterable[ValidationIssue]:
+    """Prose may mention only the output of nodes it is guaranteed to run after.
+
+    A prompt that cites ``$nodes.X.output`` for a node that is not an ancestor
+    describes data the node will never be handed; it is caught here, not by a
+    model improvising at run time. A prompt that is not on disk yet is skipped
+    (the file check reports it).
+    """
+    if bundle_root is None:
+        return
+    root = bundle_root.resolve()
+    exclusive = _exclusive_regions(definition, graph)
+    ids = set(definition.node_ids)
+    for node in definition.nodes:
+        if not isinstance(node, AgentNode) or node.prompt is None:
+            continue
+        path = confine(root, node.prompt)
+        if path is None or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        ancestors = graph.ancestors(node.id)
+        for referenced in sorted(set(_PROSE_REFERENCE.findall(text))):
+            yield from _check_reference(node, "prompt", referenced, ancestors, ids, exclusive)
 
 
 def _referenced_node_ids(node: WorkflowNode) -> Iterable[tuple[str, str]]:

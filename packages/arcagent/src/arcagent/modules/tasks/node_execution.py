@@ -104,6 +104,9 @@ class WorkflowNode(BaseModel):
     attempt_key: str = ""
     # Validated outputs of the upstream nodes this one needs, keyed by node id.
     upstream: dict[str, Any] = Field(default_factory=dict)
+    # Upstream nodes that failed under ``on_failure = "continue"``, with why. This
+    # node runs anyway and must know what it is not being handed.
+    upstream_failed: dict[str, str] = Field(default_factory=dict)
     # The run's accumulated lethal-trifecta legs at the moment this node was
     # materialised (COMP-015). Seeds this node's fresh session so a per-node
     # session cannot reset the run's accumulation.
@@ -225,6 +228,9 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             output_schema=metadata.get("output_schema"),
             artifacts=list(metadata.get("artifacts") or ()),
             upstream=dict(metadata.get("upstream") or {}),
+            upstream_failed={
+                str(k): str(v) for k, v in dict(metadata.get("upstream_failed") or {}).items()
+            },
             accumulated_legs=list(metadata.get("accumulated_legs") or ()),
             bundle_root=str(metadata.get("bundle_root") or ""),
             idempotency_key=str(metadata.get("idempotency_key") or ""),
@@ -283,11 +289,17 @@ def render_node_section(
                 f"declared route IDs: {routes}.",
             ]
         )
+    lines.extend(["", "### Upstream outputs (typed, validated)"])
     if node.upstream:
-        lines.extend(["", "### Upstream outputs (typed, validated)"])
         for upstream_id, value in sorted(node.upstream.items()):
             rendered = json.dumps(value, indent=2, default=str)[:MAX_OUTPUT_CHARS]
             lines.extend([f"`{upstream_id}`:", "```json", rendered, "```"])
+    else:
+        lines.append("(none)")
+    if node.upstream_failed:
+        lines.extend(["", "### Upstream failures (these nodes failed; you were not handed their output)"])
+        for failed_id, reason in sorted(node.upstream_failed.items()):
+            lines.append(f"- `{failed_id}`: {reason or 'no reason recorded'}")
     effective = schema if schema is not None else node.output_schema
     resolved = effective if isinstance(effective, dict) else None
     if resolved is not None:

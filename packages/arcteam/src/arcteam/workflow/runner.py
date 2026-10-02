@@ -135,7 +135,7 @@ def _is_infra_error(exc: BaseException) -> bool:
 
 # A node's inherited outputs ride on its task row, so one huge upstream result
 # would make every descendant's prompt huge too. Past this size it is a ref.
-UPSTREAM_INLINE_LIMIT_BYTES = 16_384
+UPSTREAM_INLINE_LIMIT_BYTES = 32_768
 
 
 def _ancestors(node: NodeSpec, definition: WorkflowSpec) -> set[str]:
