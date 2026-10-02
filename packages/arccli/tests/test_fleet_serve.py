@@ -66,7 +66,7 @@ def _install_loader(monkeypatch: pytest.MonkeyPatch, agents: dict[str, _FakeAgen
     """Patch _load_arcagent to return a fake agent keyed by the dir name."""
 
     def fake_load(
-        agent_dir: Path, *, skill_revision_anchor_factory: object = None
+        agent_dir: Path, *, skill_revision_anchor_factory: object = None, control: object = None
     ) -> tuple[Any, Any, Path]:
         return agents[agent_dir.name], None, agent_dir / "arcagent.toml"
 
@@ -110,17 +110,24 @@ async def test_fleet_uses_same_skill_anchor_factory_as_gateway(
     team_root = _team(tmp_path, ["josh_agent"])
     agent = _FakeAgent("did:arc:local:agent/josh1234")
     authority = object()
+    schedule_authority: Any = object()
 
     def fake_load(
-        agent_dir: Path, *, skill_revision_anchor_factory: object
+        agent_dir: Path, *, skill_revision_anchor_factory: object, control: object
     ) -> tuple[Any, Any, Path]:
         assert skill_revision_anchor_factory is authority
+        assert control is schedule_authority
         return agent, None, agent_dir / "arcagent.toml"
 
     monkeypatch.setattr("arccli.commands.agent._common._load_arcagent", fake_load)
     fleet = FleetRegistry()
     assert (
-        await _serve.serve_fleet_agents(team_root, fleet, skill_revision_anchor_factory=authority)
+        await _serve.serve_fleet_agents(
+            team_root,
+            fleet,
+            skill_revision_anchor_factory=authority,
+            control=schedule_authority,
+        )
         == 1
     )
     assert fleet.get(agent.did, required_skill_authority=authority) is agent
@@ -249,12 +256,14 @@ class TestRegisterFleetStartup:
             def put(self, did: str, agent: Any) -> None:
                 adopted[did] = agent
 
+        control_binding = object()
         app = SimpleNamespace(
             state=SimpleNamespace(
                 _extra_startup_hooks=[],
                 embedded_agent_cache=_Cache(),
                 agent_registry=None,
                 skill_revision_anchor_factory=skill_anchor_factory,
+                control_binding=control_binding,
             )
         )
         fake_agent = SimpleNamespace(_config=None)
@@ -268,7 +277,9 @@ class TestRegisterFleetStartup:
             warm: Any = None,
             deliver_for: Any = None,
             skill_revision_anchor_factory: object = None,
+            control: object = None,
         ) -> int:
+            seen["control"] = control
             seen["team_root"] = team_root
             seen["fleet"] = fleet
             seen["deliver_for"] = deliver_for
@@ -288,6 +299,8 @@ class TestRegisterFleetStartup:
 
         await app.state._extra_startup_hooks[0]()  # run the lifespan hook
         assert seen["skill_anchor_factory"] is skill_anchor_factory
+        # The fleet binds to the same schedule authority as the dashboard routes.
+        assert seen["control"] is control_binding
         assert seen["team_root"] == team_root
         assert seen["fleet"] is fleet
         # No session_router on app.state in this test → delivery stays disabled.

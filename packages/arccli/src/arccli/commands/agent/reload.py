@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import sys
 
-from arccli.commands.agent._common import _load_env, _resolve_agent_dir
+from arccli.commands.agent._common import _load_env, _resolve_agent_dir, load_cli_agent
 
 
 def _reload(args: argparse.Namespace) -> None:
@@ -14,16 +14,9 @@ def _reload(args: argparse.Namespace) -> None:
     agent_dir = _resolve_agent_dir(args.path)
     _load_env(agent_dir)
 
-    import arcagent
-
-    config_path = agent_dir / "arcagent.toml"
-    config = arcagent.load_config(config_path)
-    # An agent addressed from the CLI is still part of whatever fleet it belongs
-    # to: without this it starts with no directory and no inbox, and every
-    # fleet-facing tool reports itself unavailable on that path alone.
-    from arcteam.agent_fleet import ArcTeamFleet
-
-    arc_agent = arcagent.ArcAgent(config, config_path=config_path, fleet=ArcTeamFleet())
+    # The same loader as run/serve/chat: fleet seams, skill revision authority
+    # and schedule authority, so a reload never starts a differently-bound agent.
+    arc_agent, _config, _config_path = load_cli_agent(agent_dir)
 
     async def _do_reload() -> None:
         await arc_agent.startup()

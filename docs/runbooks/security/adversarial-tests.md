@@ -47,6 +47,7 @@ instead of silently reducing coverage.
 |---|---|
 | Direct skill/tool/module modification | load-time signatures, trust pins, drift detection, operator promotion |
 | Skill revision journal tampering, downgrade and forged signer | operator-signed hash-chained local anchor (edit, truncation, restored copy, deleted seal, replayed/cross-scope entry, foreign key, symlink), reset-vs-evidence refusal, federal external-anchor floor |
+| Forged schedule, replayed registration, unsigned schedule file | operator-signed local control journal per artifact (edited line, forged/hand-copied approval, stale CAS, revoked head), actor proof pinned to the agent's own key or the operator's (wrong key, other agent, other definition, expired, reused nonce), one admission per occurrence, planted `schedules.json` rows never fire, federal floor (no local authority) |
 | Prompt replacement or injected instructions | pinned prompt signatures, overlay isolation, role/instruction boundaries |
 | LLM/run/tool/audit log scraping or tampering | at-rest sealing, hash chains, replay redaction and path isolation |
 | Manual/forged/replayed agent actions | ArcUI operator gates, signed approvals, gateway identity and replay dedup |

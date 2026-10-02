@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import arcagent
+import arctrust
 import pytest
 from arcgateway import team_roster
 from starlette.applications import Starlette
@@ -27,6 +29,7 @@ from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.registry import AgentRegistry
 from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
+from arcui.server import _operator_proof_issuer, create_app
 
 _SCHEDULES = [
     {
@@ -313,3 +316,70 @@ class TestGuards:
         client, _ = ctx
         resp = client.patch(_URL, headers=_op(), json={"id": "hacked", "type": "once"})
         assert resp.status_code == 400
+
+
+class TestLocalAuthority:
+    """The production local authority, bound the way ``create_app(control=…)`` binds it."""
+
+    @staticmethod
+    def _binding(tmp_path: Path) -> arcagent.ControlArtifactBinding:
+        signer = arctrust.InProcessSigner(os.urandom(32))
+        authority = arctrust.LocalControlArtifactAuthority(
+            tmp_path / "control",
+            signer=signer,
+            operator_did="did:arc:operator:approver/test",
+        )
+        return arcagent.ControlArtifactBinding(
+            authority=authority,
+            tenant_id="arc-test",
+            trigger_issuer=arctrust.LocalRunTriggerIssuer(signer),
+            operator_proof=authority.operator_proof,
+        )
+
+    def _bind(self, client: TestClient, tmp_path: Path) -> None:
+        binding = self._binding(tmp_path)
+        client.app.state.schedule_control_authority = binding.authority
+        client.app.state.schedule_tenant_id = binding.tenant_id
+        client.app.state.schedule_operator_proof_issuer = _operator_proof_issuer(binding)
+
+    def test_create_app_binds_the_schedule_routes(self, tmp_path: Path) -> None:
+        binding = self._binding(tmp_path)
+        app = create_app(control=binding)
+        assert app.state.control_binding is binding
+        assert app.state.schedule_control_authority is binding.authority
+        assert app.state.schedule_tenant_id == "arc-test"
+        assert app.state.schedule_operator_proof_issuer is not None
+        unbound = create_app()
+        assert unbound.state.schedule_control_authority is None
+        assert unbound.state.schedule_operator_proof_issuer is None
+
+    def test_operator_edit_registers_signed_revisions(
+        self, ctx: tuple[TestClient, Path], tmp_path: Path
+    ) -> None:
+        client, agent_dir = ctx
+        self._bind(client, tmp_path)
+
+        first = client.patch(_URL, headers=_op(), json={"enabled": False})
+        assert first.status_code == 200, first.text
+        approval = first.json()["approval"]
+        assert approval["revision"] == 1
+        assert approval["actor_did"] == "did:arc:operator:approver/test"
+
+        second = client.patch(_URL, headers=_op(), json={"enabled": True})
+        assert second.status_code == 200, second.text
+        assert second.json()["approval"]["revision"] == 2
+        assert _entry(agent_dir, "sched_ffa77e980f06")["approval"]["revision"] == 2
+
+    def test_hand_edited_approval_is_refused(
+        self, ctx: tuple[TestClient, Path], tmp_path: Path
+    ) -> None:
+        """A revision copied into schedules.json by hand does not advance the head."""
+        client, agent_dir = ctx
+        self._bind(client, tmp_path)
+        assert client.patch(_URL, headers=_op(), json={"enabled": False}).status_code == 200
+
+        entries = _load(agent_dir)
+        entries[0]["approval"]["revision"] = 5
+        (agent_dir / "workspace" / "schedules.json").write_text(json.dumps(entries))
+        resp = client.patch(_URL, headers=_op(), json={"enabled": True})
+        assert resp.status_code == 403

@@ -236,9 +236,7 @@ def test_approve_refuses_a_skill_that_fails_validation_and_signs_nothing(tmp_pat
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
     skill_md = _skill_md(team_root, "olivia")
     # Only identity is required (J4 B1): a skill with no description is invalid.
-    skill_md.write_text(
-        _VALID_SKILL.replace("description: does {name}\n", ""), encoding="utf-8"
-    )
+    skill_md.write_text(_VALID_SKILL.replace("description: does {name}\n", ""), encoding="utf-8")
     client = _make_client(team_root)
 
     resp = client.post(

@@ -14,15 +14,20 @@ regardless of registry state.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import arctrust
+import arctrust.policy
 
 from arccli.commands._shared import write as _write
+
+if TYPE_CHECKING:
+    import arcagent
 
 _logger = logging.getLogger("arccli.serve")
 
@@ -59,6 +64,49 @@ def build_skill_revision_anchor_factory(
         )
     )
     return factory
+
+
+def build_control_artifact_authority(
+    audit_sink: arctrust.AuditSink | None = None,
+) -> arcagent.ControlArtifactBinding | None:
+    """Return the deployment's schedule and pulse authority, or None (fail closed).
+
+    Personal and enterprise get the zero-config operator-signed local journal
+    (:class:`arctrust.LocalControlArtifactAuthority` under
+    :func:`arctrust.control_artifact_journal_dir`) and a local run-trigger issuer,
+    both signing through the operator capability — never raw key material.
+    Federal floors to an externally custodied authority; none is composed here,
+    so federal answers None and every schedule write and firing stays closed.
+
+    The tenant is derived from the operator public key: stable across restarts,
+    and bound to the same custody root that signs the journals.
+    """
+    import arcagent
+
+    from arccli.commands.operator import _machine_security, resolve_operator_signer
+
+    try:
+        security = _machine_security()
+        if security.tier == "federal":
+            _logger.warning("federal tier has no local schedule authority; schedules fail closed")
+            return None
+        signer = resolve_operator_signer()
+    except Exception as exc:  # reason: fail closed — no operator signer, no authority
+        _logger.warning("schedule authority unavailable: %s", type(exc).__name__)
+        return None
+    operator_did = arctrust.policy.OperatorApprovalAuthority(signer).did
+    authority = arctrust.LocalControlArtifactAuthority(
+        arctrust.control_artifact_journal_dir(),
+        signer=signer,
+        operator_did=operator_did,
+        audit_sink=audit_sink,
+    )
+    return arcagent.ControlArtifactBinding(
+        authority=authority,
+        tenant_id="arc-" + hashlib.sha256(bytes(signer.public_key)).hexdigest()[:32],
+        trigger_issuer=arctrust.LocalRunTriggerIssuer(signer),
+        operator_proof=authority.operator_proof,
+    )
 
 
 class AgentAuditForwarder:
@@ -237,6 +285,7 @@ async def serve_fleet_agents(
     warm: Callable[[str, Any], Awaitable[Any]] | None = None,
     deliver_for: Callable[[Callable[[], str]], Any] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    control: arcagent.ControlArtifactBinding | None = None,
 ) -> int:
     """Start every discovered team agent so its messaging inbox loop runs (MSG4).
 
@@ -266,7 +315,9 @@ async def serve_fleet_agents(
     for agent_dir in agent_dirs:
         try:
             agent, _config, _config_path = _load_arcagent(
-                agent_dir, skill_revision_anchor_factory=skill_revision_anchor_factory
+                agent_dir,
+                skill_revision_anchor_factory=skill_revision_anchor_factory,
+                control=control,
             )
             # Wire channel delivery BEFORE startup so agent:ready carries it and
             # the scheduler can deliver a fired schedule's output — bound to THIS
@@ -308,6 +359,7 @@ async def serve_fleet_agents(
 
 
 __all__ = [
+    "build_control_artifact_authority",
     "discover_agent_dirs",
     "install_fleet_shared_knowledge",
     "register_folder_agents",

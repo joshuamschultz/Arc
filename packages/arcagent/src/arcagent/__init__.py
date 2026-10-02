@@ -58,6 +58,14 @@ from arcagent.connections import (
 from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
+from arcagent.core.control_contract import (
+    ControlActionProofSource,
+    ControlArtifactAuthority,
+    ControlArtifactBinding,
+    ControlArtifactRefusedError,
+    ControlArtifactUnavailableError,
+    SignedControlRevision,
+)
 from arcagent.core.errors import (
     ArcAgentError,
     CapabilityUnavailableError,
@@ -216,16 +224,6 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
-    if name in {
-        "ControlArtifactAuthority",
-        "ControlActionProofSource",
-        "ControlArtifactRefusedError",
-        "ControlArtifactUnavailableError",
-        "SignedControlRevision",
-    }:
-        from arcagent.core import control_contract
-
-        return getattr(control_contract, name)
     if name in {"MemoryConfig", "MemoryPromotionConfig"}:
         # The memory module is removable; importing arcagent must never pull it.
         from arcagent.modules.memory import config as memory_config
@@ -291,6 +289,7 @@ __all__ = [
     "ContextError",
     "ControlActionProofSource",
     "ControlArtifactAuthority",
+    "ControlArtifactBinding",
     "ControlArtifactRefusedError",
     "ControlArtifactUnavailableError",
     "DeliveryStreamEvent",

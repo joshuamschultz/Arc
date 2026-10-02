@@ -21,14 +21,22 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from arcprompt import ResolverPromptSource
+from arctrust import sign_control_actor_proof
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
+from arcagent.core.control_contract import (
+    ControlActionProofSource,
+    ControlActorEnrollment,
+    ControlArtifactRefusedError,
+    ControlPurpose,
+)
 from arcagent.core.errors import ExtensionError
 from arcagent.core.module_bus import EventContext
 from arcagent.core.module_discovery import active_modules, module_root, module_statuses
@@ -336,6 +344,40 @@ def _agent_audit_sink(agent: ArcAgent) -> DurableTelemetryAuditSink | None:
         return None
 
 
+def _control_actor_proof_source(agent: ArcAgent) -> ControlActionProofSource | None:
+    """The agent's own identity signs its control requests (schedule, pulse).
+
+    Its key is enrolled with the authority first, from the identity this agent
+    loaded out of its own key file, so a later proof from any other key is
+    refused. An enrollment the authority refuses leaves schedules unavailable
+    (fail closed) rather than stopping the agent.
+    """
+    if agent._control_actor_proof_source is not None:
+        return agent._control_actor_proof_source
+    authority = agent._control_artifact_authority
+    identity = agent._identity
+    if authority is None or identity is None or not identity.can_sign:
+        return None
+    if isinstance(authority, ControlActorEnrollment):
+        try:
+            authority.enroll_actor(identity.did, identity.public_key, identity.algorithm)
+        except ControlArtifactRefusedError:
+            _logger.error("control authority refused this agent's key; schedules unavailable")
+            return None
+
+    async def prove(purpose: ControlPurpose, artifact_id: str, definition: bytes) -> bytes:
+        return sign_control_actor_proof(
+            identity,
+            actor_did=identity.did,
+            purpose=purpose,
+            artifact_id=artifact_id,
+            definition=definition,
+            issued_at=datetime.now(UTC),
+        )
+
+    return prove
+
+
 def configure_module_runtimes(
     agent: ArcAgent, workspace: Path, *, egress_proxy: Any = None
 ) -> None:
@@ -371,7 +413,7 @@ def configure_module_runtimes(
         source_sync_store_opener=agent._make_source_sync_store_opener(),
         control_artifact_authority=agent._control_artifact_authority,
         control_tenant_id=agent._control_tenant_id,
-        control_actor_proof_source=agent._control_actor_proof_source,
+        control_actor_proof_source=_control_actor_proof_source(agent),
         trigger_issuer=agent._trigger_issuer,
         prepare_collected_request=agent.prepare_collected_request,
         audit_sink=_agent_audit_sink(agent),
