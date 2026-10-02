@@ -543,6 +543,27 @@ def _gateway_connect_voice_handler(args: list[str]) -> None:
     gateway_connect_voice_handler(args)
 
 
+def _gateway_voice_status_handler(args: list[str]) -> None:
+    """Live voice status — delegates to gateway_connect."""
+    from arccli.commands.gateway_connect import gateway_voice_status_handler
+
+    gateway_voice_status_handler(args)
+
+
+def _gateway_voice_listen_handler(args: list[str]) -> None:
+    """Voice listening ON/OFF — delegates to gateway_connect."""
+    from arccli.commands.gateway_connect import gateway_voice_listen_handler
+
+    gateway_voice_listen_handler(args)
+
+
+def _gateway_voice_wake_handler(args: list[str]) -> None:
+    """Set the typed wake word — delegates to gateway_connect."""
+    from arccli.commands.gateway_connect import gateway_voice_wake_handler
+
+    gateway_voice_wake_handler(args)
+
+
 def _gateway_voice_engines_handler(args: list[str]) -> None:
     """List registered voice engines — delegates to gateway_connect."""
     from arccli.commands.gateway_connect import gateway_voice_engines_handler
@@ -878,6 +899,30 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="--agent <dir> [--blend a:0.6,b:0.4] [--speed 1.12]",
         cli_only=True,
         handler=_gateway_connect_voice_handler,
+    ),
+    CommandDef(
+        name="gateway voice-status",
+        description="Show live voice status (gateway, mic client, engine, listening, wake word)",
+        category="Configuration",
+        args_hint="<agent> --email <you>",
+        cli_only=True,
+        handler=_gateway_voice_status_handler,
+    ),
+    CommandDef(
+        name="gateway voice-listen",
+        description="Turn voice listening ON or OFF live (saved, no restart)",
+        category="Configuration",
+        args_hint="<agent> on|off --email <you>",
+        cli_only=True,
+        handler=_gateway_voice_listen_handler,
+    ),
+    CommandDef(
+        name="gateway voice-wake",
+        description="Set the typed wake word the mic box listens for",
+        category="Configuration",
+        args_hint="<agent> <word...> --email <you>",
+        cli_only=True,
+        handler=_gateway_voice_wake_handler,
     ),
     CommandDef(
         name="gateway voice engines",

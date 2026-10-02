@@ -74,6 +74,10 @@ def build(ctx: AdapterBuildContext) -> VoiceAdapter:
         port=cfg.port,
         authenticate=pairing.authenticate,
         tier=ctx.tier,
+        chat_id=cfg.chat_id,
+        listening=cfg.listening,
+        wake=cfg.wake,
+        engine_names=(cfg.engine.get("stt"), cfg.engine.get("tts")),
     )
 
 

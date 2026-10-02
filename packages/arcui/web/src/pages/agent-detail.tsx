@@ -16,6 +16,7 @@ import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
 import { ApiError, apiGet, apiPost } from '@/lib/api'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
+import { VoiceLive, type VoiceLiveStatus } from '@/components/voice-live'
 import { StatusDot } from '@/components/status-badge'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
@@ -1548,10 +1549,14 @@ type VoiceStatus = {
   stt?: string
   blend?: string
   speed?: number
+  live?: VoiceLiveStatus
 }
 
+/** How often the voice card re-reads live status (the mic client heartbeats every 5 s). */
+const VOICE_POLL_MS = 5000
+
 /** Desk voice channel ("hey Olivia") — status + operator-gated connect (SPEC-077). */
-function VoicePanel({ agentId }: { agentId: string }) {
+export function VoicePanel({ agentId }: { agentId: string }) {
   const [operatorMode] = useOperatorMode()
   const [blend, setBlend] = useState('af_jessica:0.6,af_nicole:0.4')
   const [speed, setSpeed] = useState('1.12')
@@ -1572,7 +1577,12 @@ function VoicePanel({ agentId }: { agentId: string }) {
     void apiGet<VoiceStatus>(`/api/agents/${agentId}/voice`)
       .then((next) => { if (current) setStatus(next) })
       .catch(() => { /* status is best-effort */ })
-    return () => { current = false }
+    const timer = window.setInterval(() => {
+      void apiGet<VoiceStatus>(`/api/agents/${agentId}/voice`)
+        .then((next) => { if (current) setStatus(next) })
+        .catch(() => { /* a missed poll keeps the last status */ })
+    }, VOICE_POLL_MS)
+    return () => { current = false; window.clearInterval(timer) }
   }, [agentId])
 
   const submit = async () => {
@@ -1601,9 +1611,17 @@ function VoicePanel({ agentId }: { agentId: string }) {
         </p>
       )}
       <p className="mb-4 text-sm text-muted-foreground">
-        Hands-free desk voice. Say “Olivia …” into the mic and she answers in a natural voice. The
-        wake word runs locally on the mic box; a token is generated once for the client.
+        Hands-free desk voice. Say the wake word into the mic and she answers in a natural voice.
+        Listening runs on the mic box; a token is generated once for the client.
       </p>
+      {status?.enabled && status.bound_to_this_agent && status.live && (
+        <VoiceLive
+          agentId={agentId}
+          operatorMode={operatorMode}
+          live={status.live}
+          onChanged={() => void loadStatus()}
+        />
+      )}
       {status?.enabled && (
         <dl className="mb-4 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <div className="flex justify-between gap-3">

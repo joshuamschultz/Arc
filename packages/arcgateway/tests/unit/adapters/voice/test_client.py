@@ -6,7 +6,8 @@ microphone is needed. The real capture/playback use sounddevice on the Mac.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import numpy as np
 
@@ -19,9 +20,13 @@ class _FakeClient:
         self.sent: list[bytes] = []
         self.connected = False
         self.closed = False
+        self.control_handler: Any = lambda _p: None
 
     async def connect(self) -> None:
         self.connected = True
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        return None
 
     async def send_utterance(self, pcm: bytes) -> bytes | None:
         self.sent.append(pcm)
@@ -92,7 +97,7 @@ async def test_stt_wake_sends_only_the_segment_with_the_wake_word() -> None:
     quiet = np.zeros(1280, dtype=np.int16).tobytes()
     seq = [loud] * 3 + [quiet] * 15 + [loud] * 3 + [quiet] * 15  # two speech segments
 
-    async def frames() -> AsyncIterator[bytes]:
+    async def frames() -> AsyncGenerator[bytes, None]:
         for frame in seq:
             yield frame
 
@@ -106,7 +111,7 @@ async def test_stt_wake_sends_only_the_segment_with_the_wake_word() -> None:
         played.append(wav)
 
     await desk.run_stt_wake(
-        frames=frames(), transcribe=transcribe, playback=playback, silence_frames=15
+        open_frames=frames, transcribe=transcribe, playback=playback, silence_frames=15
     )
 
     assert calls["n"] == 2  # both segments transcribed locally

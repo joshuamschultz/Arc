@@ -8,7 +8,77 @@ openWakeWord ONNX model (follow-up); the gate logic here is model-free and teste
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+import re
+from typing import Any, Literal, Protocol
+
+MatchMode = Literal["exact", "fuzzy"]
+
+_NON_WORD = re.compile(r"[^a-z' ]+")
+_GREETINGS = frozenset({"hey", "ok", "okay", "hi"})
+#: Fuzzy matching looks only at the start of the utterance: a name said mid-sentence
+#: to someone else is not a wake.
+_FUZZY_WINDOW = 3
+#: Tokens shorter than this must match exactly — one edit in "max" is a different word.
+_FUZZY_MIN_LEN = 5
+
+
+def _tokens(text: str) -> list[str]:
+    return _NON_WORD.sub(" ", text.lower()).split()
+
+
+def _strip_greeting(tokens: list[str]) -> list[str]:
+    return tokens[1:] if tokens and tokens[0] in _GREETINGS else tokens
+
+
+def _edit_distance_at_most_one(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` differ by at most one insert, delete or substitute."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    if len(a) == len(b):
+        return a[i + 1 :] == b[i + 1 :]
+    return a[i:] == b[i + 1 :]
+
+
+def _token_matches(heard: str, wanted: str, *, fuzzy: bool) -> bool:
+    if heard == wanted:
+        return True
+    return fuzzy and len(wanted) >= _FUZZY_MIN_LEN and _edit_distance_at_most_one(heard, wanted)
+
+
+def _phrase_at(heard: list[str], wanted: list[str], start: int, *, fuzzy: bool) -> bool:
+    window = heard[start : start + len(wanted)]
+    return len(window) == len(wanted) and all(
+        _token_matches(h, w, fuzzy=fuzzy) for h, w in zip(window, wanted, strict=True)
+    )
+
+
+def match_wake(transcript: str, words: tuple[str, ...] | list[str], mode: MatchMode) -> bool:
+    """Whole-word wake match on a transcript (pure; no model, no audio).
+
+    A configured word matches when its tokens appear anywhere in the transcript as
+    whole words (so "olive" never wakes "olivia"). In ``fuzzy`` mode a word of five
+    or more letters also matches with one edit ("alivia"), but only within the first
+    three tokens, and a leading ``hey|ok|okay|hi`` is ignored on both sides.
+    """
+    heard = _strip_greeting(_tokens(transcript))
+    for word in words:
+        wanted = _strip_greeting(_tokens(word))
+        if not wanted:
+            continue
+        if any(_phrase_at(heard, wanted, i, fuzzy=False) for i in range(len(heard))):
+            return True
+        if mode == "fuzzy" and any(
+            _phrase_at(heard, wanted, i, fuzzy=True) for i in range(_FUZZY_WINDOW)
+        ):
+            return True
+    return False
 
 
 class WakeDetector(Protocol):
@@ -82,4 +152,4 @@ class WakeGate:
         self._awake = False
 
 
-__all__ = ["OpenWakeWordDetector", "WakeDetector", "WakeGate"]
+__all__ = ["MatchMode", "OpenWakeWordDetector", "WakeDetector", "WakeGate", "match_wake"]
