@@ -53,7 +53,7 @@ def fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = extensions_dir(home)
     _bundle(root, "github", description="Read pull requests, issues, and CI runs.")
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(root))
     return root
 
 

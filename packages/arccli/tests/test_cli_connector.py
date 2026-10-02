@@ -230,12 +230,12 @@ def _reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default every test to a reachable attachment; a test may override it."""
     monkeypatch.setattr(
         "arccli.commands.connector._attachment_factory",
-        lambda: lambda _manifest, _bundle, _secrets: _FakeAttachment(),
+        lambda: lambda _manifest, _bundle, _secrets, credential=None: _FakeAttachment(),
     )
 
 
 @pytest.fixture(autouse=True)
-def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Keep every command in one test on one fresh ArcStore fake."""
     from arcstore.backends.memory import FakeBackend
 
@@ -245,6 +245,29 @@ def _arcstore_backend(monkeypatch: pytest.MonkeyPatch) -> None:
         return backend
 
     monkeypatch.setattr("arccli.commands.connector._arcstore_opener", lambda: _open)
+    return backend
+
+
+def _custody(backend: Any, arc_dir: Path, connection: str) -> tuple[Any, Any]:
+    """The sealed custody row for a connection, and the store that opens it."""
+    import asyncio
+
+    from arcagent.core.tier import Tier
+    from arcagent.extension.custody import CredentialRowStore
+    from arcagent.extension.custody_select import deployment_cipher
+
+    store = CredentialRowStore(backend, deployment_cipher(arc_dir, tier=Tier.PERSONAL))
+    return asyncio.run(store.read(connection)), store
+
+
+def _raw_rows(backend: Any) -> str:
+    """Every custody row exactly as stored, as one string."""
+    import asyncio
+
+    from arcagent.extension.custody import CREDENTIAL_COLLECTION
+
+    rows = asyncio.run(backend.mutable_query(CREDENTIAL_COLLECTION))
+    return json.dumps(rows, default=str)
 
 
 @pytest.fixture
@@ -366,7 +389,7 @@ class TestAdd:
     ) -> None:
         monkeypatch.setattr(
             "arccli.commands.connector._attachment_factory",
-            lambda: lambda _manifest, _bundle, _secrets: _UnreachableAttachment(),
+            lambda: lambda _manifest, _bundle, _secrets, credential=None: _UnreachableAttachment(),
         )
         _answer_prompts(monkeypatch)
 
@@ -500,7 +523,7 @@ class TestReadVerbs:
         run("add", _EXTENSION, "--name", _INSTANCE, "--agents", _AGENT)
         monkeypatch.setattr(
             "arccli.commands.connector._attachment_factory",
-            lambda: lambda _manifest, _bundle, _secrets: _UnreachableAttachment(),
+            lambda: lambda _manifest, _bundle, _secrets, credential=None: _UnreachableAttachment(),
         )
         with pytest.raises(SystemExit) as exited:
             run("probe", _INSTANCE)
@@ -524,6 +547,7 @@ class TestReadVerbs:
 
     def test_doctor_names_a_missing_credential(
         self,
+        _arcstore_backend: Any,
         run: Callable[..., None],
         arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -534,7 +558,15 @@ class TestReadVerbs:
         capsys.readouterr()
         # The credential is gone but the connection is still configured — the
         # shape an operator hits after a store is rotated or restored without it.
-        config_file("connections.env", arc_dir).unlink()
+        import asyncio
+
+        from arcagent.extension.custody import CREDENTIAL_COLLECTION
+
+        asyncio.run(
+            _arcstore_backend.mutable_delete(
+                CREDENTIAL_COLLECTION, _INSTANCE, actor_did="did:arc:test:operator"
+            )
+        )
 
         run("doctor", _INSTANCE)
         assert "missing" in capsys.readouterr().out.lower()
@@ -545,6 +577,7 @@ class TestAuthAndApprove:
 
     def test_auth_replaces_the_credential_through_a_hidden_prompt(
         self,
+        _arcstore_backend: Any,
         run: Callable[..., None],
         arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -560,9 +593,11 @@ class TestAuthAndApprove:
         assert asked, "auth must prompt, not read a flag"
         out = capsys.readouterr().out
         assert "rotated-value" not in out
-        env = config_file("connections.env", arc_dir).read_text(encoding="utf-8")
-        assert "rotated-value" in env
-        assert _TOKEN not in env
+        row, store = _custody(_arcstore_backend, arc_dir, _INSTANCE)
+        assert store.open_field(row, "api_token").reveal() == "rotated-value"
+        raw = _raw_rows(_arcstore_backend)
+        assert "rotated-value" not in raw
+        assert _TOKEN not in raw
 
     def test_auth_on_a_credential_less_connector_names_the_host_command(
         self,
@@ -609,6 +644,7 @@ class TestRemove:
 
     def test_remove_drops_the_block_and_the_credential(
         self,
+        _arcstore_backend: Any,
         run: Callable[..., None],
         arc_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -621,7 +657,9 @@ class TestRemove:
         run("remove", _INSTANCE)
 
         assert _connections(arc_dir) == {}
-        assert _TOKEN not in config_file("connections.env", arc_dir).read_text(encoding="utf-8")
+        row, _store = _custody(_arcstore_backend, arc_dir, _INSTANCE)
+        assert row is None
+        assert _TOKEN not in _raw_rows(_arcstore_backend)
 
     def test_removing_an_unknown_instance_is_reported_not_crashed(
         self, run: Callable[..., None], arc_dir: Path, capsys: pytest.CaptureFixture[str]
