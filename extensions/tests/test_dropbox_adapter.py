@@ -459,3 +459,140 @@ def test_a_changed_file_gets_a_higher_revision_so_edits_reindex() -> None:
     # A file with no modified time still ingests the first time (revision 1).
     no_time = _source_object({".tag": "file", "id": "id:y", "path_display": "/b.txt", "rev": "r1"})
     assert no_time.metadata["revision"] == 1
+
+
+class _FakeDropboxFiles:
+    """An in-memory Dropbox: path -> (size, content_hash). Answers metadata and copy."""
+
+    def __init__(self, files: dict[str, tuple[int, str]]) -> None:
+        self.files = dict(files)
+        self.copies: list[tuple[str, str]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://api.dropbox.com/oauth2/token":
+            return httpx.Response(200, json={"access_token": _TOKEN, "expires_in": 14400})
+        body = json.loads(request.content)
+        if url.endswith("/2/files/get_metadata"):
+            path = body["path"]
+            if path not in self.files:
+                return httpx.Response(409, json={"error_summary": "path/not_found/.."})
+            size, digest = self.files[path]
+            return httpx.Response(
+                200,
+                json={".tag": "file", "path_display": path, "size": size, "content_hash": digest},
+            )
+        if url.endswith("/2/files/copy_v2"):
+            source, target = body["from_path"], body["to_path"]
+            if target in self.files:
+                return httpx.Response(409, json={"error_summary": "to/conflict/file/.."})
+            self.files[target] = self.files[source]
+            self.copies.append((source, target))
+            return httpx.Response(200, json={"metadata": {"path_display": target}})
+        return httpx.Response(404, json={"error": f"unmapped {url}"})
+
+
+def _fake_dropbox(
+    monkeypatch: pytest.MonkeyPatch, files: dict[str, tuple[int, str]]
+) -> _FakeDropboxFiles:
+    fake = _FakeDropboxFiles(files)
+    real: Callable[..., httpx.AsyncClient] = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(fake)}),
+    )
+    return fake
+
+
+_ARCHIVE = "/CRM/transcripts"
+
+
+async def _archive(files: Any, **extra: Any) -> Any:
+    return await _attachment().invoke(
+        "dropbox_archive_copy", {"files": files, "dest_root": _ARCHIVE, **extra}
+    )
+
+
+async def test_archive_copy_copies_server_side_into_a_meeting_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _fake_dropbox(monkeypatch, {"/Meetings/standup/a.txt": (10, "h1")})
+
+    result = await _archive(["/Meetings/standup/a.txt"])
+
+    assert result.outcome.value != "error", result.content
+    assert json.loads(result.content) == {
+        "status": "archived",
+        "count": 1,
+        "archived": ["standup/a.txt"],
+        "skipped": [],
+    }
+    assert fake.copies == [("/Meetings/standup/a.txt", f"{_ARCHIVE}/standup/a.txt")]
+
+
+async def test_archive_copy_is_idempotent_and_accepts_object_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _fake_dropbox(monkeypatch, {"/Meetings/m/a.txt": (10, "h1")})
+    await _archive([{"path_display": "/Meetings/m/a.txt"}])
+
+    again = json.loads((await _archive([{"path": "/Meetings/m/a.txt"}])).content)
+
+    assert again["archived"] == [] and again["skipped"] == ["m/a.txt"]
+    assert len(fake.copies) == 1
+
+
+async def test_archive_copy_never_overwrites_a_different_archived_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _fake_dropbox(
+        monkeypatch,
+        {"/Meetings/m/a.txt": (10, "new"), f"{_ARCHIVE}/m/a.txt": (10, "old")},
+    )
+
+    result = await _archive(["/Meetings/m/a.txt"])
+
+    assert result.outcome.value == "error"
+    assert "conflict" in result.content
+    assert fake.copies == []
+
+
+async def test_archive_copy_keeps_progress_when_one_file_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _fake_dropbox(monkeypatch, {"/Meetings/m/ok.txt": (1, "h")})
+
+    result = await _archive(["/Meetings/m/gone.txt", "/Meetings/m/ok.txt"])
+
+    assert result.outcome.value == "error"
+    assert "gone.txt" in result.content
+    assert fake.copies == [("/Meetings/m/ok.txt", f"{_ARCHIVE}/m/ok.txt")]
+
+
+@pytest.mark.parametrize("bad", ["/Meetings/../secret.txt", "/Meetings"])
+async def test_archive_copy_refuses_paths_outside_a_meeting_file(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    fake = _fake_dropbox(monkeypatch, {})
+    result = await _archive([bad])
+    assert result.outcome.value == "error"
+    assert fake.copies == []
+
+
+async def test_archive_copy_bounds_count_and_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _fake_dropbox(monkeypatch, {"/Meetings/m/big.txt": (2048, "h")})
+
+    many = await _archive([f"/Meetings/m/{i}.txt" for i in range(501)])
+    big = await _archive(["/Meetings/m/big.txt"], max_file_bytes="1024")
+
+    assert "too many" in many.content
+    assert "too large" in big.content
+    assert fake.copies == []
+
+
+async def test_archive_copy_refuses_a_non_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_dropbox(monkeypatch, {})
+    result = await _archive({"artifact_ref": {"task_id": "t"}})
+    assert result.outcome.value == "error"
+    assert "files" in result.content

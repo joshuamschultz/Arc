@@ -85,6 +85,12 @@ _MAX_ATTEMPTS: Final = 3
 
 _STRING: Final[dict[str, str]] = {"type": "string"}
 
+#: Bounds on ``dropbox_archive_copy``: files per call and bytes per file.
+_ARCHIVE_MAX_FILES: Final = 500
+_ARCHIVE_MAX_FILE_BYTES: Final = 100 * 1024 * 1024
+#: The Dropbox folder transcripts are filed under; stripped to find the meeting name.
+_ARCHIVE_SOURCE_FOLDER: Final = "Meetings"
+
 
 class DropboxAttachment:
     """Reaches the Dropbox files API over HTTPS, through the four hook methods."""
@@ -153,7 +159,7 @@ class DropboxAttachment:
         )
 
     async def describe_tools(self) -> list[ToolSpec]:
-        """Eight verbs. Classification and tags match extension.toml exactly."""
+        """Nine verbs. Classification and tags match extension.toml exactly."""
         return [
             ToolSpec(
                 name="dropbox_list",
@@ -208,6 +214,22 @@ class DropboxAttachment:
                 ),
                 classification="state_modifying",
                 capability_tags=["network_egress"],
+            ),
+            ToolSpec(
+                name="dropbox_archive_copy",
+                description="Copy meeting files server-side into dest_root/<meeting>/<name>. "
+                "Skips identical copies, refuses to overwrite different ones.",
+                input_schema=_schema(
+                    {
+                        "files": {"type": "array", "items": {"type": "string"}},
+                        "dest_root": _STRING,
+                        "max_file_bytes": _STRING,
+                    },
+                    required=["files", "dest_root"],
+                ),
+                classification="state_modifying",
+                capability_tags=["network_egress"],
+                timeout_seconds=_TRANSFER_TOOL_TIMEOUT,
             ),
             ToolSpec(
                 name="dropbox_delete",
@@ -408,11 +430,92 @@ class DropboxAttachment:
                     },
                 )
             )
+        if tool == "dropbox_archive_copy":
+            return _dump(await self._archive_copy(args))
         if tool == "dropbox_delete":
             return _dump(
                 await self._rpc("/2/files/delete_v2", {"path": _file_path(str(args["path"]))})
             )
         raise KeyError(tool)
+
+    async def _archive_copy(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Copy listed meeting files server-side into ``dest_root/<meeting>/<name>``.
+
+        Deterministic and bounded, for workflow tool nodes: no bytes round-trip
+        through Arc. An identical archived copy (same Dropbox content hash) is
+        skipped, a different one is a conflict and is never overwritten, and a
+        failing file does not stop the rest — the error is raised at the end so
+        the runner retries, and a retry only has the failed files left to do.
+        """
+        entries = args.get("files")
+        if not isinstance(entries, list):
+            msg = "files must be a list of Dropbox paths"
+            raise ValueError(msg)
+        if len(entries) > _ARCHIVE_MAX_FILES:
+            msg = f"too many files in one call: {len(entries)} > {_ARCHIVE_MAX_FILES}"
+            raise ValueError(msg)
+        dest_root = _file_path(str(args.get("dest_root", ""))).rstrip("/")
+        if not dest_root:
+            msg = "dest_root must be a folder path"
+            raise ValueError(msg)
+        max_bytes = int(args.get("max_file_bytes") or _ARCHIVE_MAX_FILE_BYTES)
+        archived: list[str] = []
+        skipped: list[str] = []
+        failures: list[str] = []
+        for raw in sorted({_archive_entry_path(entry) for entry in entries}):
+            try:
+                relative, copied = await self._archive_one(raw, dest_root, max_bytes)
+            except (ValueError, httpx.HTTPError) as exc:
+                failures.append(f"{raw}: {exc}")
+                continue
+            (archived if copied else skipped).append(relative)
+        if failures:
+            raise ValueError("; ".join(failures)[:2000])
+        return {
+            "status": "archived",
+            "count": len(archived) + len(skipped),
+            "archived": sorted(archived),
+            "skipped": sorted(skipped),
+        }
+
+    async def _archive_one(self, raw: str, dest_root: str, max_bytes: int) -> tuple[str, bool]:
+        """Archive one file. Returns (meeting-relative name, whether it was newly copied)."""
+        source = _file_path(raw)
+        parts = [p for p in source.split("/") if p]
+        if parts and parts[0] == _ARCHIVE_SOURCE_FOLDER:
+            parts = parts[1:]
+        if not parts:
+            msg = "not a meeting file"
+            raise ValueError(msg)
+        meeting = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+        relative = f"{meeting}/{parts[-1]}"
+        target = f"{dest_root}/{relative}"
+        origin = await self._metadata(source)
+        if origin is None or origin.get(".tag") != "file":
+            msg = "source file missing"
+            raise ValueError(msg)
+        if int(origin.get("size", 0)) > max_bytes:
+            msg = f"file too large (> {max_bytes} bytes)"
+            raise ValueError(msg)
+        existing = await self._metadata(target)
+        if existing is not None:
+            if existing.get("content_hash") == origin.get("content_hash"):
+                return relative, False
+            msg = "conflict: an archived copy already differs"
+            raise ValueError(msg)
+        await self._rpc(
+            "/2/files/copy_v2", {"from_path": source, "to_path": target, "autorename": False}
+        )
+        return relative, True
+
+    async def _metadata(self, path: str) -> dict[str, Any] | None:
+        """A path's metadata, or None when Dropbox says there is nothing there."""
+        try:
+            return await self._rpc("/2/files/get_metadata", {"path": path})
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409 and "not_found" in exc.response.text:
+                return None
+            raise
 
     async def _download(self, path: str) -> str:
         """A file's bytes as text, truncated so one large file cannot flood context."""
@@ -610,6 +713,19 @@ def _file_path(value: str) -> str:
         msg = f"invalid Dropbox path {text!r}"
         raise ValueError(msg)
     return text if text.startswith("/") else f"/{text}"
+
+
+def _archive_entry_path(entry: Any) -> str:
+    """The path in a files entry: a string, or an object carrying ``path``/``path_display``."""
+    if isinstance(entry, str) and entry:
+        return entry
+    if isinstance(entry, dict):
+        for key in ("path", "path_display"):
+            value = entry.get(key)
+            if isinstance(value, str) and value:
+                return value
+    msg = f"unreadable files entry: {str(entry)[:80]!r}"
+    raise ValueError(msg)
 
 
 def _body(response: httpx.Response) -> dict[str, Any]:

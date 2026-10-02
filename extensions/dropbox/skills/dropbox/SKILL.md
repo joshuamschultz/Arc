@@ -24,6 +24,7 @@ missing grant.
 | `dropbox_upload` | Write a text file to a path |
 | `dropbox_create_folder` | Create a folder at a path |
 | `dropbox_move` | Move or rename a file or folder |
+| `dropbox_archive_copy` | Copy meeting files server-side into an archive folder (idempotent, never overwrites) |
 | `dropbox_delete` | Delete a file or folder |
 
 ## Knowledge

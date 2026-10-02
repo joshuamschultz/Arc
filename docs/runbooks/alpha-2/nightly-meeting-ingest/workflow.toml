@@ -66,12 +66,14 @@ script = "scripts/no_new_meetings.py"   # prints {"status": "nothing_new"}; noth
 
 [[node]]
 id = "archive_transcripts"
-kind = "script"
+kind = "tool"
 agent = "@sales_agent"
 needs = ["route_new"]
-# Reads filter_new.output.new_files (a transitive ancestor, now delivered) and copies
-# each transcript verbatim to crm/meetings/transcripts/<meeting>/. No model involved.
-script = "scripts/archive_transcripts.py"   # needs ARC_MEETINGS_SOURCE = local Dropbox /Meetings root
+# Copies each new transcript server-side inside Dropbox (no bytes through Arc, no
+# model), under the sales agent's own Dropbox grant. Idempotent: an identical archived
+# copy is skipped, a different one is a conflict. Bounded: 500 files, 100 MiB each.
+tool = "dropbox_archive_copy"
+args = { files = "$nodes.filter_new.output.new_files", dest_root = "/CRM/meetings/transcripts" }   # dest_root: KEEP-FROM-LIVE
 output_schema = "schemas/archive_transcripts.json"
 timeout_s = 900
 max_attempts = 2

@@ -79,6 +79,7 @@ allow = [
   "dropbox_upload",
   "dropbox_create_folder",
   "dropbox_move",
+  "dropbox_archive_copy",
   "dropbox_delete",
 ]
 
@@ -120,6 +121,12 @@ capability_tags = ["network_egress"]
 [[tools.declared]]
 name = "dropbox_move"
 description = "Move or rename a file or folder."
+classification = "state_modifying"
+capability_tags = ["network_egress"]
+
+[[tools.declared]]
+name = "dropbox_archive_copy"
+description = "Copy meeting files server-side into dest_root/<meeting>/<name>, idempotently."
 classification = "state_modifying"
 capability_tags = ["network_egress"]
 
