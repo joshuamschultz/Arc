@@ -60,6 +60,9 @@ async function parseError(
     if (body?.error) return { message: body.error, body }
     const resultErrors = body?.results?.map((r) => r.error).filter(Boolean)
     if (resultErrors?.length) return { message: resultErrors.join('; '), body }
+    // Typed refusal bodies (the memory-share route's `{status, shared_ref}`)
+    // carry no `error` text; keep the body so callers can key on `status`.
+    if (body && typeof body === 'object') return { message: `HTTP ${res.status}`, body }
   } catch {
     /* not JSON */
   }

@@ -5,39 +5,23 @@ import { FieldHelp } from '@/components/help'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
 import { AgentIdentity } from '@/components/AgentIdentity'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import {
-  useRoster,
-  useSharedKnowledge,
-  useSharedKnowledgeDetail,
-  useSharedKnowledgeSearch,
-} from '@/lib/queries'
-import { cn } from '@/lib/utils'
-import type { AgentIdentityShape, SharedKnowledgeDocument } from '@/lib/types'
+  ClassificationBadge,
+  SharedDocumentSheet,
+} from '@/components/knowledge-shared-drawer'
+import { useRoster, useSharedKnowledgeSearch } from '@/lib/queries'
+import { useSharedList, type SharedDocument, type SharedKind } from '@/lib/queries-shared'
+import { relativeTime } from '@/lib/format'
+import type { AgentIdentityShape } from '@/lib/types'
 
-/** Data-sensitivity pill — neutral for "unclassified", warm for anything
- *  above it (mirrors `ClassificationBadge` in knowledge-chunks.tsx). */
-function ClassificationBadge({ classification }: { classification: string }) {
-  const sensitive = classification.toLowerCase() !== 'unclassified' && classification !== ''
-  return (
-    <span
-      className={cn(
-        'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-        sensitive
-          ? 'border-status-warning/40 bg-status-warning/15 text-status-warning'
-          : 'border-border bg-muted/40 text-muted-foreground',
-      )}
-    >
-      {classification || 'unlabeled'}
-    </span>
-  )
-}
+type Tab = 'all' | SharedKind
+const TABS: ReadonlyArray<{ value: Tab; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'insight', label: 'Insights' },
+  { value: 'procedure', label: 'Procedures' },
+  { value: 'entity', label: 'Entities' },
+]
 
 /** A DID the roster hasn't joined still renders through the same component —
  *  every field `AgentIdentityShape` promises is populated with "unknown"
@@ -53,14 +37,16 @@ function fallbackIdentity(ownerDid: string, ownerDisplay: string): AgentIdentity
   }
 }
 
-/** One shared document: title + excerpt + tags, opens the full-content sheet. */
+/** One shared document: real title, body only when it adds something beyond
+ *  the title, owner-side contributors and promoted time. Opens the drawer. */
 function DocumentCard({
   doc,
   onOpen,
 }: {
-  doc: SharedKnowledgeDocument
+  doc: SharedDocument
   onOpen: (identifier: string) => void
 }) {
+  const showExcerpt = doc.excerpt.trim() !== '' && doc.excerpt.trim() !== doc.title.trim()
   return (
     <button
       type="button"
@@ -69,9 +55,25 @@ function DocumentCard({
     >
       <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
         <span className="truncate text-sm font-semibold text-foreground">{doc.title}</span>
-        <ClassificationBadge classification={doc.classification} />
+        <span className="flex items-center gap-1.5">
+          {doc.demotion && (
+            <span className="rounded-full border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+              Removed
+            </span>
+          )}
+          <ClassificationBadge classification={doc.classification} />
+        </span>
       </div>
-      <p className="line-clamp-2 text-sm text-muted-foreground">{doc.excerpt}</p>
+      {showExcerpt && <p className="line-clamp-2 text-sm text-muted-foreground">{doc.excerpt}</p>}
+      {doc.demotion && (
+        <p className="mt-1 text-xs text-destructive">Reason: {doc.demotion.reason}</p>
+      )}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {doc.contributors.length > 0 && (
+          <span>With {doc.contributors.map((c) => c.display).join(', ')}</span>
+        )}
+        {doc.promoted_at && <span>Promoted {relativeTime(doc.promoted_at)}</span>}
+      </div>
       {doc.tags.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {doc.tags.map((tag) => (
@@ -95,7 +97,7 @@ function GroupedDocuments({
   documents,
   onOpen,
 }: {
-  documents: SharedKnowledgeDocument[]
+  documents: SharedDocument[]
   onOpen: (identifier: string) => void
 }) {
   const roster = useRoster()
@@ -110,7 +112,7 @@ function GroupedDocuments({
   }, [roster.data])
 
   const groups = useMemo(() => {
-    const byOwner = new Map<string, { display: string; docs: SharedKnowledgeDocument[] }>()
+    const byOwner = new Map<string, { display: string; docs: SharedDocument[] }>()
     for (const doc of documents) {
       const existing = byOwner.get(doc.owner_did)
       if (existing) existing.docs.push(doc)
@@ -173,61 +175,19 @@ function SearchResults({ q, onOpen }: { q: string; onOpen: (identifier: string) 
   )
 }
 
-/** Full-content sheet for one shared document — 403 (above clearance) and
- *  404 (missing) surface through the shared `ErrorState`, not a crash. */
-function DocumentSheet({
-  identifier,
-  onOpenChange,
-}: {
-  identifier: string | null
-  onOpenChange: (open: boolean) => void
-}) {
-  const query = useSharedKnowledgeDetail(identifier)
-  return (
-    <Sheet open={identifier != null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
-        {identifier && (
-          <QueryState query={query}>
-            {(data) => (
-              <>
-                <SheetHeader className="border-b border-border px-5 py-4">
-                  <SheetTitle className="text-sm">{data.title}</SheetTitle>
-                  <SheetDescription className="flex flex-wrap items-center gap-2">
-                    <ClassificationBadge classification={data.classification} />
-                    {data.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="flex-1 overflow-auto px-5 py-4">
-                  <p className="whitespace-pre-wrap text-sm text-foreground">{data.content}</p>
-                </div>
-              </>
-            )}
-          </QueryState>
-        )}
-      </SheetContent>
-    </Sheet>
-  )
-}
-
 /**
- * Fleet-scoped, read-only view of "shared knowledge" — documents agents have
- * promoted into the signed fleet collection (H-027). The per-agent Knowledge
- * page (`/knowledge`) shows what one agent has learned; this page shows what
- * the fleet as a whole has chosen to share, grouped by the agent that shared
- * it. No mutation surface — promotion happens agent-side.
+ * Fleet-scoped view of shared knowledge: documents agents (or an operator)
+ * promoted into the signed fleet collection, in typed tabs. An operator can
+ * permanently remove a card; removed cards are hidden unless asked for.
  */
 export function SharedKnowledgePage() {
   const [q, setQ] = useState('')
+  const [tab, setTab] = useState<Tab>('all')
+  const [includeRemoved, setIncludeRemoved] = useState(false)
   const [openIdentifier, setOpenIdentifier] = useState<string | null>(null)
-  const query = useSharedKnowledge()
+  const query = useSharedList(tab === 'all' ? null : tab, includeRemoved)
   const searching = q.trim().length > 0
+  const counts = query.data?.counts
 
   return (
     <div className="flex h-full flex-col">
@@ -236,8 +196,8 @@ export function SharedKnowledgePage() {
         description="What agents have promoted into the fleet's signed knowledge collection, grouped by owner."
       />
       <div className="flex-1 overflow-auto p-6">
-        <div className="mb-4 max-w-sm">
-          <div className="relative">
+        <div className="mb-4 flex flex-wrap items-center gap-4">
+          <div className="relative w-full max-w-sm">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               aria-label="Search shared knowledge"
@@ -248,31 +208,52 @@ export function SharedKnowledgePage() {
             />
             <FieldHelp helpKey="shared_knowledge.search" route="shared-knowledge" />
           </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeRemoved}
+              onChange={(e) => setIncludeRemoved(e.target.checked)}
+            />
+            Include removed
+          </label>
         </div>
 
         {searching ? (
           <SearchResults q={q} onOpen={setOpenIdentifier} />
         ) : (
-          <QueryState
-            query={query}
-            isEmpty={(d) => d.documents.length === 0}
-            empty={
-              <EmptyState
-                icon={<Share2 className="size-7" />}
-                title="Nothing shared yet"
-                description="No knowledge has been shared to the fleet yet."
-              />
-            }
-          >
-            {(data) => <GroupedDocuments documents={data.documents} onOpen={setOpenIdentifier} />}
-          </QueryState>
+          <div className="space-y-4">
+            <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+              <TabsList>
+                {TABS.map((t) => (
+                  <TabsTrigger key={t.value} value={t.value}>
+                    {t.label}
+                    {counts && (
+                      <span className="ml-1.5 tabular-nums text-muted-foreground">
+                        {counts[t.value === 'all' ? 'all' : t.value]}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <QueryState
+              query={query}
+              isEmpty={(d) => d.documents.length === 0}
+              empty={
+                <EmptyState
+                  icon={<Share2 className="size-7" />}
+                  title="Nothing shared yet"
+                  description="No knowledge of this kind has been shared to the fleet yet."
+                />
+              }
+            >
+              {(data) => <GroupedDocuments documents={data.documents} onOpen={setOpenIdentifier} />}
+            </QueryState>
+          </div>
         )}
       </div>
 
-      <DocumentSheet
-        identifier={openIdentifier}
-        onOpenChange={(open) => !open && setOpenIdentifier(null)}
-      />
+      <SharedDocumentSheet identifier={openIdentifier} onClose={() => setOpenIdentifier(null)} />
     </div>
   )
 }

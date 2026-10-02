@@ -1,4 +1,5 @@
 import { EmptyState, QueryState } from '@/components/states'
+import { CardShareActions } from '@/components/knowledge-share'
 import { useAgentProcedures } from '@/lib/queries'
 
 /** How-to cards promoted by repetition (U3): a repeated action-sequence becomes
@@ -63,6 +64,7 @@ export function ProcedureBrowser({ agentId }: { agentId: string }) {
                   {proc.classification}
                 </span>
               </div>
+              <CardShareActions agentId={agentId} kind="procedure" itemId={proc.slug} />
             </div>
           ))}
         </div>

@@ -1,4 +1,5 @@
 import { EmptyState, QueryState } from '@/components/states'
+import { CardShareActions } from '@/components/knowledge-share'
 import { useAgentInsights } from '@/lib/queries'
 import { fmtPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -75,6 +76,7 @@ export function InsightBrowser({ agentId }: { agentId: string }) {
                   {insight.classification}
                 </span>
               </div>
+              <CardShareActions agentId={agentId} kind="insight" itemId={insight.id} />
             </div>
           ))}
         </div>

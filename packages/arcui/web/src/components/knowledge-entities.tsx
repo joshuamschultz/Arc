@@ -6,6 +6,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { EmptyState, QueryState } from '@/components/states'
+import { CardShareActions } from '@/components/knowledge-share'
 import { useEntities, useEntityLinks } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { EntityRecord } from '@/lib/types'
@@ -138,6 +139,8 @@ function EntityDetail({
               </div>
             </div>
           </section>
+
+          <CardShareActions agentId={agentId} kind="entity" itemId={entity.slug} />
 
           {entity.tags.length > 0 && (
             <section className="space-y-2">
