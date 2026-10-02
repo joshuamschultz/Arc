@@ -37,6 +37,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import uuid
 from collections.abc import Iterator
@@ -416,17 +417,88 @@ async def claim_task() -> str:
         return json.dumps({"error": str(exc)})
 
 
+# The task table is shared and grows without bound. A model that lists it whole
+# overflows its own context on the next call, so every response is bounded three
+# ways: a row limit, a field projection, and a byte cap.
+DEFAULT_LIST_TASKS_LIMIT = 50
+MAX_LIST_TASKS_LIMIT = 200
+MAX_LIST_TASKS_BYTES = 32_768
+_MAX_LIST_FIELD_CHARS = 4_000
+_LIST_TASKS_DEFAULT_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "priority",
+    "owner_did",
+    "parent_id",
+    "blocked_by",
+    "attempts",
+    "last_error",
+    "updated_at",
+)
+
+
+def _project_task(task: Task, fields: tuple[str, ...]) -> dict[str, Any]:
+    """One task reduced to the requested fields, each value size-capped."""
+    row = task.model_dump(mode="json")
+    projected: dict[str, Any] = {}
+    for name in fields:
+        value = row.get(name)
+        if len(json.dumps(value, default=str)) > _MAX_LIST_FIELD_CHARS:
+            value = {
+                "truncated": True,
+                "preview": json.dumps(value, default=str)[:_MAX_LIST_FIELD_CHARS],
+            }
+        projected[name] = value
+    return projected
+
+
+def _bounded_listing(
+    tasks: list[Task], total: int, fields: tuple[str, ...], limit: int
+) -> dict[str, Any]:
+    """The listing envelope, shrunk row by row until it fits the byte cap."""
+    rows = [_project_task(task, fields) for task in tasks[:limit]]
+    listing: dict[str, Any] = {
+        "tasks": rows,
+        "returned": len(rows),
+        "total": total,
+        "truncated": len(rows) < total,
+    }
+    while rows and len(json.dumps(listing, default=str).encode()) > MAX_LIST_TASKS_BYTES:
+        rows.pop()
+        listing.update(returned=len(rows), truncated=True)
+    return listing
+
+
 @tool(
     name="list_tasks",
-    description="List tasks scoped to self or the whole team, optionally filtered by status",
+    description=(
+        "List tasks (newest first), scoped to self or the whole team, optionally filtered by "
+        "status or one task_id. Returns at most `limit` (default 50) tasks with a short "
+        "field set; pass `fields` (e.g. ['output']) to read more of a specific task. "
+        "The response is size-capped and says when it is truncated."
+    ),
     classification="read_only",
 )
-async def list_tasks(scope: str = "team", status: str | None = None) -> str:
+async def list_tasks(
+    scope: str = "team",
+    status: str | None = None,
+    limit: int = DEFAULT_LIST_TASKS_LIMIT,
+    fields: list[str] | None = None,
+    task_id: str | None = None,
+) -> str:
     st = await _state()
     owner_did = st.identity.did if scope == "self" else None
+    wanted = tuple(fields) if fields else _LIST_TASKS_DEFAULT_FIELDS
+    # ``id`` always travels so a row can be addressed again.
+    selected = wanted if "id" in wanted else ("id", *wanted)
+    bounded = max(1, min(int(limit), MAX_LIST_TASKS_LIMIT))
     try:
         tasks = await st.store.list(status=status, owner_did=owner_did)
-        return json.dumps([t.model_dump(mode="json") for t in tasks])
+        if task_id is not None:
+            tasks = [t for t in tasks if t.id == task_id]
+        tasks.sort(key=lambda t: t.updated_at or t.created_at or "", reverse=True)
+        return json.dumps(_bounded_listing(tasks, len(tasks), selected, bounded), default=str)
     except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
@@ -1058,6 +1130,18 @@ async def _settle_capped_run(
         )
 
 
+# Errors a retry cannot fix: the request itself is what the provider refuses.
+_NON_RETRYABLE_ERROR = re.compile(
+    r"prompt is too long|context[ _]length|context window|maximum context|too many tokens",
+    re.IGNORECASE,
+)
+
+
+def _is_non_retryable(error: str) -> bool:
+    """True for an HTTP 400 context overflow, which fails identically every time."""
+    return "HTTP 400" in error and _NON_RETRYABLE_ERROR.search(error) is not None
+
+
 async def _handle_attempt_failure(
     st: _runtime._State, task_id: str, self_did: str, error: str
 ) -> None:
@@ -1072,6 +1156,19 @@ async def _handle_attempt_failure(
     if current is None:
         return
     error = sanitize_text(error, max_length=500)
+    if _is_non_retryable(error):
+        # The same prompt overflows identically on every retry, so each retry
+        # would only burn a full model call to reach the same dead letter.
+        await st.store.dead_letter(
+            task_id,
+            actor_did=self_did,
+            resolution=f"failed on attempt {current.attempts} — error is not retryable",
+            last_error=error,
+        )
+        await _notify_operator(
+            st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
+        )
+        return
     if current.attempts >= current.max_attempts:
         await st.store.dead_letter(
             task_id,

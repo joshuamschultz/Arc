@@ -132,6 +132,45 @@ class TestRetryAndDeadLetter:
         assert task.resolution and "retries exhausted" in task.resolution
         assert task.completed_at is not None
 
+    async def test_context_overflow_dead_letters_first_attempt(self, state: Any) -> None:
+        """A prompt that is too long is too long on every retry: do not pay for three."""
+        from arcllm.exceptions import ArcLLMAPIError
+
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+        run = _FailingRun(
+            ArcLLMAPIError(
+                400, "prompt is too long: 1700000 tokens > 1000000 maximum", "anthropic"
+            )
+        )
+        st.agent_run_fn = run
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None
+        assert task.status == "failed"
+        assert task.attempts == 1
+        assert run.calls == 1
+        assert task.last_error and "prompt is too long" in task.last_error
+        assert task.resolution and "not retryable" in task.resolution
+
+    async def test_other_http_errors_are_still_retried(self, state: Any) -> None:
+        from arcllm.exceptions import ArcLLMAPIError
+
+        from arcagent.modules.tasks.capabilities import _dispatch_tick
+
+        st, identity = state
+        st.agent_run_fn = _FailingRun(ArcLLMAPIError(529, "overloaded", "anthropic"))
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+
+        await _dispatch_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None and task.status == "todo"
+
     async def test_timeout_is_a_failed_attempt(self, state: Any) -> None:
         from arcagent.modules.tasks.capabilities import _dispatch_tick
 
