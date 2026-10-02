@@ -163,6 +163,24 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # vendor SDK is confined to the removable Jev drop-in and its absence is a
     # typed ``classifier_unavailable``. Covers LLM02/LLM03/LLM09/LLM10 and
     # ASI02/ASI03/ASI04/ASI06/ASI07.
+    # Alpha-2 item 16: one durable decision per card. A demoted card is never
+    # re-sent or re-published (not by the classifier, not by hand, not after an
+    # edit, not after the tombstone is deleted); a forged/unsigned operator ledger
+    # row is never a decision; a tombstone signed by any key but the anchored
+    # operator, impersonating the operator DID, or replayed onto another document
+    # is not a demotion; a tombstone naming a file outside the retired set is never
+    # read; no contributor re-promotes into a demoted identifier; a second operator
+    # key cannot demote; forged provenance is dropped; the secret gate has no
+    # operator override; an operator share names a decider the browser cannot
+    # supply, is refused at federal and is audited. Revoked bytes are retired,
+    # never erased (AU-9/AU-11).
+    "shared knowledge demote, sticky decisions and operator share (alpha-2 item 16)": (
+        "packages/arcteam/tests/security/test_shared_knowledge_demote_abuse.py",
+        "packages/arcmemory/tests/promotion/test_ledger.py",
+        "packages/arcmemory/tests/promotion/test_sweep.py",
+        "packages/arcui/tests/integration/test_knowledge_shared_routes.py",
+        "packages/arcui/tests/test_memory_share_routes.py",
+    ),
     "memory promotion decision integrity and forged shared-knowledge ports": (
         "packages/arcteam/tests/test_promotion_audit_and_revoke.py",
         "packages/arcteam/tests/test_promotion_error_typing.py",
