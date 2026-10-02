@@ -154,6 +154,7 @@ class _MsgState:
         self.agent_run_fn: Any = None
         self.oneshot_fn = None
         self.telemetry = None
+        self.requires_signed_runs = False  # f4835435: _handle_incoming branches on it
         self.config = SimpleNamespace(
             entity_id="agent://listener",
             channel_route=False,

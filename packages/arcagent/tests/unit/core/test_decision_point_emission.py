@@ -24,7 +24,7 @@ from arcagent.core.module_bus import ModuleBus
 
 
 def _event(event_type: str, data: dict[str, Any]) -> SimpleNamespace:
-    return SimpleNamespace(type=event_type, data=data)
+    return SimpleNamespace(type=event_type, data=data, run_id="run-test")
 
 
 def test_turn_start_builds_a_pre_plan_decision_point() -> None:
