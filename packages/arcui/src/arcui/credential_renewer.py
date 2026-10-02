@@ -19,9 +19,11 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
+from typing import Any
 
 import arcagent
 from arctrust import causal
+from arctrust.audit import NullSink
 
 logger = logging.getLogger("arcui.credential_renewer")
 
@@ -58,6 +60,24 @@ async def migrate_at_startup(connections: arcagent.Connections) -> arcagent.Migr
             report.path,
         )
     return report
+
+
+def build_credential_connections(app: Any) -> ConnectionsFactory:
+    """Connections bound to this process's audit sink and shared arcstore backend."""
+    backend = getattr(app.state, "arcstore_backend", None)
+    worm = getattr(app.state, "audit_worm", None)
+    sink = worm.sink if worm is not None else NullSink()
+
+    async def open_backend() -> Any:
+        return backend
+
+    def factory() -> arcagent.Connections:
+        return arcagent.Connections.for_deployment(
+            audit=arcagent.AuditChain.held(sink),
+            state_opener=open_backend if backend is not None else None,
+        )
+
+    return factory
 
 
 class CredentialRenewer:
@@ -113,5 +133,6 @@ __all__ = [
     "RENEWER_DID",
     "CredentialMigrationRefusedError",
     "CredentialRenewer",
+    "build_credential_connections",
     "migrate_at_startup",
 ]
