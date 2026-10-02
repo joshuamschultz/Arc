@@ -95,6 +95,7 @@ from arcagent.modules.tasks.node_execution import (
     run_workspace,
     validate_output,
 )
+from arcagent.modules.tasks.stub_output import UnsatisfiableSchema, stub_from_schema
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.json_args import as_optional_object
 from arcagent.utils.moment import moment_cues
@@ -927,19 +928,58 @@ async def _complete_stubbed_node(
     output: dict[str, Any],
     self_did: str,
 ) -> None:
-    """Finish a test-run node with a recorded echo instead of its real effect.
+    """Finish a test-run node with a stand-in instead of its real effect.
 
-    Exactly once per attempt, like the real thing, and deliberately NOT held to
-    the node's output schema: the echo says what would have run, it is not what
-    the node would have produced.
+    Exactly once per attempt, like the real thing. A node with an output_schema
+    gets a stub GENERATED from it and held to the same completion gate a real
+    output passes, so a draft that passes in test mode cannot fail live on
+    schema alone. Without a schema the stub is the recorded echo of the call.
+    A schema the generator cannot satisfy fails the test run, naming the path.
     """
+    stub_or_reason = _stub_for_node(st, task, node, output)
+    if isinstance(stub_or_reason, str):
+        await _refuse_stub(st, task, stub_or_reason, self_did)
+        return
     await _complete_node_attempt(
         st,
         task,
         attempt_key=_node_attempt_key(task, node),
-        output=output,
+        output=stub_or_reason,
         resolution="stubbed in test run",
         self_did=self_did,
+    )
+
+
+def _stub_for_node(
+    st: _runtime._State, task: Task, node: WorkflowNode, echo: dict[str, Any]
+) -> dict[str, Any] | str:
+    """The node's stub output, or the reason it cannot have one."""
+    schema = resolve_schema(node, _bundle_root(st, node))
+    if isinstance(schema, str):
+        return f"test stub cannot satisfy output_schema: {schema}"
+    output = echo
+    if schema is not None:
+        try:
+            generated = stub_from_schema(schema)
+        except UnsatisfiableSchema as exc:
+            return f"test stub cannot satisfy output_schema: {exc.path} ({exc})"
+        output = generated if isinstance(generated, dict) else {"result": generated}
+    # Artifacts are side effects a stub never produces; the schema gate is the point.
+    refusal = _node_completion_refusal(st, task, output, check_artifacts=False)
+    if refusal is not None:
+        return f"test stub cannot satisfy output_schema: {refusal}"
+    return output
+
+
+async def _refuse_stub(st: _runtime._State, task: Task, reason: str, self_did: str) -> None:
+    """Fail the test run at this node: the same stub would fail every attempt."""
+    _logger.warning("Workflow test stub for %s refused: %s", task.id, reason)
+    await st.store.dead_letter(
+        task.id,
+        actor_did=self_did,
+        resolution="test stub cannot satisfy output_schema",
+        last_error=reason,
+        expected_attempts=task.attempts,
     )
 
 
