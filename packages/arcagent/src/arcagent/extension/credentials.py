@@ -28,10 +28,11 @@ Three things together prevent it, and all three are needed:
 
 Failure classification is the other half (REQ-289). ``invalid_grant`` and the
 consent codes mean a human must act, so retrying is not merely useless — it
-burns the connection further. Those stop immediately, mark the connection, and
-escalate through the operator approval path, which is signed and pinned to an
-operator identity. They never go through agent chat, where an approval is just
-text a model can be talked into producing (ASI09).
+burns the connection further. Those stop immediately and are reported to the
+connection health authority, which marks the connection and sends the operator
+one notice per outage over the operator channel. They never go through agent
+chat, where an approval is just text a model can be talked into producing
+(ASI09).
 
 This component holds no credential state of its own: values live in
 :mod:`arcagent.extension.secrets` and metadata in the connection state store.
@@ -40,7 +41,6 @@ This component holds no credential state of its own: values live in
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -49,10 +49,8 @@ from typing import Protocol
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.errors import ExtensionError
+from arcagent.extension.connection_health import HealthReporter, HealthSignal, classify
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
-from arcagent.extension.state import ConnectionHealth
-
-_logger = logging.getLogger("arcagent.extension.credentials")
 
 #: OAuth error codes that mean a human must re-consent. Retrying one of these is
 #: not just futile — it consumes attempts against a connection that is already
@@ -163,18 +161,6 @@ class CredentialMetadataStore(Protocol):
         actor_did: str,
     ) -> bool: ...
 
-    async def set_health(
-        self, connection: str, health: ConnectionHealth, *, actor_did: str
-    ) -> bool: ...
-
-
-class OperatorEscalation(Protocol):
-    """The operator approval path. Deliberately not a chat surface (ASI09)."""
-
-    async def request_operator_attention(
-        self, *, connection: str, reason: str, detail: str
-    ) -> None: ...
-
 
 RenewFn = Callable[[Secret], Awaitable[RenewedCredential]]
 Clock = Callable[[], datetime]
@@ -189,15 +175,15 @@ def _utcnow() -> datetime:
 class CredentialLifecycle:
     """Proactive, single-writer credential renewal for connected accounts.
 
-    ``escalation`` has no default on purpose: a lifecycle wired without an
-    operator path would discover terminal failures and have nowhere to report
-    them, which is exactly the silent-failure shape this component exists to
-    remove.
+    ``health`` has no default on purpose: a lifecycle wired without a health path
+    would discover terminal failures and have nowhere to report them, which is
+    exactly the silent-failure shape this component exists to remove. The
+    operator is told by the health authority, once per outage, not from here.
     """
 
     secrets: SecretStore
     state: CredentialMetadataStore
-    escalation: OperatorEscalation
+    health: HealthReporter
     sink: AuditSink | None = None
     clock: Clock = _utcnow
     sleep: Sleep = asyncio.sleep
@@ -250,7 +236,7 @@ class CredentialLifecycle:
                     self._audit("credential.renew", account, caller_did, "deny", exc.error_code)
                     raise
                 if attempt == _MAX_ATTEMPTS - 1:
-                    await self._mark(account, "degraded", caller_did)
+                    await self._report_unavailable(account, exc.message)
                     self._audit("credential.renew", account, caller_did, "error", exc.error_code)
                     raise
                 await self.sleep(min(_BASE_BACKOFF_SECONDS * 2**attempt, _MAX_BACKOFF_SECONDS))
@@ -286,28 +272,28 @@ class CredentialLifecycle:
         self._audit("credential.renew", account, caller_did, "allow", None)
 
     async def _needs_attention(self, account: ConnectedAccount, reason: str, detail: str) -> None:
-        """Mark the connection and ask the operator — never the agent's chat."""
-        await self._mark(account, "needs_attention", ESCALATION_DID)
-        await self.escalation.request_operator_attention(
-            connection=account.connection, reason=reason, detail=detail
-        )
+        """Tell the health authority this connection needs a person.
 
-    async def _mark(
-        self, account: ConnectedAccount, health: ConnectionHealth, actor_did: str
-    ) -> None:
-        """Set a connection's health, and say so when the mark landed nowhere.
-
-        Never raises: both callers are already reporting the failure that caused
-        the mark, and replacing that report with a bookkeeping error would lose
-        the reason the operator actually needs. Silence is what is unacceptable —
-        a dashboard showing ``healthy`` for a connection nothing can renew.
+        The authority owns the record and the one operator notice per outage; the
+        lifecycle only reports what it found. Never the agent's chat.
         """
-        if not await self.state.set_health(account.connection, health, actor_did=actor_did):
-            _logger.error(
-                "connection %s has no state record; its health could not be marked %s",
-                account.key,
-                health,
-            )
+        await self._report(account, reason, detail)
+
+    async def _report_unavailable(self, account: ConnectedAccount, detail: str) -> None:
+        """Renewal kept failing for a reason a person cannot fix: counted, not terminal."""
+        await self._report(account, "provider_unavailable", detail)
+
+    async def _report(self, account: ConnectedAccount, code: str, detail: str) -> None:
+        await self.health.report(
+            account.connection,
+            HealthSignal(
+                ok=False,
+                source="credential",
+                checked_by=ESCALATION_DID,
+                reason_code=classify(code, detail),
+                detail=detail,
+            ),
+        )
 
     async def _expiry(self, account: ConnectedAccount) -> datetime | None:
         record = await self.state.get(account.connection)
@@ -369,7 +355,6 @@ __all__ = [
     "CredentialLifecycle",
     "CredentialMetadataStore",
     "CredentialRenewalError",
-    "OperatorEscalation",
     "RenewFn",
     "RenewedCredential",
 ]

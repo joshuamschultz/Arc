@@ -40,16 +40,18 @@ and is why nothing here has a sink to close.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import arcagent
+from arctrust import causal
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit, operator_audit_sink
+from arcui.connection_view import CardContext, connect_kind, load_card_context, probe_view
 from arcui.routes.agent_detail._common import _agent_did, _agent_root
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
@@ -201,33 +203,47 @@ def _refused(exc: ExtensionError) -> JSONResponse:
 def _row(
     instance: str,
     connection: Connection,
-    labels: Mapping[str, str] | None = None,
-    knowledge: Mapping[str, tuple[str, str]] | None = None,
+    entry: CatalogEntry | None = None,
+    *,
+    card: CardContext | None = None,
 ) -> ConnectorInstance:
-    """One listing row, carrying the grant list that decides who may use it."""
-    mode, reason = (knowledge or {}).get(connection.extension, ("", ""))
+    """One listing row: the grant list that decides who may use it, plus its health.
+
+    ``entry`` is the bundle's catalog entry (``None`` for a bundle that has since
+    left the search path, which falls back to the coordinate rather than a blank).
+    ``card`` carries the stored health records and sync rows; without it the row
+    reads "unknown", which is the honest answer when nothing was read.
+    """
+    usable = entry if entry is not None and not entry.error else None
+    label = usable.display_name or usable.name if usable is not None else connection.extension
+    health = card.fields(instance, provider=label) if card is not None else {}
     return ConnectorInstance(
         instance=instance,
         extension=connection.extension,
-        extension_display_name=(labels or {}).get(connection.extension, connection.extension),
-        knowledge_mode=mode,
-        knowledge_reason=reason,
+        extension_display_name=label,
+        knowledge_mode=usable.knowledge_mode if usable is not None else "",
+        knowledge_reason=usable.knowledge_reason if usable is not None else "",
         approval=connection.approval,
         agents=list(connection.agents),
+        connect_kind=connect_kind(usable),
+        **health,
     )
 
 
 def _agent_row(
     instance: str,
     connection: Connection,
-    labels: Mapping[str, str] | None,
-    knowledge: Mapping[str, tuple[str, str]] | None,
+    entry: CatalogEntry | None,
     *,
-    needs_attention: bool,
+    card: CardContext,
 ) -> AgentConnectorInstance:
-    """A per-agent listing row: the shared row plus this agent's sync health."""
-    base = _row(instance, connection, labels, knowledge)
-    return AgentConnectorInstance(**base.model_dump(), needs_attention=needs_attention)
+    """A per-agent listing row: the shared row, and whether it waits on a person.
+
+    ``needs_attention`` is the connection's own health record saying ``needs_you``,
+    the same fact the card's chip shows, so the two panels cannot disagree.
+    """
+    base = _row(instance, connection, entry, card=card)
+    return AgentConnectorInstance(**base.model_dump(), needs_attention=base.status == "needs_you")
 
 
 def _embedded_agent(request: Request, agent_id: str) -> Any:
@@ -241,27 +257,6 @@ def _embedded_agent(request: Request, agent_id: str) -> Any:
     return cache.get(did) if cache is not None and did is not None else None
 
 
-async def _needs_attention_ids(request: Request, agent_id: str) -> set[str]:
-    """Connection ids this agent's connected-data sync has backed off (COMP-008).
-
-    Read from the agent's connected-data capability service. A deployment
-    without that optional module, or an agent that is not embedded, has no
-    backed-off sources — every connection reads healthy, never as an error.
-    """
-    registry = getattr(_embedded_agent(request, agent_id), "_capability_registry", None)
-    if registry is None:
-        return set()
-    entry = await registry.get_capability("connected_data")
-    service = getattr(getattr(entry, "instance", None), "service", None)
-    if service is None:
-        return set()
-    return {
-        str(getattr(status, "connection_id", "") or "")
-        for status in await service.list_sources()
-        if str(getattr(status, "status", "")) == "needs_attention"
-    }
-
-
 def _mcp_door_enabled(request: Request, agent_id: str) -> bool:
     """True when this agent enables ``[modules.mcp_server]`` (SPEC-082 COMP-008).
 
@@ -273,36 +268,26 @@ def _mcp_door_enabled(request: Request, agent_id: str) -> bool:
     return bool(getattr(modules.get("mcp_server"), "enabled", False))
 
 
-def _labels(connections: Connections) -> dict[str, str]:
-    """Extension name to the name a person reads, read from the bundles themselves.
+def _catalog_entries(connections: Connections) -> dict[str, CatalogEntry]:
+    """Extension name to its catalog entry, read from the bundles themselves.
 
     A listing row names an extension the operator connected, and the only place
-    that bundle's own spelling of itself lives is its manifest. A bundle that has
-    since been removed from the search path simply has no entry, and ``_row``
-    falls back to the coordinate rather than rendering a blank.
+    that bundle's own spelling of itself (and its declared knowledge mode and sign-in
+    shape) lives is its manifest. A bundle removed from the search path has no
+    entry, and ``_row`` falls back to the coordinate rather than a blank.
     """
     try:
-        return {
-            entry.name: entry.display_name or entry.name
-            for entry in connections.catalog()
-            if not entry.error
-        }
+        return {entry.name: entry for entry in connections.catalog() if not entry.error}
     except ExtensionError:
         # A listing must not fail because a bundle directory is unreadable; the
         # coordinate is a correct, if plainer, answer.
         return {}
 
 
-def _knowledge_metadata(connections: Connections) -> dict[str, tuple[str, str]]:
-    """Return manifest-declared Knowledge mode and reason by extension coordinate."""
-    try:
-        return {
-            entry.name: (entry.knowledge_mode, entry.knowledge_reason)
-            for entry in connections.catalog()
-            if not entry.error
-        }
-    except ExtensionError:
-        return {}
+def _display_name(connections: Connections, extension: str) -> str:
+    """What to call ``extension`` in front of a person, falling back to its coordinate."""
+    entry = _catalog_entries(connections).get(extension)
+    return (entry.display_name or entry.name) if entry is not None else extension
 
 
 def _tools(specs: Sequence[ToolSpec]) -> list[ConnectorTool]:
@@ -497,15 +482,18 @@ async def get_connections(request: Request) -> JSONResponse:
     try:
         connections = _connections(request)
         defined = connections.connections()
-        labels = _labels(connections)
-        knowledge = _knowledge_metadata(connections)
+        entries = _catalog_entries(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
+    # One read of the health records and one of each connection's sync rows. No
+    # credential is read and nothing is spawned: a page view is a database read.
+    card = await load_card_context(request, sorted(defined))
     return JSONResponse(
         ConnectionsResponse(
             connections=[
-                _row(name, cfg, labels, knowledge) for name, cfg in sorted(defined.items())
+                _row(name, cfg, entries.get(cfg.extension), card=card)
+                for name, cfg in sorted(defined.items())
             ],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
         ).model_dump(mode="json")
@@ -527,16 +515,15 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
     try:
         connections = _connections(request)
         granted = connections.registry.granted_to(agent_dir.name)
-        labels = _labels(connections)
-        knowledge = _knowledge_metadata(connections)
+        entries = _catalog_entries(connections)
     except ExtensionError as exc:
         return _refused(exc)
 
-    attention = await _needs_attention_ids(request, agent_id)
+    card = await load_card_context(request, sorted(granted))
     return JSONResponse(
         AgentConnectorsResponse(
             instances=[
-                _agent_row(name, cfg, labels, knowledge, needs_attention=name in attention)
+                _agent_row(name, cfg, entries.get(cfg.extension), card=card)
                 for name, cfg in sorted(granted.items())
             ],
             extensions_roots=[str(root) for root in connections.world.extension_roots],
@@ -733,11 +720,12 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
     if connection is None:
         return _error("connector grant did not produce a connection", 500)
     current = _connections(request)
+    card = await load_card_context(request, [instance])
     body = _row(
         instance,
         connection,
-        _labels(current),
-        _knowledge_metadata(current),
+        _catalog_entries(current).get(connection.extension),
+        card=card,
     ).model_dump(mode="json")
     body["activations"] = _activation_payload(mutation.activations)
     return JSONResponse(body)
@@ -766,9 +754,7 @@ async def get_connector_auth(request: Request) -> JSONResponse:
         ConnectorAuthorizationResponse(
             instance=auth.instance,
             extension=auth.extension,
-            extension_display_name=_labels(_connections(request)).get(
-                auth.extension, auth.extension
-            ),
+            extension_display_name=_display_name(_connections(request), auth.extension),
             credentials=[
                 # ``value`` is whatever the seam resolved, which is the empty string
                 # for every sensitive field — this route neither decides that nor can
@@ -842,27 +828,56 @@ async def put_connector_auth(request: Request) -> JSONResponse:
 
 
 async def post_connector_probe(request: Request) -> JSONResponse:
-    """POST /api/connections/{instance}/probe — is it live right now?
+    """POST /api/connections/{instance}/probe — check it now, and record what was found.
 
-    Operator only: probing opens an outbound connection to the external system.
+    Operator only: a check opens an outbound connection to the external system. It
+    is the same check the probe loop runs, so the answer is the connection's health
+    record rather than a throwaway verdict: the card, the CLI and the next notice all
+    agree with what this returned.
     """
     if not _is_operator(request):
         return _error("Operator role required", 403)
 
     instance = request.path_params["instance"]
+    connections = _connections(request)
     try:
-        result = await _connections(request).probe(instance)
+        record = await connections.check_health(
+            instance, checked_by=causal.actor_did(), source="operator"
+        )
+        tools = await _served_tools(connections, instance, record)
     except ExtensionError as exc:
         return _refused(exc)
     except Exception:  # reason: an unbuildable attachment must not 500 with detail
         logger.exception("connectors: probe failed for %s", instance)
         return _error("probe failed; see the server log", 500)
 
+    provider = _display_name(connections, connections.registry.get(instance).extension)
+    health = probe_view(record, provider=provider)
     return JSONResponse(
         ConnectorProbeResponse(
-            reachable=result.reachable, detail=result.detail, tools=_tools(result.tools)
+            **health.model_dump(),
+            reachable=record.status == "healthy",
+            detail=record.reason_text or "",
+            tools=tools,
         ).model_dump(mode="json")
     )
+
+
+async def _served_tools(
+    connections: Connections, instance: str, record: arcagent.ConnectionRecord
+) -> list[ConnectorTool]:
+    """The verbs a healthy connection serves right now; nothing for one that is not.
+
+    The doctor panel lists them beside the verdict. A connection that just failed
+    its check has no honest tool list, and asking it again would only repeat the call
+    that failed.
+    """
+    if record.status != "healthy":
+        return []
+    try:
+        return _tools(await connections.tools(instance))
+    except ExtensionError:
+        return []
 
 
 def _auth_status(auth: Authorization) -> JSONResponse:

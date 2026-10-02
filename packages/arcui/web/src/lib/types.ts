@@ -1163,6 +1163,40 @@ export interface ConnectorInstance {
   knowledge_reason: string
   approval: string
   agents: string[]
+  status: ConnectionStatus
+  /** `syncing` is derived server side from live sync leases. */
+  display_status: ConnectionDisplayStatus
+  reason_code: string | null
+  reason_text: string | null
+  action: ConnectionAction
+  action_label: string
+  last_checked_at: string | null
+  last_success_at: string | null
+  last_notice: ConnectionNotice | null
+  connect_kind: ConnectionConnectKind
+  knowledge_sync: ConnectionKnowledgeSync[]
+}
+
+export type ConnectionStatus = 'unknown' | 'healthy' | 'needs_you' | 'error'
+export type ConnectionDisplayStatus = ConnectionStatus | 'syncing'
+export type ConnectionAction = 'none' | 'reconnect' | 'approve' | 'install_host' | 'wait'
+export type ConnectionConnectKind = 'oauth' | 'token' | 'host_login' | 'remote_login' | 'none'
+
+export interface ConnectionNotice {
+  kind: 'needs_you' | 'error' | 'recovered'
+  delivered: boolean
+  channel: string
+  at: string
+}
+
+export interface ConnectionKnowledgeSync {
+  agent: string
+  source_id: string
+  state: string
+  running: boolean
+  last_synced_at: string | null
+  pages: number
+  error_code: string | null
 }
 
 export interface ConnectorActivation {
@@ -1258,6 +1292,14 @@ export interface ConnectorProbeResponse {
   reachable: boolean
   detail: string
   tools: ConnectorTool[]
+  status: ConnectionStatus
+  display_status: ConnectionDisplayStatus
+  reason_code: string | null
+  reason_text: string | null
+  action: ConnectionAction
+  action_label: string
+  last_checked_at: string | null
+  last_success_at: string | null
 }
 
 /** One row of `arc connector doctor`. `status` is the CLI's vocabulary. */

@@ -69,7 +69,8 @@ from arcagent.extension.approval import ApprovalBinding
 from arcagent.extension.attachment import ExtensionAttachment, ToolSpec
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.catalog import resolve_extension_roots
-from arcagent.extension.contract_ledger import ToolContractLedger
+from arcagent.extension.connection_health import ConnectionHealthAuthority, HealthSignal
+from arcagent.extension.contract_ledger import LEDGER_DID, ContractVerdict, ToolContractLedger
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
@@ -697,11 +698,34 @@ async def _servable_tools(
     # contract belongs to the account, so an operator's re-approval clears the
     # suspension for every agent granted it rather than for one of them.
     ledger = ToolContractLedger(ctx.store, connection=instance, sink=ctx.sink)
-    # The ledger's own filter, not a second one written here. Connecting approves
+    # The ledger's own verdicts, not a second filter written here. Connecting approves
     # the contract the connection served at install, so an unapproved verb at
     # startup is one the upstream added afterwards — the rug-pull's other half,
     # and no more callable than a description that changed underneath.
-    return await ledger.callable_tools(specs)
+    verdicts = await ledger.review(specs)
+    suspended = sum(1 for verdict in verdicts.values() if verdict is ContractVerdict.SUSPENDED)
+    if suspended:
+        await _report_contract_changed(ctx, instance, suspended)
+    return [spec for spec in specs if verdicts[spec.name] is ContractVerdict.UNCHANGED]
+
+
+async def _report_contract_changed(ctx: _AttachContext, instance: str, count: int) -> None:
+    """Tell the health authority tools were suspended, so the card asks for approval.
+
+    Sticky on the record: the credential working again does not make a changed
+    contract safe, only an operator's approval does.
+    """
+    signal = HealthSignal(
+        ok=False,
+        source="contract",
+        checked_by=LEDGER_DID,
+        reason_code="contract_changed",
+        detail=str(count),
+    )
+    try:
+        await ConnectionHealthAuthority(ctx.store, sink=ctx.sink).record(instance, signal)
+    except Exception:  # reason: bookkeeping must never stop the unchanged tools being served
+        _logger.warning("connectors: could not record contract change for %s", instance)
 
 
 def _annotated(specs: list[ToolSpec], policy: ToolPolicy) -> list[ToolSpec]:

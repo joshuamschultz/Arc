@@ -264,7 +264,7 @@ async def test_installing_creates_the_connection_record(world: _World) -> None:
     record = await (await world.state()).get(_INSTANCE)
 
     assert record is not None, "install reported success and registered no connection"
-    assert record.health == "healthy"
+    assert record.status == "healthy", "Connections.install ends with an operator check"
 
 
 async def test_connecting_records_the_served_contract_as_approved(world: _World) -> None:

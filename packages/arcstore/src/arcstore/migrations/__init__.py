@@ -5,7 +5,7 @@ from __future__ import annotations
 from importlib.resources import files
 from typing import Any
 
-SCHEMA_HEAD = 12
+SCHEMA_HEAD = 13
 
 
 async def migrate(connection: Any) -> None:

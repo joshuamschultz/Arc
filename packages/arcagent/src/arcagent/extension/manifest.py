@@ -446,6 +446,48 @@ class OAuthFlow(_ManifestModel):
     authorize_params: dict[str, str] = Field(default_factory=dict)
 
 
+class HealthProbe(_ManifestModel):
+    """``[health]`` — the cheapest real authenticated call that proves this account works.
+
+    ``probe`` is ``"attachment"`` (the attachment's own ``probe()``),
+    ``"host_verify"`` (the bundle's host sign-in check) or ``"tool:<name>"`` (one
+    read-only tool, called with ``args``). A bundle whose attachment is a bare CLI
+    cannot use ``"attachment"``: a CLI attachment's probe is ``--version``, which
+    proves a binary exists and nothing about the account.
+
+    ``mode = "none"`` is for a bundle with nothing to check; it must say why, so
+    "no check" is a decision a reviewer can read rather than a blank.
+    """
+
+    probe: str = Field(min_length=1)
+    args: dict[str, str] = Field(default_factory=dict)
+    mode: Literal["probe", "none"] = "probe"
+    reason: str = ""
+
+    @property
+    def tool(self) -> str | None:
+        """The tool name when this is a ``tool:<name>`` probe."""
+        return self.probe[len(_TOOL_PROBE) :] if self.probe.startswith(_TOOL_PROBE) else None
+
+    @model_validator(mode="after")
+    def _probe_is_a_known_shape(self) -> HealthProbe:
+        if self.mode == "none":
+            if not self.reason.strip():
+                raise ValueError('[health] mode = "none" needs a reason')
+            return self
+        if self.probe not in ("attachment", "host_verify") and not self.tool:
+            raise ValueError(
+                f'[health].probe = {self.probe!r} must be "attachment", "host_verify" '
+                f'or "tool:<name>"'
+            )
+        if self.args and self.tool is None:
+            raise ValueError("[health].args only apply to a tool:<name> probe")
+        return self
+
+
+_TOOL_PROBE = "tool:"
+
+
 class DeclaredTool(_ManifestModel):
     """``[[tools.declared]]`` — one tool's classification and trifecta capability tags."""
 
@@ -584,6 +626,7 @@ class ExtensionManifest(_ManifestModel):
     host_requires: list[HostRequirement] = Field(default_factory=list)
     secrets: list[SecretRequirement] = Field(default_factory=list)
     oauth: OAuthFlow | None = None
+    health: HealthProbe | None = None
     requires: list[str] = Field(default_factory=list)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
@@ -651,6 +694,38 @@ class ExtensionManifest(_ManifestModel):
                 if isinstance(argument, dict) and isinstance(argument.get("name"), str):
                     found.append((str(command.get("tool", "a command")), argument["name"]))
         return found
+
+    @model_validator(mode="after")
+    def _health_probe_is_runnable(self) -> ExtensionManifest:
+        """A probe must name something this bundle can actually run.
+
+        Checked at parse so a bundle whose probe cannot work is refused where its
+        author can see it, rather than reporting "unknown" forever on a card.
+        """
+        health = self.health
+        if health is None or health.mode == "none":
+            return self
+        if health.probe == "attachment" and self.extension.attachment == "cli":
+            raise ValueError(
+                '[health].probe = "attachment" proves nothing for a cli bundle (its probe is '
+                '--version); use "host_verify" or "tool:<name>"'
+            )
+        if health.probe == "host_verify" and not any(
+            required.verify_command for required in self.host_requires
+        ):
+            raise ValueError(
+                '[health].probe = "host_verify" needs a [[host_requires]] verify_command'
+            )
+        tool = health.tool
+        if tool is not None:
+            declared = {item.name: item for item in self.tools.declared}
+            if self.tools.allow is None or tool not in self.tools.allow:
+                raise ValueError(
+                    f"[health].probe names {tool!r}, which [tools].allow does not list"
+                )
+            if tool not in declared or declared[tool].classification != "read_only":
+                raise ValueError(f"[health].probe tool {tool!r} must be declared read_only")
+        return self
 
     @model_validator(mode="after")
     def _oauth_names_declared_secrets(self) -> ExtensionManifest:

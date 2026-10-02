@@ -1134,7 +1134,7 @@
       {
         "key": "connection.check",
         "label": "Connection check",
-        "description": "Use Doctor for diagnostics or Probe to check live reachability. Use Approve after an update changes the connector’s tools: until then, changed tools stay switched off for this connection."
+        "description": "Each connection shows one status. Healthy means the last check passed. Needs you means a person must act, such as sign in again. Syncing means knowledge is loading now. Error means the last check failed. Not checked yet means no check has run. The status is checked automatically every few minutes. Choose Check now under Advanced to check right away. Opening this page never contacts the provider. Use Doctor for diagnostics. Use Approve tools after an update changes the connector’s tools: until then, changed tools stay switched off."
       }
     ],
     "troubleshooting": [

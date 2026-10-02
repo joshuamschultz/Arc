@@ -70,6 +70,11 @@ client_secret_secret = "app_secret"
 refresh_token_secret = "refresh_token"
 authorize_params = { token_access_type = "offline" }
 
+# The cheapest real authenticated call: what the health probe loop runs.
+# Reads the current account with the saved token.
+[health]
+probe = "attachment"
+
 [tools]
 allow = [
   "dropbox_list",

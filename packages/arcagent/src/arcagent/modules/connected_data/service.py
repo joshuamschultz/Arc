@@ -23,6 +23,11 @@ from arcagent.connected_data import (
     SyncStatePort,
     SyncStatus,
 )
+from arcagent.extension.connection_health import (
+    HealthReporter,
+    HealthSignal,
+    classify,
+)
 from arcagent.extension.credentials import (
     ConnectedAccount,
     CredentialLifecycle,
@@ -38,7 +43,7 @@ from arcagent.extension.source import (
     SourceResource,
 )
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
-from arcagent.extension.state import ConnectionHealth
+from arcagent.extension.state import ConnectionStatus
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
 from arcagent.modules.connected_data.health import (
     REPEATED_FAILURES,
@@ -51,12 +56,6 @@ _logger = logging.getLogger("arcagent.modules.connected_data.service")
 _CATALOG_RETRY_MAX_SECONDS = 30.0
 
 IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
-
-#: Called once when a connection needs a human — connection id + reason. The
-#: health tracker guarantees it fires exactly once per outage. Returns whether the
-#: notice reached a channel, so the audit trail can say "undeliverable" rather than
-#: pretending an operator was told.
-OperatorNotifier = Callable[[str, str], Awaitable[bool]]
 
 #: How long the short-lived lease that stamps a terminal status may be held.
 _TERMINAL_LEASE_SECONDS = 30.0
@@ -98,19 +97,19 @@ class _NullCredentialState:
     ) -> bool:
         return False
 
-    async def set_health(
-        self, connection: str, health: ConnectionHealth, *, actor_did: str
-    ) -> bool:
-        return False
 
+class _NullHealthReporter:
+    """The health path when no arcstore is wired: reports vanish, statuses are unknown.
 
-class _NullEscalation:
-    """The operator path when none is wired — a no-op, never the agent's chat."""
+    A standalone agent keeps its local backoff; it just has no shared record to
+    write to, which a caller reads as "unknown", not "healthy".
+    """
 
-    async def request_operator_attention(
-        self, *, connection: str, reason: str, detail: str
-    ) -> None:
+    async def report(self, connection: str, signal: HealthSignal) -> None:
         return None
+
+    async def statuses(self) -> dict[str, ConnectionStatus]:
+        return {}
 
 
 async def _unsupported_renew(secret: Secret) -> RenewedCredential:
@@ -121,12 +120,12 @@ async def _unsupported_renew(secret: Secret) -> RenewedCredential:
     )
 
 
-def _default_credential_lifecycle() -> CredentialLifecycle:
+def _default_credential_lifecycle(health: HealthReporter) -> CredentialLifecycle:
     """A structurally-complete, inert lifecycle (null default for the seam)."""
     return CredentialLifecycle(
         secrets=SecretStore(_NullSecretBackend()),
         state=_NullCredentialState(),
-        escalation=_NullEscalation(),
+        health=health,
     )
 
 
@@ -255,7 +254,7 @@ class ConnectedDataService:
         interval_seconds: float = 3600.0,
         credentials: CredentialLifecycle | None = None,
         credential_renew: RenewFn | None = None,
-        operator_notifier: OperatorNotifier | None = None,
+        health: HealthReporter | None = None,
         restart_backoff_seconds: float = 30.0,
         restart_backoff_max_seconds: float = 1800.0,
         stall_grace_seconds: float = 120.0,
@@ -288,9 +287,9 @@ class ConnectedDataService:
         # Proactive credential renewal (COMP-007) and terminal-failure health
         # (COMP-008). The lifecycle defaults to an inert null so the seam is
         # always present; a real credential plane is handed in by the runtime.
-        self._credentials = credentials or _default_credential_lifecycle()
+        self._reporter: HealthReporter = health or _NullHealthReporter()
+        self._credentials = credentials or _default_credential_lifecycle(self._reporter)
         self._credential_renew = credential_renew or _unsupported_renew
-        self._operator_notifier = operator_notifier
         # A credential that died is rechecked slowly rather than never: it can come
         # back without any act inside Arc (a host binary re-signed in its own
         # keyring), and a latch nothing clears is a source that never syncs again.
@@ -683,7 +682,7 @@ class ConnectedDataService:
                 await asyncio.sleep(min(max(self._interval, 0.1), _CATALOG_RETRY_MAX_SECONDS))
                 continue
             try:
-                self._schedule_due(registrations)
+                self._schedule_due(registrations, await self._reporter.statuses())
             except Exception as exc:  # reason: the monitor must outlive one bad tick
                 _logger.exception("connected-data monitor tick failed")
                 await self._emit("connected_data.sync.monitor_failed", {"error": _name(exc)})
@@ -695,7 +694,11 @@ class ConnectedDataService:
                 pass
             self._wake.clear()
 
-    def _schedule_due(self, registrations: tuple[SourceRegistration, ...]) -> None:
+    def _schedule_due(
+        self,
+        registrations: tuple[SourceRegistration, ...],
+        statuses: dict[str, ConnectionStatus],
+    ) -> None:
         for registration in registrations:
             connection_id = registration.connection_id
             if connection_id in self._paused or not self._timing.is_due(connection_id):
@@ -714,10 +717,22 @@ class ConnectedDataService:
                 self._start_inspection(registration)
                 continue
             # A source that needs a human is backed off: re-running it every
-            # tick just hammers a dead credential and floods the audit log.
+            # tick just hammers a dead credential and floods the audit log. The
+            # backoff ends the moment the shared record stops saying "needs you":
+            # the operator reconnected, and waiting out the recheck window would
+            # leave a working account unsynced for up to an hour.
             if self._health.is_backed_off(connection_id):
-                continue
+                if self._reconnected(connection_id, statuses):
+                    self._health.clear(connection_id)
+                else:
+                    continue
             self._schedule(registration)
+
+    @staticmethod
+    def _reconnected(connection_id: str, statuses: dict[str, ConnectionStatus]) -> bool:
+        """True when the shared record says this connection no longer waits on a person."""
+        status = statuses.get(_instance_of(connection_id))
+        return status is not None and status != "needs_you"
 
     def _schedule(self, registration: SourceRegistration) -> None:
         connection_id = registration.connection_id
@@ -785,6 +800,9 @@ class ConnectedDataService:
                 "failures": failures,
                 "retry_in_seconds": round(delay, 3),
             },
+        )
+        await self._report(
+            connection_id, ok=False, code=detail, text="" if exc is None else str(exc)
         )
         if failures >= self._failure_ceiling:
             await self._mark_needs_attention(connection_id, REPEATED_FAILURES)
@@ -935,6 +953,10 @@ class ConnectedDataService:
         )
         # A run that completed clears any prior needs-attention backoff.
         self._health.clear(connection_id)
+        if result.status is SyncStatus.COMPLETE:
+            await self._report(connection_id, ok=True)
+        elif result.status is SyncStatus.FAILED:
+            await self._report(connection_id, ok=False, code=result.error_code)
         return result.status is SyncStatus.COMPLETE and coordinator.stopped_at_ceiling
 
     async def _inspect_registration(self, registration: SourceRegistration) -> None:
@@ -1134,8 +1156,9 @@ class ConnectedDataService:
         )
 
     async def _mark_needs_attention(self, connection_id: str, reason: str) -> None:
-        """Back a source off, surface needs_attention, and notify once."""
-        first = self._health.note_terminal_failure(connection_id)
+        """Back a source off and tell the health authority; it owns the one notice."""
+        self._health.note_terminal_failure(connection_id)
+        await self._report(connection_id, ok=False, code=reason)
         if is_terminal_sync_failure(reason):
             # Durable, so the next process knows without being told again.
             await self._record_failure(connection_id, reason, force=True)
@@ -1145,8 +1168,27 @@ class ConnectedDataService:
             detail=reason or "",
             state=await self._persisted_state(connection_id),
         )
-        if first:
-            await self._notify_operator(connection_id, reason)
+
+    async def _report(
+        self, connection_id: str, *, ok: bool, code: str | None = None, text: str = ""
+    ) -> None:
+        """Tell the shared health record what this run found, keyed by the instance.
+
+        A multi-source bundle registers ``<instance>:<suffix>``; the account is the
+        instance, so that is what the record is keyed by. The authority decides what
+        the report means (one blip is not an outage) and who is told.
+        """
+        description = self._descriptions.get(connection_id)
+        provider = description.source_kind.title() if description is not None else ""
+        signal = HealthSignal(
+            ok=ok,
+            source="sync",
+            checked_by=self._agent_did,
+            reason_code=None if ok else classify(code, text),
+            detail=text or (code or ""),
+            provider=provider,
+        )
+        await self._reporter.report(_instance_of(connection_id), signal)
 
     async def _emit(self, action: str, payload: dict[str, Any]) -> None:
         """Audit through the module's callback; an audit failure never stops a sync."""
@@ -1158,22 +1200,6 @@ class ConnectedDataService:
                 await result
         except Exception:  # reason: AU-5 — an audit sink failure is logged, not raised
             _logger.warning("connected-data audit emit failed: %s", action, exc_info=True)
-
-    async def _notify_operator(self, connection_id: str, reason: str) -> None:
-        """Tell the operator a connection needs a human — never the agent's chat."""
-        _logger.warning(
-            "connected-data connection needs attention: %s (%s)", connection_id, reason
-        )
-        delivered = False
-        if self._operator_notifier is not None:
-            try:
-                delivered = await self._operator_notifier(connection_id, reason)
-            except Exception:  # reason: an undeliverable notice must not break the sync loop
-                _logger.warning("connected-data operator notice failed: %s", connection_id)
-        await self._emit(
-            "connection.operator.notified",
-            {"source": _safe_id(connection_id), "reason": reason, "delivered": delivered},
-        )
 
     async def _inspect(self, registration: SourceRegistration) -> Any:
         """Inspect a source, turning a provider failure into a typed refusal.
@@ -1213,6 +1239,11 @@ class ConnectedDataService:
             return description
         value = await generation(description)
         return description.model_copy(update={"generation": int(value)})
+
+
+def _instance_of(connection_id: str) -> str:
+    """The connected account behind a source id (``<instance>`` or ``<instance>:<suffix>``)."""
+    return connection_id.split(":", 1)[0]
 
 
 def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:

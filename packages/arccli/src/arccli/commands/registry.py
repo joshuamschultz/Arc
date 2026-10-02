@@ -220,6 +220,13 @@ def _approve_handler(args: list[str]) -> None:
     approve_handler(args)
 
 
+def _pulse_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.pulse import pulse_handler
+
+    pulse_handler(args)
+
+
 def _stop_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.stop import stop_handler
@@ -814,6 +821,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("capability",),
         cli_only=True,
         handler=_capability_import_handler,
+    ),
+    CommandDef(
+        name="pulse",
+        description="Pulse checks — status, approve (operator review of pulse.md)",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_pulse_handler,
     ),
     CommandDef(
         name="workflow",
