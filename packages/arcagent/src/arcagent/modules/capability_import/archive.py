@@ -13,7 +13,7 @@ import shutil
 import stat
 import unicodedata
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -62,6 +62,9 @@ _MAGIC_PEEK = 8
 #: rather than rejecting the whole upload. Dropped entries never reach staging.
 _JUNK_ROOT_DIRS = frozenset({"__MACOSX"})
 _JUNK_FILE_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
+#: Supplier evidence a flat skill keeps at the archive root (not skill content).
+_SUPPLIER_ROOT_FILES = frozenset({("capability-import.toml",), ("sbom.cdx.json",)})
+_MAX_SKILL_MD_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -142,19 +145,7 @@ def _preflight(source: Path, limits: CapabilityImportLimits) -> tuple[list[_Cand
         _check_file_size(size, limits)
         if size > 1024 * 1024:
             raise CapabilityImportLimitError("plain SKILL.md exceeds 1 MiB")
-        try:
-            text = source.read_text(encoding="utf-8")
-            if not text.startswith("---\n") or "\n---\n" not in text:
-                raise ValueError("missing frontmatter")
-            header = text.split("\n---\n", 1)[0][4:]
-            if len(header.encode("utf-8")) > 16 * 1024:
-                raise ValueError("frontmatter exceeds 16 KiB")
-            metadata = yaml.safe_load(header)
-            name = metadata.get("name") if isinstance(metadata, dict) else None
-        except (OSError, UnicodeError, yaml.YAMLError, ValueError) as exc:
-            raise CapabilityImportLayoutError("SKILL.md has invalid frontmatter") from exc
-        if not isinstance(name, str) or not _safe_name(name):
-            raise CapabilityImportLayoutError("SKILL.md needs a safe frontmatter name")
+        name = _frontmatter_name(source.read_bytes())
         path = PurePosixPath("skills", name, "SKILL.md")
         return [_Candidate(path, size, size, source)], _file_digest(source), size
     if not zipfile.is_zipfile(source):
@@ -188,9 +179,17 @@ def _preflight_zip(
                 ):
                     raise CapabilityImportLimitError("archive exceeds configured aggregate limit")
                 candidates.append(_Candidate(path, info.file_size, info.compress_size, info))
+
+            def read_entry(candidate: _Candidate) -> bytes:
+                if not isinstance(candidate.source, zipfile.ZipInfo):
+                    raise CapabilityImportSourceError("invalid ZIP source entry")
+                if candidate.size > _MAX_SKILL_MD_BYTES:
+                    raise CapabilityImportLimitError("SKILL.md exceeds 1 MiB")
+                return archive.read(candidate.source)
+
+            candidates = _finalize_candidates(candidates, limits, read_entry)
     except (OSError, zipfile.BadZipFile, NotImplementedError) as exc:
         raise CapabilityImportSourceError("unreadable ZIP source") from exc
-    candidates = _finalize_candidates(candidates, limits)
     return candidates, _file_digest(source), source.stat().st_size
 
 
@@ -227,7 +226,39 @@ def _preflight_directory(source: Path, limits: CapabilityImportLimits) -> list[_
                     )
                 candidates.append(_Candidate(normalized, status.st_size, status.st_size, path))
     candidates.sort(key=lambda candidate: candidate.path.as_posix())
-    return _finalize_candidates(candidates, limits)
+    return _finalize_candidates(candidates, limits, _read_local)
+
+
+def _read_local(candidate: _Candidate) -> bytes:
+    if not isinstance(candidate.source, Path):
+        raise CapabilityImportSourceError("invalid local source entry")
+    if candidate.size > _MAX_SKILL_MD_BYTES:
+        raise CapabilityImportLimitError("SKILL.md exceeds 1 MiB")
+    return candidate.source.read_bytes()
+
+
+def _frontmatter_name(raw: bytes) -> str:
+    """Return the safe ``name`` from a SKILL.md frontmatter, or refuse.
+
+    The bytes are bounded, then parsed as YAML data only (``safe_load``);
+    nothing in them is executed.
+    """
+    if len(raw) > _MAX_SKILL_MD_BYTES:
+        raise CapabilityImportLimitError("SKILL.md exceeds 1 MiB")
+    try:
+        text = raw.decode("utf-8")
+        if not text.startswith("---\n") or "\n---\n" not in text:
+            raise ValueError("missing frontmatter")
+        header = text.split("\n---\n", 1)[0][4:]
+        if len(header.encode("utf-8")) > 16 * 1024:
+            raise ValueError("frontmatter exceeds 16 KiB")
+        metadata = yaml.safe_load(header)
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+    except (UnicodeError, yaml.YAMLError, ValueError) as exc:
+        raise CapabilityImportLayoutError("SKILL.md has invalid frontmatter") from exc
+    if not isinstance(name, str) or not _safe_name(name):
+        raise CapabilityImportLayoutError("SKILL.md needs a safe frontmatter name")
+    return name
 
 
 def _safe_path(
@@ -275,7 +306,9 @@ def _is_zip_directory(info: zipfile.ZipInfo) -> bool:
 
 
 def _finalize_candidates(
-    candidates: list[_Candidate], limits: CapabilityImportLimits
+    candidates: list[_Candidate],
+    limits: CapabilityImportLimits,
+    read: Callable[[_Candidate], bytes],
 ) -> list[_Candidate]:
     """Drop archive-manager noise, normalize the top level, then bound the count.
 
@@ -285,7 +318,7 @@ def _finalize_candidates(
     operator will review.
     """
     kept = [candidate for candidate in candidates if not _is_platform_junk(candidate.path)]
-    kept = _normalize_roots(kept)
+    kept = _normalize_roots(kept, read)
     _check_count(kept, limits)
     return kept
 
@@ -295,35 +328,76 @@ def _is_platform_junk(path: PurePosixPath) -> bool:
     return path.parts[0] in _JUNK_ROOT_DIRS or path.name in _JUNK_FILE_NAMES
 
 
-def _normalize_roots(candidates: list[_Candidate]) -> list[_Candidate]:
-    """Reshape a single-folder archive into the ``skills/``/``tools/`` layout.
+def _normalize_roots(
+    candidates: list[_Candidate], read: Callable[[_Candidate], bytes]
+) -> list[_Candidate]:
+    """Reshape the folder shapes people zip into the ``skills/``/``tools/`` layout.
 
-    Two shapes a person actually produces are accepted here:
+    Accepted shapes (J4 M3/M6):
 
+    * a flat skill — ``SKILL.md`` at the root: the root IS the skill folder, named
+      by its frontmatter ``name`` (supplier metadata files stay at the root);
     * a skill folder zipped on its own (``my-skill/SKILL.md``) — re-parented
-      under ``skills/`` so its own name is preserved; and
-    * one generic wrapper folder around a ``skills/``/``tools/`` bundle — the
-      wrapper is stripped, as ordinary ZIP applications add it.
+      under ``skills/`` so its own name is preserved;
+    * one generic wrapper folder around any of these — the wrapper is stripped,
+      as ordinary ZIP applications add it; and
+    * skill folders beside a ``tools/`` root — each folder that holds its own
+      ``SKILL.md`` is re-parented under ``skills/``.
+
+    Anything else keeps its path, so layout validation still refuses it.
     """
     if not candidates:
         return candidates
     roots = {candidate.path.parts[0] for candidate in candidates}
-    if len(roots) != 1:
-        return candidates
-    root = next(iter(roots))
-    if root in {"skills", "tools"}:
-        return candidates
-    holds_skill_manifest = any(
+    holds_manifest = any(
         len(candidate.path.parts) == 2 and candidate.path.parts[1] == "SKILL.md"
         for candidate in candidates
     )
-    if holds_skill_manifest and _safe_name(root):
-        return [
-            _reparent(candidate, ("skills", *candidate.path.parts)) for candidate in candidates
-        ]
-    if any(len(candidate.path.parts) < 2 for candidate in candidates):
+    # Strip one generic wrapper — but never a folder that is itself a skill
+    # (even an unsafe-named one): that folder's name is the skill's identity.
+    if (
+        len(roots) == 1
+        and not roots & {"skills", "tools"}
+        and not holds_manifest
+        and all(len(candidate.path.parts) >= 2 for candidate in candidates)
+    ):
+        candidates = [_reparent(c, c.path.parts[1:]) for c in candidates]
+        roots = {candidate.path.parts[0] for candidate in candidates}
+    flat = next((c for c in candidates if c.path.parts == ("SKILL.md",)), None)
+    if flat is not None:
+        return _reparent_flat(candidates, _frontmatter_name(read(flat)))
+    skill_roots = _skill_roots(candidates)
+    # Only reshape when every root is accounted for; an ambiguous mix (e.g. a
+    # bare skill folder beside ``skills/``) keeps its paths and is refused.
+    known = skill_roots | {"tools"} | _ROOT_FILES
+    if not skill_roots or any(r not in known and not r.startswith("LICENSE") for r in roots):
         return candidates
-    return [_reparent(candidate, candidate.path.parts[1:]) for candidate in candidates]
+    return [
+        _reparent(c, ("skills", *c.path.parts)) if c.path.parts[0] in skill_roots else c
+        for c in candidates
+    ]
+
+
+def _skill_roots(candidates: list[_Candidate]) -> frozenset[str]:
+    """Top-level folders that are themselves a skill (hold ``<root>/SKILL.md``)."""
+    return frozenset(
+        candidate.path.parts[0]
+        for candidate in candidates
+        if len(candidate.path.parts) == 2
+        and candidate.path.parts[1] == "SKILL.md"
+        and candidate.path.parts[0] not in {"skills", "tools"}
+        and _safe_name(candidate.path.parts[0])
+    )
+
+
+def _reparent_flat(candidates: list[_Candidate], name: str) -> list[_Candidate]:
+    """Move a flat skill's files under ``skills/<name>/``; keep supplier metadata."""
+    return [
+        candidate
+        if candidate.path.parts in _SUPPLIER_ROOT_FILES
+        else _reparent(candidate, ("skills", name, *candidate.path.parts))
+        for candidate in candidates
+    ]
 
 
 def _reparent(candidate: _Candidate, parts: tuple[str, ...]) -> _Candidate:

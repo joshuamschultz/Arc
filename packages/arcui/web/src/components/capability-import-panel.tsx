@@ -1,15 +1,66 @@
-import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { Archive, CheckCircle2, FileArchive, ShieldAlert, Upload, XCircle } from 'lucide-react'
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { AlertTriangle, Archive, CheckCircle2, FileArchive, FolderOpen, ShieldAlert, Upload, XCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useRoster } from '@/lib/queries'
 import type { Agent } from '@/lib/types'
 import { useCapabilityImport, type CapabilityImportReview } from '@/hooks/use-capability-import'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { FieldHelp } from '@/components/help'
+import { collectFromDrop, collectFromFileList, packFolder, type PackEntry } from '@/lib/skill-pack'
+
+/** Split a finding's ``code: detail`` wire form for display. */
+function splitFinding(finding: string): { code: string; detail: string } {
+  const at = finding.indexOf(': ')
+  return at < 0 ? { code: finding, detail: '' } : { code: finding.slice(0, at), detail: finding.slice(at + 2) }
+}
+
+/** What the operator must read before signing (J4 M4/G10) — never hidden behind a click. */
+function ReviewFindings({ findings }: { findings: string[] }) {
+  if (findings.length === 0) {
+    return <p className="text-xs text-muted-foreground">No review findings.</p>
+  }
+  return (
+    <div className="space-y-2 rounded-md border border-status-warning/40 bg-status-warning/10 p-3">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <AlertTriangle className="size-3.5 text-status-warning" /> Review findings — read before promoting
+      </p>
+      <ul aria-label="Review findings" className="space-y-1">
+        {findings.map((finding) => {
+          const { code, detail } = splitFinding(finding)
+          return (
+            <li key={finding} className="flex flex-wrap items-start gap-2 text-xs">
+              <Badge variant="outline" className="font-mono">{code}</Badge>
+              <span className="min-w-0 break-words text-foreground">{detail}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+const SCRIPT_SUFFIXES = ['.py', '.sh', '.js', '.ts', '.rb', '.pl', '.ps1', '.bash']
+
+/** A file that can execute: anything under a ``scripts/`` folder or with a code suffix. */
+function isScript(path: string): boolean {
+  return path.split('/').includes('scripts') || SCRIPT_SUFFIXES.some((suffix) => path.endsWith(suffix))
+}
+
+/** Group reviewed paths by their folder so the pack's shape is visible at a glance. */
+function fileTree(paths: string[]): Array<{ folder: string; files: string[] }> {
+  const groups = new Map<string, string[]>()
+  for (const path of [...paths].sort()) {
+    const cut = path.lastIndexOf('/')
+    const folder = cut < 0 ? '' : path.slice(0, cut + 1)
+    groups.set(folder, [...(groups.get(folder) ?? []), path])
+  }
+  return [...groups.entries()].map(([folder, files]) => ({ folder, files }))
+}
 
 function ReviewEvidence({ review }: { review: CapabilityImportReview }) {
   const statusLabel = review.status.replaceAll('_', ' ')
@@ -65,9 +116,29 @@ export function CapabilityImportPanel() {
   const [saving, setSaving] = useState(false)
   const [trusting, setTrusting] = useState(false)
 
+  const folderRef = useRef<HTMLInputElement>(null)
+  const [packError, setPackError] = useState<string | null>(null)
+
+  // React does not type ``webkitdirectory``; set it on the element directly.
+  useEffect(() => {
+    folderRef.current?.setAttribute('webkitdirectory', '')
+  }, [])
+
   const choose = (files: FileList | File[]) => {
+    setPackError(null)
     const file = files[0]
     if (file) void importer.upload(file)
+  }
+
+  // A folder is zipped in the browser and goes through the same upload,
+  // so the server applies every intake check to exactly those bytes.
+  const chooseFolder = async (entries: PackEntry[]) => {
+    setPackError(null)
+    try {
+      await importer.upload(await packFolder(entries))
+    } catch (error) {
+      setPackError(error instanceof Error ? `Could not read the folder: ${error.message}` : 'Could not read the folder.')
+    }
   }
 
   const openFile = async (path: string) => {
@@ -120,7 +191,13 @@ export function CapabilityImportPanel() {
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     setDragging(false)
-    choose(event.dataTransfer.files)
+    // Read entries synchronously: the DataTransfer is emptied after this handler.
+    const files = Array.from(event.dataTransfer.files ?? [])
+    void collectFromDrop(event.dataTransfer.items)
+      .then((entries) => (entries ? chooseFolder(entries) : choose(files)))
+      .catch((error: unknown) => {
+        setPackError(error instanceof Error ? `Could not read the folder: ${error.message}` : 'Could not read the folder.')
+      })
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -134,7 +211,7 @@ export function CapabilityImportPanel() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><Archive className="size-4" /> Import agent capabilities</CardTitle>
-        <CardDescription>Stage a skill ZIP or a single SKILL.md for one agent. An operator reviews and signs it before activation.</CardDescription>
+        <CardDescription>Stage a skill folder, a ZIP or a single SKILL.md for one agent. An operator reviews and signs it before activation.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <label className="flex max-w-sm flex-col gap-1 text-xs font-medium text-muted-foreground" htmlFor="capability-import-agent">
@@ -174,7 +251,7 @@ export function CapabilityImportPanel() {
         <div
           role="button"
           tabIndex={0}
-          aria-label="Upload a capability ZIP archive or SKILL.md"
+          aria-label="Upload a capability folder, ZIP archive or SKILL.md"
           onClick={() => inputRef.current?.click()}
           onKeyDown={onKeyDown}
           onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
@@ -189,11 +266,40 @@ export function CapabilityImportPanel() {
         >
           <input ref={inputRef} type="file" accept=".zip,.md,application/zip,text/markdown" className="sr-only" onChange={(event) => { choose(event.target.files ?? []); event.currentTarget.value = '' }} />
           {importer.status === 'uploading' ? <Upload className="size-5 animate-pulse text-primary" /> : <FileArchive className="size-5 text-muted-foreground" />}
-          <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting source…' : 'Drop ZIP or SKILL.md, or browse'}</span>
-          <span className="text-xs text-muted-foreground">ZIPs can include skill resources. Review does not execute scripts; an operator signs the reviewed source before it becomes available.</span>
+          <span className="text-sm font-medium text-foreground">{importer.status === 'uploading' ? 'Inspecting source…' : 'Drop a skill folder, ZIP or SKILL.md, or browse'}</span>
+          <span className="text-xs text-muted-foreground">Folders and ZIPs can include skill resources. Review does not execute scripts; an operator signs the reviewed source before it becomes available.</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            ref={folderRef}
+            id="capability-import-folder"
+            type="file"
+            multiple
+            aria-label="Choose a skill folder"
+            className="sr-only"
+            onChange={(event) => {
+              const entries = collectFromFileList(event.target.files ?? [])
+              event.currentTarget.value = ''
+              if (entries.length > 0) void chooseFolder(entries)
+            }}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => folderRef.current?.click()}
+            disabled={importer.status === 'uploading'}
+          >
+            <FolderOpen className="size-4" /> Choose folder
+          </Button>
         </div>
         <FieldHelp helpKey="capability_import.archive" route="tools-skills" />
 
+        {packError && (
+          <div role="alert" className="flex items-start gap-2 rounded-md border border-status-error/30 bg-status-error/10 p-3 text-xs text-status-error">
+            <XCircle className="mt-0.5 size-4 shrink-0" /> {packError}
+          </div>
+        )}
         {importer.status === 'rejected' && (
           <div role="alert" className="flex items-start gap-2 rounded-md border border-status-error/30 bg-status-error/10 p-3 text-xs text-status-error">
             <XCircle className="mt-0.5 size-4 shrink-0" /> {importer.error}
@@ -202,6 +308,7 @@ export function CapabilityImportPanel() {
         {importer.review && (
           <>
             <ReviewEvidence review={importer.review} />
+            <ReviewFindings findings={importer.review.findings ?? []} />
             {operatorMode && importer.status === 'review_ready' && (
               <Button type="button" size="sm" onClick={() => void promote()} disabled={trusting}>
                 {trusting ? 'Promoting…' : 'Promote and sign reviewed import'}
@@ -218,21 +325,35 @@ export function CapabilityImportPanel() {
             <div className="space-y-3 rounded-md border border-border p-3">
               <p className="text-xs font-medium text-foreground">Reviewed files</p>
               <FieldHelp helpKey="capability_import.file" route="tools-skills" />
-              <div className="flex flex-wrap gap-2">
-                {importer.review.files
-                  .filter((file) => file.path.startsWith('tools/') || file.path.startsWith('skills/'))
-                  .map((file) => (
-                    <Button
-                      key={file.path}
-                      type="button"
-                      size="sm"
-                      variant={selectedPath === file.path ? 'default' : 'outline'}
-                      onClick={() => void openFile(file.path)}
-                    >
-                      {file.path}
-                    </Button>
-                  ))}
-              </div>
+              <ul role="tree" aria-label="Reviewed files" className="space-y-2">
+                {fileTree(
+                  importer.review.files
+                    .map((file) => file.path)
+                    .filter((path) => path.startsWith('tools/') || path.startsWith('skills/')),
+                ).map(({ folder, files }) => (
+                  <li key={folder} role="treeitem" aria-expanded="true" aria-selected="false" className="space-y-1">
+                    <p className="font-mono text-xs text-muted-foreground">{folder || '/'}</p>
+                    <ul role="group" className="flex flex-wrap gap-2 pl-3">
+                      {files.map((path) => (
+                        <li key={path} role="treeitem" aria-selected={selectedPath === path}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={selectedPath === path ? 'default' : 'outline'}
+                            onClick={() => void openFile(path)}
+                            title={path}
+                          >
+                            {path.slice(folder.length)}
+                            {isScript(path) && (
+                              <Badge variant="secondary" className="ml-1">script</Badge>
+                            )}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
               {selectedPath && (
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground" htmlFor="capability-import-editor">{selectedPath}</label>
