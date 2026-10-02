@@ -66,3 +66,25 @@ it('retains the original revision after a conflicting limits update', async () =
   expect(await screen.findByText(/Reload the current values/)).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Reload limits' })).toBeTruthy()
 })
+
+it('asks for a named sign-in instead of showing an error box', async () => {
+  const denied = () => new Response(
+    JSON.stringify({ error: 'operator_account_required' }), { status: 403 },
+  )
+  vi.stubGlobal('fetch', vi.fn(async () => denied()))
+  showQueue()
+  expect(await screen.findByText(/Sign in as a named operator/i)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Sign in with an account' })).toBeTruthy()
+  expect(screen.queryByText(/Couldn.t load data/i)).toBeNull()
+})
+
+it('explains what the queue is and shows a plain empty state', async () => {
+  const fetchMock = vi.fn(async (path: RequestInfo | URL) => {
+    if (String(path) === '/api/queue/control') return new Response(JSON.stringify(control))
+    return new Response(JSON.stringify({ jobs: [], next_cursor: null }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  showQueue()
+  expect(await screen.findByText(/waiting room for model calls/i)).toBeTruthy()
+  expect(await screen.findByText(/No model calls are waiting or running/i)).toBeTruthy()
+})

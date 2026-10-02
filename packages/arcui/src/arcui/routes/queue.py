@@ -44,10 +44,15 @@ def _scope(
 ) -> arcagent.QueueReadScope | JSONResponse:
     did = getattr(request.state, "account_did", None)
     tenant = getattr(request.app.state, "queue_tenant_id", None)
-    if getattr(request.state, "role", None) != "operator" or not isinstance(did, str):
+    role = getattr(request.state, "role", None)
+    if role != "operator" or not isinstance(did, str):
         if not _audit(request, operation=operation, outcome="denied", mutation=mutation):
             return _error("queue_audit_unavailable", 503)
-        return _error("operator_account_required", 403)
+        # A viewer lacks the role. The bootstrap operator token has the role but
+        # names no person, and queue controls must be attributable to one.
+        return _error(
+            "operator_required" if role != "operator" else "operator_account_required", 403
+        )
     if not isinstance(tenant, str) or not tenant:
         return _error("queue_scope_unavailable", 503)
     try:
