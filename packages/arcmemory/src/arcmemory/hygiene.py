@@ -25,8 +25,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from arcmemory.collection_index import memory_collection
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.collection_index import refresh_memory_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.procedural import format_hits, parse_step
@@ -88,7 +88,7 @@ def _groups(directory: Path) -> dict[str, list[Path]]:
     """Map canonical slug -> the ``.md`` files that collapse onto it (dupes only)."""
     by_canon: dict[str, list[Path]] = defaultdict(list)
     if directory.exists():
-        for path in sorted(directory.glob("*.md")):
+        for path in card_files(directory):
             by_canon[canonical_slug(path.stem)].append(path)
     return {canon: paths for canon, paths in by_canon.items() if len(paths) > 1}
 
@@ -273,7 +273,7 @@ def _dedup_store(mem_dir: Path, store: str, *, apply: bool) -> StoreReport:
             atomic_write_text(target, build(canonical, paths))
             for path in variants:
                 path.unlink(missing_ok=True)
-                memory_collection(path.parent.parent).remove_document(path)
+                refresh_memory_document(path)
         merges.append(
             GroupMerge(canonical=canonical, sources=[p.name for p in paths], deleted=len(variants))
         )
@@ -364,13 +364,13 @@ def okf_migrate_workspace(workspace: Path, *, apply: bool) -> OkfMigrationReport
     reported and left byte-for-byte untouched.
     """
     import yaml
-    from arcokf import lint
+    from arcokf import lint, listable_file
 
     migrated: list[Path] = []
     failed: list[tuple[Path, str]] = []
     already_valid = 0
     for path in sorted((workspace / "memory").rglob("*.md")):
-        if ".pruned" in path.parts:
+        if ".pruned" in path.parts or not listable_file(path.name):
             continue
         if lint(path).valid:
             already_valid += 1

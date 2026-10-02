@@ -23,8 +23,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcmemory.collection_index import memory_collection, refresh_memory_document
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.collection_index import refresh_memory_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.semantic import extract_wiki_links
 from arcmemory.types import Procedure, ProcedureSummary, Step
@@ -199,7 +199,7 @@ def merge_procedures(
             when_to_use = other.when_to_use
         removed = store.path_for(slug)
         removed.unlink(missing_ok=True)
-        memory_collection(removed.parent.parent).remove_document(removed)
+        refresh_memory_document(removed)
 
     merged = Procedure(
         slug=target.slug,
@@ -343,7 +343,7 @@ class ProceduralStore:
         """Every procedure slug currently on disk (sorted)."""
         if not self._dir.exists():
             return []
-        return sorted(p.stem for p in self._dir.glob("*.md"))
+        return sorted(p.stem for p in card_files(self._dir))
 
 
 __all__ = ["ProceduralStore", "merge_steps", "procedure_link_targets"]

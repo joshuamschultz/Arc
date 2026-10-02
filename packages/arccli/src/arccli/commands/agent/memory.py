@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arcokf import listable_file
+
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands.agent._common import _resolve_agent_dir
 
@@ -128,7 +130,9 @@ def _clip(text: Any) -> str:
 
 def _file_count(directory: Path) -> int:
     """Number of ``.md`` cards in a curated store dir (0 if absent)."""
-    return len(list(directory.glob("*.md"))) if directory.is_dir() else 0
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.glob("*.md") if listable_file(path.name))
 
 
 def _scalar(conn: sqlite3.Connection, sql: str) -> Any:

@@ -20,9 +20,9 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arcmemory.collection_index import memory_collection, refresh_memory_document
+from arcmemory.collection_index import refresh_memory_document
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.types import (
     Entity,
@@ -226,7 +226,7 @@ class SemanticStore:
         """Every entity slug currently on disk (sorted)."""
         if not self._dir.exists():
             return []
-        return sorted(p.stem for p in self._dir.glob("*.md"))
+        return sorted(p.stem for p in card_files(self._dir))
 
     def read(self, slug: str) -> Entity | None:
         """Load an entity from disk (None if it does not exist)."""
@@ -357,7 +357,7 @@ class SemanticStore:
         self._persist(dst)
         removed = self.path_for(other)
         removed.unlink(missing_ok=True)
-        memory_collection(removed.parent.parent).remove_document(removed)
+        refresh_memory_document(removed)
         return True
 
     def remove(self, slug: str) -> bool:
@@ -366,7 +366,7 @@ class SemanticStore:
         if not path.exists():
             return False
         path.unlink()
-        memory_collection(path.parent.parent).remove_document(path)
+        refresh_memory_document(path)
         return True
 
     def add_link(self, src_slug: str, dst_slug: str) -> bool:

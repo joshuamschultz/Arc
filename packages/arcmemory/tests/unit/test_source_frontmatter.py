@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from arcmemory.chunk import RecursiveChunker
+from arcmemory.collection_index import memory_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
@@ -100,6 +101,7 @@ async def test_rebuild_and_incremental_index_the_same_chunk_set(
     store.write_fact("mapping-s1", "revision", "r1", entity_type="mapping")
     store.write_fact("source-s1", "kind", "dropbox", entity_type="source")
 
+    memory_maintainer(workspace / "memory").drain_sync()
     await SurfaceIndex(db, workspace, scope, embedder=embedder).index_if_needed(embed=True)
     conn = db.connect()
     incremental = conn.execute(
@@ -112,6 +114,7 @@ async def test_rebuild_and_incremental_index_the_same_chunk_set(
     assert incremental == rebuilt
     assert [row[0] for row in rebuilt] == [
         "file:memory/entities/alice.md",
+        "file:memory/entities/index.md",
         "file:memory/index.md",
     ]
     joined = " ".join(row[1] for row in rebuilt)

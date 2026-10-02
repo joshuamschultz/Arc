@@ -19,6 +19,8 @@ arcmemory owns no comparator (see ``tests/architecture``).
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from arctrust.classification import Classification
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.fusion import rrf_fuse
+from arcmemory.index.okf_walk import OkfWalker
 from arcmemory.index.rebuild import Embedder
 from arcmemory.index.structural import Reranker, StructuralIndex
 from arcmemory.index.surface import SurfaceIndex
@@ -36,6 +39,7 @@ from arcmemory.stores.semantic import extract_wiki_links
 from arcmemory.types import Bundle, Confidence, Recall, RecallCard, Scope, Situation, TimeWindow
 
 _DEFAULT_BUDGET = 1024
+_logger = logging.getLogger("arcmemory.retrieve")
 
 
 class Retriever:
@@ -58,6 +62,7 @@ class Retriever:
         seed_vocabulary: Iterable[str] | None = None,
     ) -> None:
         self._scope = scope
+        self._workspace = Path(workspace)
         self._cfg = config or MemoryConfig()
         self._audit = audit_sink if audit_sink is not None else NullSink()
         self._surface = SurfaceIndex(
@@ -111,7 +116,8 @@ class Retriever:
         surf = await self._surface.search(situation.text, top_k=pool)
         stru = await self._structural.match(situation, top_k=pool, reranker=reranker)
 
-        fused = _rrf_fuse([surf.recalls, stru.recalls], recency=self._cfg.temporal_enabled)
+        walked = await self._walk_indexes(situation.text, clearance)
+        fused = _rrf_fuse([surf.recalls, stru.recalls, walked], recency=self._cfg.temporal_enabled)
         gated = _confidence_gate(fused)
         cleared = gate_no_read_up(
             gated,
@@ -130,6 +136,26 @@ class Retriever:
             budget=budget,
             text=render_recalls(bounded),
         )
+
+    async def _walk_indexes(self, text: str, clearance: Classification) -> list[Recall]:
+        """The OKF index-walk channel; a broken index degrades recall, never fails it."""
+        if not self._cfg.okf_walk_enabled:
+            return []
+        walker = OkfWalker(
+            self._workspace / "memory",
+            self._workspace,
+            clearance=clearance,
+            strict=self._cfg.tier == "federal",
+            actor_did=self._scope.agent_did,
+            tier=self._cfg.tier,
+            top_folders=self._cfg.okf_walk_top_folders,
+            top_docs=self._cfg.okf_walk_top_docs,
+        )
+        try:
+            return await asyncio.to_thread(walker.walk, text)
+        except Exception:  # reason: an unreadable index must degrade recall, not break it
+            _logger.warning("okf index walk failed; recall continues without it", exc_info=True)
+            return []
 
     async def recall_cards(
         self,

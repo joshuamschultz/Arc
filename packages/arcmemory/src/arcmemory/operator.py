@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from arcokf import validate_collection_index
+from arcokf import validate_folder_index
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
@@ -43,6 +43,7 @@ from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _fts_query
+from arcmemory.mdfile import card_files
 from arcmemory.retrieve import Retriever
 from arcmemory.security import gate_no_read_up
 from arcmemory.status import SemanticStatus
@@ -247,15 +248,16 @@ class ChunkSearchResult(BaseModel):
 class CollectionIndexEntry(BaseModel):
     """One authorized document as the verified collection index lists it (H-026).
 
-    A projection of arcokf's ``CollectionEntry`` — the document's workspace-relative
-    path, its human title, a one-line purpose summary, and the SHA-256 the index
-    committed for it. Only unclassified documents ever enter a shared index, so an
-    entry carries no classification of its own.
+    A projection of arcokf's ``IndexEntry`` — the document's path within its folder,
+    its human title, a one-line purpose summary, the SHA-256 the index sidecar
+    committed for it, and its classification label (every valid document is listed;
+    the label is what a reader gates on).
     """
 
     path: str
     title: str
     summary: str = ""
+    classification: str = ""
     digest: str
 
 
@@ -305,7 +307,7 @@ def _importance(scalar: float) -> int:
 
 def _md_count(directory: Path) -> int:
     """Number of ``.md`` cards in a curated store dir (0 if absent)."""
-    return len(list(directory.glob("*.md"))) if directory.is_dir() else 0
+    return len(card_files(directory)) if directory.is_dir() else 0
 
 
 class MemoryOperator:
@@ -551,7 +553,7 @@ class MemoryOperator:
         The index is hosted under the agent WORKSPACE
         (``<workspace>/memory/connected/<source_id>``), never the remote origin;
         this is a plain file read of that host, gated by arcokf verification. The
-        body is returned ONLY when :func:`arcokf.validate_collection_index` confirms
+        body is returned ONLY when :func:`arcokf.validate_folder_index` (deep) confirms
         the index is canonical AND every listed document's digest still matches —
         so an operator-edited index, a stale inventory, or a tampered document all
         fail closed to ``verified=False`` with an empty body rather than rendering an
@@ -569,7 +571,7 @@ class MemoryOperator:
         index_path = root / "index.md"
         if not index_path.is_file():
             return CollectionIndexView(source_id=source_id, present=False)
-        validation = validate_collection_index(index_path, root)
+        validation = validate_folder_index(root, deep=True)
         if not validation.valid:
             return CollectionIndexView(
                 source_id=source_id,
@@ -590,9 +592,14 @@ class MemoryOperator:
             )
         entries = [
             CollectionIndexEntry(
-                path=entry.path, title=entry.title, summary=entry.summary, digest=entry.digest
+                path=entry.path,
+                title=entry.title,
+                summary=entry.description,
+                classification=entry.classification,
+                digest=entry.digest,
             )
             for entry in validation.entries
+            if not entry.is_folder
         ]
         return CollectionIndexView(
             source_id=source_id,

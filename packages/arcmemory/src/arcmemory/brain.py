@@ -21,6 +21,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from arctrust.signer import Signer
 
 from arcmemory import ingest
 from arcmemory.capture import FastCapture
+from arcmemory.collection_index import memory_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.datastore import DatastoreOntology, DatastorePort, SqliteDatastorePort
@@ -462,9 +464,13 @@ class ArcMemoryBrain:
         if consolidator.pending_recovery:
             await consolidator.recover()
         now = datetime.now(UTC)
+        result = ConsolidationResult()
         if consolidator.hygiene_due(now=now):
-            return self._summarize(await consolidator.run_hygiene(now=now))
-        return self._summarize(ConsolidationResult())
+            result = await consolidator.run_hygiene(now=now)
+        # Consolidation rewrites many cards; settle the folder indexes now rather
+        # than waiting out the debounce.
+        await self._drain_indexes()
+        return self._summarize(result)
 
     async def refresh_index(self, *, session_id: str | None = None) -> None:
         """Incrementally index changed chunks — the background maintainer's job.
@@ -476,7 +482,16 @@ class ArcMemoryBrain:
         person's turn. Cheap when nothing changed. Degrades silently without an
         embedder, like recall.
         """
+        await self._drain_indexes()
         await self._bundle(session_id).retriever.index(embed=True)
+
+    async def _drain_indexes(self) -> None:
+        """Settle every per-folder ``index.md``: drain pending folders, heal missing ones.
+
+        Off the loop and deterministic. The first call on a pre-existing workspace
+        is also its backfill: folders that never had an index get one.
+        """
+        await asyncio.to_thread(memory_maintainer(self._workspace / "memory").sync_all)
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the glass-box files + stream (REQ-022)."""

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcokf import validate_collection_index
+from arcokf import validate_folder_index
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.memory import FakeBackend
 
@@ -111,9 +111,8 @@ async def test_per_object_ingest_never_walks_or_rewrites_the_collection_index(
         return record
 
     with monkeypatch.context() as patch:
-        patch.setattr(collection_index, "inventory_documents", forbid("inventory_documents"))
-        patch.setattr(collection_index, "candidate_documents", forbid("candidate_documents"))
-        patch.setattr(collection_index, "render_collection_index", forbid("render"))
+        patch.setattr(collection_index, "folder_entry", forbid("folder_entry"))
+        patch.setattr(collection_index, "render_folder_index", forbid("render"))
         for number in range(30):
             await _ingest(service, mapping, number)
 
@@ -123,7 +122,7 @@ async def test_per_object_ingest_never_walks_or_rewrites_the_collection_index(
 
     await service.finish_sync(_source())
 
-    validation = validate_collection_index(root / "index.md", root)
+    validation = validate_folder_index(root, deep=True)
     assert validation.valid, validation.error
     assert len(validation.entries) == 30
     hits = await service.document_search("Heading", _source())
@@ -213,5 +212,5 @@ async def test_deleting_an_object_updates_the_index_at_finish(tmp_path: Path) ->
     await service.finish_sync(_source())
 
     root = tmp_path / "memory" / "connected" / mapping.source_id
-    validation = validate_collection_index(root / "index.md", root)
+    validation = validate_folder_index(root, deep=True)
     assert validation.valid and len(validation.entries) == 1

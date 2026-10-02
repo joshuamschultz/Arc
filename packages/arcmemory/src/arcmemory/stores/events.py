@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.collection_index import refresh_memory_document
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
 from arcmemory.types import LifeEvent, utc_today
@@ -124,7 +124,7 @@ class EventStore:
         """Every event slug currently on disk (sorted)."""
         if not self._dir.exists():
             return []
-        return sorted(p.stem for p in self._dir.glob("*.md"))
+        return sorted(p.stem for p in card_files(self._dir))
 
 
 def _merge_participants(existing: list[str], new: list[str]) -> list[str]:

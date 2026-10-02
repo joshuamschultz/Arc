@@ -141,48 +141,41 @@ dangling reference rather than a real link.
 
 ---
 
-## Collection indexes (`arcokf.index`)
+## Folder indexes (`arcokf.index`)
 
-A collection index is deliberately a plain reserved `index.md`. Machine-readable
-HTML entry comments (`<!-- arcokf:entry:{…} -->`) make validation unambiguous,
-while the adjacent Markdown links stay useful to a person browsing the folder.
-`arcokf` only renders and validates an index; the **owning store decides when to
+Every folder of a bundle may carry its own reserved `index.md`: a grouped listing
+(`# <type>` headings, `* [Title](doc.md) - description` lines, child folders as
+`* [name/](name/index.md) - N docs`). Only the bundle-root index may carry
+frontmatter, and only `okf_version: "0.2"`. Integrity data lives beside the
+listing in a `.index.digest` sidecar, so the visible lines stay spec-shaped.
+`arcokf` only renders, parses and validates; the **owning store decides when to
 write one**.
 
 | Symbol | What it does |
 |---|---|
-| `CollectionEntry` | One authorized document: relative `path`, `title`, SHA-256 `digest`, one-line `summary` |
-| `render_collection_index(entries)` | Render the canonical index — sorted by path, with a whole-inventory SHA-256 and a per-entry JSON comment |
-| `validate_collection_index(index, root=None)` | Parse and canonicality-check an index; with a `root`, also re-inventory the tree, re-digest every listed file, and re-lint it as OKF |
-| `inventory_documents(root)` | Deterministically enumerate the authorized documents under `root` |
-| `document_entry(path, root)` | Build one entry for a single document without walking its siblings; returns `None` when the document is invalid or not `unclassified` |
-| `CollectionIndexValidation` | `valid`, `error`, and the parsed `entries` tuple |
-| `CollectionIndexError` | Raised internally for any entry that cannot be represented safely; surfaced as `error` text on the validation result |
+| `IndexEntry` | One line: `path`, `title`, `description`, `group` (the document `type`), `classification` label; plus sidecar-only `digest` / `count` |
+| `render_folder_index(entries, root=…)` | Render the canonical index: folders first, then one `#` group per type, sorted, deterministic |
+| `parse_folder_index(text, root=…)` | Parse index text back to entries; rejects anything not byte-identical to its re-render |
+| `render_folder_digest` / `read_folder_digest` | The sidecar: the index's own SHA-256, each document's SHA-256, child-folder counts |
+| `validate_folder_index(folder, root=…, deep=…)` | Verify ONE folder. Shallow is O(1): canonical and matching its sidecar. Deep adds O(folder): every listed document still exists with its digest and its listed title/description, and no valid document is unlisted |
+| `folder_entry(path)` | Build the entry for one document (every valid document is listed, with its classification label) |
 
-The short aliases `render_index` and `validate_index` live on the submodule
-(`arcokf.index`) for a store's convenience; the explicit names are the
-documented public API off the package root.
+Properties:
 
-Three properties make the index tamper-evident rather than merely tidy:
-
-- **Canonical round-trip check.** `_parse_index` re-renders the entries it just
-  parsed and compares the result to the file **byte for byte**. Anything a hand
-  edit could do — reordering, an added link line, a tweaked summary, a swapped
-  digest — changes those bytes, so tamper detection needs no separate signature.
-- **Hash-verifiable inventory.** One SHA-256 digest covers the whole canonical
-  entry list, and each entry carries a per-document digest. A stale or edited
-  corpus is detectable without re-reading every file; `validate_collection_index`
-  with a `root` re-inventories the tree and refuses a stale or tampered index.
-- **Classification floor.** Only a document explicitly labelled
-  `classification: unclassified` enters a shared index (`document_entry` returns
-  `None` otherwise). A missing, malformed, or elevated label is silently omitted,
-  so an index can never advertise the existence of something its readers may not
-  see. A higher-clearance collection gets its own owner and its own index.
-
-Path guards run at entry construction (`_validate_entry`): absolute paths, `..`
-traversal, non-`.md` suffixes, reserved names (`index.md`, `context.md`,
-`log.md`), and operational directories (`.git`, `.arc`, `audit`, `secrets`,
-`credentials`, …) are all refused before an entry is ever accepted.
+- **Canonical round-trip check.** Parsing re-renders and compares byte for byte, so
+  any hand edit (reorder, added line, tweaked summary) is detected without a signature.
+- **Sidecar digest.** An index edited without its sidecar fails shallow validation;
+  one forged together with its sidecar is caught by the deep check and healed by a
+  forced re-sync from the documents.
+- **Nothing silently vanishes.** Classified documents are listed with
+  `(classification: <label>)`; the reader gates on the label.
+- **Path guards.** Absolute paths, `..`, sub-paths, non-`.md` suffixes and reserved
+  names are refused when an entry is rendered or parsed; operational and hidden
+  directories are never listed.
+- **Root frontmatter.** `validate(..., bundle_root=True)` accepts `index.md`
+  frontmatter only when it is exactly `{okf_version: "0.2"}`; everywhere else an
+  index with frontmatter is rejected. `title`, `description` and `generated` are
+  optional on concept documents but type-checked when present.
 
 ---
 
@@ -213,26 +206,28 @@ if not result.valid:
         print(diagnostic.code, diagnostic.message, diagnostic.path)
 ```
 
-Building and verifying a collection index over a folder of documents:
+Building and verifying one folder's index:
 
 ```python
 from pathlib import Path
 
 from arcokf import (
-    inventory_documents,
-    render_collection_index,
-    validate_collection_index,
+    DIGEST_NAME,
+    folder_entry,
+    render_folder_digest,
+    render_folder_index,
+    validate_folder_index,
 )
 
-root = Path("workspace/knowledge")
+folder = Path("workspace/knowledge")
+entries = [e for p in sorted(folder.glob("*.md")) if p.name != "index.md" and (e := folder_entry(p))]
+text = render_folder_index(entries, root=False)
+(folder / "index.md").write_text(text, encoding="utf-8")
+(folder / DIGEST_NAME).write_text(render_folder_digest(text, tuple(entries)), encoding="utf-8")
 
-# Enumerate the authorized `unclassified` documents and render the canonical index.
-entries = inventory_documents(root)
-(root / "index.md").write_text(render_collection_index(entries), encoding="utf-8")
-
-# Later: verify the index is canonical AND every listed file still hashes correctly.
-validation = validate_collection_index(root / "index.md", root)
-assert validation.valid, validation.error
+# Later: shallow = canonical + matches its sidecar; deep = every listed document still matches.
+assert validate_folder_index(folder).valid
+assert validate_folder_index(folder, deep=True).valid
 ```
 
 ---
@@ -246,9 +241,12 @@ choke point rather than scattering parse calls across the engine:
   a frontmatter document. It imports `Document`, `OKFValidationError`, `parse`,
   and `render` from `arcokf`, so every memory file is a validated OKF v0.2
   document on the way in and out.
-- **`arcmemory.collection_index`** wraps `inventory_documents`,
-  `render_collection_index`, `document_entry`, and `validate_collection_index`
-  to keep a knowledge folder's `index.md` in sync and tamper-checked.
+- **`arcmemory.collection_index`** (`OkfIndexMaintainer`) keeps every folder's
+  `index.md` current: stores only mark a folder dirty (O(1)), one debounced
+  background task regenerates dirty folders off the event loop reading only
+  changed documents, and a parent is touched only when a child's document count
+  moves. `arcmemory.index.okf_walk.OkfWalker` retrieves by walking root index,
+  folder index, documents.
 - **`arcteam`** (shared knowledge and per-agent memory storage), **`arccli`**
   (agent create / run), and several **`arcagent` modules** (workpad,
   user_profile) validate documents through the same contract.
@@ -283,9 +281,9 @@ onto the OWASP LLM and agentic surfaces:
   `result.document` is `None`.
 - **Unreadable file passed to `lint`** → an `invalid_utf8` diagnostic on the
   result (the `OSError` is captured, not raised).
-- **Tampered or stale collection index** → `validate_collection_index` returns
-  `CollectionIndexValidation(valid=False, error=…)`; the underlying
-  `CollectionIndexError` is surfaced as `error` text, never raised to the caller.
+- **Tampered or stale folder index** → `validate_folder_index` returns
+  `FolderIndexValidation(valid=False, error=…)`; the underlying
+  `FolderIndexError` is surfaced as `error` text, never raised to the caller.
 
 Every failure mode leaves the decision — and the write — with the caller. That
 is the point of the contract.
@@ -300,10 +298,11 @@ is the point of the contract.
 **From `arcokf.core`:** `VERSION`, `Document`, `Diagnostic`, `DiagnosticCode`,
 `ValidationResult`, `OKFValidationError`, `validate`, `parse`, `render`, `lint`.
 
-**From `arcokf.index`:** `CollectionEntry`, `CollectionIndexValidation`,
-`CollectionIndexError`, `render_collection_index`, `validate_collection_index`,
-`inventory_documents`, `document_entry`, plus the submodule aliases
-`render_index` and `validate_index`.
+**From `arcokf.index`:** `IndexEntry`, `FolderDigest`, `FolderIndexValidation`,
+`FolderIndexError`, `render_folder_index`, `parse_folder_index`,
+`render_folder_digest`, `parse_folder_digest`, `read_folder_digest`,
+`validate_folder_index`, `folder_entry`, `folder_summary_entry`, `listable_dir`,
+`listable_file`, and the constants `INDEX_NAME`, `DIGEST_NAME`, `FOLDERS_GROUP`.
 
 ---
 
@@ -311,7 +310,7 @@ is the point of the contract.
 
 - **Contract version:** OKF v0.2 (`VERSION == "0.2"`)
 - **Runtime dependency:** PyYAML only — no Arc imports
-- **Tests:** `packages/arcokf/tests/` (`test_okf.py`, `test_index.py`)
+- **Tests:** `packages/arcokf/tests/` (`test_okf.py`, `test_index_v02.py`)
 - **Type check:** `mypy --strict` clean · **Lint:** `ruff check` clean
 
 ```bash

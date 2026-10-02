@@ -28,7 +28,7 @@ from arcmemory.agent_consolidate import (
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
-from arcmemory.collection_index import CollectionIndexStore
+from arcmemory.collection_index import OkfIndexMaintainer
 from arcmemory.config import MemoryConfig, Tier
 from arcmemory.connected_data import (
     ApprovedMapping,
@@ -144,7 +144,6 @@ __all__ = [
     "ArcLLMEmbedder",
     "ArcMemoryBrain",
     "Bundle",
-    "CollectionIndexStore",
     "Confidence",
     "ConnectedDataService",
     "ConnectedDocument",
@@ -197,6 +196,7 @@ __all__ = [
     "MemoryTool",
     "MutationResult",
     "MutationStatus",
+    "OkfIndexMaintainer",
     "ProceduralStore",
     "Procedure",
     "ProfileContext",

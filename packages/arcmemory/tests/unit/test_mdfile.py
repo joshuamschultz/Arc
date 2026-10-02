@@ -11,7 +11,8 @@ def test_curated_memory_render_is_valid_okf_and_keeps_graph_links() -> None:
 
     document = parse(encoded)
     metadata, body = parse_document(encoded)
-    assert metadata["type"] == "ArcMemory"
+    assert metadata["type"] == "Note"
+    assert metadata["generated"]["by"] == "process:arcmemory"
     assert "[other](other.md)" in document.body
     assert "[[other]]" in body
 

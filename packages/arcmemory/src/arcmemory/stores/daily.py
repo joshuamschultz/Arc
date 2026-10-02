@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.collection_index import refresh_memory_document
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.types import DaySummary, Event
 
@@ -88,7 +88,7 @@ class DailyNotesStore:
         """Every day with curated notes on disk, newest first (sorted DESC)."""
         if not self._dir.exists():
             return []
-        return sorted((p.stem for p in self._dir.glob("*.md")), reverse=True)
+        return sorted((p.stem for p in card_files(self._dir)), reverse=True)
 
 
 def _union(existing: list[str], new: list[str]) -> list[str]:

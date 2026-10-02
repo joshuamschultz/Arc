@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from arcokf import validate_collection_index
+from arcokf import validate_folder_index
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.memory import FakeBackend
 
@@ -104,7 +104,7 @@ async def test_ingest_writes_valid_okf_collection_index(tmp_path: Path) -> None:
     assert index_path.is_file(), "ingest must render a real index.md on disk"
 
     # arcokf-valid, and valid against every listed document's digest.
-    validation = validate_collection_index(index_path, index_path.parent)
+    validation = validate_folder_index(index_path.parent, deep=True)
     assert validation.valid, validation.error
     assert validation.entries, "the ingested document must appear in the inventory"
 
@@ -123,19 +123,19 @@ async def test_every_reindex_refreshes_index_with_no_expiry_gate(tmp_path: Path)
 
     await service.ingest(source, _obj("a"), _content("a", "alpha revenue notes"), mapping)
     await service.finish_sync(source)
-    first = validate_collection_index(index_path, index_path.parent)
+    first = validate_folder_index(index_path.parent, deep=True)
     assert first.valid and len(first.entries) == 1
 
     # A second run refreshes the SAME index to two documents — unconditionally.
     await service.ingest(source, _obj("b"), _content("b", "beta revenue notes"), mapping)
     await service.finish_sync(source)
-    second = validate_collection_index(index_path, index_path.parent)
+    second = validate_folder_index(index_path.parent, deep=True)
     assert second.valid and len(second.entries) == 2, "reindex must refresh, never skip"
 
     # A full source reindex regenerates a valid index every time (no TTL short-circuit).
     reindexed = await service.reindex_source(source)
     assert reindexed == 2
-    after = validate_collection_index(index_path, index_path.parent)
+    after = validate_folder_index(index_path.parent, deep=True)
     assert after.valid and len(after.entries) == 2
 
 
@@ -153,7 +153,7 @@ async def test_index_is_hosted_under_workspace_never_remote(tmp_path: Path) -> N
     index_path = doc_root / "index.md"
     # The index and every listed document resolve strictly under the workspace.
     assert index_path.resolve().is_relative_to(tmp_path.resolve())
-    entries = validate_collection_index(index_path, doc_root).entries
+    entries = validate_folder_index(doc_root, deep=True).entries
     assert entries
     for entry in entries:
         target = (doc_root / entry.path).resolve()
@@ -180,7 +180,7 @@ async def test_reader_returns_verified_view_on_a_clean_index(tmp_path: Path) -> 
     assert isinstance(view, CollectionIndexView)
     assert view.present and view.verified
     assert view.document_count == 1 and view.entries
-    assert view.markdown.startswith("# Collection Index")
+    assert view.markdown.startswith("# ")
     assert view.error is None
 
 
@@ -261,7 +261,7 @@ async def test_resync_restores_a_fail_closed_index(tmp_path: Path) -> None:
     healed = operator.read_collection_index(mapping.source_id)
     assert healed.present and healed.verified
     assert healed.document_count == 1 and healed.entries
-    assert healed.markdown.startswith("# Collection Index")
+    assert healed.markdown.startswith("# ")
     assert healed.error is None and healed.guidance is None
 
 
@@ -280,3 +280,38 @@ def test_reader_rejects_path_traversal_source_id(tmp_path: Path) -> None:
         view = _operator(tmp_path).read_collection_index(evil)
         assert not view.present and not view.verified
         assert view.error == "invalid source id"
+
+
+# -- Per-folder indexes: the source folder and the connected/ listing above it ---
+
+
+@pytest.mark.asyncio
+async def test_connected_source_gets_per_folder_indexes_once_per_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import arcmemory.collection_index as collection_index
+
+    regenerated: list[tuple[str, str]] = []
+    real = collection_index.OkfIndexMaintainer._regenerate
+
+    def spy(self, rel, **kwargs):  # type: ignore[no-untyped-def]
+        regenerated.append((self._root.name, rel))
+        return real(self, rel, **kwargs)
+
+    monkeypatch.setattr(collection_index.OkfIndexMaintainer, "_regenerate", spy)
+    service, source, mapping = await _granted(tmp_path)
+
+    for name in ("a", "b", "c"):
+        await service.ingest(source, _obj(name), _content(name, f"{name} revenue notes"), mapping)
+    assert regenerated == [], "ingesting objects must not touch any index"
+
+    await service.finish_sync(source)
+
+    assert regenerated.count((mapping.source_id, "")) == 1, "the source index is built once"
+    memory = tmp_path / "memory"
+    collection_index.memory_maintainer(memory).drain_sync()
+    listing = (memory / "connected" / "index.md").read_text(encoding="utf-8")
+    assert f"[{mapping.source_id}/]({mapping.source_id}/index.md) - 3 docs" in listing
+    assert collection_index.memory_maintainer(memory).verify(memory / "connected")
+    source_index = (memory / "connected" / mapping.source_id / "index.md").read_text("utf-8")
+    assert not source_index.startswith("---"), "only the bundle root carries frontmatter"

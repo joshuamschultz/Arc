@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.collection_index import refresh_memory_document
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.slug import canonical_slug
 from arcmemory.types import Confidence, Insight
 
@@ -78,7 +78,7 @@ class InsightStore:
         """Every insight id currently on disk (sorted)."""
         if not self._dir.exists():
             return []
-        return sorted(p.stem for p in self._dir.glob("*.md"))
+        return sorted(p.stem for p in card_files(self._dir))
 
 
 __all__ = ["InsightStore"]

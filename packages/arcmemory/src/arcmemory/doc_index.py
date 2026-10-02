@@ -21,11 +21,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from arcokf import validate_collection_index
+from arcokf import validate_folder_index
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, Field
 
-from arcmemory.collection_index import CollectionIndexStore, routing_text
+from arcmemory.collection_index import memory_maintainer, routing_text, source_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.backend import IndexBackend, open_index_backend
@@ -185,25 +185,29 @@ class DocIndex:
 
         Run once per sync run, never per object: the index lists the whole
         source, so maintaining it per object made every ingest cost the size of
-        the inventory. The on-disk index is trusted for an incremental refresh
-        only when its routing text is exactly what was last indexed; anything
-        else (first run, a crash, an edit behind our back) is rebuilt from the
-        documents. The result is validated again before it is searchable, and
-        indexed as bounded windows labelled with the source's dominating
-        classification. File work runs off the event loop. Returns the entry
-        count.
+        the inventory. The source's maintainer heals only what is missing,
+        tampered or older than a document (a ``stat`` pass; nothing is re-read
+        when the folder is current), the connected-sources listing above it is
+        marked for refresh, and the verified routing lines are indexed as
+        bounded windows labelled with the source's dominating classification.
+        File work runs off the event loop. Returns the number of listed entries.
         """
         scope = doc_scope(agent_did, source_id).key
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
-        store = CollectionIndexStore(collection_root)
+        maintainer = source_maintainer(collection_root)
         base_id = f"index:{source_id}"
         indexed = await _indexed_windows(backend, scope, base_id)
-        on_disk = await asyncio.to_thread(_routing_windows, store.index_path, base_id)
+        # The on-disk index is trusted for an incremental refresh only when its
+        # routing text is exactly what was last indexed. Anything else (first
+        # run, a crash, an edit behind our back, even one forged together with
+        # its digest sidecar) is rebuilt from the documents.
+        on_disk = await asyncio.to_thread(_routing_windows, collection_root, base_id)
         trusted = on_disk is not None and [chunk.text for chunk in on_disk] == indexed
-        count = await asyncio.to_thread(store.refresh if trusted else store.sync)
-        fresh = await asyncio.to_thread(_routing_windows, store.index_path, base_id)
+        await asyncio.to_thread(maintainer.sync_all, force=not trusted)
+        memory_maintainer(self._workspace / "memory").mark_folder_dirty(collection_root.parent)
+        fresh = await asyncio.to_thread(_routing_windows, collection_root, base_id)
         await self._replace_index_windows(source_id, agent_did, fresh or [], indexed)
-        return count
+        return len(fresh or [])
 
     async def _replace_index_windows(
         self, source_id: str, agent_did: str, windows: list[SourceChunk], indexed: list[str]
@@ -386,17 +390,19 @@ async def _indexed_windows(backend: IndexBackend, scope: str, base_id: str) -> l
         texts.append(text)
 
 
-def _routing_windows(index_path: Path, base_id: str) -> list[SourceChunk] | None:
+def _routing_windows(collection_root: Path, base_id: str) -> list[SourceChunk] | None:
     """Bounded windows of a verified index's routing lines; ``None`` if untrusted.
 
-    An index that lists nothing yields no windows, so an emptied source stops
-    surfacing a bare heading.
+    Verification is the O(1) sidecar check: the index must be canonical and
+    match its digest. An index that lists nothing yields no windows, so an
+    emptied source stops surfacing a bare heading.
     """
-    validation = validate_collection_index(index_path)
+    validation = validate_folder_index(collection_root)
     if not validation.valid:
         return None
     if not validation.entries:
         return []
+    index_path = collection_root / "index.md"
     return list(
         bounded_chunks(
             base_id,
