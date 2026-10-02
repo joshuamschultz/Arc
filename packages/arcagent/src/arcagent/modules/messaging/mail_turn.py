@@ -140,7 +140,8 @@ async def format_delivery(st: Any, message: Any) -> str:
         )
     lines.append(
         "Mail allows one reply only. For discussion or follow-ups, post in the team "
-        "channel (messaging_send to channel://<name>). For directed work, use "
+        "channel (messaging_send to channel://<name>); read a channel's recent history "
+        "with messaging_read_channel. For directed work, use "
         "create_task / assign_task. To pass this mail to a better-placed teammate, "
         "use mail_handoff."
     )

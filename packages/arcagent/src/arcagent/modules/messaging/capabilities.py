@@ -10,6 +10,7 @@ The live messaging surface. Capabilities register on load:
   * ``mail_handoff``          (@tool)        — pass the inbound mail to a teammate.
   * ``messaging_check_inbox`` (@tool)        — poll all streams for unread messages.
   * ``messaging_read_thread`` (@tool)        — read full conversation thread.
+  * ``messaging_read_channel`` (@tool)      — read a channel's recent history.
   * ``messaging_list_entities`` (@tool)      — list registered team entities.
   * ``messaging_list_channels`` (@tool)      — list available channels.
   * ``store_team_file``       (@tool)        — share a file in the team directory.
@@ -36,7 +37,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
-from arcagent.modules.messaging import _runtime, activation, mail_turn, sweep
+from arcagent.modules.messaging import _runtime, activation, channel_read, mail_turn, sweep
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
@@ -225,7 +226,8 @@ def _format_delivery(msg: Any) -> str:
         name = sanitize_text(channel_target[len("channel://") :], max_length=200)
         lines.append(
             f"Reply normally — your answer is posted to #{name} automatically. "
-            "Use messaging_send only to reach a different channel or DM a teammate."
+            "Use messaging_send only to reach a different channel or DM a teammate. "
+            "To catch up on earlier messages here, use messaging_read_channel."
         )
     else:
         lines.append("Reply with messaging_send if a response is warranted.")
@@ -977,6 +979,29 @@ async def messaging_read_thread(stream: str, thread_id: str) -> str:
 
 
 @tool(
+    name="messaging_read_channel",
+    description=(
+        "Read a team channel's recent history, newest first, to catch up on a "
+        "conversation you were not awake for. You must be a member. Pass the "
+        "returned next_before_seq as before_seq to page further back."
+    ),
+    classification="read_only",
+    # SPEC-038 REQ-030 — channel content is peer-authored untrusted input.
+    capability_tags=["extract"],
+    when_to_use="Catch up on a channel before answering a mail or mention that refers to it.",
+)
+async def messaging_read_channel(
+    channel: str, limit: int = channel_read.DEFAULT_LIMIT, before_seq: int = 0
+) -> str:
+    """Read one bounded, clearance-filtered page of a channel the agent belongs to."""
+    st = _runtime.state()
+    try:
+        return json.dumps(await channel_read.read_channel(st, channel, limit, before_seq))
+    except (ValueError, TypeError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@tool(
     name="messaging_list_entities",
     description=(
         "List all registered entities (agents and users) in the team. "
@@ -1175,6 +1200,7 @@ __all__ = [
     "messaging_inbox_loop",
     "messaging_list_channels",
     "messaging_list_entities",
+    "messaging_read_channel",
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",

@@ -115,6 +115,7 @@ _EXPECTED_TOOLS: dict[str, frozenset[str]] = {
             "messaging_send",
             "messaging_check_inbox",
             "messaging_read_thread",
+            "messaging_read_channel",
             "messaging_list_entities",
             "messaging_list_channels",
             "store_team_file",

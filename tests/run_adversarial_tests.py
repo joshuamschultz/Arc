@@ -118,6 +118,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/modules/messaging/test_mail_turn.py",
         "packages/arcstore/tests/unit/test_mail_outbox.py",
     ),
+    "cross-channel read and classification laundering via a channel (alpha-2 item 58)": (
+        # A channel member reads only its own channels; a message above the
+        # reader's clearance stays withheld even when the channel was later
+        # lowered; a channel above clearance is denied outright; other agents'
+        # un-addressed posts stay out of context; every read is audited.
+        "packages/arcagent/tests/unit/modules/messaging/test_read_channel.py",
+    ),
     "foreign harness enrollment and admission (H-040)": (
         "packages/arctrust/tests/test_enrollment_grant.py",
         "packages/arcteam/tests/security/test_enrollment_abuse.py",
