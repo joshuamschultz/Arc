@@ -421,6 +421,8 @@ def test_a_gate_rejection_is_a_result_not_an_error(world: World) -> None:
         ("stale_preview", 409),
         ("preview_expired", 409),
         ("timeout", 504),
+        # The operator-anchored revision writer refused the commit (stale head, bad path).
+        ("refused", 409),
     ],
 )
 def test_control_statuses_map_to_http_codes(world: World, status: str, code: int) -> None:

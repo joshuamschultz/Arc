@@ -266,16 +266,19 @@ def test_versions_body_diff_rollback_work_on_a_zero_config_app(
         versions = client.get(path + "/versions", headers=viewer)
         assert versions.status_code == 200, versions.text
         items = versions.json()["items"]
-        assert [row["generation"] for row in items] == [2, 1]
-        newest, oldest = items[0]["candidate_id"], items[1]["candidate_id"]
-        body = client.get(path + f"/versions/{oldest}/body", headers=viewer)
+        # The first edit enrolled the signed original as revision 1.
+        assert [row["generation"] for row in items] == [3, 2, 1]
+        newest, middle, original = (row["candidate_id"] for row in items)
+        first_body = client.get(path + f"/versions/{original}/body", headers=viewer)
+        assert first_body.json()["body"] == _body("v1").decode()
+        body = client.get(path + f"/versions/{middle}/body", headers=viewer)
         assert body.status_code == 200, body.text
         assert body.json()["body"] == _body("v2").decode()
-        diff = client.get(path + f"/versions/diff?a={oldest}&b={newest}", headers=viewer)
+        diff = client.get(path + f"/versions/diff?a={middle}&b={newest}", headers=viewer)
         assert diff.status_code == 200, diff.text
         assert "+v3" in diff.json()["diff"]
         rollback = client.post(
-            path + "/rollback", headers=operator, json={"candidate_id": oldest, "confirm": True}
+            path + "/rollback", headers=operator, json={"candidate_id": middle, "confirm": True}
         )
         assert rollback.status_code == 200, rollback.text
         after = client.get(path + "/detail", headers=viewer)
@@ -283,7 +286,7 @@ def test_versions_body_diff_rollback_work_on_a_zero_config_app(
         assert [
             row["generation"]
             for row in client.get(path + "/versions", headers=viewer).json()["items"]
-        ] == [3, 2, 1]
+        ] == [4, 3, 2, 1]
     assert list(skill_revision_anchor_dir().glob("*.jsonl"))
 
 

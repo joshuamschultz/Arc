@@ -1,21 +1,19 @@
 """Injected Protocol seams — arcskill.improver declares, arcagent injects (REQ-004, D-3).
 
-``arcskill.improver`` is provider-free: LLM completion, artifact signing, sandbox
+``arcskill.improver`` is provider-free: LLM completion, skill writes, sandbox
 evaluation, and audit all enter through these structural Protocols. arcagent's
 ``skilladapt`` wiring supplies concrete implementations (arcllm-backed LLM, the
-agent-DID sidecar signer, the ``hub.dry_run`` sandbox runner, the operator-key
-WORM sink).
+operator-anchored :class:`SkillRevisionWriter`, the ``hub.dry_run`` sandbox runner,
+the operator-key WORM sink).
 
-Phase 1 ships the two seams the relocated engine needs — ``LLMInvoker`` (drives
-the judge + prose mutator) and ``Signer`` (agent-DID sidecar on write). The
-richer ``Mutator``/``Judge``/``EvalRunner``/``AuditSink`` Protocols over
-``BundleView`` land as the acceptance path is rewired (SPEC-044 Phases 3-4).
+There is one signing authority for skill content: the operator, through the
+anchored revision chain. The improver proposes changes and commits them through
+``SkillRevisionWriter``; it holds no signer and never writes a skill file in place.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from pathlib import Path
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -80,16 +78,39 @@ class EvalRunner(Protocol):
     async def run(self, view: BundleView, cases: list[EvalCase]) -> list[EvalOutcome]: ...
 
 
-@runtime_checkable
-class Signer(Protocol):
-    """Agent-DID sidecar signer (SPEC-033): sign ``content`` for ``path`` on write.
+class SkillWriterUnavailableError(RuntimeError):
+    """No operator-anchored revision writer is wired; the improver must not write."""
 
-    The concrete impl writes the ``<path>.arcsig`` detached signature the hub
-    re-verifies at reload. ``None`` (no signer) means personal-tier relaxable —
-    no sidecar written.
+
+class SkillRevisionRefusedError(ValueError):
+    """The revision writer refused a commit (unsafe path, stale head, bad signature)."""
+
+
+@runtime_checkable
+class SkillRevisionWriter(Protocol):
+    """The ONE write path for an improver change: an operator-anchored skill revision.
+
+    The improver never writes or signs a skill file itself. It hands the changed
+    files (skill-root-relative posix paths -> new bytes) to this seam; every file it
+    does not name carries forward. arcagent backs it with the anchored revision
+    chain signed by the OPERATOR signer, so the agent's DID key never signs a
+    capability artifact, and history, versions and rollback show the change.
+    ``reason`` labels the commit for audit. Returns the new revision digest.
+    Raises ``ValueError`` (nothing activated) for an unknown skill, an unsafe path,
+    or any authority/verification failure. ``None`` (no writer wired) means the
+    improver fails closed: status ``unavailable``, nothing written.
     """
 
-    def sign(self, path: Path, content: bytes) -> None: ...
+    def commit(self, skill_name: str, files: Mapping[str, bytes], *, reason: str) -> str: ...
 
 
-__all__ = ["ApprovalProvider", "EvalRunner", "LLMInvoker", "Merger", "Mutator", "Signer"]
+__all__ = [
+    "ApprovalProvider",
+    "EvalRunner",
+    "LLMInvoker",
+    "Merger",
+    "Mutator",
+    "SkillRevisionRefusedError",
+    "SkillRevisionWriter",
+    "SkillWriterUnavailableError",
+]

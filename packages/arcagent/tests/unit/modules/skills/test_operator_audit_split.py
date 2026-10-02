@@ -1,10 +1,9 @@
-"""SPEC-044 P7 / SPEC-053 — audit chain → OPERATOR key, skill signing → AGENT DID.
+"""SPEC-053 + W0-skill — the operator is the only signing authority in the skills module.
 
-Re-establishes the security test deleted with ``modules/skill_improver`` in the new
-``modules/skills`` layout (arcskill relocation). The crux of SPEC-053: two different
-attestations by two different authorities. The AUDIT chain (who-did-what, tamper-evident)
-is signed by the OPERATOR key; the mutated-SKILL sidecar (SPEC-033 D3, provenance) stays
-on the AGENT DID. Moving only the audit-chain signer is the whole fix.
+The AUDIT chain (who-did-what, tamper-evident) is signed by the OPERATOR key and
+verifies only under it. Skill content is never signed by the agent DID: the module
+holds no agent signer at all; an applied improver change is an operator-signed
+anchored revision (see ``tests/integration/test_improver_operator_revisions_w0.py``).
 """
 
 from __future__ import annotations
@@ -15,28 +14,17 @@ from arctrust import OperatorKey, verify_chain
 from arctrust.audit import AuditEvent
 from arctrust.identity import AgentIdentity
 
-from arcagent.capabilities.artifact_signing import load_signature
-from arcagent.modules.skills._runtime import _build_signer, _build_worm_sink
+from arcagent.modules.skills import _runtime
+from arcagent.modules.skills._runtime import _build_worm_sink, _build_writer
 
 
-def test_audit_chain_uses_operator_key_skill_signing_uses_agent_did(tmp_path: Path) -> None:
+def test_audit_chain_uses_the_operator_key(tmp_path: Path) -> None:
     ws = tmp_path / "agent" / "workspace"
     ws.mkdir(parents=True)
     agent = AgentIdentity.generate(org="arc", agent_type="exec")
     operator = OperatorKey.generate()
     assert operator.public_key != agent.public_key
 
-    # Skill signing (SPEC-033 D3) is pinned to the AGENT DID.
-    signer = _build_signer(agent)
-    assert signer is not None
-    artifact = ws / "SKILL.md"
-    artifact.write_text("# skill\n", encoding="utf-8")
-    signer.sign(artifact, b"# skill\n")
-    manifest = load_signature(artifact)
-    assert manifest is not None
-    assert manifest.signer_did == agent.did
-
-    # The audit chain is signed by the OPERATOR key, verifiable ONLY under it.
     sink = _build_worm_sink(ws, operator.into_signer(), None)
     assert sink is not None
     chain = Path(sink._path)
@@ -47,3 +35,14 @@ def test_audit_chain_uses_operator_key_skill_signing_uses_agent_did(tmp_path: Pa
 
     assert verify_chain(chain, operator.public_key) is True
     assert verify_chain(chain, agent.public_key) is False
+
+
+def test_the_module_holds_no_agent_signer() -> None:
+    assert not hasattr(_runtime, "_build_signer")
+    assert not hasattr(_runtime, "_SidecarSigner")
+
+
+def test_no_writer_without_an_anchored_authority_or_operator_signer() -> None:
+    operator = OperatorKey.generate().into_signer()
+    assert _build_writer(None, operator, lambda _name: None) is None
+    assert _build_writer(object(), operator, lambda _name: None) is None

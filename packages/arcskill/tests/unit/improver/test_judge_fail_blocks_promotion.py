@@ -33,6 +33,8 @@ from arcskill.improver.goldencase import (
 )
 from arcskill.improver.models import BundleView, EvalOutcome
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 _RUBRIC = "Pass iff the summary names the customer AND the invoice amount."
 
 
@@ -72,7 +74,8 @@ def _judge_case() -> CuratedGoldenCase:
 
 def _emit_into(skill_dir: Path) -> Any:
     (skill_dir / "evals").mkdir(parents=True, exist_ok=True)
-    return emit_golden_case(skill_dir, _judge_case())
+    writer = DirRevisionWriter(lambda _name: skill_dir)
+    return emit_golden_case(skill_dir, _judge_case(), writer=writer)
 
 
 def test_emitted_judge_rubric_anchor_is_content_independent(tmp_path: Path) -> None:
@@ -83,7 +86,7 @@ def test_emitted_judge_rubric_anchor_is_content_independent(tmp_path: Path) -> N
     on candidate quality.
     """
     emitted = _emit_into(tmp_path)
-    src = emitted.anchor_path.read_text(encoding="utf-8")
+    src = (tmp_path / emitted.anchor_path).read_text(encoding="utf-8")
 
     # Structural well-formedness checks only.
     assert 'CASE["gate_type"]' in src

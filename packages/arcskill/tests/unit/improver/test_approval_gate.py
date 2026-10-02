@@ -14,6 +14,8 @@ import pytest
 from arcskill.improver import ArcSkillImprover, ImproverConfig
 from arcskill.improver.models import BundlePatch, BundleView, EvalCase, EvalOutcome
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 _BUGGY = b"def add(a, b):\n    return a - b\n"
 _FIXED = b"def add(a, b):\n    return a + b\n"
 
@@ -74,6 +76,7 @@ def _make(
         eval_runner=_PassRunner(),
         approval_provider=approval_provider,
         audit_sink=sink,
+        writer=DirRevisionWriter(lambda _n: skill_md.parent),
         skill_path=lambda name: skill_md,
     )
 

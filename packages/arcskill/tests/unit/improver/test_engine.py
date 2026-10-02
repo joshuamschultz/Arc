@@ -112,6 +112,8 @@ def optimizer(
     mock_reflector: AsyncMock,
     guardrails: Guardrails,
     store: CandidateStore,
+    workspace: Path,
+    dir_writer: Any,
 ) -> SkillOptimizer:
     return SkillOptimizer(
         config=config,
@@ -119,6 +121,7 @@ def optimizer(
         reflector=mock_reflector,
         guardrails=guardrails,
         store=store,
+        writer=dir_writer(lambda name: workspace / "committed" / name),
     )
 
 
@@ -263,7 +266,9 @@ class TestPostOptimizationApplication:
             trace_ids=["t1"],
         )
 
-        # Verify file updated
-        assert "Improved" in skill_path.read_text()
+        # The candidate is committed as a revision; the active file is never rewritten.
+        committed = workspace / "committed" / "test-skill" / "SKILL.md"
+        assert "Improved" in committed.read_text()
+        assert skill_path.read_text() == SKILL_TEXT
         # SPEC-033 D4/REQ-060: no plaintext audit log — audit is the WORM chain.
         assert not (store._skill_dir("test-skill") / "audit.jsonl").exists()

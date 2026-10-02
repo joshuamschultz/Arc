@@ -5,11 +5,11 @@ One journey, the acceptance test (locked done-criteria):
 1. A real used skill leaves improver spans whose ``llm_trace_ids`` point at real
    arcllm payloads (a secret planted in one body).
 2. The read-time join makes those payloads VISIBLE (no second store).
-3. The operator edits a result to the ideal and emits a golden — SIGNED + REDACTED.
+3. The operator edits a result to the ideal and emits a golden — REDACTED, and
+   committed as one revision through the operator-anchored writer.
 4. load_suite discovers it, gate-typed and human-authored.
 5. The improvement gate compares PER CASE TYPE (exact_match here + a judge_rubric case).
-6. Promotion re-enters the hub gates: the signed sidecar re-verifies (sign gate) and
-   the anchor AST-scans clean (scan gate) — never a hot-swap.
+6. The anchor AST-scans clean (scan gate) — never a hot-swap.
 """
 
 from __future__ import annotations
@@ -26,22 +26,10 @@ from arcskill.improver import (
     rubric_digest,
 )
 from arcskill.improver.evalgate import load_suite
-from arctrust import sign_artifact, verify_artifact
-from arctrust.artifact import ArtifactSignature
-from arctrust.identity import AgentIdentity
+
+from packages.arcskill.tests.conftest import DirRevisionWriter
 
 _SECRET = "sk-proj-CAFEBABEcafebabe0123456789ABCDEFGH"
-
-
-class _ArctrustSigner:
-    """A real agent-DID sidecar signer — the hub's signature gate re-verifies it."""
-
-    def __init__(self, did: str, key: bytes) -> None:
-        self._did, self._key = did, key
-
-    def sign(self, path: Path, content: bytes) -> None:
-        manifest = sign_artifact(content, signer_did=self._did, private_key=self._key)
-        path.with_name(path.name + ".arcsig").write_text(manifest.to_json(), encoding="utf-8")
 
 
 class _FakeJudge:
@@ -59,8 +47,7 @@ def _make_skill(root: Path) -> Path:
 async def test_curation_journey_end_to_end(tmp_path: Path) -> None:
     skill_md = _make_skill(tmp_path)
     ws = tmp_path / "ws"
-    ident = AgentIdentity.generate(org="arc", agent_type="exec")
-    signer = _ArctrustSigner(ident.did, ident.signing_seed)
+    writer = DirRevisionWriter(lambda _name: skill_md.parent)
 
     # (1) A real arcllm payload with a planted secret in the response body.
     llm_store = JSONLTraceStore(ws / "agent_root")
@@ -77,7 +64,7 @@ async def test_curation_journey_end_to_end(tmp_path: Path) -> None:
         ws,
         config=ImproverConfig(optimize_after_uses=1),
         tier="personal",
-        signer=signer,
+        writer=writer,
         llm=_FakeJudge(),
         skill_path=lambda name: skill_md,
     )
@@ -114,11 +101,12 @@ async def test_curation_journey_end_to_end(tmp_path: Path) -> None:
     )
     emitted = imp.curate_golden(case)
 
-    # SIGNED: the sidecar re-verifies (the hub signature gate) — promotion, not hot-swap.
-    sidecar = ArtifactSignature.from_json(
-        emitted.anchor_path.with_name(emitted.anchor_path.name + ".arcsig").read_text()
-    )
-    assert verify_artifact(emitted.anchor_path.read_bytes(), sidecar)
+    # COMMITTED: one revision through the writer (the operator signs it in arcagent).
+    assert writer.commits[-1][1].keys() == {
+        emitted.case_path,
+        emitted.anchor_path,
+        "evals/.manifest.json",
+    }
     # REDACTED: the planted secret reached NO written golden artifact.
     for path in (skill_md.parent / "evals").rglob("*"):
         if path.is_file():
@@ -157,7 +145,7 @@ async def test_curation_journey_end_to_end(tmp_path: Path) -> None:
     assert {v.passed for v in verdicts} == {True}  # both gate types evaluated, both pass
 
     # (6) The anchor AST-scans clean — the hub scan gate accepts the promoted artifact.
-    ast.parse(emitted.anchor_path.read_text(encoding="utf-8"))
+    ast.parse((skill_md.parent / emitted.anchor_path).read_text(encoding="utf-8"))
 
     await imp.aclose()
     await llm_store.close()

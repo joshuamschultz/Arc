@@ -237,6 +237,7 @@ def __getattr__(name: str) -> Any:
         return register_schedule_revision
     if name in {
         "AnchoredSkillRevisionResolver",
+        "OperatorSkillRevisionWriter",
         "ReviewedSkillBundle",
         "SkillRuntime",
         "reviewed_bundle_digest",
@@ -317,6 +318,7 @@ __all__ = [
     "MemoryConfig",
     "MemoryPromotionConfig",
     "ModuleBusError",
+    "OperatorSkillRevisionWriter",
     "PersonalKnowledgePort",
     "ProbeResult",
     "PromotionSource",

@@ -13,7 +13,7 @@ import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from tempfile import mkdtemp
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import Any, Protocol
 
 from arctrust import (
@@ -29,6 +29,7 @@ from arctrust import (
 from arcagent.capabilities.artifact_signing import write_signature_with_signer
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.capabilities.skill_validator import validate_skill_folder
+from arcagent.modules.capability_import.archive import _BINARY_SUFFIXES, _NESTED_ARCHIVE_SUFFIXES
 from arcagent.modules.capability_import.service import approval_name, approval_source
 
 _MAX_FILES = 512
@@ -179,26 +180,72 @@ def reviewed_bundle_digest(files: Mapping[str, bytes]) -> str:
     return _digest(_canonical({"files": _file_rows(dict(files))}))
 
 
+#: Paths a revision folder owns itself: its signed manifest and that signature.
+_RESERVED_REVISION_FILES = frozenset({"manifest.json", "manifest.json.arcsig"})
+
+
+def _check_reviewable_path(relative: str) -> None:
+    """Refuse a bundle path a signed revision cannot hold, naming the real reason.
+
+    A revision holds the same reviewable subtree a first promote installs
+    (``SKILL.md``, ``references/``, ``scripts/``, ``assets/``, ``evals/``, root
+    notes such as ``LICENSE.txt``): any safe relative path except the revision's
+    own manifest, a signature sidecar, and the opaque/auto-run artifacts intake
+    refuses (nested archives, binaries, bytecode, package ``__init__.py``).
+    """
+    path = PurePosixPath(relative)
+    reason = ""
+    if (
+        not relative
+        or str(path) != relative
+        or path.is_absolute()
+        or "\\" in relative
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        reason = "path escapes the skill folder"
+    elif relative in _RESERVED_REVISION_FILES:
+        reason = "reserved for the signed revision manifest"
+    elif relative.endswith(".arcsig"):
+        reason = "signature sidecars are written by the operator signer"
+    elif path.name.casefold() == "__init__.py" or path.suffix.casefold() in {".pyc", ".pyo"}:
+        reason = "Python packages and bytecode are not accepted"
+    elif path.name.casefold().endswith(_NESTED_ARCHIVE_SUFFIXES):
+        reason = "nested archives are not accepted"
+    elif path.suffix.casefold() in _BINARY_SUFFIXES:
+        reason = "compiled binaries are not accepted"
+    if reason:
+        raise ValueError(f"reviewed skill bundle has an unsafe file {relative!r}: {reason}")
+
+
 def _validate_reviewed_files(files: Mapping[str, bytes]) -> None:
     if "SKILL.md" not in files or len(files) > _MAX_FILES:
         raise ValueError("reviewed skill bundle is incomplete or exceeds limits")
     total = 0
     for relative, content in files.items():
-        path = PurePosixPath(relative)
-        if (
-            not isinstance(content, bytes)
-            or str(path) != relative
-            or path.is_absolute()
-            or "\\" in relative
-            or any(part in {"", ".", ".."} for part in path.parts)
-            or (relative != "SKILL.md" and path.parts[0] not in {"references", "assets", "evals"})
-            or relative.endswith(".arcsig")
-            or len(content) > _MAX_FILE
-        ):
-            raise ValueError("reviewed skill bundle has an unsafe file")
+        _check_reviewable_path(relative)
+        if not isinstance(content, bytes) or len(content) > _MAX_FILE:
+            raise ValueError(f"reviewed skill bundle file {relative!r} exceeds limits")
         total += len(content)
         if total > _MAX_TOTAL:
             raise ValueError("reviewed skill bundle exceeds limits")
+
+
+def _precheck_skill_body(content: bytes, skill_name: str) -> None:
+    """Validate an edited SKILL.md (and its name) without touching the lineage."""
+    with TemporaryDirectory(prefix="skill-precheck-") as scratch:
+        (Path(scratch) / "SKILL.md").write_bytes(content)
+        validation = validate_skill_folder(Path(scratch), "revision")
+    if not validation.ok or validation.entry is None or validation.entry.name != skill_name:
+        raise ValueError("edited skill failed validation or changed its name")
+
+
+def _data_files(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """The reviewable data of a bundle snapshot: no manifest, no sidecars."""
+    return {
+        path: content
+        for path, content in files.items()
+        if path not in _RESERVED_REVISION_FILES and not path.endswith(".arcsig")
+    }
 
 
 @dataclass(frozen=True)
@@ -373,6 +420,49 @@ class AnchoredSkillRevisionResolver:
         self._verify_revision(revision, head, folder.name, files=files)
         return files
 
+    def active_folder(self, folder: Path) -> Path | None:
+        """Return the verified active revision folder, or None while unenrolled.
+
+        ``<root>/.skill-revisions/<name>/<digest>`` for the installed folder
+        ``<root>/skills/<name>``. None is only valid where :meth:`resolve` would
+        load the signed original directly (below federal, no revision evidence);
+        an unavailable or regressed authority raises ``ValueError``.
+        """
+        head = self._anchor(folder.name).latest()
+        if head is None:
+            self._require_unenrolled(folder)
+            return None
+        _reject_regressed_head(folder, head, self._config_path, self._agent_did)
+        revision = folder.parent.parent / ".skill-revisions" / folder.name / head.digest
+        self._verify_revision(revision, head, folder.name)
+        return revision
+
+    def read_verified_file(self, folder: Path, relpath: str) -> bytes:
+        """Return one bundle file's bytes only if the operator signature covers them.
+
+        Re-checks the external head on every call. For an active revision the
+        whole bundle is read through no-follow handles and checked against the
+        operator-signed revision manifest (sha256 + size of every file). For an
+        unenrolled original (below federal) every file must carry an operator
+        ``.arcsig`` from a pinned key plus its promote-time approval. Unknown
+        paths, traversal, symlinks, hard links, sidecars, the revision manifest
+        and any byte drift raise ``ValueError``.
+        """
+        _check_reviewable_path(relpath)
+        head = self._anchor(folder.name).latest()
+        if head is None:
+            self._require_unenrolled(folder)
+            if not _safe_name(folder.name) or folder.is_symlink():
+                raise ValueError("skill folder is unsafe")
+            files = _snapshot(folder)
+            self._verify_original(folder, files)
+        else:
+            files = self.read_bundle(folder)
+        content = files.get(relpath)
+        if content is None:
+            raise ValueError(f"{relpath!r} is not in the signed skill bundle")
+        return content
+
     def _require_unenrolled(self, folder: Path) -> None:
         if _enrollment_required(self._config_path) or _has_revision_evidence(folder):
             raise ValueError("skill revision authority is unavailable")
@@ -459,25 +549,63 @@ class AnchoredSkillRevisionResolver:
         """
         replacement = dict(files)
         _validate_reviewed_files(replacement)
+        return self._activate_bundle(folder, replacement, signer=signer, operator_did=operator_did)
+
+    def overlay(
+        self,
+        folder: Path,
+        changes: Mapping[str, bytes],
+        *,
+        signer: Signer,
+        operator_did: str,
+    ) -> str:
+        """Activate the active bundle with ``changes`` laid over it as a new revision.
+
+        Every file the change set does not name carries forward byte for byte,
+        and every non-``SKILL.md`` file is re-signed by the operator in the new
+        revision. An unenrolled original is enrolled as revision 1 first.
+        Returns the new revision digest.
+        """
+        for relative in changes:
+            _check_reviewable_path(relative)
         if self._anchor(folder.name).latest() is None:
-            original = _snapshot(folder)["SKILL.md"]
-            self.revise(
-                folder,
-                original,
-                expected_sha256=_digest(original),
-                signer=signer,
-                operator_did=operator_did,
-            )
+            self._enroll_original(folder, signer=signer, operator_did=operator_did)
+        bundle = _data_files(self.read_bundle(folder))
+        bundle.update(changes)
+        _validate_reviewed_files(bundle)
+        return self._activate_bundle(folder, bundle, signer=signer, operator_did=operator_did)
+
+    def _enroll_original(self, folder: Path, *, signer: Signer, operator_did: str) -> None:
+        """Activate the signed, approved installed original as revision 1."""
+        original = _snapshot(folder)["SKILL.md"]
+        self.revise(
+            folder,
+            original,
+            expected_sha256=_digest(original),
+            signer=signer,
+            operator_did=operator_did,
+        )
+
+    def _activate_bundle(
+        self,
+        folder: Path,
+        files: dict[str, bytes],
+        *,
+        signer: Signer,
+        operator_did: str,
+    ) -> str:
+        if self._anchor(folder.name).latest() is None:
+            self._enroll_original(folder, signer=signer, operator_did=operator_did)
         head = self._anchor(folder.name).latest()
         if head is None:
             raise ValueError("skill revision authority is unavailable")
         current = self.read_bundle(folder)
         self.revise(
             folder,
-            replacement["SKILL.md"],
+            files["SKILL.md"],
             expected_sha256=_digest(current["SKILL.md"]),
             expected_active_digest=head.digest,
-            replacement_files=replacement,
+            replacement_files=files,
             signer=signer,
             operator_did=operator_did,
         )
@@ -569,6 +697,20 @@ class AnchoredSkillRevisionResolver:
             revisions_root = folder.parent.parent / ".skill-revisions" / folder.name
             if revisions_root.exists() and any(revisions_root.iterdir()):
                 raise ValueError("skill revision authority is unavailable after reset")
+            original = _snapshot(folder)["SKILL.md"]
+            if resource_updates or replacement_files is not None or content != original:
+                # Refuse a stale or invalid edit BEFORE enrollment moves the anchor.
+                if _digest(original) != expected_sha256:
+                    raise ValueError("skill changed since it was opened")
+                for relative in resource_updates or {}:
+                    _check_reviewable_path(relative)
+                _precheck_skill_body(content, folder.name)
+                # A change to a never-revised skill: enroll the signed original as
+                # revision 1 first, so history and rollback can still reach it.
+                self._enroll_original(folder, signer=signer, operator_did=operator_did)
+                prior_head = anchor.latest()
+                if prior_head is None:
+                    raise ValueError("skill revision authority is unavailable")
         source_folder = (
             folder.parent.parent / ".skill-revisions" / folder.name / prior_head.digest
             if prior_head
@@ -622,16 +764,9 @@ class AnchoredSkillRevisionResolver:
                         target, data, signer_did=operator_did, signer=signer
                     )
             for relative, data in (resource_updates or {}).items():
-                parts = Path(relative).parts
-                if (
-                    Path(relative).is_absolute()
-                    or not parts
-                    or parts[0] not in {"references", "assets", "evals"}
-                    or any(part in {"", ".", ".."} for part in parts)
-                    or relative.endswith(".arcsig")
-                    or len(data) > _MAX_FILE
-                ):
-                    raise ValueError("skill resource update is unsafe")
+                if relative == "SKILL.md" or len(data) > _MAX_FILE:
+                    raise ValueError(f"skill resource update {relative!r} is unsafe")
+                _check_reviewable_path(relative)
                 target = staging / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
@@ -756,3 +891,58 @@ class AnchoredSkillRevisionResolver:
         if not isinstance(listed, list) or listed != _file_rows(files):
             raise ValueError("active revision bundle changed")
         return files["SKILL.md"]
+
+
+class OperatorSkillRevisionWriter:
+    """Commit agent-proposed skill changes as operator-signed anchored revisions.
+
+    The one write path for automated skill mutation (the arcskill improver's
+    prose, code-repair, merge and golden-curation writes). It never writes into
+    the installed folder or an existing revision: every commit becomes a new
+    revision signed by the OPERATOR signer and activated through the external
+    anchor, so history, versions and rollback show it, and the agent's own DID
+    key never signs a capability artifact.
+    """
+
+    def __init__(
+        self,
+        *,
+        authority: Callable[[], AnchoredSkillRevisionResolver],
+        signer: Signer,
+        operator_did: str,
+        folder_of: Callable[[str], Path | None],
+    ) -> None:
+        self._authority = authority
+        self._signer = signer
+        self._operator_did = operator_did
+        self._folder_of = folder_of
+
+    def commit(self, skill_name: str, files: Mapping[str, bytes], *, reason: str) -> str:
+        """Lay ``files`` over the active bundle as a new revision; return its digest.
+
+        ``files`` maps skill-root-relative posix paths to their new bytes; every
+        other file carries forward. ``reason`` is the caller's audit label.
+        Raises ``ValueError`` for an unknown skill, an unsafe path, or any
+        authority/verification failure; nothing is activated in that case.
+        """
+        folder = self._folder_of(skill_name)
+        if folder is None:
+            raise ValueError(f"skill {skill_name!r} has no installed folder to revise")
+        if not files:
+            raise ValueError(f"a skill revision needs at least one changed file ({reason})")
+        return self._authority().overlay(
+            folder, dict(files), signer=self._signer, operator_did=self._operator_did
+        )
+
+
+def installed_skill_folder(location: Path) -> Path:
+    """The installed ``<root>/skills/<name>`` folder for a loaded SKILL.md path.
+
+    A skill loaded from an active revision lives at
+    ``<root>/.skill-revisions/<name>/<digest>/SKILL.md``; its lineage is keyed by
+    the installed folder, which is what every revision method takes.
+    """
+    revision = location.parent
+    if revision.parent.parent.name == ".skill-revisions":
+        return revision.parent.parent.parent / "skills" / revision.parent.name
+    return revision

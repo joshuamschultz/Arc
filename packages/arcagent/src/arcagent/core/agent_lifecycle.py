@@ -376,6 +376,8 @@ def configure_module_runtimes(
         prepare_collected_request=agent.prepare_collected_request,
         audit_sink=_agent_audit_sink(agent),
         prompt_source=agent._prompt_source,
+        skill_revisions=agent._skill_artifact_resolver,
+        capability_reload=agent.reload,
     )
     # Kept so a module enabled later in the session is configured from the same
     # menu as one enabled at startup (set_module_enabled).

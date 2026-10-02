@@ -28,6 +28,8 @@ from arcskill.improver.gate_log import GateLog, GateRecord
 from arcskill.improver.models import BundleView, Candidate, EvalCase, EvalOutcome, OptimizeResult
 from arcskill.improver.reader import ImproverStateReader
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 _SEED = "---\nname: s\n---\n# s\n\nDo the thing.\n"
 _BETTER = "---\nname: s\n---\n# s\n\nDo the thing carefully.\n"
 _CASES = "def test_a():\n    assert 1\n\ndef test_b():\n    assert 1\n"
@@ -112,6 +114,7 @@ def _improver(
         approval_provider=approver,
         suite_generator=trigger,
         agent_did="did:arc:test:agent",
+        writer=DirRevisionWriter(lambda _n: skill_md.parent if skill_md else Path()),
         skill_path=lambda name: skill_md if name == "s" else None,
     )
 

@@ -50,6 +50,7 @@ _STATUS_CODES = {
     "busy": 409,
     "stale_preview": 409,
     "preview_expired": 409,
+    "refused": 409,
     "timeout": 504,
 }
 _AUDIT_KEYS = ("candidate_id", "preview_id", "total", "passed", "failed", "adopted")

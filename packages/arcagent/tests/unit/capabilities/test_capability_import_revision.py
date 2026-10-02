@@ -138,7 +138,8 @@ async def test_reviewed_bundle_promotion_reloads_exact_active_content(tmp_path: 
     entry = await registry.get_skill("reporter")
     assert entry is not None and entry.read_current is not None
     assert entry.read_current() == _body("reviewed").decode()
-    assert anchor.head.version == 2
+    # The never-revised original was enrolled as revision 1 before the first edit.
+    assert anchor.head.version == 3
     assert activated_digest == anchor.head.digest
 
 
@@ -326,7 +327,8 @@ def test_revision_is_anchored_and_revalidated_on_use(tmp_path: Path) -> None:
         operator_did="did:arc:operator:test",
     )
     assert digest == hashlib.sha256(_body("new")).hexdigest()
-    assert anchor.head is not None and anchor.head.version == 1
+    # Revision 1 is the enrolled original; the edit is revision 2.
+    assert anchor.head is not None and anchor.head.version == 2
     path = resolver.resolve(folder, "workspace-skills")
     assert path is not None
     assert resolver.read_current(folder, path) == _body("new").decode()
@@ -358,7 +360,7 @@ def test_prior_version_activation_advances_anchor_and_keeps_history(tmp_path: Pa
     )
     second = anchor.head
     assert second is not None
-    assert [version for _, version, _, _ in resolver.revision_history(folder)] == [2, 1]
+    assert [version for _, version, _, _ in resolver.revision_history(folder)] == [3, 2, 1]
     resolver.activate_prior(
         folder,
         first.digest,
@@ -367,7 +369,7 @@ def test_prior_version_activation_advances_anchor_and_keeps_history(tmp_path: Pa
         operator_did="did:arc:operator:test",
     )
     assert anchor.head is not None
-    assert anchor.head.version == 3
+    assert anchor.head.version == 4
     assert anchor.head.previous_digest == second.digest
     assert (
         resolver.read_current(folder, resolver.resolve(folder, "workspace-skills"))
@@ -375,7 +377,7 @@ def test_prior_version_activation_advances_anchor_and_keeps_history(tmp_path: Pa
     )
     active = resolver.resolve(folder, "workspace-skills")
     assert (active.parent / "references" / "schema.txt").read_bytes() == b"data source"
-    assert [version for _, version, _, _ in resolver.revision_history(folder)] == [3, 2, 1]
+    assert [version for _, version, _, _ in resolver.revision_history(folder)] == [4, 3, 2, 1]
 
 
 def test_anchored_resolver_refuses_empty_and_reset_head_in_fresh_instance(tmp_path: Path) -> None:

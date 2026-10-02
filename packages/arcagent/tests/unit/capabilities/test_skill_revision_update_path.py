@@ -221,7 +221,8 @@ def test_failed_update_leaves_the_enrolled_original_active(tmp_path: Path) -> No
         config_path=config,
         revisions=resolver,
     )
-    # An update may only carry resources an anchored revision can hold.
+    # An update may only carry files an anchored revision can hold: the revision's
+    # own manifest name is reserved, and the refusal names the file and the rule.
     second = _import(
         tmp_path,
         service,
@@ -229,9 +230,9 @@ def test_failed_update_leaves_the_enrolled_original_active(tmp_path: Path) -> No
         "v2",
         _body("v2"),
         b"v2",
-        extra={"scripts/extract.py": b"print('x')\n"},
+        extra={"manifest.json": b"{}"},
     )
-    with pytest.raises(ValueError, match="unsafe file"):
+    with pytest.raises(ValueError, match="unsafe file 'manifest.json'"):
         service.promote(
             second,
             target_agent_did=_AGENT,

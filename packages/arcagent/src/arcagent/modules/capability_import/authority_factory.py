@@ -22,6 +22,7 @@ from arctrust.policy import OperatorApprovalAuthority
 
 from arcagent.modules.capability_import.revisions import (
     AnchoredSkillRevisionResolver,
+    OperatorSkillRevisionWriter,
     skill_revision_scope,
 )
 
@@ -146,5 +147,44 @@ class LiveSkillRevisionResolver:
         """One bundle file of the active revision, verified against its signed manifest."""
         return self._resolver().read_verified_file(folder, relpath)
 
+    def authority(self) -> AnchoredSkillRevisionResolver:
+        """The anchored revision authority bound to the running agent's DID."""
+        return self._resolver()
 
-__all__ = ["LiveSkillRevisionResolver", "build_skill_revision_anchor_factory"]
+
+def build_operator_skill_writer(
+    resolver: object,
+    operator_signer: Signer | None,
+    folder_of: Callable[[str], Path | None],
+) -> OperatorSkillRevisionWriter | None:
+    """The agent's one skill write path, or None when it cannot be operator-anchored.
+
+    Needs both an anchored revision authority (``resolver``: the agent's
+    :class:`LiveSkillRevisionResolver` or an :class:`AnchoredSkillRevisionResolver`)
+    and the operator signer. Either missing → None, and every automated skill
+    write (the improver) refuses instead of falling back to another signer.
+    """
+    if operator_signer is None:
+        return None
+    if isinstance(resolver, LiveSkillRevisionResolver):
+        authority: Callable[[], AnchoredSkillRevisionResolver] = resolver.authority
+    elif isinstance(resolver, AnchoredSkillRevisionResolver):
+        bound = resolver
+
+        def authority() -> AnchoredSkillRevisionResolver:
+            return bound
+    else:
+        return None
+    return OperatorSkillRevisionWriter(
+        authority=authority,
+        signer=operator_signer,
+        operator_did=OperatorApprovalAuthority(operator_signer).did,
+        folder_of=folder_of,
+    )
+
+
+__all__ = [
+    "LiveSkillRevisionResolver",
+    "build_operator_skill_writer",
+    "build_skill_revision_anchor_factory",
+]

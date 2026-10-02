@@ -21,6 +21,8 @@ from arcskill.improver.config import LifecycleConfig
 from arcskill.improver.lifecycle import STATE_ACTIVE, STATE_MERGED, SkillLifecycle
 from arcskill.improver.models import BundlePatch, BundleView, EvalCase, EvalOutcome
 
+from packages.arcskill.tests.conftest import DirRevisionWriter
+
 # ---------------------------------------------------------------------------
 # SkillLifecycle.consolidation_candidates() / merge() — pure, no LLM, no sandbox
 # ---------------------------------------------------------------------------
@@ -203,6 +205,7 @@ async def test_review_consolidation_applies_merge_when_gate_passes_and_approved(
         merger=merger,
         approval_provider=approver,
         audit_sink=sink,
+        writer=DirRevisionWriter(lambda n: skills_root / n),
         skill_path=_skill_path_fn(skills_root),
     )
 
@@ -253,6 +256,7 @@ async def test_review_consolidation_blocked_on_regression_never_asks_approval(
         eval_runner=runner,
         merger=merger,
         approval_provider=approver,
+        writer=DirRevisionWriter(lambda n: skills_root / n),
         skill_path=_skill_path_fn(skills_root),
     )
 
@@ -283,6 +287,7 @@ async def test_review_consolidation_fails_closed_without_approver_at_federal(
         eval_runner=runner,
         merger=_FakeMerger(_MERGED_TEXT),
         audit_sink=sink,
+        writer=DirRevisionWriter(lambda n: skills_root / n),
         skill_path=_skill_path_fn(skills_root),
         # no approval_provider wired
     )

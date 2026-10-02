@@ -12,13 +12,12 @@ from pathlib import Path
 import arcrun
 from arcokf import OKFValidationError, validate
 
-from arccli.commands._serve import build_skill_revision_anchor_factory
 from arccli.commands.agent._common import (
-    _load_arcagent,
     _load_env,
     _print_result_json,
     _resolve_agent_dir,
     _scaffold_workspace,
+    load_cli_agent,
 )
 
 
@@ -82,9 +81,7 @@ async def _agent_run_once(
     session_id: str,
 ) -> None:
     """One-shot task execution coroutine."""
-    arc_agent, config, _config_path = _load_arcagent(
-        agent_dir, skill_revision_anchor_factory=build_skill_revision_anchor_factory()
-    )
+    arc_agent, config, _config_path = load_cli_agent(agent_dir)
     _scaffold_workspace(agent_dir, config.agent.name)
 
     if model_override:
