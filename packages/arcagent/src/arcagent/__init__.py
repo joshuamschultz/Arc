@@ -92,7 +92,7 @@ from arcagent.knowledge import (
 )
 from arcagent.modules.capability_import.archive import intake as intake_capability_archive
 from arcagent.modules.capability_import.errors import CapabilityImportError
-from arcagent.modules.capability_import.manifest import manifest_dict
+from arcagent.modules.capability_import.manifest import manifest_dict, strict_sections_for_agent
 from arcagent.modules.capability_import.models import (
     CapabilityImportLimits,
     CapabilityImportManifest,
@@ -406,6 +406,7 @@ __all__ = [
     "signed_workspace_files",
     "skill_revision_scope",
     "stream_token_text",
+    "strict_sections_for_agent",
     "stricter_tier",
     "summarize_tool_policy",
     "tier_rank",

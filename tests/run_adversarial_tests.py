@@ -31,6 +31,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # anchored revision, or stop with "activation unavailable" — never an unsigned
         # eval file the improver gate would score.
         "packages/arccli/tests/test_skill_evals_activation.py",
+        # Federal strict skill sections are enforced at import REVIEW, not after promote.
+        "packages/arcui/tests/test_capability_import_routes.py",
+        "packages/arcagent/tests/unit/capabilities/test_capability_import_strict_sections.py",
         "tests/architecture/test_agent_key_never_signs_capabilities.py",
     ),
     "connected-source routing index tampering (memory poisoning)": (

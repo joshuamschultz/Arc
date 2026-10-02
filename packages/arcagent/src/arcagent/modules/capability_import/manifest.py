@@ -9,7 +9,9 @@ from typing import Any
 
 from arctrust import canonical_json
 
-from arcagent.capabilities.skill_validator import validate_skill_folder
+from arcagent.capabilities.skill_validator import strict_sections_for, validate_skill_folder
+from arcagent.core.config import load_config
+from arcagent.core.errors import ConfigError
 from arcagent.modules.capability_import.errors import CapabilityImportLayoutError
 from arcagent.modules.capability_import.models import (
     CapabilityImportFile,
@@ -17,6 +19,23 @@ from arcagent.modules.capability_import.models import (
     CapabilityImportManifest,
 )
 from arcagent.tools._dynamic_loader import AstValidator
+
+
+def strict_sections_for_agent(config_path: Path) -> bool:
+    """Whether review of this agent's imports refuses missing Arc sections.
+
+    Resolved from the agent's own tier + ``capabilities.strict_skill_sections`` through
+    the same ``strict_sections_for`` rule the loader applies (federal opt-in only), so
+    a skill the loader would refuse is refused at review, not after the operator
+    promotes it. An unreadable config answers True: fail closed.
+    """
+    try:
+        config = load_config(config_path)
+    except (OSError, ValueError, ConfigError):
+        return True
+    return strict_sections_for(
+        config.security.tier, configured=config.capabilities.strict_skill_sections
+    )
 
 
 def build_manifest(
