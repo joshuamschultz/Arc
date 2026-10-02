@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import arcagent
+from arcprompt import PromptHistory, record_if_unseen
 from arctrust.artifact import sign_artifact
 
 _SIDECAR_SUFFIX = ".arcsig"
@@ -33,6 +34,11 @@ def sign_workspace_documents(agent_dir: Path, signer: tuple[str, bytes]) -> list
         sidecar = agent_dir / "context" / package / f"{name}.md{_SIDECAR_SUFFIX}"
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(signature.to_json(), encoding="utf-8")
+        # Same capture-if-unseen path as every other signed write, so the version
+        # history lists this signing and a re-sign of unchanged bytes adds nothing.
+        record_if_unseen(
+            PromptHistory(agent_dir, package, name), path.read_bytes(), signature.to_json()
+        )
         signed.append(path.name)
     return signed
 

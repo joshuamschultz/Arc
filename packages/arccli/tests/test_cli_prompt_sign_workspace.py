@@ -126,3 +126,19 @@ def test_without_an_operator_key_it_refuses_and_writes_nothing(
     with pytest.raises(SystemExit):
         prompt_handler(["sign-workspace", "--agent", str(root)])
     assert not (root / "context").exists()
+
+
+def test_sign_workspace_records_a_history_version_without_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arcprompt import PromptHistory
+
+    _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    (root / "workspace" / "identity.md").write_text("# Persona\n", encoding="utf-8")
+
+    prompt_handler(["sign-workspace", "--agent", str(root)])
+    prompt_handler(["sign-workspace", "--agent", str(root)])
+
+    versions = PromptHistory(root, "workspace", "identity").versions()
+    assert len(versions) == 1
