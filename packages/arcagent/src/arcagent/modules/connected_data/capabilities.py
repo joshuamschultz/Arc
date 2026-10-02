@@ -44,6 +44,7 @@ class ConnectedData:
             stall_grace_seconds=state.config.stall_grace_seconds,
             failure_ceiling=state.config.consecutive_failure_ceiling,
             health=_health_reporter(state),
+            renewals=state.credential_renewals,
         )
         await state.service.start()
         self._service = state.service

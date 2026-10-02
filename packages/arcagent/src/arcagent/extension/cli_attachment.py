@@ -30,7 +30,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -49,6 +49,9 @@ from arcagent.extension.attachment import (
 from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
+
+#: Resolves the sensitive placed credentials (env name -> value) for one spawn.
+CredentialEnv = Callable[[], Awaitable[Mapping[str, Secret]]]
 
 _logger = logging.getLogger(__name__)
 
@@ -340,8 +343,15 @@ class CliAttachment:
         owned_env: frozenset[str] = frozenset(),
         visible_env: frozenset[str] = frozenset(),
         download_dir: Path | None = None,
+        credential_env: CredentialEnv | None = None,
     ) -> None:
         self._binary = binary
+        # Sensitive placed credentials are NOT held here: they are fetched through
+        # the connection's credential handle right before each spawn, so a rotated
+        # or re-authorised credential reaches the very next call, and a revoked
+        # grant stops it (P18-2).
+        self._credential_env = credential_env
+        self._redaction_env: dict[str, Secret] = {}
         # Variables the bundle PLACES belong to this connection: set from its own
         # value or absent, never inherited from the service environment, where a
         # stray one would silently act as another account.
@@ -487,11 +497,12 @@ class CliAttachment:
         when it outran its deadline — in which case the process is killed rather than
         left behind.
         """
+        placed = await self._placed_credentials()
         process = await asyncio.create_subprocess_exec(
             *argv,
             # The one place a placed credential is unwrapped: straight into the child's
             # environment, never onto argv, which every other user on the box can read.
-            env=self._child_environment(),
+            env=self._child_environment(placed),
             # No inherited stdin, ever. A vendor CLI that decides to prompt — a
             # confirmation, a missing required field, an editor — would otherwise
             # block on the service's stdin until the tool deadline and report a
@@ -515,10 +526,20 @@ class CliAttachment:
             stderr.decode("utf-8", "replace"),
         )
 
-    def _child_environment(self) -> dict[str, str]:
+    async def _placed_credentials(self) -> dict[str, Secret]:
+        """The sensitive placed credentials for THIS spawn, from the credential handle."""
+        if self._credential_env is None:
+            return {}
+        placed = dict(await self._credential_env())
+        # Remembered for redaction only: output of this spawn is scrubbed of them.
+        self._redaction_env.update(placed)
+        return placed
+
+    def _child_environment(self, placed: Mapping[str, Secret] | None = None) -> dict[str, str]:
         """The placed values, the scrubbed inheritance, and no stray owned variable."""
-        env = scrubbed_environment({name: secret.reveal() for name, secret in self._env.items()})
-        for name in self._owned_env - set(self._env):
+        values = {**self._env, **(placed or {})}
+        env = scrubbed_environment({name: secret.reveal() for name, secret in values.items()})
+        for name in self._owned_env - set(values):
             env.pop(name, None)
         return env
 
@@ -561,7 +582,7 @@ class CliAttachment:
             text,
             (
                 secret.reveal()
-                for name, secret in self._env.items()
+                for name, secret in {**self._env, **self._redaction_env}.items()
                 if name not in self._visible_env
             ),
         )

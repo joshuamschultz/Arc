@@ -32,6 +32,8 @@ class _State:
             self.arcstore_opener, self.agent_did
         )
         self.source_catalog = kwargs.get("source_catalog")
+        #: The agent's credential broker registry (P18-2); renews before a sync reads.
+        self.credential_renewals = kwargs.get("credential_renewals")
         self.telemetry = kwargs.get("telemetry")
         supplied_factory = kwargs.get("ingest_port_factory")
         self.ingest_port_factory: IngestPortFactory | None = (
@@ -65,6 +67,7 @@ def configure(
     telemetry: Any = None,
     ingest_port_factory: IngestPortFactory | None = None,
     prompt_source: PromptSource | None = None,
+    credential_renewals: Any = None,
     **kwargs: Any,
 ) -> None:
     del kwargs
@@ -84,6 +87,7 @@ def configure(
             telemetry=telemetry,
             ingest_port_factory=ingest_port_factory,
             prompt_source=prompt_source,
+            credential_renewals=credential_renewals,
         )
     )
 

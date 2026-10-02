@@ -69,17 +69,22 @@ from arcagent.extension.approval import ApprovalBinding
 from arcagent.extension.attachment import ExtensionAttachment, ToolSpec
 from arcagent.extension.bridge import CapabilityBridge
 from arcagent.extension.catalog import resolve_extension_roots
-from arcagent.extension.connection_health import ConnectionHealthAuthority, HealthSignal
+from arcagent.extension.connection_health import (
+    ConnectionHealthAuthority,
+    HealthSignal,
+    StoreHealthReporter,
+)
 from arcagent.extension.contract_ledger import LEDGER_DID, ContractVerdict, ToolContractLedger
+from arcagent.extension.credential_broker import AccessTokenBroker, credential_plan
+from arcagent.extension.custody_select import open_custody
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
-from arcagent.extension.secrets import SecretStore, select_secret_backend
+from arcagent.extension.secrets import SecretStore
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.install import (
     build_attachment,
-    connector_env_file,
     resolve_secrets,
 )
 from arcagent.modules.connectors.routing import RoutedAttachment, RoutedMember
@@ -293,12 +298,14 @@ class Connectors:
         if self._state_store is None:
             return ()
 
+        secrets, broker = await _custody(state, sink)
         context = _AttachContext(
             state=state,
             sink=sink,
             registry=registry,
             store=self._state_store,
-            secrets=_secret_store(state, sink),
+            secrets=secrets,
+            broker=broker,
         )
         registered: list[str] = []
         routed: dict[str, list[_Prepared]] = {}
@@ -354,6 +361,7 @@ class _AttachContext:
     registry: ToolRegistry | _PreparedRegistry
     store: ConnectionStateStore
     secrets: SecretStore | None
+    broker: AccessTokenBroker | None
 
 
 @dataclass(frozen=True)
@@ -381,6 +389,19 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
             connection=instance,
             store=ctx.secrets,
             caller_did=state.identity.did,
+            include_sensitive=loaded.manifest.extension.attachment == "mcp",
+        )
+        # Sensitive values reach a native/cli attachment only through this handle,
+        # fresh on every call and re-checked against the grant (P18-2).
+        handle = (
+            ctx.broker.handle(
+                instance,
+                agent=state.agent_dir.name,
+                agent_did=str(state.identity.did),
+                plan=credential_plan(loaded.manifest),
+            )
+            if ctx.broker is not None
+            else None
         )
         # Built once and reused: the connection whose tools were described has to
         # be the connection the registered verbs then call, or a stateful
@@ -392,6 +413,7 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
             secrets,
             connection_id=instance,
             download_dir=state.workspace / "downloads" / loaded.name / instance,
+            credential=handle,
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
     except ExtensionError as exc:
@@ -780,25 +802,41 @@ def _extension_roots(state: _runtime._State) -> tuple[Path, ...]:
     return resolve_extension_roots(state.arc_dir)
 
 
-def _secret_store(state: _runtime._State, sink: AuditSink) -> SecretStore | None:
-    """Where this deployment's connector credentials live, or ``None`` if there is no store.
+async def _custody(
+    state: _runtime._State, sink: AuditSink
+) -> tuple[SecretStore | None, AccessTokenBroker | None]:
+    """This agent's view of connector custody, or ``(None, None)`` when it has none.
 
-    The same selection ``arc connector`` makes, from the same arc dir, so the
-    agent reads the file the CLI wrote. ``None`` is not itself a failure: a ``cli``
-    bundle whose binary owns its own authentication declares no ``[[secrets]]`` and
-    needs no store, and taking the safest connectors away because a deployment has
-    configured no vault would be the wrong refusal. A bundle that DOES declare a
-    credential is refused by name in :func:`~arcagent.modules.connectors.install.
-    resolve_secrets`.
+    ``None`` is not itself a failure: a ``cli`` bundle whose binary owns its own
+    authentication declares no ``[[secrets]]`` and needs no store. A bundle that
+    DOES declare a credential is refused by name in
+    :func:`~arcagent.modules.connectors.install.resolve_secrets`. The broker is
+    bound to this agent's name and DID, so it issues handles for no one else.
     """
+    cipher = state.credential_cipher
+    if cipher is None:
+        return None, None
+    opener = _reconcile_backend_opener(state)
     try:
-        backend = select_secret_backend(
-            Tier(state.tier), env_file=connector_env_file(state.arc_dir)
-        )
-    except ExtensionError as exc:
-        _logger.warning("connectors: no secret store on this deployment — %s", exc.message)
-        return None
-    return SecretStore(backend, sink=sink)
+        backend = await opener()
+    except Exception as exc:  # reason: no data plane, no custody; cli bundles still attach
+        _logger.warning("connectors: no credential custody — %s", type(exc).__name__)
+        return None, None
+    custody = open_custody(
+        backend,
+        cipher,
+        health=StoreHealthReporter(opener, sink=sink),
+        sink=sink,
+        actor_did=str(state.identity.did),
+    )
+    broker = custody.broker(
+        registry=lambda: ConnectionRegistry(state.arc_dir),
+        bound_agent=state.agent_dir.name,
+        bound_did=str(state.identity.did),
+    )
+    if state.credential_renewals is not None:
+        state.credential_renewals.bind(broker)
+    return custody.store, broker
 
 
 def _transport(kind: str) -> ToolTransport:

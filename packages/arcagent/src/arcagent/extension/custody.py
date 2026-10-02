@@ -498,6 +498,10 @@ class SealedCredentialBackend:
     async def put(self, ref: SecretRef, value: str) -> None:
         await self._rows.put_fields(ref.connection, {ref.field: value}, actor_did=self._actor_did)
 
+    async def present(self, connection: str) -> frozenset[str]:
+        row = await self._rows.read(connection)
+        return frozenset(row.fields) if row is not None else frozenset()
+
     async def delete(self, ref: SecretRef) -> bool:
         removed = await self._rows.delete_fields(
             ref.connection, [ref.field], actor_did=self._actor_did

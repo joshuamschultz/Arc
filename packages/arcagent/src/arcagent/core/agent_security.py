@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from arctrust import (
     AppendOnlyMediumWitness,
+    ArcTrustFipsError,
     FileNotaryTransit,
     OperatorKey,
     RecordCipher,
@@ -25,6 +26,9 @@ from arctrust import (
     verify_local_head_witnessed,
 )
 from arctrust.signer import VAULT_TRANSIT
+
+if TYPE_CHECKING:
+    from arcagent.extension.custody import CredentialCipher
 
 _logger = logging.getLogger("arcagent.agent")
 _OPERATOR_KEY_REF = "operator"
@@ -92,6 +96,29 @@ def resolve_record_cipher(agent: Any) -> RecordCipher | None:
         "(SPEC-063 owns audit-store key custody)"
     )
     return None
+
+
+def resolve_credential_cipher(agent: Any) -> CredentialCipher | None:
+    """The cipher sealing connector credentials for this agent, or None with one warning.
+
+    The same derivation the operator surfaces use (P18-2): the in-process operator
+    seed this agent already custodies. ``vault_transit`` keeps the seed out of the
+    process; until the Transit row cipher ships (P18-2F) such an agent holds no
+    connector custody, and a bundle that declares a credential is refused by name.
+    """
+    from arcagent.core.errors import ExtensionError
+    from arcagent.extension.custody_select import connector_cipher
+
+    sec = agent._config.security
+    try:
+        return connector_cipher(
+            custody=sec.custody,
+            operator_key=agent._operator_key,
+            require_fips=sec.require_fips,
+        )
+    except (ExtensionError, ArcTrustFipsError) as exc:
+        _logger.warning("connector credentials unavailable to this agent: %s", exc)
+        return None
 
 
 def resolve_transit(_agent: Any, sec: Any) -> FileNotaryTransit:
@@ -178,6 +205,7 @@ __all__ = [
     "operator_key_path",
     "policy_audit_log_path",
     "prior_audit_chains_exist",
+    "resolve_credential_cipher",
     "resolve_operator_signer",
     "resolve_record_cipher",
     "resolve_transit",

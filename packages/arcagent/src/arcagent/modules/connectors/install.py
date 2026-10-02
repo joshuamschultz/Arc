@@ -28,7 +28,8 @@ the host's decision and must be visible.
 
 **A connection is the deployment's, not an agent's.** The definition and its
 grants are written to :class:`~arcagent.extension.grants.ConnectionRegistry` under
-``arc_home()``, and the credential to one owner-only file beside it. An install
+``arc_home()``, and the credential to one sealed custody row in arcstore
+(:mod:`arcagent.extension.custody`). An install
 therefore hands nothing to any agent: the account exists, and the agents named in
 ``agents`` may use it. An agent not named gets no verb and no credential, which is
 what makes adding an agent incapable of widening access.
@@ -37,9 +38,9 @@ what makes adding an agent incapable of widening access.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from arctrust.audit import AuditSink, NullSink
 from pydantic import ValidationError
@@ -52,6 +53,8 @@ from arcagent.extension.connection_health import custody_of
 from arcagent.extension.contract_ledger import ToolContractLedger
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
+from arcagent.extension.credential_broker import AccessTokenHandle
+from arcagent.extension.custody import CredentialRowStore
 from arcagent.extension.field_formats import choose, normalize
 from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.host import HostPrerequisiteDirector
@@ -73,9 +76,6 @@ _logger = logging.getLogger("arcagent.modules.connectors.install")
 # Kept as an established import surface while credential placement has one owner.
 visible_values = _visible_values
 
-#: The deployment's owner-only credential file, beside its connections (D-555).
-CONNECTOR_ENV_FILENAME = "connections.env"
-
 #: The ordered steps an install runs, and the vocabulary a failure reports in.
 INSTALL_STEPS: tuple[str, ...] = (
     "resolve",
@@ -87,9 +87,22 @@ INSTALL_STEPS: tuple[str, ...] = (
     "persist",
 )
 
-#: How a manifest's declared attachment kind becomes something that can be probed,
-#: holding the credentials the operator connected it with.
-AttachmentFactory = Callable[[ExtensionManifest, Path, Mapping[str, Secret]], ExtensionAttachment]
+class AttachmentFactory(Protocol):
+    """How a manifest's declared attachment kind becomes something that can be probed.
+
+    ``secrets`` holds the visible (non-sensitive) fields, plus every field for an
+    ``mcp`` attachment; sensitive values reach a native/cli attachment only through
+    ``credential`` at call time (P18-2).
+    """
+
+    def __call__(
+        self,
+        manifest: ExtensionManifest,
+        bundle: Path,
+        secrets: Mapping[str, Secret],
+        *,
+        credential: AccessTokenHandle | None = None,
+    ) -> ExtensionAttachment: ...
 
 
 def _refuse(step: str, message: str, **details: Any) -> ExtensionError:
@@ -198,6 +211,7 @@ async def install_connector(
     audit_sink: AuditSink | None = None,
     trusted_public_key: bytes | None = None,
     registry: CapabilityRegistry | None = None,
+    credential: AccessTokenHandle | None = None,
 ) -> InstallReport:
     """Finish the install: host, verify, secrets, probe, and only then persist.
 
@@ -223,6 +237,8 @@ async def install_connector(
             ``None`` above personal tier is itself the refusal (REQ-283).
         registry: The capability registry the bundle's skills and tools register
             into. A fresh one is used when the surface has none.
+        credential: The operator's credential handle for this connection, which
+            the probe's attachment reads sensitive values through.
 
     Returns:
         The instance, the tools the probe found, and the probe's own detail line.
@@ -251,9 +267,13 @@ async def install_connector(
         # probe proves must be the credential the running agent will later resolve,
         # not the one this call happened to be handed.
         secrets = await resolve_secrets(
-            plan.manifest, connection=plan.instance, store=store, caller_did=caller_did
+            plan.manifest,
+            connection=plan.instance,
+            store=store,
+            caller_did=caller_did,
+            include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
-        probe = await _probe(plan, attachment_factory, secrets)
+        probe = await _probe(plan, attachment_factory, secrets, credential)
         _refuse_probed_egress(plan, probe)
     except BaseException:
         await _forget_secrets(written, store=store, did=caller_did)
@@ -291,9 +311,8 @@ async def remove_connector(
     *,
     connections: ConnectionRegistry,
     instance: str,
-    store: SecretStore,
+    credentials: CredentialRowStore,
     caller_did: str,
-    secret_fields: Sequence[str],
     state: ConnectionStateStore,
 ) -> RemovalReport:
     """Drop one connected account: its credential, its definition, its grants, its state.
@@ -306,48 +325,23 @@ async def remove_connector(
     leaves the record behind hands the next install of that name the approvals an
     operator minted for the account they just disconnected.
 
+    The whole custody row goes, not one field per declared secret, so a field the
+    bundle no longer declares cannot outlive the connection (the orphan-key class).
+
     Removing something that was never installed is reported, not raised: an
     operator cleaning up after a failed install must not be blocked by a step that
     already has nothing to do.
     """
-    removed: list[str] = []
-    for field in secret_fields:
-        ref = SecretRef(connection=instance, field=field)
-        if await store.delete(ref, caller_did=caller_did):
-            removed.append(field)
+    row = await credentials.read(instance)
+    removed = tuple(sorted(row.fields)) if row is not None else ()
+    await credentials.forget(instance, actor_did=caller_did)
 
     return RemovalReport(
         instance=instance,
-        removed_secrets=tuple(removed),
+        removed_secrets=removed,
         removed_config=connections.forget(instance),
         removed_state=await state.forget(instance, actor_did=caller_did),
     )
-
-
-# --- where a credential lives ----------------------------------------------
-
-
-def connector_env_file(arc_dir: Path) -> Path:
-    """The owner-only file this deployment's connector credentials live in (D-555).
-
-    One resolver rather than a filename constant per surface: the CLI, the TUI,
-    the web and the running agent all hand this path to
-    ``select_secret_backend``, and a surface spelling it differently would write a
-    credential the others cannot read.
-
-    One file for the deployment, beside ``connections.toml``, because a connection
-    is one account. Per-agent files were the shape that made "grant" mean "type
-    the token again", and left a copy behind on every revoke.
-
-    "Beside ``connections.toml``" is resolved through the same accessor that
-    answers for it, never composed here: joining the root by hand kept the
-    credentials flat at ``<root>/connections.env`` after the registry had moved
-    into ``config/``, so every connection read its grants from one directory and
-    its token from another.
-    """
-    from arctrust.paths import config_file
-
-    return config_file(CONNECTOR_ENV_FILENAME, arc_dir)
 
 
 async def resolve_secrets(
@@ -356,6 +350,7 @@ async def resolve_secrets(
     connection: str,
     store: SecretStore | None,
     caller_did: str,
+    include_sensitive: bool = True,
 ) -> dict[str, Secret]:
     """Every credential this bundle declares, still wrapped, or refuse naming the gaps.
 
@@ -373,6 +368,9 @@ async def resolve_secrets(
             declares none — a ``cli`` connector whose binary owns its own auth needs
             no store at all — and is a refusal for one that does.
         caller_did: Recorded as the actor on every read.
+        include_sensitive: False for a native/cli attachment, which reads its
+            sensitive fields through its credential handle at call time; such a
+            field is then only checked for PRESENCE (named if missing), never read.
 
     Returns:
         Field name to credential, one entry per declared secret.
@@ -401,7 +399,12 @@ async def resolve_secrets(
     optional = manifest.oauth.refresh_token_secret if manifest.oauth else None
     resolved: dict[str, Secret] = {}
     missing: list[str] = []
+    held = await store.present(connection) if not include_sensitive else None
     for declared in manifest.secrets:
+        if held is not None and declared.sensitive:
+            if declared.name not in held and declared.name != optional and declared.required:
+                missing.append(declared.name)
+            continue
         ref = SecretRef(connection=connection, field=declared.name)
         secret = await store.get(ref, caller_did=caller_did)
         if secret is None:
@@ -543,12 +546,15 @@ async def _forget_secrets(refs: Sequence[SecretRef], *, store: SecretStore, did:
 
 
 async def _probe(
-    plan: ConnectorPlan, factory: AttachmentFactory | None, secrets: Mapping[str, Secret]
+    plan: ConnectorPlan,
+    factory: AttachmentFactory | None,
+    secrets: Mapping[str, Secret],
+    credential: AccessTokenHandle | None,
 ) -> ProbeResult:
     """Build the attachment with its credentials and prove the connection answers."""
     build = factory or build_attachment
     try:
-        attachment = build(plan.manifest, plan.bundle, secrets)
+        attachment = build(plan.manifest, plan.bundle, secrets, credential=credential)
         result = await attachment.probe()
     except ExtensionError as exc:
         raise _refuse("probe", exc.message, extension=plan.extension) from exc
@@ -599,14 +605,12 @@ def _refuse_egress(
 
 
 __all__ = [
-    "CONNECTOR_ENV_FILENAME",
     "INSTALL_STEPS",
     "AttachmentFactory",
     "ConnectorPlan",
     "InstallReport",
     "RemovalReport",
     "build_attachment",
-    "connector_env_file",
     "install_connector",
     "placement_environment",
     "plan_connector",

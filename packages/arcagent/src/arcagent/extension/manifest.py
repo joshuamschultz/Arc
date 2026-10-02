@@ -446,6 +446,17 @@ class OAuthFlow(_ManifestModel):
     authorize_params: dict[str, str] = Field(default_factory=dict)
 
 
+class CredentialDeclaration(_ManifestModel):
+    """``[credential]`` — what a running attachment receives as its bearer value.
+
+    ``bearer`` names a declared SENSITIVE secret the attachment's credential handle
+    returns from ``bearer()`` (a Slack user token, a GitHub token). An ``[oauth]``
+    bundle needs no declaration: its bearer is the renewed access token.
+    """
+
+    bearer: str | None = None
+
+
 class HealthProbe(_ManifestModel):
     """``[health]`` — the cheapest real authenticated call that proves this account works.
 
@@ -626,6 +637,7 @@ class ExtensionManifest(_ManifestModel):
     host_requires: list[HostRequirement] = Field(default_factory=list)
     secrets: list[SecretRequirement] = Field(default_factory=list)
     oauth: OAuthFlow | None = None
+    credential: CredentialDeclaration | None = None
     health: HealthProbe | None = None
     requires: list[str] = Field(default_factory=list)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
@@ -694,6 +706,19 @@ class ExtensionManifest(_ManifestModel):
                 if isinstance(argument, dict) and isinstance(argument.get("name"), str):
                     found.append((str(command.get("tool", "a command")), argument["name"]))
         return found
+
+    @model_validator(mode="after")
+    def _bearer_names_a_sensitive_secret(self) -> ExtensionManifest:
+        """``[credential].bearer`` must be a declared credential, never a visible setting."""
+        bearer = self.credential.bearer if self.credential is not None else None
+        if bearer is None:
+            return self
+        declared = next((secret for secret in self.secrets if secret.name == bearer), None)
+        if declared is None:
+            raise ValueError(f"[credential].bearer = {bearer!r} is not a declared secret")
+        if not declared.sensitive:
+            raise ValueError(f"[credential].bearer = {bearer!r} must be a sensitive secret")
+        return self
 
     @model_validator(mode="after")
     def _health_probe_is_runnable(self) -> ExtensionManifest:
@@ -863,6 +888,7 @@ __all__ = [
     "REDIRECT_URL_SLOT",
     "ApprovalPolicy",
     "ArtifactPin",
+    "CredentialDeclaration",
     "CredentialPlacement",
     "DeclaredTool",
     "ExtensionHeader",

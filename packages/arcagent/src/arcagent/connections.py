@@ -48,9 +48,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-import httpx
 from arctrust import causal
-from arctrust.audit import AuditEvent, AuditSink, emit
+from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.paths import arc_team, config_file
 from arctrust.signer import Signer
 
@@ -71,12 +70,21 @@ from arcagent.extension.connection_health import (
     ConnectionHealthAuthority,
     HealthSignal,
     SignalSource,
+    StoreHealthReporter,
     classify,
     custody_of,
     effective_probe,
 )
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
+from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
+from arcagent.extension.custody import CredentialCipher
+from arcagent.extension.custody_select import (
+    VAULT_REQUIRED,
+    Custody,
+    deployment_cipher,
+    open_custody,
+)
 from arcagent.extension.grants import (
     BAD_NAME,
     NO_SUCH_CONNECTION,
@@ -98,7 +106,7 @@ from arcagent.extension.manifest import (
     SecretRequirement,
     load_manifest,
 )
-from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code
+from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code, post_form
 from arcagent.extension.remote_login import (
     REMOTE_LOGIN_FAILED,
     REMOTE_LOGIN_NEEDS_CONFIRMATION,
@@ -106,7 +114,7 @@ from arcagent.extension.remote_login import (
     RemoteLoginLedger,
     checked_account,
 )
-from arcagent.extension.secrets import Secret, SecretRef, SecretStore, select_secret_backend
+from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import (
     ConnectionRecord,
     ConnectionStateStore,
@@ -118,7 +126,6 @@ from arcagent.modules.connectors.install import (
     InstallReport,
     RemovalReport,
     build_attachment,
-    connector_env_file,
     install_connector,
     placement_environment,
     plan_connector,
@@ -215,7 +222,6 @@ class ConnectionWorld:
     did: str
     tier: Tier
     extension_roots: tuple[Path, ...]
-    env_file: Path
     egress_allow: tuple[str, ...] = ()
     #: ``[tools.policy] mcp_stdio_allow`` — the programs an operator-added MCP server
     #: may launch above personal tier.
@@ -228,6 +234,11 @@ class ConnectionWorld:
     def connections_file(self) -> Path:
         """Where this deployment's connections and grants live."""
         return ConnectionRegistry(self.arc_dir).path
+
+    @property
+    def credential_location(self) -> str:
+        """Where connector credentials live, in words a surface can print."""
+        return CREDENTIAL_LOCATION
 
 
 @dataclass(frozen=True)
@@ -252,6 +263,10 @@ class McpServerAdded:
     exposed: tuple[str, ...] = ()
 
 
+#: Where every connector credential lives since P18-2: sealed rows, never a file.
+CREDENTIAL_LOCATION = "sealed Arc custody (arcstore, encrypted with the operator key)"
+
+
 #: Recorded as the actor when a deployment has no operator key to derive a DID
 #: from. Honest rather than convenient: an unkeyed deployment cannot pin its
 #: connector verdicts to a person, and saying so in the chain is better than
@@ -264,7 +279,6 @@ def resolve_deployment(
     arc_dir: Path | str | None = None,
     data_dir: Path | str | None = None,
     extensions_root: Path | str | None = None,
-    env_file: Path | str | None = None,
 ) -> ConnectionWorld:
     """Resolve one deployment's paths, tier, and operator identity.
 
@@ -276,7 +290,6 @@ def resolve_deployment(
             state and the audit chain live. Created when the caller names one.
         extensions_root: Use exactly this bundle root. An operator pointing a
             command at one directory gets that directory and no fallback behind it.
-        env_file: Owner-only credential store (default ``<arc_dir>/connections.env``).
 
     Returns:
         The resolved deployment, ready to hand to :class:`Connections`.
@@ -288,7 +301,6 @@ def resolve_deployment(
         did=_operator_did(root),
         tier=deployment_tier(root),
         extension_roots=resolve_roots(root, extensions_root=extensions_root),
-        env_file=(Path(env_file).expanduser().resolve() if env_file else connector_env_file(root)),
         egress_allow=deployment_egress_allow(root),
         mcp_stdio_allow=deployment_mcp_stdio_allow(root),
         extensions_override=extensions_root is not None,
@@ -671,24 +683,6 @@ def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
     )
 
 
-async def _oauth_post(
-    url: str, data: dict[str, str], auth: tuple[str, str]
-) -> tuple[int, dict[str, Any]]:
-    """POST form data with HTTP basic auth for the OAuth exchange — the one HTTP call.
-
-    A plain function, not a method, so :meth:`Connections.complete_oauth` injects
-    it exactly as the exchange's tests inject a fake: the framework owns the HTTP
-    client, the pure exchange in :mod:`arcagent.extension.oauth` owns the protocol.
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, data=data, auth=auth)
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    return response.status_code, payload if isinstance(payload, dict) else {}
-
-
 def _authorization(
     instance: str,
     plan: ConnectorPlan,
@@ -752,8 +746,13 @@ class Connections:
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
+        credential_cipher: CredentialCipher | None = None,
     ) -> None:
         self._world = world
+        # The cipher sealing connector credentials. Resolved from the operator key
+        # on first use when not injected (a test, or a caller that already holds it).
+        self._credential_cipher = credential_cipher
+        self._backend: Any = None
         self._audit = audit if audit is not None else AuditChain()
         self._factory: AttachmentFactory = attachment_factory or build_attachment
         self._install_dir = install_dir
@@ -775,7 +774,6 @@ class Connections:
         arc_dir: Path | str | None = None,
         data_dir: Path | str | None = None,
         extensions_root: Path | str | None = None,
-        env_file: Path | str | None = None,
         audit: AuditChain | None = None,
         attachment_factory: AttachmentFactory | None = None,
         install_dir: Path | None = None,
@@ -784,13 +782,13 @@ class Connections:
         remote_logins: RemoteLoginLedger | None = None,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
+        credential_cipher: CredentialCipher | None = None,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
             arc_dir=arc_dir,
             data_dir=data_dir,
             extensions_root=extensions_root,
-            env_file=env_file,
         )
         return cls(
             world,
@@ -802,6 +800,7 @@ class Connections:
             remote_logins=remote_logins,
             host_step_timeout=host_step_timeout,
             clock=clock,
+            credential_cipher=credential_cipher,
         )
 
     @property
@@ -1000,12 +999,16 @@ class Connections:
         return record
 
     async def _credential_generation(self, instance: str) -> int | None:
-        """The custody generation the credential is at. Arc custody (P18-2) fills this in.
+        """The custody generation the credential is at, or None when Arc holds none.
 
-        Until a credential lives in Arc custody there is no generation to compare,
-        so every check really probes.
+        A dead Arc-held credential is not probed again until this changes (P18-1 D8):
+        the operator reconnecting bumps it, and nothing else does.
         """
-        return None
+        try:
+            custody = await self._custody(NullSink())
+        except ExtensionError:
+            return None
+        return await custody.rows.generation(instance)
 
     @staticmethod
     async def _skip_dead_credential(
@@ -1155,7 +1158,7 @@ class Connections:
                     ),
                     details={"instance": instance},
                 )
-            store = self._store(sink)
+            store = await self._store(sink)
             client_id = await self._read_secret(store, instance, flow.client_id_secret)
             client_secret = await self._read_secret(store, instance, flow.client_secret_secret)
             if not client_id or not client_secret:
@@ -1172,7 +1175,7 @@ class Connections:
                 code=code.strip(),
                 client_id=client_id,
                 client_secret=client_secret,
-                post=_oauth_post,
+                post=post_form,
             )
             await store.put(
                 SecretRef(connection=instance, field=flow.refresh_token_secret),
@@ -1183,7 +1186,7 @@ class Connections:
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
             authorize_url = await self._oauth_authorize_url(plan, sink)
-        await self._operator_check(instance)
+        await self._push_credential_change(instance)
         return _authorization(
             instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
         )
@@ -1198,7 +1201,7 @@ class Connections:
         flow = plan.manifest.oauth
         if flow is None:
             return ""
-        store = self._store(sink)
+        store = await self._store(sink)
         client_id = await self._read_secret(store, plan.instance, flow.client_id_secret)
         return build_authorize_url(flow, client_id=client_id) if client_id else ""
 
@@ -1624,12 +1627,14 @@ class Connections:
             _check_agent(agent)
         self._refuse_lax_plan(plan, agents)
         with self._audit.open() as sink:
+            custody = await self._custody(sink)
             report = await install_connector(
                 plan,
                 connections=self.registry,
                 agents=agents,
                 secret_values=secrets,
-                store=self._store(sink),
+                store=custody.store,
+                credential=self._operator_handle(custody, plan),
                 caller_did=causal.actor_did(),
                 state=await self._connection_state(),
                 attachment_factory=self._factory,
@@ -1968,7 +1973,7 @@ class Connections:
         shaped = shape_supplied(plan, secrets)
         written: list[str] = []
         with self._audit.open() as sink:
-            store = self._store(sink)
+            store = await self._store(sink)
             for required in plan.secrets:
                 value = shaped.get(required.name)
                 if not value:
@@ -1977,7 +1982,7 @@ class Connections:
                 await store.put(ref, value, caller_did=causal.actor_did())
                 written.append(required.name)
         if written:
-            await self._operator_check(plan.instance)
+            await self._push_credential_change(plan.instance)
         return tuple(written)
 
     async def approve(self, instance: str) -> tuple[str, ...]:
@@ -2026,9 +2031,8 @@ class Connections:
             return await remove_connector(
                 connections=self.registry,
                 instance=instance,
-                store=self._store(sink),
+                credentials=(await self._custody(sink)).rows,
                 caller_did=causal.actor_did(),
-                secret_fields=self._declared_secret_fields(instance, sink),
                 state=await self._connection_state(),
             )
 
@@ -2120,13 +2124,12 @@ class Connections:
     def _refuse_silent_rehome(self, instance: str, agents: Sequence[str], sink: AuditSink) -> None:
         """Refuse a grant that would raise the tier past the store holding the credential.
 
-        Granting a federal agent an account whose token sits in this host's
-        ``connections.env`` does not move the token. Honouring it would leave a
-        connection reporting federal stringency with its credential in a local
-        file — a control reporting a posture it does not have, which is the exact
-        defect class this feature has already shipped. Re-homing it silently is
-        the other half of that hazard, so neither happens: the operator is told
-        what to configure and re-runs the connect.
+        Granting a federal agent an account whose token is sealed under an
+        in-process key does not move the token into Vault. Honouring it would leave
+        a connection reporting federal stringency with its credential under a
+        personal-tier cipher — a control reporting a posture it does not have.
+        Re-homing it silently is the other half of that hazard, so neither happens:
+        the operator is told what to configure and re-runs the connect.
 
         A connection Arc stores no credential for is untouched by this: a bundle
         whose binary owns its own token has nothing in any store to be in the
@@ -2137,17 +2140,20 @@ class Connections:
             return
         if not self._declared_secret_fields(instance, sink):
             return
-        try:
-            select_secret_backend(required, env_file=self._world.env_file)
-        except ExtensionError as exc:
-            raise _refuse(
-                TIER_WOULD_RISE,
-                f"granting {instance!r} to these agents raises it to {required.value}, "
-                f"and this deployment cannot hold its credential at that tier: "
-                f"{exc.message}. Configure that store, then connect {instance!r} again.",
-                connection=instance,
-                required_tier=required.value,
-            ) from exc
+        if required is not Tier.FEDERAL:
+            return
+        # Federal custody is Vault Transit only (FIPS forbids the in-process
+        # XChaCha20 cipher); until the Transit row cipher ships (P18-2F) there is no
+        # store that can hold this credential at federal stringency.
+        raise _refuse(
+            TIER_WOULD_RISE,
+            f"granting {instance!r} to these agents raises it to {required.value}, "
+            f"and this deployment cannot hold its credential at that tier "
+            f"({VAULT_REQUIRED}: connector credentials need the Vault Transit row cipher). "
+            f"Configure it, then connect {instance!r} again.",
+            connection=instance,
+            required_tier=required.value,
+        )
 
     def _record(self, sink: AuditSink, action: str, instance: str, agents: Sequence[str]) -> None:
         """Record a change to who may reach an account (AU-2).
@@ -2231,13 +2237,20 @@ class Connections:
         report on a connection the operator does not have. A declared credential the
         store does not hold refuses by name rather than answering from a blank one.
         """
+        custody = await self._custody(sink)
         secrets = await resolve_secrets(
             plan.manifest,
             connection=plan.instance,
-            store=self._store(sink),
+            store=custody.store,
             caller_did=causal.actor_did(),
+            include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
-        return self._factory(plan.manifest, plan.bundle, secrets)
+        return self._factory(
+            plan.manifest,
+            plan.bundle,
+            secrets,
+            credential=self._operator_handle(custody, plan),
+        )
 
     async def _supplied(
         self, plan: ConnectorPlan, sink: AuditSink
@@ -2255,7 +2268,7 @@ class Connections:
         built from this list must still draw the input on a connection that has
         never been configured.
         """
-        store = self._store(sink)
+        store = await self._store(sink)
         # An OAuth connector's refresh token is WRITTEN by ``complete_oauth``, never
         # typed — the operator supplies only the app key/secret. Listing it as a
         # field to fill would send them looking for a value they can't get by hand,
@@ -2301,17 +2314,68 @@ class Connections:
             secrets = await resolve_secrets(
                 plan.manifest,
                 connection=plan.instance,
-                store=self._store(sink),
+                store=await self._store(sink),
                 caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}
         return placement_environment(plan.manifest, secrets)
 
-    def _store(self, sink: AuditSink) -> SecretStore:
+    async def _custody(self, sink: AuditSink) -> Custody:
+        """Sealed custody over this deployment's arcstore, sealed with its operator key.
+
+        Raises:
+            ExtensionError: ``SECRET_STORE_VAULT_REQUIRED`` when this deployment's
+                custody cannot hold a connector credential yet (vault_transit).
+        """
+        if self._credential_cipher is None:
+            self._credential_cipher = deployment_cipher(self._world.arc_dir, tier=self._world.tier)
+        backend = await self._custody_backend()
+
+        async def opened() -> Any:
+            return backend
+
+        return open_custody(
+            backend,
+            self._credential_cipher,
+            health=StoreHealthReporter(opened, sink=sink),
+            sink=sink,
+            actor_did=causal.actor_did(),
+        )
+
+    async def _custody_backend(self) -> Any:
+        if self._backend is None:
+            self._backend = await self._open_reconcile_backend()
+        return self._backend
+
+    async def _store(self, sink: AuditSink) -> SecretStore:
         """The one place a connector credential is written or read."""
-        backend = select_secret_backend(self._world.tier, env_file=self._world.env_file)
-        return SecretStore(backend, sink=sink)
+        return (await self._custody(sink)).store
+
+    def _operator_handle(self, custody: Custody, plan: ConnectorPlan) -> AccessTokenHandle:
+        """The credential handle the deployment's own verbs (probe, install) use."""
+        broker = custody.broker(registry=lambda: self.registry)
+        return broker.operator_handle(
+            plan.instance, actor_did=causal.actor_did(), plan=credential_plan(plan.manifest)
+        )
+
+    async def _push_credential_change(self, instance: str) -> None:
+        """A credential changed: reach running agents, then look at the connection.
+
+        Native and CLI attachments already read the new value through their handle;
+        the push is for MCP attachments (resolved at session start, C7) and for
+        non-sensitive fields baked in at build.
+        """
+        try:
+            agents = self.registry.get(instance).agents
+        except ExtensionError:
+            agents = ()
+        if agents:
+            try:
+                await self._reconcile_agents(agents)
+            except Exception:  # reason: the credential is stored; activation retries
+                _logger.warning("reconcile after credential change failed: %s", instance)
+        await self._operator_check(instance)
 
     def _pinned_key(self) -> bytes | None:
         """The operator key an extension bundle's signatures are pinned to (REQ-283)."""
@@ -2322,14 +2386,20 @@ class Connections:
         self, plan: ConnectorPlan, instance: str, sink: AuditSink
     ) -> list[DoctorCheck]:
         """One row per declared credential: present or missing, never the value."""
-        store = self._store(sink)
-        rows: list[DoctorCheck] = []
-        for required in plan.secrets:
-            ref = SecretRef(connection=instance, field=required.name)
-            found = await store.get(ref, caller_did=causal.actor_did())
-            status = "present" if found else "missing"
-            rows.append(DoctorCheck(required.name, status, str(self._world.env_file)))
-        return rows
+        try:
+            custody = await self._custody(sink)
+            row = await custody.rows.read(instance)
+        except ExtensionError as exc:
+            return [DoctorCheck(required.name, "error", exc.message) for required in plan.secrets]
+        held = set(row.fields) if row is not None else set()
+        return [
+            DoctorCheck(
+                required.name,
+                "present" if required.name in held else "missing",
+                "sealed custody",
+            )
+            for required in plan.secrets
+        ]
 
     async def _reachability(self, plan: ConnectorPlan, sink: AuditSink) -> DoctorCheck:
         """Probing is the only honest answer to "does this connection work"."""
@@ -2345,6 +2415,7 @@ class Connections:
 __all__ = [
     "BAD_NAME",
     "BUNDLES_DIRNAME",
+    "CREDENTIAL_LOCATION",
     "NOT_INSTALLED",
     "PLAN_TIER_TOO_LOW",
     "TIER_WOULD_RISE",
