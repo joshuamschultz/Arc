@@ -392,6 +392,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_serve_control_authority.py",
         "tests/journeys/test_journey_schedules.py",
     ),
+    # Item 61: a deleted schedule is revoked (its old approval and a re-planted
+    # row never fire), an admitted occurrence stays admitted across a process
+    # restart with a torn or planted-junk log, and every entry point
+    # (`python -m arcagent`, arcui serve) carries the authority fail-closed.
+    "revoked schedule, persisted occurrence replay and unwired entry points": (
+        "packages/arctrust/tests/test_control_authority.py",
+        "packages/arcagent/tests/unit/modules/scheduler/test_scheduler_capabilities.py",
+        "packages/arcagent/tests/unit/test_serve_cli.py",
+        "packages/arcui/tests/test_serve_control_authority.py",
+        "packages/arccli/tests/test_serve_control_authority.py",
+        "tests/journeys/test_journey_schedules.py",
+    ),
 }
 
 

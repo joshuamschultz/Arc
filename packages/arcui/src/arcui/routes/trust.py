@@ -172,6 +172,21 @@ def default_skill_revision_anchor_factory() -> Any:
     return arcagent.build_skill_revision_anchor_factory(security, _operator_signer)
 
 
+def default_control_artifact_binding() -> Any:
+    """The deployment's schedule and pulse authority for an app built outside ``arc``.
+
+    Same policy as ``arc ui start`` (arcagent owns it): the operator-signed local
+    journal below federal, None (schedule writes closed) at federal or when no
+    operator key exists.
+    """
+    try:
+        security = _machine_security()
+    except ValueError:
+        logger.warning("schedule authority refused by [security]")
+        return None
+    return arcagent.build_control_artifact_authority(security, _operator_signer)
+
+
 def operator_signer_for_request(request: Request) -> Signer:
     """Resolve the deployment's operator signing capability for this request."""
     factory = getattr(request.app.state, "operator_signer_factory", None)

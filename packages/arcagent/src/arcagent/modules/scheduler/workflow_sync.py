@@ -399,6 +399,16 @@ async def _disable_derived(entry: ScheduleEntry) -> None:
         entry.model_copy(update={"enabled": False, "metadata": archived}), previous=entry
     )
     state.store.update(entry.id, disabled.model_dump())
+    authority = state.control_artifact_authority
+    tenant_id = state.control_tenant_id
+    if authority is None or tenant_id is None:
+        raise RuntimeError("signed workflow schedule registration unavailable")
+    await authority.revoke(
+        tenant_id=tenant_id,
+        agent_did=state.agent_did,
+        purpose="schedule",
+        artifact_id=entry.id,
+    )
     state.store.remove(entry.id)
 
 

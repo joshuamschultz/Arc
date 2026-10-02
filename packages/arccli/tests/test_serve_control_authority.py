@@ -106,3 +106,65 @@ async def test_personal_install_has_authority_and_schedule_create_succeeds(
     assert [row["approval"]["definition_digest"] for row in stored] == [
         approval["definition_digest"]
     ]
+
+
+async def test_schedule_cancel_delete_revokes_head(agent_dir: Path) -> None:
+    """Deleting a schedule revokes its signed head: the old approval never verifies again."""
+    from arcagent.modules.scheduler import _runtime
+    from arcagent.modules.scheduler.capabilities import schedule_cancel, schedule_create
+    from arcagent.modules.scheduler.occurrence import canonical_definition
+
+    agent, _config, _path = _common.load_cli_agent(agent_dir)
+    await agent.startup()
+    try:
+        created = json.loads(
+            await schedule_create(
+                type="cron", expression="0 9 * * *", prompt="Send the morning briefing"
+            )
+        )
+        entry = _runtime.state().store.get(created["id"])
+        assert entry is not None and entry.approval is not None
+        deleted = json.loads(await schedule_cancel(id=created["id"], delete=True))
+        assert deleted["status"] == "deleted", deleted
+        assert _runtime.state().store.get(created["id"]) is None
+    finally:
+        await agent.shutdown()
+
+    binding = _serve.build_control_artifact_authority()
+    assert binding is not None
+    # The revoked head refuses the old approval in a fresh process.
+    with pytest.raises(arcagent.ControlArtifactRefusedError):
+        await binding.authority.verify_current(
+            tenant_id=binding.tenant_id,
+            agent_did=agent.did,
+            purpose="schedule",
+            artifact_id=entry.id,
+            canonical_definition=canonical_definition(entry),
+            approval=entry.approval,
+            occurrence_id="after-delete",
+        )
+
+
+async def test_main_module_agent_has_authority(agent_dir: Path) -> None:
+    """`python -m arcagent` builds its agent with the authority: schedule_create succeeds."""
+    from arcagent.__main__ import _build_agent
+    from arcagent.modules.scheduler.capabilities import schedule_create
+
+    toml = agent_dir / "arcagent.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8") + '\n[llm]\nmodel = "openai/gpt-4o-mini"\n',
+        encoding="utf-8",
+    )
+    agent = _build_agent(agent_dir)
+    await agent.startup()
+    try:
+        created = json.loads(
+            await schedule_create(
+                type="cron", expression="0 9 * * *", prompt="Send the morning briefing"
+            )
+        )
+    finally:
+        await agent.shutdown()
+
+    assert "error" not in created, created
+    assert created["approval"]["agent_did"] == agent.did

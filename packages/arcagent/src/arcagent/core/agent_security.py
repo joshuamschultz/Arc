@@ -165,8 +165,33 @@ def verify_witness_consistency(agent: Any) -> None:
     )
 
 
+def machine_operator_signer(sec: Any) -> Signer:
+    """The operator signer a standalone ``python -m arcagent`` resolves before any agent exists.
+
+    Same key location and custody the agent resolves at startup: ``in_process``
+    loads (or bootstraps, as startup does) the operator key; ``vault_transit``
+    signs by reference through the notary. An operator seed kept in a vault
+    cannot be read before the agent's vault resolver exists, so that refuses and
+    the caller fails closed.
+    """
+    if sec.custody == VAULT_TRANSIT:
+        return build_signer(
+            SignerConfig(
+                custody=VAULT_TRANSIT,
+                algorithm=sec.signing_algorithm,
+                key_ref=_OPERATOR_KEY_REF,
+            ),
+            vault_transit=resolve_transit(None, sec),
+        )
+    if sec.operator_vault_path:
+        raise SignerError("operator key is vault-resolved; no authority before agent startup")
+    key = OperatorKey.load(operator_key_path(sec), generate_if_absent=True)
+    return key.into_signer(sec.signing_algorithm)
+
+
 __all__ = [
     "build_witness",
+    "machine_operator_signer",
     "operator_key_path",
     "policy_audit_log_path",
     "prior_audit_chains_exist",

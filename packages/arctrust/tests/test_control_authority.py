@@ -353,3 +353,122 @@ async def test_run_trigger_issuer_signs_request_and_evidence(
         bytes.fromhex(body["signature"]),
         operator.public_key,
     )
+
+
+# ----------------------------------------------- persisted occurrence replay
+
+
+def _fresh(
+    tmp_path: Path, operator: InProcessSigner, clock: _Clock, **kwargs: int
+) -> LocalControlArtifactAuthority:
+    return LocalControlArtifactAuthority(
+        tmp_path / "control",
+        signer=operator,
+        operator_did=did_from_public_key(operator.public_key, org="local", agent_type="operator"),
+        clock=clock,
+        **kwargs,
+    )
+
+
+def _occurrence_file(tmp_path: Path) -> Path:
+    return next((tmp_path / "control").glob("*.occurrences.jsonl"))
+
+
+async def test_occurrence_replay_refused_across_process_restart(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    operator: InProcessSigner,
+    clock: _Clock,
+) -> None:
+    approval = await _register(authority, agent, clock)
+    await _verify(authority, agent, approval, occurrence_id="occ-1")
+
+    restarted = _fresh(tmp_path, operator, clock)
+    with pytest.raises(ControlArtifactRefusedError):
+        await _verify(restarted, agent, approval, occurrence_id="occ-1")
+    await _verify(restarted, agent, approval, occurrence_id="occ-2")
+
+
+async def test_occurrence_log_is_per_target(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    clock: _Clock,
+) -> None:
+    approval = await _register(authority, agent, clock)
+    await _verify(authority, agent, approval, occurrence_id="occ-1")
+    assert len(_occurrence_file(tmp_path).read_text(encoding="utf-8").splitlines()) == 1
+    assert "occ-1" not in _occurrence_file(tmp_path).read_text(encoding="utf-8")
+
+
+async def test_torn_last_occurrence_line_is_not_an_admission_and_not_a_crash(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    operator: InProcessSigner,
+    clock: _Clock,
+) -> None:
+    approval = await _register(authority, agent, clock)
+    await _verify(authority, agent, approval, occurrence_id="occ-1")
+    log = _occurrence_file(tmp_path)
+    admitted = log.read_text(encoding="utf-8")
+    # A crash mid-append left half a digest with no newline.
+    log.write_text(admitted + hashlib.sha256(b"x").hexdigest()[:20], encoding="utf-8")
+
+    restarted = _fresh(tmp_path, operator, clock)
+    with pytest.raises(ControlArtifactRefusedError):
+        await _verify(restarted, agent, approval, occurrence_id="occ-1")
+    await _verify(restarted, agent, approval, occurrence_id="occ-2")
+    # The torn fragment never merged with the new entry: both digests parse.
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert admitted.strip() in lines
+    assert sum(1 for line in lines if len(line) == 64) == 2
+
+
+async def test_unterminated_complete_digest_is_not_read_as_admission(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    operator: InProcessSigner,
+    clock: _Clock,
+) -> None:
+    approval = await _register(authority, agent, clock)
+    await _verify(authority, agent, approval, occurrence_id="occ-1")
+    log = _occurrence_file(tmp_path)
+    log.write_text(log.read_text(encoding="utf-8").rstrip("\n"), encoding="utf-8")
+
+    restarted = _fresh(tmp_path, operator, clock)
+    await _verify(restarted, agent, approval, occurrence_id="occ-1")
+
+
+async def test_occurrence_log_is_bounded(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    operator: InProcessSigner,
+    clock: _Clock,
+) -> None:
+    bounded = _fresh(tmp_path, operator, clock, max_remembered=10)
+    bounded.enroll_actor(agent.did, agent.public_key, agent.algorithm)
+    approval = await _register(bounded, agent, clock)
+    for number in range(35):
+        await _verify(bounded, agent, approval, occurrence_id=f"occ-{number}")
+    assert len(_occurrence_file(tmp_path).read_text(encoding="utf-8").splitlines()) <= 10
+    with pytest.raises(ControlArtifactRefusedError):
+        await _verify(bounded, agent, approval, occurrence_id="occ-34")
+
+
+async def test_planted_junk_in_occurrence_log_is_ignored(
+    tmp_path: Path,
+    authority: LocalControlArtifactAuthority,
+    agent: AgentIdentity,
+    clock: _Clock,
+) -> None:
+    approval = await _register(authority, agent, clock)
+    await _verify(authority, agent, approval, occurrence_id="occ-1")
+    log = _occurrence_file(tmp_path)
+    log.write_text("not-a-digest\n{}\n\n" + log.read_text(encoding="utf-8"), encoding="utf-8")
+    with pytest.raises(ControlArtifactRefusedError):
+        await _verify(authority, agent, approval, occurrence_id="occ-1")
+    await _verify(authority, agent, approval, occurrence_id="occ-2")

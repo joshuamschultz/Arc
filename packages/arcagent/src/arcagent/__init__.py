@@ -59,6 +59,7 @@ from arcagent.connections import (
 from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
 from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
+from arcagent.core.control_binding import build_control_artifact_authority
 from arcagent.core.control_contract import (
     ControlActionProofSource,
     ControlArtifactAuthority,
@@ -360,6 +361,7 @@ __all__ = [
     "VerifiedRunAuthorization",
     "append_module_scan_roots",
     "audit_tier_relaxations",
+    "build_control_artifact_authority",
     "build_mcp_door",
     "build_prompt_resolver",
     "build_skill_revision_anchor_factory",

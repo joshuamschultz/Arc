@@ -26,12 +26,16 @@ The authority never holds key material — only an operator :class:`Signer`.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import hmac
 import json
+import os
+import re
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -83,6 +87,85 @@ class _BoundedSet:
             return True
 
 
+_DIGEST_LINE = re.compile(rb"[0-9a-f]{64}")
+
+
+class _OccurrenceLog:
+    """Durable once-only set of admitted occurrences for one control target.
+
+    One digest per line, appended and fsynced *before* the caller dispatches, so
+    a crash between admission and dispatch leaves the occurrence refused rather
+    than run twice. Every admission re-reads the file under an exclusive file
+    lock, so a second process sees what the first admitted. Only newline-terminated
+    64-hex lines count: a torn final line (crash mid-append) is never read as an
+    admission, and the next append starts on a fresh line. Past ``limit`` entries
+    the file is rewritten (atomically) with its newest half.
+    """
+
+    def __init__(self, path: Path, limit: int) -> None:
+        self._path = path
+        self._lockfile = path.with_suffix(".lock")
+        self._limit = max(limit, 2)
+        self._mutex = threading.Lock()
+
+    def add_new(self, digest: str) -> bool:
+        """Record ``digest`` durably; False when it was already admitted."""
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with self._mutex, self._locked():
+            data = self._read()
+            entries = self._entries(data)
+            if digest in entries:
+                return False
+            if len(entries) >= self._limit:
+                self._rotate(entries[len(entries) // 2 :])
+                data = self._read()
+            self._append(digest, torn=bool(data) and not data.endswith(b"\n"))
+            return True
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        descriptor = os.open(self._lockfile, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
+
+    def _read(self) -> bytes:
+        try:
+            descriptor = os.open(self._path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return b""
+        with os.fdopen(descriptor, "rb") as handle:
+            return handle.read()
+
+    @staticmethod
+    def _entries(data: bytes) -> list[str]:
+        lines = data.split(b"\n")
+        lines.pop()  # whatever follows the last newline is unterminated: never an admission
+        return [line.decode() for line in lines if _DIGEST_LINE.fullmatch(line)]
+
+    def _append(self, digest: str, *, torn: bool) -> None:
+        descriptor = os.open(
+            self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600
+        )
+        try:
+            os.write(descriptor, (b"\n" if torn else b"") + digest.encode() + b"\n")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _rotate(self, keep: list[str]) -> None:
+        temporary = self._path.with_suffix(".tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(descriptor, "".join(f"{entry}\n" for entry in keep).encode())
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, self._path)
+
+
 class LocalControlArtifactAuthority:
     """Operator-signed local journal implementing ``ControlArtifactAuthority``."""
 
@@ -110,7 +193,8 @@ class LocalControlArtifactAuthority:
         self._anchors: dict[str, FileJournalAnchor] = {}
         self._lock = threading.Lock()
         self._proof_nonces = _BoundedSet(max_remembered)
-        self._occurrences = _BoundedSet(max_remembered)
+        self._occurrence_logs: dict[str, _OccurrenceLog] = {}
+        self._max_remembered = max_remembered
 
     @property
     def operator_did(self) -> str:
@@ -206,9 +290,8 @@ class LocalControlArtifactAuthority:
                 raise ControlArtifactRefusedError("control approval is not the current revision")
             if current.revoked:
                 raise ControlArtifactRefusedError("control artifact is revoked")
-            if not self._occurrences.add_new(
-                _sha256(json.dumps([*target, occurrence_id]).encode())
-            ):
+            admitted = await asyncio.to_thread(self._admit, target, occurrence_id)
+            if not admitted:
                 raise ControlArtifactRefusedError("control occurrence was already admitted")
         except (ControlArtifactRefusedError, ControlArtifactUnavailableError) as exc:
             self._audit("verify", agent_did, purpose, artifact_id, "deny", reason=str(exc))
@@ -308,6 +391,19 @@ class LocalControlArtifactAuthority:
                 )
                 self._anchors[scope] = anchor
             return anchor
+
+    def _admit(self, target: tuple[str, str, str, str], occurrence_id: str) -> bool:
+        """Durably record this occurrence; False when any process already admitted it."""
+        stem = _sha256(json.dumps(list(target)).encode("utf-8"))
+        with self._lock:
+            log = self._occurrence_logs.get(stem)
+            if log is None:
+                path = self._directory / f"{stem}.occurrences.jsonl"
+                log = self._occurrence_logs[stem] = _OccurrenceLog(path, self._max_remembered)
+        try:
+            return log.add_new(_sha256(json.dumps([*target, occurrence_id]).encode()))
+        except OSError as exc:
+            raise ControlArtifactUnavailableError("control occurrence log is unavailable") from exc
 
     def _head(
         self, target: tuple[str, str, str, str]

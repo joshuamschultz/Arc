@@ -396,6 +396,22 @@ class _EchoControlAuthority:
             signature="aa",
         )
 
+    async def revoke(self, **kwargs: Any) -> Any:
+        from arcagent.core.control_contract import SignedControlRevision
+
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=2,
+            definition_digest="0" * 64,
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            revoked=True,
+            signature="aa",
+        )
+
     async def verify_current(self, **kwargs: Any) -> None:
         assert (
             kwargs["approval"].definition_digest

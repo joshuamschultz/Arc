@@ -45,6 +45,10 @@ class ControlArtifactAuthority(Protocol):
         occurrence_id: str,
     ) -> None: ...
 
+    async def revoke(
+        self, *, tenant_id: str, agent_did: str, purpose: ControlPurpose, artifact_id: str
+    ) -> SignedControlRevision: ...
+
 
 @runtime_checkable
 class ControlActorEnrollment(Protocol):
