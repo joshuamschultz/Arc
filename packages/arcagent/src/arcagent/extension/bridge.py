@@ -161,6 +161,7 @@ class CapabilityBridge:
             scan_root=extension_root(self._source),
             classification=spec.classification,
             capability_tags=list(spec.capability_tags),
+            idempotent=spec.idempotent,
         )
         if spec.timeout_seconds is not None:
             tool.timeout_seconds = spec.timeout_seconds

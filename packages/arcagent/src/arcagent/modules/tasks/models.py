@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from arcstore.tasks import Priority, Task, TaskStatus
+from arcstore.tasks import Priority, Task, TaskStatus, reclaim_allowance_s
 
 ClaimReason = Literal["assigned", "continue_current", "no_tasks_available"]
 
-__all__ = ["ClaimReason", "Priority", "Task", "TaskStatus"]
+__all__ = ["ClaimReason", "Priority", "Task", "TaskStatus", "reclaim_allowance_s"]

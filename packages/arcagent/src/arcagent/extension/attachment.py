@@ -84,6 +84,10 @@ class ToolSpec(_Contract):
     #: file upload) declares its own, so the tool bound never undercuts the
     #: transport bound beneath it.
     timeout_seconds: int | None = Field(default=None, gt=0, le=3600)
+    #: False when a repeat call duplicates an external effect the verb cannot
+    #: dedupe. A workflow tool node then refuses to re-run it for a retried or
+    #: reclaimed attempt without an operator's OK.
+    idempotent: bool = True
 
 
 class ProbeResult(_Contract):
