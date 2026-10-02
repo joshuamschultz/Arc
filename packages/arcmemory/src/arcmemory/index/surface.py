@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.fusion import rrf_fuse
+from arcmemory.fusion import RRF_K, rrf_fuse
 from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.backend import _cosine as _cosine
 from arcmemory.index.graph import WeightedGraph
@@ -111,6 +111,9 @@ class SurfaceIndex:
         embedder: Embedder | None = None,
         audit_sink: AuditSink | None = None,
         seed_vocabulary: Iterable[str] | None = None,
+        use_recency: bool = True,
+        vector_weight: int = 1,
+        rrf_k: int = RRF_K,
     ) -> None:
         self._db = db
         self._workspace = Path(workspace)
@@ -123,6 +126,13 @@ class SurfaceIndex:
         self._episodic = EpisodicStore(db, workspace)
         self._mem_dir = self._workspace / "memory"
         self._seed_vocab = set(seed_vocabulary or [])
+        # A document pool's mtime is sync order, not relevance: its recency list
+        # would vote for arbitrary chunks, so document search turns it off.
+        self._use_recency = use_recency
+        # Channel weighting: a document pool leans on the vector channel (paraphrased
+        # questions share few words with the page) and sharpens the rank weighting.
+        self._vector_weight = vector_weight
+        self._rrf_k = rrf_k
 
     # -- indexing ----------------------------------------------------------
 
@@ -259,12 +269,13 @@ class SurfaceIndex:
         ranked_lists = [
             await self._bm25_search(text),
             await self._graph_search(text),
-            await self._recency_order(),
         ]
+        if self._use_recency:
+            ranked_lists.append(await self._recency_order())
         if vec_ranked is not None:
-            ranked_lists.append(vec_ranked)
+            ranked_lists.extend([vec_ranked] * self._vector_weight)
 
-        fused = _ensure_curated_present(rrf_fuse(ranked_lists), top_k)
+        fused = _ensure_curated_present(rrf_fuse(ranked_lists, k=self._rrf_k), top_k)
         recalls = [
             recall
             for cid, score in fused[:top_k]
@@ -386,9 +397,20 @@ def _established_date(mtime: float | None) -> str:
         return ""
 
 
+#: Function words that match nearly every chunk. In an OR-query they outvote the
+#: content words ("how do I ... from home" ranks any page containing "how"/"do").
+_QUERY_STOPWORDS: frozenset[str] = frozenset(
+    "a an and are as at be but by can do does for from had has have how i if in into is it "
+    "its me my no not of on or our so that the their them then there these they this to "
+    "up us was we were what when where which who why will with would you your".split()
+)
+
+
 def _fts_query(text: str) -> str:
-    """Turn free text into a safe FTS5 OR-query of its alphanumeric tokens."""
+    """Turn free text into a safe FTS5 OR-query of its content-word tokens."""
     tokens = [t for t in _tokenize(text) if t]
+    content = [t for t in tokens if t not in _QUERY_STOPWORDS]
+    tokens = content or tokens
     return " OR ".join(f'"{t}"' for t in tokens)
 
 

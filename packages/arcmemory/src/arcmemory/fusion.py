@@ -10,24 +10,28 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-_RRF_K = 60
+RRF_K = 60
 
 
 def rrf_fuse(
-    ranked_lists: Iterable[list[str]], *, promoted: set[str] | None = None
+    ranked_lists: Iterable[list[str]],
+    *,
+    promoted: set[str] | None = None,
+    k: int = RRF_K,
 ) -> list[tuple[str, float]]:
     """Reciprocal-rank-fuse ranked lists into one descending ``(key, score)`` list.
 
     Each input list is already best-first. When ``promoted`` is given, only keys in
     that set accumulate score (the structural channel's conjunctive-gate filter).
+    ``k`` flattens (large) or sharpens (small) the rank weighting.
     """
     scores: dict[str, float] = {}
     for ranked in ranked_lists:
         for rank, key in enumerate(ranked):
             if promoted is not None and key not in promoted:
                 continue
-            scores[key] = scores.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
     return sorted(scores.items(), key=lambda pair: (-pair[1], pair[0]))
 
 
-__all__ = ["rrf_fuse"]
+__all__ = ["RRF_K", "rrf_fuse"]

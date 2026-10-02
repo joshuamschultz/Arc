@@ -412,7 +412,12 @@ class ArcMemoryIngestAdapter(IngestPort):
             deleted=source_object.deleted,
             classification=str(source_object.metadata.get("classification", "")),
             revision=_revision(source_object.metadata.get("revision")),
-            metadata={key: str(value) for key, value in source_object.metadata.items()},
+            metadata={
+                **(
+                    {"modified_at": source_object.modified_at} if source_object.modified_at else {}
+                ),
+                **{key: str(value) for key, value in source_object.metadata.items()},
+            },
         )
         content_model = (
             None

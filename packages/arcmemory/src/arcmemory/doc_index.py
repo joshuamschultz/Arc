@@ -16,8 +16,10 @@ memory recall uses, scoped to exactly one source at a time.
 from __future__ import annotations
 
 import asyncio
+import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from arcokf import validate_collection_index
 from arctrust.audit import AuditSink
@@ -30,6 +32,7 @@ from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import SourceChunk, bounded_chunks
 from arcmemory.index.surface import SurfaceIndex
+from arcmemory.mdfile import read_frontmatter
 from arcmemory.security import content_hash, dominating_classification
 from arcmemory.types import Recall, Scope
 
@@ -65,6 +68,52 @@ class DocHit(BaseModel):
     score: float
     classification: str = "unclassified"
     provenance: list[str] = Field(default_factory=list)
+    #: Citation fields, read from the extracted document's front matter. They
+    #: are source-supplied text, so the renderer frames them as DATA too.
+    title: str = ""
+    source_kind: str = ""
+    url: str = ""
+    updated_at: str = ""
+
+
+#: Chunks fetched per pool, as a multiple of the requested hit count, so that
+#: collapsing several chunks of one long document still leaves ``top_k`` documents.
+_COLLAPSE_OVERFETCH = 4
+#: Document-pool fusion. Questions are paraphrases of a page, not copies, so the
+#: vector channel counts double, and a small RRF constant lets a channel's top
+#: ranks decide the order instead of a flat sum that rewards incidental word overlap.
+_DOC_VECTOR_WEIGHT = 2
+_DOC_RRF_K = 5
+_CITATION_FIELD_CAP = 300
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _citation_text(value: Any) -> str:
+    """One bounded, single-line citation value (no control characters)."""
+    return _CONTROL_CHARS.sub(" ", str(value or "")).strip()[:_CITATION_FIELD_CAP]
+
+
+def _citation_frontmatter(path: Path) -> dict[str, Any] | None:
+    """A document's front matter, or ``None`` for a file that is not a valid OKF document.
+
+    The collection ``index.md`` lives beside the documents and is a hit too; it has
+    no citation of its own.
+    """
+    try:
+        return read_frontmatter(path)
+    except ValueError:
+        return None
+
+
+def _best_chunk_per_document(hits: list[DocHit]) -> list[DocHit]:
+    """Keep each document's highest-scoring chunk, best document first."""
+    best: dict[tuple[str, str], DocHit] = {}
+    for hit in hits:
+        key = (hit.source_id, hit.pointer)
+        current = best.get(key)
+        if current is None or hit.score > current.score:
+            best[key] = hit
+    return sorted(best.values(), key=lambda hit: hit.score, reverse=True)
 
 
 @runtime_checkable
@@ -179,18 +228,42 @@ class DocIndex:
         agent_did: str,
         *,
         source_id: str | None = None,
+        source_ids: Sequence[str] | None = None,
         top_k: int | None = None,
     ) -> list[DocHit]:
-        """Search one source's doc pool via ``SurfaceIndex.search`` (SEARCH only).
+        """Search document pools via ``SurfaceIndex.search`` (SEARCH only).
 
-        ``top_k`` falls back to the operator's ``doc_search_top_k`` setting when
-        the caller omits it, and hits below ``doc_search_min_score`` are dropped.
-        ``[]`` when ``doc_search_enabled`` is off or no ``source_id`` is given
-        (there is no pool to search without one).
+        With no ``source_id``/``source_ids`` it fans out across every pool this
+        agent owns; a pool exists only for a source whose mapping an operator
+        approved, and purging a source deletes its pool. Hits are collapsed to
+        the best chunk per document, so one long document cannot fill ``top_k``.
+        ``top_k`` falls back to the operator's ``doc_search_top_k`` setting and
+        hits below ``doc_search_min_score`` are dropped. ``[]`` when
+        ``doc_search_enabled`` is off.
         """
-        if not self._cfg.doc_search_enabled or source_id is None:
+        if not self._cfg.doc_search_enabled:
             return []
         k = self._cfg.doc_search_top_k if top_k is None else top_k
+        wanted = [source_id] if source_id is not None else source_ids
+        hits: list[DocHit] = []
+        for pool in await self._pool_ids(agent_did, wanted):
+            hits.extend(await self._search_pool(query, agent_did, pool, k * _COLLAPSE_OVERFETCH))
+        collapsed = _best_chunk_per_document(hits)[:k]
+        reranked = await self._maybe_rerank(query, collapsed)
+        return await asyncio.to_thread(self._with_citations, reranked)
+
+    async def _pool_ids(self, agent_did: str, wanted: Sequence[str] | None) -> list[str]:
+        """The source ids to search: the requested ones, or every pool this agent owns."""
+        if wanted is not None:
+            return list(dict.fromkeys(wanted))
+        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        prefix = doc_scope(agent_did, "").key
+        return [scope[len(prefix) :] for scope in await backend.scopes_with_prefix(prefix)]
+
+    async def _search_pool(
+        self, query: str, agent_did: str, source_id: str, limit: int
+    ) -> list[DocHit]:
+        """Fused search of exactly one source's pool, floor-filtered and hydrated."""
         scope = doc_scope(agent_did, source_id)
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
         surface = SurfaceIndex(
@@ -200,12 +273,38 @@ class DocIndex:
             config=self._cfg,
             embedder=self._embedder,
             audit_sink=self._audit,
+            use_recency=False,
+            vector_weight=_DOC_VECTOR_WEIGHT,
+            rrf_k=_DOC_RRF_K,
         )
-        result = await surface.search(query, top_k=k)
+        result = await surface.search(query, top_k=limit)
         floor = self._cfg.doc_search_min_score
         recalls = [recall for recall in result.recalls if recall.score >= floor]
-        hits = [await self._to_hit(backend, scope, source_id, recall) for recall in recalls]
-        return await self._maybe_rerank(query, hits)
+        return [await self._to_hit(backend, scope, source_id, recall) for recall in recalls]
+
+    def _with_citations(self, hits: list[DocHit]) -> list[DocHit]:
+        """Attach title, kind, url and updated time from each document's front matter."""
+        root = (self._workspace / "memory" / "connected").resolve()
+        cited: list[DocHit] = []
+        for hit in hits:
+            path = (self._workspace / hit.pointer).resolve()
+            frontmatter = _citation_frontmatter(path) if path.is_relative_to(root) else None
+            if not frontmatter:
+                cited.append(hit)
+                continue
+            cited.append(
+                hit.model_copy(
+                    update={
+                        "title": _citation_text(frontmatter.get("title")),
+                        "source_kind": _citation_text(frontmatter.get("source_kind")),
+                        "url": _citation_text(
+                            frontmatter.get("url") or frontmatter.get("locator")
+                        ),
+                        "updated_at": _citation_text(frontmatter.get("updated_at")),
+                    }
+                )
+            )
+        return cited
 
     async def list_documents(
         self, agent_did: str, *, source_id: str, limit: int = 50

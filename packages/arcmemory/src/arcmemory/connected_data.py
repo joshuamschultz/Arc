@@ -209,6 +209,24 @@ def source_instance_id(agent_did: str, source: ConnectedSource) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _citation_metadata(source: ConnectedSource, source_object: ConnectedObject) -> dict[str, str]:
+    """What an agent needs to cite a document: title, kind, url/locator, updated time.
+
+    Kept in the extracted document's front matter (never in the embedded text),
+    so a hit can name its source without the citation skewing relevance.
+    """
+    extra = source_object.metadata
+    url = extra.get("url") or (source_object.locator if "://" in source_object.locator else "")
+    citation = {
+        "title": extra.get("title", ""),
+        "source_kind": source.source_kind,
+        "url": url,
+        "locator": source_object.locator,
+        "updated_at": extra.get("modified_at") or extra.get("updated_at", ""),
+    }
+    return {key: value for key, value in citation.items() if value}
+
+
 def _write_document(path: Path, metadata: dict[str, str], text: str, stale: str) -> None:
     """Render and atomically write one extracted document; drop a moved predecessor."""
     atomic_write_text(path, render_document(metadata, text))
@@ -506,7 +524,7 @@ class ConnectedDataService:
         path = self._document_path(source_id, source_object.object_id)
         if MemoryHome.DOCUMENT in mapping.homes:
             await self._write_and_index_document(
-                index, source_id, source_object, clean, digest, path, prior
+                index, source_id, source, source_object, clean, digest, path, prior
             )
         else:
             await index.delete_object(source_id, self._agent_did, source_object.object_id)
@@ -706,6 +724,7 @@ class ConnectedDataService:
         self,
         index: DocIndex,
         source_id: str,
+        source: ConnectedSource,
         source_object: ConnectedObject,
         text: str,
         digest: str,
@@ -726,6 +745,7 @@ class ConnectedDataService:
             "version": source_object.version,
             "classification": source_object.classification,
             "content_hash": digest,
+            **_citation_metadata(source, source_object),
         }
         stale = prior.path if prior is not None and prior.path != path.as_posix() else ""
         await asyncio.to_thread(_write_document, path, metadata, text, stale)
