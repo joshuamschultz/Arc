@@ -131,6 +131,27 @@ class ToolNodeSpec(NodeSpec, Protocol):
     def args(self) -> Mapping[str, Any]: ...
 
 
+class GateNodeSpec(NodeSpec, Protocol):
+    """A human decision: who may decide it is part of the signed definition."""
+
+    @property
+    def gate(self) -> str: ...
+    @property
+    def approvers(self) -> Sequence[str]: ...
+
+
+class RoleRoster(Protocol):
+    """The team registry's roles — the ONLY source a decider's roles come from.
+
+    Run start checks a gate's ``role:<name>`` approvers against
+    :meth:`declared_roles`; a surface resolving a gate for a chat user asks
+    :meth:`roles_of` for that user's registered roles, never the message.
+    """
+
+    async def declared_roles(self) -> frozenset[str]: ...
+    async def roles_of(self, did: str) -> frozenset[str]: ...
+
+
 class WorkflowSpec(Protocol):
     """A parsed, validated workflow definition."""
 
@@ -497,6 +518,7 @@ __all__ = [
     "DefinitionParser",
     "DefinitionStoreLike",
     "DefinitionValidator",
+    "GateNodeSpec",
     "Initiator",
     "NodeKind",
     "NodeSpec",
@@ -504,6 +526,7 @@ __all__ = [
     "OperatorNotifier",
     "OwnerResolver",
     "PredicateEvaluator",
+    "RoleRoster",
     "RouteSpec",
     "RouterNodeSpec",
     "RunRecord",

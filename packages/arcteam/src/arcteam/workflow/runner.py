@@ -47,7 +47,7 @@ from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from .errors import UnsignedWorkflowError
-from .narrator import RunNarrator, assert_channel_binding
+from .narrator import RunNarrator, assert_channel_binding, gate_card_text
 from .runner_budget import RunBudget
 from .runner_contracts import (
     RETRYABLE_RUN_STATUSES,
@@ -55,12 +55,14 @@ from .runner_contracts import (
     ArgsResolver,
     BundleSpec,
     DefinitionStoreLike,
+    GateNodeSpec,
     Initiator,
     NodeSpec,
     OnFailure,
     OperatorNotifier,
     OwnerResolver,
     PredicateEvaluator,
+    RoleRoster,
     RouterNodeSpec,
     RunRecord,
     RunStatus,
@@ -72,6 +74,7 @@ from .runner_contracts import (
 )
 from .runner_state import NodeInstance, RunState, derive_node_states
 from .stores import RunStateMissingError
+from .validator import approver_roles, check_gate_roles
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +296,7 @@ class WorkflowRunner:
         resolve_args: ArgsResolver,
         narrator: RunNarrator | None = None,
         operator_notifier: OperatorNotifier | None = None,
+        roles: RoleRoster | None = None,
         audit_sink: AuditSink | None = None,
         node_max_tokens: int | None = None,
         node_max_cost_usd: float | None = None,
@@ -316,6 +320,9 @@ class WorkflowRunner:
         self._resolve_args = resolve_args
         self._narrator = narrator
         self._operator_notifier = operator_notifier
+        # Absent roster = no role is declared and nobody holds one: a gate that
+        # names a role refuses to start, and only the operator decides gates.
+        self._roles = roles
         self._sink: AuditSink = audit_sink or NullSink()
         self._node_max_tokens = node_max_tokens
         self._node_max_cost_usd = node_max_cost_usd
@@ -373,6 +380,65 @@ class WorkflowRunner:
     def tier(self) -> Tier:
         """The deployment posture this runner enforces."""
         return self._tier
+
+    async def member_roles(self, did: str) -> frozenset[str]:
+        """The team-registry roles ``did`` holds; empty when no roster is wired.
+
+        The one place a gate surface learns a chat decider's roles. It is keyed
+        on the authenticated DID, so nothing the decider typed can add a role.
+        """
+        if self._roles is None:
+            return frozenset()
+        return await self._roles.roles_of(did)
+
+    async def gate_approvers(self, task: Task) -> tuple[str, ...]:
+        """Who may decide gate row ``task``, read from the run's PINNED definition.
+
+        Never from the row: a task row is a mutable record, and the approver list
+        is authority, so it comes from the signed bundle the run is bound to. The
+        row's id must be the one its claimed (run, node, iteration) derives, so a
+        row cannot borrow another gate's approvers.
+
+        Raises:
+            WorkflowRunError: the row, run, or definition does not line up.
+        """
+        run_id = str(task.metadata.get("flow_run_id", ""))
+        node_id = str(task.metadata.get("node_id", ""))
+        iteration = int(task.metadata.get("iteration", -1))
+        if not run_id or not node_id or task.id != node_task_id(run_id, node_id, iteration):
+            raise WorkflowRunError(f"task {task.id!r} is not a workflow gate row")
+        run = await self._require_run(run_id)
+        bundle = self._bundle_for_dispatch(run)
+        if bundle.content_hash != run.content_hash:
+            raise WorkflowRunError("the definition changed under this run")
+        node = bundle.definition.node_by_id(node_id)
+        if node.kind != "gate":
+            raise WorkflowRunError(f"node {node_id!r} is not a gate")
+        return tuple(cast(GateNodeSpec, node).approvers)
+
+    async def _refuse_undeclared_gate_roles(
+        self, definition: WorkflowSpec, initiator_did: str
+    ) -> None:
+        """A gate naming a role no team member holds can never be decided: refuse
+        the run up front with the reason, rather than strand it at the gate."""
+        if not any(
+            node.kind == "gate" and approver_roles(cast(GateNodeSpec, node).approvers)
+            for node in definition.nodes
+        ):
+            return
+        declared = frozenset() if self._roles is None else await self._roles.declared_roles()
+        issues = check_gate_roles(definition, declared)
+        if not issues:
+            return
+        reason = "; ".join(f"{i.node_id}.{i.field}: {i.error} ({i.observed})" for i in issues)
+        self._audit(
+            "workflow.run.refused",
+            target=definition.id,
+            outcome="unknown_gate_role",
+            actor_did=initiator_did,
+            extra={"reason": reason},
+        )
+        raise WorkflowRunError(f"workflow {definition.id!r} cannot start: {reason}")
 
     async def start_run(
         self,
@@ -433,6 +499,7 @@ class WorkflowRunner:
             self._admit_unsigned(workflow_id, initiator, initiator_did)
         definition = bundle.definition
         assert_channel_binding(definition.channel)
+        await self._refuse_undeclared_gate_roles(definition, initiator_did)
         budget = definition.budget
         run_id = run_id or f"run-{uuid4().hex[:12]}"
         # A caller-supplied run id becomes part of every task key this run
@@ -1289,11 +1356,17 @@ class WorkflowRunner:
                 "accumulated_legs": list(task.metadata.get("accumulated_legs") or ()),
             },
         )
+        kind = str(task.metadata.get("node_kind", ""))
+        if kind == "gate":
+            await self._push_gate_card(run, node_id, task.id)
         if self._narrator is not None:
-            kind = str(task.metadata.get("node_kind", ""))
             if kind == "gate":
                 await self._narrator.gate_waiting(
-                    channel=run.channel, run_id=run.run_id, node_id=node_id
+                    channel=run.channel,
+                    run_id=run.run_id,
+                    node_id=node_id,
+                    task_id=task.id,
+                    workflow_id=run.workflow_id,
                 )
             else:
                 await self._narrator.node_started(
@@ -1742,6 +1815,26 @@ class WorkflowRunner:
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
 
+    async def _push_gate_card(self, run: RunRecord, node_id: str, task_id: str) -> None:
+        """Put the approval card in front of the operator, wherever they are.
+
+        A gate waits on a human, and the narration line only reaches a bound
+        channel. The card names the row and the three verbs; a platform that has
+        buttons renders them, and every verb lands on the same authorized
+        ``/gate`` command. Keyed on the row id, so a re-derived materialization
+        or a restarted runner never pushes it twice.
+        """
+        delivered = await self._tell_operator(
+            gate_card_text(run.workflow_id, run.run_id, node_id, task_id),
+            f"workflow-gate:{task_id}",
+        )
+        self._audit(
+            "workflow.gate.card_pushed",
+            target=f"{run.workflow_id}/{node_id}",
+            outcome="delivered" if delivered else "undelivered",
+            extra={"run_id": run.run_id, "task_id": task_id},
+        )
+
     async def _tell_operator(self, text: str, idempotency_key: str) -> bool:
         """Hand one notice to the host's operator seam. Never raises; reports delivery.
 
@@ -2018,11 +2111,13 @@ def build_workflow_runner(
         tier,
         "required" if tier != "personal" else "NOT required",
     )
+    team = RegistryOwnerResolver(registry) if registry is not None else _no_registry()
     return WorkflowRunner(
         tasks=WorkflowTaskStore(task_store_backend, actor_did=identity.did),
         runs=WorkflowRunStore(task_store_backend),
         definitions=definitions,
-        owners=RegistryOwnerResolver(registry) if registry is not None else _no_registry(),
+        owners=team,
+        roles=team,
         runner_did=identity.did,
         tier=cast(Tier, tier),
         evaluate=evaluate_predicate,
@@ -2079,14 +2174,21 @@ def _definition_audit_hook(sink: AuditSink, tier: str) -> Callable[[str, dict[st
 
 
 class _NoRegistry:
-    """Owner resolution with no registry wired: refuse, never guess.
+    """Owner and role resolution with no registry wired: refuse, never guess.
 
     A node whose owner cannot be resolved fails the run closed. Returning some
-    default DID would hand another agent's identity a task row.
+    default DID would hand another agent's identity a task row. Likewise no
+    role is declared and nobody holds one, so only the operator decides gates.
     """
 
     async def resolve_owner(self, handle: str) -> str | None:
         return None
+
+    async def declared_roles(self) -> frozenset[str]:
+        return frozenset()
+
+    async def roles_of(self, did: str) -> frozenset[str]:
+        return frozenset()
 
 
 __all__ = [

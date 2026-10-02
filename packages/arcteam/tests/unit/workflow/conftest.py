@@ -165,6 +165,7 @@ class Node:
     args: Mapping[str, Any] = field(default_factory=dict)
     # gate
     gate: str | None = None
+    approvers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -521,13 +522,22 @@ class FlowTaskStore:
 
 
 class Registry:
-    """Handle -> DID resolution (the arcteam entity registry's one method here)."""
+    """Handle -> DID resolution, plus each member's registered roles."""
 
-    def __init__(self, mapping: Mapping[str, str]) -> None:
+    def __init__(
+        self, mapping: Mapping[str, str], roles: Mapping[str, tuple[str, ...]] | None = None
+    ) -> None:
         self._mapping = dict(mapping)
+        self.roles: dict[str, tuple[str, ...]] = dict(roles or {})
 
     async def resolve_owner(self, handle: str) -> str | None:
         return self._mapping.get(handle.lstrip("@"))
+
+    async def declared_roles(self) -> frozenset[str]:
+        return frozenset(r for held in self.roles.values() for r in held)
+
+    async def roles_of(self, did: str) -> frozenset[str]:
+        return frozenset(self.roles.get(did, ()))
 
 
 class RecordingSink:

@@ -23,9 +23,10 @@ agent; a node may force the loop ``strategy`` but never the model.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_core import ErrorDetails
 
 from arcteam.workflow.errors import ValidationIssue, WorkflowParseError
@@ -178,11 +179,41 @@ class RouterNode(NodeBase):
     routes: tuple[Route, ...] = Field(min_length=1)
 
 
+APPROVER_DID_PATTERN = r"^did:[a-z0-9]+:[A-Za-z0-9._:%/-]+$"
+"""An approver named by identity: a full DID, matched exactly at resolution."""
+
+APPROVER_ROLE_PREFIX = "role:"
+APPROVER_ROLE_PATTERN = r"^role:[A-Za-z][A-Za-z0-9_-]{0,63}$"
+"""An approver named by team role: ``role:<name>``, checked against the roster
+at run start and against the decider's REGISTRY roles at resolution."""
+
+_APPROVER_RE = re.compile(f"{APPROVER_DID_PATTERN}|{APPROVER_ROLE_PATTERN}")
+
+
 class GateNode(NodeBase):
-    """A human decision. Resolvable only by the control plane, never by a tool."""
+    """A human decision. Resolvable only by the control plane, never by a tool.
+
+    ``approvers`` names who may decide: DIDs, or ``role:<name>`` for anyone the
+    team registry gives that role. Empty means the operator only — a gate never
+    defaults to "anyone who can reach the chat".
+    """
 
     kind: Literal["gate"]
     gate: str
+    approvers: tuple[str, ...] = ()
+
+    @field_validator("approvers")
+    @classmethod
+    def _approver_syntax(cls, approvers: tuple[str, ...]) -> tuple[str, ...]:
+        for approver in approvers:
+            if not _APPROVER_RE.fullmatch(approver):
+                raise ValueError(
+                    f"approver {approver!r} is neither a DID nor role:<name> "
+                    "(e.g. 'did:arc:telegram:12345' or 'role:reviewer')"
+                )
+        if len(set(approvers)) != len(approvers):
+            raise ValueError("approvers lists the same entry twice")
+        return approvers
 
 
 WorkflowNode = Annotated[

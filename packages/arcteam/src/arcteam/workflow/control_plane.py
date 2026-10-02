@@ -26,7 +26,7 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .errors import WorkflowError
+from .errors import GateNotAuthorizedError, WorkflowError
 from .runner import TEST_RUN_MAX_COST_USD, NodeRetryRefusedError, WorkflowRunner
 from .runner_contracts import (
     BundleSpec,
@@ -40,6 +40,7 @@ from .runner_contracts import (
     ValidationIssueLike,
 )
 from .templates import load_template
+from .validator import approver_roles
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,10 @@ _GATE_DECISIONS: dict[str, str] = {
     "fail_run": "rejected",
     "return_for_revision": "returned_for_revision",
 }
+
+#: The role an AUTHENTICATED operator surface (the dashboard's operator session,
+#: the CLI holding the operator key) asserts. Operator decides every gate.
+OPERATOR_ROLE = "operator"
 
 #: The words a human reviewer uses (CLI, chat card) mapped to the decision the
 #: control plane takes. One table, so every caller means the same thing by "reject".
@@ -367,8 +372,18 @@ class WorkflowControlPlane:
         decision: str,
         notes: str = "",
         actor_did: str,
+        actor_roles: frozenset[str],
     ) -> ControlPlaneResult:
         """Resolve a waiting gate: approve, fail the run, or return for revision.
+
+        Only an approver decides (alpha-2 #67): the operator, a DID the gate's
+        signed ``approvers`` lists, or a holder of a listed ``role:<name>``.
+        ``actor_roles`` is what the CALLER established from an authenticated
+        identity — the operator session, or the team registry's record for a
+        paired chat user — never anything the decider typed. Anyone else gets
+        :class:`GateNotAuthorizedError` and an audited ``workflow.gate.denied``.
+        A gate decides once: resolving a settled gate again is refused, so a
+        replayed approval cannot ride on the original.
 
         The reviewer's three outcomes are not a task approve/reject (REQ-247):
         returning for revision sends the reviewed work back to whoever produced
@@ -401,6 +416,7 @@ class WorkflowControlPlane:
                 ok=False,
                 errors=(OperationIssue(None, None, f"task {task_id!r} is not a workflow gate"),),
             )
+        await self._authorize_gate(task, decision, actor_did, actor_roles)
         recorded = _GATE_DECISIONS[decision]
         metadata = {
             **dict(task.metadata),
@@ -419,20 +435,30 @@ class WorkflowControlPlane:
         )
         if updated is None:
             current = await tasks.get(task_id)
-            if current is None or current.metadata.get("gate_decision") != recorded:
-                self._emit(_Operation("workflow.gate.resolved", task_id, "conflict"), actor_did)
-                return ControlPlaneResult(
-                    ok=False,
-                    errors=(OperationIssue(None, "status", "gate was resolved concurrently"),),
-                )
-            # An identical retry is idempotent: the first resolver already owns
-            # the decision and this call may safely observe its advancement.
+            replayed = current is not None and current.metadata.get("gate_decision") == recorded
+            self._emit(
+                _Operation(
+                    "workflow.gate.resolved",
+                    task_id,
+                    "replayed" if replayed else "conflict",
+                    {"decision": recorded},
+                ),
+                actor_did,
+            )
+            return ControlPlaneResult(
+                ok=False,
+                errors=(OperationIssue(None, "status", "gate was already resolved"),),
+            )
         self._emit(
             _Operation(
                 "workflow.gate.resolved",
                 task_id,
                 recorded,
-                {"run_id": str(task.metadata.get("flow_run_id", "")), "notes": notes},
+                {
+                    "run_id": str(task.metadata.get("flow_run_id", "")),
+                    "decision": recorded,
+                    "notes": notes,
+                },
             ),
             actor_did,
         )
@@ -565,6 +591,35 @@ class WorkflowControlPlane:
         self._emit(_Operation(action, target, "ok", {"status": bundle.status}), actor_did)
         return ControlPlaneResult(ok=True, bundle=bundle)
 
+    async def _authorize_gate(
+        self, task: Any, decision: str, actor_did: str, actor_roles: frozenset[str]
+    ) -> None:
+        """Allow the operator, a listed DID, or a listed role; deny everyone else.
+
+        The approver list comes from the run's pinned, signed definition — never
+        the row. Any failure to read it denies (fail closed), except for the
+        operator, who decides every gate whatever the definition says.
+        """
+        if OPERATOR_ROLE in actor_roles:
+            return
+        try:
+            approvers = await self._runner.gate_approvers(task)
+        except Exception:  # reason: an unreadable approver list must deny, not 500
+            logger.warning("gate %s: approvers unreadable; denying", task.id, exc_info=True)
+            approvers = ()
+        if actor_did in approvers or approver_roles(approvers) & actor_roles:
+            return
+        self._emit(
+            _Operation(
+                "workflow.gate.denied",
+                task.id,
+                "denied",
+                {"task_id": task.id, "actor_did": actor_did, "decision": decision},
+            ),
+            actor_did,
+        )
+        raise GateNotAuthorizedError(task.id, actor_did)
+
     def _emit(self, operation: _Operation, actor_did: str) -> None:
         emit(
             AuditEvent(
@@ -581,6 +636,7 @@ class WorkflowControlPlane:
 
 __all__ = [
     "GATE_WORDS",
+    "OPERATOR_ROLE",
     "ControlPlaneResult",
     "OperationIssue",
     "WorkflowControlPlane",

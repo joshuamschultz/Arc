@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -38,6 +38,7 @@ from arcteam.workflow.errors import (
     ValidationIssue,
 )
 from arcteam.workflow.models import (
+    APPROVER_ROLE_PREFIX,
     MAX_DEFINITION_BYTES,
     MAX_NODES,
     AgentNode,
@@ -53,6 +54,7 @@ from arcteam.workflow.resolver import (
     malformed_reference_strings,
     references_in,
 )
+from arcteam.workflow.runner_contracts import GateNodeSpec, WorkflowSpec
 
 
 class KnownReferences(BaseModel):
@@ -71,6 +73,7 @@ class KnownReferences(BaseModel):
     agents: frozenset[str] = frozenset()
     tools: frozenset[str] = frozenset()
     skills: frozenset[str] = frozenset()
+    roles: frozenset[str] = frozenset()
 
 
 def validate_definition(
@@ -302,6 +305,13 @@ def _parse_or_issue(node_id: str, field: str, expression: str) -> Iterable[Valid
 # --- roster and files --------------------------------------------------------
 
 
+def approver_roles(approvers: Iterable[str]) -> frozenset[str]:
+    """The role names (prefix stripped) among a gate's ``approvers``."""
+    return frozenset(
+        a[len(APPROVER_ROLE_PREFIX) :] for a in approvers if a.startswith(APPROVER_ROLE_PREFIX)
+    )
+
+
 def _check_known(
     definition: WorkflowDefinition, known: KnownReferences | None
 ) -> Iterable[ValidationIssue]:
@@ -322,6 +332,35 @@ def _check_known(
         if known.skills and isinstance(node, AgentNode) and node.skill is not None:
             if node.skill not in known.skills:
                 yield _unknown(node.id, "skill", node.skill, known.skills)
+    if known.roles:
+        yield from check_gate_roles(definition, known.roles)
+
+
+def check_gate_roles(
+    definition: WorkflowSpec, declared_roles: frozenset[str]
+) -> tuple[ValidationIssue, ...]:
+    """Every ``role:<name>`` a gate admits must be a role the team declares.
+
+    Run start calls this with the live registry's roles and refuses the run on
+    any issue — unlike the authoring roster check, an EMPTY roster is not
+    "skip" here: a gate naming a role nobody holds could never be approved, and
+    a role that appears later must not silently widen who decides.
+    """
+    issues: list[ValidationIssue] = []
+    for node in definition.nodes:
+        if node.kind != "gate":
+            continue
+        for role in sorted(approver_roles(cast(GateNodeSpec, node).approvers) - declared_roles):
+            issues.append(
+                ValidationIssue(
+                    node_id=node.id,
+                    field="approvers",
+                    error="unknown role — no team member is registered with it",
+                    observed=f"role:{role}",
+                    admissible=tuple(f"role:{r}" for r in sorted(declared_roles)),
+                )
+            )
+    return tuple(issues)
 
 
 def _unknown(node_id: str, field: str, observed: str, roster: frozenset[str]) -> ValidationIssue:
@@ -706,4 +745,10 @@ def _check_arg_strings(node: ToolNode) -> Iterable[ValidationIssue]:
         )
 
 
-__all__ = ["KnownReferences", "confine", "validate_definition"]
+__all__ = [
+    "KnownReferences",
+    "approver_roles",
+    "check_gate_roles",
+    "confine",
+    "validate_definition",
+]

@@ -124,7 +124,21 @@ class WorkflowNotFoundError(WorkflowError):
     """No bundle exists for the requested workflow id."""
 
 
+class GateNotAuthorizedError(WorkflowError):
+    """The decider may not resolve this gate.
+
+    Not the operator, not listed by DID, and holding none of the gate's listed
+    roles in the team registry. Roles are never taken from the caller's message.
+    """
+
+    def __init__(self, task_id: str, actor_did: str) -> None:
+        self.task_id = task_id
+        self.actor_did = actor_did
+        super().__init__(f"{actor_did} is not an approver of gate {task_id}")
+
+
 __all__ = [
+    "GateNotAuthorizedError",
     "InvalidWorkflowIdError",
     "PredicateError",
     "PredicateEvaluationError",
