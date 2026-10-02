@@ -7,7 +7,7 @@ the next step is re-derived on every tick from two durable sources:
   ``status=done`` plus ``output`` IS the memoization record (Restate/Inngest
   model, not a full replay), and
 * the **Run record's path taken** — the ordered trace of materializations,
-  router choices, skips, loop iterations, gate decisions, and settlements.
+  router choices, skips, gate revisions, gate decisions, and settlements.
 
 Re-deriving rather than remembering is what makes a restart safe: a runner that
 died mid-materialization comes back, reads the same two sources, and reaches the
@@ -31,7 +31,7 @@ NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped"]
 
 @dataclass(frozen=True)
 class NodeInstance:
-    """One materialized attempt of a node at one loop iteration."""
+    """One materialized attempt of a node at one iteration (a gate revision or an operator retry)."""
 
     node_id: str
     iteration: int
@@ -62,7 +62,6 @@ class RunState:
         self.routes: dict[tuple[str, int], str] = {}
         self.settled: set[tuple[str, int]] = set()
         self.gates: set[tuple[str, int]] = set()
-        self.loops: set[tuple[str, int]] = set()
         self.materialized: set[tuple[str, int]] = set()
         # Reviewer notes addressed to one upcoming node instance (REQ-247).
         self.revisions: dict[tuple[str, int], str] = {}
@@ -86,8 +85,6 @@ class RunState:
                 self.gates.add(key)
                 if entry.get("decision") == "returned_for_revision":
                     self.superseded.add(key)
-            elif kind == "loop":
-                self.loops.add(key)
             elif kind == "revision":
                 self.revisions[key] = str(entry.get("notes", ""))
 
@@ -98,7 +95,7 @@ class RunState:
         return group[-1] if group else None
 
     def materialized_count(self, node_id: str) -> int:
-        """How many times this node has been materialized (its loop counter)."""
+        """How many times this node has been materialized (its iteration counter)."""
         return len(self.instances.get(node_id, []))
 
     def highest_iteration(self, node_id: str) -> int:
@@ -194,9 +191,6 @@ class RunState:
 
     def record_route(self, node_id: str, iteration: int, chosen: str) -> None:
         self.routes[(node_id, iteration)] = chosen
-
-    def record_loop(self, node_id: str, iteration: int) -> None:
-        self.loops.add((node_id, iteration))
 
     def record_instance(self, node_id: str, iteration: int, task: Task) -> None:
         """Idempotent: a row already derived from the store is not added twice."""

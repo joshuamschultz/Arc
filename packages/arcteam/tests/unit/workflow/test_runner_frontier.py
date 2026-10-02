@@ -91,8 +91,7 @@ def onboarding() -> Definition:
                 id="qa",
                 kind="agent",
                 agent="@reviewer",
-                needs=("provision", "manual_review"),
-                join="any",
+                needs=("provision",),
             ),
         ),
     )
@@ -184,14 +183,15 @@ async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry
     assert routes[0]["node_id"] == "risk_router"
     assert routes[0]["chosen"] == "manual_review"
     assert routes[0]["skipped"] == ["provision"]
-    assert [e for e in record.path_taken if e["kind"] == "skipped"] == [
-        {
-            "kind": "skipped",
-            "node_id": "provision",
-            "iteration": 0,
-            "reason": "branch not taken",
-        }
-    ]
+    skipped = [e for e in record.path_taken if e["kind"] == "skipped"]
+    assert skipped[0] == {
+        "kind": "skipped",
+        "node_id": "provision",
+        "iteration": 0,
+        "reason": "branch not taken",
+    }
+    # qa follows provision only, so the untaken branch takes it down too.
+    assert [e["node_id"] for e in skipped] == ["provision", "qa"]
     assert "materialized" in path_kinds(record)
 
 
@@ -560,7 +560,7 @@ async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any)
     )
     record = await runner.advance(run.run_id)
 
-    assert record.status == "running", "the run resumes once the human answers"
+    assert record.status == "done", "the run resumes once the human answers; qa follows the untaken branch"
     gate = next(e for e in record.path_taken if e["kind"] == "gate")
     assert gate["decision"] == "approved"
 
@@ -666,55 +666,6 @@ async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
     assert materialized == {"collect", "verify"}, "no branch may be taken on a failed predicate"
 
 
-async def test_loop_mints_iteration_stamped_rows_then_fails_on_exhaustion(
-    stores: Any, registry: Any
-) -> None:
-    definition = Definition(
-        id="qa-loop",
-        nodes=(
-            Node(id="draft", kind="agent", agent="@ops"),
-            Node(id="check", kind="agent", agent="@reviewer", needs=("draft",)),
-            Node(
-                id="revise",
-                kind="agent",
-                agent="@ops",
-                needs=("check",),
-                when="$nodes.check.output.verdict == 'revise'",
-                loop_back_to="draft",
-                max_iterations=3,
-            ),
-        ),
-    )
-    flow_tasks, runs, tasks = stores
-    runner = build(stores, registry, definition)
-    run = await runner.start_run(
-        "qa-loop", input={}, initiator="operator", initiator_did="did:arc:x/1"
-    )
-
-    for iteration in range(3):
-        await complete_node(
-            tasks, task_id(run.run_id, "draft", iteration), OPS_DID, {"draft": "x"}
-        )
-        await runner.advance(run.run_id)
-        await complete_node(
-            tasks, task_id(run.run_id, "check", iteration), REVIEWER_DID, {"verdict": "revise"}
-        )
-        await runner.advance(run.run_id)
-        await complete_node(
-            tasks, task_id(run.run_id, "revise", iteration), OPS_DID, {"done": True}
-        )
-        await runner.advance(run.run_id)
-
-    rows = await flow_tasks.query_by_flow_run(run.run_id)
-    drafts = sorted(r.metadata["iteration"] for r in rows if r.metadata["node_id"] == "draft")
-    assert drafts == [0, 1, 2], "one fresh iteration-stamped row per loop entry, bounded at 3"
-
-    record = await runs.get(run.run_id)
-    assert record.status == "failed"
-    assert "max_iterations" in (record.resolution or "")
-    assert [e for e in record.path_taken if e["kind"] == "loop"]
-
-
 async def test_when_false_skips_the_node_and_the_run_completes(stores: Any, registry: Any) -> None:
     definition = Definition(
         id="qa-loop",
@@ -727,8 +678,6 @@ async def test_when_false_skips_the_node_and_the_run_completes(stores: Any, regi
                 agent="@ops",
                 needs=("check",),
                 when="$nodes.check.output.verdict == 'revise'",
-                loop_back_to="draft",
-                max_iterations=3,
             ),
         ),
     )

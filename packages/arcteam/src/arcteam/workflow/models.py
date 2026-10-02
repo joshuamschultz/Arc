@@ -50,7 +50,7 @@ WORKFLOW_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 owning agent's workspace, so this is the one rule keeping an id from being a
 path — it is shared with the store rather than restated there (ADR-029)."""
 
-JoinMode = Literal["all", "any"]
+OnFailure = Literal["fail_run", "continue", "skip_dependents"]
 RouterMode = Literal["rules", "llm"]
 TriggerType = Literal["cron", "interval", "manual"]
 
@@ -118,7 +118,7 @@ class NodeBase(BaseModel):
 
     ``needs`` are satisfied when each named upstream reaches ``done`` **or**
     ``skipped`` — one non-run terminal state, propagating transitively.
-    ``join`` declares fan-in: ``all`` (default) or ``any``.
+    A skipped upstream skips its dependents; there is no fan-in override.
     """
 
     model_config = _FROZEN
@@ -126,10 +126,11 @@ class NodeBase(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     agent: str | None = None
     needs: tuple[str, ...] = ()
-    join: JoinMode = "all"
     when: str | None = None
-    loop_back_to: str | None = None
-    max_iterations: int | None = Field(default=None, gt=0, le=100)
+    # What a failed node does to the run. ``fail_run`` fails the run with the
+    # node's error; ``continue`` lets dependents run and tells them what failed;
+    # ``skip_dependents`` skips every descendant and finishes the run with failures.
+    on_failure: OnFailure = "fail_run"
     output_schema: str | None = None
     artifacts: tuple[str, ...] = ()
     strategy: tuple[str, ...] = ()
@@ -398,8 +399,6 @@ def _admissible_for(field: str, error: ErrorDetails) -> tuple[str, ...]:
     """Name what would have been accepted, which is what drives repair."""
     if field.endswith("kind") or error["type"] == "union_tag_invalid":
         return NODE_KINDS
-    if field.endswith("join"):
-        return ("all", "any")
     if field.endswith("mode"):
         return ("rules", "llm")
     expected = error.get("ctx", {}).get("expected")
@@ -416,8 +415,8 @@ __all__ = [
     "Budget",
     "GateNode",
     "InputSpec",
-    "JoinMode",
     "NodeBase",
+    "OnFailure",
     "Route",
     "RouterMode",
     "RouterNode",

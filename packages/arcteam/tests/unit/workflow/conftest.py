@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-# The DESIGN.md §4 example graph, already carrying the join="any" fix for the
-# router-exclusivity deadlock the design's own example shipped with.
+# The DESIGN.md §4 example graph. Fan-in after a router is unsupported, so QA
+# follows the provision branch only and the manual-review branch ends at its gate.
 EXAMPLE_DOCUMENT: dict[str, Any] = {
     "workflow": {
         "schema_version": "1.0",
@@ -83,8 +83,7 @@ EXAMPLE_DOCUMENT: dict[str, Any] = {
             "id": "qa",
             "kind": "agent",
             "agent": "@reviewer",
-            "needs": ["provision", "manual_review"],
-            "join": "any",
+            "needs": ["provision"],
             "output_schema": "schemas/qa_verdict.json",
         },
         {
@@ -93,8 +92,6 @@ EXAMPLE_DOCUMENT: dict[str, Any] = {
             "agent": "@ops",
             "needs": ["qa"],
             "when": "$nodes.qa.output.verdict == 'revise'",
-            "loop_back_to": "provision",
-            "max_iterations": 3,
         },
     ],
 }
@@ -153,10 +150,8 @@ class Node:
     kind: str
     agent: str | None = None
     needs: tuple[str, ...] = ()
-    join: str = "all"
     when: str | None = None
-    loop_back_to: str | None = None
-    max_iterations: int | None = None
+    on_failure: str = "fail_run"
     output_schema: str | None = None
     artifacts: tuple[str, ...] = ()
     strategy: tuple[str, ...] = ()

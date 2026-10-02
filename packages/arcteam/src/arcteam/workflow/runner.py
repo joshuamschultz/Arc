@@ -835,12 +835,7 @@ class WorkflowRunner:
             return await self._require_run(run.run_id), True, state
         changed |= routed
 
-        looped = await self._follow_loops(run, definition, state)
-        if looped is None:
-            return await self._require_run(run.run_id), True, state
-        pending, loop_changed = looped
-        pending.extend(revisions)
-        changed |= loop_changed
+        pending: list[tuple[NodeSpec, int]] = list(revisions)
 
         try:
             for node in definition.nodes:
@@ -874,10 +869,12 @@ class WorkflowRunner:
         if candidate is None:
             return _WAIT
         action, iteration = candidate
+        if state.highest_iteration(node.id) >= iteration:
+            # Already materialized, routed or skipped at this iteration: a
+            # skipped need must not re-journal its dependents' skip every pass.
+            return _WAIT
         if action == "skip":
             return _Decision("skip", iteration)
-        if state.highest_iteration(node.id) >= iteration:
-            return _WAIT
         if node.when is not None:
             try:
                 satisfied = self._evaluate(node.when, scope)
@@ -890,11 +887,11 @@ class WorkflowRunner:
     def _candidate_iteration(
         self, node: NodeSpec, state: RunState
     ) -> tuple[Literal["go", "skip"], int] | None:
-        """Resolve ``needs`` + ``join`` into a decision, or ``None`` to wait.
+        """Resolve ``needs`` into a decision, or ``None`` to wait.
 
-        A need is satisfied when it is done OR skipped; ``join="any"`` fires on
-        the first done need, ``join="all"`` requires them all and propagates a
-        skip. Exactly one non-run terminal state, and it travels transitively.
+        A need is satisfied when it is done OR skipped; every need must settle,
+        and a skipped need skips this node too. Exactly one non-run terminal
+        state, and it travels transitively.
         """
         if not node.needs:
             return ("go", 0)
@@ -906,12 +903,6 @@ class WorkflowRunner:
                 done.append(iteration)
             elif status == "skipped":
                 skipped.append(iteration)
-        if node.join == "any":
-            if done:
-                return ("go", max(done))
-            if len(skipped) == len(node.needs):
-                return ("skip", max(skipped))
-            return None
         if skipped:
             return ("skip", max(skipped))
         if len(done) == len(node.needs):
@@ -1273,54 +1264,6 @@ class WorkflowRunner:
         for target in untaken:
             await self._skip(run, target, iteration, state, "branch not taken")
 
-    async def _follow_loops(
-        self, run: RunRecord, definition: WorkflowSpec, state: RunState
-    ) -> tuple[list[tuple[NodeSpec, int]], bool] | None:
-        """Mint the next iteration of a declared back-edge's target.
-
-        The counter is keyed on the TARGET, not on the node carrying the edge, so
-        a router inside the loop body cannot reset it. Exhaustion fails the node.
-        """
-        pending: list[tuple[NodeSpec, int]] = []
-        changed = False
-        for node in definition.nodes:
-            target_id = node.loop_back_to
-            if target_id is None:
-                continue
-            status, iteration = state.terminal_state(node.id)
-            if status != "done" or (node.id, iteration) in state.loops:
-                continue
-            taken = state.materialized_count(target_id)
-            bound = node.max_iterations or 1
-            state.record_loop(node.id, iteration)
-            if taken >= bound:
-                await self._append(
-                    run.run_id,
-                    {
-                        "kind": "loop",
-                        "node_id": node.id,
-                        "iteration": iteration,
-                        "target": target_id,
-                        "outcome": "exhausted",
-                    },
-                )
-                await self._fail_node(
-                    run, node.id, state, f"max_iterations ({bound}) reached looping to {target_id}"
-                )
-                return None
-            await self._append(
-                run.run_id,
-                {
-                    "kind": "loop",
-                    "node_id": node.id,
-                    "iteration": iteration,
-                    "target": target_id,
-                },
-            )
-            pending.append((definition.node_by_id(target_id), taken))
-            changed = True
-        return pending, changed
-
     async def _resolve_gates(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
     ) -> tuple[list[tuple[NodeSpec, int]], bool]:
@@ -1387,7 +1330,7 @@ class WorkflowRunner:
     ) -> list[tuple[NodeSpec, int]]:
         """Put each node this gate reviewed back on the frontier, with notes.
 
-        The next iteration is minted exactly the way a declared loop mints one,
+        The next iteration is minted as a fresh instance of the node,
         so a revision is an ordinary new node instance: it materializes, the
         gate re-materializes behind it, and the path taken records both. The
         notes travel on the Run's journal rather than in a message, so the

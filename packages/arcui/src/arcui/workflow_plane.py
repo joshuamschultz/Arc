@@ -510,13 +510,7 @@ def _run_summary(run: Any) -> dict[str, Any]:
 
 def _edges(definition: Any) -> list[dict[str, str]]:
     """The graph the dashboard draws, derived from each node's ``needs``."""
-    edges = [{"from": need, "to": node.id} for node in definition.nodes for need in node.needs]
-    edges.extend(
-        {"from": node.id, "to": node.loop_back_to}
-        for node in definition.nodes
-        if node.loop_back_to is not None
-    )
-    return edges
+    return [{"from": need, "to": node.id} for node in definition.nodes for need in node.needs]
 
 
 def _document_from(body: dict[str, Any], *, default_owner: str) -> dict[str, Any]:
