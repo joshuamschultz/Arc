@@ -1501,8 +1501,6 @@ export type MemoryPromotionUpdate = Pick<
   'enabled' | 'confidence_threshold' | 'classifier_model'
 >
 
-export const JEV_KEY_ENV = 'TYPESAFE_API_KEY'
-
 const memoryPromotionKey = (agentId: string) => ['agent', agentId, 'memory-promotion']
 const memoryPromotionPath = (agentId: string) =>
   `/api/agents/${encodeURIComponent(agentId)}/memory/promotion`
@@ -1535,18 +1533,14 @@ export const useRunMemoryPromotion = (agentId: string) =>
     mutationFn: () => apiPost(`${memoryPromotionPath(agentId)}/run`, {}),
   })
 
-// Same write-only store as `useSetKey`; also refreshes this agent's `key_set`.
-export const useSaveJevKey = (agentId: string) => {
-  const queryClient = useQueryClient()
-  return useMutation<KeyWriteResponse, Error, string>({
-    mutationFn: (value) => apiPut(`/api/keys/${JEV_KEY_ENV}`, { value }),
-    onSuccess: () =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
-        queryClient.invalidateQueries({ queryKey: memoryPromotionKey(agentId) }),
-      ]),
-  })
-}
+// Pinned model names a classifier drop-in offers (feeds the model dropdown).
+export type ClassifierModelsResponse = { classifier: string; models: string[] }
+
+export const useClassifierModels = (name: string) =>
+  useApiQuery<ClassifierModelsResponse>(
+    ['classifiers', name, 'models'],
+    `/api/classifiers/${encodeURIComponent(name)}/models`,
+  )
 
 // --- Connections and grants (SPEC-064) -------------------------------------
 //

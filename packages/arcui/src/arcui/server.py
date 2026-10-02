@@ -59,6 +59,7 @@ from arcui.routes import attachments as attachments_routes
 from arcui.routes import cancellations as cancellations_routes
 from arcui.routes import capability_imports as capability_imports_routes
 from arcui.routes import chat_ws as chat_ws_routes
+from arcui.routes import classifiers as classifiers_routes
 from arcui.routes import config as config_routes
 from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connected_explorer as connected_explorer_routes
@@ -389,6 +390,7 @@ def create_app(
         *agent_detail_routes.routes,
         # SPEC-064: provider keys (fleet-wide) and connectors (per agent).
         *keys_routes.routes,
+        *classifiers_routes.routes,
         *connectors_routes.routes,
         *semantic_layer_routes.routes,
         *gateway_routes.routes,

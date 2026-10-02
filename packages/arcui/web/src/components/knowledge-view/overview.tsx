@@ -8,10 +8,8 @@ import {
   ListChecks,
   NotebookPen,
   Share2,
-  Sparkles,
 } from 'lucide-react'
 import { FileTree } from '@/components/file-tree'
-import { JsonBlock } from '@/components/json-block'
 import { fmtNumber } from '@/lib/format'
 import type { KnowledgeResponse } from '@/lib/queries'
 
@@ -132,7 +130,6 @@ export function KnowledgeOverview({
 }) {
   const memory = data.memory ?? {}
   const graph = data.graph ?? {}
-  const context = data.context ?? {}
 
   const totalMemories = MEMORY_TILES.reduce((sum, t) => sum + asCount(memory[t.key]), 0)
 
@@ -177,17 +174,6 @@ export function KnowledgeOverview({
           <FileTree agentId={agentId} />
         </div>
       </section>
-
-      {/* Raw store payload kept for operators who want the exact numbers. */}
-      <details className="group rounded-lg border border-border bg-card">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground">
-          <Sparkles className="size-3.5 text-signed" />
-          Raw summary payload
-        </summary>
-        <div className="px-4 pb-4">
-          <JsonBlock value={{ context, graph, memory }} className="max-h-72" />
-        </div>
-      </details>
     </div>
   )
 }

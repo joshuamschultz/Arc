@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/states";
 import { KeysPanel } from "@/components/keys-panel";
+import { MemoryPromotionPanel } from "@/components/memory-promotion-panel";
 import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
 import { useOperatorMode } from "@/hooks/use-operator-mode";
 import { useRoster } from "@/lib/queries";
@@ -35,6 +36,9 @@ const SYSTEM_ONLY_FILES = [{ key: "gateway", label: "Gateway" }] as const;
 // Sentinel scope: the fleet-wide `~/.arc` files that per-agent files layer over.
 const SYSTEM_SCOPE = "__system__";
 
+// Per-agent memory promotion settings; no fleet-wide counterpart.
+const MEMORY_SHARING_TAB = "memory-sharing";
+
 export function SettingsPage() {
   const roster = useRoster();
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden);
@@ -42,6 +46,10 @@ export function SettingsPage() {
   const scope = picked ?? agents[0]?.agent_id ?? null;
   const isSystem = scope === SYSTEM_SCOPE;
   const [operatorMode] = useOperatorMode();
+  const [tab, setTab] = useState("arcllm");
+  // The Memory sharing tab exists only in agent scope; fall back when the
+  // operator switches to System while it is open.
+  const activeTab = isSystem && tab === MEMORY_SHARING_TAB ? "arcllm" : tab;
 
   const visibleFiles = isSystem
     ? [...CONFIG_FILES, ...SYSTEM_ONLY_FILES]
@@ -98,7 +106,8 @@ export function SettingsPage() {
         </div>
       ) : (
         <Tabs
-          defaultValue="arcllm"
+          value={activeTab}
+          onValueChange={setTab}
           className="flex flex-1 flex-col overflow-hidden"
         >
           <div className="border-b border-border px-6">
@@ -108,6 +117,11 @@ export function SettingsPage() {
                   {f.label}
                 </TabsTrigger>
               ))}
+              {!isSystem && (
+                <TabsTrigger value={MEMORY_SHARING_TAB}>
+                  Memory sharing
+                </TabsTrigger>
+              )}
               {/* Keys live in the fleet-wide `~/.arc/.env`, not in any config
                   file — the tab shows in every scope so a fresh install finds
                   it without first knowing to switch to System. */}
@@ -129,6 +143,20 @@ export function SettingsPage() {
               />
             </TabsContent>
           ))}
+          {!isSystem && (
+            <TabsContent
+              value={MEMORY_SHARING_TAB}
+              className="flex-1 overflow-auto p-6"
+            >
+              <div className="mx-auto max-w-xl">
+                <MemoryPromotionPanel
+                  key={scope}
+                  agentId={scope}
+                  operatorMode={operatorMode}
+                />
+              </div>
+            </TabsContent>
+          )}
           <TabsContent value="keys" className="flex-1 overflow-auto p-6">
             <div className="mx-auto max-w-5xl space-y-4">
               <div className="flex items-start gap-3">

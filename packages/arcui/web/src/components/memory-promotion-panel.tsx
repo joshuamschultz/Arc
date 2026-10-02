@@ -1,13 +1,21 @@
 import { useId, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { QueryState } from '@/components/states'
 import { ApiError } from '@/lib/api'
 import {
+  useClassifierModels,
   useMemoryPromotion,
   useRunMemoryPromotion,
-  useSaveJevKey,
   useSaveMemoryPromotion,
   type MemoryPromotionRunResult,
   type MemoryPromotionSettings,
@@ -63,6 +71,77 @@ function KeyBadge({ set }: { set: boolean }) {
     >
       {set ? 'Key set' : 'Key not set'}
     </span>
+  )
+}
+
+// Classifier drop-in whose pinned models the dropdown lists.
+const CLASSIFIER = 'jev'
+const OTHER = '__other__'
+
+/**
+ * Model picker: the drop-in's pinned models plus "Other…" for free text, so a
+ * pinned version the list does not know still saves. While the list is loading
+ * (or unavailable) the field is plain text, so saving never depends on it.
+ */
+function ModelField({
+  id,
+  value,
+  onChange,
+  disabled,
+}: {
+  id: string
+  value: string
+  onChange: (next: string) => void
+  disabled: boolean
+}) {
+  const models = useClassifierModels(CLASSIFIER).data?.models
+  const [other, setOther] = useState(false)
+  const customId = useId()
+
+  if (!models) {
+    return (
+      <Input
+        id={id}
+        aria-label="Classifier model"
+        value={value}
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      />
+    )
+  }
+
+  const custom = other || !models.includes(value)
+  return (
+    <div className="space-y-2">
+      <Select
+        value={custom ? OTHER : value}
+        onValueChange={(next) => (next === OTHER ? setOther(true) : (setOther(false), onChange(next)))}
+        disabled={disabled}
+      >
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {models.map((m) => (
+            <SelectItem key={m} value={m}>
+              {m}
+            </SelectItem>
+          ))}
+          <SelectItem value={OTHER}>Other…</SelectItem>
+        </SelectContent>
+      </Select>
+      {custom && (
+        <Input
+          id={customId}
+          aria-label="Pinned model version"
+          value={value}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+        />
+      )}
+    </div>
   )
 }
 
@@ -125,13 +204,7 @@ function SettingsForm({
           <label htmlFor={ids.model} className={LABEL}>
             Classifier model
           </label>
-          <Input
-            id={ids.model}
-            value={model}
-            spellCheck={false}
-            onChange={(e) => setModel(e.target.value)}
-            disabled={readOnly}
-          />
+          <ModelField id={ids.model} value={model} onChange={setModel} disabled={readOnly} />
         </div>
       </div>
       {operatorMode && (
@@ -139,48 +212,6 @@ function SettingsForm({
           {save.isPending ? 'Saving…' : 'Save settings'}
         </Button>
       )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
-    </div>
-  )
-}
-
-/** Write-only key field: the value goes to `/api/keys` and is dropped on success. */
-function JevKeyForm({ agentId, disabled }: { agentId: string; disabled: boolean }) {
-  const saveKey = useSaveJevKey(agentId)
-  const [draft, setDraft] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const id = useId()
-  const busy = disabled || saveKey.isPending
-
-  const submit = () => {
-    setError(null)
-    saveKey.mutate(draft, {
-      onSuccess: () => setDraft(''),
-      onError: (e) => setError(errorText(e, 'Could not save key')),
-    })
-  }
-
-  return (
-    <div className="space-y-2 border-t border-border pt-3">
-      <label htmlFor={id} className={LABEL}>
-        Jev API key
-      </label>
-      <div className="flex items-center gap-2">
-        <Input
-          id={id}
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Paste key…"
-          className="h-8"
-          disabled={busy}
-        />
-        <Button size="sm" onClick={submit} disabled={busy || draft.length === 0}>
-          Save key
-        </Button>
-      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   )
@@ -269,7 +300,14 @@ export function MemoryPromotionPanel({
     <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold tracking-tight text-foreground">Memory sharing</h3>
-        {query.data && <KeyBadge set={query.data.key_set} />}
+        {query.data && (
+          <div className="flex items-center gap-2">
+            <KeyBadge set={query.data.key_set} />
+            <Link to="/settings" className="text-xs text-primary underline-offset-2 hover:underline">
+              Set in Settings → Keys
+            </Link>
+          </div>
+        )}
       </div>
       <QueryState query={query}>
         {(settings) => {
@@ -290,7 +328,7 @@ export function MemoryPromotionPanel({
               )}
               {!operatorMode && (
                 <p className="text-xs italic text-muted-foreground/80">
-                  Turn on operator mode (top-right) to change these settings or set the key.
+                  Turn on operator mode (top-right) to change these settings.
                 </p>
               )}
               <SettingsForm
@@ -300,8 +338,7 @@ export function MemoryPromotionPanel({
                 locked={locked}
                 operatorMode={operatorMode}
               />
-              {operatorMode && <JevKeyForm agentId={agentId} disabled={locked} />}
-              <RunNow agentId={agentId} canRun={operatorMode && settings.enabled && !locked} />
+                            <RunNow agentId={agentId} canRun={operatorMode && settings.enabled && !locked} />
             </div>
           )
         }}
