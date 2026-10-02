@@ -1,0 +1,29 @@
+[workflow]
+id = "intake_specialist"
+name = "Intake specialist"
+description = "Take in a request, classify it, get a human decision, then file it."
+owner = "@operator"
+
+[input]
+schema = "schemas/request.json"
+
+[[node]]
+id = "intake"
+kind = "agent"
+prompt = "prompts/intake.md"
+output_schema = "schemas/intake.json"
+timeout_s = 300
+
+[[node]]
+id = "review"
+kind = "gate"
+gate = "human:approve_intake"
+needs = ["intake"]
+
+[[node]]
+id = "file"
+kind = "agent"
+prompt = "prompts/file.md"
+needs = ["review"]
+output_schema = "schemas/filed.json"
+timeout_s = 300

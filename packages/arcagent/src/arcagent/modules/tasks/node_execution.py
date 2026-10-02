@@ -42,6 +42,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+#: The ``mode`` a test run's node rows carry.
+TEST_MODE = "test"
+
 # The metadata keys the runner stamps on a materialised node row
 # (the workflow runner's task builder). They are FLAT on ``task.metadata``, not
 # nested — ``workflow`` is the workflow id string, not a block. Reading them
@@ -115,6 +118,12 @@ class WorkflowNode(BaseModel):
     # dispatched it. Empty means the runner did not say and the executor falls
     # back to the deployment's bundle directory.
     bundle_root: str = ""
+    # ``"test"`` for a node of an operator's draft test run (stamped by the runner
+    # from the run's id). Anything that changes the world is stubbed, never run.
+    mode: str = "live"
+    # A per-node spend ceiling the runner stamped (test runs only), forwarded to
+    # the agent turn so a draft nobody has read cannot run up a bill.
+    max_cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -235,6 +244,8 @@ def node_from_task(task: Any) -> WorkflowNode | None:
             bundle_root=str(metadata.get("bundle_root") or ""),
             idempotency_key=str(metadata.get("idempotency_key") or ""),
             attempt_key=str(metadata.get("attempt_key") or ""),
+            mode=str(metadata.get("mode") or "live"),
+            max_cost_usd=metadata.get("max_cost_usd"),
         )
     except (TypeError, ValueError):
         # A malformed row is a corrupt row, not a node: treat it as an ordinary

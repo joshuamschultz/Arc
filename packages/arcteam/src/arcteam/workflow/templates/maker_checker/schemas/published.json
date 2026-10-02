@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "location": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "location"
+  ],
+  "additionalProperties": true
+}

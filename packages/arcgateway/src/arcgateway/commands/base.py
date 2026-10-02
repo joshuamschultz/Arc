@@ -88,3 +88,19 @@ class WorkflowProvider(Protocol):
     async def run(self, workflow_id: str, *, actor_did: str, args: str) -> str:
         """Start ``workflow_id``; return the reply text (run id / error)."""
         ...
+
+
+@runtime_checkable
+class GateResolver(Protocol):
+    """Resolves a waiting workflow gate on behalf of a paired human.
+
+    ``decision`` is the reviewer's word (``approve``, ``reject`` or ``revise``);
+    the implementation maps it onto the control plane's decision. Returns the
+    reply line for the user, and never raises into a chat turn.
+    """
+
+    async def resolve_gate(
+        self, task_id: str, *, decision: str, notes: str, actor_did: str
+    ) -> str:
+        """Apply the decision; return the line to reply with."""
+        ...

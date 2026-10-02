@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "changed",
+    "summary"
+  ],
+  "additionalProperties": true
+}

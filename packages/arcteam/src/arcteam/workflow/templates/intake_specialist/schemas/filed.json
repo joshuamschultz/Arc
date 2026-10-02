@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "reference": {
+      "type": "string"
+    },
+    "next_step": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reference",
+    "next_step"
+  ],
+  "additionalProperties": true
+}

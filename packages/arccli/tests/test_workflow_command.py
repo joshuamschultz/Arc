@@ -208,7 +208,7 @@ def test_sign_missing_workflow_toml_errors(
     arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with pytest.raises(SystemExit):
-        workflow_handler(["sign", str(arc_dir / "does-not-exist")])
+        workflow_handler(["sign", "does-not-exist", "--dir", str(arc_dir)])
 
     assert "workflow.toml not found" in capsys.readouterr().err
 
@@ -692,6 +692,10 @@ def test_every_subcommand_is_reachable() -> None:
         "retry",
         "sign",
         "verify",
+        "templates",
+        "new",
+        "test",
+        "gate",
     }
 
 

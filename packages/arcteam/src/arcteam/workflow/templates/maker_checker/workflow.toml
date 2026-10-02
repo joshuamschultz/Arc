@@ -1,0 +1,37 @@
+[workflow]
+id = "maker_checker"
+name = "Maker and checker"
+description = "One agent drafts, a second checks it against the brief, and a person approves before it ships."
+owner = "@operator"
+
+[input]
+schema = "schemas/brief.json"
+
+[[node]]
+id = "maker"
+kind = "agent"
+prompt = "prompts/maker.md"
+output_schema = "schemas/draft.json"
+timeout_s = 600
+
+[[node]]
+id = "checker"
+kind = "agent"
+prompt = "prompts/checker.md"
+needs = ["maker"]
+output_schema = "schemas/verdict.json"
+timeout_s = 600
+
+[[node]]
+id = "approve"
+kind = "gate"
+gate = "human:approve_release"
+needs = ["checker"]
+
+[[node]]
+id = "publish"
+kind = "agent"
+prompt = "prompts/publish.md"
+needs = ["approve"]
+output_schema = "schemas/published.json"
+timeout_s = 300

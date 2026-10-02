@@ -212,6 +212,22 @@ class WorkflowControlPlane(Protocol):
         """One companion file's text — the prompt a node actually runs."""
         ...
 
+    async def test_run_workflow(
+        self, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Try a draft with state-modifying work stubbed; needs no signature."""
+        ...
+
+    async def list_templates(self) -> list[dict[str, Any]]:
+        """The starter templates: ``id``, ``title``, ``description``."""
+        ...
+
+    async def create_from_template(
+        self, template: str, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Copy a starter template in as a new unsigned draft."""
+        ...
+
     async def write_file(
         self,
         workflow_id: str,
@@ -603,6 +619,73 @@ async def request_signature(request: Request) -> JSONResponse:
     return _relay(request, result, target=target, operation="workflow.sign.request", ok_status=201)
 
 
+async def test_run_workflow(request: Request) -> JSONResponse:
+    """POST /api/workflows/{id}/test-run — try a draft safely (operator only).
+
+    Allowed on an unsigned draft at every tier: state-modifying work is stubbed
+    and spend is capped by the control plane, which also audits the run.
+    """
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}"
+    denial = _require_operator(request, target=target, operation="workflow.test_run")
+    if denial is not None:
+        return denial
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    result = await plane.test_run_workflow(workflow_id, actor=_actor(request))
+    return _relay(request, result, target=target, operation="workflow.test_run", ok_status=201)
+
+
+async def list_workflow_templates(request: Request) -> JSONResponse:
+    """GET /api/workflow-templates — the starter templates (operator only)."""
+    denial = _require_operator(
+        request, target="workflow:templates", operation="workflow.templates"
+    )
+    if denial is not None:
+        return denial
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    return JSONResponse({"templates": await plane.list_templates()})
+
+
+async def create_from_template(request: Request) -> JSONResponse:
+    """POST /api/workflows/from-template — start a draft from a template (operator only).
+
+    Body: ``{"template": str, "workflow_id": str}``. The copy lands unsigned,
+    through the same create path every author uses.
+    """
+    denial = _require_operator(
+        request, target="workflow:from-template", operation="workflow.create_from_template"
+    )
+    if denial is not None:
+        return denial
+
+    body = await _json_body(request)
+    template = (body or {}).get("template")
+    workflow_id = (body or {}).get("workflow_id")
+    if not isinstance(template, str) or not isinstance(workflow_id, str):
+        return _error('expected {"template": str, "workflow_id": str}', 400)
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    result = await plane.create_from_template(template, workflow_id, actor=_actor(request))
+    return _relay(
+        request,
+        result,
+        target=f"workflow:{workflow_id}",
+        operation="workflow.create_from_template",
+        ok_status=201,
+    )
+
+
 async def get_workflow_file(request: Request) -> JSONResponse:
     """GET /api/workflows/{id}/file?path=… — one prompt or schema body."""
     workflow_id = request.path_params["id"]
@@ -660,6 +743,8 @@ async def put_workflow_file(request: Request) -> JSONResponse:
 routes = [
     Route("/api/workflows", list_workflows, methods=["GET"]),
     Route("/api/workflows", create_workflow, methods=["POST"]),
+    Route("/api/workflows/from-template", create_from_template, methods=["POST"]),
+    Route("/api/workflow-templates", list_workflow_templates, methods=["GET"]),
     Route("/api/workflows/{id}", get_workflow, methods=["GET"]),
     Route("/api/workflows/{id}", patch_workflow, methods=["PATCH"]),
     Route("/api/workflows/{id}/request-signature", request_signature, methods=["POST"]),
@@ -668,6 +753,7 @@ routes = [
     Route("/api/workflows/{id}/archive", archive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/unarchive", unarchive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/run", run_workflow, methods=["POST"]),
+    Route("/api/workflows/{id}/test-run", test_run_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/runs", list_runs, methods=["GET"]),
     Route("/api/workflow-runs/{id}", get_run, methods=["GET"]),
     Route("/api/workflow-runs/{id}/cancel", cancel_run, methods=["POST"]),
@@ -698,15 +784,18 @@ __all__ = [
     "WorkflowFieldError",
     "archive_workflow",
     "cancel_run",
+    "create_from_template",
     "create_workflow",
     "get_run",
     "get_workflow",
     "list_runs",
+    "list_workflow_templates",
     "list_workflows",
     "patch_workflow",
     "resolve_gate",
     "retry_node",
     "routes",
     "run_workflow",
+    "test_run_workflow",
     "unarchive_workflow",
 ]

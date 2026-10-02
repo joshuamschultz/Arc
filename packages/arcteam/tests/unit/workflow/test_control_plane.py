@@ -477,6 +477,8 @@ def test_the_operation_set_is_the_shared_nine(stores: Any) -> None:
         "cancel",
         "resolve_gate",
         "retry_node",
+        "create_from_template",
+        "test_run",
     }
 
 

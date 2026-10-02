@@ -422,6 +422,35 @@ class DashboardWorkflowPlane:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
 
+    async def test_run_workflow(
+        self, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Try a draft: the control plane stubs state-modifying work and caps spend."""
+        result = await self._plane.test_run(workflow_id, actor_did=actor.did)
+        if not result.ok or result.run is None:
+            return _errors(result)
+        return ControlPlaneResult(value={**_run_summary(result.run), "mode": "test"})
+
+    async def list_templates(self) -> list[dict[str, Any]]:
+        """The starter templates a "Start from template" picker offers."""
+        from arcteam.workflow.templates import list_templates
+
+        return [
+            {"id": info.id, "title": info.title, "description": info.description}
+            for info in list_templates()
+        ]
+
+    async def create_from_template(
+        self, template: str, workflow_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Copy a template in as an unsigned draft, owned by the dashboard's default owner."""
+        result = await self._plane.create_from_template(
+            template, workflow_id, actor_did=actor.did, owner=self._default_owner
+        )
+        if not result.ok:
+            return _errors(result)
+        return ControlPlaneResult(value={"workflow_id": workflow_id})
+
     async def cancel_run(self, run_id: str, *, actor: OperatorActor) -> ControlPlaneResult:
         result = await self._plane.cancel(run_id, actor_did=actor.did)
         if not result.ok or result.run is None:

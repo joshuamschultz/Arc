@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -88,6 +89,7 @@ class Scheduler:
             accepted_reply_fn=st.accepted_reply_fn,
             reply_send=st.reply_send,
             reply_lookup=st.reply_lookup,
+            team_send=st.team_send,
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
@@ -119,6 +121,19 @@ class Scheduler:
         _logger.info("Scheduler capability stopped")
 
 
+def _messaging_team_sender() -> Callable[[str, str], Awaitable[None]] | None:
+    """The messaging module's team-bus sender, or None when that module is absent.
+
+    Lazy and optional on purpose: the scheduler must keep working on a deployment
+    with no messaging module, where a ``channel://`` schedule then fails closed.
+    """
+    try:
+        from arcagent.modules.messaging.capabilities import team_sender
+    except ImportError:
+        return None
+    return team_sender()
+
+
 @hook(event="agent:ready")
 async def bind_agent_run_fn(ctx: Any) -> None:
     """Bind the agent's ``run`` callback into the engine on agent:ready.
@@ -139,6 +154,7 @@ async def bind_agent_run_fn(ctx: Any) -> None:
     st.reply_send = data.get("scheduled_reply_send")
     st.reply_lookup = data.get("scheduled_reply_lookup")
     st.channel_deliver_fn = data.get("channel_deliver_fn")
+    st.team_send = _messaging_team_sender()
     # Remember it against the agent's workspace as well: the engine may live in
     # a different asyncio task, where this state object is not the one it reads.
     _runtime.remember_run_fn(st.workspace, run_fn)
@@ -148,6 +164,7 @@ async def bind_agent_run_fn(ctx: Any) -> None:
         return
     st.engine.set_agent_run_fn(run_fn)
     st.engine.set_reply_delivery(st.accepted_reply_fn, st.reply_send, st.reply_lookup)
+    st.engine.set_team_send(st.team_send)
     _logger.info("Bound agent_run_fn via agent:ready hook")
 
 

@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "question": {
+      "type": "string"
+    },
+    "context": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "question"
+  ],
+  "additionalProperties": true
+}

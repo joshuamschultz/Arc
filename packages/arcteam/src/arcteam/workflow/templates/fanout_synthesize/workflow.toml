@@ -1,0 +1,37 @@
+[workflow]
+id = "fanout_synthesize"
+name = "Fan out and synthesize"
+description = "Run three independent looks at one question in parallel, then merge them into one answer."
+owner = "@operator"
+
+[input]
+schema = "schemas/question.json"
+
+[[node]]
+id = "angle_evidence"
+kind = "agent"
+prompt = "prompts/angle_evidence.md"
+output_schema = "schemas/finding.json"
+timeout_s = 600
+
+[[node]]
+id = "angle_risks"
+kind = "agent"
+prompt = "prompts/angle_risks.md"
+output_schema = "schemas/finding.json"
+timeout_s = 600
+
+[[node]]
+id = "angle_options"
+kind = "agent"
+prompt = "prompts/angle_options.md"
+output_schema = "schemas/finding.json"
+timeout_s = 600
+
+[[node]]
+id = "synthesize"
+kind = "agent"
+prompt = "prompts/synthesize.md"
+needs = ["angle_evidence", "angle_risks", "angle_options"]
+output_schema = "schemas/answer.json"
+timeout_s = 600
