@@ -87,8 +87,13 @@ def operator_promoted_row(
     now: datetime,
     publish_state: PublishState,
     shared_ref: str | None,
+    declassified: Mapping[str, str] | None = None,
 ) -> LedgerRow:
-    """The ``promoted_by_operator`` row, written once the publish outcome is known."""
+    """The ``promoted_by_operator`` row, written once the publish outcome is known.
+
+    ``declassified`` carries the label / clearance / why of a share below the
+    agent's clearance (empty otherwise).
+    """
     return LedgerRow(
         item_kind=text.item_kind,
         item_id=text.item_id,
@@ -104,6 +109,7 @@ def operator_promoted_row(
         publish_state=publish_state,
         shared_ref=shared_ref,
         decided_by=decided_by,
+        **(declassified or {}),
     )
 
 

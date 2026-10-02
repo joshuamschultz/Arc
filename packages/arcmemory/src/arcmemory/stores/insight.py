@@ -67,7 +67,7 @@ class InsightStore:
             trigger=str(fm.get("trigger", "")),
             cues=[str(x) for x in fm.get("cues", [])],
             instances=[str(x) for x in fm.get("instances", [])],
-            classification=str(fm.get("classification", "unclassified")),
+            classification=str(fm.get("classification", "")),
             confidence=float(fm.get("confidence", 0.0)),
             salience=float(fm.get("salience", 0.0)),
             status=Confidence(str(fm.get("status", "guessed"))),

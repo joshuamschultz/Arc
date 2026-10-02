@@ -294,7 +294,10 @@ class FleetSharedKnowledgeBackend:
         document = parse_classification(draft.classification, strict=True)
         if not dominates(caller, document):
             raise PermissionError("knowledge classification exceeds caller clearance")
-        if not dominates(document, caller):
+        # The one exception to no-write-down is a promotion the service attested as a
+        # declassified-at-source share (the card's own stored label, below the
+        # clearance, decided + audited). Every other lower label is still refused.
+        if not dominates(document, caller) and not getattr(draft, "declassified_at_source", False):
             raise PermissionError("no-write-down forbids lower-classification shared knowledge")
         # A revoked or demoted identifier is closed for good: no contributor
         # re-promotes into it (a demoted card never re-promotes).

@@ -53,6 +53,14 @@ _NO_VERDICT_DECISIONS = _PRE_EGRESS_DECISIONS | OPERATOR_DECISIONS
 #: Optional operator fields. Omitted from the stored (and signed) bytes when
 #: absent, so a row signed before they existed still verifies.
 _OPERATOR_FIELDS = frozenset({"decided_by", "reason"})
+#: Optional declassified-at-source fields: the label a card was shared under, the
+#: clearance of the sharing agent, and why a lower label was allowed. Omitted from
+#: the stored (and signed) bytes when absent, like the operator fields.
+_DECLASS_FIELDS = frozenset({"shared_label", "share_clearance", "declassified_why"})
+DECLASSIFIED_WHY = (
+    "card's stored label is below the agent's clearance; shared at its own label "
+    "after the secret gate and the sharing decision"
+)
 MAX_REASON_CHARS = 500
 _MAX_DID_CHARS = 256
 
@@ -77,6 +85,9 @@ class LedgerRow(BaseModel):
     shared_ref: str | None
     decided_by: str | None = None
     reason: str | None = None
+    shared_label: str | None = None
+    share_clearance: str | None = None
+    declassified_why: str | None = None
     signature: str = ""
 
     @model_validator(mode="after")
@@ -94,6 +105,9 @@ class LedgerRow(BaseModel):
         elif any(field is None for field in verdict):
             raise ValueError(f"a {self.decision} row requires the full classifier verdict")
         self._check_operator_fields()
+        declass = (self.shared_label, self.share_clearance, self.declassified_why)
+        if any(value is not None for value in declass) and any(value is None for value in declass):
+            raise ValueError("a declassified share records its label, clearance and why together")
         return self
 
     def _check_operator_fields(self) -> None:
@@ -110,7 +124,8 @@ class LedgerRow(BaseModel):
 
     def stored(self) -> dict[str, object]:
         """The JSON form on disk: an absent operator field is omitted, not ``null``."""
-        absent = {name for name in _OPERATOR_FIELDS if getattr(self, name) is None}
+        optional = _OPERATOR_FIELDS | _DECLASS_FIELDS
+        absent = {name for name in optional if getattr(self, name) is None}
         return self.model_dump(mode="json", exclude=absent)
 
     def signing_payload(self) -> bytes:
@@ -231,6 +246,7 @@ def _ends_mid_line(path: Path) -> bool:
 
 
 __all__ = [
+    "DECLASSIFIED_WHY",
     "MAX_REASON_CHARS",
     "OPERATOR_DECISIONS",
     "LedgerDecision",

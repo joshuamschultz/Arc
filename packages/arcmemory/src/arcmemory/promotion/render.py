@@ -15,6 +15,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
+from arctrust.classification import Classification, dominates, parse_classification
+
 from arcmemory.types import Entity, Insight, Procedure
 
 PromotableKind = Literal["insight", "procedure", "entity"]
@@ -37,6 +39,23 @@ class PromotionText:
     content: str
     content_sha256: str
     classification: str
+
+
+def shared_label(stored: str, clearance: Classification) -> Classification | None:
+    """The label a card is shared under, or ``None`` when it must not be shared.
+
+    The ONE trust rule for a share below the writer's clearance (a "declassified-
+    at-source share"). The label is the card's own STORED classification, written
+    when the card was made (the consolidator only ever raises it) and never taken
+    from the publisher or the shared side. At or below ``clearance`` it is shared
+    as is; above, ``None`` (refused). A missing or unknown label fails UPWARD to
+    ``clearance``: it is never read as unclassified.
+    """
+    try:
+        label = parse_classification(stored, strict=True)
+    except ValueError:
+        return clearance
+    return label if dominates(clearance, label) else None
 
 
 def content_digest(content: str) -> str:
@@ -83,4 +102,5 @@ __all__ = [
     "content_digest",
     "render_candidate",
     "require_card_id",
+    "shared_label",
 ]

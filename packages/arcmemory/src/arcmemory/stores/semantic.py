@@ -239,7 +239,7 @@ class SemanticStore:
             slug=slug,
             name=str(fm.get("name", slug.replace("-", " ").title())),
             entity_type=str(fm.get("entity_type", "unknown")),
-            classification=str(fm.get("classification", "unclassified")),
+            classification=str(fm.get("classification", "")),
             cross_session_visibility=bool(fm.get("cross_session_visibility", False)),
             confidence=float(fm.get("confidence", 0.5)),
             facts=parse_facts(body),

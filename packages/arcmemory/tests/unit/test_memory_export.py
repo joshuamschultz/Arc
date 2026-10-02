@@ -16,8 +16,8 @@ Contract under test (SDD COMP-021, README decision 2):
   ``PersonalKnowledgeAdapter.export_for_promotion``):
   ``reference(scope="personal", identifier=<reference>, digest)``, ``digest``,
   ``content``, ``classification``, ``title``, ``tags``, ``document_type``.
-- ``classification == access.clearance`` (the shared store's no-write-down rule
-  requires label == writer clearance).
+- ``classification`` is the card's own label when it is at or below the clearance;
+  a missing or unknown label is the clearance (fail upward, never unclassified).
 - Refusals: ``access.caller_did != agent_did`` -> ``PermissionError``; a card whose
   own label is not dominated by the clearance -> ``PermissionError``;
   ``episodic:``/``daily:``/unknown kinds, and missing cards, are refused.
@@ -102,22 +102,48 @@ async def test_export_insight_returns_rendered_bytes_at_caller_clearance(
 
 
 @pytest.mark.asyncio
-async def test_label_equals_card_label_or_refuses(
+async def test_card_below_clearance_exports_at_its_own_label(
     exporter: ConsolidatedMemoryExporter, stores: SimpleNamespace
 ) -> None:
-    """Q16-a: the shared label is the card's own label, never the clearance over it.
-
-    A card below the writer's clearance is refused rather than relabelled up, so
-    the label a shared card shows is always true.
-    """
-    _write_insight(stores, classification="cui")
+    """A CUI agent's unclassified card is shared AS unclassified, never relabelled up."""
+    _write_insight(stores, classification="unclassified")
 
     source = await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
+
+    assert source.classification == "UNCLASSIFIED"
+    assert source.label_from_card is True
+
+
+@pytest.mark.asyncio
+async def test_card_with_no_stored_label_is_shared_at_the_clearance(
+    exporter: ConsolidatedMemoryExporter, stores: SimpleNamespace
+) -> None:
+    """A missing label fails upward: it is never read as unclassified."""
+    _write_insight(stores, classification="unclassified")
+    path = stores.insights.path_for("acme-renewal")
+    path.write_text(
+        "".join(
+            line
+            for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
+            if not line.startswith("classification:")
+        ),
+        encoding="utf-8",
+    )
+
+    source = await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
+
     assert source.classification == "CUI"
 
-    _write_insight(stores, classification="unclassified")
-    with pytest.raises(PermissionError, match="never relabelled"):
-        await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
+
+@pytest.mark.asyncio
+async def test_card_with_an_unknown_label_is_shared_at_the_clearance(
+    exporter: ConsolidatedMemoryExporter, stores: SimpleNamespace
+) -> None:
+    _write_insight(stores, classification="top-sekrit")
+
+    source = await exporter.export_for_promotion("insight:acme-renewal", _Access(clearance="CUI"))
+
+    assert source.classification == "CUI"
 
 
 @pytest.mark.asyncio
