@@ -72,11 +72,23 @@ class _Gateway:
         return message
 
 
+class _Notices:
+    """The operator seam ``ArcAgent.notify_operator`` stands behind in production."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def notify(self, text: str, idempotency_key: str) -> str | None:
+        self.sent.append((text, idempotency_key))
+        return "telegram"
+
+
 class _World:
     def __init__(self, tmp_path: Path, backend: FakeBackend) -> None:
         self.tmp_path = tmp_path
         self.backend = backend
         self.gateway = _Gateway()
+        self.notices = _Notices()
         self.tasks = TaskStore(backend)
         self.actor = OperatorActor(did="did:arc:ui:operator", session_id="s1")
         self.runner = self.new_runner()
@@ -91,6 +103,7 @@ class _World:
             workspace_root=self.tmp_path,
             registry=_Registry(),
             narrator=RunNarrator(self.gateway, sender_did=SALES),
+            operator_notifier=self.notices.notify,
         )
 
 
@@ -128,9 +141,9 @@ async def test_j3_failed_cron_run_notifies_operator_with_reason(world: _World) -
 
     await _fail_the_archive_node(world, run_id)
 
-    notices = [m for m in world.gateway.sent if "user://operator" in m.to]
-    assert len(notices) == 1
-    body = notices[0].body
+    assert len(world.notices.sent) == 1
+    body, key = world.notices.sent[0]
+    assert key.startswith(f"workflow-run:{run_id}:failed:")
     assert "nightly" in body and "archive" in body and "prompt is too long" in body
 
 
@@ -268,7 +281,7 @@ async def test_restart_between_fire_and_tick_yields_exactly_one_completed_run(
     assert sorted(r["id"] for r in rows) == sorted(
         node_task_id(run_id, node, 0) for node in ("collect", "archive")
     )
-    assert not [m for m in world.gateway.sent if "user://operator" in m.to]
+    assert world.notices.sent == []
 
 
 _THREE_NODE_DAG = """

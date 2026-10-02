@@ -543,6 +543,18 @@ class RecordingSink:
         return [e.action for e in self.events]
 
 
+class RecordingNotifier:
+    """The host's operator seam: records ``(text, idempotency_key)``, reports a channel."""
+
+    def __init__(self, channel: str | None = "telegram") -> None:
+        self.channel = channel
+        self.notices: list[tuple[str, str]] = []
+
+    async def __call__(self, text: str, idempotency_key: str) -> str | None:
+        self.notices.append((text, idempotency_key))
+        return self.channel
+
+
 class DroppingSender:
     """A messenger that drops EVERY send — the D-538 test harness."""
 

@@ -13,24 +13,14 @@ from typing import Any
 
 import pytest
 
-from arcteam.types import DeliveryKind
-from arcteam.workflow.narrator import RunNarrator
 from arcteam.workflow.runner import NodeDecisionError
 
-from .conftest import RUNNER_DID, Definition, Node, RecordingSender, RecordingSink
+from .conftest import Definition, Node, RecordingNotifier, RecordingSink
 from .test_runner_frontier import build
 
 WIRED = Definition(id="wired", nodes=(Node(id="only", kind="agent", agent="@sales"),))
 
 _NatsTimeout = type("TimeoutError", (Exception,), {"__module__": "nats.errors"})
-
-
-def _operator_mails(sender: RecordingSender) -> list[Any]:
-    return [
-        m
-        for m in sender.sent
-        if "user://operator" in m.to and m.delivery_kind is DeliveryKind.MAIL
-    ]
 
 
 @pytest.mark.parametrize(
@@ -42,15 +32,9 @@ async def test_nats_timeout_does_not_terminate_run_and_mails_after_threshold(
     stores: Any, registry: Any, error: Exception
 ) -> None:
     _, runs, _ = stores
-    sender = RecordingSender()
+    notifier = RecordingNotifier()
     sink = RecordingSink()
-    runner = build(
-        stores,
-        registry,
-        WIRED,
-        audit_sink=sink,
-        narrator=RunNarrator(sender, sender_did=RUNNER_DID),
-    )
+    runner = build(stores, registry, WIRED, audit_sink=sink, operator_notifier=notifier)
     started = await runner.start_run(
         "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
     )
@@ -63,16 +47,16 @@ async def test_nats_timeout_does_not_terminate_run_and_mails_after_threshold(
         await runner.tick()
 
     assert (await runs.get(started.run_id)).status == "running"
-    mails = _operator_mails(sender)
-    assert len(mails) == 1
-    assert started.run_id in (mails[0].subject or "")
-    assert "cannot advance" in (mails[0].subject or "")
-    assert type(error).__name__ in mails[0].body and "20" in mails[0].body
+    assert len(notifier.notices) == 1
+    text, key = notifier.notices[0]
+    assert started.run_id in text and "has not advanced" in text
+    assert type(error).__name__ in text and "20" in text
+    assert key.startswith(f"workflow-run:{started.run_id}:stuck:")
     outcomes = {e.outcome for e in sink.events if e.action == "workflow.run.advance_failed"}
     assert outcomes == {"retrying"}
 
     await runner.tick()  # the 21st: still retrying, never a second mail
-    assert len(_operator_mails(sender)) == 1
+    assert len(notifier.notices) == 1
     assert (await runs.get(started.run_id)).status == "running"
 
 

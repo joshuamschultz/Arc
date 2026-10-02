@@ -577,3 +577,43 @@ async def test_the_runner_and_the_agents_resolve_the_same_bus(
     assert handle.url == "nats://moved-bus:4333", (
         "the broker we start must be the broker everyone else connects to"
     )
+
+
+class _Agent:
+    def __init__(self, channel: str | None = None, *, boom: bool = False) -> None:
+        self.channel = channel
+        self.boom = boom
+        self.seen: list[tuple[str, str]] = []
+
+    async def notify_operator(self, text: str, *, idempotency_key: str) -> str | None:
+        self.seen.append((text, idempotency_key))
+        if self.boom:
+            raise RuntimeError("bus down")
+        return self.channel
+
+
+async def test_operator_relay_is_undelivered_until_bound() -> None:
+    from arcgateway.workflow_runner_host import OperatorNoticeRelay
+
+    assert await OperatorNoticeRelay().notify("run failed", "k1") is None
+
+
+async def test_operator_relay_returns_the_first_channel_that_took_the_notice() -> None:
+    from arcgateway.workflow_runner_host import OperatorNoticeRelay
+
+    silent, broken, reached = _Agent(), _Agent(boom=True), _Agent("telegram")
+    relay = OperatorNoticeRelay()
+    relay.bind(lambda: [silent, broken, reached])
+
+    assert await relay.notify("run failed", "workflow-run:r1:failed:3") == "telegram"
+    assert reached.seen == [("run failed", "workflow-run:r1:failed:3")]
+    assert silent.seen and broken.seen, "every agent is asked until one is reached"
+
+
+async def test_operator_relay_reports_none_when_no_agent_reached_the_operator() -> None:
+    from arcgateway.workflow_runner_host import OperatorNoticeRelay
+
+    relay = OperatorNoticeRelay()
+    relay.bind(lambda: [_Agent(), _Agent(boom=True)])
+
+    assert await relay.notify("run failed", "k") is None

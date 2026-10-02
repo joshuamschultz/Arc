@@ -18,7 +18,7 @@ it is allowed to touch.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol
 
 from arcstore.mutation_fence import RunnerFence
@@ -33,6 +33,13 @@ Initiator = Literal["operator", "agent", "scheduler", "chat"]
 """Deployment stringency. Handed to the runner at CONSTRUCTION, never resolved
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
+
+OperatorNotifier = Callable[[str, str], Awaitable[str | None]]
+"""``(text, idempotency_key) -> channel``: put one notice in front of the operator.
+
+The runner owns the wording and the key; the host decides how it is delivered
+(``ArcAgent.notify_operator``). ``None`` means nobody was told, and the runner
+audits exactly that."""
 
 RunStatus = Literal[
     "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
@@ -494,6 +501,7 @@ __all__ = [
     "NodeKind",
     "NodeSpec",
     "OnFailure",
+    "OperatorNotifier",
     "OwnerResolver",
     "PredicateEvaluator",
     "RouteSpec",

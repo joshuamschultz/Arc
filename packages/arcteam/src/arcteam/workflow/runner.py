@@ -58,6 +58,7 @@ from .runner_contracts import (
     Initiator,
     NodeSpec,
     OnFailure,
+    OperatorNotifier,
     OwnerResolver,
     PredicateEvaluator,
     RouterNodeSpec,
@@ -291,6 +292,7 @@ class WorkflowRunner:
         evaluate: PredicateEvaluator,
         resolve_args: ArgsResolver,
         narrator: RunNarrator | None = None,
+        operator_notifier: OperatorNotifier | None = None,
         audit_sink: AuditSink | None = None,
         node_max_tokens: int | None = None,
         node_max_cost_usd: float | None = None,
@@ -313,6 +315,7 @@ class WorkflowRunner:
         self._evaluate = evaluate
         self._resolve_args = resolve_args
         self._narrator = narrator
+        self._operator_notifier = operator_notifier
         self._sink: AuditSink = audit_sink or NullSink()
         self._node_max_tokens = node_max_tokens
         self._node_max_cost_usd = node_max_cost_usd
@@ -809,14 +812,14 @@ class WorkflowRunner:
         self, run: RunRecord, exc: BaseException, count: int
     ) -> None:
         """One mail: this run has not advanced for ``count`` ticks, and why."""
-        delivered = False
-        if self._narrator is not None:
-            delivered = await self._narrator.operator_stuck_notice(
-                run_id=run.run_id,
-                workflow_id=run.workflow_id,
-                error_class=type(exc).__name__,
-                consecutive_failures=count,
-            )
+        delivered = await self._tell_operator(
+            (
+                f"Workflow {run.workflow_id} run {run.run_id} has not advanced for {count} "
+                f"consecutive ticks ({type(exc).__name__}). The run is still live and "
+                "retrying every tick; no further notice until it advances."
+            ),
+            f"workflow-run:{run.run_id}:stuck:{len(run.path_taken)}",
+        )
         self._audit(
             "workflow.run.operator_notified",
             target=f"{run.workflow_id}/{run.run_id}",
@@ -1739,6 +1742,22 @@ class WorkflowRunner:
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
 
+    async def _tell_operator(self, text: str, idempotency_key: str) -> bool:
+        """Hand one notice to the host's operator seam. Never raises; reports delivery.
+
+        The key is stable per run and kind, so a retried or restarted runner that
+        reaches the same terminal state cannot notify twice. The run is already
+        past the point where a delivery failure could change its outcome.
+        """
+        if self._operator_notifier is None:
+            return False
+        try:
+            channel = await self._operator_notifier(text, idempotency_key)
+        except Exception:  # reason: the run is already terminal; report, do not raise
+            logger.warning("operator notice %s not delivered", idempotency_key, exc_info=True)
+            return False
+        return channel is not None
+
     async def _notify_operator_of_failure(self, run: RunRecord, reason: str) -> None:
         """Every terminal failure reaches a human, with the reason, whatever the channel.
 
@@ -1747,14 +1766,10 @@ class WorkflowRunner:
         and its outcome is audited either way: a notice that could not be sent is
         a recorded fact, not silence.
         """
-        delivered = False
-        if self._narrator is not None:
-            delivered = await self._narrator.operator_failure_notice(
-                run_id=run.run_id,
-                workflow_id=run.workflow_id,
-                version=run.version,
-                reason=reason,
-            )
+        delivered = await self._tell_operator(
+            f"Workflow {run.workflow_id} v{run.version} failed (run {run.run_id}): {reason}",
+            f"workflow-run:{run.run_id}:failed:{len(run.path_taken)}",
+        )
         self._audit(
             "workflow.run.operator_notified",
             target=f"{run.workflow_id}/{run.run_id}",
@@ -1934,6 +1949,7 @@ def build_workflow_runner(
     registry: Any = None,
     operator_public_key: bytes | None = None,
     narrator: RunNarrator | None = None,
+    operator_notifier: OperatorNotifier | None = None,
     audit_sink: AuditSink | None = None,
     on_close: Callable[[], Awaitable[None]] | None = None,
     tick_failure_threshold: int = 3,
@@ -2012,6 +2028,7 @@ def build_workflow_runner(
         evaluate=evaluate_predicate,
         resolve_args=resolve_node_args,
         narrator=narrator,
+        operator_notifier=operator_notifier,
         audit_sink=sink,
         run_workspace_root=root / "shared",
         on_close=on_close,
