@@ -93,7 +93,8 @@ class _LiveAgent:
             tier="federal",
             caller_did=_DID,
         )
-        self.loaded_content = await provider.load("reporter", caller_did=_DID)
+        document = await provider.load("reporter", caller_did=_DID)
+        self.loaded_content = document.body if document is not None else None
 
 
 def test_signed_revision_route_reloads_live_provider(tmp_path: Path) -> None:

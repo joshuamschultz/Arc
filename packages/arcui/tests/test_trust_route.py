@@ -232,8 +232,9 @@ def test_approve_refuses_a_skill_that_fails_validation_and_signs_nothing(tmp_pat
     team_root.mkdir()
     _build_agent(team_root, "olivia", tier="enterprise", sign=False)
     skill_md = _skill_md(team_root, "olivia")
+    # Only identity is required (J4 B1): a skill with no description is invalid.
     skill_md.write_text(
-        _VALID_SKILL.split("\n## Resources")[0] + "\nNo sections here.\n", encoding="utf-8"
+        _VALID_SKILL.replace("description: does {name}\n", ""), encoding="utf-8"
     )
     client = _make_client(team_root)
 
@@ -243,7 +244,7 @@ def test_approve_refuses_a_skill_that_fails_validation_and_signs_nothing(tmp_pat
 
     assert resp.status_code == 422
     assert resp.json()["error"] == "skill_invalid"
-    assert "missing_section" in resp.json()["detail"]
+    assert "missing_frontmatter_field" in resp.json()["detail"]
     assert not artifact_signing.sidecar_path(skill_md).exists()
     assert _audit(client).outcomes_for("trust.approve") == ["denied"]
 
