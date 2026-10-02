@@ -324,3 +324,44 @@ async def test_unknown_backend_raises() -> None:
 
     with pytest.raises(ArcLLMConfigError):
         resolve_embedder("m", backend="bogus")
+
+
+async def test_local_embedder_serializes_concurrent_encodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One torch model is not thread-safe: concurrent encodes must never overlap.
+
+    Regression for an intermittent SIGSEGV (transformers mask creation) when
+    several ``asyncio.to_thread`` encodes hit the shared cached model at once.
+    """
+    import asyncio
+    import threading
+    import time
+
+    import numpy as np
+
+    from arcllm import embeddings as emb
+
+    state = {"active": 0, "max_active": 0, "loads": 0}
+    guard = threading.Lock()
+
+    class _SlowModel:
+        def encode(self, texts: list[str], **_: object) -> np.ndarray:
+            with guard:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with guard:
+                state["active"] -= 1
+            return np.zeros((len(texts), 4))
+
+    def _load(_model: str) -> _SlowModel:
+        state["loads"] += 1
+        time.sleep(0.05)
+        return _SlowModel()
+
+    monkeypatch.setattr(emb, "_load_sentence_transformer", _load)
+    embedder = emb.LocalEmbedder("m")
+    await asyncio.gather(*(embedder.embed(["a"]) for _ in range(6)))
+    assert state["max_active"] == 1
+    assert state["loads"] == 1
