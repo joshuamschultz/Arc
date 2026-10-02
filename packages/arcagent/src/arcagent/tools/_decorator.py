@@ -363,8 +363,10 @@ def _json_type(annotation: Any) -> str:
     # Optional[X] / Union — walk args, take first non-None primitive.
     if origin is not None:
         for arg in get_args(annotation):
-            if arg in _PY_TYPE_TO_JSON:
-                return _PY_TYPE_TO_JSON[arg]
+            # ``list[str] | None`` carries a parameterized arm: map its origin.
+            primitive = get_origin(arg) or arg
+            if primitive in _PY_TYPE_TO_JSON:
+                return _PY_TYPE_TO_JSON[primitive]
     return "string"
 
 

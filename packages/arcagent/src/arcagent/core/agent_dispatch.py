@@ -168,6 +168,7 @@ async def build_run_context(
         workspace_authored=_workspace_authored(agent),
         requires_skill=_requires_skill_map(agent),
         audit=telemetry.audit_event,
+        skill_files=agent._skill_files,
     )
 
     await bus.emit("agent:pre_respond", {"task": task})
@@ -215,6 +216,7 @@ def _agent_skills(agent: ArcAgent) -> list[_Skill]:
             location=e.location,
             scan_root=e.scan_root,
             read_current=e.read_current,
+            bundle_folder=e.bundle_folder,
         )
         for e in registry.skill_entries()
     ]

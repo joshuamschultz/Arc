@@ -38,6 +38,4 @@ async def write(file_path: str, content: str) -> str:
     except OSError:
         return f"Error: File could not be written safely: {file_path}"
     message = f"Written {len(encoded)} bytes to {file_path}"
-    if _runtime.resign_if_previously_signed(resolved, encoded) is False:
-        message += _runtime.audit_unsigned_artifact(resolved, tool_name="write")
-    return message
+    return message + _runtime.warn_if_signature_invalidated(resolved, tool_name="write")

@@ -534,10 +534,8 @@ async def test_anchored_revision_loads_and_provider_reads_verified_body(tmp_path
         caller_did="did:arc:agent:reporter",
         audit=lambda event, details: audit_events.append((event, details)),
     )
-    assert (
-        await provider.load("reporter", caller_did="did:arc:agent:reporter")
-        == _body("new").decode()
-    )
+    loaded = await provider.load("reporter", caller_did="did:arc:agent:reporter")
+    assert loaded is not None and loaded.body == _body("new").decode()
     entry.location.write_text("tampered", encoding="utf-8")
     assert await provider.load("reporter", caller_did="did:arc:agent:reporter") is None
     assert audit_events[-1][0] == "skill.load"

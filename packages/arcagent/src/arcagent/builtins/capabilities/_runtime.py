@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from arctrust.identity import AgentIdentity
 
     from arcagent.capabilities.capability_loader import CapabilityLoader
+    from arcagent.capabilities.skill_files import SkillFiles
 
 _logger = logging.getLogger("arcagent.builtins.capabilities.runtime")
 
@@ -95,6 +96,20 @@ _identity_var: contextvars.ContextVar[AgentIdentity | None] = contextvars.Contex
 )
 _protected_paths_var: contextvars.ContextVar[frozenset[Path]] = contextvars.ContextVar(
     "arcagent_builtin_protected_paths", default=frozenset()
+)
+# Operator capability roots (``<agent_root>/capabilities``, the global root) the
+# generic tools may never touch; ``<workspace>/capabilities/skills`` is always
+# added on top (J4 B5) — see :func:`protected_trees`.
+_protected_trees_var: contextvars.ContextVar[frozenset[Path]] = contextvars.ContextVar(
+    "arcagent_builtin_protected_trees", default=frozenset()
+)
+# Verified, jailed reader of skill bundle files (read_skill_file / run_skill_script).
+_skill_files_var: contextvars.ContextVar[SkillFiles | None] = contextvars.ContextVar(
+    "arcagent_builtin_skill_files", default=None
+)
+# ArcRun isolation relaxation (personal only) for run_skill_script.
+_isolation_relax_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "arcagent_builtin_isolation_relax", default=None
 )
 _audit_sink_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "arcagent_builtin_audit_sink", default=None
@@ -130,6 +145,9 @@ def configure(
     tier: str | None = None,
     import_policy: ImportPolicy | None = None,
     prompt_source: PromptSource | None = None,
+    protected_trees: frozenset[Path] | None = None,
+    skill_files: SkillFiles | None = None,
+    isolation_relax: str | None = None,
 ) -> None:
     """Bind per-agent runtime state for the CURRENT asyncio task.
 
@@ -156,6 +174,12 @@ def configure(
         _import_policy_var.set(import_policy)
     if prompt_source is not None:
         _prompt_source_var.set(prompt_source)
+    if protected_trees is not None:
+        _protected_trees_var.set(protected_trees)
+    if skill_files is not None:
+        _skill_files_var.set(skill_files)
+    if isolation_relax is not None:
+        _isolation_relax_var.set(isolation_relax)
 
 
 @dataclass(frozen=True)
@@ -180,6 +204,9 @@ class RuntimeSnapshot:
     tier: str
     import_policy: ImportPolicy
     prompt_source: PromptSource | None
+    protected_trees: frozenset[Path]
+    skill_files: SkillFiles | None
+    isolation_relax: str | None
 
 
 def snapshot() -> RuntimeSnapshot:
@@ -203,6 +230,9 @@ def snapshot() -> RuntimeSnapshot:
         tier=_tier_var.get(),
         import_policy=_import_policy_var.get(),
         prompt_source=_prompt_source_var.get(),
+        protected_trees=_protected_trees_var.get(),
+        skill_files=_skill_files_var.get(),
+        isolation_relax=_isolation_relax_var.get(),
     )
 
 
@@ -226,6 +256,9 @@ def bind(snap: RuntimeSnapshot) -> None:
     _tier_var.set(snap.tier)
     _import_policy_var.set(snap.import_policy)
     _prompt_source_var.set(snap.prompt_source)
+    _protected_trees_var.set(snap.protected_trees)
+    _skill_files_var.set(snap.skill_files)
+    _isolation_relax_var.set(snap.isolation_relax)
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> bool:
@@ -261,42 +294,29 @@ def sign_artifact_file(artifact: Path, content: bytes) -> bool:
     return True
 
 
-def resign_if_previously_signed(artifact: Path, content: bytes) -> bool | None:
-    """Refresh a stale signature after a GENERIC tool mutates a signed artifact.
+def warn_if_signature_invalidated(artifact: Path, *, tool_name: str) -> str:
+    """Report a generic write over a signed artifact; never re-sign it (J4 B5).
 
-    Task #28 root cause: create_skill/create_tool/update_skill/update_tool all
-    sign on write, but ``write``/``edit`` are general-purpose tools that know
-    nothing about the Sign pillar — an agent that hand-edits an already-signed
-    ``SKILL.md`` or ``capabilities/*.py`` with the plain ``edit``/``write``
-    tool (instead of the matching self-modification tool) silently leaves a
-    stale ``.arcsig`` sidecar: bytes changed, signature didn't. The next
-    load-time verify fails closed (the reported symptom: "artifact_sha256 no
-    longer matches content").
-
-    The presence of a ``.arcsig`` sidecar IS the signal that a file
-    participates in the Sign pillar — checking for it (rather than a
-    hardcoded ``capabilities/`` path prefix) means write/edit never start
-    signing ordinary workspace files, only keep a promise that already
-    existed.
-
-    Returns None when the artifact was never signed (nothing to do — no
-    warning needed). Returns True/False when a signature already existed and
-    the refresh succeeded/failed; False MUST be surfaced to the model by the
-    caller (via :func:`audit_unsigned_artifact`).
+    The agent key must never sign what a generic tool wrote: an agent that could
+    rewrite a signed file and re-sign it with its own key launders any edit past
+    the Sign pillar. A ``.arcsig`` beside the target means its signature is now
+    stale, so the result says the file is UNSIGNED and the event is audited.
+    The dedicated self-authoring tools (create/update skill/tool) are the only
+    agent-key signers. Returns ``""`` when the file was never signed.
     """
     from arcagent.capabilities.artifact_signing import sidecar_path
 
     if not sidecar_path(artifact).exists():
-        return None
-    return sign_artifact_file(artifact, content)
+        return ""
+    return audit_unsigned_artifact(artifact, tool_name=tool_name)
 
 
 def audit_unsigned_artifact(artifact: Path, *, tool_name: str) -> str:
     """Audit an unsigned (or now-unsigned) artifact; return a warning suffix.
 
     Doctrine (task #28, "fail honest"): every caller whose
-    :func:`sign_artifact_file`/:func:`resign_if_previously_signed` call
-    returned False MUST append the returned string to its success message —
+    :func:`sign_artifact_file` call returned False (or whose generic write left
+    a stale signature) MUST append the returned string to its success message —
     never report plain "Created"/"Updated"/"Written" when the artifact will
     in fact be denied at next load.
     """
@@ -413,15 +433,17 @@ class _ArcRunAuditAdapter:
         self._sink(getattr(event, "action", "code_exec.backend.selected"), payload)
 
 
-def _readonly_protected_subpaths() -> list[Path]:
-    """Protected files inside the workspace, as workspace-RELATIVE paths.
+def readonly_subpaths() -> list[Path]:
+    """Protected files and skill trees inside the workspace, workspace-RELATIVE.
 
     arcrun's backend mounts each as ``{workspace}/{sub}:/workspace/{sub}:ro``, so
     ``sub`` must be relative to the workspace root (REQ-023 read-only mounts).
+    The workspace skill tree is mounted read-only too (J4 B5), so a sandboxed
+    shell cannot rewrite a signed skill even through shell indirection.
     """
     ws = workspace()
     subs: list[Path] = []
-    for path in _protected_paths_var.get():
+    for path in [*_protected_paths_var.get(), *protected_trees()]:
         try:
             relative = path.relative_to(ws)
         except ValueError:
@@ -456,7 +478,7 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
             command,
             tier=tier_value,
             workspace=workspace(),
-            readonly_subpaths=_readonly_protected_subpaths(),
+            readonly_subpaths=readonly_subpaths(),
             caller_did=caller,
             audit_sink=audit,
             timeout=float(timeout),
@@ -530,6 +552,85 @@ def check_protected(resolved: Path, file_path: str, *, tool_name: str) -> None:
         caller_did=caller,
         audit_sink=_audit_sink_var.get(),
     )
+    check_outside_skill_trees(resolved, file_path, tool_name=tool_name)
+
+
+def protected_trees() -> frozenset[Path]:
+    """Signed capability folders generic tools may not touch (J4 B5).
+
+    Always includes ``<workspace>/capabilities/skills``; the agent startup adds
+    the operator capability roots via :func:`configure`.
+    """
+    from arcagent.tools._validation import WORKSPACE_SKILL_TREE
+
+    return _protected_trees_var.get() | {(workspace() / WORKSPACE_SKILL_TREE).resolve()}
+
+
+def check_outside_skill_trees(resolved: Path, file_path: str, *, tool_name: str) -> None:
+    """Deny + audit a generic tool's read or write inside a signed skill folder.
+
+    ``read`` uses this too: the bytes there are verified only through
+    ``read_skill_file``, so a plain read would hand the model unverified text.
+    """
+    from arcagent.tools._validation import enforce_outside_protected_trees
+
+    enforce_outside_protected_trees(
+        resolved,
+        protected_trees(),
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller_did(),
+        audit_sink=_audit_sink_var.get(),
+    )
+
+
+def check_shell_skill_trees(command: str, *, tool_name: str = "bash") -> None:
+    """Refuse a shell command that names a path inside a signed skill folder.
+
+    Every tier: a script run through ``bash`` skips the run-time signature check
+    ``run_skill_script`` enforces, and a write breaks the operator's approval.
+    """
+    from arcagent.tools._validation import scan_shell_for_protected_trees
+
+    hit = scan_shell_for_protected_trees(command, working_dir(), protected_trees())
+    if hit is not None:
+        check_outside_skill_trees(hit, str(hit), tool_name=tool_name)
+
+
+def skill_files() -> SkillFiles:
+    """The agent's verified skill-file reader; raises if the agent did not wire it."""
+    current = _skill_files_var.get()
+    if current is None:
+        raise RuntimeError("skill file tools called before the skill file reader is configured")
+    return current
+
+
+def isolation_relax() -> str | None:
+    """Personal-tier ArcRun isolation relaxation for run_skill_script (None: tier floor)."""
+    return _isolation_relax_var.get()
+
+
+def arcrun_audit_sink() -> Any:
+    """The agent audit sink adapted to arcrun's ``write(AuditEvent)`` shape, or None."""
+    sink = _audit_sink_var.get()
+    return _ArcRunAuditAdapter(sink) if sink is not None else None
+
+
+def audit(event: str, payload: dict[str, Any]) -> None:
+    """Emit one agent audit event (fail-open: audit never masks the tool result)."""
+    sink = _audit_sink_var.get()
+    if sink is None:
+        return
+    try:
+        sink(event, payload)
+    except Exception:  # reason: fail-open — audit must not mask the tool outcome
+        _logger.exception("Audit sink raised for %s; continuing", event)
+
+
+def caller_did() -> str:
+    """The agent DID every tool call is made under (``did:arc:unknown`` unbound)."""
+    identity = _identity_var.get()
+    return identity.did if identity is not None else "did:arc:unknown"
 
 
 def check_secret_content(content: str, file_path: str, *, tool_name: str) -> None:
@@ -627,30 +728,42 @@ def reset() -> None:
     _tier_var.set("personal")
     _import_policy_var.set(DEFAULT_IMPORT_POLICY)
     _prompt_source_var.set(None)
+    _protected_trees_var.set(frozenset())
+    _skill_files_var.set(None)
+    _isolation_relax_var.set(None)
 
 
 __all__ = [
     "RuntimeSnapshot",
     "allowed_paths",
+    "arcrun_audit_sink",
+    "audit",
     "audit_unsigned_artifact",
     "authorized_roots",
     "bind",
+    "caller_did",
+    "check_outside_skill_trees",
     "check_protected",
     "check_secret_content",
     "check_shell_command",
+    "check_shell_skill_trees",
     "configure",
     "egress",
     "get_secret",
     "import_policy",
+    "isolation_relax",
     "loader",
     "prompt_source",
     "protected_paths",
+    "protected_trees",
+    "readonly_subpaths",
     "reset",
-    "resign_if_previously_signed",
     "resolve_workspace_path",
     "run_sandboxed_bash",
     "sign_artifact_file",
+    "skill_files",
     "snapshot",
     "tier",
+    "warn_if_signature_invalidated",
     "workspace",
 ]

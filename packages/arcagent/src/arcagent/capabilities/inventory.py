@@ -36,6 +36,7 @@ from arcagent.capabilities.capability_loader import (
     pin_name_for_path,
 )
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.capabilities.skill_validator import strict_sections_for
 from arcagent.core.config import CapabilitiesConfig, SecurityConfig, load_config
 from arcagent.core.module_discovery import active_modules
 from arcagent.tools._dynamic_loader import (
@@ -159,6 +160,7 @@ async def collect_capability_inventory(
     import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
     modules: Sequence[str] = (),
     skill_artifact_resolver: SkillArtifactResolver | None = None,
+    strict_skill_sections: bool = False,
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
 
@@ -182,6 +184,7 @@ async def collect_capability_inventory(
         # may depend on a live agent's module _runtime being configured).
         spawn_background_tasks=False,
         skill_artifact_resolver=skill_artifact_resolver,
+        strict_skill_sections=strict_skill_sections,
     )
     delta = await loader.scan_and_register()
     return [
@@ -225,6 +228,9 @@ class TrustPosture:
     #: floor (container); an off-value ("local"/"off"/"none") runs a personal-tier
     #: tool in a bare subprocess. Tier-gated by :func:`_resolve_isolation_relax`.
     isolation_relax: str | None
+    #: Missing recommended Arc sections refuse a skill (federal config opt-in);
+    #: otherwise they are warnings. Resolved by ``strict_sections_for``.
+    strict_skill_sections: bool = False
 
 
 def resolve_trust_posture(
@@ -260,6 +266,9 @@ def resolve_trust_posture(
         require_signature=tier in ("enterprise", "federal"),
         trusted_public_keys=_union_trusted_keys(trusted_public_key, security.validators),
         import_policy=import_policy,
+        strict_skill_sections=strict_sections_for(
+            tier, configured=capabilities.strict_skill_sections
+        ),
         isolation_relax=_resolve_isolation_relax(tier, capabilities.isolation_relax),
     )
 
@@ -400,6 +409,7 @@ async def collect_agent_capability_inventory(
         import_policy=posture.import_policy,
         modules=active_modules(config),
         skill_artifact_resolver=skill_artifact_resolver,
+        strict_skill_sections=posture.strict_skill_sections,
     )
     if live_agent is None:
         return AgentCapabilityInventory(items=items, runtime=False, runtime_tools=[])

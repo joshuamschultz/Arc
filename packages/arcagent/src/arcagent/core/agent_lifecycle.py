@@ -273,6 +273,21 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         isolation_tier=agent._config.security.tier,
         isolation_relax=posture.isolation_relax,
         skill_artifact_resolver=agent._skill_artifact_resolver,
+        strict_skill_sections=posture.strict_skill_sections,
+    )
+    # J4 B4/B5: skill bundle files are read and run only through the verified,
+    # jailed reader; generic tools never touch the signed capability trees.
+    from arcagent.capabilities.skill_files import SkillFiles, operator_keys_from
+    from arcagent.tools._validation import resolve_protected_trees
+
+    config_path = agent._config_path
+    agent._skill_files = SkillFiles(
+        operator_keys=lambda: operator_keys_from(config_path),
+        agent_key=trusted_pubkey,
+        revisions=agent._skill_artifact_resolver,
+    )
+    protected_trees = resolve_protected_trees(
+        workspace, [agent_root / "capabilities", global_capabilities_root()]
     )
     builtin_runtime.configure(
         workspace=workspace,
@@ -287,6 +302,9 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         tier=agent._config.security.tier,
         import_policy=posture.import_policy,
         prompt_source=agent._prompt_source,
+        protected_trees=protected_trees,
+        skill_files=agent._skill_files,
+        isolation_relax=posture.isolation_relax,
     )
     # Task 27 follow-up (hotfix) — this is the FINAL builtin_runtime.configure()
     # call, so its snapshot is the one every turn must rebind.

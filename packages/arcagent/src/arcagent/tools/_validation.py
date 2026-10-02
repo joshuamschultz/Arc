@@ -129,6 +129,102 @@ def enforce_protected_path(
     )
 
 
+#: Agent-authored skills, relative to the workspace. Only the dedicated
+#: create_skill/update_skill tools write here; generic tools never do (J4 B5).
+WORKSPACE_SKILL_TREE = Path("capabilities") / "skills"
+
+SKILL_TREE_GUIDANCE = (
+    "Read skill files with read_skill_file(skill, path) and run a bundled script "
+    "with run_skill_script(skill, path, args)."
+)
+
+
+def resolve_protected_trees(
+    workspace: Path, operator_capability_roots: list[Path]
+) -> frozenset[Path]:
+    """The signed capability folders no generic agent tool may touch (J4 B5).
+
+    ``<workspace>/capabilities/skills`` (agent-authored skills) plus every
+    operator capability root (``<agent_root>/capabilities`` — imports, module
+    copies, revisions — and the global root). Their bytes are verified at load,
+    read and exec time; a generic write could only invalidate them or, before
+    J4, re-sign them with the agent key.
+    """
+    trees = {(workspace / WORKSPACE_SKILL_TREE).resolve()}
+    trees.update(root.resolve() for root in operator_capability_roots)
+    return frozenset(trees)
+
+
+def protected_tree_containing(resolved: Path, trees: frozenset[Path]) -> Path | None:
+    """The protected tree ``resolved`` is inside (case-normalized), else None."""
+    target = _casenorm(resolved.resolve())
+    for tree in trees:
+        root = _casenorm(tree.resolve())
+        if target == root or target.startswith(root + os.sep):
+            return tree
+    return None
+
+
+def enforce_outside_protected_trees(
+    resolved: Path,
+    trees: frozenset[Path],
+    *,
+    tool_name: str,
+    file_path: str,
+    caller_did: str = "did:arc:unknown",
+    audit_sink: ProtectedAuditSink | None = None,
+) -> None:
+    """Deny + audit a generic tool's reach into a signed capability folder.
+
+    Raises :class:`ToolError` (``TOOL_PROTECTED_PATH``) and emits
+    ``tool.protected_path.denied``. No-op outside every tree.
+    """
+    tree = protected_tree_containing(resolved, trees)
+    if tree is None:
+        return
+    reason = "signed skill/capability folder; generic agent tools may not touch it"
+    if audit_sink is not None:
+        try:
+            audit_sink(
+                "tool.protected_path.denied",
+                {
+                    "tool": tool_name,
+                    "actor_did": caller_did,
+                    "path": str(resolved),
+                    "reason": reason,
+                },
+            )
+        except Exception:  # reason: fail-open — audit must not mask the denial
+            _logger.exception("Protected-tree audit sink raised; continuing")
+    raise ToolError(
+        code="TOOL_PROTECTED_PATH",
+        message=(
+            f"'{file_path}' is inside a signed skill or capability folder; the "
+            f"{tool_name} tool may not use it. {SKILL_TREE_GUIDANCE}"
+        ),
+        details={"path": str(resolved), "tool": tool_name},
+    )
+
+
+def scan_shell_for_protected_trees(
+    command: str, workspace: Path, trees: frozenset[Path]
+) -> Path | None:
+    """Return the first path-shaped token of ``command`` inside a protected tree.
+
+    Every operand counts, not just redirections: executing a bundled script with
+    ``python`` skips its run-time signature check exactly as ``sed -i`` rewrites
+    it. Best-effort against shell indirection (``$(...)``); the sandbox mounts
+    the workspace tree read-only and never mounts the agent root.
+    """
+    ws = workspace.resolve()
+    for match in _SHELL_TOKEN_RE.finditer(command):
+        candidate = Path(match.group(0))
+        resolved = candidate.resolve() if candidate.is_absolute() else (ws / candidate).resolve()
+        if protected_tree_containing(resolved, trees) is not None:
+            return resolved
+    return None
+
+
 # Redirection / in-place-write targets a shell command may mutate. Best-effort
 # only (OQ-2): a host shell can evade naive parsing via $(...) / eval / here-docs.
 # Real enforcement at enterprise/federal comes from the sandbox read-only mount

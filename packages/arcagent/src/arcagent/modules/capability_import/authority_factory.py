@@ -138,5 +138,13 @@ class LiveSkillRevisionResolver:
         """Verify the current head again before exposing its body."""
         return self._resolver().read_current(folder, path)
 
+    def active_folder(self, folder: Path) -> Path | None:
+        """The verified active revision folder (None while unenrolled)."""
+        return self._resolver().active_folder(folder)
+
+    def read_verified_file(self, folder: Path, relpath: str) -> bytes:
+        """One bundle file of the active revision, verified against its signed manifest."""
+        return self._resolver().read_verified_file(folder, relpath)
+
 
 __all__ = ["LiveSkillRevisionResolver", "build_skill_revision_anchor_factory"]
