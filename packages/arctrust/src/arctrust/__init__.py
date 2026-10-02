@@ -126,7 +126,12 @@ from arctrust.classification import (
     dominates,
     parse_classification,
 )
-from arctrust.connector_cipher import ConnectorSecretCipher, CredentialSealError
+from arctrust.connector_cipher import (
+    ConnectorSecretCipher,
+    CredentialCustodyUnavailableError,
+    CredentialSealError,
+    TransitConnectorCipher,
+)
 from arctrust.control import (
     ControlArtifactRefusedError,
     ControlArtifactUnavailableError,
@@ -458,6 +463,7 @@ __all__ = [
     "ControlArtifactRefusedError",
     "ControlArtifactUnavailableError",
     "ControlPurpose",
+    "CredentialCustodyUnavailableError",
     "CredentialSealError",
     "Decision",
     "DeploymentAuthorityConfig",
@@ -506,6 +512,7 @@ __all__ = [
     "TofuDecision",
     "TofuLayer",
     "ToolCall",
+    "TransitConnectorCipher",
     "TransparencyLogWitness",
     "TrustStoreError",
     "User",
