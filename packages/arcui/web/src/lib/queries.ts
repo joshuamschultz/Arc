@@ -1770,3 +1770,25 @@ export const useRemoveConnector = () => {
     onSuccess: invalidate,
   })
 }
+
+// Item 57: operator compose. status "pending" means durably queued, not yet
+// delivered; surfaces must show it, never swallow it.
+export interface MailSendResult {
+  message_id: string
+  conversation_id: string
+  thread_id: string
+  status: 'sent' | 'pending'
+}
+
+export const useSendAgentMail = (agentId: string) => {
+  const client = useQueryClient()
+  return useMutation<MailSendResult, Error, { body: string; subject?: string; idempotencyKey: string }>({
+    mutationFn: ({ body, subject, idempotencyKey }) =>
+      apiPost<MailSendResult>(
+        `/api/agents/${agentId}/inbox`,
+        subject ? { body, subject } : { body },
+        { 'Idempotency-Key': idempotencyKey },
+      ),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['agent', agentId, 'inbox'] }),
+  })
+}

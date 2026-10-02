@@ -48,6 +48,7 @@ import {
   useAgentCapabilities,
   useAgentInbox,
   useAgentInboxSearch,
+  useSendAgentMail,
   useAgentInboxThread,
   useAgentConfig,
   useAgentFileRead,
@@ -1955,6 +1956,15 @@ function ThreadParticipants({
   )
 }
 
+const THREAD_CLOSED_HINT = 'This mail has its reply. Continue in the team channel.'
+
+function composeErrorMessage(cause: unknown): string {
+  if (cause instanceof ApiError && cause.status === 403) {
+    return 'An operator role is required to send mail.'
+  }
+  return cause instanceof ApiError ? cause.message : 'Could not send the message'
+}
+
 /** ArcTeam mail only. Sessions and gateway conversations remain separate tabs. */
 export function InboxTab({ agentId }: { agentId: string }) {
   const queryClient = useQueryClient()
@@ -1969,6 +1979,13 @@ export function InboxTab({ agentId }: { agentId: string }) {
   const [handoffRecipient, setHandoffRecipient] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
+  const [composing, setComposing] = useState(false)
+  const [composeSubject, setComposeSubject] = useState('')
+  const [composeBody, setComposeBody] = useState('')
+  const [composeError, setComposeError] = useState<string | null>(null)
+  const [composeNotice, setComposeNotice] = useState<string | null>(null)
+  const [closedThreads, setClosedThreads] = useState<Set<string>>(new Set())
+  const sendMail = useSendAgentMail(agentId)
   const threadQ = useAgentInboxThread(agentId, active)
   const searchQ = useAgentInboxSearch(agentId, search)
 
@@ -1984,8 +2001,36 @@ export function InboxTab({ agentId }: { agentId: string }) {
       (item) => item.role === 'agent' || item.participant_id === did,
     ) ?? []
 
+  const threadClosed =
+    !!active &&
+    (closedThreads.has(active) || (threadQ.data?.messages ?? []).some((m) => !!m.reply_to_id))
+
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'inbox'] })
+  }
+
+  const sendCompose = async () => {
+    if (!composeBody.trim()) return
+    setComposeError(null)
+    setComposeNotice(null)
+    try {
+      const result = await sendMail.mutateAsync({
+        body: composeBody.trim(),
+        subject: composeSubject.trim() || undefined,
+        idempotencyKey: inboxIdempotencyKey('compose'),
+      })
+      setActive(result.thread_id)
+      setComposeNotice(
+        result.status === 'pending'
+          ? 'Message pending: queued, not yet delivered.'
+          : 'Message sent.',
+      )
+      setComposeSubject('')
+      setComposeBody('')
+      setComposing(false)
+    } catch (cause) {
+      setComposeError(composeErrorMessage(cause))
+    }
   }
 
   const runMutation = async (operation: string, action: () => Promise<void>) => {
@@ -1995,7 +2040,12 @@ export function InboxTab({ agentId }: { agentId: string }) {
       await action()
       await refresh()
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Inbox action failed')
+      if (cause instanceof ApiError && cause.status === 409 && active) {
+        setClosedThreads((prev) => new Set(prev).add(active))
+        setError(THREAD_CLOSED_HINT)
+      } else {
+        setError(cause instanceof ApiError ? cause.message : 'Inbox action failed')
+      }
     } finally {
       setPending(null)
     }
@@ -2067,6 +2117,49 @@ export function InboxTab({ agentId }: { agentId: string }) {
       )}
 
       <Section title="Inbox threads">
+        {operatorMode && (
+          <div className="mb-3 space-y-2">
+            {!composing ? (
+              <Button size="sm" onClick={() => setComposing(true)}>
+                New message
+              </Button>
+            ) : (
+              <div className="max-w-xl space-y-2 rounded-lg border border-border bg-card p-3">
+                <Input
+                  value={composeSubject}
+                  maxLength={200}
+                  onChange={(event) => setComposeSubject(event.target.value)}
+                  placeholder="Subject (optional)"
+                  aria-label="Mail subject"
+                />
+                <Textarea
+                  value={composeBody}
+                  onChange={(event) => setComposeBody(event.target.value)}
+                  placeholder="Message to this agent, signed by the operator…"
+                  aria-label="Mail body"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!composeBody.trim() || sendMail.isPending}
+                    onClick={() => void sendCompose()}
+                  >
+                    Send message
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setComposing(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+            {composeError && (
+              <div role="alert" className="text-sm text-status-error">{composeError}</div>
+            )}
+          </div>
+        )}
+        {composeNotice && (
+          <div role="status" className="mb-3 text-sm text-muted-foreground">{composeNotice}</div>
+        )}
         <div className="mb-2 flex max-w-xl gap-2">
           <Input
             value={search}
@@ -2249,8 +2342,15 @@ export function InboxTab({ agentId }: { agentId: string }) {
                         aria-label="Reply to mail thread"
                       />
                       <FieldHelp helpKey="agent.inbox.reply" route="agents/:id" />
+                      {threadClosed && (
+                        <p className="text-xs text-muted-foreground">{THREAD_CLOSED_HINT}</p>
+                      )}
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button size="sm" disabled={!replyBody.trim() || pending === 'reply'} onClick={sendReply}>
+                        <Button
+                          size="sm"
+                          disabled={threadClosed || !replyBody.trim() || pending === 'reply'}
+                          onClick={sendReply}
+                        >
                           Send reply
                         </Button>
                         {recipients.length > 0 && (
