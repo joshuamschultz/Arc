@@ -87,6 +87,7 @@ INSTALL_STEPS: tuple[str, ...] = (
     "persist",
 )
 
+
 class AttachmentFactory(Protocol):
     """How a manifest's declared attachment kind becomes something that can be probed.
 

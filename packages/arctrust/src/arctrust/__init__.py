@@ -113,7 +113,6 @@ from arctrust.audit import (
     worm_policy_sink,
 )
 from arctrust.audit_cipher import RecordCipher, derive_record_key
-from arctrust.connector_cipher import ConnectorSecretCipher, CredentialSealError
 from arctrust.authority_config import (
     AuthorityConfigError,
     DeploymentAuthorityConfig,
@@ -127,6 +126,7 @@ from arctrust.classification import (
     dominates,
     parse_classification,
 )
+from arctrust.connector_cipher import ConnectorSecretCipher, CredentialSealError
 from arctrust.control import (
     ControlArtifactRefusedError,
     ControlArtifactUnavailableError,
@@ -437,8 +437,6 @@ __all__ = [
     "AppendOnlyMediumWitness",
     "ApprovalGrant",
     "ArcTrustFipsError",
-    "ConnectorSecretCipher",
-    "CredentialSealError",
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
@@ -456,9 +454,11 @@ __all__ = [
     "Classification",
     "ClassificationLayer",
     "ClearanceContext",
+    "ConnectorSecretCipher",
     "ControlArtifactRefusedError",
     "ControlArtifactUnavailableError",
     "ControlPurpose",
+    "CredentialSealError",
     "Decision",
     "DeploymentAuthorityConfig",
     "DeploymentChallenge",
