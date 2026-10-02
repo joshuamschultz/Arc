@@ -250,6 +250,16 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcgateway/tests/unit/test_signed_delivery.py",
         "packages/arcteam/tests/unit/test_messenger_signing.py",
     ),
+    "unapproved, edited or replayed pulse check approval (P47)": (
+        # A pulse check runs only from an operator-approved revision of its exact
+        # text: unapproved and post-edit checks never fire, a forged approval line
+        # is inert, a viewer cannot approve, and a stale or replayed approval
+        # request is refused. Every outcome is audited.
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_approval.py",
+        "packages/arcui/tests/integration/test_pulse_approval_routes.py",
+        "packages/arccli/tests/test_pulse_command.py",
+        "tests/journeys/test_journey_pulse_approval.py",
+    ),
     "scheduled control revision and occurrence replay refusal": (
         "packages/arcagent/tests/unit/core/test_control_contract.py",
         "packages/arcagent/tests/unit/modules/scheduler/test_signed_dispatch.py",
