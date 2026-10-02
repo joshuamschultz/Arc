@@ -121,6 +121,14 @@ async def test_j4_update_then_rollback(
             assert resolver.read_verified_file(folder, relative) == content
         await agent.reload_or_raise()
         assert _loaded_body(agent) == _pack("v2")["SKILL.md"].decode()
+        # run_skill_script / read_skill_file serve the ACTIVE revision's verified bytes.
+        entry = next(item for item in agent.skills if item.name == _SKILL)
+        assert agent._skill_files is not None
+        files = agent._skill_files
+        assert files.read(entry, "references/schema.md") == _pack("v2")["references/schema.md"]
+        copy = files.materialize(entry, deployment.home / "run-copy")
+        assert (copy / "scripts" / "extract.py").read_bytes() == _pack("v2")["scripts/extract.py"]
+        assert "scripts/extract.py" in files.inventory(entry)
 
         # 3. Roll back to v1 through the arcui operator route.
         auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})

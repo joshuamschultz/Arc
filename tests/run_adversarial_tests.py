@@ -209,6 +209,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/capabilities/test_capability_import_archive_shapes_j4.py",
         "packages/arcui/tests/test_trust_route.py",
         "tests/journeys/test_j4_skill_packs.py",
+        # One signing authority: revisions (scripts included) and every improver
+        # write are operator-anchored; tamper/symlink/traversal refused per file.
+        "packages/arcagent/tests/unit/capabilities/test_skill_revision_chain_w0.py",
+        "packages/arcagent/tests/integration/test_improver_operator_revisions_w0.py",
+        "tests/journeys/test_j4_update_then_rollback.py",
     ),
     "skill outcome bridge replay, cancellation and credential isolation": (
         "packages/arcagent/tests/integration/test_skill_tool_outcome_bridge.py",
