@@ -256,6 +256,8 @@ class _StubAgent:
         )
         self._active_runs = self._run_coordinator.active_runs
         self._config = SimpleNamespace(security=SimpleNamespace(tier=tier))
+        # Unsigned delivery: no accepted-run owner, so the steering path runs.
+        self._accepted_run_owner = None
         self.started_runs: list[tuple[str, str]] = []
 
     def _ensure_started(self) -> None:

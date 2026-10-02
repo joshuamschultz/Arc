@@ -312,9 +312,10 @@ def bind_inbound_channel(
     turn_context.set_overheard(overheard)
     turn_context.set_inbound_hop(hop)
     turn_context.set_interactive(interactive)
-    if reply_target:
+    if reply_target and turn_context.mail_conversation(reply_target) is None:
         # Remember this channel so arcui can offer it as a delivery-target
-        # dropdown (a raw chat_id exists only here on the inbound path).
+        # dropdown (a raw chat_id exists only here on the inbound path). A mail
+        # thread is not a channel: it takes one reply and is never a target.
         known_channels.record(
             agent._workspace, target=reply_target, label=reply_label or reply_target
         )
@@ -523,6 +524,7 @@ async def _dispatch_stream_locked(
                     {"role": "assistant", "content": final_text},
                 ],
                 "session_id": session.session_id,
+                "run_id": run_id,
                 "automated": False,
             },
         )
@@ -650,6 +652,7 @@ async def _finalize_tracked_run(
                         {"role": "assistant", "content": final_text},
                     ],
                     "session_id": session.session_id,
+                    "run_id": run_id,
                     "automated": True,
                 },
             )

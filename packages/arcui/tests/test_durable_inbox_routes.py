@@ -40,7 +40,9 @@ class _MailTransport:
 
 
 class _MailOutbox:
-    def claim(self, _worker_id: str, *, limit: int) -> tuple[object, ...]:
+    def claim(
+        self, _worker_id: str, *, limit: int, signer_did: str | None = None
+    ) -> tuple[object, ...]:
         return ()
 
 

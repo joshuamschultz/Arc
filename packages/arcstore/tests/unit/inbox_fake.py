@@ -259,6 +259,7 @@ class FakeInboxRepository:
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
+        join: bool = False,
     ) -> tuple[Message, ...]:
         snapshot = (
             copy.deepcopy(self.inboxes),
@@ -281,6 +282,8 @@ class FakeInboxRepository:
                         f"{inbox_id}\x1f{external_thread_id or event_id}".encode()
                     ).hexdigest()
                 )
+                if join:
+                    self._join(thread_id, all_participants)
                 thread = await self.create_thread(
                     inbox.inbox_id,
                     all_participants,
@@ -456,6 +459,16 @@ class FakeInboxRepository:
             for handoff in self.handoffs.values()
             if handoff.thread_id == thread_id and _level(handoff.trace.classification) <= clearance
         )
+
+    def _join(self, thread_id: str, participants: tuple[Participant, ...]) -> None:
+        """Grow an existing copy's participants; a join never removes anyone."""
+        existing = self.threads.get(thread_id)
+        if existing is None:
+            return
+        current = {item.participant_id for item in existing.participants}
+        if not current <= {item.participant_id for item in participants}:
+            raise ValueError("existing mail thread has different participants")
+        self.threads[thread_id] = existing.model_copy(update={"participants": participants})
 
     def _thread(self, thread_id: str) -> Thread:
         try:

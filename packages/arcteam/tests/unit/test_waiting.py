@@ -91,7 +91,7 @@ class TestPredicate:
         assert {m.id for m in out} == {"q"}
 
     def test_an_auto_posted_final_reply_is_excluded(self) -> None:
-        # deliver_channel_reply auto-posts every completed channel turn's closing
+        # deliver_origin_reply auto-posts every completed channel turn's closing
         # text with action_required False (default). The agent ANSWERED — this is
         # not a waiting ask — so the flag gate must keep it out.
         messages = [_msg(signer_did=_AGENT, body="Done, report attached.", action_required=False)]

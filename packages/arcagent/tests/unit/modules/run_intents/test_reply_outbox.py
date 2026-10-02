@@ -90,12 +90,13 @@ def _ledger(
 
 async def _completed_reply_run(
     purpose: Literal["message", "schedule"] = "message",
+    reply_target: str = "channel://ops",
 ) -> tuple[LedgerRunOwner, str]:
     request = CanonicalRunRequest(
         run_id="reply-run-1",
         session_key="channel-session",
         input_text="question",
-        reply_target="channel://ops",
+        reply_target=reply_target,
         caller_did="did:arc:user:alice",
         purpose=purpose,
         occurrence_id="message-1",
@@ -190,6 +191,21 @@ async def test_lost_send_response_reconciles_without_duplicate_reply() -> None:
     repeated = await owner.deliver_reply(run_id, send=send, lookup=lookup)
     assert first == repeated == "sent"
     assert calls == 1
+
+
+async def test_mail_turn_reply_is_a_durable_transport() -> None:
+    """A signed mail turn's answer is sent once into its mail thread (item 3)."""
+    owner, run_id = await _completed_reply_run(reply_target="mail://conversation-1")
+    sent: list[ChannelReply] = []
+
+    async def send(reply: ChannelReply) -> None:
+        sent.append(reply)
+
+    async def lookup(reply: ChannelReply) -> bool:
+        return reply in sent
+
+    assert await owner.deliver_reply(run_id, send=send, lookup=lookup) == "sent"
+    assert [(r.target, r.text) for r in sent] == [("mail://conversation-1", "answer")]
 
 
 async def test_scheduled_reply_reconciles_after_lost_send_response() -> None:

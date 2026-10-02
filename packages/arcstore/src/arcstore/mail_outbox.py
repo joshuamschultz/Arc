@@ -15,6 +15,11 @@ from arcstore.spool import read_complete_segments
 _FILE_MODE = 0o600
 
 
+def sealed_by(envelope: dict[str, Any], signer_did: str | None) -> bool:
+    """Whether ``envelope`` was signed by ``signer_did`` (``None`` matches any)."""
+    return signer_did is None or envelope.get("signer_did") == signer_did
+
+
 class MailOutboxEntry(BaseModel):
     """One deterministic transport attempt persisted before NATS."""
 
@@ -49,7 +54,14 @@ class MailOutbox:
         self._append({"operation": "enqueue", "entry": entry.model_dump(mode="json")})
         return entry
 
-    def claim(self, consumer_id: str, *, limit: int = 100) -> tuple[MailOutboxEntry, ...]:
+    def claim(
+        self, consumer_id: str, *, limit: int = 100, signer_did: str | None = None
+    ) -> tuple[MailOutboxEntry, ...]:
+        """Lease ready entries; ``signer_did`` restricts the lease to that signer's mail.
+
+        A transport re-signs what it sends, so a worker must only drain the
+        envelopes its own identity sealed (see :func:`sealed_by`).
+        """
         if not consumer_id:
             raise ValueError("consumer_id is required")
         if limit < 1:
@@ -60,7 +72,7 @@ class MailOutbox:
         for entry in entries.values():
             if len(claimed) >= limit:
                 break
-            if entry.available_at > now:
+            if entry.available_at > now or not sealed_by(entry.envelope, signer_did):
                 continue
             lease = leases.get(entry.event_id)
             if lease is not None and lease[1] > now:
@@ -206,8 +218,10 @@ class PostgresMailOutbox:
     async def enqueue(self, event_id: str, envelope: dict[str, Any]) -> None:
         await self._backend.enqueue_mail(event_id, envelope)
 
-    async def claim(self, consumer_id: str, *, limit: int = 100) -> tuple[MailOutboxEntry, ...]:
-        rows = await self._backend.claim_mail(consumer_id, limit=limit)
+    async def claim(
+        self, consumer_id: str, *, limit: int = 100, signer_did: str | None = None
+    ) -> tuple[MailOutboxEntry, ...]:
+        rows = await self._backend.claim_mail(consumer_id, limit=limit, signer_did=signer_did)
         return tuple(
             MailOutboxEntry(
                 event_id=row["event_id"],
@@ -232,4 +246,4 @@ class PostgresMailOutbox:
         return bool(await self._backend.dead_letter_mail(consumer_id, event_id, reason=reason))
 
 
-__all__ = ["MailOutbox", "MailOutboxEntry", "PostgresMailOutbox"]
+__all__ = ["MailOutbox", "MailOutboxEntry", "PostgresMailOutbox", "sealed_by"]

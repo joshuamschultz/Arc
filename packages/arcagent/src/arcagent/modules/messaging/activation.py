@@ -399,6 +399,11 @@ async def decide(msg: Any, st: Any) -> Decision:
     identity = st.identity
     if _is_own(msg, identity):
         return Decision(False, "self")
+    if str(getattr(msg, "delivery_kind", "chat")) == "mail":
+        # Mail is addressed to its recipients by construction, and its fan-out
+        # is bounded by the one-reply rule checked before this ladder runs, so an
+        # @mention of someone else in the body never silences the addressee.
+        return Decision(True, "mail")
     if str(msg.priority) == "critical":
         return Decision(True, "critical")
     if int(getattr(msg, "hop", 0) or 0) >= MAX_HOP:

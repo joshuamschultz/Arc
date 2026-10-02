@@ -245,7 +245,9 @@ class TestSendSigned:
             def __init__(self, _backend: object) -> None:
                 self._leased: set[str] = set()
 
-            async def claim(self, _worker: str, *, limit: int = 100) -> tuple[Any, ...]:
+            async def claim(
+                self, _worker: str, *, limit: int = 100, signer_did: str | None = None
+            ) -> tuple[Any, ...]:
                 from arcstore.mail_outbox import MailOutboxEntry
 
                 entries = [

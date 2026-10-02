@@ -13,6 +13,7 @@ from arcui.messaging import (
     build_agent_mail_service,
     build_messaging_service,
     build_team_post_forwarder,
+    register_operator_entity,
 )
 from arcui.team_stream import TeamBusObserver
 
@@ -61,6 +62,8 @@ class MessagingLifecycle:
             service, registry, backend = await build_messaging_service()
             if service is None:
                 return False
+            if registry is not None and self._app.state.inbox_service is not None:
+                await register_operator_entity(registry)
             self._install(service, registry, backend)
             return True
         except asyncio.CancelledError:
@@ -80,15 +83,14 @@ class MessagingLifecycle:
         mail = None
         worker = None
         if registry is not None and self._app.state.inbox_service is not None:
-            from arcteam.mail import MailDeliveryWorker
-
             mail = build_agent_mail_service(
                 transport=service,
                 store=self._app.state.inbox_service,
                 outbox=self._outbox,
                 registry=registry,
             )
-            worker = MailDeliveryWorker(self._outbox, service, worker_id="arcui-agent-mail")
+            if mail is not None:
+                worker = mail.delivery_worker("arcui-agent-mail")
         observer = TeamBusObserver(service, self._app.state.team_stream)
         self._backend = backend
         self._app.state.messaging_service = service
@@ -96,6 +98,7 @@ class MessagingLifecycle:
         self._app.state.messaging_backend = backend
         self._app.state.team_post_forwarder = forwarder
         self._app.state.agent_mail = mail
+        self._bind_delivery_port(mail)
         if worker is not None:
             self._mail_task = asyncio.create_task(
                 self._drain_mail(worker), name="arcui-agent-mail"
@@ -103,6 +106,13 @@ class MessagingLifecycle:
         self._observer_task = asyncio.create_task(
             observer.run(interval=self._observer_interval), name="arcui:team-bus-observer"
         )
+
+    def _bind_delivery_port(self, mail: Any) -> None:
+        """Let durable handoffs travel as signed mail once mail exists (or stop)."""
+        port = getattr(self._app.state, "inbox_delivery_port", None)
+        bind = getattr(port, "bind", None)
+        if bind is not None:
+            bind(mail)
 
     async def _recover(self) -> None:
         delay = 0.5
@@ -138,6 +148,7 @@ class MessagingLifecycle:
 
     async def aclose(self) -> None:
         """Cancel owned tasks before closing the connection they use."""
+        self._bind_delivery_port(None)
         for task in (self._recovery_task, self._mail_task, self._observer_task):
             if task is not None:
                 task.cancel()

@@ -20,7 +20,7 @@ notify->adopt handoff (step 3 below) instead of live NATS delivery. This
 keeps the test deterministic and dependency-free while still exercising every
 OTHER real seam: real arcstore atomic claim/assign, real arcteam handle
 resolution, real ``@tool`` capability functions, and the real assignee-side
-``handle_task_assigned`` adopt handler.
+``start_task`` adoption the dispatch loop drives.
 
 Only the LLM/run loop is out of scope entirely — this suite never touches
 arcrun; it calls the ``tasks`` module's tool functions directly, exactly as
@@ -32,8 +32,8 @@ Scenario (mirrors the task brief 1:1):
 2. alice ``assign_task``s it to ``@bob`` -> arcstore owner=bob, status=todo,
    AND exactly one ``TASK_ASSIGNED`` message lands in the shared messenger
    addressed to bob's inbox.
-3. That delivered message is fed to bob's ``handle_task_assigned`` -> bob
-   adopts it -> the real notify->adopt handoff -> task in_progress/owner=bob.
+3. The task id is read off the delivered message and bob's ``start_task`` ->
+   bob adopts it -> the real notify->adopt handoff -> task in_progress/owner=bob.
 4. A second unowned task; bob's ``claim_task`` (already at his one-active
    cap) returns ``continue_current``; carol's ``claim_task`` grabs the
    still-unowned second task from backlog -> ``assigned``.

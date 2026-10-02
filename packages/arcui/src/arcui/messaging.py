@@ -265,7 +265,7 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
 
     async def forward(*, sender: str, channel: str, text: str) -> str | None:
         from arcteam.mentions import unresolved_mentions
-        from arcteam.types import Channel, Entity, EntityType, Message
+        from arcteam.types import Channel, EntityType, Message
 
         # Refuse before anything is written. An unresolvable @handle is dropped
         # by apply_mentions, which turns an addressed post into an un-addressed
@@ -277,17 +277,7 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
             named = ", ".join(f"@{handle}" for handle in unknown)
             raise TeamPostRefusedError(f"No such teammate: {named}. Check the handle and resend.")
 
-        if await registry.get(op.did) is None:
-            await registry.register(
-                Entity(
-                    did=op.did,
-                    handle="operator",
-                    id="user://operator",
-                    name="Operator",
-                    type=EntityType.USER,
-                    public_key=op.public_key_hex,
-                )
-            )
+        await _register_operator(registry, op)
         channels = await service.list_channels()
         existing = next((c for c in channels if c.name == channel), None)
         if existing is None:
@@ -313,6 +303,39 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
         return await _no_audience_warning(service, registry, channel, op.did)
 
     return forward
+
+
+async def _register_operator(registry: Any, op: _OperatorMessaging) -> None:
+    """Register the operator as a signing USER entity once (audited by the registry)."""
+    from arcteam.types import Entity, EntityType
+
+    if await registry.get(op.did) is None:
+        await registry.register(
+            Entity(
+                did=op.did,
+                handle="operator",
+                id="user://operator",
+                name="Operator",
+                type=EntityType.USER,
+                public_key=op.public_key_hex,
+            )
+        )
+
+
+async def register_operator_entity(registry: Any) -> bool:
+    """Make the operator addressable before any mail names it.
+
+    Mail from the dashboard is sent as ``user://operator`` and agents reply to
+    it; both need the operator entity in the registry. Registering only on the
+    first channel post left every reply to operator mail dead-lettered with
+    ``UnknownHandle`` after the route had already answered 201. Returns whether
+    an operator identity exists to register.
+    """
+    op = _operator_messaging()
+    if op is None:
+        return False
+    await _register_operator(registry, op)
+    return True
 
 
 def build_agent_mail_service(

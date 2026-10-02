@@ -6,7 +6,8 @@ from json import JSONDecodeError
 from typing import Any
 
 from arcstore.inbox import HandoffStatus, ParticipantRole, TraceMetadata
-from arcstore.inbox_projection import participant
+from arcstore.inbox_projection import participant, thread_id_for
+from arcteam.mail import MailSendRequest, MailThreadClosedError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -198,8 +199,117 @@ async def post_inbox_read(request: Request) -> JSONResponse:
     return JSONResponse({"message": message.model_dump(mode="json")})
 
 
+#: Compose bodies are bounded like every other mail body (the bus caps at 64KB).
+_MAX_SUBJECT = 200
+
+
+def _closed(request: Request, *, target: str, operation: str, exc: Exception) -> JSONResponse:
+    """The one-reply rule refused the mail: say where the conversation continues."""
+    emit_mutation_audit(
+        request, target=target, operation=operation, outcome="denied", detail="thread_closed"
+    )
+    return JSONResponse({"error": "mail_thread_closed", "detail": str(exc)}, status_code=409)
+
+
+def _compose_fields(payload: object) -> tuple[str | None, str] | str:
+    """Validate ``{"subject"?: str, "body": str}``; return the fields or an error."""
+    if not isinstance(payload, dict):
+        return "expected JSON object"
+    body = payload.get("body")
+    subject = payload.get("subject")
+    if not isinstance(body, str) or not body.strip():
+        return "body must be a non-empty string"
+    if subject is not None and (
+        not isinstance(subject, str) or not subject.strip() or len(subject) > _MAX_SUBJECT
+    ):
+        return f"subject must be a non-empty string of at most {_MAX_SUBJECT} characters"
+    return (subject.strip() if isinstance(subject, str) else None), body
+
+
+async def post_inbox_compose(request: Request) -> JSONResponse:
+    """Mail a new message from the operator to one agent (alpha-2 item 3).
+
+    Operator role only; the ``Idempotency-Key`` header makes a retried submit
+    return the same message instead of mailing twice. The mail is signed by the
+    operator key and wakes the agent; its one reply lands in the same thread.
+    """
+    target = f"inbox:{request.path_params['id']}:compose"
+    if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="inbox.compose",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return JSONResponse({"error": "operator_role_required"}, status_code=403)
+    service, reader = _service(request), _reader(request)
+    if service is None:
+        return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
+    sender = _operator_sender(service)
+    if sender is None:
+        return JSONResponse({"error": "operator_mail_identity_unavailable"}, status_code=503)
+    if reader is None:
+        return JSONResponse({"error": "agent_not_found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except (JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "expected JSON object"}, status_code=400)
+    fields = _compose_fields(payload)
+    if isinstance(fields, str):
+        return JSONResponse({"error": fields}, status_code=400)
+    subject, body = fields
+    idempotency_key = _idempotency_key(request)
+    if idempotency_key is None:
+        return JSONResponse({"error": "Idempotency-Key header is required"}, status_code=400)
+    try:
+        sent = await service.send(
+            MailSendRequest(
+                sender="user://operator",
+                sender_did=sender.participant_id,
+                to=(reader.participant_id,),
+                subject=subject,
+                body=body,
+                idempotency_key=f"compose:{idempotency_key}",
+                classification=_clearance(request),
+            )
+        )
+    except (KeyError, PermissionError, ValueError) as exc:
+        emit_mutation_audit(
+            request, target=target, operation="inbox.compose", outcome="denied", detail=str(exc)
+        )
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        emit_mutation_audit(
+            request, target=target, operation="inbox.compose", outcome="deferred", detail=str(exc)
+        )
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="inbox.compose",
+        outcome="applied",
+        detail=f"message={sent.message_id}; status={sent.status}",
+    )
+    return JSONResponse(
+        {
+            "message_id": sent.message_id,
+            "conversation_id": sent.thread_id,
+            "thread_id": thread_id_for(reader.participant_id, sent.thread_id),
+            "status": sent.status,
+        },
+        status_code=201,
+    )
+
+
 async def post_inbox_reply(request: Request) -> JSONResponse:
-    """Append an operator-authorized reply to the durable thread record."""
+    """Append an operator-authorized reply to the durable thread record.
+
+    The operator may answer any fleet thread it can observe, including one
+    between two agents it does not belong to: it joins the conversation through
+    the observed agent's copy (role-gated here, audited below). The reply obeys
+    the one-reply rule; a closed thread answers 409 naming the team channel.
+    """
     thread_id = request.path_params["thread_id"]
     target = f"inbox:{thread_id}"
     if getattr(request.state, "role", None) != "operator":
@@ -245,7 +355,10 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
             reply_to_id=reply_to_id,
             idempotency_key=idempotency_key,
             classification_max=_clearance(request),
+            observed_as=reader,
         )
+    except MailThreadClosedError as exc:
+        return _closed(request, target=target, operation="inbox.reply", exc=exc)
     except RuntimeError as exc:
         emit_mutation_audit(
             request, target=target, operation="inbox.reply", outcome="deferred", detail=str(exc)
@@ -260,7 +373,13 @@ async def post_inbox_reply(request: Request) -> JSONResponse:
             detail=str(exc),
         )
         return JSONResponse({"error": str(exc)}, status_code=400)
-    emit_mutation_audit(request, target=target, operation="inbox.reply", outcome="applied")
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="inbox.reply",
+        outcome="applied",
+        detail=f"sender={sender.participant_id}; observed_as={reader.participant_id}",
+    )
     return JSONResponse({"message": message.model_dump(mode="json")}, status_code=201)
 
 

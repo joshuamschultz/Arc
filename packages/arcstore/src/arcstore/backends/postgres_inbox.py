@@ -274,8 +274,14 @@ class PostgresInboxRepository:
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
+        join: bool = False,
     ) -> tuple[Message, ...]:
-        """Persist all inbox copies and transport work in one DB transaction."""
+        """Persist all inbox copies and transport work in one DB transaction.
+
+        ``join=True`` admits the sender into an existing conversation: each
+        stored copy's participants grow to the new set (never shrink) inside the
+        same transaction, so a join and its message commit together or not at all.
+        """
         if not recipients:
             raise ValueError("at least one recipient is required")
         participants = tuple(dict.fromkeys((sender, *recipients)))
@@ -321,6 +327,10 @@ class PostgresInboxRepository:
                         thread.updated_at,
                     )
                     stored_thread = await self._get_thread(connection, thread_id, for_update=True)
+                    if join:
+                        stored_thread = await self._join_thread(
+                            connection, stored_thread, participants
+                        )
                     _require_thread_contract(
                         stored_thread, participants, classification, subject, conversation_id
                     )
@@ -567,6 +577,24 @@ class PostgresInboxRepository:
         if row is None:
             raise KeyError(f"unknown thread: {thread_id}")
         return _model_from(row, Thread)
+
+    async def _join_thread(
+        self, connection: Any, thread: Thread, participants: tuple[Participant, ...]
+    ) -> Thread:
+        """Grow one locked copy's participants to ``participants``; never remove one."""
+        current = {item.participant_id for item in thread.participants}
+        wanted = {item.participant_id for item in participants}
+        if not current <= wanted:
+            raise ValueError("existing mail thread has different participants")
+        if current == wanted:
+            return thread
+        joined = thread.model_copy(update={"participants": participants})
+        await connection.execute(
+            "UPDATE inbox_threads SET payload=$1::jsonb WHERE thread_id=$2",
+            _model_json(joined),
+            thread.thread_id,
+        )
+        return joined
 
     async def _get_message(
         self, connection: Any, message_id: str, *, for_update: bool = False

@@ -527,7 +527,7 @@ def create_app(
             try:
                 starlette_app.state.inbox_service = DurableInboxService(
                     PostgresInboxRepository(task_store_backend),
-                    delivery_port=inbox_delivery_port,
+                    delivery_port=starlette_app.state.inbox_delivery_port,
                     projection_spool=InboxProjectionSpool(
                         inbox_data_dir / "inbox-projection.jsonl"
                     ),
@@ -795,6 +795,13 @@ def create_app(
     # collection; the surface that parks a stop request for a per-agent watcher.
     app.state.cancel_store = CancelStore(task_store_backend)
     app.state.inbox_service = inbox_service
+    # Durable handoffs wake their recipients as signed mail. The port exists
+    # before the mail service it carries; the messaging lifecycle binds it.
+    if inbox_delivery_port is None:
+        from arcteam.mail import MailInboxDeliveryPort
+
+        inbox_delivery_port = MailInboxDeliveryPort()
+    app.state.inbox_delivery_port = inbox_delivery_port
     app.state.agent_mail = None
     app.state.mail_outbox = None
     app.state.inbox_clearance = inbox_clearance

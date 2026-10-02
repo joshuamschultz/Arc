@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcstore.inbox import Participant, ParticipantRole, Thread
+from arcstore.inbox import MessagePage, PageInfo, Participant, ParticipantRole, Thread
 from arcstore.inbox_projection import DurableInboxService
 from arcstore.mail_outbox import MailOutbox
 from arctrust import AgentIdentity
@@ -137,7 +137,9 @@ class _LeaseLossOutbox:
             },
         )()
 
-    def claim(self, _worker_id: str, *, limit: int) -> tuple[Any, ...]:
+    def claim(
+        self, _worker_id: str, *, limit: int, signer_did: str | None = None
+    ) -> tuple[Any, ...]:
         return (self._entry,)
 
     def ack(self, _worker_id: str, _event_id: str) -> bool:
@@ -169,7 +171,9 @@ class _DeadLetterOutbox:
         )()
         self.reason: str | None = None
 
-    def claim(self, _worker_id: str, *, limit: int) -> tuple[Any, ...]:
+    def claim(
+        self, _worker_id: str, *, limit: int, signer_did: str | None = None
+    ) -> tuple[Any, ...]:
         return (self.entry,)
 
     def dead_letter(self, _worker_id: str, _event_id: str, *, reason: str) -> bool:
@@ -213,6 +217,9 @@ class _ReplyStore(_Store):
 
     async def get_thread(self, _thread_id: str, **_kwargs: object) -> Thread:
         return self._thread
+
+    async def list_messages(self, _thread_id: str, **_kwargs: object) -> MessagePage:
+        return MessagePage(items=(), page_info=PageInfo())
 
     async def record_event_with_outbox(self, **kwargs: object) -> tuple[object, ...]:
         await super().record_event_with_outbox(**kwargs)
