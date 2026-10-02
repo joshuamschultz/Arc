@@ -126,14 +126,12 @@ def _operator_signer() -> Any | None:
     deployment has not been initialised, so the builder degrades rather than
     minting a signing authority from the observer.
     """
-    from arctrust import OperatorKey
-    from arctrust.paths import default_operator_key_path
+    from arctrust import operator_signer_for
 
-    key_path = default_operator_key_path()
     try:
-        return OperatorKey.load(key_path, generate_if_absent=False).into_signer()
+        return operator_signer_for()
     except (OSError, ValueError, RuntimeError):
-        logger.warning("embedded messaging: operator key unavailable at %s", key_path)
+        logger.warning("embedded messaging: operator signer unavailable")
         return None
 
 

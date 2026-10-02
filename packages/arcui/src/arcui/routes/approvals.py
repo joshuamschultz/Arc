@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from arcstore.approvals import ApprovalStore
-from arctrust import OperatorKey, default_operator_key_path
+from arctrust import operator_signer_for
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -50,8 +50,7 @@ def _operator_authority() -> OperatorApprovalAuthority:
     Read-only load — never bootstraps a key here (an unpinned operator is no
     operator); a missing key raises and the caller fails the approve with 500.
     """
-    signer = OperatorKey.load(default_operator_key_path(), generate_if_absent=False).into_signer()
-    return OperatorApprovalAuthority(signer)
+    return OperatorApprovalAuthority(operator_signer_for())
 
 
 #: The pending-approval ``tool`` an agent writes when it wants a draft signed.
@@ -82,9 +81,7 @@ def _sign_requested_workflow(request: Request, row: Any) -> str | None:
             # operator read is not what they would be signing.
             return "workflow_changed_since_the_request"
         # A signer handle, never the seed, so a vault-held key signs here too.
-        signer = OperatorKey.load(
-            default_operator_key_path(), generate_if_absent=False
-        ).into_signer()
+        signer = operator_signer_for()
         sign_definition_with_signer(
             definitions,
             workflow_id,

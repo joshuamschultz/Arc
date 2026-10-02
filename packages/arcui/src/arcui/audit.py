@@ -277,13 +277,11 @@ def build_mutation_worm_writer(data_dir: Path) -> MutationWormWriter | None:
     deployment) or the chain file can't be opened, so the server degrades to
     log+OTel rather than minting a signing authority out of nothing.
     """
-    from arctrust import OperatorKey, default_operator_key_path
+    from arctrust import operator_signer_for
     from arctrust.policy import OperatorApprovalAuthority
 
     try:
-        signer = OperatorKey.load(
-            default_operator_key_path(), generate_if_absent=False
-        ).into_signer()
+        signer = operator_signer_for()
     except (OSError, ValueError, RuntimeError):
         _logger.warning("arcui mutation WORM: operator key unavailable; mutations log+OTel only")
         return None

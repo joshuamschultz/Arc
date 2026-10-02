@@ -607,7 +607,8 @@ def _fleet_tier(deployment: _Deployment, tier: str) -> None:
     """Set the deployment's own floor, in the file the whole stack already merges."""
     fleet = config_file("arcagent.toml", deployment.arc_dir)
     fleet.parent.mkdir(parents=True, exist_ok=True)
-    fleet.write_text(f'[security]\ntier = "{tier}"\n', encoding="utf-8")
+    # in_process: this fixture holds an on-disk operator key, not a notary.
+    fleet.write_text(f'[security]\ntier = "{tier}"\ncustody = "in_process"\n', encoding="utf-8")
 
 
 async def test_a_connection_is_served_at_its_strictest_grantee(

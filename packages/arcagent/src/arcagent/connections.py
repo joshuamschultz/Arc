@@ -50,7 +50,7 @@ from typing import Any, Literal
 import httpx
 from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.paths import arc_team, config_file, default_operator_key_path
+from arctrust.paths import arc_team, config_file
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
 from arcagent.connector_control import ConnectorControl, ConnectorReconcileResult
@@ -356,17 +356,18 @@ def _read_toml(path: Path) -> dict[str, Any]:
     return parsed
 
 
-def _operator_key(arc_dir: Path) -> Any:
-    """The deployment's operator key, or ``None`` when it has none.
+def _operator_signer(arc_dir: Path) -> Any:
+    """The deployment's operator signer, or ``None`` when it has none.
 
     Read-only: never mints a key, so an install above personal tier on a machine
     with no operator key is refused by the loader rather than quietly satisfied by
-    a keypair this call generated moments earlier (REQ-283).
+    a keypair this call generated moments earlier (REQ-283). Resolved through the
+    one arctrust resolver so a vault-held key answers the same as an on-disk one.
     """
-    from arctrust import OperatorKey
+    from arctrust import operator_signer_for
 
     try:
-        return OperatorKey.load(default_operator_key_path(arc_dir), generate_if_absent=False)
+        return operator_signer_for(base=arc_dir)
     except (FileNotFoundError, OSError):
         return None
 
@@ -382,10 +383,10 @@ def _operator_did(arc_dir: Path) -> str:
     """
     from arctrust.policy import OperatorApprovalAuthority
 
-    key = _operator_key(arc_dir)
-    if key is None:
+    signer = _operator_signer(arc_dir)
+    if signer is None:
         return UNKEYED_OPERATOR_DID
-    return str(OperatorApprovalAuthority(key.into_signer()).did)
+    return str(OperatorApprovalAuthority(signer).did)
 
 
 def _data_dir(given: Path | str | None) -> Path:
@@ -2028,8 +2029,8 @@ class Connections:
 
     def _pinned_key(self) -> bytes | None:
         """The operator key an extension bundle's signatures are pinned to (REQ-283)."""
-        key = _operator_key(self._world.arc_dir)
-        return None if key is None else bytes(key.public_key)
+        signer = _operator_signer(self._world.arc_dir)
+        return None if signer is None else bytes(signer.public_key)
 
     async def _credential_checks(
         self, plan: ConnectorPlan, instance: str, sink: AuditSink

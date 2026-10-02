@@ -31,6 +31,9 @@ def _operator(tmp_path: Path, monkeypatch: Any) -> tuple[OperatorKey, str]:
     op = OperatorKey.generate()
     op.save(key_path)
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: key_path)
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path", lambda base=None: key_path
+    )
     did = OperatorApprovalAuthority(op.into_signer()).did
     return op, did
 
@@ -131,6 +134,10 @@ def test_unpinned_operator_key_refuses_overlay_but_resolves_stock(
 
     # Now make the operator key unresolvable → build_prompt_resolver pins None.
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: tmp_path / "missing.key")
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path",
+        lambda base=None: tmp_path / "missing.key",
+    )
     resolver = build_prompt_resolver(config_path, "federal")
 
     import pytest

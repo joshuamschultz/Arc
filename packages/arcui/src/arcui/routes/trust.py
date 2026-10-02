@@ -44,18 +44,10 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arctrust import (
-    FileNotaryTransit,
-    OperatorKey,
-    Signer,
-    SignerConfig,
-    build_signer,
-    default_operator_key_path,
-)
+from arctrust import Signer, operator_signer_for
 from arctrust import disapprove as _disapprove_pin
-from arctrust.paths import config_file, operator_dir
+from arctrust.paths import config_file
 from arctrust.policy import OperatorApprovalAuthority
-from arctrust.signer import VAULT_TRANSIT
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -64,11 +56,6 @@ from arcui.audit import emit_mutation_audit, operator_actor_did, operator_audit_
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.trust")
-
-#: The transit key reference the deployment operator key is provisioned under —
-#: the same one ``arccli.commands.operator`` uses, so a notary provisioned for
-#: the CLI serves this route unchanged.
-_OPERATOR_KEY_REF = "operator"
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -143,18 +130,7 @@ def _operator_signer() -> Signer:
     exactly like ``routes/approvals.py._operator_authority`` — never a silent
     downgrade to whatever key can be found (NFR-3).
     """
-    security = _machine_security()
-    if security.custody == VAULT_TRANSIT:
-        return build_signer(
-            SignerConfig(
-                custody=VAULT_TRANSIT,
-                algorithm=security.signing_algorithm,
-                key_ref=_OPERATOR_KEY_REF,
-            ),
-            vault_transit=_transit(security),
-        )
-    key = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
-    return key.into_signer(security.signing_algorithm)
+    return operator_signer_for(_machine_security())
 
 
 def default_skill_revision_anchor_factory() -> Any:
@@ -196,35 +172,6 @@ def operator_signer_for_request(request: Request) -> Signer:
     if getattr(request.app.state, "hosted", False):
         raise RuntimeError("operator signing authority is unavailable")
     return _operator_signer()
-
-
-def _notary_default(operator_key_dir: str) -> Path:
-    """The vault_transit keystore that sits beside the operator key.
-
-    Empty ``operator_key_dir`` means the deployment's own operator dir, so the
-    keystore follows the key rather than pinning a literal the key no longer
-    lives under.
-    """
-    base = Path(operator_key_dir).expanduser() if operator_key_dir else operator_dir()
-    return base / "notary"
-
-
-def _transit(security: Any) -> FileNotaryTransit:
-    """The out-of-process transit, proven able to serve the operator key first.
-
-    Mirrors ``arccli.commands.operator._resolve_transit``: the same keystore
-    convention, so a notary provisioned for the CLI serves this route unchanged.
-    Probing the key here turns a missing keystore into a refusal at resolution
-    time rather than a partial signing later.
-    """
-    keystore = (
-        Path(security.notary_keystore).expanduser()
-        if security.notary_keystore
-        else _notary_default(security.operator_key_dir)
-    )
-    transit = FileNotaryTransit(keystore, algorithm=security.signing_algorithm)
-    transit.public_key(_OPERATOR_KEY_REF)
-    return transit
 
 
 def _operator_did(signer: Signer) -> str:

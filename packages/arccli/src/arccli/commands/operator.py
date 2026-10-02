@@ -14,20 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from arctrust import (
-    FileNotaryTransit,
     OperatorKey,
     RecordCipher,
     Signer,
-    SignerConfig,
-    SignerError,
     WormSink,
-    build_signer,
     derive_record_key,
+    operator_public_key_for,
+    operator_signer_for,
 )
-from arctrust.paths import config_file, default_operator_key_path, operator_dir
+from arctrust.paths import config_file, default_operator_key_path
 from arctrust.signer import VAULT_TRANSIT
-
-_OPERATOR_KEY_REF = "operator"
 
 
 def _machine_config_path() -> Path:
@@ -72,22 +68,16 @@ def load_operator_key(arc_dir: Path | None = None) -> OperatorKey:
 
 
 def operator_public_key(arc_dir: Path | None = None) -> bytes | None:
-    """Resolve the on-disk operator public key for signature PINNING (read-only).
+    """The operator public key signatures are PINNED against (read-only).
 
-    This is the key ``arc blueprint sign`` signs a preset with, so verification pins
-    a user blueprint's ``.arcsig`` against it: an attacker who self-signs with a random
-    keypair is refused because the manifest's key is not this one (SPEC-047 HIGH-1).
-
-    Read-only and side-effect-free — it NEVER bootstraps a key (unlike
-    :func:`load_operator_key`). Returns ``None`` when no operator key exists so the
-    caller can fail closed above the personal tier (an unpinned floor is no floor). A
-    present-but-tampered key raises through ``OperatorKey.load`` (covert-erasure guard).
+    One answer under every custody: :func:`arctrust.operator_public_key_for` reads
+    the key file in ``in_process`` and the transit handle in ``vault_transit``, so
+    a federal vault-held key verifies the same here as in the gateway and arcui.
+    Never bootstraps a key (unlike :func:`load_operator_key`); ``None`` means no
+    key exists so a caller above personal tier can fail closed (SPEC-047 HIGH-1).
     """
     base = Path(arc_dir).expanduser() if arc_dir is not None else None
-    try:
-        return OperatorKey.load(operator_key_path(base), generate_if_absent=False).public_key
-    except FileNotFoundError:
-        return None
+    return operator_public_key_for(_machine_security(), base=base)
 
 
 def ensure_operator_key(arc_dir: Path) -> OperatorKey:
@@ -133,16 +123,9 @@ def resolve_operator_signer(arc_dir: Path | None = None) -> Signer:
     never loads the seed. Fail-closed on an unresolvable transit (NFR-3).
     """
     sec = _machine_security()
+    base = Path(arc_dir).expanduser() if arc_dir is not None else None
     if sec.custody == VAULT_TRANSIT:
-        transit = _resolve_transit(sec)
-        return build_signer(
-            SignerConfig(
-                custody=VAULT_TRANSIT,
-                algorithm=sec.signing_algorithm,
-                key_ref=_OPERATOR_KEY_REF,
-            ),
-            vault_transit=transit,
-        )
+        return operator_signer_for(sec, base=base)
     return load_operator_key(arc_dir).into_signer(sec.signing_algorithm)
 
 
@@ -195,37 +178,6 @@ def operator_worm_sink(arc_dir: Path | None, data_dir: Path) -> WormSink:
         resolve_operator_signer(arc_dir),
         cipher=resolve_record_cipher(arc_dir),
     )
-
-
-def _notary_default(operator_key_dir: str) -> Path:
-    """The vault_transit keystore that sits beside the operator key.
-
-    Empty ``operator_key_dir`` means the deployment's own operator dir, so the
-    keystore follows the key rather than pinning a literal the key no longer
-    lives under.
-    """
-    base = Path(operator_key_dir).expanduser() if operator_key_dir else operator_dir()
-    return base / "notary"
-
-
-def _resolve_transit(sec: Any) -> FileNotaryTransit:
-    """Resolve the out-of-process transit for CLI vault_transit signing."""
-    keystore = (
-        Path(sec.notary_keystore).expanduser()
-        if sec.notary_keystore
-        else _notary_default(sec.operator_key_dir)
-    )
-    transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
-    try:
-        transit.public_key(_OPERATOR_KEY_REF)
-    except OSError as exc:
-        raise SignerError(
-            f"custody=vault_transit (tier={sec.tier}) but the transit at {keystore} "
-            f"cannot serve the operator key — refusing to fall back to in-process "
-            "signing (fail-closed, NFR-3). Provision the notary keystore or a "
-            "Vault/HSM adapter, or run at tier=personal for on-disk in-process signing."
-        ) from exc
-    return transit
 
 
 __all__ = [

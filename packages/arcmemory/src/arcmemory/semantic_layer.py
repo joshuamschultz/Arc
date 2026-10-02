@@ -70,9 +70,9 @@ def _operator_public_key() -> bytes | None:
     which fails a signed file's verification closed rather than skipping it.
     """
     try:
-        from arctrust import OperatorKey, default_operator_key_path
+        from arctrust import operator_public_key_for
 
-        return OperatorKey.load(default_operator_key_path(), generate_if_absent=False).public_key
+        return operator_public_key_for()
     except (OSError, ValueError, RuntimeError):
         return None
 
