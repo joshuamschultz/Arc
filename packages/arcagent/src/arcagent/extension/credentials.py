@@ -152,7 +152,7 @@ class ClientCredentialSource(Protocol):
 def connection_client(
     rows: CredentialRowStore, row: CredentialRow, flow: OAuthFlow
 ) -> tuple[str, Secret] | None:
-    """The client id/secret stored on the connection itself (Dropbox app key/secret)."""
+    """The OAuth client id/secret stored on the connection itself (its app key/secret)."""
     client_id = rows.open_field(row, flow.client_id_secret)
     client_secret = rows.open_field(row, flow.client_secret_secret)
     if client_id is None or client_secret is None:

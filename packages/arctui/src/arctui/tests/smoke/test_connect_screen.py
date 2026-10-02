@@ -150,9 +150,10 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     ``ARC_CONFIG_DIR`` and ``ARCSTORE_DATA_DIR`` are redirected so the operator
     key this test mints, the connections it defines, and the WORM chain it writes
-    never touch the real ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` is cleared so a value
-    in the developer's environment cannot add a bundle the assertions do not
-    expect.
+    never touch the real ``~/.arc``. ``ARC_EXTENSIONS_ROOT`` points at this test's
+    own bundle root: code-bearing bundles never load from the operator tree or
+    unsigned from the install home (P18-2), and a value in the developer's
+    environment cannot add a bundle the assertions do not expect.
 
     The agent lives under ``<arc_dir>/team/<name>`` because that is where the
     grant model looks for its tier: the directory name is the grant coordinate,
@@ -160,7 +161,7 @@ def agent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ARC_EXTENSIONS_ROOT", raising=False)
+    monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundles"))
 
     agent = tmp_path / "arc" / "team" / "acme_agent"
     agent.mkdir(parents=True)
@@ -199,12 +200,12 @@ def _arc_dir(agent_dir: Path) -> Path:
 
 
 def _write_bundle(agent_dir: Path, manifest: str = _MANIFEST) -> Path:
-    """Put a bundle on the DEPLOYMENT's search path.
+    """Put a bundle on the DEPLOYMENT's search path (``$ARC_EXTENSIONS_ROOT``).
 
     There is deliberately no agent-local extensions root: a connection is the
     deployment's, so its bundle has to be resolvable by every agent granted it.
     """
-    bundle = _arc_dir(agent_dir) / "extensions" / _EXTENSION
+    bundle = agent_dir.parents[2] / "bundles" / _EXTENSION
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "extension.toml").write_text(manifest, encoding="utf-8")
     (bundle / "acme_tui_attachment.py").write_text(_ADAPTER, encoding="utf-8")
@@ -231,16 +232,18 @@ async def _stored(agent_dir: Path, backend: FakeBackend) -> str:
 
     Also proves the stored row itself holds no plaintext.
     """
-    from arcagent.core.tier import Tier
-    from arcagent.extension.custody import CREDENTIAL_COLLECTION, CredentialRowStore
-    from arcagent.extension.custody_select import deployment_cipher
+    from arctrust import ConnectorSecretCipher, operator_key_for
 
-    raw = str(await backend.mutable_query(CREDENTIAL_COLLECTION))
+    raw = str(await backend.mutable_query("connector_credentials"))
     assert _SENTINEL not in raw, "a sealed row never holds the plaintext"
-    rows = CredentialRowStore(backend, deployment_cipher(_arc_dir(agent_dir), tier=Tier.PERSONAL))
-    row = await rows.read(_INSTANCE)
-    found = rows.open_field(row, "api_token") if row is not None else None
-    return found.reveal() if found is not None else ""
+    row = await backend.mutable_read("connector_credentials", _INSTANCE)
+    if row is None or "api_token" not in row["fields"]:
+        return ""
+    key = operator_key_for(base=_arc_dir(agent_dir))
+    assert key is not None
+    cipher = ConnectorSecretCipher.for_operator_key(key)
+    sealed = row["fields"]["api_token"]["sealed"]
+    return cipher.open(sealed, scope=_INSTANCE, slot="api_token").decode()
 
 
 async def _open_connect(pilot: Any) -> Any:
@@ -431,7 +434,7 @@ async def test_a_bundle_that_will_not_parse_is_named_not_dropped(agent_dir: Path
     installed, and 500-ing the whole listing would hide the working one too.
     """
     _write_bundle(agent_dir)
-    broken = _arc_dir(agent_dir) / "extensions" / "brokenbundle"
+    broken = agent_dir.parents[2] / "bundles" / "brokenbundle"
     broken.mkdir()
     (broken / "extension.toml").write_text(
         '[extension]\nname = "brokenbundle"\n', encoding="utf-8"
