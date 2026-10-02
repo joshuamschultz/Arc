@@ -33,7 +33,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -47,6 +47,7 @@ from arcokf import (
     UPDATE,
     FolderIndexValidation,
     IndexEntry,
+    LogDigest,
     LogEntry,
     archive_name,
     folder_entry,
@@ -54,8 +55,9 @@ from arcokf import (
     listable_dir,
     listable_file,
     merge_log_events,
+    parse_log_digest,
     read_folder_digest,
-    read_log_digest,
+    read_regular_file,
     read_verified_log,
     render_change_log,
     render_folder_digest,
@@ -65,6 +67,7 @@ from arcokf import (
 )
 
 from arcmemory.mdfile import atomic_write_text
+from arcmemory.okf_seal import SEAL_NAME, CollectionSeal, Seal, SealPending, sha256_hex
 
 _logger = logging.getLogger("arcmemory.collection_index")
 
@@ -86,7 +89,9 @@ _JOURNAL = ".dirty"
 JOURNAL_MAX_BYTES = 64 * 1024
 
 #: The files a maintainer derives at a collection root: they hold no memory data.
-DERIVED_INDEX_FILES = frozenset({INDEX_NAME, DIGEST_NAME, _JOURNAL, LOG_NAME, LOG_DIGEST_NAME})
+DERIVED_INDEX_FILES = frozenset(
+    {INDEX_NAME, DIGEST_NAME, _JOURNAL, LOG_NAME, LOG_DIGEST_NAME, SEAL_NAME}
+)
 
 #: ``log.md`` holds at most this many entries; past it the oldest roll into
 #: per-year ``log.YYYY.md`` archives. Trimming drops to ``LOG_KEEP_ENTRIES`` so
@@ -110,6 +115,17 @@ _MTIME_SLACK_NS = 2_000_000_000
 # A cached document entry is valid while (mtime, size, inode) are unchanged; the
 # inode changes on every atomic replace, so a same-tick rewrite is still seen.
 _Stat = tuple[int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _FolderPlan:
+    """One folder's next index and sidecar, rendered in memory until the commit."""
+
+    folder: Path
+    text: str
+    sidecar: str
+    count: int
+    entries: list[IndexEntry]
 
 
 class OkfIndexMaintainer:
@@ -136,6 +152,9 @@ class OkfIndexMaintainer:
         self._dirty: set[str] = set()
         self._cache: dict[str, dict[str, tuple[_Stat, IndexEntry | None]]] = {}
         self._task: asyncio.Task[None] | None = None
+        self._labels: dict[str, tuple[_Stat, str]] = {}
+        self._seal = CollectionSeal(self._root)
+        self._warned_unsigned = False
         self._merge_journal()
 
     @property
@@ -235,14 +254,21 @@ class OkfIndexMaintainer:
         index already on disk. ``log=False`` regenerates indexes without
         recording the changes in ``log.md`` (a layout move is not a change to
         the knowledge itself).
+
+        Every folder is rendered in memory first; the drain then commits once:
+        a signed seal naming the new sidecars and the pending log events, the
+        files, then the final seal. One signature pair per drain, off the loop,
+        and a crash at any point is replayed from the seal, never lost.
         """
         with self._drain_lock:
             self._merge_journal()
+            self._recover_pending()
             if self._resync:
                 self._resync = False
                 with self._lock:
                     self._dirty.update(self._walk())
-            written = 0
+            plans: dict[str, _FolderPlan] = {}
+            removed: set[str] = set()
             failed: set[str] = set()
             try:
                 while True:
@@ -254,55 +280,88 @@ class OkfIndexMaintainer:
                             break
                         self._dirty.difference_update(batch)
                     for rel in batch:
-                        written += self._regenerate_or_fail(rel, failed, force, log)
-                    self._flush_log()
+                        self._regenerate_or_fail(rel, failed, force, log, plans, removed)
+                return self._commit(plans, removed)
+            except BaseException:
+                failed.update(plans)  # nothing committed: every planned folder stays journaled
+                self._events = []
+                raise
             finally:
                 with self._lock:
                     self._dirty |= failed
                     self._compact_journal()
-            return written
 
-    def _regenerate_or_fail(self, rel: str, failed: set[str], force: bool, log: bool) -> int:
-        """Regenerate one folder; any failure leaves it journaled, never aborts the pass."""
+    def _regenerate_or_fail(
+        self,
+        rel: str,
+        failed: set[str],
+        force: bool,
+        log: bool,
+        plans: dict[str, _FolderPlan],
+        removed: set[str],
+    ) -> None:
+        """Plan one folder; any failure leaves it journaled, never aborts the pass."""
         try:
-            return self._regenerate(rel, reuse=not force, log=log)
+            self._regenerate(rel, reuse=not force, log=log, plans=plans, removed=removed)
         except Exception:  # one bad folder (or a racing writer) must not stop the rest
             _logger.warning("okf index regeneration failed for %r", rel, exc_info=True)
             failed.add(rel)
-            return 0
 
     def _pending(self) -> bool:
         with self._lock:
             return bool(self._dirty)
 
-    def _regenerate(self, rel: str, *, reuse: bool = True, log: bool = True) -> int:
+    def _regenerate(
+        self,
+        rel: str,
+        *,
+        reuse: bool,
+        log: bool,
+        plans: dict[str, _FolderPlan],
+        removed: set[str],
+    ) -> None:
+        """Render one folder's index and sidecar in memory (written at commit)."""
         folder = self._contained_folder(rel) if self._valid_rel(rel) else None
         if folder is None:
             _logger.warning("okf index refused folder outside the collection: %r", rel)
-            return 0
+            return
         parent = rel.rpartition("/")[0] if "/" in rel else ""
         if not folder.is_dir():
             self._cache.pop(str(folder), None)
+            plans.pop(rel, None)
+            removed.add(rel)
             if rel:
                 self._mark(parent)
-            return 0
-        previous = read_folder_digest(folder)
-        prior, prior_mtime, valid = self._prior_entries(folder)
-        entries = self._collect(folder, prior if reuse else {}, prior_mtime)
+            return
+        removed.discard(rel)
+        earlier = plans.get(rel)
+        previous_count: int | None
+        if earlier is not None:  # planned again this drain: diff against that plan
+            prior = {e.path: e for e in earlier.entries if not e.is_folder}
+            prior_mtime, valid, previous_count = 0, True, earlier.count
+        else:
+            validation = self.validate(folder)
+            prior, prior_mtime, valid = self._prior_entries(folder, validation)
+            previous_count = validation.digest.count if validation.digest is not None else None
+        entries = self._collect(rel, folder, prior if reuse else {}, prior_mtime, plans, removed)
         text = render_folder_index(entries, root=self._bundle_root and rel == "")
         if log and (valid or not (folder / INDEX_NAME).exists()):
             self._record_changes(rel, entries, prior)
-        wrote = _write_if_changed(folder / INDEX_NAME, text)
-        wrote |= _write_if_changed(
-            folder / DIGEST_NAME, render_folder_digest(text, tuple(entries))
-        )
         count = sum(1 if not e.is_folder else e.count for e in entries)
-        if rel and (previous is None or previous.count != count):
+        plans[rel] = _FolderPlan(
+            folder, text, render_folder_digest(text, tuple(entries)), count, entries
+        )
+        if rel and previous_count != count:
             self._mark(parent)
-        return int(wrote)
 
     def _collect(
-        self, folder: Path, prior: dict[str, IndexEntry], prior_mtime: int
+        self,
+        rel: str,
+        folder: Path,
+        prior: dict[str, IndexEntry],
+        prior_mtime: int,
+        plans: dict[str, _FolderPlan],
+        removed: set[str],
     ) -> list[IndexEntry]:
         entries: list[IndexEntry] = []
         cached = self._cache.get(str(folder), {})
@@ -312,22 +371,14 @@ class OkfIndexMaintainer:
             items = sorted(scan, key=lambda item: item.name)
         for item in items:
             if item.is_dir(follow_symlinks=False):
-                child = read_folder_digest(Path(item.path)) if listable_dir(item.name) else None
-                if child is not None:
-                    entries.append(folder_summary_entry(item.name, child.count))
+                if not listable_dir(item.name):
+                    continue
+                child_rel = f"{rel}/{item.name}" if rel else item.name
+                count = _child_count(child_rel, Path(item.path), plans, removed)
+                if count is not None:
+                    entries.append(folder_summary_entry(item.name, count))
             elif item.is_file(follow_symlinks=False) and listable_file(item.name):
-                st = item.stat(follow_symlinks=False)
-                stat: _Stat = (st.st_mtime_ns, st.st_size, st.st_ino)
-                hit = cached.get(item.name)
-                if hit is not None and hit[0] == stat:
-                    entry = hit[1]
-                elif (old := prior.get(item.name)) is not None and (
-                    st.st_mtime_ns + _MTIME_SLACK_NS < prior_mtime
-                ):
-                    entry = old  # untouched since the trusted index was written
-                else:
-                    entry = folder_entry(Path(item.path))
-                fresh[item.name] = (stat, entry)
+                entry = self._document_entry(item, cached, fresh, prior, prior_mtime)
                 if entry is None:
                     invalid += 1
                 else:
@@ -337,22 +388,50 @@ class OkfIndexMaintainer:
             _logger.warning("okf index: %d invalid document(s) not listed in %s", invalid, folder)
         return entries
 
-    def _prior_entries(self, folder: Path) -> tuple[dict[str, IndexEntry], int, bool]:
+    @staticmethod
+    def _document_entry(
+        item: os.DirEntry[str],
+        cached: dict[str, tuple[_Stat, IndexEntry | None]],
+        fresh: dict[str, tuple[_Stat, IndexEntry | None]],
+        prior: dict[str, IndexEntry],
+        prior_mtime: int,
+    ) -> IndexEntry | None:
+        st = item.stat(follow_symlinks=False)
+        stat: _Stat = (st.st_mtime_ns, st.st_size, st.st_ino)
+        hit = cached.get(item.name)
+        if hit is not None and hit[0] == stat:
+            entry = hit[1]
+        elif (old := prior.get(item.name)) is not None and (
+            st.st_mtime_ns + _MTIME_SLACK_NS < prior_mtime
+        ):
+            entry = old  # untouched since the trusted (signed) index was written
+        else:
+            # One open, never through a symlink, and only the inode scandir listed.
+            entry = folder_entry(Path(item.path), expect=st)
+        fresh[item.name] = (stat, entry)
+        return entry
+
+    def _prior_entries(
+        self, folder: Path, validation: FolderIndexValidation
+    ) -> tuple[dict[str, IndexEntry], int, bool]:
         """Document entries of the trusted on-disk index, when it was written, and
         whether it was trusted at all.
 
         Lets a fresh maintainer (a new process, a new sync run) read only the
         documents modified since, instead of the whole folder. Empty when the
-        index does not verify, so a tampered index is never reused.
+        index is not signed by the agent, so a forged or tampered index is never
+        reused and its folder is regenerated from the documents.
         """
-        validation = validate_folder_index(folder, root=self._bundle_root and folder == self._root)
-        digest = read_folder_digest(folder)
+        digest = validation.digest
         if not validation.valid or digest is None:
             return {}, 0, False
-        index_mtime = (folder / INDEX_NAME).stat().st_mtime_ns
+        try:
+            index_mtime = (folder / INDEX_NAME).lstat().st_mtime_ns
+        except OSError:
+            return {}, 0, False
         if index_mtime > time.time_ns() + _MTIME_SLACK_NS:
             # A future timestamp would make every document look older than the
-            # index, so a forged index could be reused indefinitely.
+            # index, so even a signed index is not reused past it.
             return {}, 0, False
         entries = {
             entry.path: replace(entry, digest=digest.docs[entry.path])
@@ -360,6 +439,86 @@ class OkfIndexMaintainer:
             if not entry.is_folder and entry.path in digest.docs
         }
         return entries, index_mtime, True
+
+    # -- commit: signed intent, then files, then the final seal -------------
+
+    def _commit(self, plans: dict[str, _FolderPlan], removed: set[str]) -> int:
+        """Write this drain's folders and log under the agent's seal; return folders written."""
+        events, self._events = self._events, []
+        if not self._seal.can_sign:
+            self._refuse_unsigned(plans)
+            return 0
+        seal = self._seal.load()
+        if not plans and not removed and not events and seal is not None:
+            return 0
+        committed = {k: v for k, v in (seal.folders if seal else {}).items() if k not in removed}
+        committed_log = seal.log if seal else ""
+        new_shas = {rel: sha256_hex(plan.sidecar.encode("utf-8")) for rel, plan in plans.items()}
+        log_files = self._plan_log(events, seal) if events else {}
+        new_log = (
+            sha256_hex(log_files[LOG_DIGEST_NAME].encode("utf-8")) if log_files else committed_log
+        )
+        if log_files:
+            # Journal-first: the signed intent names every file about to change and
+            # carries the log events, so a crash after the indexes replays the log.
+            pending = SealPending(new_shas, new_log, tuple(events))
+            seal = self._seal.write(committed, committed_log, pending, seal)
+        written = 0
+        for plan in plans.values():
+            wrote = _write_if_changed(plan.folder / INDEX_NAME, plan.text)
+            wrote |= _write_if_changed(plan.folder / DIGEST_NAME, plan.sidecar)
+            written += int(wrote)
+        self._write_log_files(log_files)
+        final = {**committed, **new_shas}
+        if (
+            seal is None
+            or seal.pending is not None
+            or seal.folders != final
+            or seal.log != new_log
+        ):
+            self._seal.write(final, new_log, None, seal)
+        return written
+
+    def _write_log_files(self, files: dict[str, str]) -> None:
+        """Write the log and archives, then the sidecar that commits to them."""
+        for name, text in files.items():
+            if name != LOG_DIGEST_NAME:
+                _write_if_changed(self._root / name, text)
+        if LOG_DIGEST_NAME in files:
+            _write_if_changed(self._root / LOG_DIGEST_NAME, files[LOG_DIGEST_NAME])
+
+    def _refuse_unsigned(self, plans: dict[str, _FolderPlan]) -> None:
+        """No agent key in this process: write nothing a reader could be asked to trust."""
+        if plans and not self._warned_unsigned:
+            self._warned_unsigned = True
+            _logger.warning(
+                "okf index: no agent signing key bound for %s; indexes not written "
+                "(the agent's own heal pass regenerates and signs them)",
+                self._root,
+            )
+
+    def _recover_pending(self) -> None:
+        """Finish a drain that crashed after its signed intent: replay the log, re-seal."""
+        if not self._seal.can_sign:
+            return
+        seal = self._seal.load()
+        if seal is None or seal.pending is None:
+            return
+        pending = seal.pending
+        new_log = seal.log
+        if _sidecar_sha(self._root / LOG_DIGEST_NAME) == pending.log:
+            new_log = pending.log
+        elif pending.events:
+            files = self._plan_log(list(pending.events), seal, committed_only=True)
+            self._write_log_files(files)
+            new_log = sha256_hex(files[LOG_DIGEST_NAME].encode("utf-8"))
+            _logger.warning("okf log: replayed %d event(s) after a crash", len(pending.events))
+        folders = dict(seal.folders)
+        for rel, sha in pending.folders.items():
+            folder = self._root / rel if rel else self._root
+            if _sidecar_sha(folder / DIGEST_NAME) == sha:
+                folders[rel] = sha
+        self._seal.write(folders, new_log, None, seal)
 
     # -- change log ---------------------------------------------------------
 
@@ -383,49 +542,77 @@ class OkfIndexMaintainer:
             if name not in current:
                 self._events.append(LogEntry(day, DEPRECATION, prefix + name, before.title))
 
-    def _flush_log(self) -> None:
-        """Fold queued events into ``log.md`` (and archives); one write per drain batch."""
-        events, self._events = self._events, []
-        if not events:
-            return
-        try:
-            existing = self._trusted_log(LOG_NAME)
-            digest = read_log_digest(self._root)
-            archives = dict(digest.archives) if digest is not None else {}
-            merged = merge_log_events(existing, events)
-            if len(merged) > LOG_MAX_ENTRIES:
-                archives = self._archive(merged[LOG_KEEP_ENTRIES:], archives)
-                merged = merged[:LOG_KEEP_ENTRIES]
-            text = render_change_log(merged)
-            _write_if_changed(self._root / LOG_NAME, text)
-            _write_if_changed(self._root / LOG_DIGEST_NAME, render_log_digest(text, archives))
-        except OSError:
-            _logger.warning("okf log write failed", exc_info=True)
+    def _plan_log(
+        self, events: list[LogEntry], seal: Seal | None, *, committed_only: bool = False
+    ) -> dict[str, str]:
+        """Render ``log.md`` (and any archive) with ``events`` folded in; nothing written.
 
-    def _trusted_log(self, name: str) -> list[LogEntry]:
-        """Entries of a log file that matches its sidecar; ``[]`` for an absent one.
+        The result maps file name to text and always holds ``.log.digest``. The
+        existing log is merged only when its sidecar is signed by the agent.
+        """
+        digest = self._trusted_log_digest(seal, committed_only=committed_only)
+        existing = self._trusted_log(LOG_NAME, digest)
+        archives = dict(digest.archives) if digest is not None else {}
+        merged = merge_log_events(existing, events)
+        files: dict[str, str] = {}
+        if len(merged) > LOG_MAX_ENTRIES:
+            archives = self._archive(merged[LOG_KEEP_ENTRIES:], archives, digest, files)
+            merged = merged[:LOG_KEEP_ENTRIES]
+        text = render_change_log(merged)
+        files[LOG_NAME] = text
+        files[LOG_DIGEST_NAME] = render_log_digest(text, archives)
+        return files
+
+    def _trusted_log_digest(self, seal: Seal | None, *, committed_only: bool) -> LogDigest | None:
+        """The ``.log.digest`` on disk if the agent's seal vouches for it, else ``None``."""
+        try:
+            raw = read_regular_file(self._root / LOG_DIGEST_NAME)
+        except OSError:
+            return None
+        sha = sha256_hex(raw)
+        trusted = seal is not None and (
+            seal.log == sha if committed_only else seal.trusts_log(sha)
+        )
+        if not trusted:
+            _logger.warning(
+                "okf log sidecar in %s is not signed by the agent; discarded", self._root
+            )
+            return None
+        try:
+            return parse_log_digest(raw.decode("utf-8"))
+        except (UnicodeError, ValueError):
+            return None
+
+    def _trusted_log(self, name: str, digest: LogDigest | None) -> list[LogEntry]:
+        """Entries of a log file that matches its signed sidecar; ``[]`` otherwise.
 
         A log that exists but does not verify was edited behind our back: it is
         discarded (loudly), never merged, so a forged entry cannot be laundered
         into the signed-off history.
         """
-        verified = read_verified_log(self._root, name)
+        verified = None if digest is None else read_verified_log(self._root, name, digest=digest)
         if verified is not None:
             return list(verified)
-        if (self._root / name).exists():
+        if digest is not None and (self._root / name).exists():
             _logger.warning("okf %s failed verification in %s; discarding it", name, self._root)
         return []
 
-    def _archive(self, overflow: list[LogEntry], archives: dict[str, str]) -> dict[str, str]:
+    def _archive(
+        self,
+        overflow: list[LogEntry],
+        archives: dict[str, str],
+        digest: LogDigest | None,
+        files: dict[str, str],
+    ) -> dict[str, str]:
         """Roll the oldest entries into their year's ``log.YYYY.md``; return the digests."""
         by_year: dict[str, list[LogEntry]] = {}
         for entry in overflow:
             by_year.setdefault(entry.day[:4], []).append(entry)
         for year, rolled in by_year.items():
             name = archive_name(year)
-            held = self._trusted_log(name) if year in archives else []
+            held = self._trusted_log(name, digest) if year in archives else []
             text = render_change_log(merge_log_events(held, rolled))
-            _write_if_changed(self._root / name, text)
+            files[name] = text
             archives[year] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return archives
 
@@ -466,14 +653,16 @@ class OkfIndexMaintainer:
         return found
 
     def _is_stale(self, rel: str) -> bool:
+        """Missing, unsigned, forged, replayed, tampered, or older than a document."""
         folder = self._root / rel if rel else self._root
-        digest = read_folder_digest(folder)
-        index = folder / INDEX_NAME
-        if digest is None or not index.is_file():
+        validation = self.validate(folder)
+        digest = validation.digest
+        if not validation.valid or digest is None:
             return True
-        if not self.validate(folder).valid:
+        try:
+            index_mtime = (folder / INDEX_NAME).lstat().st_mtime_ns
+        except OSError:
             return True
-        index_mtime = index.stat().st_mtime_ns
         if index_mtime > time.time_ns() + _MTIME_SLACK_NS:
             return True  # an index dated in the future is never trusted
         docs: set[str] = set()
@@ -493,10 +682,56 @@ class OkfIndexMaintainer:
     # -- verification -------------------------------------------------------
 
     def validate(self, folder: Path | None = None, *, deep: bool = False) -> FolderIndexValidation:
-        """Verify one folder's index (the root's by default); never its children."""
+        """Verify one folder's index (the root's by default); never its children.
+
+        Beyond the OKF checks, the folder's sidecar must be one the agent signed:
+        its hash is in this collection's seal, which verifies against the pinned
+        agent key. An unkeyed sidecar recomputed by anyone else, an older signed
+        pair replayed, or a process with no pinned key all fail closed. The
+        result carries the exact verified text and sidecar for the caller to use.
+        """
         target = self._root if folder is None else Path(folder)
         is_root = self._bundle_root and target == self._root
-        return validate_folder_index(target, root=is_root, deep=deep)
+        validation = validate_folder_index(target, root=is_root, deep=deep)
+        if not validation.valid:
+            return validation
+        try:
+            rel = target.relative_to(self._root).as_posix()
+        except ValueError:
+            return FolderIndexValidation(False, error="folder is outside this collection")
+        seal = self._seal.load()
+        if seal is None:
+            return FolderIndexValidation(False, error="no verified agent seal for this collection")
+        if not seal.trusts_folder("" if rel == "." else rel, validation.sidecar_sha):
+            return FolderIndexValidation(False, error="folder index is not signed by the agent")
+        return validation
+
+    def document_labels(self, folder: Path, names: list[str]) -> dict[str, str]:
+        """Each listed document's classification, read from the document itself.
+
+        A routing chunk is gated on these labels, never on its index lines.
+        Cached by ``(mtime, size, inode)`` so an unchanged document is not
+        re-read; a document that is missing, a symlink or not valid OKF is left
+        out (the caller treats it as unlabeled).
+        """
+        labels: dict[str, str] = {}
+        for name in names:
+            path = folder / name
+            try:
+                st = path.lstat()
+            except OSError:
+                continue
+            key = (st.st_mtime_ns, st.st_size, st.st_ino)
+            hit = self._labels.get(str(path))
+            if hit is not None and hit[0] == key:
+                labels[name] = hit[1]
+                continue
+            entry = folder_entry(path, expect=st)
+            if entry is None:
+                continue
+            self._labels[str(path)] = (key, entry.classification)
+            labels[name] = entry.classification
+        return labels
 
     def verify(self, folder: Path | None = None, *, deep: bool = False) -> bool:
         """Whether one folder's index is trusted."""
@@ -550,12 +785,32 @@ class OkfIndexMaintainer:
 
 def _write_if_changed(path: Path, text: str) -> bool:
     try:
-        if path.read_text(encoding="utf-8") == text:
+        if read_regular_file(path) == text.encode("utf-8"):
             return False
-    except (OSError, UnicodeError):
+    except OSError:
         pass
     atomic_write_text(path, text)
     return True
+
+
+def _sidecar_sha(path: Path) -> str:
+    """SHA-256 of a sidecar's bytes, or ``""`` when it is absent or unsafe."""
+    try:
+        return sha256_hex(read_regular_file(path))
+    except OSError:
+        return ""
+
+
+def _child_count(
+    child_rel: str, child: Path, plans: dict[str, _FolderPlan], removed: set[str]
+) -> int | None:
+    """A child folder's document count: this drain's plan first, else its sidecar."""
+    if child_rel in plans:
+        return plans[child_rel].count
+    if child_rel in removed:
+        return None
+    digest = read_folder_digest(child)
+    return None if digest is None else digest.count
 
 
 _REGISTRY: weakref.WeakValueDictionary[str, OkfIndexMaintainer] = weakref.WeakValueDictionary()

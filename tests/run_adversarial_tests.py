@@ -54,6 +54,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcmemory/tests/unit/test_connected_layout.py",
         "packages/arcmemory/tests/unit/index/test_okf_log.py",
         "packages/arcokf/tests/test_log.py",
+        # Item 62 F4/F6: index and log sidecars are agent-signed (.okf.seal). A forged
+        # index or log with a recomputed sidecar, an older signed pair, a replayed
+        # lower-generation seal, a seal from another collection or key, and unsigned
+        # legacy sidecars all fail closed and heal from the documents; routing labels
+        # come from the documents; a symlink swapped in between verify and read is
+        # never served; a crash between the index and log writes loses no log line.
+        "packages/arcmemory/tests/security/test_okf_signed_sidecars.py",
+        "packages/arcokf/tests/test_safe_read.py",
+        # The operator's repository-index view walks folders, verified deep, and
+        # refuses a folder argument outside the source.
+        "packages/arcui/tests/integration/test_doc_repo_index_route.py",
     ),
     "prompt replacement and instruction-boundary attacks": (
         "packages/arcprompt/tests/unit/test_verifier.py",

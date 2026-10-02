@@ -21,7 +21,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from arcokf import validate_folder_index
 from arctrust.audit import AuditSink
 from pydantic import BaseModel, Field
 
@@ -408,11 +407,13 @@ async def _indexed_windows(backend: IndexBackend, scope: str, base_id: str) -> l
 def _routing_windows(collection_root: Path, base_id: str) -> list[SourceChunk] | None:
     """Bounded windows of a verified index's routing lines; ``None`` if untrusted.
 
-    Verification is the O(1) sidecar check: the index must be canonical and
-    match its digest. An index that lists nothing yields no windows, so an
-    emptied source stops surfacing a bare heading.
+    Verification is the O(1) sidecar check plus the agent's signed seal: the
+    index must be canonical, match its digest, and that digest must be one the
+    agent signed. The windows are cut from the exact verified text, never a
+    second read. An index that lists nothing yields no windows, so an emptied
+    source stops surfacing a bare heading.
     """
-    validation = validate_folder_index(collection_root)
+    validation = source_maintainer(collection_root).validate()
     if not validation.valid:
         return None
     if not validation.entries:
@@ -422,9 +423,9 @@ def _routing_windows(collection_root: Path, base_id: str) -> list[SourceChunk] |
         bounded_chunks(
             base_id,
             index_path.as_posix(),
-            routing_text(index_path.read_text(encoding="utf-8")),
+            routing_text(validation.text),
             "",
-            index_path.stat().st_mtime,
+            index_path.lstat().st_mtime,
         )
     )
 

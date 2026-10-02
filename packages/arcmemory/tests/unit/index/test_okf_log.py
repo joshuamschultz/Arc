@@ -172,7 +172,11 @@ def test_forged_archive_is_discarded_not_rolled_forward(
     # from the forged file.
     digest = read_log_digest(tmp_path)
     assert digest is not None
+    files: dict[str, str] = {}
     maintainer._archive(
-        [LogEntry("2025-06-01", "Creation", "older.md", "Older")], dict(digest.archives)
+        [LogEntry("2025-06-01", "Creation", "older.md", "Older")],
+        dict(digest.archives),
+        digest,
+        files,
     )
-    assert "evil" not in archive.read_text(encoding="utf-8")
+    assert "evil" not in files["log.2025.md"]

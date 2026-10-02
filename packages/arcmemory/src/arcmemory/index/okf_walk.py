@@ -8,10 +8,12 @@ that fuse with the vector / BM25 / graph channels.
 
 Trust and scope, in order:
 
-* every index visited is verified (O(1) sidecar check) and a failing one is
-  skipped, never read, so a tampered index degrades to ordinary recall;
+* every index visited is verified (O(1) sidecar check plus the agent's signed
+  seal) and a failing one is skipped, never read, so a forged index degrades to
+  ordinary recall;
 * a document is opened only through a verified folder, must resolve inside
-  ``memory/`` without a symlink, and must still match the digest the sidecar
+  ``memory/`` without a symlink, is opened once with ``O_NOFOLLOW`` and must
+  still match the digest the verified sidecar (the same bytes, never a re-read)
   committed for it;
 * the walk starts only at the surface index's own source folders, never follows
   a symlinked folder, and refuses anything that resolves under ``connected/`` at
@@ -31,7 +33,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from arcokf import IndexEntry, OKFValidationError, read_folder_digest
+from arcokf import FolderDigest, IndexEntry, OKFValidationError, read_regular_file
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import Classification
 
@@ -111,6 +113,7 @@ class OkfWalker:
         self._top_folders = top_folders
         self._top_docs = top_docs
         self._maintainer = memory_maintainer(self._mem_dir)
+        self._digests: dict[Path, FolderDigest] = {}
 
     def walk(self, query: str) -> list[Recall]:
         """The best documents the indexes route ``query`` to, gated on clearance.
@@ -120,6 +123,7 @@ class OkfWalker:
         terms = _tokens(query)
         if not terms:
             return []
+        self._digests = {}
         ranked = self._rank_documents(terms)
         recalls = [r for folder, entry, score in ranked if (r := self._open(folder, entry, score))]
         return gate_no_read_up(
@@ -158,9 +162,10 @@ class OkfWalker:
             _logger.warning("okf walk refused folder outside its scope: %s", folder)
             return ()
         validation = self._maintainer.validate(folder)
-        if not validation.valid:
+        if not validation.valid or validation.digest is None:
             _logger.warning("okf walk skipped unverified index %s: %s", folder, validation.error)
             return ()
+        self._digests[folder] = validation.digest  # the verified sidecar, never re-read
         return validation.entries
 
     def _rank_documents(self, terms: list[str]) -> list[tuple[Path, IndexEntry, float]]:
@@ -201,11 +206,11 @@ class OkfWalker:
     def _open(self, folder: Path, entry: IndexEntry, score: float) -> Recall | None:
         """Read one indexed document, refusing anything the sidecar does not vouch for."""
         path = folder / entry.path
-        digest = read_folder_digest(folder)
+        digest = self._digests.get(folder)
         try:
             if not self._within_scope(path):
                 return None
-            raw = path.read_bytes()
+            raw = read_regular_file(path)  # one open, never through a symlink leaf
             if digest is None or hashlib.sha256(raw).hexdigest() != digest.docs.get(entry.path):
                 _logger.warning("okf walk skipped changed document %s", path)
                 return None

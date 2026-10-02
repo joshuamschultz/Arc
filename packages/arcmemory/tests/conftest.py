@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from arctrust.identity import AgentIdentity
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.okf_seal import bind_memory_identity, release_memory_identity
 from arcmemory.types import Scope
 
 _DIMS = 8
@@ -47,6 +50,16 @@ def _isolate_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc-team"))
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+
+
+@pytest.fixture(autouse=True)
+def _agent_signs_its_memory(tmp_path: Path) -> Iterator[None]:
+    """Bind a fresh agent identity to this test's tmp dir (ADR-029: the agent signs
+    its own memory indexes). Without a bound key every index read fails closed, as
+    it does in production for a process that never built the agent's brain."""
+    bind_memory_identity(tmp_path, AgentIdentity.generate(org="test", agent_type="memory"))
+    yield
+    release_memory_identity(tmp_path)
 
 
 @pytest.fixture
