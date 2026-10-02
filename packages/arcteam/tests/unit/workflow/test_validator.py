@@ -571,3 +571,32 @@ def test_all_problems_are_reported_together_not_one_at_a_time() -> None:
     document["node"][1]["when"] = "len($input.x) > 1"
 
     assert len(_issues(document)) >= 2
+
+
+# --- on_failure ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("as_router", [False, True])
+def test_continue_is_refused_on_a_gate_and_a_router(as_router: bool) -> None:
+    """A failed gate is a rejection and a failed router chose nothing: neither may be skipped past."""
+    document = minimal_document()
+    if as_router:
+        document["node"][0] = {
+            "id": "a",
+            "kind": "router",
+            "agent": "@a",
+            "mode": "llm",
+            "routes": [{"to": "b", "default": True}],
+        }
+    else:
+        document["node"][0] = {"id": "a", "kind": "gate", "gate": "human:ok"}
+    document["node"][0]["on_failure"] = "continue"
+
+    assert ("a", "on_failure") in _fields(document)
+
+
+def test_continue_is_accepted_on_an_agent_node() -> None:
+    document = minimal_document()
+    document["node"][0]["on_failure"] = "continue"
+
+    assert _issues(document) == ()

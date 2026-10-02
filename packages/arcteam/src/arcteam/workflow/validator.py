@@ -240,6 +240,17 @@ def _check_routes(
 
 def _check_node_options(definition: WorkflowDefinition) -> Iterable[ValidationIssue]:
     for node in definition.nodes:
+        if node.on_failure == "continue" and node.kind in ("gate", "router"):
+            yield ValidationIssue(
+                node_id=node.id,
+                field="on_failure",
+                error=(
+                    "a failed gate is a rejection and a failed router chose no route; "
+                    "the run may not go on past either"
+                ),
+                observed=node.on_failure,
+                admissible=("fail_run", "skip_dependents"),
+            )
         yield from _check_artifact_paths(node)
 
 

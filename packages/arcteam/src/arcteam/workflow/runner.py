@@ -55,6 +55,7 @@ from .runner_contracts import (
     DefinitionStoreLike,
     Initiator,
     NodeSpec,
+    OnFailure,
     OwnerResolver,
     PredicateEvaluator,
     RouterNodeSpec,
@@ -173,6 +174,29 @@ def _failure_reason(failed: NodeInstance) -> str:
     return f"node {failed.node_id} failed: {detail}"
 
 
+def _completed_with_failures(failures: list[NodeInstance]) -> str:
+    """The resolution of a run that finished although some nodes failed."""
+    return "completed with failures: " + "; ".join(_failure_reason(f) for f in failures)
+
+
+def _descendants(node_id: str, definition: WorkflowSpec) -> set[str]:
+    """Every node that reaches ``node_id`` through ``needs``, transitively."""
+    found: set[str] = set()
+    frontier = [node_id]
+    while frontier:
+        current = frontier.pop()
+        for node in definition.nodes:
+            if current in node.needs and node.id not in found:
+                found.add(node.id)
+                frontier.append(node.id)
+    return found
+
+
+def _upstream_failed_reason(node_id: str, error: str) -> str:
+    """Why a node that never ran did not: the upstream failure, in one line."""
+    return f"upstream {node_id} failed: {error}" if error else f"upstream {node_id} failed"
+
+
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -211,6 +235,7 @@ class _Decision:
 
     action: Literal["wait", "skip", "go"]
     iteration: int = 0
+    reason: str = "condition"
 
 
 _WAIT = _Decision("wait")
@@ -833,17 +858,19 @@ class WorkflowRunner:
         routed = await self._follow_llm_routers(run, definition, state)
         if routed is None:
             return await self._require_run(run.run_id), True, state
-        changed |= routed
+        repairs, routes_changed = routed
+        changed |= routes_changed
 
-        pending: list[tuple[NodeSpec, int]] = list(revisions)
+        pending: list[tuple[NodeSpec, int]] = [*revisions, *repairs]
+        failure_policy = {node.id: node.on_failure for node in definition.nodes}
 
         try:
             for node in definition.nodes:
-                decision = self._decide(node, state, scope)
+                decision = self._decide(node, state, scope, failure_policy)
                 if decision.action == "wait":
                     continue
                 if decision.action == "skip":
-                    await self._skip(run, node.id, decision.iteration, state, "condition")
+                    await self._skip(run, node.id, decision.iteration, state, decision.reason)
                     changed = True
                 elif node.kind == "router" and cast(RouterNodeSpec, node).mode == "rules":
                     await self._choose_rules_route(
@@ -863,18 +890,24 @@ class WorkflowRunner:
             return await self._require_run(run.run_id), True, state
         return await self._require_run(run.run_id), changed, state
 
-    def _decide(self, node: NodeSpec, state: RunState, scope: Mapping[str, Any]) -> _Decision:
+    def _decide(
+        self,
+        node: NodeSpec,
+        state: RunState,
+        scope: Mapping[str, Any],
+        failure_policy: Mapping[str, OnFailure],
+    ) -> _Decision:
         """Whether this node runs, is skipped, or is not yet decidable."""
-        candidate = self._candidate_iteration(node, state)
+        candidate = self._candidate_iteration(node, state, failure_policy)
         if candidate is None:
             return _WAIT
-        action, iteration = candidate
+        action, iteration, reason = candidate
         if state.highest_iteration(node.id) >= iteration:
             # Already materialized, routed or skipped at this iteration: a
             # skipped need must not re-journal its dependents' skip every pass.
             return _WAIT
         if action == "skip":
-            return _Decision("skip", iteration)
+            return _Decision("skip", iteration, reason)
         if node.when is not None:
             try:
                 satisfied = self._evaluate(node.when, scope)
@@ -885,28 +918,39 @@ class WorkflowRunner:
         return _Decision("go", iteration)
 
     def _candidate_iteration(
-        self, node: NodeSpec, state: RunState
-    ) -> tuple[Literal["go", "skip"], int] | None:
+        self, node: NodeSpec, state: RunState, failure_policy: Mapping[str, OnFailure]
+    ) -> tuple[Literal["go", "skip"], int, str] | None:
         """Resolve ``needs`` into a decision, or ``None`` to wait.
 
-        A need is satisfied when it is done OR skipped; every need must settle,
-        and a skipped need skips this node too. Exactly one non-run terminal
-        state, and it travels transitively.
+        A need is satisfied when it is done, skipped, or failed under a policy
+        that lets the run go on. Every need must settle, and a skipped need
+        skips this node too. A failed ``continue`` node counts as done (its
+        dependents run and are told); a failed ``skip_dependents`` node skips
+        them, with the reason; a failed ``fail_run`` node is never satisfied.
         """
         if not node.needs:
-            return ("go", 0)
-        done: list[int] = []
-        skipped: list[int] = []
+            return ("go", 0, "condition")
+        settled: list[int] = []
+        skipped: list[tuple[int, str]] = []
         for need in node.needs:
             status, iteration = state.terminal_state(need)
             if status == "done":
-                done.append(iteration)
+                settled.append(iteration)
             elif status == "skipped":
-                skipped.append(iteration)
+                skipped.append((iteration, state.skip_reasons.get((need, iteration), "")))
+            elif status == "failed":
+                policy = failure_policy[need]
+                if policy == "continue":
+                    settled.append(iteration)
+                elif policy == "skip_dependents":
+                    error = (state.latest_failure_reason(need) or "").strip()
+                    skipped.append((iteration, _upstream_failed_reason(need, error)))
         if skipped:
-            return ("skip", max(skipped))
-        if len(done) == len(node.needs):
-            return ("go", max(done))
+            iteration = max(i for i, _ in skipped)
+            reason = next((r for _, r in skipped if r.startswith("upstream ")), "condition")
+            return ("skip", iteration, reason)
+        if len(settled) == len(node.needs):
+            return ("go", max(settled), "condition")
         return None
 
     # -- effects ------------------------------------------------------------
@@ -995,6 +1039,13 @@ class WorkflowRunner:
             # could complete stays unreachable by splitting it across nodes.
             "accumulated_legs": list(legs),
         }
+        failed_upstream = {
+            ancestor: reason
+            for ancestor, reason in state.upstream_failed().items()
+            if ancestor in _ancestors(node, definition)
+        }
+        if failed_upstream:
+            metadata["upstream_failed"] = failed_upstream
         revision_notes = state.revisions.get((node.id, iteration))
         if revision_notes:
             metadata["revision_notes"] = revision_notes
@@ -1169,7 +1220,7 @@ class WorkflowRunner:
         self, run: RunRecord, node_id: str, iteration: int, state: RunState, reason: str
     ) -> None:
         """Record a non-run terminal state. Skipped nodes get no task row, ever."""
-        state.record_skip(node_id, iteration)
+        state.record_skip(node_id, iteration, reason)
         await self._append(
             run.run_id,
             {"kind": "skipped", "node_id": node_id, "iteration": iteration, "reason": reason},
@@ -1208,8 +1259,15 @@ class WorkflowRunner:
 
     async def _follow_llm_routers(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
-    ) -> bool | None:
-        """Follow a completed llm router's choice. ``None`` means the run failed."""
+    ) -> tuple[list[tuple[NodeSpec, int]], bool] | None:
+        """Follow a completed llm router's choice; one repair for an invalid one.
+
+        The answer must be a declared route. An undeclared one gets exactly one
+        repair attempt (the router runs again, told what it may choose); a second
+        invalid answer fails the node. Never a silent fall-through to a branch.
+        ``None`` means the pass should restart against fresh state.
+        """
+        repairs: list[tuple[NodeSpec, int]] = []
         changed = False
         for node in definition.nodes:
             if node.kind != "router":
@@ -1220,20 +1278,57 @@ class WorkflowRunner:
             instance = state.latest(node.id)
             if instance is None or instance.task.status != "done":
                 continue
-            if (node.id, instance.iteration) in state.routes:
+            key = (node.id, instance.iteration)
+            if key in state.routes or key in state.superseded:
                 continue
             chosen = str(instance.output.get("route", ""))
             declared = [route.to for route in router.routes]
-            if chosen not in declared:
-                await self._terminate(
-                    run.run_id,
-                    "failed",
-                    f"node {node.id}: undeclared route {chosen!r}, declared {declared}",
-                )
+            if chosen in declared:
+                await self._record_route(run, router, instance.iteration, chosen, state)
+                changed = True
+            elif node.id in state.repaired:
+                await self._fail_node(run, node.id, state, f"router output invalid: {chosen!r}")
                 return None
-            await self._record_route(run, router, instance.iteration, chosen, state)
-            changed = True
-        return changed
+            else:
+                repairs.append(
+                    await self._request_router_repair(run, router, instance, declared, state)
+                )
+                changed = True
+        return repairs, changed
+
+    async def _request_router_repair(
+        self,
+        run: RunRecord,
+        router: RouterNodeSpec,
+        instance: NodeInstance,
+        declared: list[str],
+        state: RunState,
+    ) -> tuple[NodeSpec, int]:
+        """Journal the repair and put the router back on the frontier with notes."""
+        chosen = str(instance.output.get("route", ""))
+        notes = (
+            f"Your route {chosen!r} is not declared. Choose exactly one of: {', '.join(declared)}."
+        )
+        await self._append(
+            run.run_id,
+            {
+                "kind": "repair",
+                "node_id": router.id,
+                "iteration": instance.iteration,
+                "notes": notes,
+            },
+        )
+        # Mirror the journal entry now: the next pass would derive the same.
+        state.superseded.add((router.id, instance.iteration))
+        state.repaired.add(router.id)
+        state.revisions[(router.id, instance.iteration + 1)] = notes
+        self._audit(
+            "workflow.router.repair_requested",
+            target=f"{run.workflow_id}/{router.id}",
+            outcome="repair",
+            extra={"run_id": run.run_id, "answer": chosen, "declared": declared},
+        )
+        return router, instance.iteration + 1
 
     async def _record_route(
         self,
@@ -1355,8 +1450,13 @@ class WorkflowRunner:
         return pending
 
     async def _fail_node(self, run: RunRecord, node_id: str, state: RunState, reason: str) -> None:
+        """Mark a node failed with its reason; the roll-up applies its ``on_failure``.
+
+        A node whose answer was unusable fails even though its task row said
+        done, so the row is rewritten, not just left alone.
+        """
         instance = state.latest(node_id)
-        if instance is not None and instance.task.status not in ("done", "failed"):
+        if instance is not None and instance.task.status != "failed":
             await self._tasks.update(
                 instance.task.id,
                 {"status": "failed", "last_error": reason},
@@ -1369,7 +1469,6 @@ class WorkflowRunner:
             outcome="failed",
             extra={"run_id": run.run_id, "reason": reason},
         )
-        await self._terminate(run.run_id, "failed", f"node {node_id}: {reason}")
 
     # -- roll-up -------------------------------------------------------------
 
@@ -1400,8 +1499,11 @@ class WorkflowRunner:
                 return await self._require_run(run.run_id)
             return run
         failures = state.failures()
-        if failures:
-            return await self._terminate(run.run_id, "failed", _failure_reason(failures[0]))
+        policy = {node.id: node.on_failure for node in definition.nodes}
+        fatal = [f for f in failures if policy.get(f.node_id, "fail_run") == "fail_run"]
+        if fatal:
+            await self._cancel_unreached(run, definition, state, fatal[0])
+            return await self._terminate(run.run_id, "failed", _failure_reason(fatal[0]))
         # A task that settled between the decide pass and this roll-up moved the
         # frontier AFTER the pass decided against it — not a stall. The decide pass
         # and this roll-up read the store separately, so a predecessor committing
@@ -1431,7 +1533,42 @@ class WorkflowRunner:
                 "failed",
                 f"stalled: nothing in flight and {undecided[0]} never became reachable",
             )
+        if failures:
+            return await self._terminate(
+                run.run_id, "done_with_failures", _completed_with_failures(failures)
+            )
         return await self._terminate(run.run_id, "done", "all nodes complete")
+
+    async def _cancel_unreached(
+        self, run: RunRecord, definition: WorkflowSpec, state: RunState, failed: NodeInstance
+    ) -> None:
+        """Say why each node that will never run did not, when a failure ends the run.
+
+        A descendant of the failed node names it and its error; a node on an
+        independent branch that never started names the run's failure instead.
+        Journaled, so the per-node snapshot and the run view show the reason.
+        """
+        error = (failed.task.last_error or "").strip()
+        downstream = _descendants(failed.node_id, definition)
+        for node in definition.nodes:
+            if state.terminal_state(node.id)[0] != "absent":
+                continue
+            reason = (
+                _upstream_failed_reason(failed.node_id, error)
+                if node.id in downstream
+                else f"run failed: {_failure_reason(failed)}"
+            )
+            state.record_cancel(node.id, 0, reason)
+            await self._append(
+                run.run_id,
+                {"kind": "cancelled", "node_id": node.id, "iteration": 0, "reason": reason},
+            )
+            self._audit(
+                "workflow.node.cancelled",
+                target=f"{run.workflow_id}/{node.id}",
+                outcome="cancelled",
+                extra={"run_id": run.run_id, "reason": reason},
+            )
 
     @staticmethod
     def _terminal_states_moved(prev: RunState, curr: RunState, definition: WorkflowSpec) -> bool:
@@ -1455,7 +1592,7 @@ class WorkflowRunner:
             actor_did=self._runner_did,
             expected_status=run.status,
             resolution=resolution,
-            last_error=resolution if status == "failed" else None,
+            last_error=resolution if status in ("failed", "done_with_failures") else None,
             fence=self._mutation_fence(),
         )
         if not flipped:
@@ -1471,7 +1608,7 @@ class WorkflowRunner:
             await self._narrator.run_outcome(
                 channel=run.channel, run_id=run_id, status=status, detail=resolution
             )
-        if status == "failed":
+        if status in ("failed", "done_with_failures"):
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
 

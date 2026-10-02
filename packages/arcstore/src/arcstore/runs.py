@@ -23,14 +23,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from arcstore.mutation_fence import RunnerFence
 from arcstore.tasks import _validate_free_text
 
-RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
+RunStatus = Literal[
+    "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
+]
 NodeKind = Literal["agent", "tool", "script", "router", "gate"]
 NodeOutcome = Literal["done", "failed", "skipped"]
 NodeStatus = Literal[
     "materialized", "in_progress", "review", "done", "failed", "skipped", "cancelled", "routed"
 ]
 
-_TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
+_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"done", "done_with_failures", "failed", "cancelled"}
+)
 
 
 def _now() -> str:

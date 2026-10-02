@@ -109,6 +109,13 @@ def reference_node_states(
                 0,
                 NodeState(status="skipped", iteration=iteration, reason=str(entry["reason"])),
             )
+        elif entry.get("kind") == "cancelled":
+            offer(
+                node_id,
+                iteration,
+                0,
+                NodeState(status="cancelled", iteration=iteration, reason=str(entry["reason"])),
+            )
         elif entry.get("kind") == "route":
             base = instances.get((node_id, iteration)) or NodeState(
                 status="routed", iteration=iteration

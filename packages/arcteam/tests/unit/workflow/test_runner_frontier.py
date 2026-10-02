@@ -272,8 +272,8 @@ async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: 
     assert next(e for e in record.path_taken if e["kind"] == "route")["chosen"] == "fast"
 
 
-async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry: Any) -> None:
-    definition = Definition(
+def _triage() -> Definition:
+    return Definition(
         id="triage",
         nodes=(
             Node(
@@ -287,8 +287,13 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
             Node(id="slow", kind="agent", agent="@ops", needs=("pick",)),
         ),
     )
-    _, runs, tasks = stores
-    runner = build(stores, registry, definition)
+
+
+async def test_llm_router_invalid_output_fails_node_with_reason_after_one_repair(
+    stores: Any, registry: Any
+) -> None:
+    flow_tasks, runs, tasks = stores
+    runner = build(stores, registry, _triage())
     run = await runner.start_run(
         "triage", input={}, initiator="operator", initiator_did="did:arc:x/1"
     )
@@ -297,8 +302,39 @@ async def test_llm_router_undeclared_choice_fails_the_run(stores: Any, registry:
     await runner.advance(run.run_id)
 
     record = await runs.get(run.run_id)
+    assert record.status == "running", "one repair attempt before the node fails"
+    rows = {r.id: r for r in await flow_tasks.query_by_flow_run(run.run_id)}
+    repair = rows[task_id(run.run_id, "pick", 1)]
+    assert "fast, slow" in repair.metadata["revision_notes"]
+    assert not {"fast", "slow"} & {r.metadata["node_id"] for r in rows.values()}, (
+        "no branch is taken on an invalid answer"
+    )
+
+    await complete_node(tasks, task_id(run.run_id, "pick", 1), SALES_DID, {"route": "sideways"})
+    await runner.advance(run.run_id)
+
+    record = await runs.get(run.run_id)
     assert record.status == "failed"
-    assert "undeclared route" in (record.resolution or "")
+    assert "router output invalid: 'sideways'" in (record.last_error or "")
+    assert record.node_states["pick"].status == "failed"
+
+
+async def test_llm_router_repair_that_names_a_declared_route_is_followed(
+    stores: Any, registry: Any
+) -> None:
+    flow_tasks, runs, tasks = stores
+    runner = build(stores, registry, _triage())
+    run = await runner.start_run(
+        "triage", input={}, initiator="operator", initiator_did="did:arc:x/1"
+    )
+
+    await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "sideways"})
+    await runner.advance(run.run_id)
+    await complete_node(tasks, task_id(run.run_id, "pick", 1), SALES_DID, {"route": "fast"})
+    await runner.advance(run.run_id)
+
+    materialized = {r.metadata["node_id"] for r in await flow_tasks.query_by_flow_run(run.run_id)}
+    assert "fast" in materialized and "slow" not in materialized
 
 
 async def test_failed_node_finalizes_the_run_instead_of_hanging(

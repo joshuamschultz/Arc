@@ -26,7 +26,7 @@ from arcstore.tasks import Task
 
 from .runner_contracts import IN_FLIGHT_TASK_STATUSES
 
-NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped"]
+NodeStatus = Literal["absent", "in_flight", "done", "failed", "skipped", "cancelled"]
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,11 @@ class RunState:
             group.sort(key=lambda instance: instance.iteration)
 
         self.skips: set[tuple[str, int]] = set()
+        self.skip_reasons: dict[tuple[str, int], str] = {}
+        # Routers whose invalid answer already got its one repair attempt.
+        self.repaired: set[str] = set()
+        # Nodes that never ran because the run ended first, and why.
+        self.cancels: dict[tuple[str, int], str] = {}
         self.routes: dict[tuple[str, int], str] = {}
         self.settled: set[tuple[str, int]] = set()
         self.gates: set[tuple[str, int]] = set()
@@ -77,6 +82,13 @@ class RunState:
                 self.materialized.add(key)
             elif kind == "skipped":
                 self.skips.add(key)
+                self.skip_reasons[key] = str(entry.get("reason", ""))
+            elif kind == "repair":
+                self.superseded.add(key)
+                self.repaired.add(key[0])
+                self.revisions[(key[0], key[1] + 1)] = str(entry.get("notes", ""))
+            elif kind == "cancelled":
+                self.cancels[key] = str(entry.get("reason", ""))
             elif kind == "route":
                 self.routes[key] = str(entry.get("chosen", ""))
             elif kind == "settled":
@@ -103,6 +115,7 @@ class RunState:
         reached = [instance.iteration for instance in self.instances.get(node_id, [])]
         reached.extend(iteration for node, iteration in self.skips if node == node_id)
         reached.extend(iteration for node, iteration in self.routes if node == node_id)
+        reached.extend(iteration for node, iteration in self.cancels if node == node_id)
         return max(reached, default=-1)
 
     def status_at(self, node_id: str, iteration: int) -> NodeStatus:
@@ -115,6 +128,8 @@ class RunState:
             return "done"
         if (node_id, iteration) in self.skips:
             return "skipped"
+        if (node_id, iteration) in self.cancels:
+            return "cancelled"
         for instance in self.instances.get(node_id, []):
             if instance.iteration != iteration:
                 continue
@@ -163,12 +178,21 @@ class RunState:
         ]
 
     def failures(self) -> list[NodeInstance]:
+        """Nodes whose LATEST instance failed. A retried node's old failure is history."""
         return [
-            instance
-            for group in self.instances.values()
-            for instance in group
-            if instance.task.status == "failed"
+            group[-1] for group in self.instances.values() if group[-1].task.status == "failed"
         ]
+
+    def latest_failure_reason(self, node_id: str) -> str | None:
+        instance = self.latest(node_id)
+        return None if instance is None else instance.task.last_error
+
+    def upstream_failed(self) -> dict[str, str]:
+        """Each failed node's recorded reason, for dependents that run anyway."""
+        return {
+            instance.node_id: (instance.task.last_error or "").strip()
+            for instance in self.failures()
+        }
 
     def scope(self, run_input: Mapping[str, Any]) -> dict[str, Any]:
         """The predicate/wiring scope: ``$nodes.<id>.output.<field>`` and ``$input.*``."""
@@ -186,8 +210,12 @@ class RunState:
     # so dropping one of these costs an extra pass and changes no outcome.
     # Verified by mutation — see the equivalence note in the test suite.
 
-    def record_skip(self, node_id: str, iteration: int) -> None:
+    def record_skip(self, node_id: str, iteration: int, reason: str = "") -> None:
         self.skips.add((node_id, iteration))
+        self.skip_reasons[(node_id, iteration)] = reason
+
+    def record_cancel(self, node_id: str, iteration: int, reason: str) -> None:
+        self.cancels[(node_id, iteration)] = reason
 
     def record_route(self, node_id: str, iteration: int, chosen: str) -> None:
         self.routes[(node_id, iteration)] = chosen
@@ -260,6 +288,11 @@ def derive_node_states(
                 status="skipped", iteration=iteration, reason=str(entry.get("reason", ""))
             )
             offer(node_id, iteration, _RANK_SKIP, skipped)
+        elif kind == "cancelled":
+            cancelled = NodeState(
+                status="cancelled", iteration=iteration, reason=str(entry.get("reason", ""))
+            )
+            offer(node_id, iteration, _RANK_SKIP, cancelled)
         elif kind == "route":
             base = rows.get((node_id, iteration)) or NodeState(
                 status="routed", iteration=iteration

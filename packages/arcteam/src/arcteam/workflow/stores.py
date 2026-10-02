@@ -39,7 +39,7 @@ from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
 from .narrator import RunNarrator
-from .runner_contracts import RunStatus
+from .runner_contracts import TERMINAL_RUN_STATUSES, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ class WorkflowRunStore:
         for _ in range(_CAS_RETRIES):
             run = await self._runs.get(run_id)
             state = await self._backend.mutable_read(_STATE_COLLECTION, run_id)
-            if run is None or state is None or run.status in {"done", "failed", "cancelled"}:
+            if run is None or state is None or run.status in TERMINAL_RUN_STATUSES:
                 raise RunStateMissingError(f"active run {run_id} is unavailable")
             basis = f"{run.status}:{state['path_len']}"
             count = (

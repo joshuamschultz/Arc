@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_core import ErrorDetails
 
 from arcteam.workflow.errors import ValidationIssue, WorkflowParseError
+from arcteam.workflow.runner_contracts import OnFailure
 
 SCHEMA_VERSION = "1.0"
 """The predicate/graph language version this build speaks."""
@@ -50,7 +51,6 @@ WORKFLOW_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 owning agent's workspace, so this is the one rule keeping an id from being a
 path — it is shared with the store rather than restated there (ADR-029)."""
 
-OnFailure = Literal["fail_run", "continue", "skip_dependents"]
 RouterMode = Literal["rules", "llm"]
 TriggerType = Literal["cron", "interval", "manual"]
 

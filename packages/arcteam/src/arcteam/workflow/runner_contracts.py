@@ -34,11 +34,16 @@ Initiator = Literal["operator", "agent", "scheduler", "chat"]
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
 
-RunStatus = Literal["pending", "running", "waiting_gate", "done", "failed", "cancelled"]
+RunStatus = Literal[
+    "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
+]
 NodeKind = Literal["agent", "tool", "script", "router", "gate"]
+OnFailure = Literal["fail_run", "continue", "skip_dependents"]
 BundleStatus = Literal["draft", "signed", "archived"]
 
-TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
+TERMINAL_RUN_STATUSES: frozenset[str] = frozenset(
+    {"done", "done_with_failures", "failed", "cancelled"}
+)
 #: Task statuses that mean a node is still owed work (in flight, not terminal).
 IN_FLIGHT_TASK_STATUSES: frozenset[str] = frozenset({"backlog", "todo", "in_progress", "review"})
 
@@ -86,7 +91,7 @@ class NodeSpec(Protocol):
     @property
     def when(self) -> str | None: ...
     @property
-    def on_failure(self) -> Literal["fail_run", "continue", "skip_dependents"]: ...
+    def on_failure(self) -> OnFailure: ...
     @property
     def output_schema(self) -> str | None: ...
     @property
@@ -483,6 +488,7 @@ __all__ = [
     "DefinitionValidator",
     "Initiator",
     "NodeKind",
+    "OnFailure",
     "NodeSpec",
     "OwnerResolver",
     "PredicateEvaluator",
