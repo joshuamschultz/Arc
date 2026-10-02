@@ -16,7 +16,7 @@ from typing import Protocol, runtime_checkable
 
 from arctrust.audit import AuditSink
 
-from arcmemory.index.source import SourceChunk
+from arcmemory.index.source import MAX_CHUNK_BYTES, SourceChunk, hard_split
 from arcmemory.security import document_sanitize, token_estimate
 
 
@@ -45,7 +45,16 @@ def _split_units(text: str, *, chunk_tokens: int) -> list[str]:
             units.extend(line.strip() for line in para.split("\n") if line.strip())
         else:
             units.append(para)
-    return units
+    # One huge unbroken line must still end up under the per-chunk byte cap (the
+    # tsvector limit). A quarter-cap piece leaves room for the overlap tail.
+    piece_cap = MAX_CHUNK_BYTES // 4
+    bounded: list[str] = []
+    for unit in units:
+        if len(unit.encode("utf-8")) > piece_cap:
+            bounded.extend(hard_split(unit, max_bytes=piece_cap))
+        else:
+            bounded.append(unit)
+    return bounded
 
 
 def _overlap_tail(units: list[str], *, chunk_tokens: int, overlap: float) -> list[str]:

@@ -40,7 +40,7 @@ from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.backend import _cosine as _cosine
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
-from arcmemory.index.source import iter_source_chunks
+from arcmemory.index.source import embed_text, iter_source_chunks
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.tagging import entity_vocabulary, tag_entities
@@ -191,7 +191,7 @@ class SurfaceIndex:
         if not targets:
             return 0
 
-        embeddings = await self._embed([c.text for c in targets]) if embed else None
+        embeddings = await self._embed([embed_text(c.text) for c in targets]) if embed else None
         indexed = 0
         for i, chunk in enumerate(targets):
             try:
