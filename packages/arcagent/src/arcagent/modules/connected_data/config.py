@@ -26,6 +26,10 @@ class ConnectedDataConfig(ModuleConfig):
     # A run still going this long past its own time bound is stuck on a call
     # that never returns; it is cancelled, audited and retried.
     stall_grace_seconds: float = Field(default=120.0, gt=0)
+    # A source that fails this many runs in a row, in ways nobody classified (the
+    # default for an unknown error is "retry"), is escalated to the operator rather
+    # than retried silently for a month. A run that completes resets the count.
+    consecutive_failure_ceiling: int = Field(default=5, gt=0)
 
 
 __all__ = ["ConnectedDataConfig"]

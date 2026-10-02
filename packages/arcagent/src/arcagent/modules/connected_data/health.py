@@ -28,9 +28,15 @@ from collections.abc import Callable
 
 from arcagent.extension.source import SourceFailureCode
 
+#: A source that kept failing in ways nobody classified. Not a provider verdict
+#: but ours: retrying the same unknown error forever is a silent outage, so past a
+#: ceiling of consecutive failures the source is handed to a human like any other
+#: dead connection. Durable, so a restart does not forget it.
+REPEATED_FAILURES = "repeated_failures"
+
 #: Sync failure codes only a human can clear. A source that hits one is backed
 #: off until an operator explicitly acts (resume / reindex / sync-now / revoke).
-TERMINAL_SYNC_CODES = frozenset({SourceFailureCode.AUTH_REQUIRED.value})
+TERMINAL_SYNC_CODES = frozenset({SourceFailureCode.AUTH_REQUIRED.value, REPEATED_FAILURES})
 
 
 def is_terminal_sync_failure(code: str | None) -> bool:
@@ -75,6 +81,7 @@ class ConnectionHealthTracker:
 
 
 __all__ = [
+    "REPEATED_FAILURES",
     "TERMINAL_SYNC_CODES",
     "ConnectionHealthTracker",
     "is_terminal_sync_failure",

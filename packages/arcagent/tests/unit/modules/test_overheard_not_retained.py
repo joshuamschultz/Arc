@@ -153,6 +153,7 @@ class _MsgState:
         self.deliver_fn: Any = None
         self.agent_run_fn: Any = None
         self.oneshot_fn = None
+        self.requires_signed_runs = False
         self.telemetry = None
         self.requires_signed_runs = False  # f4835435: _handle_incoming branches on it
         self.config = SimpleNamespace(

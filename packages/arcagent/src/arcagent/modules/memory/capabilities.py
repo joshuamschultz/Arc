@@ -1003,17 +1003,10 @@ async def connected_sources() -> str:
         service = None
     if service is None:
         return "No connected sources are available."
-    descriptions: list[str] = []
-    for status in await service.list_sources():
-        source = status.description
-        if source is None:
-            continue
-        proposal = await service.get_mapping_proposal(status.connection_id)
-        homes = ", ".join(home.value for home in proposal.homes) if proposal else "not mapped"
-        descriptions.append(
-            f"- {source.display_name or source.source_kind}: {source.source_kind}; "
-            f"status={status.status}; homes={homes}"
-        )
+    descriptions = [
+        f"- {entry.name}: {entry.kind}; status={entry.status}; homes={entry.homes_text}"
+        for entry in await service.catalog_entries(refresh=True)
+    ]
     return "\n".join(descriptions) if descriptions else "No connected sources are available."
 
 

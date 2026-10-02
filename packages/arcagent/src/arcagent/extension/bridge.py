@@ -148,7 +148,7 @@ class CapabilityBridge:
 
     def _to_registered_tool(self, spec: ToolSpec) -> RegisteredTool:
         """Translate one spec, carrying the fields the trifecta gate reads."""
-        return RegisteredTool(
+        tool = RegisteredTool(
             name=spec.name,
             description=spec.description,
             input_schema=dict(spec.input_schema),
@@ -162,6 +162,9 @@ class CapabilityBridge:
             classification=spec.classification,
             capability_tags=list(spec.capability_tags),
         )
+        if spec.timeout_seconds is not None:
+            tool.timeout_seconds = spec.timeout_seconds
+        return tool
 
     def _dispatcher(self, tool: str) -> Callable[..., Coroutine[Any, Any, str]]:
         """Build the executor for one verb.

@@ -15,41 +15,29 @@ from typing import Any
 
 import pytest
 
+from arcagent.connected_data import KnowledgeHome
 from arcagent.modules.connected_data import _runtime
 from arcagent.modules.connected_data.capabilities import inject_connections_catalog
+from arcagent.modules.connected_data.service import CatalogEntry
 
 
 def _ctx(data: dict[str, Any]) -> SimpleNamespace:
     return SimpleNamespace(data=data)
 
 
-class _Home:
-    def __init__(self, value: str) -> None:
-        self.value = value
-
-
-class _Proposal:
-    def __init__(self, *homes: str) -> None:
-        self.homes = [_Home(h) for h in homes]
-
-
-class _Status:
-    def __init__(self, connection_id: str, display_name: str, kind: str, status: str) -> None:
-        self.connection_id = connection_id
-        self.description = SimpleNamespace(display_name=display_name, source_kind=kind)
-        self.status = status
-
-
 class _FakeService:
-    def __init__(self, statuses: list[_Status], homes: dict[str, _Proposal]) -> None:
-        self._statuses = statuses
-        self._homes = homes
+    """The service's cached catalog view: the prompt reads nothing else."""
 
-    async def list_sources(self) -> list[_Status]:
-        return self._statuses
+    def __init__(self, entries: list[CatalogEntry]) -> None:
+        self._entries = entries
 
-    async def get_mapping_proposal(self, connection_id: str) -> _Proposal | None:
-        return self._homes.get(connection_id)
+    async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
+        assert not refresh, "the prompt must never ask the service to refresh"
+        return tuple(self._entries)
+
+
+def _entry(name: str, kind: str, status: str, *homes: KnowledgeHome) -> CatalogEntry:
+    return CatalogEntry(name=name, kind=kind, status=status, homes=homes)
 
 
 def _configure_with(service: Any) -> None:
@@ -62,10 +50,9 @@ async def test_catalog_lists_connected_sources_with_a_nudge_to_search() -> None:
     _configure_with(
         _FakeService(
             [
-                _Status("slack", "Slack", "slack", "synced"),
-                _Status("crm", "CRM", "postgres", "synced"),
-            ],
-            {"slack": _Proposal("document"), "crm": _Proposal("datastore")},
+                _entry("Slack", "slack", "synced", KnowledgeHome.DOCUMENT),
+                _entry("CRM", "postgres", "synced", KnowledgeHome.DATASTORE),
+            ]
         )
     )
     sections: dict[str, str] = {}
@@ -82,7 +69,7 @@ async def test_catalog_lists_connected_sources_with_a_nudge_to_search() -> None:
 
 @pytest.mark.asyncio
 async def test_no_section_when_no_sources_are_connected() -> None:
-    _configure_with(_FakeService([], {}))
+    _configure_with(_FakeService([]))
     sections: dict[str, str] = {}
 
     await inject_connections_catalog(_ctx({"sections": sections}))

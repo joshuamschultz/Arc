@@ -79,6 +79,11 @@ class ToolSpec(_Contract):
     input_schema: dict[str, Any] = Field(default_factory=dict)
     classification: Classification = "state_modifying"
     capability_tags: list[str] = Field(default_factory=list)
+    #: How long one call may take before the registry cuts it off. ``None`` keeps
+    #: the registry default; a verb whose transport legitimately runs longer (a
+    #: file upload) declares its own, so the tool bound never undercuts the
+    #: transport bound beneath it.
+    timeout_seconds: int | None = Field(default=None, gt=0, le=3600)
 
 
 class ProbeResult(_Contract):
