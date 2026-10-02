@@ -18,8 +18,8 @@ Two properties are load-bearing rather than tidy:
   permitting ``Work`` alongside ``work`` would fold two connections onto one cell.
 
 :class:`EnvFile` stays: it is the owner-only ``KEY=value`` file provider API keys
-live in (``arc.env``), and the one-time ``connections.env`` migration reads the
-legacy connector file through it.
+live in (``arc.env``), and the one-time migration of the legacy plaintext
+connector file reads it through it.
 """
 
 from __future__ import annotations
@@ -141,7 +141,7 @@ class EnvFile:
     overwrite a newer snapshot.
 
     Provider API keys (:class:`arcagent.keys.KeyStore`) live in one of these, and
-    the one-time ``connections.env`` migration reads the legacy connector file
+    the one-time migration reads the legacy plaintext connector file
     through it, so its ownership and ``O_NOFOLLOW`` checks apply there too.
     """
 

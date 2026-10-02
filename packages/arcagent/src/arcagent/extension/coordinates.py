@@ -10,13 +10,12 @@ from is the one that breaks.
 
 **Why this is stricter than TOML.** A bare TOML key permits far more than this —
 ``personal-mail`` parses perfectly well, and connections carrying hyphenated
-names exist and work. The narrower rule is set by the env-var key, not by TOML: a
-POSIX shell variable name is ``[A-Za-z_][A-Za-z0-9_]*``, so a hyphen produces an
-entry in ``connections.env`` that cannot be exported and that several dotenv
-parsers reject outright. The strictest destination sets the rule, because a name
-is checked once and then used in all three. Loosen this to match TOML and you
-move the failure from a refusal an operator can read into a credential that
-silently will not load.
+names exist and work. The narrower rule is set by the strictest place a name is
+used: it becomes a POSIX environment variable for a placed credential
+(``[A-Za-z_][A-Za-z0-9_]*``) and the associated data a sealed credential is bound
+to. A name is checked once and then used everywhere. Loosen this to match TOML
+and you move the failure from a refusal an operator can read into a credential
+that silently will not load.
 
 Lowercase is load-bearing for the same reason. The local backend upper-cases a
 coordinate into that env key, so permitting ``Work`` beside ``work`` would fold

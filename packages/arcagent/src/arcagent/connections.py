@@ -79,6 +79,11 @@ from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
 from arcagent.extension.custody import CredentialCipher
+from arcagent.extension.custody_migrate import (
+    MigrationReport,
+    legacy_env_path,
+    migrate_connector_secrets,
+)
 from arcagent.extension.custody_select import (
     VAULT_REQUIRED,
     Custody,
@@ -1985,6 +1990,51 @@ class Connections:
             await self._push_credential_change(plan.instance)
         return tuple(written)
 
+    async def migrate_secrets(self, *, dry_run: bool = False) -> MigrationReport:
+        """Move the legacy ``connections.env`` into sealed custody, once (P18-2).
+
+        Every declared credential is stored, read back through a fresh store and
+        compared, and only then is the file deleted; undeclared keys are dropped
+        by name. Running agents are pushed the change. A dry run writes nothing.
+
+        Raises:
+            ExtensionError: The migration could not complete (no custody cipher,
+                a read-back mismatch, a symlinked or loose file). The file is kept.
+        """
+        with self._audit.open() as sink:
+            custody: Custody | None
+            try:
+                custody = await self._custody(sink)
+            except ExtensionError:
+                if not dry_run:
+                    raise
+                custody = None
+
+            def declared(instance: str, _extension: str) -> tuple[str, ...] | None:
+                try:
+                    plan = self._plan_for(instance, sink)
+                except ExtensionError:
+                    return None
+                return tuple(required.name for required in plan.secrets)
+
+            async def fresh_store() -> SecretStore:
+                return (await self._custody(sink)).store
+
+            verify = (await fresh_store()) if custody is not None else None
+            report = await migrate_connector_secrets(
+                env_path=legacy_env_path(self._world.connections_file),
+                registry=self.registry,
+                declared_fields=declared,
+                secret_store=custody.store if custody is not None else None,
+                verify_store=(lambda: verify) if verify is not None else None,
+                actor_did=causal.actor_did(),
+                sink=sink,
+                dry_run=dry_run,
+            )
+        for instance in report.connections if report.deleted else ():
+            await self._push_credential_change(instance)
+        return report
+
     async def approve(self, instance: str) -> tuple[str, ...]:
         """Record the tool contract this connection serves RIGHT NOW as approved.
 
@@ -2446,6 +2496,7 @@ __all__ = [
     "HostVerdict",
     "InstallReport",
     "McpServerAdded",
+    "MigrationReport",
     "ProbeResult",
     "RemoteLoginLedger",
     "RemoteLoginStart",

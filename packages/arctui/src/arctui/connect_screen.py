@@ -239,7 +239,7 @@ class ConnectScreen(ModalScreen[ConnectOutcome | None]):
 
         self._plan = plan
         self.query_one("#connect-plan", Label).update(
-            "\n".join(connect.plan_summary(plan, self._connections.world.env_file))
+            "\n".join(connect.plan_summary(plan, self._connections.world.credential_location))
         )
         await self._ask_for_credentials(plan)
 

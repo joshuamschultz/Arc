@@ -21,7 +21,6 @@ and appear in no return value, no log line, and no exception message raised here
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
 from typing import Any
 
 import arcagent
@@ -64,12 +63,12 @@ def _worm_sink(world: arcagent.ConnectionWorld) -> arcagent.ClosableSink:
     return operator_worm_sink(world.arc_dir, world.data_dir)
 
 
-def plan_summary(plan: arcagent.ConnectorPlan, env_file: Path) -> tuple[str, ...]:
+def plan_summary(plan: arcagent.ConnectorPlan, credential_location: str) -> tuple[str, ...]:
     """What is about to happen, in the order it will happen — shown before any input."""
     lines = [
         f"{plan.extension} → instance '{plan.instance}'",
         f"  approval mode  : {plan.approval_mode}",
-        f"  credentials in : {env_file}  (owner-only, never the config)",
+        f"  credentials in : {credential_location}  (never the config)",
     ]
     if plan.secrets:
         asked = ", ".join(declared.name for declared in plan.secrets)
@@ -103,7 +102,7 @@ def install_summary(
     return (
         f"Connected {report.extension} as instance '{report.instance}'.",
         f"  granted to     : {', '.join(agents) or '(nobody — nothing can use it yet)'}",
-        f"  credentials in : {connections.world.env_file}  (owner-only)",
+        f"  credentials in : {connections.world.credential_location}",
         f"  probe          : {report.detail or '(reachable)'}",
         f"  tools          : {', '.join(report.tools) or '(none served)'}",
         "  Restart the agent for the connection to attach.",

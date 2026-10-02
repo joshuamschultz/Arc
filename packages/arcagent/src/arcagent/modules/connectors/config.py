@@ -25,7 +25,7 @@ class ConnectorsConfig(ModuleConfig):
 
     Attributes:
         arc_dir: The deployment config root holding ``connections.toml`` (the
-            grants) and ``connections.env`` (the credentials) — the same thing
+            grants) — the same thing
             ``arc connector --arc-dir`` means. Empty defers to ``arc_home()``, so
             an agent and the CLI read one deployment without either being
             configured.
