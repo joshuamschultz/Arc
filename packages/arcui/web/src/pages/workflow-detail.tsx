@@ -714,6 +714,7 @@ const NODE_STATUS_TONE: Record<string, string> = {
   running: 'border-status-info/30 bg-status-info/10 text-status-info',
   failed: 'border-status-error/30 bg-status-error/10 text-status-error',
   waiting_gate: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
+  done_with_failures: 'border-status-warning/30 bg-status-warning/10 text-status-warning',
   skipped: 'border-border bg-muted/30 text-muted-foreground',
   cancelled: 'border-border bg-muted/30 text-muted-foreground line-through',
   routed: 'border-status-info/30 bg-status-info/10 text-status-info',
@@ -749,7 +750,7 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
     for (const n of workflow.nodes) {
       const r = reached.get(n.id)
       out[n.id] = r
-        ? { status: r.status, iteration: r.iteration, max_iterations: r.max_iterations }
+        ? { status: r.status }
         : { status: terminal ? 'skipped' : 'pending' }
     }
     return out
@@ -852,11 +853,6 @@ function RunGraph({ workflow, runId }: { workflow: WorkflowDetail; runId: string
                 <span className="min-w-0 flex-1 truncate">
                   <span className="text-foreground">{id}</span>
                   {kind && <span className="ml-1.5 text-[11px] text-muted-foreground">{kind}</span>}
-                  {rec?.iteration != null && (
-                    <span className="ml-1.5 text-[11px] text-muted-foreground">
-                      · iter {String(rec.iteration)}
-                    </span>
-                  )}
                 </span>
                 {owner && (
                   <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">

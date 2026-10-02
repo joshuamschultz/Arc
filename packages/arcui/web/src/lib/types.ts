@@ -906,11 +906,10 @@ export interface ToolDetail {
 export type WorkflowStatus = 'draft' | 'signed' | 'archived'
 export type WorkflowNodeKind = 'agent' | 'tool' | 'script' | 'router' | 'gate'
 export type WorkflowRunStatus =
-  'pending' | 'running' | 'waiting_gate' | 'done' | 'failed' | 'cancelled'
-// Per-node run status. `skipped` = an untaken branch; `looping` = an
-// in-progress loop iteration. Both are sourced from the Run's path taken —
-// with lazy materialization there are no task rows for unreached nodes, so
-// this status is NEVER read from a task row for those two states.
+  'pending' | 'running' | 'waiting_gate' | 'done' | 'done_with_failures' | 'failed' | 'cancelled'
+// Per-node run status. `skipped` = an untaken branch, sourced from the Run's
+// path taken — with lazy materialization there are no task rows for unreached
+// nodes, so this status is NEVER read from a task row for it.
 export type WorkflowNodeStatus =
   | 'pending'
   | 'running'
@@ -918,7 +917,6 @@ export type WorkflowNodeStatus =
   | 'done'
   | 'failed'
   | 'skipped'
-  | 'looping'
   | 'cancelled'
   | 'routed'
   | 'materialized'
@@ -930,10 +928,8 @@ export interface WorkflowNode {
   id: string
   kind: WorkflowNodeKind
   needs?: string[]
-  join?: string | null
+  on_failure?: 'fail_run' | 'continue' | 'skip_dependents'
   when?: string | null
-  loop_back_to?: string | null
-  max_iterations?: number | null
   agent?: string | null
 }
 
@@ -1011,8 +1007,6 @@ export interface WorkflowRunNodeStatus {
   [key: string]: unknown
   node_id: string
   status: WorkflowNodeStatus
-  iteration?: number | null
-  max_iterations?: number | null
   // Joins the EXISTING `/api/runs/{run_id}/timeline` (observe_run.py) — a
   // node's OWN per-dispatch execution trace, distinct from the workflow
   // run_id itself. See routes/workflows.py's naming note.

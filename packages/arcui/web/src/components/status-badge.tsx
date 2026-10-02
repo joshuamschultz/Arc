@@ -66,6 +66,8 @@ const STATUS_TONE: Record<string, string> = {
   // Hit a turn/cost/token cap after doing real work — amber, not the red of a
   // run that errored and died. Distinct from "completed" (it did not finish).
   limited: 'text-status-warning',
+  // Terminal: the run finished, but at least one node failed under `continue`.
+  done_with_failures: 'text-status-warning',
 }
 
 /** Inline status text with a tone dot. */

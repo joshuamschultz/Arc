@@ -45,11 +45,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   /** Kind-specific one-liner: the tool called, script run, gate decision,
    *  router mode, or agent skill/strategy. */
   detail?: string | null
-  /** `loops → <target> (max N)` when the node declares a loop-back. */
-  loop?: string | null
   status?: WorkflowNodeStatus
-  iteration?: number | null
-  maxIterations?: number | null
   hasError?: boolean
 }
 
@@ -60,7 +56,6 @@ const STATUS_TONE: Record<string, string> = {
   done: 'border-status-online/60 bg-status-online/10 text-status-online',
   failed: 'border-status-error/60 bg-status-error/10 text-status-error',
   skipped: 'border-border bg-muted/10 text-muted-foreground/50 opacity-60',
-  looping: 'border-status-info/60 bg-status-info/10 text-status-info',
   in_progress: 'border-status-info/60 bg-status-info/10 text-status-info animate-pulse',
   review: 'border-status-warning/60 bg-status-warning/10 text-status-warning',
   routed: 'border-status-info/60 bg-status-info/10 text-status-info',
@@ -124,14 +119,7 @@ const WorkflowGraphNode = memo(function WorkflowGraphNode({
       {data.detail ? (
         <div className="mt-0.5 truncate text-[10px] text-muted-foreground/80">{data.detail}</div>
       ) : null}
-      {data.loop ? (
-        <div className="mt-0.5 truncate text-[10px] text-muted-foreground/80">{data.loop}</div>
-      ) : null}
-      {data.status === 'looping' ? (
-        <div className="mt-1 text-[10px]">
-          looping {data.iteration ?? 0} of {data.maxIterations ?? '?'}
-        </div>
-      ) : data.status ? (
+      {data.status ? (
         <div className="mt-1 text-[10px] capitalize">{data.status.replace(/_/g, ' ')}</div>
       ) : null}
       <Handle type="source" position={Position.Right} className="!size-2 !bg-muted-foreground" />
@@ -177,13 +165,6 @@ function nodeDetail(node: WfNode): string | null {
   }
 }
 
-/** `loops → <target> (max N)` for a declared loop-back, else null. */
-function loopLabel(node: WfNode): string | null {
-  if (!node.loop_back_to) return null
-  const cap = node.max_iterations ? ` (max ${node.max_iterations})` : ''
-  return `loops → ${node.loop_back_to}${cap}`
-}
-
 // Hoisted once at module scope — recreating this object inline on every
 // render is the #1 React Flow remount bug (DESIGN.md §8 Research Insights).
 const nodeTypes = { workflowNode: WorkflowGraphNode }
@@ -212,8 +193,6 @@ function layoutPositions(cacheKey: string, nodes: WfNode[], edges: WfEdge[]) {
 
 export interface NodeStatusUpdate {
   status: WorkflowNodeStatus
-  iteration?: number | null
-  max_iterations?: number | null
 }
 
 interface WorkflowGraphProps {
@@ -263,10 +242,7 @@ function WorkflowGraphInner({
             kind: n.kind,
             runner,
             detail: nodeDetail(n),
-            loop: loopLabel(n),
             status: nodeStatus?.[n.id]?.status,
-            iteration: nodeStatus?.[n.id]?.iteration,
-            maxIterations: nodeStatus?.[n.id]?.max_iterations,
             hasError: errorNodeIds?.has(n.id) ?? false,
           },
           sourcePosition: Position.Right,
@@ -308,8 +284,6 @@ function WorkflowGraphInner({
     for (const [nodeId, update] of Object.entries(nodeStatus)) {
       updateNodeData(nodeId, {
         status: update.status,
-        iteration: update.iteration,
-        maxIterations: update.max_iterations,
       })
     }
   }, [nodeStatus, updateNodeData])
