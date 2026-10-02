@@ -21,7 +21,10 @@ _logger = logging.getLogger("arcagent.tools.validation")
 
 # Goal-bearing / control-plane files that are operator-authored and read-only
 # to the agent's own mutating tools at every tier (SPEC-035 REQ-001/002, ASI01).
-DEFAULT_PROTECTED_NAMES: tuple[str, ...] = ("identity.md", "policy.md", "context.md")
+# ``pulse.md`` is included because its checks auto-run as agent prompts on an
+# interval: an agent-writable copy is a standing instruction an injected turn can
+# plant (ASI01/ASI06). Operators edit it through the audited arcui file route.
+DEFAULT_PROTECTED_NAMES: tuple[str, ...] = ("identity.md", "policy.md", "context.md", "pulse.md")
 
 ProtectedAuditSink = Callable[[str, dict[str, Any]], None]
 
@@ -29,7 +32,7 @@ ProtectedAuditSink = Callable[[str, dict[str, Any]], None]
 def resolve_protected_paths(workspace: Path, extra: list[str]) -> frozenset[Path]:
     """Resolve the operator-declared protected-path set once, for the session.
 
-    Unions the built-in defaults (``identity.md``/``policy.md``/``context.md``)
+    Unions the built-in defaults (``identity.md``/``policy.md``/``context.md``/``pulse.md``)
     with the operator's ``tools.policy.protected_paths`` entries. Relative
     entries resolve against the workspace root; absolute entries are honored
     as-is. The returned frozenset is immutable for the session (REQ-002).
