@@ -15,7 +15,9 @@ from .test_control_plane_retry import OPERATOR, _failed_run, _plane
 
 
 def _retried_events(sink: Any) -> list[Any]:
-    return [e for e in sink.events if e.action == "workflow.node.retried" and e.outcome == "retried"]
+    return [
+        e for e in sink.events if e.action == "workflow.node.retried" and e.outcome == "retried"
+    ]
 
 
 async def test_retry_marks_the_new_attempt_as_an_operator_retry(

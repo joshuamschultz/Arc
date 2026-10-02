@@ -201,6 +201,19 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcgateway/tests/platform/telegram/test_telegram_gate_buttons.py",
         "packages/arccli/tests/test_gate_cli.py",
     ),
+    # Workflow node retry (alpha-2 #68/#69/#71): a repeat of a non-idempotent side
+    # effect runs only when an operator says so (viewers and non-boolean accepts are
+    # refused, a retried row is a re-run from its first claim, the accept is audited);
+    # two racing first starts announce one run; a test stub that cannot satisfy its
+    # output_schema fails the test run instead of passing on an echo.
+    "workflow retry accept forgery, racing first start and unsound test stubs": (
+        "packages/arcteam/tests/unit/workflow/test_control_plane_retry_accept.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_occurrence.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_attempt_safety_operator_retry.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_workflow_test_mode_schema.py",
+        "packages/arcui/tests/test_workflow_routes.py",
+        "packages/arccli/tests/test_workflow_command.py",
+    ),
     "report read authority and provenance refusal": (
         "packages/arcui/tests/test_report_preview.py",
     ),

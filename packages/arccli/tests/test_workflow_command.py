@@ -727,3 +727,40 @@ def test_retry_of_an_unknown_run_exits_nonzero_with_the_reason(
 
     assert exc.value.code == 1
     assert "run-nope" in capsys.readouterr().err
+
+
+def _spy_retry(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Route ``arc workflow retry`` at a plane that records what it was asked."""
+    calls: list[dict[str, Any]] = []
+
+    class _Plane:
+        async def retry_node(self, run_id: str, node_id: str, **kwargs: Any) -> Any:
+            calls.append({"run_id": run_id, "node_id": node_id, **kwargs})
+            return SimpleNamespace(ok=True, run=SimpleNamespace(status="running"), errors=())
+
+    def _with_plane(args: Any, run: Any) -> None:
+        asyncio.run(run(_Plane(), "did:arc:local:user/0f0f0f0f"))
+
+    monkeypatch.setattr(wf_cmd, "_with_plane", _with_plane)
+    return calls
+
+
+def test_retry_does_not_accept_a_repeat_by_default(
+    monkeypatch: pytest.MonkeyPatch, arc_dir: Path
+) -> None:
+    calls = _spy_retry(monkeypatch)
+
+    workflow_handler(["retry", "run-1", "b", "--dir", str(arc_dir)])
+
+    assert calls[0]["accept_side_effect_repeat"] is False
+
+
+def test_retry_accept_repeat_flag_is_the_operators_explicit_release(
+    monkeypatch: pytest.MonkeyPatch, arc_dir: Path
+) -> None:
+    calls = _spy_retry(monkeypatch)
+
+    workflow_handler(["retry", "run-1", "b", "--accept-repeat", "--dir", str(arc_dir)])
+
+    assert calls[0]["accept_side_effect_repeat"] is True
+    assert calls[0]["actor_did"] == "did:arc:local:user/0f0f0f0f"

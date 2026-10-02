@@ -1477,13 +1477,22 @@ export const useRunWorkflow = (id: string) => {
   })
 }
 
-/** Retry one failed node of a terminal-failed run (operator). */
+/**
+ * Retry one failed node of a terminal-failed run (operator). `acceptSideEffectRepeat`
+ * is the operator's explicit release of a non-idempotent tool; it is sent only
+ * when true, and the server honours nothing the operator did not say.
+ */
 export const useRetryWorkflowNode = (runId: string) => {
   const queryClient = useQueryClient()
-  return useMutation<WorkflowRunDetail, Error, string>({
-    mutationFn: (nodeId) =>
+  return useMutation<
+    WorkflowRunDetail,
+    Error,
+    { nodeId: string; acceptSideEffectRepeat?: boolean }
+  >({
+    mutationFn: ({ nodeId, acceptSideEffectRepeat }) =>
       apiPost(
         `/api/workflow-runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/retry`,
+        acceptSideEffectRepeat ? { accept_side_effect_repeat: true } : undefined,
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow-run', runId] }),
   })

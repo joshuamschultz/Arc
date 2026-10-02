@@ -64,7 +64,7 @@ function RetryNodeButton({
   const submit = async () => {
     setError(null)
     try {
-      await retry.mutateAsync(nodeId)
+      await retry.mutateAsync({ nodeId, acceptSideEffectRepeat: repeatUnsafe && accepted })
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not retry node')
     }

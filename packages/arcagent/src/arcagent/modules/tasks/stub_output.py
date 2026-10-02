@@ -18,7 +18,15 @@ from __future__ import annotations
 from typing import Any
 
 # Keywords that make a value unguessable from the schema alone.
-_UNGENERATABLE = ("pattern", "$ref", "not", "if", "patternProperties", "format", "dependentSchemas")
+_UNGENERATABLE = (
+    "pattern",
+    "$ref",
+    "not",
+    "if",
+    "patternProperties",
+    "format",
+    "dependentSchemas",
+)
 
 
 class UnsatisfiableSchema(ValueError):  # noqa: N818 — reads as the condition it names

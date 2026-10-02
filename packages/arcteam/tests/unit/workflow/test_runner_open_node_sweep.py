@@ -15,8 +15,8 @@ from arcteam.workflow.runner_state import derive_node_states
 
 from .conftest import (
     SALES_DID,
-    Bundle,
     Budget,
+    Bundle,
     Definition,
     Node,
     complete_node,
@@ -86,7 +86,9 @@ async def test_budget_exhausted_marks_open_nodes_cancelled(stores: Any, registry
     _, _, tasks = stores
     runner, run = await _start(stores, registry)
 
-    await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=140)
+    await complete_node(
+        tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=140
+    )
     record = await runner.advance(run.run_id)
 
     assert record.status == "failed"

@@ -784,7 +784,12 @@ def _cancel(args: argparse.Namespace) -> None:
 def _retry(args: argparse.Namespace) -> None:
     async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
         result = _ok_or_exit(
-            await plane.retry_node(args.run_id, args.node_id, actor_did=actor_did)
+            await plane.retry_node(
+                args.run_id,
+                args.node_id,
+                actor_did=actor_did,
+                accept_side_effect_repeat=args.accept_repeat,
+            )
         )
         record = result.run
         assert record is not None  # noqa: S101 — ok=True always carries the run
@@ -1010,6 +1015,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("run_id")
     p.add_argument("node_id")
+    p.add_argument(
+        "--accept-repeat",
+        action="store_true",
+        help=(
+            "Accept that a non-idempotent tool may repeat its side effect on this retry. "
+            "Audited; without it such a tool is refused."
+        ),
+    )
     _add_dir_arg(p)
 
     p = subs.add_parser(

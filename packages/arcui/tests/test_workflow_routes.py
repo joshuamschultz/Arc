@@ -643,9 +643,20 @@ class RetryingPlane(FakeControlPlane):
         self.retry_result = ControlPlaneResult(value={"run_id": "run-1", "status": "running"})
 
     async def retry_node(
-        self, run_id: str, node_id: str, *, actor: OperatorActor
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        actor: OperatorActor,
+        accept_side_effect_repeat: bool = False,
     ) -> ControlPlaneResult:
-        self.calls.append(("retry_node", (run_id, node_id), {"actor": actor}))
+        self.calls.append(
+            (
+                "retry_node",
+                (run_id, node_id),
+                {"actor": actor, "accept_side_effect_repeat": accept_side_effect_repeat},
+            )
+        )
         return self.retry_result
 
 
@@ -675,6 +686,56 @@ def test_retry_requires_operator_and_audits(caplog: pytest.LogCaptureFixture) ->
     mutation = _mutations(caplog)[-1]
     assert mutation["operation"] == "run.retry_node"
     assert mutation["outcome"] == "applied"
+
+
+def test_retry_accept_side_effect_repeat_reaches_the_plane_and_is_audited(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, auth, plane = _app()
+    app.state.audit = UIAuditLogger()
+    client = TestClient(app)
+    path = "/api/workflow-runs/run-1/nodes/b/retry"
+
+    plain = client.post(path, headers=_operator(auth))
+    assert plain.status_code == 200
+    assert plane.calls[-1][2]["accept_side_effect_repeat"] is False
+
+    with caplog.at_level("INFO", logger="arcui.audit"):
+        accepted = client.post(
+            path, headers=_operator(auth), json={"accept_side_effect_repeat": True}
+        )
+
+    assert accepted.status_code == 200
+    assert plane.calls[-1][2]["accept_side_effect_repeat"] is True
+    assert "accepted_repeat" in str(_mutations(caplog)[-1])
+
+
+def test_a_viewer_cannot_send_the_repeat_accept() -> None:
+    app, auth, plane = _app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/workflow-runs/run-1/nodes/b/retry",
+        headers=_viewer(auth),
+        json={"accept_side_effect_repeat": True},
+    )
+
+    assert resp.status_code == 403
+    assert plane.calls == []
+
+
+def test_a_non_boolean_repeat_accept_is_a_client_error() -> None:
+    app, auth, plane = _app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/workflow-runs/run-1/nodes/b/retry",
+        headers=_operator(auth),
+        json={"accept_side_effect_repeat": "yes"},
+    )
+
+    assert resp.status_code == 400
+    assert plane.calls == [], "only a real true is an accept"
 
 
 def test_a_refused_retry_is_relayed_and_audited_as_refused(

@@ -26,7 +26,7 @@ _STUB_SCHEMA = {
 }
 
 
-async def test_test_mode_stub_output_validated_against_schema(state: Any) -> None:  # noqa: F811
+async def test_test_mode_stub_output_validated_against_schema(state: Any) -> None:
     import jsonschema
 
     state.tool_registry = _Registry("state_modifying")
@@ -41,7 +41,7 @@ async def test_test_mode_stub_output_validated_against_schema(state: Any) -> Non
 
 
 async def test_test_mode_stub_goes_through_the_normal_completion_gate(
-    state: Any,  # noqa: F811
+    state: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arcagent.modules.tasks import capabilities
@@ -57,7 +57,7 @@ async def test_test_mode_stub_goes_through_the_normal_completion_gate(
     assert "gate said no" in (row.last_error or "")
 
 
-async def test_unsatisfiable_schema_fails_test_run_with_path(state: Any) -> None:  # noqa: F811
+async def test_unsatisfiable_schema_fails_test_run_with_path(state: Any) -> None:
     schema = {
         "type": "object",
         "required": ["code"],

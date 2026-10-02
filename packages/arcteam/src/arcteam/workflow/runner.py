@@ -1779,7 +1779,12 @@ class WorkflowRunner:
             status, iteration = state.terminal_state(node_id)
             if status not in ("absent", "in_flight"):
                 continue
-            entry = {"kind": "cancelled", "node_id": node_id, "iteration": iteration, "reason": reason}
+            entry = {
+                "kind": "cancelled",
+                "node_id": node_id,
+                "iteration": iteration,
+                "reason": reason,
+            }
             if operator_did is None:
                 await self._append(run.run_id, entry)
             else:

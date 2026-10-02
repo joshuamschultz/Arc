@@ -14,7 +14,7 @@ from .test_attempt_safety import _run, _Tool
 
 
 async def test_operator_retried_row_refuses_non_idempotent_tool_without_accept(
-    state: Any,  # noqa: F811
+    state: Any,
 ) -> None:
     tool = _Tool(idempotent=False)
     state.tool_registry = tool
@@ -31,7 +31,7 @@ async def test_operator_retried_row_refuses_non_idempotent_tool_without_accept(
 
 
 async def test_operator_retried_row_runs_non_idempotent_tool_when_accepted(
-    state: Any,  # noqa: F811
+    state: Any,
 ) -> None:
     tool = _Tool(idempotent=False)
     state.tool_registry = tool
@@ -43,7 +43,7 @@ async def test_operator_retried_row_runs_non_idempotent_tool_when_accepted(
     assert tool.calls == 1
 
 
-async def test_operator_retried_row_runs_an_idempotent_tool(state: Any) -> None:  # noqa: F811
+async def test_operator_retried_row_runs_an_idempotent_tool(state: Any) -> None:
     tool = _Tool(idempotent=True)
     state.tool_registry = tool
     await _todo_node(state, operator_retry=True)

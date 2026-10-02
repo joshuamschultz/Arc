@@ -189,9 +189,18 @@ class WorkflowControlPlane(Protocol):
         ...
 
     async def retry_node(
-        self, run_id: str, node_id: str, *, actor: OperatorActor
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        actor: OperatorActor,
+        accept_side_effect_repeat: bool = False,
     ) -> ControlPlaneResult:
-        """Re-run one failed node of a failed run; completed nodes are kept."""
+        """Re-run one failed node of a failed run; completed nodes are kept.
+
+        ``accept_side_effect_repeat`` is the operator's explicit release of a
+        non-idempotent tool for the new attempt.
+        """
         ...
 
     async def list_runs(self, workflow_id: str, *, actor: OperatorActor) -> list[dict[str, Any]]:
@@ -316,7 +325,13 @@ def _require_operator(request: Request, *, target: str, operation: str) -> JSONR
 
 
 def _relay(
-    request: Request, result: ControlPlaneResult, *, target: str, operation: str, ok_status: int
+    request: Request,
+    result: ControlPlaneResult,
+    *,
+    target: str,
+    operation: str,
+    ok_status: int,
+    applied_detail: str = "",
 ) -> JSONResponse:
     """Translate a `ControlPlaneResult` into the HTTP response + audit it.
 
@@ -347,7 +362,9 @@ def _relay(
             detail="validation_error",
         )
         return _errors_response(result.errors)
-    emit_mutation_audit(request, target=target, operation=operation, outcome="applied")
+    emit_mutation_audit(
+        request, target=target, operation=operation, outcome="applied", detail=applied_detail
+    )
     return JSONResponse(result.value, status_code=ok_status)
 
 
@@ -558,12 +575,41 @@ async def retry_node(request: Request) -> JSONResponse:
     if denial is not None:
         return denial
 
+    accept = await _accept_side_effect_repeat(request)
+    if accept is None:
+        return _error("accept_side_effect_repeat must be true or false", 400)
+
     plane = _control_plane(request)
     if plane is None:
         return _error("workflow_control_plane_unavailable", 503)
 
-    result = await plane.retry_node(run_id, node_id, actor=_actor(request))
-    return _relay(request, result, target=target, operation="run.retry_node", ok_status=200)
+    result = await plane.retry_node(
+        run_id, node_id, actor=_actor(request), accept_side_effect_repeat=accept
+    )
+    return _relay(
+        request,
+        result,
+        target=target,
+        operation="run.retry_node",
+        ok_status=200,
+        applied_detail="accepted_repeat" if accept else "",
+    )
+
+
+async def _accept_side_effect_repeat(request: Request) -> bool | None:
+    """The operator's explicit accept of a repeated side effect; ``None`` if malformed.
+
+    Only a JSON ``true`` accepts. An absent body is "no accept"; anything that is
+    not a boolean is refused rather than coerced, because the answer releases a
+    non-idempotent tool to run twice.
+    """
+    if not await request.body():
+        return False
+    body = await _json_body(request)
+    if body is None:
+        return None
+    value = body.get("accept_side_effect_repeat", False)
+    return value if isinstance(value, bool) else None
 
 
 async def resolve_gate(request: Request) -> Response:

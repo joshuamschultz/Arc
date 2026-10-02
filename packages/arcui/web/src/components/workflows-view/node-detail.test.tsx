@@ -108,10 +108,12 @@ describe('NodeDetail route, reason and retry', () => {
 
   it('failed non-idempotent node warns and gates retry on operator acknowledgement', async () => {
     const calls: string[] = []
+    const bodies: unknown[] = []
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (path: RequestInfo | URL) => {
+      vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
         calls.push(String(path))
+        bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined)
         return new Response(JSON.stringify({}))
       }),
     )
@@ -130,6 +132,8 @@ describe('NodeDetail route, reason and retry', () => {
     expect((retry as HTMLButtonElement).disabled).toBe(false)
     await userEvent.click(retry)
     expect(calls).toEqual(['/api/workflow-runs/r1/nodes/ingest/retry'])
+    // The checkbox is the operator's accept; the server only honours what is sent.
+    expect(bodies).toEqual([{ accept_side_effect_repeat: true }])
   })
 
   it('an idempotent node keeps the plain retry button', () => {
@@ -154,6 +158,7 @@ describe('NodeDetail route, reason and retry', () => {
       'fetch',
       vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
         calls.push(`${init?.method} ${String(path)}`)
+        expect(String(init?.body ?? '')).not.toContain('accept_side_effect_repeat')
         return new Response(JSON.stringify({ error: 'node not retryable' }), { status: 409 })
       }),
     )

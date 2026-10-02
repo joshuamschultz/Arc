@@ -473,9 +473,19 @@ class DashboardWorkflowPlane:
         return ControlPlaneResult(value=_run_summary(result.run))
 
     async def retry_node(
-        self, run_id: str, node_id: str, *, actor: OperatorActor
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        actor: OperatorActor,
+        accept_side_effect_repeat: bool = False,
     ) -> ControlPlaneResult:
-        result = await self._plane.retry_node(run_id, node_id, actor_did=actor.did)
+        result = await self._plane.retry_node(
+            run_id,
+            node_id,
+            actor_did=actor.did,
+            accept_side_effect_repeat=accept_side_effect_repeat,
+        )
         if not result.ok or result.run is None:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
