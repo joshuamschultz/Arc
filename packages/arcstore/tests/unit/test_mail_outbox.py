@@ -49,3 +49,33 @@ async def test_backend_outbox_uses_public_arcstore_seam_and_reclaims_expired_lea
     backend._tables["mail_outbox"]["mail-1"]["lease_until"] = 0
     second = await outbox.claim("worker-b")
     assert [item.event_id for item in second] == ["mail-1"]
+
+
+def test_outbox_claims_only_envelopes_its_signer_sealed(tmp_path: Path) -> None:
+    """A worker re-signs what it sends, so it may only send its own mail.
+
+    Every mail service shares one outbox. A worker that drained another
+    identity's envelope would re-sign it under its own key, and the recipient
+    would quarantine it as a forged origin: the reply silently never arrives.
+    """
+    outbox = MailOutbox(tmp_path / "outbox.jsonl")
+    outbox.enqueue("mine", {"signer_did": "did:arc:me", "body": "a"})
+    outbox.enqueue("theirs", {"signer_did": "did:arc:peer", "body": "b"})
+
+    claimed = outbox.claim("worker", signer_did="did:arc:me")
+
+    assert [entry.event_id for entry in claimed] == ["mine"]
+    other = outbox.claim("other", signer_did="did:arc:peer")
+    assert [entry.event_id for entry in other] == ["theirs"]
+
+
+@pytest.mark.asyncio
+async def test_backend_outbox_claims_only_its_signer_envelopes() -> None:
+    backend = FakeBackend()
+    outbox = PostgresMailOutbox(backend)
+    await outbox.enqueue("mine", {"signer_did": "did:arc:me"})
+    await outbox.enqueue("theirs", {"signer_did": "did:arc:peer"})
+
+    claimed = await outbox.claim("worker", signer_did="did:arc:me")
+
+    assert [entry.event_id for entry in claimed] == ["mine"]

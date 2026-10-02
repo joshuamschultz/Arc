@@ -99,6 +99,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # H-047 build_brain identity guard: zero-tolerance cross-agent isolation.
         "packages/arcmemory/tests/security/test_build_brain_isolation.py",
     ),
+    "agent mail abuse — unsigned, replayed, forged second reply (alpha-2 item 3)": (
+        # Unsigned mail never wakes; a replayed idempotency key projects once; a
+        # forged or racing third message is refused before the agent wakes; a
+        # worker never drains (and re-signs) another identity's envelope.
+        "packages/arcteam/tests/security/test_mail_abuse.py",
+        "packages/arcteam/tests/unit/test_mail_one_reply.py",
+        "packages/arcagent/tests/unit/modules/messaging/test_mail_turn.py",
+        "packages/arcstore/tests/unit/test_mail_outbox.py",
+    ),
     "foreign harness enrollment and admission (H-040)": (
         "packages/arctrust/tests/test_enrollment_grant.py",
         "packages/arcteam/tests/security/test_enrollment_abuse.py",

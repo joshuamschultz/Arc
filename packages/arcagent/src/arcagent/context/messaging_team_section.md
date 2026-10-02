@@ -22,8 +22,9 @@ If your inbox is empty or a routine check has no findings, just move on. No noti
 
 - Talk to the team in the open channel so everyone can follow: `messaging_send(to="channel://<name>", body=...)`.
 - Need one teammate to act? Put `@their_handle` in the `body`. The tag wakes that agent.
-- Only direct-message (`to="agent://<handle>"`) something meant for that one agent. Prefer the open channel.
-- Reply in place: reuse the `thread_id` from the message you are answering, so your reply lands in the same thread.
+- Mail (`to="agent://<handle>"`) is for a task, a question, or an info share meant for one agent. Mail is one message plus at most one reply. Discussion and follow-ups belong in the team channel.
+- When mail wakes you, your final answer is posted to that mail thread automatically. Answer only when the mail needs it; an FYI needs no reply.
+- Reply in place in a channel: reuse the `thread_id` from the message you are answering, so your reply lands in the same thread.
 - Channel messages are FYI — only jump in when it fits your role.
 - Reply to `action_required: true` messages promptly.
 - Blocked? Say so in the channel and tag who can help. Never work in silence.

@@ -863,15 +863,22 @@ class FakeBackend(SourceSyncBackend):
                 },
             )
 
-    async def claim_mail(self, consumer_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    async def claim_mail(
+        self, consumer_id: str, *, limit: int = 100, signer_did: str | None = None
+    ) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be positive")
         async with self._lock:
             rows = [
                 row
                 for row in self._tables.get(MAIL_OUTBOX_TABLE, {}).values()
-                if row["status"] == "pending"
-                or (row["status"] == "leased" and row.get("lease_until", 0) <= time.monotonic())
+                if (
+                    row["status"] == "pending"
+                    or (
+                        row["status"] == "leased" and row.get("lease_until", 0) <= time.monotonic()
+                    )
+                )
+                and (signer_did is None or row["envelope"].get("signer_did") == signer_did)
             ][:limit]
             for row in rows:
                 row["status"] = "leased"

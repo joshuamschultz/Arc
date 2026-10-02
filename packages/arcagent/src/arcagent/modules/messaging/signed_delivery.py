@@ -9,9 +9,12 @@ from typing import Any, cast
 from arcagent.core.run_contract import (
     ChannelReply,
     DeliveryUnavailableError,
+    ReplyLookup,
+    ReplySender,
     RunAdmissionUnavailableError,
     RunOutcomeUnknownError,
 )
+from arcagent.core.turn_context import mail_conversation
 
 
 def run_id_for(message: Any, *, agent_did: str, session_key: str) -> str:
@@ -74,8 +77,23 @@ async def deliver(
     if reply_target is None:
         return "completed"
     reply_fn = st.accepted_reply_fn
+    if reply_fn is None:
+        raise DeliveryUnavailableError("accepted reply capability is unavailable")
+    conversation = mail_conversation(reply_target)
+    if conversation is not None:
+        send, lookup = await _mail_reply(st, conversation, run_id)
+    else:
+        send, lookup = _channel_reply(st, message)
+    try:
+        return cast(str, await reply_fn(run_id, send=send, lookup=lookup))
+    except (RunAdmissionUnavailableError, TimeoutError, OSError) as exc:
+        raise DeliveryUnavailableError(message.id) from exc
+
+
+def _channel_reply(st: Any, message: Any) -> tuple[ReplySender, ReplyLookup]:
+    """Send and reconcile a channel reply through the fleet ``TeamReplyPort``."""
     reply_port = st.reply_port
-    if reply_fn is None or reply_port is None:
+    if reply_port is None:
         raise DeliveryUnavailableError("accepted reply capability is unavailable")
 
     async def send(reply: ChannelReply) -> None:
@@ -98,7 +116,34 @@ async def deliver(
             ),
         )
 
+    return send, lookup
+
+
+async def _mail_reply(st: Any, conversation: str, run_id: str) -> tuple[ReplySender, ReplyLookup]:
+    """Send and reconcile a mail turn's one reply through ``AgentMailService``.
+
+    The idempotency key is the signed run id, so a redelivered signed run finds
+    its reply already durable instead of posting a second one.
+    """
+    from arcagent.modules.messaging import _runtime, mail_turn
+
     try:
-        return cast(str, await reply_fn(run_id, send=send, lookup=lookup))
-    except (RunAdmissionUnavailableError, TimeoutError, OSError) as exc:
-        raise DeliveryUnavailableError(message.id) from exc
+        mail = await _runtime.ensure_agent_mail()
+    except RuntimeError as exc:
+        raise DeliveryUnavailableError("agent mail is unavailable") from exc
+    key = f"run:{run_id}"
+    clearance = mail_turn.clearance(st)
+
+    async def send(reply: ChannelReply) -> None:
+        await mail.reply_to_conversation(
+            conversation, body=reply.text, idempotency_key=key, classification_max=clearance
+        )
+
+    async def lookup(reply: ChannelReply) -> bool:
+        del reply
+        return cast(
+            bool,
+            await mail.has_reply(conversation, idempotency_key=key, classification_max=clearance),
+        )
+
+    return send, lookup

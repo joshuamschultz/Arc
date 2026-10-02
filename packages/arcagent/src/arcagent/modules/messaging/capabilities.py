@@ -7,6 +7,7 @@ The live messaging surface. Capabilities register on load:
   * ``agent:shutdown``        (priority 100) — cancel poll task, log stop.
   * ``notify_user``           (@tool)        — proactive message to the human (gateway channel).
   * ``messaging_send``        (@tool)        — send a message to entity/channel/role.
+  * ``mail_handoff``          (@tool)        — pass the inbound mail to a teammate.
   * ``messaging_check_inbox`` (@tool)        — poll all streams for unread messages.
   * ``messaging_read_thread`` (@tool)        — read full conversation thread.
   * ``messaging_list_entities`` (@tool)      — list registered team entities.
@@ -35,7 +36,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
-from arcagent.modules.messaging import _runtime, activation, sweep
+from arcagent.modules.messaging import _runtime, activation, mail_turn, sweep
 from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
@@ -186,14 +187,17 @@ def _interrupt_for(msg: Any, identity: Any) -> bool:
 
 
 def _origin_reply_target(msg: Any) -> tuple[str | None, str | None]:
-    """The arcteam channel a reply to ``msg`` should return to, or (None, None).
+    """Where a reply to ``msg`` should return to, or (None, None).
 
     A message posted to a channel (e.g. an operator's group post from the arcui
     dashboard) is answered IN that channel, so the reply lands where the human
     wrote it rather than on whatever gateway platform the agent was last reached
-    on. A direct message threads no reply target: ``notify_user`` then reaches the
-    human on their own known channel, never the teammate who sent the DM.
+    on. Mail is answered in its own thread (``mail://<conversation>``). A direct
+    chat message threads no reply target: ``notify_user`` then reaches the human
+    on their own known channel, never the teammate who sent the DM.
     """
+    if mail_turn.is_mail(msg):
+        return mail_turn.reply_target(msg)
     channels = [str(t) for t in (msg.to or []) if str(t).startswith("channel://")]
     if channels:
         name = channels[0][len("channel://") :]
@@ -241,8 +245,12 @@ async def _handle_incoming(message: Any) -> None:
     is dropped in the startup window.
     """
     st = _runtime.state()
-    await _persist_team_event(message, recipient_id=st.config.entity_id)
-    decision = await activation.decide(message, st)
+    refusal = await mail_turn.admit(st, message) if mail_turn.is_mail(message) else None
+    decision = (
+        activation.Decision(False, refusal)
+        if refusal is not None
+        else await activation.decide(message, st)
+    )
     if st.telemetry is not None:
         st.telemetry.audit_event(
             "messaging.activation",
@@ -270,6 +278,20 @@ async def _wake_on(message: Any) -> None:
     # every other member's memory. Selection decides whether to reply, never
     # whether to remember.
     overheard = activation.is_overheard(message)
+    is_mail = mail_turn.is_mail(message)
+    prompt = await mail_turn.format_delivery(st, message) if is_mail else _format_delivery(message)
+    # A mail turn's tools (``mail_handoff``) act on the mail that opened it. The
+    # run task copies this context when it starts, so the binding reaches it and
+    # is released here once the turn has been handed off.
+    token = mail_turn.bind_inbound(mail_turn.inbound_record(message) if is_mail else None)
+    try:
+        await _deliver_wake(st, message, prompt, overheard)
+    finally:
+        mail_turn.unbind_inbound(token)
+
+
+async def _deliver_wake(st: Any, message: Any, prompt: str, overheard: bool) -> None:
+    """Hand one woken message to the run owner that fits this agent's mode."""
     async with st.processing_lock:
         caller_did = message.signer_did or message.sender
         session_key = _inbox_session(caller_did, st.identity)
@@ -280,7 +302,7 @@ async def _wake_on(message: Any) -> None:
             outcome = await deliver(
                 st,
                 message,
-                prompt=_format_delivery(message),
+                prompt=prompt,
                 session_key=session_key,
                 reply_target=reply_target,
                 reply_label=reply_label,
@@ -294,7 +316,7 @@ async def _wake_on(message: Any) -> None:
             try:
                 await st.deliver_fn(
                     caller_did=caller_did,
-                    message=_format_delivery(message),
+                    message=prompt,
                     session_key=session_key,
                     interrupt=_interrupt_for(message, st.identity),
                     reply_target=reply_target,
@@ -310,7 +332,7 @@ async def _wake_on(message: Any) -> None:
                 raise RetryableDeliveryError(message.id) from exc
         elif st.agent_run_fn is not None:
             await st.agent_run_fn(
-                _format_delivery(message),
+                prompt,
                 session_key=session_key,
                 reply_target=reply_target,
                 reply_label=reply_label,
@@ -472,32 +494,41 @@ def _final_assistant_text(messages: Any) -> str:
 
 
 @hook(event="agent:post_respond", priority=100)
-async def deliver_channel_reply(ctx: Any) -> None:
-    """Post a woken channel turn's answer back to the channel it came from.
+async def deliver_origin_reply(ctx: Any) -> None:
+    """Post a woken team turn's answer back where the turn came from.
 
     A turn opened by an arcteam channel post (an operator's group message in the
-    arcui dashboard) produces its reply as the run's final assistant text — the
-    same contract every gateway turn already relies on. That text is committed to
-    the session but, unlike a gateway turn, nothing streams it back to the origin
-    channel, so the agent answers into the void: the run trace shows a full reply
-    while the channel shows silence (the reported bug).
+    arcui dashboard) or by agent mail produces its reply as the run's final
+    assistant text — the same contract every gateway turn already relies on. That
+    text is committed to the session but, unlike a gateway turn, nothing streams
+    it back to the origin, so without this the agent answers into the void.
 
-    Fires on every turn; delivers only when the origin is an arcteam channel
-    (``channel://…``). A gateway turn carries a ``platform:chat_id`` target (no
-    ``://``) whose reply the executor already streamed, and an origin-less
-    proactive run carries None — both are skipped, so no turn is answered twice.
-    An empty final text (the model answered through a tool and closed silently)
-    is skipped too: there is nothing to echo, and whitespace would be noise.
+    Fires on every turn; delivers only for a ``channel://`` origin (posted to the
+    channel) or a ``mail://`` origin (the mail thread's one reply, keyed to the
+    run id). A gateway turn carries a ``platform:chat_id`` target (no ``://``)
+    whose reply the executor already streamed, and an origin-less proactive run
+    carries None — both are skipped, so no turn is answered twice. An empty final
+    text (an FYI mail, or the model answered through a tool) is skipped too.
+    Signed runs deliver through the accepted-run owner instead.
     """
-    if _runtime.state().requires_signed_runs:
+    st = _runtime.state()
+    if st.requires_signed_runs:
         return
     target = turn_context.inbound_channel()
-    if not target or not target.startswith("channel://"):
+    if not target:
         return
-    final_text = _final_assistant_text(ctx.data.get("messages") if hasattr(ctx, "data") else None)
+    data = ctx.data if hasattr(ctx, "data") else {}
+    final_text = _final_assistant_text(data.get("messages"))
     if not final_text.strip():
         return
-    st = _runtime.state()
+    if turn_context.mail_conversation(target) is not None:
+        run_id = data.get("run_id")
+        await mail_turn.deliver_reply(
+            st, target, final_text, run_id if isinstance(run_id, str) else None
+        )
+        return
+    if not target.startswith("channel://"):
+        return
     try:
         await _send_to_team(st, target, final_text)
     except Exception as exc:  # reason: a failed reply must not crash the finalizer
@@ -541,10 +572,11 @@ def _notify_target(st: Any) -> str | None:
 
     Prefers the channel the current turn arrived on (reply in place); else the
     agent's most-recently-seen channel. None when the agent has never been
-    reached on any channel (nothing to notify on).
+    reached on any channel (nothing to notify on). A mail thread is never a
+    notification channel: the human is reached where they reach the agent.
     """
     current = turn_context.inbound_channel()
-    if current:
+    if current and turn_context.mail_conversation(current) is None:
         return current
     known = known_channels.list_channels(st.workspace)
     return known[0]["target"] if known else None
@@ -561,7 +593,7 @@ async def _send_to_team(st: Any, target: str, message: str) -> None:
     from arcteam.types import Message
 
     sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
-    sent = await st.svc.send(
+    await st.svc.send(
         Message(
             sender=st.config.entity_id,
             to=[target],
@@ -570,43 +602,6 @@ async def _send_to_team(st: Any, target: str, message: str) -> None:
             hop=turn_context.inbound_hop() + 1,
         )
     )
-    await _persist_team_event(sent, recipient_ids=(target,))
-
-
-async def _persist_team_event(
-    message: Any,
-    *,
-    recipient_id: str = "",
-    recipient_ids: tuple[str, ...] = (),
-) -> None:
-    """Project a verified team event into Postgres without blocking messaging."""
-    # Only explicit mail envelopes belong in Agent Inbox.  Channel chat and
-    # operator-originated turns remain in their own transport/session views.
-    if str(getattr(message, "delivery_kind", "chat")) != "mail":
-        return
-    try:
-        from arcstore.inbox import ParticipantRole, TraceMetadata
-        from arcstore.inbox_projection import participant
-
-        targets = recipient_ids or ((recipient_id,) if recipient_id else tuple(message.to))
-        if not targets:
-            return
-        service = await _runtime.ensure_durable_inbox()
-        if service is None:
-            return
-        await service.record_event(
-            event_id=str(message.id),
-            sender=participant(str(message.sender)),
-            recipients=tuple(
-                participant(str(target), role=ParticipantRole.AGENT) for target in targets
-            ),
-            body=str(message.body),
-            attachments=tuple(str(item) for item in getattr(message, "attachments", ())),
-            external_thread_id=str(message.thread_id or message.id),
-            trace=TraceMetadata(classification=str(message.classification)),
-        )
-    except Exception:  # reason: bus delivery remains available during store outage
-        _logger.exception("durable inbox projection failed for team event")
 
 
 @tool(
@@ -645,11 +640,56 @@ async def notify_user(message: str = "") -> str:
     return json.dumps({"status": "sent", "target": target})
 
 
+#: Addresses that make ``messaging_send`` durable mail rather than channel chat.
+_MAIL_ADDRESS_PREFIXES = ("agent://", "user://", "@", "did:")
+
+
+async def _reply_in_mail_turn(st: Any, mail: Any, targets: list[str], body: str) -> str | None:
+    """Answer the inbound mail in place when ``targets`` are its own participants.
+
+    Inside a mail turn, mailing the people the mail came from IS the reply: it
+    lands in the same thread under the run's idempotency key, so the run's final
+    text cannot post a second reply. Mailing anyone else starts new mail.
+    """
+    from arcstore.spool import current_request_id
+
+    conversation = turn_context.mail_conversation(turn_context.inbound_channel())
+    if conversation is None:
+        return None
+    participants = set(
+        await mail.conversation_participants(
+            conversation, classification_max=mail_turn.clearance(st)
+        )
+    )
+    for target in targets:
+        did = target if target.startswith("did:") else await _did_of(st, target)
+        if did not in participants:
+            return None
+    reply = await mail.reply_to_conversation(
+        conversation,
+        body=body,
+        idempotency_key=mail_turn.idempotency_key(current_request_id(), body),
+        classification_max=mail_turn.clearance(st),
+    )
+    return json.dumps({"id": reply.message_id, "thread_id": conversation, "status": "replied"})
+
+
+async def _did_of(st: Any, address: str) -> str:
+    """Resolve an ``agent://``/``user://``/``@`` address to its DID ("" if unknown)."""
+    from arcteam.registry import UnknownHandle, resolve_ref
+
+    try:
+        return resolve_ref(await st.registry.list_entities(), address)
+    except UnknownHandle:
+        return ""
+
+
 @tool(
     name="messaging_send",
     description=(
         "Send a message to another agent, user, channel, or role. "
-        "Use agent://name for direct messages, channel://name for channels, "
+        "Use channel://name for discussion the team should see, agent://name "
+        "(or a DID) for mail - one message plus at most one reply - and "
         "role://name for role-based broadcast."
     ),
     classification="state_modifying",
@@ -694,7 +734,7 @@ async def messaging_send(
         # who cannot receive it. Default UNCLASSIFIED clearance = no change.
         sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
         is_mail = st.arcstore_opener is not None and all(
-            target.startswith(("agent://", "user://", "@")) for target in targets
+            target.startswith(_MAIL_ADDRESS_PREFIXES) for target in targets
         )
         if is_mail:
             from arcteam import MailSendRequest
@@ -702,6 +742,10 @@ async def messaging_send(
             if st.identity is None:
                 return json.dumps({"error": "agent mail requires an agent signing identity"})
             mail = await _runtime.ensure_agent_mail()
+            if thread_id is None:
+                reply = await _reply_in_mail_turn(st, mail, targets, body)
+                if reply is not None:
+                    return reply
             sent = await mail.send(
                 MailSendRequest(
                     sender=st.config.entity_id,
@@ -738,7 +782,6 @@ async def messaging_send(
             hop=turn_context.inbound_hop() + 1,
         )
         sent = await st.svc.send(msg)
-        await _persist_team_event(sent)
         _logger.info("Sent message %s to %s", sent.id, to)
         return json.dumps(
             {
@@ -751,6 +794,69 @@ async def messaging_send(
     except (ValueError, TypeError) as exc:
         _trace_send_failure(st, "messaging_send", to, exc)
         return json.dumps({"error": str(exc)})
+
+
+@tool(
+    name="mail_handoff",
+    description=(
+        "Pass the mail you are handling to a better-placed teammate. Sends them "
+        "the original mail plus your note and copies the original sender, so the "
+        "teammate's single reply reaches both. Use only inside a mail turn."
+    ),
+    classification="state_modifying",
+    capability_tags=["network_egress"],
+    when_to_use="Hand a mail you received to the teammate who should answer it.",
+)
+async def mail_handoff(to: str, note: str = "") -> str:
+    """Forward the inbound mail to ``to`` with ``note``, copying its sender."""
+    from arcstore.spool import current_request_id
+    from arcteam import MailSendRequest
+
+    st = _runtime.state()
+    inbound = mail_turn.inbound()
+    if inbound is None:
+        return json.dumps({"error": "mail_handoff works only inside a turn opened by mail"})
+    if st.identity is None:
+        return json.dumps({"error": "agent mail requires an agent signing identity"})
+    target = to.strip()
+    if not target.startswith(_MAIL_ADDRESS_PREFIXES):
+        return json.dumps({"error": "hand mail to an agent://, user://, @handle or DID"})
+    run = current_request_id() or inbound.conversation_id
+    try:
+        mail = await _runtime.ensure_agent_mail()
+        sent = await mail.send(
+            MailSendRequest(
+                sender=st.config.entity_id,
+                sender_did=st.identity.did,
+                to=(target,),
+                cc=(inbound.sender,),
+                subject=f"Handoff: {inbound.subject}" if inbound.subject else "Handoff",
+                body=await _handoff_body(st, inbound, note),
+                classification=mail_turn.clearance(st),
+                idempotency_key=f"handoff:{inbound.conversation_id}:{run}:{target}",
+            )
+        )
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _trace_send_failure(st, "mail_handoff", target, exc)
+        return json.dumps({"error": str(exc)})
+    if st.telemetry is not None:
+        st.telemetry.audit_event(
+            "messaging.mail_handoff",
+            {
+                "conversation_id": inbound.conversation_id,
+                "to": target,
+                "message_id": sent.message_id,
+            },
+        )
+    return json.dumps({"id": sent.message_id, "thread_id": sent.thread_id, "status": sent.status})
+
+
+async def _handoff_body(st: Any, inbound: mail_turn.InboundMail, note: str) -> str:
+    """The note, then the original mail quoted with its sender's handle."""
+    quoted = "\n".join(f"> {line}" for line in (inbound.body.splitlines() or [""]))
+    origin = await mail_turn.handle_of(st, inbound.sender)
+    lead = f"{note.strip()}\n\n" if note.strip() else ""
+    return f"{lead}Original mail from {origin}:\n{quoted}"
 
 
 @tool(
@@ -1059,10 +1165,11 @@ async def messaging_sweep_loop(_ctx: Any) -> None:
 
 
 __all__ = [
-    "deliver_channel_reply",
     "deliver_connection_attention",
+    "deliver_origin_reply",
     "inject_messaging_sections",
     "list_team_files",
+    "mail_handoff",
     "messaging_bind_run_fn",
     "messaging_check_inbox",
     "messaging_inbox_loop",

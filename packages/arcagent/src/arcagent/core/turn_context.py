@@ -103,6 +103,21 @@ def inbound_channel() -> str | None:
     return _inbound_channel.get()
 
 
+#: Reply target scheme of a turn opened by agent mail: ``mail://<conversation id>``.
+MAIL_TARGET_SCHEME = "mail://"
+
+
+def mail_conversation(target: str | None) -> str | None:
+    """The conversation a ``mail://`` reply target names, else ``None``.
+
+    A mail turn's answer goes back into its mail thread, never to a gateway
+    platform or a team channel, and the thread is not a place to notify a human.
+    """
+    if not target or not target.startswith(MAIL_TARGET_SCHEME):
+        return None
+    return target[len(MAIL_TARGET_SCHEME) :] or None
+
+
 def is_team_target(target: str) -> bool:
     """True when ``target`` is an arcteam address, not a gateway platform channel.
 
@@ -111,16 +126,19 @@ def is_team_target(target: str) -> bool:
     ``channel_deliver_fn``; an arcteam target (``channel://``, ``agent://``,
     ``role://``, ``user://``) is delivered back onto the team bus. Gateway targets
     never contain ``//`` — a reply to a dashboard group post must go back into the
-    channel, not out to whatever platform the agent was last reached on.
+    channel, not out to whatever platform the agent was last reached on. A
+    ``mail://`` target is a team target too: its reply travels as signed mail.
     """
     return "://" in target
 
 
 __all__ = [
+    "MAIL_TARGET_SCHEME",
     "inbound_channel",
     "inbound_hop",
     "interactive",
     "is_team_target",
+    "mail_conversation",
     "overheard",
     "set_inbound_channel",
     "set_inbound_hop",

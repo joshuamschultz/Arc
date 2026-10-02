@@ -42,6 +42,16 @@ def _stable_id(prefix: str, *parts: str) -> str:
     return f"{prefix}_{digest}"
 
 
+def thread_id_for(owner_id: str, conversation_id: str) -> str:
+    """Return the id of ``owner_id``'s durable copy of one mail conversation.
+
+    Every participant owns a separate copy of a conversation; this is the one
+    derivation every repository uses, so a caller holding the conversation id
+    (the transport ``thread_id``) can address its own copy directly.
+    """
+    return _stable_id("thread", _stable_id("inbox", owner_id), conversation_id)
+
+
 def participant(identifier: str, *, role: ParticipantRole = ParticipantRole.AGENT) -> Participant:
     """Make the minimal durable participant record for an Arc principal."""
     return Participant(participant_id=identifier, role=role)
@@ -375,4 +385,4 @@ def _unique(items: Iterable[Participant]) -> tuple[Participant, ...]:
     return tuple(unique.values())
 
 
-__all__ = ["DurableInboxService", "InboxDeliveryPort", "participant"]
+__all__ = ["DurableInboxService", "InboxDeliveryPort", "participant", "thread_id_for"]

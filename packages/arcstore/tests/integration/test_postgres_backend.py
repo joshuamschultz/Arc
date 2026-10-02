@@ -481,6 +481,63 @@ async def test_postgres_atomic_inbox_and_mail_outbox_is_idempotent_under_concurr
     assert len(matching) == 1
 
 
+async def test_postgres_mail_claim_is_scoped_to_the_signer(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """A worker drains only envelopes its own identity signed (it re-signs on send)."""
+    assert isinstance(postgres_backend, PostgresBackend)
+    mine, theirs = f"mine-{uuid4().hex}", f"theirs-{uuid4().hex}"
+    me, peer = f"did:arc:me:{uuid4().hex}", f"did:arc:peer:{uuid4().hex}"
+    await postgres_backend.enqueue_mail(mine, {"signer_did": me})
+    await postgres_backend.enqueue_mail(theirs, {"signer_did": peer})
+
+    claimed = await postgres_backend.claim_mail(f"w-{uuid4().hex}", signer_did=me)
+
+    assert [entry["event_id"] for entry in claimed] == [mine]
+
+
+async def test_postgres_operator_join_grows_every_copy_of_the_conversation(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """``join=True`` admits a new sender into all copies atomically; it never shrinks."""
+    from arcstore.inbox_projection import thread_id_for
+
+    assert isinstance(postgres_backend, PostgresBackend)
+    repository = PostgresInboxRepository(postgres_backend)
+    alpha = inbox_participant(f"did:arc:agent:{uuid4().hex}")
+    beta = inbox_participant(f"did:arc:agent:{uuid4().hex}")
+    operator = inbox_participant(f"did:arc:operator:{uuid4().hex}", role=ParticipantRole.HUMAN)
+    conversation = f"conversation-{uuid4().hex}"
+    base = {"external_thread_id": conversation, "subject": "s", "envelope": {}}
+    await repository.record_event_with_outbox(
+        event_id=f"e1-{uuid4().hex}", sender=alpha, recipients=(beta,), body="ask", **base
+    )
+    with pytest.raises(ValueError, match="different participants"):
+        await repository.record_event_with_outbox(
+            event_id=f"e2-{uuid4().hex}",
+            sender=operator,
+            recipients=(alpha, beta),
+            body="x",
+            **base,
+        )
+
+    await repository.record_event_with_outbox(
+        event_id=f"e3-{uuid4().hex}",
+        sender=operator,
+        recipients=(alpha, beta),
+        body="answer",
+        join=True,
+        **base,
+    )
+
+    expected = {alpha.participant_id, beta.participant_id, operator.participant_id}
+    for owner in (alpha, beta, operator):
+        thread = await repository.get_thread(
+            thread_id_for(owner.participant_id, conversation), reader_id=owner.participant_id
+        )
+        assert {item.participant_id for item in thread.participants} == expected
+
+
 async def test_postgres_v3_indexes_cover_inbox_foreign_keys_and_queries(
     postgres_backend: ArcStoreBackend,
 ) -> None:

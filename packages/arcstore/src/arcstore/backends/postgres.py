@@ -1076,12 +1076,15 @@ class PostgresBackend(SourceSyncBackend):
                 _json(envelope),
             )
 
-    async def claim_mail(self, consumer_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    async def claim_mail(
+        self, consumer_id: str, *, limit: int = 100, signer_did: str | None = None
+    ) -> list[dict[str, Any]]:
         statement = """
             WITH ready AS (
                 SELECT event_id FROM mail_outbox
                 WHERE (status='pending' OR (status='leased' AND lease_until <= now()))
                   AND available_at <= now()
+                  AND ($3::text IS NULL OR envelope->>'signer_did' = $3::text)
                 ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
             )
             UPDATE mail_outbox AS m SET status='leased', lease_owner=$2,
@@ -1091,7 +1094,7 @@ class PostgresBackend(SourceSyncBackend):
         """
         async with self._require_pool().acquire() as connection:
             async with connection.transaction():
-                rows = await connection.fetch(statement, limit, consumer_id)
+                rows = await connection.fetch(statement, limit, consumer_id, signer_did)
         return [
             {
                 "event_id": row["event_id"],

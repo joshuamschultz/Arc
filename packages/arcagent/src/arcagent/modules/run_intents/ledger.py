@@ -578,7 +578,7 @@ class RunIntentLedger:
         )
         if request.reply_target is None:
             return None
-        if not request.reply_target.startswith("channel://"):
+        if not request.reply_target.startswith(("channel://", "mail://")):
             raise RunIntentUnavailableError("reply target has no durable transport")
         payload = await self.result_bytes(intent)
         result = _RESULT_ADAPTER.validate_json(payload)

@@ -26,7 +26,7 @@ from arcagent.core.module_bus import EventContext
 from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import (
     _format_delivery,
-    deliver_channel_reply,
+    deliver_origin_reply,
 )
 
 
@@ -74,7 +74,7 @@ class TestChannelReplyDelivery:
         st = _configure(tmp_path)
         turn_context.set_inbound_channel("channel://work")
 
-        await deliver_channel_reply(_ctx("The NNL stack is Haystack + Qdrant + vLLM."))
+        await deliver_origin_reply(_ctx("The NNL stack is Haystack + Qdrant + vLLM."))
 
         st.svc.send.assert_awaited_once()
         sent = st.svc.send.await_args.args[0]
@@ -87,7 +87,7 @@ class TestChannelReplyDelivery:
         st = _configure(tmp_path)
         turn_context.set_inbound_channel("web:room-123")
 
-        await deliver_channel_reply(_ctx("answer"))
+        await deliver_origin_reply(_ctx("answer"))
 
         st.svc.send.assert_not_called()
 
@@ -95,7 +95,7 @@ class TestChannelReplyDelivery:
         st = _configure(tmp_path)
         turn_context.set_inbound_channel(None)
 
-        await deliver_channel_reply(_ctx("answer"))
+        await deliver_origin_reply(_ctx("answer"))
 
         st.svc.send.assert_not_called()
 
@@ -105,7 +105,7 @@ class TestChannelReplyDelivery:
         st = _configure(tmp_path)
         turn_context.set_inbound_channel("channel://work")
 
-        await deliver_channel_reply(_ctx("   "))
+        await deliver_origin_reply(_ctx("   "))
 
         st.svc.send.assert_not_called()
 

@@ -296,7 +296,14 @@ class InboxRepository(Protocol):
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
-    ) -> tuple[Message, ...]: ...
+        join: bool = False,
+    ) -> tuple[Message, ...]:
+        """Persist every participant copy and the transport envelope atomically.
+
+        ``join=True`` lets the sender enter an existing conversation: each
+        existing copy's participants grow to include it, never shrink.
+        """
+        ...
 
     async def list_messages(
         self,

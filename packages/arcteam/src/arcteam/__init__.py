@@ -12,6 +12,7 @@ from arcteam.mail import (
     AgentMailService,
     MailSendRequest,
     MailSendResult,
+    MailThreadClosedError,
     RegistryMailAddressBook,
     mail_participant,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "FleetBackendUnavailableError",
     "MailSendRequest",
     "MailSendResult",
+    "MailThreadClosedError",
     "MemoryBackend",
     "Message",
     "MessagingService",

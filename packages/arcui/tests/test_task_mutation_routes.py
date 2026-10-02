@@ -126,6 +126,61 @@ class TestCreateTaskOperatorGate:
         assert response.status_code == 201
         assert response.json()["owner_notification"] == "pending"
 
+    def test_owner_mail_travels_to_the_agent_handle_not_its_raw_did(self, tmp_path: Path) -> None:
+        """The bus routes only agent:// addresses; a raw DID was rejected (item 3)."""
+        from arcstore.inbox_projection import DurableInboxService
+        from arcteam.crypto import MessageSigner
+        from arcteam.mail import AgentMailService
+        from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
+
+        sent: list[Any] = []
+
+        class Transport:
+            async def send(self, message: Any) -> Any:
+                sent.append(message)
+                return message
+
+        class Outbox:
+            def __init__(self) -> None:
+                self.entries: list[Any] = []
+
+            def claim(
+                self, _worker: str, *, limit: int, signer_did: str | None = None
+            ) -> tuple[Any, ...]:
+                return ()
+
+        class Book:
+            async def did_for(self, address: str) -> str:
+                return {"agent://alpha": "did:arc:alpha", "user://operator": "did:arc:operator"}[
+                    address
+                ]
+
+            async def address_for(self, did: str) -> str:
+                return {"did:arc:alpha": "agent://alpha", "did:arc:operator": "user://operator"}[
+                    did
+                ]
+
+        inbox = DurableInboxService(FakeInboxRepository())
+        app, auth = _make_app(tmp_path)
+        app.state.agent_mail = AgentMailService(
+            Transport(),
+            inbox,
+            outbox=Outbox(),
+            address_book=Book(),
+            signer=MessageSigner(did="did:arc:operator", private_key=b"\x05" * 32),
+        )
+        response = TestClient(app).post(
+            "/api/team/tasks",
+            headers=_operator(auth),
+            json={"title": "Assigned", "owner_did": "did:arc:alpha"},
+        )
+
+        assert response.status_code == 201
+        from arcstore.inbox_projection import participant
+
+        _, threads, _ = asyncio.run(inbox.list_threads(participant("did:arc:alpha")))
+        assert [thread.subject for thread in threads] == ["New task assigned"]
+
     def test_mail_failure_reports_unknown_without_replaying_create(self, tmp_path: Path) -> None:
         class FailingMail:
             sender_did = "did:arc:operator"

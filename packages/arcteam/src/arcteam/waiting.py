@@ -121,7 +121,7 @@ def _is_waiting_question(message: Message) -> bool:
     * ``action_required`` must be True — the agent deliberately asked the
       operator to act (``messaging_send(action_required=True)``). This is the
       line between a question and noise: an agent's auto-posted final reply
-      (``deliver_channel_reply``) and a plain FYI both leave it False, so both
+      (``deliver_origin_reply``) and a plain FYI both leave it False, so both
       are excluded, and it is unforgeable — ``action_required`` is in the
       Ed25519-signed field set (``arcteam.crypto._SIGNED_FIELDS``).
     * not run/gate narration (a paused run is already counted elsewhere), and
