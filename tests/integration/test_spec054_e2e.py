@@ -37,8 +37,11 @@ Stages (PLAN T-735):
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,15 @@ import pytest
 from arcagent.builtins.capabilities import _runtime as builtins_runtime
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry, SkillEntry
+from arcagent.modules.capability_import.archive import intake
+from arcagent.modules.capability_import.authority_factory import build_operator_skill_writer
+from arcagent.modules.capability_import.models import CapabilityImportLimits
+from arcagent.modules.capability_import.revisions import (
+    AnchoredSkillRevisionResolver,
+    OperatorSkillRevisionWriter,
+    skill_revision_scope,
+)
+from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.skills import _runtime as skills_runtime
 from arcagent.modules.skills.capabilities import (
     skills_post_plan,
@@ -59,6 +71,9 @@ from arcskill.improver.improver import ArcSkillImprover
 from arcstore import query
 from arcstore.backends.memory import FakeBackend
 from arcstore.ingest import StoreIngest
+from arctrust import FileJournalAnchor, InProcessSigner
+from arctrust.identity import AgentIdentity
+from arctrust.policy import OperatorApprovalAuthority
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -199,10 +214,91 @@ async def _create_skill(workspace: Path) -> Path:
     return workspace / "capabilities/skills" / _SKILL
 
 
+@dataclass
+class _Installed:
+    """A skill promoted by the operator, plus the anchored authority that revises it."""
+
+    folder: Path
+    resolver: AnchoredSkillRevisionResolver
+    writer: OperatorSkillRevisionWriter
+    signer: InProcessSigner
+    operator_did: str
+
+    def active_folder(self) -> Path:
+        """The verified active revision folder (what a reload would load)."""
+        active = self.resolver.active_folder(self.folder)
+        return active if active is not None else self.folder
+
+    def active_bundle(self) -> dict[str, bytes]:
+        """Verified bytes of the active revision, read through the revision chain.
+
+        Before the first revision the signed original is the active bundle.
+        """
+        if self.resolver.active_folder(self.folder) is None:
+            return {
+                path.relative_to(self.folder).as_posix(): path.read_bytes()
+                for path in self.folder.rglob("*")
+                if path.is_file() and path.suffix != ".arcsig"
+            }
+        return self.resolver.read_bundle(self.folder)
+
+    def skill_md(self) -> Path:
+        return self.active_folder() / "SKILL.md"
+
+    def skill_text(self) -> str:
+        return self.active_bundle()["SKILL.md"].decode("utf-8")
+
+
+def _install_skill(workspace: Path, tmp_path: Path, skill_dir: Path) -> _Installed:
+    """Promote the scaffolded skill as the operator would, then anchor its revisions.
+
+    The improver never writes the skill in place and never signs with the agent key:
+    every change lands as an operator-signed revision on a real file-journal anchor.
+    The original must therefore be a signed, approved install, so the scaffold is
+    exported, removed, and re-imported through the real import/review/promote path.
+    """
+    signer = InProcessSigner(bytes(range(32)))
+    operator_did = OperatorApprovalAuthority(signer).did
+    agent_did = AgentIdentity.generate(org="arc", agent_type="exec").did
+    exported = tmp_path / "export" / "skills" / _SKILL
+    shutil.copytree(skill_dir, exported)
+    shutil.rmtree(skill_dir)
+    root = workspace / "capabilities"
+    config = tmp_path / "arcagent.toml"
+    config.write_text('[security]\ntier = "personal"\n', encoding="utf-8")
+    service = CapabilityImportService(root)
+    imported = intake(tmp_path / "export", root)
+    service.review(imported, target_agent_did=agent_did, limits=CapabilityImportLimits())
+    service.promote(
+        imported.staging_dir,
+        target_agent_did=agent_did,
+        operator_did=operator_did,
+        signer=signer,
+        config_path=config,
+    )
+    folder = root / "skills" / _SKILL
+    anchors = tmp_path / "anchors"
+    resolver = AnchoredSkillRevisionResolver(
+        agent_did=agent_did,
+        config_path=config,
+        anchor_factory=lambda did, name: FileJournalAnchor(
+            anchors, scope=skill_revision_scope(did, name), signer=signer
+        ),
+    )
+    writer = build_operator_skill_writer(
+        resolver, signer, lambda name: folder if name == _SKILL else None
+    )
+    assert writer is not None
+    return _Installed(folder, resolver, writer, signer, operator_did)
+
+
 def _improver(
-    workspace: Path, *, llm: ScriptedLLM, sink: _ListSink, skill_md: Path
+    workspace: Path, *, llm: ScriptedLLM, sink: _ListSink, installed: _Installed
 ) -> ArcSkillImprover:
-    """A REAL improver: default (real) HubEvalRunner, real stores, scripted LLM only."""
+    """A REAL improver: default (real) HubEvalRunner, real stores, scripted LLM only.
+
+    ``skill_path`` follows the active anchored revision, as a capability reload does.
+    """
     config = ImproverConfig(
         min_traces=2,
         trace_buffer_turns=0,
@@ -221,9 +317,10 @@ def _improver(
         config=config,
         tier="personal",
         llm=llm,
+        writer=installed.writer,
         audit_sink=sink,
         agent_did="did:arc:test:e2e",
-        skill_path=lambda name: skill_md if name == _SKILL else None,
+        skill_path=lambda name: installed.skill_md() if name == _SKILL else None,
     )
 
 
@@ -255,7 +352,7 @@ async def test_stage1_create_skill_births_fail_closed(workspace: Path) -> None:
 
 
 async def test_stage2_4_suite_generated_via_real_trigger_and_gate_consumes_it(
-    workspace: Path, caplog: pytest.LogCaptureFixture
+    workspace: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """maybe_improve's lazy trigger must REALLY produce anchors, and the gate must
     decide on those anchors (rejection reason 'no strict improvement'), never fall
@@ -263,12 +360,12 @@ async def test_stage2_4_suite_generated_via_real_trigger_and_gate_consumes_it(
     caplog.set_level(logging.INFO)
     skill_dir = await _create_skill(workspace)
     (skill_dir / "scripts" / "util.py").write_text(_UTIL_PY, encoding="utf-8")
-    skill_md = skill_dir / "SKILL.md"
-    seed_text = skill_md.read_text(encoding="utf-8")
+    seed_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    installed = _install_skill(workspace, tmp_path, skill_dir)
 
     llm = ScriptedLLM(suite_module=_SUITE_MODULE)
     sink = _ListSink()
-    improver = _improver(workspace, llm=llm, sink=sink, skill_md=skill_md)
+    improver = _improver(workspace, llm=llm, sink=sink, installed=installed)
 
     await _use_skill_past_threshold(improver)
     await improver.maybe_improve()
@@ -276,19 +373,25 @@ async def test_stage2_4_suite_generated_via_real_trigger_and_gate_consumes_it(
 
     _no_swallowed_crash(caplog)
 
-    # REQ-101: the generated suite exists, marked and manifested (stage 3).
-    generated = skill_dir / "evals" / "test_golden_generated.py"
-    assert generated.exists(), (
+    # REQ-101: the generated suite exists, marked and manifested (stage 3). It is
+    # skill content, so it lands as an operator-anchored revision, read back through
+    # the verified revision chain (the installed original is never written in place).
+    active_dir = installed.active_folder()
+    bundle = installed.active_bundle()
+    generated_rel = "evals/test_golden_generated.py"
+    assert generated_rel in bundle, (
         "REAL-PATH GAP: SuiteGenerator adopted nothing — the candidate case source "
         "is never materialized into the sandbox bundle, so every candidate fails "
         "its current-bundle run and quarantines (suitegen._cascade_verdict runs "
         "cases whose evals/test_golden_generated.py does not exist yet)"
     )
-    module = ast.parse(generated.read_text(encoding="utf-8"))
+    module = ast.parse(bundle[generated_rel].decode("utf-8"))
     assert "@generated" in (ast.get_docstring(module) or "")
-    manifest = json.loads((skill_dir / "evals" / ".manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(bundle["evals/.manifest.json"].decode("utf-8"))
     assert "test_golden_generated.py" in manifest["files"]
-    cases = load_suite(skill_dir)
+    history = installed.resolver.revision_history(installed.folder)
+    assert len(history) >= 2, "suite adoption must be a new anchored revision over the original"
+    cases = load_suite(active_dir)
     assert cases, "generated anchors must be discoverable by load_suite"
     assert all(case.machine_authored for case in cases)
 
@@ -302,8 +405,8 @@ async def test_stage2_4_suite_generated_via_real_trigger_and_gate_consumes_it(
         "expected the eval gate to reject the neutral prose candidate on the "
         "generated anchors with 'no strict improvement'"
     )
-    assert skill_md.read_text(encoding="utf-8") == seed_text, (
-        "rejected candidate must leave SKILL.md untouched"
+    assert installed.skill_text() == seed_text, (
+        "rejected candidate must leave the active SKILL.md body untouched"
     )
 
 
@@ -320,11 +423,12 @@ async def test_stage4_6_7_strict_improvement_applies_then_arcstore_and_rollback(
     skill_dir = await _create_skill(workspace)
     (skill_dir / "scripts" / "util.py").write_text(_UTIL_PY, encoding="utf-8")
     (skill_dir / "evals" / "test_human.py").write_text(_HUMAN_EVAL, encoding="utf-8")
-    skill_md = skill_dir / "SKILL.md"
+    installed = _install_skill(workspace, tmp_path, skill_dir)
+    seed_digest_text = installed.skill_text()
 
     llm = ScriptedLLM(suite_module=_SUITE_MODULE)
     sink = _ListSink()
-    improver = _improver(workspace, llm=llm, sink=sink, skill_md=skill_md)
+    improver = _improver(workspace, llm=llm, sink=sink, installed=installed)
 
     await _use_skill_past_threshold(improver)
     await improver.maybe_improve()
@@ -335,10 +439,17 @@ async def test_stage4_6_7_strict_improvement_applies_then_arcstore_and_rollback(
     # Accepted ONLY via strict improvement over the real sandbox runs — the
     # fail-open no-suite path never ran, and the flip target is now documented.
     assert not [r for r in caplog.records if "no golden suite" in r.message]
-    assert _MARKER in skill_md.read_text(encoding="utf-8"), (
+    assert _MARKER in installed.skill_text(), (
         "strict-improvement candidate was not applied — the previously-failing "
         "human anchor should have flipped fail->pass through the real eval runner"
     )
+    # The improvement is a new anchored revision head (reload sees it via the chain),
+    # operator-signed, and the prior body is still reachable in the lineage.
+    history = installed.resolver.revision_history(installed.folder)
+    _, _, head_body, is_active = history[0]
+    assert is_active and _MARKER in head_body
+    assert any(body == seed_digest_text for _, _, body, _ in history[1:])
+    assert installed.resolver.read_current(installed.folder, installed.skill_md()) == head_body
     manifest_path = workspace / "skill_traces" / _SKILL / "candidates" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     applied_id = manifest["active_candidate_id"]
@@ -358,7 +469,20 @@ async def test_stage4_6_7_strict_improvement_applies_then_arcstore_and_rollback(
     active = [v for v in versions if v["active"]]
     assert [v["candidate_id"] for v in active] == [applied_id]
 
-    # Stage 7: rollback flips the manifest active id and appends an audit event.
+    # Stage 7: rollback flips the manifest active id and appends an audit event, and
+    # the operator restores the prior revision as a new forward activation on the
+    # anchored chain (never an in-place rewrite).
+    seed_revision = next(d for d, _, body, _ in history if body == seed_digest_text)
+    installed.resolver.activate_prior(
+        installed.folder,
+        seed_revision,
+        expected_sha256=hashlib.sha256(head_body.encode("utf-8")).hexdigest(),
+        signer=installed.signer,
+        operator_did=installed.operator_did,
+    )
+    assert installed.skill_text() == seed_digest_text
+    assert _MARKER not in installed.skill_text()
+    assert installed.resolver.revision_history(installed.folder)[0][1] == history[0][1] + 1
     improver.rollback(_SKILL, "seed")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["active_candidate_id"] == "seed"
