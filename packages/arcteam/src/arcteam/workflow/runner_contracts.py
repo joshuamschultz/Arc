@@ -44,6 +44,8 @@ BundleStatus = Literal["draft", "signed", "archived"]
 TERMINAL_RUN_STATUSES: frozenset[str] = frozenset(
     {"done", "done_with_failures", "failed", "cancelled"}
 )
+#: A node can be retried only once the run has stopped on a failure.
+RETRYABLE_RUN_STATUSES: frozenset[str] = frozenset({"failed", "done_with_failures"})
 #: Task statuses that mean a node is still owed work (in flight, not terminal).
 IN_FLIGHT_TASK_STATUSES: frozenset[str] = frozenset({"backlog", "todo", "in_progress", "review"})
 
@@ -364,6 +366,7 @@ class RunStoreLike(Protocol):
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: RunnerFence | None = None,
     ) -> bool:
         """Conditional transition. ``False`` means another writer won the race."""
@@ -478,6 +481,7 @@ class OwnerResolver(Protocol):
 
 __all__ = [
     "IN_FLIGHT_TASK_STATUSES",
+    "RETRYABLE_RUN_STATUSES",
     "TERMINAL_RUN_STATUSES",
     "ArgsResolver",
     "BudgetSpec",

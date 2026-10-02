@@ -1,6 +1,6 @@
 """``arc workflow`` — ArcFlow operator CLI (SPEC-061 COMP-019).
 
-``create | edit | archive | unarchive | purge | run | cancel`` delegate to the
+``create | edit | archive | unarchive | purge | run | cancel | retry`` delegate to the
 arcteam :class:`~arcteam.workflow.control_plane.WorkflowControlPlane`
 (COMP-021) — the single shared operation set every surface (agent tools, this
 CLI, the dashboard) invokes, so there is exactly one implementation of what a
@@ -762,6 +762,16 @@ def _cancel(args: argparse.Namespace) -> None:
     _with_plane(args, _run)
 
 
+def _retry(args: argparse.Namespace) -> None:
+    async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
+        result = _ok_or_exit(await plane.retry_node(args.run_id, args.node_id, actor_did=actor_did))
+        record = result.run
+        assert record is not None  # noqa: S101 — ok=True always carries the run
+        write(f"Retrying node {args.node_id} of {args.run_id} (status={record.status}).")
+
+    _with_plane(args, _run)
+
+
 # ---------------------------------------------------------------------------
 # Argparse dispatcher
 # ---------------------------------------------------------------------------
@@ -856,6 +866,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", default=None)
     _add_dir_arg(p)
 
+    p = subs.add_parser(
+        "retry", help="Re-run one failed node of a failed run; finished nodes are kept."
+    )
+    p.add_argument("run_id")
+    p.add_argument("node_id")
+    _add_dir_arg(p)
+
     p = subs.add_parser("sign", help="Operator-sign a workflow bundle (writes .arcsig sidecar).")
     p.add_argument("path")
     _add_dir_arg(p)
@@ -880,6 +897,7 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "run": _run_workflow,
     "serve": _serve,
     "cancel": _cancel,
+    "retry": _retry,
     "sign": _sign,
     "verify": _verify,
 }

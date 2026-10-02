@@ -689,6 +689,7 @@ def test_every_subcommand_is_reachable() -> None:
         "run",
         "serve",
         "cancel",
+        "retry",
         "sign",
         "verify",
     }
@@ -712,3 +713,13 @@ def test_deployment_tier_is_read_from_config_not_guessed(arc_dir: Path) -> None:
     machine_config.write_text('[security]\ntier = "federal"\n', encoding="utf-8")
     assert wf_cmd._deployment_tier(arc_dir) == "federal"
     assert tomllib is not None
+
+
+def test_retry_of_an_unknown_run_exits_nonzero_with_the_reason(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        workflow_handler(["retry", "run-nope", "b", "--dir", str(arc_dir)])
+
+    assert exc.value.code == 1
+    assert "run-nope" in capsys.readouterr().err

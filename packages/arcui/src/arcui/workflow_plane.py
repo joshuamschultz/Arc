@@ -428,6 +428,14 @@ class DashboardWorkflowPlane:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
 
+    async def retry_node(
+        self, run_id: str, node_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        result = await self._plane.retry_node(run_id, node_id, actor_did=actor.did)
+        if not result.ok or result.run is None:
+            return _errors(result)
+        return ControlPlaneResult(value=_run_summary(result.run))
+
     async def resolve_gate(
         self,
         task_id: str,

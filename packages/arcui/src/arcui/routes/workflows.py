@@ -188,6 +188,12 @@ class WorkflowControlPlane(Protocol):
         """Order cancellation of an in-flight run."""
         ...
 
+    async def retry_node(
+        self, run_id: str, node_id: str, *, actor: OperatorActor
+    ) -> ControlPlaneResult:
+        """Re-run one failed node of a failed run; completed nodes are kept."""
+        ...
+
     async def list_runs(self, workflow_id: str, *, actor: OperatorActor) -> list[dict[str, Any]]:
         """Run history for a definition."""
         ...
@@ -527,6 +533,23 @@ async def cancel_run(request: Request) -> JSONResponse:
     return _relay(request, result, target=target, operation="run.cancel", ok_status=200)
 
 
+async def retry_node(request: Request) -> JSONResponse:
+    """POST /api/workflow-runs/{id}/nodes/{node}/retry — retry one failed node (operator only)."""
+    run_id = request.path_params["id"]
+    node_id = request.path_params["node"]
+    target = f"workflow_run:{run_id}/{node_id}"
+    denial = _require_operator(request, target=target, operation="run.retry_node")
+    if denial is not None:
+        return denial
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    result = await plane.retry_node(run_id, node_id, actor=_actor(request))
+    return _relay(request, result, target=target, operation="run.retry_node", ok_status=200)
+
+
 async def resolve_gate(request: Request) -> Response:
     """POST /api/workflow-tasks/{id}/gate — resolve a gate node (operator only).
 
@@ -648,6 +671,7 @@ routes = [
     Route("/api/workflows/{id}/runs", list_runs, methods=["GET"]),
     Route("/api/workflow-runs/{id}", get_run, methods=["GET"]),
     Route("/api/workflow-runs/{id}/cancel", cancel_run, methods=["POST"]),
+    Route("/api/workflow-runs/{id}/nodes/{node}/retry", retry_node, methods=["POST"]),
     # ``{id:path}``, not ``{id}``: a workflow task id is
     # ``wf/{run_id}/{node_id}/{iteration}`` (``workflow.runner.node_task_id``),
     # so it CONTAINS slashes and the default converter — which matches a single
@@ -674,6 +698,7 @@ __all__ = [
     "WorkflowFieldError",
     "archive_workflow",
     "cancel_run",
+    "retry_node",
     "create_workflow",
     "get_run",
     "get_workflow",

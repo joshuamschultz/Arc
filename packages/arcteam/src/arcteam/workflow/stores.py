@@ -278,6 +278,7 @@ class WorkflowRunStore:
         expected_status: RunStatus | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: RunnerFence | None = None,
     ) -> bool:
         current = await self._runs.get(run_id)
@@ -290,6 +291,7 @@ class WorkflowRunStore:
             actor_did=actor_did,
             expected_status=expected,
             last_error=_storable_error(last_error),
+            clear_last_error=clear_error,
             fence=fence,
         )
         if outcome != "applied":

@@ -50,6 +50,7 @@ from .errors import UnsignedWorkflowError
 from .narrator import RunNarrator, assert_channel_binding
 from .runner_budget import RunBudget
 from .runner_contracts import (
+    RETRYABLE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
     ArgsResolver,
     DefinitionStoreLike,
@@ -83,6 +84,10 @@ class WorkflowRunNotFoundError(WorkflowRunError):
 
 class UnsignedWorkflowRefusedError(WorkflowRunError):
     """An unsigned definition was asked to run by an initiator or tier that may not."""
+
+
+class NodeRetryRefusedError(WorkflowRunError):
+    """An operator asked to retry a node that cannot be retried, and why."""
 
 
 class NodeDecisionError(WorkflowRunError):
@@ -835,6 +840,63 @@ class WorkflowRunner:
             await self._narrator.run_outcome(
                 channel=run.channel, run_id=run_id, status="cancelled", detail=reason
             )
+        return await self._require_run(run_id)
+
+    async def retry_node(self, run_id: str, node_id: str, *, actor_did: str) -> RunRecord:
+        """Re-run one failed node of a finished run, keeping everything that completed.
+
+        Only a run that ended in failure can retry (a running run is still being
+        driven by the runner). The node gets a fresh instance (the next iteration,
+        a fresh attempt budget); its row is written BEFORE the run reopens, so a
+        tick can never see a reopened run whose failed node still looks fatal.
+        Nodes that already finished are untouched, and never run again.
+        Like ``cancel``, this is an operator control-plane action and does not
+        need the runner lease.
+        """
+        run = await self._require_run(run_id)
+        if run.status not in RETRYABLE_RUN_STATUSES:
+            raise NodeRetryRefusedError(
+                f"run {run_id} is {run.status}: only a failed run can retry a node"
+            )
+        bundle = self._definitions.load_for_dispatch(run.workflow_id)
+        if bundle.content_hash != run.content_hash:
+            raise NodeRetryRefusedError("the definition changed under this run; start a new run")
+        definition = bundle.definition
+        if node_id not in definition.node_ids:
+            raise NodeRetryRefusedError(f"node {node_id!r} is not in workflow {definition.id!r}")
+        state = RunState(await self._tasks.query_by_flow_run(run_id), run.path_taken)
+        latest = state.latest(node_id)
+        if latest is None or latest.task.status != "failed":
+            raise NodeRetryRefusedError(f"node {node_id!r} did not fail, so it cannot be retried")
+        iteration = latest.iteration + 1
+        task = await self._build_task(
+            run,
+            definition,
+            definition.node_by_id(node_id),
+            iteration,
+            state,
+            state.scope(run.input),
+            self._legs_for(run, state),
+        )
+        created = await self._tasks.create_batch([task], actor_did=actor_did)
+        await self._record_materialization(run, state, created[0])
+        reopened = await self._runs.set_status(
+            run_id,
+            "running",
+            actor_did=actor_did,
+            expected_status=run.status,
+            resolution=f"retrying node {node_id}",
+            clear_error=True,
+        )
+        if not reopened:
+            raise NodeRetryRefusedError(f"run {run_id} changed while retrying; try again")
+        self._audit(
+            "workflow.node.retried",
+            target=f"{run.workflow_id}/{node_id}",
+            outcome="retried",
+            actor_did=actor_did,
+            extra={"run_id": run_id, "iteration": iteration, "previous_error": latest.task.last_error},
+        )
         return await self._require_run(run_id)
 
     # -- one pass over the graph -------------------------------------------

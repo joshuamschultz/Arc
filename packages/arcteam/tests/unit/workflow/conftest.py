@@ -385,9 +385,12 @@ class FlowRunStore:
         expected_status: str | None = None,
         resolution: str | None = None,
         last_error: str | None = None,
+        clear_error: bool = False,
         fence: Any | None = None,
     ) -> bool:
         patch: dict[str, Any] = {"status": status}
+        if clear_error:
+            patch["last_error"] = None
         if resolution is not None:
             patch["resolution"] = resolution
         if last_error is not None:
