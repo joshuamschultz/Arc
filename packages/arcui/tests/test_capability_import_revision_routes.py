@@ -181,7 +181,14 @@ def test_signed_revision_route_reloads_live_provider(tmp_path: Path) -> None:
     assert second.status_code == 200, second.text
     versions = client.get(path + "/versions", headers={"Authorization": "Bearer viewer"})
     assert versions.status_code == 200
-    assert [row["generation"] for row in versions.json()["items"]] == [2, 1]
+    # The first edit of a never-revised skill enrolled the signed original as
+    # revision 1, so history reaches the version the operator started from.
+    assert [row["generation"] for row in versions.json()["items"]] == [3, 2, 1]
+    original_digest = versions.json()["items"][-1]["candidate_id"]
+    original_body = client.get(
+        path + f"/versions/{original_digest}/body", headers={"Authorization": "Bearer viewer"}
+    )
+    assert original_body.json()["body"] == _body("old").decode()
     old_body = client.get(
         path + f"/versions/{first_digest}/body", headers={"Authorization": "Bearer viewer"}
     )
@@ -226,7 +233,7 @@ def test_signed_revision_route_reloads_live_provider(tmp_path: Path) -> None:
         headers={"Authorization": "Bearer operator"},
     )
     assert rollback.status_code == 200, rollback.text
-    assert anchor.head.version == 3
+    assert anchor.head.version == 4
     assert live.loaded_content == _body("new").decode()
     curated = client.post(
         path + "/promote",
@@ -234,14 +241,20 @@ def test_signed_revision_route_reloads_live_provider(tmp_path: Path) -> None:
         headers={"Authorization": "Bearer operator"},
     )
     assert curated.status_code == 200, curated.text
-    assert anchor.head.version == 4
+    assert anchor.head.version == 5
     evals = client.get(path + "/evals", headers={"Authorization": "Bearer viewer"})
     assert evals.status_code == 200
     assert curated.json()["nodeid"] in {item["nodeid"] for item in evals.json()["items"]}
     versions_after_curation = client.get(
         path + "/versions", headers={"Authorization": "Bearer viewer"}
     )
-    assert [row["generation"] for row in versions_after_curation.json()["items"]] == [4, 3, 2, 1]
+    assert [row["generation"] for row in versions_after_curation.json()["items"]] == [
+        5,
+        4,
+        3,
+        2,
+        1,
+    ]
     current_head = anchor.head
 
     class _StaleRuntime:
