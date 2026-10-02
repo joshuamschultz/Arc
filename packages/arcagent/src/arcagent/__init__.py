@@ -100,7 +100,11 @@ from arcagent.modules.capability_import.models import (
     CapabilityImportReview,
     CapabilityImportStatus,
 )
-from arcagent.modules.capability_import.pack_signing import SkillPackError, sign_skill_folder
+from arcagent.modules.capability_import.pack_signing import (
+    SkillPackError,
+    revoke_skill_folder,
+    sign_skill_folder,
+)
 from arcagent.modules.capability_import.service import CapabilityImportService
 from arcagent.modules.connected_data import SourceRefusedError, SourceUnreachableError
 from arcagent.modules.scheduler.models import ScheduleEntry, ScheduleMetadata, generate_schedule_id
@@ -393,6 +397,7 @@ __all__ = [
     "resolve_workspace_import_policy",
     "reviewed_bundle_digest",
     "revoke_capability",
+    "revoke_skill_folder",
     "serve_mcp_stdio",
     "set_workflow_runner",
     "sidecar_path",

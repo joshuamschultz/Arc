@@ -26,15 +26,19 @@ from arctrust import (
     AuditSink,
     Signer,
     approve,
+    disapprove,
     emit,
     hash_source,
     load_validators,
     persist_validators,
     pin_key,
+    unpin_key,
 )
 
 from arcagent.capabilities.artifact_signing import (
     SIDECAR_SUFFIX,
+    key_still_in_use,
+    load_signature,
     sidecar_path,
     write_signature_with_signer,
 )
@@ -110,15 +114,9 @@ def sign_skill_folder(
         pin_key(config_path, public_key=signer.public_key)
         timestamp = datetime.now(UTC).isoformat()
         for path, content in contents.items():
-            relative = path.relative_to(folder).as_posix()
-            name = (
-                pin_name_for_path(path)
-                if relative == "SKILL.md"
-                else approval_name(path, f"skills/{folder.name}/{relative}")
-            )
             approve(
                 config_path,
-                name=name,
+                name=_pin_name(folder, path.relative_to(folder).as_posix(), path),
                 source=approval_source(content),
                 approver=signer_did,
                 timestamp=timestamp,
@@ -143,6 +141,75 @@ def sign_skill_folder(
     return tuple(files)
 
 
+def revoke_skill_folder(
+    skill_md: Path,
+    *,
+    config_path: Path,
+    operator_did: str,
+    audit_sink: AuditSink | None = None,
+) -> int:
+    """Revoke the whole skill pack that owns ``skill_md``; return the file count.
+
+    The inverse of :func:`sign_skill_folder`. Approval signs and pins every data
+    file, so revocation covers every file that has a sidecar OR a pin, including
+    a sidecar whose file has since been deleted: leaving it would re-enable the
+    file the moment something recreated it. Links are never followed.
+    Idempotent; the trusted key is unpinned once, and only when no other artifact
+    under the agent root is still signed by it.
+    """
+    folder = skill_md.parent
+    names = _pack_member_names(folder)
+    keys: set[str] = set()
+    for relative in names:
+        member = folder / relative
+        manifest = load_signature(member)
+        if manifest is not None:
+            keys.add(manifest.public_key)
+        sidecar_path(member).unlink(missing_ok=True)
+        disapprove(config_path, name=_pin_name(folder, relative, member))
+    for public_key in keys:
+        if not key_still_in_use(config_path.parent, public_key):
+            unpin_key(config_path, public_key=bytes.fromhex(public_key))
+    if audit_sink is not None:
+        emit(
+            AuditEvent(
+                actor_did=operator_did,
+                action="capability.signature_revoked",
+                target=str(skill_md),
+                outcome="revoked",
+                payload_hash=_skill_source_hash(skill_md),
+                extra={"pack_files": len(names), "scope": "skill_folder"},
+            ),
+            audit_sink,
+        )
+    return len(names)
+
+
+def _skill_source_hash(skill_md: Path) -> str | None:
+    """Canonical pin hash of ``SKILL.md`` as it stands, or ``None`` if unreadable."""
+    try:
+        return hash_source(skill_md.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _pack_member_names(folder: Path) -> list[str]:
+    """Relative POSIX names of every file or orphaned sidecar target in ``folder``."""
+    names = {"SKILL.md"}
+    for entry in folder.rglob("*"):
+        if entry.is_symlink() or not entry.is_file():
+            continue
+        relative = entry.relative_to(folder).as_posix()
+        names.add(relative.removesuffix(SIDECAR_SUFFIX))
+    return sorted(names)
+
+
+def _pin_name(folder: Path, relative: str, member: Path) -> str:
+    if relative == "SKILL.md":
+        return pin_name_for_path(member)
+    return approval_name(member, f"skills/{folder.name}/{relative}")
+
+
 def _read_optional(path: Path) -> bytes | None:
     try:
         return path.read_bytes()
@@ -157,4 +224,4 @@ def _restore_optional(path: Path, content: bytes | None) -> None:
         path.write_bytes(content)
 
 
-__all__ = ["SkillPackError", "sign_skill_folder", "skill_pack_files"]
+__all__ = ["SkillPackError", "revoke_skill_folder", "sign_skill_folder", "skill_pack_files"]

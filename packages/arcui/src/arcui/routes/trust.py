@@ -522,6 +522,14 @@ async def disapprove(request: Request) -> JSONResponse:
     try:
         if item is None:
             _disapprove_pin(config_path, name=name)
+        elif item.kind == "skill":
+            # A skill was approved as one pack, so it is revoked as one pack.
+            arcagent.revoke_skill_folder(
+                Path(item.path),
+                config_path=config_path,
+                operator_did=operator_actor_did(request),
+                audit_sink=operator_audit_sink(request),
+            )
         else:
             arcagent.revoke_capability(
                 Path(item.path),

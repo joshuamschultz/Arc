@@ -64,6 +64,20 @@ def write_signature_with_signer(
     )
 
 
+def key_still_in_use(agent_root: Path, public_key_hex: str) -> bool:
+    """True when any artifact still under ``agent_root`` is signed by that key.
+
+    Runs after the revoked artifact's own sidecar is gone, so it sees exactly
+    the set of signatures that must keep working.
+    """
+    for sidecar in agent_root.rglob(f"*{SIDECAR_SUFFIX}"):
+        artifact = sidecar.with_name(sidecar.name.removesuffix(SIDECAR_SUFFIX))
+        manifest = load_signature(artifact)
+        if manifest is not None and manifest.public_key == public_key_hex:
+            return True
+    return False
+
+
 def _write(artifact: Path, manifest: ArtifactSignature) -> Path:
     """Persist ``manifest`` as ``artifact``'s sidecar and return the sidecar path.
 

@@ -21,6 +21,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/capabilities/test_capability_gating.py",
         "packages/arcagent/tests/security/test_module_capability_trust.py",
         "packages/arcagent/tests/security/capabilities/test_capability_import_drift.py",
+        # Disapprove revokes the WHOLE skill pack (every sidecar + pin, including a
+        # leftover sidecar whose file was deleted); the agent key never signs under
+        # the agent-root capabilities/ tree.
+        "packages/arcui/tests/test_trust_route.py",
+        "packages/arccli/tests/test_cli_trust.py",
+        "packages/arccli/tests/test_capability_signing_authority.py",
+        "tests/architecture/test_agent_key_never_signs_capabilities.py",
     ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never
