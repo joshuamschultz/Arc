@@ -506,23 +506,29 @@ class ArcSkillImprover:
             lock = self._skill_locks[skill_name] = asyncio.Lock()
         return lock
 
-    async def _generate_suite(self, skill_name: str, skill_dir: Path, kind: str) -> None:
+    async def _generate_suite(self, skill_name: str, skill_dir: Path, kind: str) -> bool:
         """One guarded suite generation; the caller holds the skill's lock.
 
         ``create`` is idempotent (skipped once anchors exist); the in-flight set is
         what stops the sweep double-claiming a generation already running (REQ-108).
+        Returns True when anchors were committed as a new revision: the skill's active
+        folder has moved, so the caller must re-resolve it and the agent must reload.
         """
         if self._suite_generator is None or not self._config.suite.autogen:
-            return
+            return False
         if kind == "create" and load_suite(skill_dir):
-            return
+            return False
         self._generating.add(skill_name)
         try:
-            await self._suite_generator.generate(
+            result = await self._suite_generator.generate(
                 skill_name=skill_name, skill_dir=skill_dir, kind=kind
             )
         finally:
             self._generating.discard(skill_name)
+        committed = bool(result is not None and result.files)
+        if committed and self._reload is not None:
+            self._reload()
+        return committed
 
     async def _optimize(self, skill_name: str, insight: str) -> None:
         """Serialize the whole pass — suite generation included — per skill (REQ-108)."""
@@ -550,7 +556,10 @@ class ArcSkillImprover:
             return
         # Lazy bootstrap (REQ-101): a suite-less skill gets its golden suite generated
         # before any gate decision, so acceptance is decided on anchors, not policy.
-        await self._generate_suite(skill_name, skill_path.parent, kind="create")
+        if await self._generate_suite(skill_name, skill_path.parent, kind="create"):
+            # The adopted anchors are a new anchored revision: gate on that bundle,
+            # not the folder the pass started from (which has no evals yet).
+            skill_path = self._skill_path(skill_name) or skill_path
 
         # Code-repair path (SPEC-044 P4): a skill with scripts + a golden suite whose
         # failing traces carry code error signals is repaired as bounded, gated,
