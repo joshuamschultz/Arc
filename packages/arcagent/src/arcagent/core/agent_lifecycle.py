@@ -78,6 +78,18 @@ def _resolve_working_dir(
     return None
 
 
+def _configured_pulse_file(agent: ArcAgent) -> list[str]:
+    """The operator's ``[modules.pulse] pulse_file``, if set to a non-default name.
+
+    Pulse checks auto-run as agent prompts, so whatever file the operator points
+    pulse at is a control-plane file the agent's own tools must not write (the
+    default ``pulse.md`` is already in the built-in protected names).
+    """
+    entry = agent._config.modules.get("pulse")
+    name = entry.config.get("pulse_file") if entry is not None else None
+    return [name] if isinstance(name, str) and name else []
+
+
 def load_module_runtime(name: str) -> RuntimeModule:
     """Load ``<module_root>/<name>/_runtime.py`` from the filesystem.
 
@@ -165,7 +177,8 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     allowed_paths = [Path(p).resolve() for p in agent._config.tools.policy.allowed_paths] or None
     # SPEC-035 REQ-002 — resolve the goal-lock set once; immutable for the session.
     protected_paths = resolve_protected_paths(
-        workspace, list(agent._config.tools.policy.protected_paths)
+        workspace,
+        [*agent._config.tools.policy.protected_paths, *_configured_pulse_file(agent)],
     )
     protected_audit = telemetry.audit_event if telemetry is not None else None
     # Coding agents (opt-in) operate their file/exec tools in the trusted launch dir;
