@@ -244,17 +244,28 @@ async def _service_worker(request: Request) -> Response:
     )
 
 
+def _operator_proof_issuer(
+    control: arcagent.ControlArtifactBinding,
+) -> Callable[[Request, str, str, bytes], Awaitable[bytes]]:
+    """Adapt the operator proof to the schedule routes (which check the role first)."""
+
+    async def issue(request: Request, purpose: str, artifact_id: str, definition: bytes) -> bytes:
+        if purpose == "schedule":
+            return control.operator_proof("schedule", artifact_id, definition)
+        if purpose == "pulse":
+            return control.operator_proof("pulse", artifact_id, definition)
+        raise arcagent.ControlArtifactRefusedError("control purpose is invalid")
+
+    return issue
+
+
 def create_app(
     *,
     auth_config: AuthConfig | None = None,
     operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
-    schedule_control_authority: arcagent.ControlArtifactAuthority | None = None,
-    schedule_tenant_id: str | None = None,
-    schedule_operator_proof_issuer: (
-        Callable[[Request, str, str, bytes], Awaitable[bytes]] | None
-    ) = None,
+    control: arcagent.ControlArtifactBinding | None = None,
     report_read_authority: ReportReadAuthority | None = None,
     queue_coordinator: arcagent.CallQueueCoordinator | None = None,
     queue_tenant_id: str | None = None,
@@ -291,6 +302,10 @@ def create_app(
         queue_coordinator: Initialized coordinator shared with embedded agents.
         queue_tenant_id: Trusted deployment tenant bound to that coordinator.
         queue_owner_epoch: Broker-issued lease epoch used by durable queue jobs.
+        control: The deployment's schedule and pulse authority (tenant, trigger
+            issuer, operator proof). The schedule routes and every embedded or
+            fleet agent bind to this one value; ``None`` (federal without an
+            external authority) keeps schedule writes closed with 503.
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
         max_agents: Maximum concurrent agent connections (default 100).
@@ -556,6 +571,7 @@ def create_app(
                 queue_tenant_id=queue_tenant_id,
                 queue_owner_epoch=queue_owner_epoch,
                 skill_revision_anchor_factory=skill_revision_anchor_factory,
+                control=control,
             )
             starlette_app.state.embedded_gateway = embedded_gateway
             starlette_app.state.workflow_runner_host = embedded_gateway.workflow_runner_host
@@ -750,9 +766,12 @@ def create_app(
     app.state.operator_signer_factory = operator_signer_factory
     app.state.user_store_factory = user_store_factory
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
-    app.state.schedule_control_authority = schedule_control_authority
-    app.state.schedule_tenant_id = schedule_tenant_id
-    app.state.schedule_operator_proof_issuer = schedule_operator_proof_issuer
+    app.state.control_binding = control
+    app.state.schedule_control_authority = None if control is None else control.authority
+    app.state.schedule_tenant_id = None if control is None else control.tenant_id
+    app.state.schedule_operator_proof_issuer = (
+        None if control is None else _operator_proof_issuer(control)
+    )
     app.state.report_read_authority = report_read_authority
     app.state.report_read_workers = (
         ReportReadWorkerPool() if report_read_authority is not None else None

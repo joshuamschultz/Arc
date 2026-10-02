@@ -31,7 +31,11 @@ from arcokf import OKFValidationError, render_collection_index, validate
 from arctrust.paths import dotenv_file, env_file
 
 from arccli.commands._arcllm_surface import commented_module_surface
-from arccli.commands._serve import AgentAuditForwarder, build_skill_revision_anchor_factory
+from arccli.commands._serve import (
+    AgentAuditForwarder,
+    build_control_artifact_authority,
+    build_skill_revision_anchor_factory,
+)
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import print_table as _print_table
 
@@ -654,6 +658,7 @@ def _load_arcagent(
     agent_dir: Path,
     *,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    control: arcagent.ControlArtifactBinding | None = None,
 ) -> tuple[Any, Any, Path]:
     """Load ArcAgent from agent directory.
 
@@ -687,6 +692,7 @@ def _load_arcagent(
         config_path=config_path,
         fleet=ArcTeamFleet(),
         skill_artifact_resolver=resolver,
+        **(control.agent_kwargs() if control is not None else {}),
     )
     return arc_agent, config, config_path
 
@@ -699,7 +705,9 @@ def load_cli_agent(agent_dir: Path) -> tuple[Any, Any, Path]:
     """
     audit = AgentAuditForwarder()
     loaded = _load_arcagent(
-        agent_dir, skill_revision_anchor_factory=build_skill_revision_anchor_factory(audit)
+        agent_dir,
+        skill_revision_anchor_factory=build_skill_revision_anchor_factory(audit),
+        control=build_control_artifact_authority(audit),
     )
     audit.bind(loaded[0])
     return loaded

@@ -149,6 +149,7 @@ def _make_agent_factory(
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    control: arcagent.ControlArtifactBinding | None = None,
 ) -> Any:
     """Build an async agent_factory bound to ``team_root``.
 
@@ -231,6 +232,7 @@ def _make_agent_factory(
             queue_tenant_id=queue_tenant_id,
             queue_owner_epoch=queue_owner_epoch,
             skill_artifact_resolver=resolver,
+            **(control.agent_kwargs() if control is not None else {}),
         )
         # Inject channel delivery BEFORE startup so agent:ready carries it and
         # the scheduler can bind it (fleet-started agents get it in ui.py).
@@ -327,6 +329,7 @@ async def build_for_embedded(
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    control: arcagent.ControlArtifactBinding | None = None,
 ) -> EmbeddedGateway:
     """Compose the in-process gateway runtime for arcui.
 
@@ -382,6 +385,7 @@ async def build_for_embedded(
             queue_tenant_id=queue_tenant_id,
             queue_owner_epoch=queue_owner_epoch,
             skill_revision_anchor_factory=skill_revision_anchor_factory,
+            control=control,
         )
     except BaseException:
         # A broker started moments ago and abandoned here would outlive the
@@ -401,6 +405,7 @@ async def _compose_embedded(
     queue_tenant_id: str | None = None,
     queue_owner_epoch: str | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
+    control: arcagent.ControlArtifactBinding | None = None,
 ) -> EmbeddedGateway:
     """Wire the components onto an already-ensured broker (see build_for_embedded)."""
     # Late-bound holder: the factory needs a per-agent deliver fn that closes
@@ -424,6 +429,7 @@ async def _compose_embedded(
         queue_tenant_id=queue_tenant_id,
         queue_owner_epoch=queue_owner_epoch,
         skill_revision_anchor_factory=skill_revision_anchor_factory,
+        control=control,
     )
     executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 

@@ -349,6 +349,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_cli_attachment_bounds.py",
         "packages/arcagent/tests/integration/test_google_account_routing.py",
     ),
+    # Item 52: the production local schedule authority. A forged or hand-edited
+    # approval, a stale or replayed registration, a proof from a key that is not
+    # the actor's, an edited journal, a revoked head, a replayed occurrence and an
+    # unsigned or forged row planted in schedules.json are all refused; the
+    # journey drives the real loader with no stand-in authority.
+    "forged schedule, replayed registration and unsigned schedule file": (
+        "packages/arctrust/tests/test_control_authority.py",
+        "packages/arcui/tests/integration/test_schedule_write_routes.py",
+        "packages/arccli/tests/test_serve_control_authority.py",
+        "tests/journeys/test_journey_schedules.py",
+    ),
 }
 
 

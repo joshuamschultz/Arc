@@ -3,45 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime
-from typing import Literal, Protocol
+from dataclasses import dataclass
+from typing import Protocol, TypedDict, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from arctrust import (
+    ControlArtifactRefusedError,
+    ControlArtifactUnavailableError,
+    ControlPurpose,
+    SignedControlRevision,
+)
 
-ControlPurpose = Literal["schedule", "pulse"]
+from arcagent.core.run_contract import RunTriggerIssuer
+
 ControlActionProofSource = Callable[[ControlPurpose, str, bytes], Awaitable[bytes]]
-
-
-class ControlArtifactRefusedError(RuntimeError):
-    """A control revision was revoked, stale, or did not bind its definition."""
-
-
-class ControlArtifactUnavailableError(RuntimeError):
-    """The protected control revision could not be checked or advanced."""
-
-
-class SignedControlRevision(BaseModel):
-    """Broker-custodied signed approval for exactly one definition revision."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tenant_id: str = Field(min_length=1)
-    agent_did: str = Field(min_length=1)
-    purpose: ControlPurpose
-    artifact_id: str = Field(min_length=1)
-    revision: int = Field(ge=1)
-    definition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    actor_did: str = Field(min_length=1)
-    issued_at: datetime
-    revoked: bool = False
-    signature: str = Field(pattern=r"^(?:[0-9a-f]{2})+$")
-
-    @field_validator("issued_at")
-    @classmethod
-    def _aware_issue_time(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("signed control issue time must include a timezone")
-        return value
 
 
 class ControlArtifactAuthority(Protocol):
@@ -70,3 +44,53 @@ class ControlArtifactAuthority(Protocol):
         approval: SignedControlRevision,
         occurrence_id: str,
     ) -> None: ...
+
+
+@runtime_checkable
+class ControlActorEnrollment(Protocol):
+    """An authority that pins the key each agent proves its control requests with."""
+
+    def enroll_actor(self, did: str, public_key: bytes, algorithm: str) -> None: ...
+
+
+class ControlAgentKwargs(TypedDict, total=False):
+    """The ``ArcAgent`` keyword arguments a :class:`ControlArtifactBinding` supplies."""
+
+    control_artifact_authority: ControlArtifactAuthority
+    control_tenant_id: str
+    trigger_issuer: RunTriggerIssuer
+
+
+@dataclass(frozen=True)
+class ControlArtifactBinding:
+    """One deployment's control authority, as every entry point hands it to agents.
+
+    ``operator_proof`` signs an operator-role request (the dashboard); agents sign
+    their own requests with their identity, so no per-agent source is carried.
+    """
+
+    authority: ControlArtifactAuthority
+    tenant_id: str
+    trigger_issuer: RunTriggerIssuer
+    operator_proof: Callable[[ControlPurpose, str, bytes], bytes]
+
+    def agent_kwargs(self) -> ControlAgentKwargs:
+        """The ``ArcAgent`` keyword arguments that bind an agent to this authority."""
+        return ControlAgentKwargs(
+            control_artifact_authority=self.authority,
+            control_tenant_id=self.tenant_id,
+            trigger_issuer=self.trigger_issuer,
+        )
+
+
+__all__ = [
+    "ControlActionProofSource",
+    "ControlActorEnrollment",
+    "ControlAgentKwargs",
+    "ControlArtifactAuthority",
+    "ControlArtifactBinding",
+    "ControlArtifactRefusedError",
+    "ControlArtifactUnavailableError",
+    "ControlPurpose",
+    "SignedControlRevision",
+]

@@ -310,6 +310,16 @@ def skill_revision_anchor_dir(base: Base = None) -> Path:
     return trust_dir(base) / "anchors"
 
 
+def control_artifact_journal_dir(base: Base = None) -> Path:
+    """Return the local control-artifact journals: ``<arc_state>/trust/control``.
+
+    One operator-signed, hash-chained journal per scheduled or pulse artifact
+    (:class:`arctrust.LocalControlArtifactAuthority`) — the zero-config schedule
+    authority at personal and enterprise tier.
+    """
+    return trust_dir(base) / "control"
+
+
 def store_dir(base: Base = None) -> Path:
     """Return the arcstore data dir: ``<arc_state>/store``."""
     return arc_state(base) / "store"
@@ -543,6 +553,7 @@ __all__ = [
     "bundles_dir",
     "capabilities_dir",
     "config_file",
+    "control_artifact_journal_dir",
     "default_operator_key_path",
     "default_witness_medium_path",
     "dotenv_file",

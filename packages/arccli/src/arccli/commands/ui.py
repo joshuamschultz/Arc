@@ -286,7 +286,10 @@ def _start(args: argparse.Namespace) -> None:
     # One skill revision authority for the dashboard AND the agents it serves
     # (alpha-2 P5). Zero-config local journal below federal; None at federal
     # without an external anchor, which keeps every anchored route closed.
-    from arccli.commands._serve import build_skill_revision_anchor_factory
+    from arccli.commands._serve import (
+        build_control_artifact_authority,
+        build_skill_revision_anchor_factory,
+    )
 
     anchor_audit = _AppAuditSink()
     app = create_app(
@@ -298,6 +301,9 @@ def _start(args: argparse.Namespace) -> None:
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
         skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
+        # The schedule/pulse authority shared by the dashboard and every agent it
+        # serves (item 52). None at federal: schedule writes stay closed (503).
+        control=build_control_artifact_authority(anchor_audit),
     )
     anchor_audit.app = app
 
@@ -510,6 +516,7 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
             warm=_warm,
             deliver_for=deliver_for,
             skill_revision_anchor_factory=app.state.skill_revision_anchor_factory,
+            control=app.state.control_binding,
         )
         _write(f"  Fleet: {count} always-on agent(s) started (messaging inbox active).")
 
