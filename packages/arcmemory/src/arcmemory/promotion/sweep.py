@@ -12,9 +12,13 @@ Phases, in order (each a named helper below):
    (drop-in, SDK or key missing; bounded by ``request_timeout_seconds``) →
    ``classifier_unavailable``; no publisher → ``publisher_unavailable``.
    A gated sweep reads nothing, sends nothing and writes no egress record.
-2. **plan** — enumerate, render, skip items the signed ledger already judged,
-   secret gate, size gate, clearance gate, count cap (oldest file first, so every
-   item eventually runs; the overflow is ``deferred``).
+2. **plan** — read the shared side's verified operator demotions (unreadable →
+   ``publisher_unavailable``, nothing sent); enumerate, render; a card whose
+   shared copy an operator demoted gets a sticky ``demoted_by_operator`` row and
+   is never sent again; skip cards the signed ledger already decided (an operator
+   decision always; a classifier verdict until the card's bytes change); secret
+   gate, size gate, clearance gate, count cap (oldest file first, so every item
+   eventually runs; the overflow is ``deferred``).
 3. **egress audit** — one durable ``memory.promotion.egress`` record BEFORE the
    first classifier call. No durable sink, or a failed write → zero calls.
 4. **classify** — sequential, one item at a time, each bounded by
@@ -28,6 +32,10 @@ Phases, in order (each a named helper below):
 5. **publish** — every ``pending`` row whose signature verifies and whose freshly
    re-rendered bytes still hash to the judged digest, including rows an earlier
    failed night left behind.
+
+:meth:`PromotionSweep.share` is the operator's hand share (alpha-2 item 16): the
+same lock, tier gate, demotion check, secret / size / clearance gates and
+publisher, with no classifier and no override for a secret hit.
 
 No audit event and no ledger row ever carries item content.
 
@@ -45,10 +53,10 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.classification import Classification, dominates, parse_classification
+from arctrust.classification import Classification, parse_classification
 
 from arcmemory.promotion.classifier import (
     ClassifierCallError,
@@ -60,13 +68,26 @@ from arcmemory.promotion.classifier import (
 )
 from arcmemory.promotion.config import PromotionConfig, is_federal_tier
 from arcmemory.promotion.decide import decide
-from arcmemory.promotion.ledger import LedgerDecision, LedgerRow, PromotionLedger, is_current
+from arcmemory.promotion.ledger import LedgerDecision, LedgerRow, PromotionLedger, needs_judging
+from arcmemory.promotion.operator import (
+    OperatorShareResult,
+    demoted_row,
+    demotion_for,
+    operator_promoted_row,
+)
 from arcmemory.promotion.publisher import (
+    Demotion,
     PromotionPublisher,
     PublisherUnavailableError,
     PublishOutcomeUnknownError,
 )
-from arcmemory.promotion.render import PromotableKind, PromotionText, render_candidate
+from arcmemory.promotion.render import (
+    PROMOTABLE_KINDS,
+    PromotableKind,
+    PromotionText,
+    render_candidate,
+    require_card_id,
+)
 from arcmemory.promotion.secret_gate import contains_secret
 from arcmemory.types import Entity, Insight, Procedure
 
@@ -150,12 +171,14 @@ class PromotionSweepResult:
     blocked_secret: int = 0
     too_large: int = 0
     deferred: int = 0
+    demoted: int = 0
 
 
 @dataclass
 class _Plan:
     """The plan phase's output: pre-egress verdicts, the batch to send, carried rows."""
 
+    demoted: list[tuple[LedgerRow, Demotion]] = field(default_factory=list)
     blocked_secret: list[PromotionText] = field(default_factory=list)
     too_large: list[PromotionText] = field(default_factory=list)
     batch: list[PromotionText] = field(default_factory=list)
@@ -242,7 +265,10 @@ class PromotionSweep:
         classifier, publisher = gate
         if not await self._classifier_ready(classifier):
             return PromotionSweepResult(status="classifier_unavailable")
-        plan = await asyncio.to_thread(self._plan, classifier, cap)
+        demotions = await self._demotions(publisher)
+        if demotions is None:
+            return PromotionSweepResult(status="publisher_unavailable")
+        plan = await asyncio.to_thread(self._plan, cap, demotions)
         await asyncio.to_thread(self._record_pre_egress, plan, now)
         if plan.batch and not self._write_egress_audit(classifier, plan.batch):
             return _result("classifier_error", plan, _Classified())
@@ -252,8 +278,123 @@ class PromotionSweep:
         if classified.failure is not None:
             return _result(classified.failure, plan, classified)
         pending = plan.carried_pending + classified.pending
-        promoted = await self._publish_pending(classifier, publisher, pending)
+        promoted = await self._publish_pending(publisher, pending)
         return _result("completed", plan, classified, promoted=promoted)
+
+    # -- operator hand share (alpha-2 item 16) -------------------------------------
+
+    async def share(
+        self, kind: str, item_id: str, *, decided_by: str, now: datetime
+    ) -> OperatorShareResult:
+        """Share one card on an operator's decision; audit every attempt.
+
+        The same lock as the sweep, so a share never races a night's publish. The
+        federal tier lock, a verified demotion, the secret gate (no override), the
+        size cap and the clearance rule all refuse before anything is published.
+        The ``promoted_by_operator`` row is appended once the outcome is known, so
+        a refused share leaves the card's decision unchanged.
+
+        Raises ``ValueError`` for a kind that is not promotable or an id that
+        names more than one card.
+        """
+        if kind not in PROMOTABLE_KINDS:
+            raise ValueError(f"memory kind {kind!r} is not promotable")
+        require_card_id(item_id)
+        card_kind = cast(PromotableKind, kind)
+        async with self._lock:
+            result = await self._share(card_kind, item_id, decided_by, now)
+        extra: dict[str, Any] = {"item_kind": kind, "item_id": item_id}
+        extra.update(decided_by=decided_by, shared_ref=result.shared_ref)
+        self._emit("memory.promotion.operator_promote", f"{kind}:{item_id}", result.status, extra)
+        return result
+
+    async def _share(
+        self, kind: PromotableKind, item_id: str, decided_by: str, now: datetime
+    ) -> OperatorShareResult:
+        if is_federal_tier(self._tier):
+            return OperatorShareResult("tier_forbidden")
+        if not self._cfg.enabled:
+            return OperatorShareResult("disabled")
+        publisher = self._publisher
+        if publisher is None:
+            return OperatorShareResult("publisher_unavailable")
+        demotions = await self._demotions(publisher)
+        if demotions is None:
+            return OperatorShareResult("publisher_unavailable")
+        refusal = await asyncio.to_thread(self._share_refusal, kind, item_id, demotions, now)
+        if isinstance(refusal, OperatorShareResult):
+            return refusal
+        return await self._publish_by_operator(publisher, refusal, decided_by, now)
+
+    def _share_refusal(
+        self, kind: PromotableKind, item_id: str, demotions: dict[str, Demotion], now: datetime
+    ) -> OperatorShareResult | PromotionText:
+        """Every gate before an operator share; the card's text when all pass."""
+        text = self._render(kind, item_id)
+        if text is None:
+            return OperatorShareResult("not_found")
+        if not self._cleared(text):
+            return OperatorShareResult("clearance_refused")
+        row = self._ledger.latest(kind, item_id)
+        demotion = demotion_for(row, demotions)
+        if row is not None and demotion is not None:
+            self._record(demoted_row(row, demotion, now))
+        if demotion is not None or (row is not None and row.decision == "demoted_by_operator"):
+            return OperatorShareResult("demoted")
+        if contains_secret(text.content):
+            if row is None or not (
+                row.decision == "blocked_secret" and row.content_sha256 == text.content_sha256
+            ):
+                self._record(_pre_egress_row(text, "blocked_secret", now))
+            return OperatorShareResult("blocked_secret")
+        if _content_bytes(text) > self._cfg.max_item_bytes:
+            return OperatorShareResult("too_large")
+        return text
+
+    async def _publish_by_operator(
+        self, publisher: PromotionPublisher, text: PromotionText, decided_by: str, now: datetime
+    ) -> OperatorShareResult:
+        reference = f"{text.item_kind}:{text.item_id}"
+        try:
+            shared_ref = await publisher.publish_by_operator(
+                reference, content_sha256=text.content_sha256, decided_by=decided_by
+            )
+        except PublisherUnavailableError:
+            return OperatorShareResult("refused")
+        except PublishOutcomeUnknownError:
+            row = operator_promoted_row(
+                text,
+                decided_by=decided_by,
+                now=now,
+                publish_state="outcome_unknown",
+                shared_ref=None,
+            )
+            await asyncio.to_thread(self._record, row)
+            return OperatorShareResult("outcome_unknown")
+        row = operator_promoted_row(
+            text, decided_by=decided_by, now=now, publish_state="published", shared_ref=shared_ref
+        )
+        await asyncio.to_thread(self._record, row)
+        return OperatorShareResult("published", shared_ref)
+
+    def history(self, kind: str, item_id: str) -> list[LedgerRow]:
+        """Every verified decision row for one card, oldest first (no content)."""
+        if kind not in PROMOTABLE_KINDS:
+            raise ValueError(f"memory kind {kind!r} is not promotable")
+        require_card_id(item_id)
+        return self._ledger.history(kind, item_id)
+
+    async def _demotions(self, publisher: PromotionPublisher) -> dict[str, Demotion] | None:
+        """The shared side's verified demotions; ``None`` when they cannot be read.
+
+        Fail closed: a sweep that cannot tell what an operator demoted decides
+        nothing, so a demoted card is never re-sent through a read failure.
+        """
+        try:
+            return dict(await publisher.demotions())
+        except Exception as exc:  # reason: any read failure means "cannot know" — decide nothing
+            _log.warning("shared demotions unreadable (%s); deciding nothing", type(exc).__name__)
+            return None
 
     # -- phase 1: gate ---------------------------------------------------------
 
@@ -295,17 +436,21 @@ class PromotionSweep:
 
     # -- phase 2: plan (worker thread) ---------------------------------------------
 
-    def _plan(self, classifier: PromotionClassifier, cap: int) -> _Plan:
-        """Sort every unjudged card into blocked / oversize / batch / deferred."""
+    def _plan(self, cap: int, demotions: dict[str, Demotion]) -> _Plan:
+        """Sort every undecided card into demoted / blocked / oversize / batch / deferred."""
         plan = _Plan()
         eligible: list[_Candidate] = []
         ledger = self._ledger.latest_index()
         for kind, item_id in self._listing():
+            row = ledger.get((kind, item_id))
+            demotion = demotion_for(row, demotions)
+            if row is not None and demotion is not None:
+                plan.demoted.append((row, demotion))
+                continue
             candidate = self._candidate(kind, item_id)
             if candidate is None:
                 continue
-            row = ledger.get((kind, item_id))
-            if row is not None and _already_judged(row, candidate.text, classifier, self._cfg):
+            if row is not None and _decided(row, candidate.text, self._cfg):
                 if row.publish_state == "pending":
                     plan.carried_pending.append(row)
                 continue
@@ -357,15 +502,19 @@ class PromotionSweep:
     def _cleared(self, text: PromotionText) -> bool:
         """Only cards the shared side could accept at our clearance are ever sent.
 
-        The exporter refuses a card whose label our clearance does not dominate,
-        so sending its bytes to the classifier would be disclosure for nothing.
+        The shared store publishes a card under its OWN label and accepts only a
+        label equal to the writer's clearance (no-write-down; alpha-2 Q16-a), so
+        the exporter refuses any other label. Sending such a card's bytes to the
+        classifier would be disclosure for nothing.
         """
         label = _parse_label(text.classification)
-        return label is not None and dominates(self._clearance, label)
+        return label is not None and label == self._clearance
 
     # -- pre-egress + verdict recording (worker thread) ------------------------------
 
     def _record_pre_egress(self, plan: _Plan, now: datetime) -> None:
+        for row, demotion in plan.demoted:
+            self._record(demoted_row(row, demotion, now))
         for text in plan.blocked_secret:
             self._record(_pre_egress_row(text, "blocked_secret", now))
         for text in plan.too_large:
@@ -409,6 +558,9 @@ class PromotionSweep:
             "classifier_version": row.classifier_version,
             "decision": row.decision,
         }
+        if row.decided_by is not None:
+            # An operator decision names who decided and why (never content).
+            extra.update(decided_by=row.decided_by, reason=row.reason, shared_ref=row.shared_ref)
         self._emit("memory.promotion.decision", _reference(row), row.decision, extra)
         return signed
 
@@ -509,10 +661,7 @@ class PromotionSweep:
     # -- phase 5: publish ----------------------------------------------------------
 
     async def _publish_pending(
-        self,
-        classifier: PromotionClassifier,
-        publisher: PromotionPublisher,
-        pending: list[LedgerRow],
+        self, publisher: PromotionPublisher, pending: list[LedgerRow]
     ) -> int:
         if not pending:
             return 0
@@ -522,21 +671,24 @@ class PromotionSweep:
         published = 0
         for row in pending:
             latest = ledger.get((row.item_kind, row.item_id))
-            if await asyncio.to_thread(self._still_publishable, classifier, row, latest):
+            if await asyncio.to_thread(self._still_publishable, row, latest):
                 published += await self._publish_one(publisher, row)
         return published
 
-    def _still_publishable(
-        self, classifier: PromotionClassifier, row: LedgerRow, latest: LedgerRow | None
-    ) -> bool:
-        """Re-read the card: publish only the exact bytes the classifier judged."""
+    def _still_publishable(self, row: LedgerRow, latest: LedgerRow | None) -> bool:
+        """Re-read the card: publish only the exact bytes the classifier judged.
+
+        The newest verified row must still be this pending ``promote`` (an operator
+        decision appended since supersedes it) and the card must still hash to it.
+        """
         text = self._render(row.item_kind, row.item_id)
         return (
             text is not None
             and latest is not None
+            and latest.decision == "promote"
             and latest.publish_state == "pending"
             and latest.content_sha256 == row.content_sha256
-            and is_current(latest, text, classifier, self._cfg)
+            and text.content_sha256 == row.content_sha256
         )
 
     async def _publish_one(self, publisher: PromotionPublisher, row: LedgerRow) -> int:
@@ -588,22 +740,19 @@ class PromotionSweep:
 # -- pure helpers ----------------------------------------------------------------
 
 
-def _already_judged(
-    row: LedgerRow, text: PromotionText, classifier: PromotionClassifier, cfg: PromotionConfig
-) -> bool:
-    """A verified row settles the item until its bytes (or classifier/question) change.
+def _decided(row: LedgerRow, text: PromotionText, cfg: PromotionConfig) -> bool:
+    """A verified row settles the card: one durable decision per card version.
 
-    Pre-egress rows carry no classifier fields. ``blocked_secret`` is reused on the
-    content hash alone. ``too_large`` is reused only while the same bytes still
-    exceed the current ``max_item_bytes``, so raising the limit re-checks them.
+    An operator decision settles it whatever the bytes become; any other decision
+    until the bytes change (:func:`needs_judging`). ``too_large`` is the one
+    exception: reused only while the same bytes still exceed the current
+    ``max_item_bytes``, so raising the limit re-checks them.
     """
-    if row.decision == "blocked_secret":
-        return row.content_sha256 == text.content_sha256
     if row.decision == "too_large":
         return (
             row.content_sha256 == text.content_sha256 and _content_bytes(text) > cfg.max_item_bytes
         )
-    return is_current(row, text, classifier, cfg)
+    return not needs_judging(row, text)
 
 
 def _content_bytes(text: PromotionText) -> int:
@@ -640,6 +789,7 @@ def _result(
         blocked_secret=len(plan.blocked_secret),
         too_large=len(plan.too_large),
         deferred=plan.deferred,
+        demoted=len(plan.demoted),
     )
 
 

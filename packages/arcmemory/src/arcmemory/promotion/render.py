@@ -18,6 +18,13 @@ from typing import Literal
 from arcmemory.types import Entity, Insight, Procedure
 
 PromotableKind = Literal["insight", "procedure", "entity"]
+PROMOTABLE_KINDS: tuple[PromotableKind, ...] = ("insight", "procedure", "entity")
+
+
+def require_card_id(item_id: str) -> None:
+    """Refuse an id that could name anything but one card in its store (path jail)."""
+    if item_id in ("", ".", "..") or any(sep in item_id for sep in ("/", "\\", "\0")):
+        raise ValueError("memory reference must name exactly one card")
 
 
 @dataclass(frozen=True)
@@ -69,4 +76,11 @@ def _text(
     )
 
 
-__all__ = ["PromotableKind", "PromotionText", "content_digest", "render_candidate"]
+__all__ = [
+    "PROMOTABLE_KINDS",
+    "PromotableKind",
+    "PromotionText",
+    "content_digest",
+    "render_candidate",
+    "require_card_id",
+]

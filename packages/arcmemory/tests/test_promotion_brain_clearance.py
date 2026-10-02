@@ -86,6 +86,9 @@ class _Publisher:
     async def publish(self, reference: str, **_: Any) -> str:  # pragma: no cover
         return f"shared:{reference}"
 
+    async def demotions(self) -> dict[str, object]:
+        return {}
+
 
 class _DurableSink:
     def __init__(self) -> None:

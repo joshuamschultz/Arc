@@ -50,7 +50,8 @@ from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
 from arcmemory.promotion.classifier import PromotionClassifier
 from arcmemory.promotion.config import PromotionConfig, is_federal_tier
-from arcmemory.promotion.ledger import PromotionLedger
+from arcmemory.promotion.ledger import LedgerRow, PromotionLedger
+from arcmemory.promotion.operator import OperatorShareResult
 from arcmemory.promotion.publisher import PromotionPublisher
 from arcmemory.promotion.sweep import (
     PromotionSweep,
@@ -976,6 +977,29 @@ class ArcMemoryBrain:
             status: SweepStatus = "tier_forbidden" if federal else "disabled"
             return PromotionSweepResult(status=status)
         return await self._promotion_sweep.run(datetime.now(UTC), max_items=cap)
+
+    async def share_memory_item(
+        self, kind: str, item_id: str, *, decided_by: str
+    ) -> OperatorShareResult:
+        """Share one card on an operator's decision (alpha-2 item 16).
+
+        The sweep's own path (lock, tier, demotion, secret, size and clearance
+        gates, publisher) with no classifier. Federal -> ``tier_forbidden``;
+        promotion not configured -> ``disabled``. Raises ``ValueError`` for a
+        non-promotable kind or a malformed card id.
+        """
+        if self._promotion_sweep is None:
+            federal = is_federal_tier(self._cfg.tier)
+            return OperatorShareResult("tier_forbidden" if federal else "disabled")
+        return await self._promotion_sweep.share(
+            kind, item_id, decided_by=decided_by, now=datetime.now(UTC)
+        )
+
+    def promotion_history(self, kind: str, item_id: str) -> list[LedgerRow]:
+        """One card's verified decision rows, oldest first; empty when not configured."""
+        if self._promotion_sweep is None:
+            return []
+        return self._promotion_sweep.history(kind, item_id)
 
     # -- internals ---------------------------------------------------------
 

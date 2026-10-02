@@ -159,6 +159,9 @@ class FakePublisher:
         self.references.append(reference)
         return f"shared:{reference}"
 
+    async def demotions(self) -> dict[str, object]:
+        return {}
+
 
 class RecordingSink:
     """``AuditSink`` + ``DurableAuditSink`` recorder."""
@@ -693,17 +696,31 @@ async def test_valid_row_replayed_onto_another_item_is_ignored(env: Env) -> None
     [{"classifier_version": "jev-1.12"}, {"question": "sha256:" + "0" * 64}],
     ids=["other-classifier-version", "other-question-version"],
 )
-async def test_verdict_from_other_classifier_or_question_version_is_not_reused(
+async def test_verdict_from_other_classifier_or_question_version_holds_for_same_bytes(
     env: Env, stale: dict[str, str]
 ) -> None:
+    """Alpha-2 item 16: one durable decision per card version.
+
+    A model or question bump is not new facts, so the card's bytes are never
+    re-sent to the third-party classifier and a private card never flips public.
+    """
     env.add_insight("diary", "My daughter's recital is Friday.")
-    env.ledger.append(_row("diary", env.digest("diary"), **stale))
-    classifier = FakeClassifier({"diary": _verdict("personal")})
+    env.ledger.append(
+        _row(
+            "diary",
+            env.digest("diary"),
+            decision="keep_private",
+            label="personal",
+            publish_state="none",
+            **stale,
+        )
+    )
+    classifier = FakeClassifier({"diary": _verdict("company")})
     publisher = FakePublisher()
 
     await env.sweep(classifier, publisher=publisher).run(_NIGHT_1)
 
-    assert classifier.sent_ids == ["diary"]
+    assert classifier.sent_ids == []
     assert publisher.references == []
 
 

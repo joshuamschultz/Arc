@@ -6,9 +6,11 @@ card from disk and renders it with :func:`render_candidate`, so the published
 bytes are exactly the bytes the classifier saw — or the digest no longer matches.
 
 Only the owning agent may export (``access.caller_did == agent_did``, ASI03). The
-shared label is the caller's clearance (the shared store's no-write-down rule
-requires label == writer clearance); a card whose own label is not dominated by
-that clearance is refused, never laundered down.
+shared label is the CARD's own label (alpha-2 Q16-a), never the caller's clearance
+written over it. The shared store's no-write-down rule accepts only a label equal
+to the writer's clearance, so a card labelled anything else is refused here —
+above clearance is never read up, below it is never relabelled up, so the label a
+shared card shows is always true.
 """
 
 from __future__ import annotations
@@ -18,11 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from arctrust.classification import dominates, parse_classification
+from arctrust.classification import parse_classification
 
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.promotion.render import PromotionText, render_candidate
+from arcmemory.promotion.render import PromotionText, render_candidate, require_card_id
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -114,21 +116,24 @@ class ConsolidatedMemoryExporter:
     async def export_for_promotion(self, reference: str, access: _Access) -> _PromotionSource:
         """Re-read and render ``reference`` (``<kind>:<id>``) at the caller's clearance.
 
-        Raises ``PermissionError`` for a foreign caller or a card above clearance,
-        ``ValueError`` for a non-promotable or malformed reference, and
-        ``LookupError`` for a missing card.
+        Raises ``PermissionError`` for a foreign caller or a card whose label is not
+        the caller's clearance, ``ValueError`` for a non-promotable or malformed
+        reference, and ``LookupError`` for a missing card.
         """
         if access.caller_did != self._agent_did:
             raise PermissionError("consolidated memory belongs to a different agent")
         clearance = parse_classification(access.clearance, strict=True)
         text = await asyncio.to_thread(self._render, reference)
-        if not dominates(clearance, parse_classification(text.classification, strict=True)):
-            raise PermissionError("memory card classification exceeds caller clearance")
+        label = parse_classification(text.classification, strict=True)
+        if label != clearance:
+            raise PermissionError(
+                "memory card label differs from the caller's clearance; it is never relabelled"
+            )
         return _PromotionSource(
             reference=_Reference("personal", reference, text.content_sha256),
             digest=text.content_sha256,
             content=text.content,
-            classification=access.clearance,
+            classification=label.name,
             title=text.title,
             tags=(),
             document_type=text.item_kind,
@@ -136,7 +141,7 @@ class ConsolidatedMemoryExporter:
 
     def _render(self, reference: str) -> PromotionText:
         kind, _, item_id = reference.partition(":")
-        _require_child_segment(item_id)
+        require_card_id(item_id)
         item: Insight | Procedure | Entity | None
         if kind == "insight":
             item = self._stores.insights.read(item_id)
@@ -149,12 +154,6 @@ class ConsolidatedMemoryExporter:
         if item is None:
             raise LookupError(f"no {kind} card named {item_id!r}")
         return render_candidate(item)
-
-
-def _require_child_segment(item_id: str) -> None:
-    """Refuse an id that could name anything but one card in its store (path jail)."""
-    if item_id in ("", ".", "..") or any(sep in item_id for sep in ("/", "\\", "\0")):
-        raise ValueError("memory reference must name exactly one card")
 
 
 __all__ = ["ConsolidatedMemoryExporter", "ConsolidatedStores"]

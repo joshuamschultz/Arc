@@ -136,6 +136,7 @@ class Publisher:
     async def publish(self, reference, **_):
         self.references.append(reference)
         return "shared:" + reference
+    async def demotions(self): return {}
 
 
 # The ONE seam replaced: a model-free distiller, so no LLM call is attempted.
