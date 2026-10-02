@@ -69,13 +69,40 @@ def _session(auth: AuthConfig, email: str, did: str, role: str) -> dict[str, str
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_static_operator_and_foreign_account_cannot_read_queue() -> None:
+def test_foreign_tenant_account_cannot_read_queue() -> None:
+    queue = arcrun.CallQueueCoordinator(tenant_scope="tenant-a")
+    client, auth = _client(queue)
+    foreign = _session(auth, "foreign@example.com", "did:arc:tenant-b:user/foreign", "operator")
+    assert client.get("/api/queue/jobs", headers=foreign).status_code == 403
+
+
+def test_static_operator_token_reads_and_controls_deployment_queue() -> None:
+    """The bootstrap operator token names nobody; it is scoped to the trusted tenant."""
     queue = arcrun.CallQueueCoordinator(tenant_scope="tenant-a")
     client, auth = _client(queue)
     static = {"Authorization": f"Bearer {auth.operator_token}"}
-    foreign = _session(auth, "foreign@example.com", "did:arc:tenant-b:user/foreign", "operator")
-    assert client.get("/api/queue/jobs", headers=static).status_code == 403
-    assert client.get("/api/queue/jobs", headers=foreign).status_code == 403
+    assert client.get("/api/queue/jobs", headers=static).status_code == 200
+    assert client.get("/api/queue/control", headers=static).status_code == 200
+    paused = client.post("/api/queue/pause", headers=static, json={"expected_revision": 0})
+    assert paused.status_code == 200
+
+
+def test_viewers_and_anonymous_callers_are_denied_every_queue_route() -> None:
+    queue = arcrun.CallQueueCoordinator(tenant_scope="tenant-a")
+    client, auth = _client(queue)
+    static_viewer = {"Authorization": f"Bearer {auth.viewer_token}"}
+    account_viewer = _session(auth, "viewer@example.com", "did:arc:tenant-a:user/viewer", "viewer")
+    for headers in (static_viewer, account_viewer):
+        assert client.get("/api/queue/jobs", headers=headers).status_code == 403
+        assert client.get("/api/queue/control", headers=headers).status_code == 403
+        assert (
+            client.post(
+                "/api/queue/pause", headers=headers, json={"expected_revision": 0}
+            ).status_code
+            == 403
+        )
+    assert client.get("/api/queue/jobs").status_code == 401
+    assert client.get("/api/queue/control").status_code == 401
 
 
 def test_operator_reads_only_trusted_tenant_even_with_forged_query() -> None:

@@ -82,6 +82,12 @@ export function QueuePage() {
         description="Inspect call state and control admission for this deployment."
       />
       <div className="space-y-6 overflow-auto p-6">
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          This is the waiting room for model calls. When many agents ask the model provider
+          for answers at once, the queue lets a set number run together and holds the rest in
+          line. Here you can see each call, pause new calls from starting, change how many
+          run at once, or cancel a call. Most days you do not need to touch it.
+        </p>
         {notice && <p role="status" className="rounded border border-border p-3">{notice}</p>}
         {control.error && <ErrorState error={control.error} />}
         {control.data && limits && (
@@ -222,7 +228,13 @@ export function QueuePage() {
                     ))}
                   </tbody>
                 </table>
-                {jobs.data.jobs.length === 0 && <p className="p-4">No calls match these filters.</p>}
+                {jobs.data.jobs.length === 0 && (
+                  <p className="p-4">
+                    {owner || state
+                      ? 'No calls match these filters.'
+                      : 'No model calls are waiting or running right now. Calls show here only while an agent waits for or uses the model provider.'}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" disabled={!cursors.length} onClick={() => setCursors(cursors.slice(0, -1))}>Previous</Button>

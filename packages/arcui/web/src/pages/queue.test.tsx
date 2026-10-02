@@ -66,3 +66,14 @@ it('retains the original revision after a conflicting limits update', async () =
   expect(await screen.findByText(/Reload the current values/)).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Reload limits' })).toBeTruthy()
 })
+
+it('explains what the queue is and shows a plain empty state', async () => {
+  const fetchMock = vi.fn(async (path: RequestInfo | URL) => {
+    if (String(path) === '/api/queue/control') return new Response(JSON.stringify(control))
+    return new Response(JSON.stringify({ jobs: [], next_cursor: null }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  showQueue()
+  expect(await screen.findByText(/waiting room for model calls/i)).toBeTruthy()
+  expect(await screen.findByText(/No model calls are waiting or running/i)).toBeTruthy()
+})

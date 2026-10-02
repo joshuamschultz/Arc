@@ -904,7 +904,7 @@
   },
   "queue": {
     "title": "Model call queue",
-    "summary": "Review payload-free model-call status and manage provider admission for your authorized tenant.",
+    "summary": "The waiting room for model calls. It limits how many calls reach the model provider at once and holds the rest in line, so a busy fleet does not overload the provider. You can review call state, pause admission, change limits, or cancel a call. Prompts and answers are never shown.",
     "steps": [
       "Review call state and the current admission controls for your tenant. Queue rows show metadata only; prompts and provider payloads are not shown.",
       "Pause admission or change limits only when you understand the effect on calls waiting for a provider slot. Existing provider calls may continue while admission is paused.",
