@@ -169,7 +169,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "scheduled control revision and occurrence replay refusal": (
         "packages/arcagent/tests/unit/core/test_control_contract.py",
         "packages/arcagent/tests/unit/modules/scheduler/test_signed_dispatch.py",
+        "packages/arcagent/tests/unit/modules/scheduler/test_pending_recovery.py",
         "packages/arcagent/tests/unit/modules/scheduler/test_scheduler_capabilities.py",
+        "packages/arcagent/tests/unit/modules/pulse/test_signed_pulse.py",
         "packages/arcagent/tests/integration/test_workflow_trigger_wiring.py",
         "packages/arcui/tests/integration/test_schedule_write_routes.py",
         "packages/arcteam/tests/unit/workflow/test_run_create_idempotence.py",

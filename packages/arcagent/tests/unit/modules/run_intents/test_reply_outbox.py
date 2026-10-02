@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import arcrun
 import arcstore
@@ -87,14 +88,16 @@ def _ledger(
     )
 
 
-async def _completed_reply_run() -> tuple[LedgerRunOwner, str]:
+async def _completed_reply_run(
+    purpose: Literal["message", "schedule"] = "message",
+) -> tuple[LedgerRunOwner, str]:
     request = CanonicalRunRequest(
         run_id="reply-run-1",
         session_key="channel-session",
         input_text="question",
         reply_target="channel://ops",
         caller_did="did:arc:user:alice",
-        purpose="message",
+        purpose=purpose,
         occurrence_id="message-1",
     )
     owner = LedgerRunOwner(_ledger(request))
@@ -186,6 +189,25 @@ async def test_lost_send_response_reconciles_without_duplicate_reply() -> None:
     first = await owner.deliver_reply(run_id, send=send, lookup=lookup)
     repeated = await owner.deliver_reply(run_id, send=send, lookup=lookup)
     assert first == repeated == "sent"
+    assert calls == 1
+
+
+async def test_scheduled_reply_reconciles_after_lost_send_response() -> None:
+    owner, run_id = await _completed_reply_run("schedule")
+    sent: dict[str, ChannelReply] = {}
+    calls = 0
+
+    async def send(reply: ChannelReply) -> None:
+        nonlocal calls
+        calls += 1
+        sent[reply.message_id] = reply
+        raise TimeoutError("publish response lost")
+
+    async def lookup(reply: ChannelReply) -> bool:
+        return sent.get(reply.message_id) == reply
+
+    assert await owner.deliver_reply(run_id, send=send, lookup=lookup) == "sent"
+    assert await owner.deliver_reply(run_id, send=send, lookup=lookup) == "sent"
     assert calls == 1
 
 

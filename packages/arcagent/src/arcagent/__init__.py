@@ -207,16 +207,17 @@ def __getattr__(name: str) -> Any:
         from arcagent.modules import run_intents
 
         return getattr(run_intents, name)
-    if name == "CanonicalRunRequest":
-        from arcagent.core.run_contract import CanonicalRunRequest
+    if name in {"AcceptedRunOwner", "CanonicalRunRequest", "RunTriggerIssuer"}:
+        from arcagent.core import run_contract
 
-        return CanonicalRunRequest
+        return getattr(run_contract, name)
     if name == "DeliveryUnavailableError":
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
     if name in {
         "ControlArtifactAuthority",
+        "ControlActionProofSource",
         "ControlArtifactRefusedError",
         "ControlArtifactUnavailableError",
         "SignedControlRevision",
@@ -253,6 +254,7 @@ __all__ = [
     "MEMORY_PROMOTION_MAX_ITEMS",
     "NOT_INSTALLED",
     "SECURITY_CONFIG_KNOBS",
+    "AcceptedRunOwner",
     "AnchoredSkillRevisionResolver",
     "ArcAgent",
     "ArcAgentConfig",
@@ -284,6 +286,7 @@ __all__ = [
     "ConnectorPlan",
     "ConnectorReconcileResult",
     "ContextError",
+    "ControlActionProofSource",
     "ControlArtifactAuthority",
     "ControlArtifactRefusedError",
     "ControlArtifactUnavailableError",
@@ -326,6 +329,7 @@ __all__ = [
     "RootTokenBudget",
     "RunIntentLedger",
     "RunIntentUnavailableError",
+    "RunTriggerIssuer",
     "ScheduleEntry",
     "ScheduleMetadata",
     "ScheduleStore",

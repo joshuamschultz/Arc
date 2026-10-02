@@ -7,15 +7,21 @@ the single ``run_fn`` directly without wrapping it.
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
+from arcagent.core.control_contract import SignedControlRevision
+from arcagent.core.run_contract import CanonicalRunRequest
 from arcagent.modules.pulse import PulseCheck, PulseState, _runtime
 from arcagent.modules.pulse.capabilities import bind_agent_run_fn
 from arcagent.modules.pulse.config import PulseConfig
 from arcagent.modules.pulse.engine import PulseEngine
+from arcagent.modules.pulse.signed_dispatch import canonical_definition
 
 
 class _RunResult:
@@ -44,26 +50,59 @@ def _clean_runtime() -> Any:
 
 
 def _engine(workspace: Path, run_fn: Any) -> PulseEngine:
+    def prepare(prompt: str, **kwargs: Any) -> CanonicalRunRequest:
+        kwargs["purpose"] = kwargs.pop("run_purpose")
+        return CanonicalRunRequest(input_text=prompt, **kwargs)
+
+    async def issue(request: CanonicalRunRequest, evidence: bytes) -> tuple[bytes, datetime]:
+        del request, evidence
+        return b"signed", datetime.now(UTC) + timedelta(minutes=1)
+
     engine = PulseEngine(
         workspace=workspace,
         config=PulseConfig(timeout_seconds=5.0),
         agent_run_fn=run_fn,
+        control_artifact_authority=AsyncMock(),
+        control_tenant_id="tenant",
+        agent_did="did:arc:local:agent/one",
+        trigger_issuer=issue,
+        prepare_collected_request=prepare,
     )
     engine.set_agent_run_fn(run_fn)
     return engine
+
+
+def _approved(check: PulseCheck) -> PulseCheck:
+    return check.model_copy(
+        update={
+            "approval": SignedControlRevision(
+                tenant_id="tenant",
+                agent_did="did:arc:local:agent/one",
+                purpose="pulse",
+                artifact_id=check.name,
+                revision=1,
+                definition_digest=hashlib.sha256(canonical_definition(check)).hexdigest(),
+                actor_did="did:arc:local:user/operator",
+                issued_at=datetime.now(UTC),
+                signature="ab" * 64,
+            )
+        }
+    )
 
 
 @pytest.mark.asyncio
 async def test_execute_check_calls_run_fn_with_session_key(tmp_path: Path) -> None:
     recorder = _Recorder()
     engine = _engine(tmp_path, recorder)
-    check = PulseCheck(name="inbox", interval_minutes=10, action="Check inbox")
+    check = _approved(PulseCheck(name="inbox", interval_minutes=10, action="Check inbox"))
 
     await engine._execute_check(check, PulseState())
 
     assert len(recorder.calls) == 1
     prompt, kwargs = recorder.calls[0]
-    assert kwargs == {"session_key": "pulse:inbox"}
+    assert kwargs["session_key"] == "pulse:inbox"
+    assert kwargs["run_purpose"] == "pulse"
+    assert kwargs["signed_authorization"] == b"signed"
     assert "Check inbox" in prompt
 
 
@@ -71,7 +110,7 @@ async def test_execute_check_calls_run_fn_with_session_key(tmp_path: Path) -> No
 async def test_execute_check_drops_tool_choice_and_automated(tmp_path: Path) -> None:
     recorder = _Recorder()
     engine = _engine(tmp_path, recorder)
-    check = PulseCheck(name="health", interval_minutes=5, action="Ping")
+    check = _approved(PulseCheck(name="health", interval_minutes=5, action="Ping"))
 
     await engine._execute_check(check, PulseState())
 
@@ -86,10 +125,10 @@ async def test_session_key_is_per_check(tmp_path: Path) -> None:
     engine = _engine(tmp_path, recorder)
 
     await engine._execute_check(
-        PulseCheck(name="alpha", interval_minutes=1, action="a"), PulseState()
+        _approved(PulseCheck(name="alpha", interval_minutes=1, action="a")), PulseState()
     )
     await engine._execute_check(
-        PulseCheck(name="beta", interval_minutes=1, action="b"), PulseState()
+        _approved(PulseCheck(name="beta", interval_minutes=1, action="b")), PulseState()
     )
 
     keys = [kwargs["session_key"] for _, kwargs in recorder.calls]
@@ -100,7 +139,7 @@ async def test_session_key_is_per_check(tmp_path: Path) -> None:
 async def test_execute_check_marks_ok_after_success(tmp_path: Path) -> None:
     recorder = _Recorder()
     engine = _engine(tmp_path, recorder)
-    check = PulseCheck(name="inbox", interval_minutes=10, action="Check inbox")
+    check = _approved(PulseCheck(name="inbox", interval_minutes=10, action="Check inbox"))
 
     await engine._execute_check(check, PulseState())
 

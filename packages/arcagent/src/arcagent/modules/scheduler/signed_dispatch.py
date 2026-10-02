@@ -13,7 +13,11 @@ from arcagent.core.control_contract import (
     ControlArtifactRefusedError,
     ControlArtifactUnavailableError,
 )
-from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    RunOutcomeUnknownError,
+    RunTriggerIssuer,
+)
 from arcagent.modules.scheduler.models import ScheduleEntry
 from arcagent.modules.scheduler.occurrence import scheduled_occurrence
 
@@ -111,7 +115,7 @@ async def dispatch_signed_schedule(
         raise ControlArtifactUnavailableError("scheduled trigger issuer unavailable") from exc
     if deadline.tzinfo is None or deadline.utcoffset() is None or deadline <= datetime.now(UTC):
         raise ControlArtifactRefusedError("scheduled run deadline invalid")
-    return await run_fn(
+    result = await run_fn(
         entry.prompt,
         session_key=session_key,
         run_id=occurrence.run_id,
@@ -123,3 +127,6 @@ async def dispatch_signed_schedule(
         signed_authorization=authorization,
         authorization_deadline=deadline,
     )
+    if getattr(result, "outcome_unknown", None) is not None:
+        raise RunOutcomeUnknownError(occurrence.run_id)
+    return result

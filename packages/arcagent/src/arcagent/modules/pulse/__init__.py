@@ -6,7 +6,9 @@ via agent_run_fn. Both humans and agents can edit pulse.md.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from arcagent.core.control_contract import SignedControlRevision
 
 # --- Models ---
 
@@ -14,9 +16,10 @@ from pydantic import BaseModel
 class PulseCheck(BaseModel):
     """A single check defined in pulse.md."""
 
-    name: str
-    interval_minutes: int
-    action: str
+    name: str = Field(min_length=1)
+    interval_minutes: int = Field(gt=0)
+    action: str = Field(min_length=1)
+    approval: SignedControlRevision | None = None
 
 
 class PulseCheckState(BaseModel):
@@ -25,6 +28,8 @@ class PulseCheckState(BaseModel):
     last_run: str | None = None
     last_result: str | None = None
     consecutive_failures: int = 0
+    pending_due_at: str | None = None
+    pending_definition_digest: str | None = None
 
 
 class PulseState(BaseModel):

@@ -7,6 +7,7 @@ agent_run_fn callback with timeout enforcement and circuit breaker.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -22,12 +23,16 @@ from arcagent.core.control_contract import (
 )
 from arcagent.core.run_contract import (
     CanonicalRunRequest,
+    ReplyLookup,
+    ReplySender,
     RunAdmissionUnavailableError,
+    RunOutcomeUnknownError,
     RunTriggerIssuer,
 )
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ScheduleEntry
+from arcagent.modules.scheduler.occurrence import canonical_definition, scheduled_occurrence
 from arcagent.modules.scheduler.store import ScheduleStore
 from arcagent.utils.periodic import FailurePolicy, PeriodicRunner
 
@@ -41,9 +46,7 @@ _logger = logging.getLogger("arcagent.scheduler")
 
 AgentRunFn = Callable[..., Awaitable[Any]]
 
-# Sends a schedule's final output to a channel target string ("telegram:123").
-# Injected by the embedded gateway (which owns channels); None standalone.
-ChannelDeliverFn = Callable[[str, str], Awaitable[None]]
+AcceptedReplyFn = Callable[..., Awaitable[str]]
 
 
 def _result_text(result: Any) -> str:
@@ -66,19 +69,23 @@ class SchedulerEngine:
         # reminder silently. Absent is a state the engine reports.
         agent_run_fn: AgentRunFn | None,
         bus: ModuleBus | None = None,
-        channel_deliver_fn: ChannelDeliverFn | None = None,
         control_artifact_authority: ControlArtifactAuthority | None = None,
         control_tenant_id: str | None = None,
         agent_did: str = "",
         trigger_issuer: RunTriggerIssuer | None = None,
         prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None,
+        accepted_reply_fn: AcceptedReplyFn | None = None,
+        reply_send: ReplySender | None = None,
+        reply_lookup: ReplyLookup | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._telemetry = telemetry
         self._agent_run_fn: AgentRunFn | None = agent_run_fn
         self._bus = bus
-        self._channel_deliver_fn = channel_deliver_fn
+        self._accepted_reply_fn = accepted_reply_fn
+        self._reply_send = reply_send
+        self._reply_lookup = reply_lookup
         self._control_artifact_authority = control_artifact_authority
         self._control_tenant_id = control_tenant_id
         self._agent_did = agent_did
@@ -118,9 +125,13 @@ class SchedulerEngine:
         """
         self._agent_run_fn = fn
 
-    def set_channel_deliver_fn(self, fn: ChannelDeliverFn | None) -> None:
-        """Bind the channel-delivery callback (embedded gateway supplies it)."""
-        self._channel_deliver_fn = fn
+    def set_reply_delivery(
+        self, fn: AcceptedReplyFn | None, send: ReplySender | None, lookup: ReplyLookup | None
+    ) -> None:
+        """Bind the accepted-run reply owner and idempotent transport operations."""
+        self._accepted_reply_fn = fn
+        self._reply_send = send
+        self._reply_lookup = lookup
 
     # --- Public API ---
 
@@ -152,12 +163,37 @@ class SchedulerEngine:
         """
         start_time = time.monotonic()
         timeout = entry.timeout_seconds
+        found = self._store.get(entry.id)
+        stored = found if isinstance(found, ScheduleEntry) else None
+        if stored is not None:
+            entry = stored
+        digest = hashlib.sha256(canonical_definition(entry)).hexdigest()
+        if entry.metadata.pending_due_at is not None:
+            if entry.metadata.pending_definition_digest != digest:
+                _logger.error("Schedule %s pending definition changed", entry.id)
+                return None
+            due_at = datetime.fromisoformat(entry.metadata.pending_due_at)
+        else:
+            due_at = scheduled_occurrence(
+                entry, datetime.now(UTC), default_timezone=self._config.timezone or "UTC"
+            ).due_at
+            if stored is not None:
+                metadata = entry.metadata.model_copy(
+                    update={
+                        "pending_due_at": due_at.isoformat(),
+                        "pending_definition_digest": digest,
+                    }
+                )
+                entry = self._store.update(entry.id, {"metadata": metadata.model_dump()})
+        occurrence = scheduled_occurrence(
+            entry, due_at, default_timezone=self._config.timezone or "UTC"
+        )
 
         try:
             result = await asyncio.wait_for(self._dispatch(entry), timeout=timeout)
             elapsed = time.monotonic() - start_time
-            self._on_execution_complete(entry, result, elapsed)
-            await self._deliver_to_channel(entry, result)
+            self._on_execution_complete(entry, result, elapsed, occurrence.run_id)
+            await self._deliver_reply(entry, occurrence.run_id, result)
             return result
         except TimeoutError:
             elapsed = time.monotonic() - start_time
@@ -166,7 +202,11 @@ class SchedulerEngine:
                 entry.id,
                 elapsed,
             )
-            self.on_execution_failed(entry, TimeoutError(f"Timed out after {timeout}s"))
+            # The accepted run may have completed while its response was lost.
+            # Preserve the due slot for a same-ID reconciliation after restart.
+            return None
+        except RunOutcomeUnknownError as exc:
+            _logger.warning("Schedule %s outcome requires reconciliation: %s", entry.id, exc)
             return None
         except (ControlArtifactUnavailableError, RunAdmissionUnavailableError) as exc:
             _logger.error("Schedule %s remains pending: %s", entry.id, exc)
@@ -211,7 +251,11 @@ class SchedulerEngine:
 
         return await dispatch_signed_schedule(
             entry,
-            now=datetime.now(UTC),
+            now=(
+                datetime.fromisoformat(entry.metadata.pending_due_at)
+                if entry.metadata.pending_due_at
+                else datetime.now(UTC)
+            ),
             default_timezone=self._config.timezone or "UTC",
             tenant_id=tenant_id,
             agent_did=self._agent_did,
@@ -320,26 +364,29 @@ class SchedulerEngine:
 
     # --- Private ---
 
-    async def _deliver_to_channel(self, entry: ScheduleEntry, result: Any) -> None:
-        """Send the run's output to ``entry.deliver_to`` if delivery is wired.
-
-        Fail-open: a channel send error is logged but never propagates — a
-        delivery failure must not fail the schedule execution or trip the
-        circuit breaker (the run itself already succeeded).
-        """
-        if not entry.deliver_to or self._channel_deliver_fn is None:
+    async def _deliver_reply(self, entry: ScheduleEntry, run_id: str, result: Any) -> None:
+        """Reconcile the anchored reply for this completed scheduled run."""
+        if not entry.deliver_to or not _result_text(result):
             return
-        text = _result_text(result)
-        if not text:
+        fn = self._accepted_reply_fn
+        send = self._reply_send
+        lookup = self._reply_lookup
+        if fn is None or send is None or lookup is None:
+            _logger.error(
+                "Schedule %s reply remains pending: durable delivery unavailable", entry.id
+            )
             return
         try:
-            await self._channel_deliver_fn(entry.deliver_to, text)
-        except Exception:  # reason: fail-open — delivery must not fail the run
-            _logger.exception(
-                "Schedule %s: channel delivery to %s failed",
-                entry.id,
-                entry.deliver_to,
-            )
+            outcome = await fn(run_id, send=send, lookup=lookup)
+            if outcome in ("sent", "not_applicable"):
+                current = self._store.get(entry.id)
+                if current is not None and current.metadata.pending_reply_run_id == run_id:
+                    metadata = current.metadata.model_copy(update={"pending_reply_run_id": None})
+                    self._store.update(entry.id, {"metadata": metadata.model_dump()})
+            if outcome == "outcome_unknown":
+                _logger.warning("Schedule %s reply outcome remains unknown", entry.id)
+        except Exception:
+            _logger.exception("Schedule %s durable reply reconciliation unavailable", entry.id)
 
     def _emit_bus_event(self, event: str, data: dict[str, Any]) -> None:
         """Fire-and-forget bus event emission with proper task reference tracking.
@@ -365,6 +412,8 @@ class SchedulerEngine:
         meta_data = entry.metadata.model_dump()
         meta_data["last_run"] = datetime.now(tz=UTC).isoformat()
         meta_data["last_result"] = last_result
+        meta_data["pending_due_at"] = None
+        meta_data["pending_definition_digest"] = None
         meta_data["consecutive_failures"] = consecutive_failures
         if run_count_increment:
             meta_data["run_count"] = entry.metadata.run_count + run_count_increment
@@ -442,6 +491,7 @@ class SchedulerEngine:
         entry: ScheduleEntry,
         result: Any,
         elapsed: float,
+        run_id: str,
     ) -> None:
         """Update metadata and emit bus event after successful execution."""
         updates = self._build_metadata_update(
@@ -451,6 +501,8 @@ class SchedulerEngine:
             elapsed=elapsed,
             consecutive_failures=0,
         )
+        if entry.deliver_to and _result_text(result):
+            updates["metadata"]["pending_reply_run_id"] = run_id
 
         # Auto-disable once-schedules after successful execution.
         if entry.type == "once":
@@ -508,12 +560,17 @@ class SchedulerEngine:
 
     async def _tick(self) -> None:
         """Run every schedule that is due, sequentially."""
+        for entry in self._store.load():
+            pending_reply = entry.metadata.pending_reply_run_id
+            if pending_reply is not None:
+                await self._deliver_reply(entry, pending_reply, "pending")
         due = [
             entry
             for entry in self._store.load()
             if self.should_fire(entry)
             and self.is_within_active_hours(entry)
             and entry.id not in self._in_flight
+            and entry.metadata.pending_reply_run_id is None
         ]
         if not due:
             self._unready_ticks = 0

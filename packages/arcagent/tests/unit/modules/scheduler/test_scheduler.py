@@ -507,8 +507,8 @@ class TestExecution:
         entry = make_entry(timeout_seconds=1)
         # Should handle timeout gracefully, not raise
         await engine.execute(entry)
-        # After timeout, metadata should show error
-        store.update.assert_called_once()
+        # A lost result must leave the due slot pending for reconciliation.
+        store.update.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_interval_not_auto_disabled(self) -> None:
@@ -575,11 +575,13 @@ class TestCronTimezone:
         assert engine.should_fire(entry) is True
 
 
-class TestChannelDelivery:
+class TestDurableReplyDelivery:
     @pytest.mark.asyncio
     async def test_delivers_result_to_channel_when_deliver_to_set(self) -> None:
         agent_run_fn = AsyncMock(return_value=MagicMock(content="the answer"))
-        deliver_fn = AsyncMock()
+        deliver_fn = AsyncMock(return_value="sent")
+        send = AsyncMock()
+        lookup = AsyncMock(return_value=True)
         store = MagicMock(spec=ScheduleStore)
         engine = SchedulerEngine(
             store=store,
@@ -587,10 +589,11 @@ class TestChannelDelivery:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        engine.set_channel_deliver_fn(deliver_fn)
-        entry = make_entry(id="s1", deliver_to="telegram:999")
+        engine.set_reply_delivery(deliver_fn, send, lookup)
+        entry = make_entry(id="s1", deliver_to="channel://ops")
         await engine.execute(entry)
-        deliver_fn.assert_awaited_once_with("telegram:999", "the answer")
+        deliver_fn.assert_awaited_once()
+        assert deliver_fn.await_args.kwargs == {"send": send, "lookup": lookup}
 
     @pytest.mark.asyncio
     async def test_no_delivery_when_deliver_to_unset(self) -> None:
@@ -602,7 +605,7 @@ class TestChannelDelivery:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        engine.set_channel_deliver_fn(deliver_fn)
+        engine.set_reply_delivery(deliver_fn, AsyncMock(), AsyncMock())
         entry = make_entry(id="s1")  # no deliver_to
         await engine.execute(entry)
         deliver_fn.assert_not_awaited()
@@ -616,8 +619,8 @@ class TestChannelDelivery:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        entry = make_entry(id="s1", deliver_to="telegram:999")
-        # No channel_deliver_fn bound — must not raise.
+        entry = make_entry(id="s1", deliver_to="channel://ops")
+        # The run completes while the reply remains pending for recovery.
         await engine.execute(entry)
 
     @pytest.mark.asyncio
@@ -631,8 +634,8 @@ class TestChannelDelivery:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        engine.set_channel_deliver_fn(deliver_fn)
-        entry = make_entry(id="s1", deliver_to="telegram:999")
+        engine.set_reply_delivery(deliver_fn, AsyncMock(), AsyncMock())
+        entry = make_entry(id="s1", deliver_to="channel://ops")
         # Delivery raises, but execute() must still complete and record success.
         result = await engine.execute(entry)
         assert result is not None
@@ -648,8 +651,8 @@ class TestChannelDelivery:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        engine.set_channel_deliver_fn(deliver_fn)
-        entry = make_entry(id="s1", deliver_to="telegram:999")
+        engine.set_reply_delivery(deliver_fn, AsyncMock(), AsyncMock())
+        entry = make_entry(id="s1", deliver_to="channel://ops")
         await engine.execute(entry)
         deliver_fn.assert_not_awaited()
 

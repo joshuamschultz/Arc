@@ -74,12 +74,14 @@ class Scheduler:
             telemetry=st.telemetry,
             agent_run_fn=st.agent_run_fn,
             bus=st.bus,
-            channel_deliver_fn=st.channel_deliver_fn,
             control_artifact_authority=st.control_artifact_authority,
             control_tenant_id=st.control_tenant_id,
             agent_did=st.agent_did,
             trigger_issuer=st.trigger_issuer,
             prepare_collected_request=st.prepare_collected_request,
+            accepted_reply_fn=st.accepted_reply_fn,
+            reply_send=st.reply_send,
+            reply_lookup=st.reply_lookup,
         )
         # If a real run_fn was provided at configure time, mark the
         # engine ready so the timer loop doesn't block waiting for one.
@@ -127,7 +129,9 @@ async def bind_agent_run_fn(ctx: Any) -> None:
 
     st = _runtime.state()
     st.agent_run_fn = run_fn
-    st.channel_deliver_fn = data.get("channel_deliver_fn")
+    st.accepted_reply_fn = data.get("accepted_reply_fn")
+    st.reply_send = data.get("scheduled_reply_send")
+    st.reply_lookup = data.get("scheduled_reply_lookup")
     # Remember it against the agent's workspace as well: the engine may live in
     # a different asyncio task, where this state object is not the one it reads.
     _runtime.remember_run_fn(st.workspace, run_fn)
@@ -136,7 +140,7 @@ async def bind_agent_run_fn(ctx: Any) -> None:
         # reads the callback off this state when it builds the engine.
         return
     st.engine.set_agent_run_fn(run_fn)
-    st.engine.set_channel_deliver_fn(st.channel_deliver_fn)
+    st.engine.set_reply_delivery(st.accepted_reply_fn, st.reply_send, st.reply_lookup)
     _logger.info("Bound agent_run_fn via agent:ready hook")
 
 

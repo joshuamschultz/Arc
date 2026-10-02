@@ -26,7 +26,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcagent.core.control_contract import ControlActionProofSource, ControlArtifactAuthority
-from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
+from arcagent.core.run_contract import (
+    CanonicalRunRequest,
+    ReplyLookup,
+    ReplySender,
+    RunTriggerIssuer,
+)
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.store import ScheduleStore
 
@@ -56,7 +61,6 @@ class _State:
     # The orchestration layer this agent was composed into, or None alone. Read
     # only to learn which schedules a deployment workflow expects it to keep.
     fleet: Any = None
-    channel_deliver_fn: Callable[[str, str], Awaitable[None]] | None = None
     engine: SchedulerEngine | None = None
     control_artifact_authority: ControlArtifactAuthority | None = None
     control_tenant_id: str | None = None
@@ -64,6 +68,9 @@ class _State:
     trigger_issuer: RunTriggerIssuer | None = None
     prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None
     agent_did: str = ""
+    accepted_reply_fn: Callable[..., Awaitable[str]] | None = None
+    reply_send: ReplySender | None = None
+    reply_lookup: ReplyLookup | None = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

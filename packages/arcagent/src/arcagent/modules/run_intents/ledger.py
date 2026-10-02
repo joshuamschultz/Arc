@@ -547,12 +547,12 @@ class RunIntentLedger:
     async def _reply_dispatch(self, intent: arcstore.StoredRunIntent) -> ChannelReply | None:
         if (
             intent.status != "completed"
-            or intent.purpose != "message"
+            or intent.purpose not in ("message", "schedule", "pulse")
             or intent.request_ref is None
             or intent.authorization_ref is None
             or intent.result_ref is None
         ):
-            raise RunIntentUnavailableError("reply requires a completed message run")
+            raise RunIntentUnavailableError("reply requires a completed deliverable run")
         body = await self._store.read_blob(self.tenant_id, self.agent_did, intent.request_ref)
         request = CanonicalRunRequest.model_validate_json(body)
         if (
@@ -576,8 +576,10 @@ class RunIntentLedger:
             purpose=intent.purpose,
             occurrence_id=intent.occurrence_id,
         )
-        if request.reply_target is None or not request.reply_target.startswith("channel://"):
+        if request.reply_target is None:
             return None
+        if not request.reply_target.startswith("channel://"):
+            raise RunIntentUnavailableError("reply target has no durable transport")
         payload = await self.result_bytes(intent)
         result = _RESULT_ADAPTER.validate_json(payload)
         if result.outcome_unknown is not None or not result.content:

@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcagent.core.control_contract import ControlArtifactAuthority
+from arcagent.core.run_contract import CanonicalRunRequest, RunTriggerIssuer
 from arcagent.modules.pulse.config import PulseConfig
 
 if TYPE_CHECKING:
@@ -45,6 +47,11 @@ class _State:
     bus: Any = None
     agent_run_fn: AgentRunFn | None = None
     engine: PulseEngine | None = None
+    control_artifact_authority: ControlArtifactAuthority | None = None
+    control_tenant_id: str | None = None
+    agent_did: str = ""
+    trigger_issuer: RunTriggerIssuer | None = None
+    prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -61,6 +68,11 @@ def configure(
     agent_name: str = "",
     bus: Any = None,
     agent_run_fn: AgentRunFn | None = None,
+    control_artifact_authority: ControlArtifactAuthority | None = None,
+    control_tenant_id: str | None = None,
+    agent_did: str = "",
+    trigger_issuer: RunTriggerIssuer | None = None,
+    prepare_collected_request: Callable[..., CanonicalRunRequest] | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     if isinstance(config, PulseConfig):
@@ -76,6 +88,11 @@ def configure(
             agent_name=agent_name,
             bus=bus,
             agent_run_fn=agent_run_fn,
+            control_artifact_authority=control_artifact_authority,
+            control_tenant_id=control_tenant_id,
+            agent_did=agent_did,
+            trigger_issuer=trigger_issuer,
+            prepare_collected_request=prepare_collected_request,
         )
     )
 
