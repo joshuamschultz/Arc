@@ -355,6 +355,14 @@ async def schedule_cancel(
         )
         st.store.update(id, disabled.model_dump())
         if delete:
+            # Revoke the signed head first: a deleted row whose approval still
+            # verifies could be re-planted in schedules.json and fire again.
+            await st.control_artifact_authority.revoke(
+                tenant_id=st.control_tenant_id,
+                agent_did=st.agent_did,
+                purpose="schedule",
+                artifact_id=id,
+            )
             st.store.remove(id)
             _logger.info("Deleted schedule %s", id)
             return json.dumps({"status": "deleted", "id": id})

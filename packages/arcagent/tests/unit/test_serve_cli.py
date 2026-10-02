@@ -124,3 +124,22 @@ class TestMainErrorPaths:
     def test_missing_directory_returns_nonzero(self, tmp_path: Path) -> None:
         exit_code = main(["serve", str(tmp_path / "does-not-exist")])
         assert exit_code == 2
+
+
+def test_main_module_agent_gets_authority_on_personal_and_none_on_federal(
+    valid_agent_dir: Path,
+) -> None:
+    from arctrust import LocalControlArtifactAuthority
+
+    from arcagent.__main__ import _build_agent
+
+    agent = _build_agent(valid_agent_dir)
+    assert isinstance(agent._control_artifact_authority, LocalControlArtifactAuthority)
+
+    federal = valid_agent_dir / "federal"
+    federal.mkdir()
+    text = (valid_agent_dir / "arcagent.toml").read_text(encoding="utf-8")
+    (federal / "arcagent.toml").write_text(
+        text + '\n[security]\ntier = "federal"\n', encoding="utf-8"
+    )
+    assert _build_agent(federal)._control_artifact_authority is None

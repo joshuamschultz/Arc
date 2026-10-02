@@ -136,3 +136,48 @@ async def test_unsigned_or_forged_schedule_file_never_fires(
         assert _prompt_runs(scripted_llm, planted) == 0, "a planted schedule ran"
     finally:
         await agent.shutdown()
+
+
+async def test_deleted_schedule_replanted_never_fires(
+    deployment: Deployment, enable_modules: Any, scripted_llm: ScriptedLLM
+) -> None:
+    """Deleting a schedule revokes its signed head; putting the old row back stays inert."""
+    from arcagent.modules.scheduler import _runtime
+    from arcagent.modules.scheduler.capabilities import schedule_cancel
+    from arccli.commands.agent._common import load_cli_agent
+
+    enable_modules("scheduler")
+    rows = install_modules(deployment)
+    assert not [row for row in rows if "REFUSED" in row], f"install refused: {rows}"
+
+    agent, _config, _path = load_cli_agent(deployment.agent_dir)
+    await agent.startup()
+    try:
+        prompt = "Send the morning briefing"
+        scripted_llm.replies.extend(
+            [
+                ScriptedTurn(
+                    tool="schedule_create",
+                    args={"type": "cron", "expression": "0 9 * * *", "prompt": prompt},
+                ),
+                "Scheduled for 9am daily.",
+            ]
+        )
+        session = await agent.session("journey")
+        async for _event in agent.run("brief me every morning at 9", session=session):
+            pass
+
+        state = _runtime.state()
+        approved = state.store.load()[0]
+        assert approved.approval is not None
+        deleted = json.loads(await schedule_cancel(id=approved.id, delete=True))
+        assert deleted["status"] == "deleted", deleted
+
+        # An attacker with file access puts the once-approved row back.
+        state.store.add(approved)
+        engine = state.engine
+        assert engine is not None
+        await engine.execute(approved)
+        assert _prompt_runs(scripted_llm, prompt) == 0, "a deleted schedule fired"
+    finally:
+        await agent.shutdown()

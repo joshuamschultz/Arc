@@ -34,7 +34,10 @@ from arcagent.capabilities.capability_registry import (
     LifecycleEntry,
     ToolEntry,
 )
-from arcagent.core.control_contract import SignedControlRevision
+from arcagent.core.control_contract import (
+    ControlArtifactUnavailableError,
+    SignedControlRevision,
+)
 from arcagent.modules.scheduler import _runtime
 
 
@@ -49,6 +52,20 @@ class _Authority:
             definition_digest=hashlib.sha256(kwargs["canonical_definition"]).hexdigest(),
             actor_did="did:arc:test:operator",
             issued_at=datetime.now(UTC),
+            signature="aa",
+        )
+
+    async def revoke(self, **kwargs: Any) -> SignedControlRevision:
+        return SignedControlRevision(
+            tenant_id=kwargs["tenant_id"],
+            agent_did=kwargs["agent_did"],
+            purpose="schedule",
+            artifact_id=kwargs["artifact_id"],
+            revision=2,
+            definition_digest="0" * 64,
+            actor_did="did:arc:test:operator",
+            issued_at=datetime.now(UTC),
+            revoked=True,
             signature="aa",
         )
 
@@ -383,6 +400,24 @@ class TestCrudTools:
 
         deleted = json.loads(await schedule_cancel(id=created["id"], delete=True))
         assert deleted["status"] == "deleted"
+
+    async def test_delete_that_cannot_revoke_keeps_the_row(self, configured: Path) -> None:
+        """No revoked head, no delete: a row whose approval still verifies must not vanish."""
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_cancel, schedule_create
+
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Keep me", every_seconds=300)
+        )
+
+        async def refuse(**_kwargs: Any) -> Any:
+            raise ControlArtifactUnavailableError("authority offline")
+
+        _runtime.state().control_artifact_authority.revoke = refuse  # type: ignore[union-attr,method-assign]  # reason: stub authority
+        result = json.loads(await schedule_cancel(id=created["id"], delete=True))
+        assert "error" in result
+        assert _runtime.state().store.get(created["id"]) is not None
 
 
 @pytest.mark.asyncio

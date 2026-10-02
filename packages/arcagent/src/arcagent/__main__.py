@@ -37,7 +37,9 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.agent import ArcAgent
+from arcagent.core.agent_security import machine_operator_signer
 from arcagent.core.config import ArcAgentConfig
+from arcagent.core.control_binding import build_control_artifact_authority
 
 _logger = logging.getLogger("arcagent.serve")
 
@@ -166,9 +168,26 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop, event: asyncio.Eve
             _logger.debug("Signal handler for %s not supported on this platform", signame)
 
 
-async def _serve(agent_dir: Path, inbound: str) -> int:
+def _build_agent(agent_dir: Path) -> ArcAgent:
+    """An agent bound to the deployment's schedule authority, like every entry point.
+
+    Without the binding the scheduler's signed registration is unavailable and
+    every ``schedule_create`` fails closed; federal tier has no local authority
+    and stays that way.
+    """
     config, _config_path = _load_config(agent_dir)
-    agent = ArcAgent(config=config, config_path=agent_dir / "arcagent.toml")
+    binding = build_control_artifact_authority(
+        config.security, lambda: machine_operator_signer(config.security)
+    )
+    return ArcAgent(
+        config=config,
+        config_path=agent_dir / "arcagent.toml",
+        **(binding.agent_kwargs() if binding is not None else {}),
+    )
+
+
+async def _serve(agent_dir: Path, inbound: str) -> int:
+    agent = _build_agent(agent_dir)
 
     shutdown_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), shutdown_event)
