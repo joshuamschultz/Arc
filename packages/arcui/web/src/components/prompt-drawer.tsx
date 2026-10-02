@@ -11,15 +11,16 @@ import {
 import { Button } from '@/components/ui/button'
 import { PromptStatusBadge } from '@/components/prompt-status-badge'
 import { CodeBlock } from '@/components/code-block'
+import { PromptHistoryPanel } from '@/components/prompt-history-panel'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { useAgentPromptDetail } from '@/lib/queries'
 import { apiPut, apiDelete, ApiError } from '@/lib/api'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import type { PromptWriteResponse } from '@/lib/types'
 
-type View = 'stock' | 'effective' | 'diff'
+type View = 'stock' | 'effective' | 'diff' | 'history'
 
-/** System-prompt detail drawer (COMP-012). A `stock | effective | diff` toggle
+/** System-prompt detail drawer (COMP-012). A `stock | effective | diff | history` toggle
  *  renders the server-computed unified diff (no diff library in the browser);
  *  operator mode adds Edit/Save (PUT) and Reset-to-stock (DELETE). Every mutation
  *  is server-gated on the operator role regardless of this client toggle. */
@@ -63,6 +64,7 @@ export function PromptDrawer({
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompt', prompt.package, prompt.name] }),
       queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompts'] }),
+      queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompt-history'] }),
     ])
 
   // A rejected override has no effective body; editing starts from stock so the
@@ -127,7 +129,7 @@ export function PromptDrawer({
 
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-2 text-xs">
           <div className="flex items-center gap-1">
-            {(['stock', 'effective', 'diff'] as View[]).map((v) => (
+            {(['stock', 'effective', 'diff', 'history'] as View[]).map((v) => (
               <button
                 key={v}
                 type="button"
@@ -184,6 +186,13 @@ export function PromptDrawer({
             <LoadingRows rows={8} />
           ) : detail.isError ? (
             <ErrorState error={detail.error} />
+          ) : view === 'history' ? (
+            <PromptHistoryPanel
+              agentId={agentId}
+              prompt={prompt}
+              operatorMode={operatorMode}
+              onChanged={invalidate}
+            />
           ) : editing ? (
             <textarea
               value={draft}

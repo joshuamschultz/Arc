@@ -237,3 +237,30 @@ async def test_operator_pinned_rule_survives_three_curator_passes(
     assert rule in (workspace / "policy_pinned.md").read_text(encoding="utf-8")
     await _one_turn(deployment)
     assert rule in _agent_prompt(scripted_llm)
+
+
+# ---------------------------------------------------------------------------
+# J2 G7 — an operator can go back to a previous version, not just to stock
+# ---------------------------------------------------------------------------
+
+_BASE_PROMPT = "/api/agents/journey/prompts/arcagent/base_system"
+
+
+async def test_revert_to_an_earlier_prompt_version_reaches_the_wire(
+    deployment: Deployment, scripted_llm: ScriptedLLM, operator_ui: Any
+) -> None:
+    """G7: PUT v1, PUT v2, revert v1 -> the model is sent v1, under a fresh signature."""
+    for marker in ("TUESDAY-VERSION-MARKER", "WEDNESDAY-WORSE-MARKER"):
+        saved = operator_ui.put(_BASE_PROMPT, json={"content": f"You are Journey. {marker}"})
+        assert saved.status_code == 200, saved.text
+    history = operator_ui.get(f"{_BASE_PROMPT}/history").json()["versions"]
+    assert [v["version"] for v in history] == [2, 1]
+
+    reverted = operator_ui.post(f"{_BASE_PROMPT}/history/1/revert")
+    assert reverted.status_code == 200, reverted.text
+    assert reverted.json()["new_version"] == 3
+
+    await _one_turn(deployment)
+    prompt = _agent_prompt(scripted_llm)
+    assert "TUESDAY-VERSION-MARKER" in prompt
+    assert "WEDNESDAY-WORSE-MARKER" not in prompt

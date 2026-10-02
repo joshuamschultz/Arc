@@ -72,8 +72,11 @@ from arcui.routes.agent_detail.prompts import (
     delete_prompt,
     get_prompt_detail,
     get_prompt_health,
+    get_prompt_history,
+    get_prompt_history_diff,
     get_prompts,
     get_rubric,
+    post_prompt_revert,
     put_prompt,
     put_rubric,
 )
@@ -152,6 +155,19 @@ routes = [
     Route("/api/agents/{id}/prompts/health", get_prompt_health, methods=["GET"]),
     Route("/api/agents/{id}/prompts/{package}/{name}/rubric", get_rubric, methods=["GET"]),
     Route("/api/agents/{id}/prompts/{package}/{name}/rubric", put_rubric, methods=["PUT"]),
+    Route(
+        "/api/agents/{id}/prompts/{package}/{name}/history", get_prompt_history, methods=["GET"]
+    ),
+    Route(
+        "/api/agents/{id}/prompts/{package}/{name}/history/diff",
+        get_prompt_history_diff,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{id}/prompts/{package}/{name}/history/{version}/revert",
+        post_prompt_revert,
+        methods=["POST"],
+    ),
     Route("/api/agents/{id}/prompts/{package}/{name}", get_prompt_detail, methods=["GET"]),
     Route("/api/agents/{id}/prompts/{package}/{name}", put_prompt, methods=["PUT"]),
     Route("/api/agents/{id}/prompts/{package}/{name}", delete_prompt, methods=["DELETE"]),

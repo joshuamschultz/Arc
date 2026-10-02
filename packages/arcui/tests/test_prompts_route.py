@@ -524,3 +524,169 @@ def test_failed_sidecar_write_leaves_the_previous_override_intact(
 
     assert (overlay.read_bytes(), Path(f"{overlay}{_SIDECAR}").read_bytes()) == before
     assert not list(overlay.parent.glob("*.tmp"))
+
+
+# --- Version history + revert (J2 F3 / G7) ----------------------------------
+
+
+def _history(client: TestClient, agent: str, pkg: str, name: str, token: str = "viewer"):
+    return _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}/history", token)
+
+
+def _revert(
+    client: TestClient, agent: str, pkg: str, name: str, version: str, token: str = "operator"
+):
+    return client.post(
+        f"/api/agents/{agent}/prompts/{pkg}/{name}/history/{version}/revert",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_every_save_is_kept_as_a_signed_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    assert _put(client, agent, pkg, name, "FIRST BODY").status_code == 200
+    assert _put(client, agent, pkg, name, "SECOND BODY").status_code == 200
+    versions = _history(client, agent, pkg, name).json()["versions"]
+    assert [v["version"] for v in versions] == [2, 1]
+    assert [v["current"] for v in versions] == [True, False]
+    assert all(v["signer_did"] == _resolved_operator_did() for v in versions)
+    stored = agent_dir / "context" / ".history" / pkg / name
+    assert (stored / "000001.md").is_file()
+    assert (stored / f"000001.md{_SIDECAR}").is_file()
+
+
+def test_history_diff_between_two_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "alpha line")
+    _put(client, agent, pkg, name, "beta line")
+    resp = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}/history/diff?from=1&to=2")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["from_label"], body["to_label"]) == ("v1", "v2")
+    assert "-alpha line" in body["diff"] and "+beta line" in body["diff"]
+    stock = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}/history/diff?from=stock&to=2")
+    assert stock.status_code == 200 and "+beta line" in stock.json()["diff"]
+
+
+def test_diff_requires_both_sides_and_known_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "one")
+    base = f"/api/agents/{agent}/prompts/{pkg}/{name}/history/diff"
+    assert _get(client, f"{base}?from=1").status_code == 400
+    assert _get(client, f"{base}?from=1&to=9").status_code == 404
+
+
+def test_revert_creates_a_new_signed_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "ORIGINAL TEXT")
+    _put(client, agent, pkg, name, "WORSE TEXT")
+    resp = _revert(client, agent, pkg, name, "1")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (body["reverted_from"], body["new_version"]) == (1, 3)
+    live = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}").json()
+    assert live["status"] == "overridden" and live["effective"].strip() == "ORIGINAL TEXT"
+    versions = _history(client, agent, pkg, name).json()["versions"]
+    assert [v["version"] for v in versions] == [3, 2, 1]
+    assert versions[0]["current"] is True
+    overlay = agent_dir / "context" / pkg / f"{name}.md"
+    manifest = ArtifactSignature.from_json(
+        Path(f"{overlay}{_SIDECAR}").read_text(encoding="utf-8")
+    )
+    assert verify_artifact(
+        overlay.read_bytes(), manifest, trusted_public_key=bytes.fromhex(manifest.public_key)
+    )
+
+
+def test_revert_accepts_a_sha_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "ONE")
+    _put(client, agent, pkg, name, "TWO")
+    first = _history(client, agent, pkg, name).json()["versions"][-1]["sha256"]
+    resp = _revert(client, agent, pkg, name, first.removeprefix("sha256:")[:12])
+    assert resp.status_code == 200 and resp.json()["reverted_from"] == 1
+
+
+def test_viewer_cannot_revert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "ONE")
+    assert _revert(client, agent, pkg, name, "1", token="viewer").status_code == 403
+    assert len(_history(client, agent, pkg, name).json()["versions"]) == 1
+
+
+def test_reset_keeps_history_and_revert_brings_the_override_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "KEEP ME")
+    resp = client.delete(
+        f"/api/agents/{agent}/prompts/{pkg}/{name}", headers={"Authorization": "Bearer operator"}
+    )
+    assert resp.status_code == 200
+    assert _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}").json()["status"] == "stock"
+    assert len(_history(client, agent, pkg, name).json()["versions"]) == 1
+    assert _revert(client, agent, pkg, name, "1").status_code == 200
+    live = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}").json()
+    assert live["effective"].strip() == "KEEP ME"
+
+
+def test_tampered_stored_version_is_refused_not_laundered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abuse: an archived file edited on disk must never be re-signed as the operator's."""
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    pkg, name = _first_prompt()
+    _put(client, agent, pkg, name, "GOOD")
+    _put(client, agent, pkg, name, "NEXT")
+    stored = agent_dir / "context" / ".history" / pkg / name / "000001.md"
+    stored.write_bytes(stored.read_bytes().replace(b"GOOD", b"EVIL"))
+    resp = _revert(client, agent, pkg, name, "1")
+    assert resp.status_code == 409
+    live = _get(client, f"/api/agents/{agent}/prompts/{pkg}/{name}").json()
+    assert "EVIL" not in live["effective"]
+    assert len(_history(client, agent, pkg, name).json()["versions"]) == 2
+
+
+def test_signed_identity_saves_are_versioned_and_revertible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, agent_dir = _agent(tmp_path, monkeypatch)
+    _mk_operator_key()
+    files = f"/api/agents/{agent}/files/read?root=workspace&path=identity.md"
+    hdr = {"Authorization": "Bearer operator"}
+    assert client.put(files, json={"content": "I am v1"}, headers=hdr).status_code == 200
+    assert client.put(files, json={"content": "I am v2"}, headers=hdr).status_code == 200
+    versions = _history(client, agent, "workspace", "identity").json()["versions"]
+    assert [v["version"] for v in versions] == [2, 1]
+    assert _revert(client, agent, "workspace", "identity", "1").status_code == 200
+    assert (agent_dir / "workspace" / "identity.md").read_text(encoding="utf-8") == "I am v1"
+
+
+def test_history_refuses_a_traversal_shaped_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, agent, _ = _agent(tmp_path, monkeypatch)
+    assert _history(client, agent, "arcrun", "a\\b").status_code in (400, 404)

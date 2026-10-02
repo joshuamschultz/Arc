@@ -219,6 +219,55 @@ class PromptWriteResponse(BaseModel):
     message: str
 
 
+class PromptVersionItem(BaseModel):
+    """One signed, immutable stored version of a prompt (J2 F3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    sha256: str
+    signer_did: str
+    signed_at: str | None = None
+    #: True when this version's bytes are what is live on disk right now.
+    current: bool
+
+
+class PromptHistoryResponse(BaseModel):
+    """Body of ``GET .../prompts/{package}/{name}/history`` — newest version first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    versions: list[PromptVersionItem]
+
+
+class PromptHistoryDiffResponse(BaseModel):
+    """Body of ``GET .../history/diff`` — a unified diff between two versions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    from_label: str
+    to_label: str
+    diff: str
+
+
+class PromptRevertResponse(BaseModel):
+    """Body of ``POST .../history/{version}/revert`` — the NEW signed version it created."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    reverted_from: int
+    new_version: int
+    signer_did: str
+    sha256: str
+    message: str
+
+
 class SemanticLayerResponse(BaseModel):
     """Body of ``GET /api/connections/{instance}/semantic-layer`` (H-025).
 

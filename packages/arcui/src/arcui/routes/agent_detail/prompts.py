@@ -27,13 +27,22 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
+import arcagent
 import yaml
 from arcprompt import (
     PromptCatalog,
+    PromptError,
+    PromptHistory,
     PromptMissing,
+    PromptUnsigned,
+    PromptVersion,
+    PromptVersionMissing,
+    SignatureVerifier,
     load_stock_document,
+    parse_prompt,
     render_prompt,
 )
+from arctrust.artifact import content_sha256
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -47,9 +56,13 @@ from arcui.schemas import (
     ErrorResponse,
     PromptDetailResponse,
     PromptHealthResponse,
+    PromptHistoryDiffResponse,
+    PromptHistoryResponse,
     PromptListItem,
     PromptListResponse,
     PromptResetResponse,
+    PromptRevertResponse,
+    PromptVersionItem,
     PromptWriteResponse,
     RejectedPromptItem,
     RubricDimension,
@@ -471,12 +484,217 @@ async def put_rubric(request: Request) -> JSONResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Version history + revert (J2 F3)
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_PACKAGE = "workspace"
+_STOCK_REF = "stock"
+_CURRENT_REF = "current"
+
+
+def _live_paths(agent_root: Path, package: str, name: str) -> tuple[Path, Path] | None:
+    """The ``(text, sidecar)`` a save of ``package/name`` writes, or None if unsafe/unknown.
+
+    A catalog prompt is an overlay under ``context/``; a signed workspace document
+    (``identity.md`` ...) is the workspace file with its sidecar under ``context/``.
+    """
+    if package == _WORKSPACE_PACKAGE:
+        live = arcagent.signed_workspace_files(agent_root / "workspace").get((package, name))
+        if live is None:
+            return None
+        return live, agent_root / _OVERLAY_DIRNAME / package / f"{name}.md{_SIDECAR_SUFFIX}"
+    overlay = _confine(agent_root / _OVERLAY_DIRNAME, f"{package}/{name}.md")
+    if overlay is None:
+        return None
+    return overlay, Path(f"{overlay}{_SIDECAR_SUFFIX}")
+
+
+def _version_text(package: str, data: bytes) -> str:
+    """The reader-facing text of stored bytes: an overlay's body, or a document verbatim."""
+    if package == _WORKSPACE_PACKAGE:
+        return data.decode("utf-8", errors="replace")
+    return parse_prompt(data, source="overlay").body
+
+
+def _text_for_ref(
+    history: PromptHistory,
+    live: Path,
+    package: str,
+    name: str,
+    ref: str,
+    verifier: SignatureVerifier,
+) -> tuple[str, str]:
+    """Resolve a diff reference (``stock``, ``current`` or a version) to ``(label, text)``."""
+    if ref == _STOCK_REF:
+        if package == _WORKSPACE_PACKAGE:
+            raise PromptVersionMissing("a workspace document has no stock version")
+        return _STOCK_REF, load_stock_document(package, name).body
+    if ref == _CURRENT_REF:
+        if not live.is_file():
+            raise PromptVersionMissing("no live version")
+        return _CURRENT_REF, _version_text(package, live.read_bytes())
+    number = history.resolve_ref(ref)
+    return f"v{number}", _version_text(package, history.read_verified(number, verifier))
+
+
+def _history_error(exc: Exception) -> JSONResponse:
+    if isinstance(exc, PromptVersionMissing | PromptMissing):
+        return _error(str(exc), 404)
+    if isinstance(exc, PromptUnsigned):
+        return _error(f"stored version failed signature verification: {exc}", 409)
+    return _error(f"history unreadable: {exc}", 503)
+
+
+def _history_item(version: PromptVersion, live_sha: str | None) -> PromptVersionItem:
+    return PromptVersionItem(
+        version=version.version,
+        sha256=version.sha256,
+        signer_did=version.signer_did,
+        signed_at=version.signed_at,
+        current=live_sha == version.sha256,
+    )
+
+
+async def get_prompt_history(request: Request) -> JSONResponse:
+    """GET .../prompts/{package}/{name}/history — every signed version, newest first."""
+    package = request.path_params["package"]
+    name = request.path_params["name"]
+    agent_root = _agent_root(request, request.path_params["id"])
+    if agent_root is None:
+        return _error("Agent not found", 404)
+    paths = _live_paths(agent_root, package, name)
+    if paths is None:
+        return _error(f"invalid prompt path: {package}/{name}", 400)
+    try:
+        stored = PromptHistory(agent_root, package, name).versions()
+    except PromptError as exc:
+        return _history_error(exc)
+    live_sha = content_sha256(paths[0].read_bytes()) if paths[0].is_file() else None
+    items = [_history_item(v, live_sha) for v in reversed(stored)]
+    return JSONResponse(
+        PromptHistoryResponse(package=package, name=name, versions=items).model_dump(mode="json")
+    )
+
+
+async def get_prompt_history_diff(request: Request) -> JSONResponse:
+    """GET .../history/diff?from=&to= — unified diff between two versions.
+
+    Each side is a version number, a sha256 prefix, ``stock`` or ``current``.
+    """
+    package = request.path_params["package"]
+    name = request.path_params["name"]
+    agent_root = _agent_root(request, request.path_params["id"])
+    if agent_root is None:
+        return _error("Agent not found", 404)
+    left_ref = request.query_params.get("from")
+    right_ref = request.query_params.get("to")
+    if not left_ref or not right_ref:
+        return _error("both 'from' and 'to' query parameters are required", 400)
+    paths = _live_paths(agent_root, package, name)
+    if paths is None:
+        return _error(f"invalid prompt path: {package}/{name}", 400)
+    verifier = agent_prompt_resolver(agent_root).verifier
+    try:
+        history = PromptHistory(agent_root, package, name)
+        left_label, left = _text_for_ref(history, paths[0], package, name, left_ref, verifier)
+        right_label, right = _text_for_ref(history, paths[0], package, name, right_ref, verifier)
+    except (PromptError, OSError) as exc:
+        return _history_error(exc)
+    diff = "".join(
+        difflib.unified_diff(
+            left.splitlines(keepends=True),
+            right.splitlines(keepends=True),
+            fromfile=left_label,
+            tofile=right_label,
+        )
+    )
+    return JSONResponse(
+        PromptHistoryDiffResponse(
+            package=package, name=name, from_label=left_label, to_label=right_label, diff=diff
+        ).model_dump(mode="json")
+    )
+
+
+async def post_prompt_revert(request: Request) -> JSONResponse:
+    """POST .../history/{version}/revert — re-sign an earlier version as a NEW version.
+
+    The stored bytes are verified against the pinned operator key first, then go
+    through the same signed-write envelope as any save: policy gate, fresh
+    signature, atomic write, a new history entry and an audit row naming the
+    version it was reverted from. Nothing already stored is touched.
+    """
+    agent_id = request.path_params["id"]
+    package = request.path_params["package"]
+    name = request.path_params["name"]
+    ref = request.path_params["version"]
+    target = f"prompt:{package}/{name}"
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return _error("Agent not found", 404)
+    if getattr(request.state, "role", None) != "operator":
+        _audit_revert_denied(request, target, "viewer role")
+        return _error("operator_role_required", 403)
+    paths = _live_paths(agent_root, package, name)
+    if paths is None:
+        return _error(f"invalid prompt path: {package}/{name}", 400)
+    try:
+        history = PromptHistory(agent_root, package, name)
+        number = history.resolve_ref(ref)
+        data = history.read_verified(number, agent_prompt_resolver(agent_root).verifier)
+        _version_text(package, data)  # refuse bytes that are no longer a valid document
+    except (PromptError, OSError) as exc:
+        _audit_revert_denied(request, target, f"v{ref}: {exc}")
+        return _history_error(exc)
+
+    secret_type = _find_secret(data.decode("utf-8", errors="replace"))
+    if secret_type is not None:
+        _audit_revert_denied(request, target, f"secret_content:{secret_type}")
+        return _error(f"version {number} contains what looks like a live credential", 400)
+    written = await sign_and_write(
+        request,
+        agent_root=agent_root,
+        agent_did=_agent_did(request, agent_id) or "did:arc:unknown",
+        package=package,
+        name=name,
+        target=target,
+        operation="prompt.revert",
+        path=paths[0],
+        data=data,
+        sidecar=paths[1],
+        audit_note=f" reverted_from=v{number}",
+    )
+    if isinstance(written, JSONResponse):
+        return written
+    return JSONResponse(
+        PromptRevertResponse(
+            package=package,
+            name=name,
+            reverted_from=number,
+            new_version=written.version,
+            signer_did=written.signer_did,
+            sha256=written.sha256,
+            message=f"Reverted to version {number} as new version {written.version}. "
+            "It takes effect on the agent's next run.",
+        ).model_dump(mode="json")
+    )
+
+
+def _audit_revert_denied(request: Request, target: str, detail: str) -> None:
+    emit_mutation_audit(
+        request, target=target, operation="prompt.revert", outcome="denied", detail=detail
+    )
+
+
 __all__ = [
     "delete_prompt",
     "get_prompt_detail",
     "get_prompt_health",
+    "get_prompt_history",
+    "get_prompt_history_diff",
     "get_prompts",
     "get_rubric",
+    "post_prompt_revert",
     "put_prompt",
     "put_rubric",
 ]

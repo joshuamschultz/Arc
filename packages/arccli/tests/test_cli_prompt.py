@@ -231,3 +231,80 @@ class _FakeStdin:
 
     def read(self) -> str:
         return self._data
+
+
+# --- history / diff --from --to / revert (J2 F3) ---------------------------
+
+
+def _edit_body(root: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin(body))
+    prompt_handler(["edit", _PACKAGE, _NAME, "--agent", str(root), "--stdin"])
+
+
+def test_history_lists_every_save_with_the_live_one_marked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    did = _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    prompt_handler(["history", _PACKAGE, _NAME, "--agent", str(root)])
+    assert "No saved versions" in capsys.readouterr().out
+
+    _edit_body(root, monkeypatch, "first")
+    _edit_body(root, monkeypatch, "second")
+    capsys.readouterr()
+    prompt_handler(["history", _PACKAGE, _NAME, "--agent", str(root)])
+    rows = [ln for ln in capsys.readouterr().out.splitlines() if did in ln]
+    assert len(rows) == 2
+    assert "current" not in rows[0] and "current" in rows[1]
+
+
+def test_diff_between_two_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    _edit_body(root, monkeypatch, "alpha line")
+    _edit_body(root, monkeypatch, "beta line")
+    capsys.readouterr()
+    prompt_handler(["diff", _PACKAGE, _NAME, "--agent", str(root), "--from", "1", "--to", "2"])
+    out = capsys.readouterr().out
+    assert "-alpha line" in out and "+beta line" in out
+
+
+def test_revert_makes_a_new_signed_version_of_the_old_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    _edit_body(root, monkeypatch, "TUESDAY")
+    _edit_body(root, monkeypatch, "WEDNESDAY")
+    capsys.readouterr()
+    prompt_handler(["revert", _PACKAGE, _NAME, "1", "--agent", str(root)])
+    assert "new version 3" in capsys.readouterr().out
+    prompt_handler(["show", _PACKAGE, _NAME, "--agent", str(root), "--effective"])
+    assert "TUESDAY" in capsys.readouterr().out
+    prompt_handler(["history", _PACKAGE, _NAME, "--agent", str(root)])
+    assert capsys.readouterr().out.count("did:") == 3
+
+
+def test_revert_refuses_a_tampered_stored_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    _edit_body(root, monkeypatch, "GOOD")
+    _edit_body(root, monkeypatch, "NEXT")
+    stored = root / "context" / ".history" / _PACKAGE / _NAME / "000001.md"
+    stored.write_bytes(stored.read_bytes().replace(b"GOOD", b"EVIL"))
+    with pytest.raises(SystemExit):
+        prompt_handler(["revert", _PACKAGE, _NAME, "1", "--agent", str(root)])
+    assert "EVIL" not in _overlay(root).read_text(encoding="utf-8")
+
+
+def test_revert_unknown_version_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_operator(tmp_path, monkeypatch)
+    root = _agent_root(tmp_path)
+    with pytest.raises(SystemExit):
+        prompt_handler(["revert", _PACKAGE, _NAME, "7", "--agent", str(root)])

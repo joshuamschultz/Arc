@@ -12,6 +12,11 @@ as a pair: both land in temp files first, then are renamed into place, and a
 failure between the two renames puts the previous text back. A reader therefore
 never meets new text beside an old signature — which the agent would reject,
 refusing every run (J2 F7).
+
+Every successful save is also appended to the agent's :class:`arcprompt.PromptHistory`
+(signed, immutable prior versions — J2 F3), so "go back to Tuesday's" is possible. A
+signed text that was already live before history existed is captured first, so the
+operator's last pre-history edit survives their next save.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from arcprompt import PromptHistory, record_if_unseen
 from arctrust.policy import Decision, PolicyContext, ToolCall, read_agent_tier
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -33,10 +39,11 @@ _TMP_SUFFIX = ".tmp"
 
 @dataclass(frozen=True)
 class SignedWrite:
-    """The outcome of a signed write: who signed and the digest that was signed."""
+    """The outcome of a signed write: who signed, the digest, and the history version."""
 
     signer_did: str
     sha256: str
+    version: int
 
 
 def error_response(message: str, status: int) -> JSONResponse:
@@ -101,6 +108,15 @@ def write_pair_atomically(path: Path, data: bytes, sidecar: Path, sidecar_text: 
         tmp_sidecar.unlink(missing_ok=True)
 
 
+def _capture_live_version(history: PromptHistory, path: Path, sidecar: Path) -> None:
+    """Record the signed text currently live (if any) before it is replaced."""
+    if path.is_file() and sidecar.is_file():
+        try:
+            record_if_unseen(history, path.read_bytes(), sidecar.read_text(encoding="utf-8"))
+        except ValueError:  # reason: an unparseable live sidecar is not a signed version
+            return
+
+
 def _restore(path: Path, previous: bytes | None) -> None:
     """Put back the text that was there before a failed pair write (best effort)."""
     if previous is None:
@@ -123,6 +139,7 @@ async def sign_and_write(
     path: Path,
     data: bytes,
     sidecar: Path,
+    audit_note: str = "",
 ) -> SignedWrite | JSONResponse:
     """Gate, sign and write ``data`` to ``path`` with its sidecar; audit the outcome.
 
@@ -149,8 +166,11 @@ async def sign_and_write(
         return error_response(f"cannot sign override: {exc}", 500)
 
     signature = prompt_signing.sign(data, identity)
+    history = PromptHistory(agent_root, package, name)
     try:
+        _capture_live_version(history, path, sidecar)
         write_pair_atomically(path, data, sidecar, signature.to_json())
+        recorded = history.record(data, signature.to_json())
     except OSError as exc:
         emit_mutation_audit(
             request, target=target, operation=operation, outcome="error", detail=str(exc)
@@ -162,9 +182,11 @@ async def sign_and_write(
         target=target,
         operation=operation,
         outcome="applied",
-        detail=f"signer={identity.did} sha256={signature.artifact_sha256}",
+        detail=f"signer={identity.did} sha256={signature.artifact_sha256}{audit_note}",
     )
-    return SignedWrite(signer_did=identity.did, sha256=signature.artifact_sha256)
+    return SignedWrite(
+        signer_did=identity.did, sha256=signature.artifact_sha256, version=recorded.version
+    )
 
 
 __all__ = [

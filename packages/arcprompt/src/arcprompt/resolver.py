@@ -57,6 +57,11 @@ class PromptResolver:
         """Return the overlay file path for one prompt (may or may not exist)."""
         return self._overlay_root / package / f"{name}.md"
 
+    @property
+    def verifier(self) -> SignatureVerifier:
+        """The verifier pinned to this resolver's trusted key (for history reads)."""
+        return self._verifier
+
     def resolve(self, package: str, name: str) -> PromptDocument:
         """Resolve ``package:name`` to its effective document.
 
