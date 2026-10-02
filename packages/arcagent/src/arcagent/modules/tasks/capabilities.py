@@ -835,11 +835,17 @@ def _retry_needs_operator_ok(task: Task, declared: arcrun.Tool) -> bool:
 
     The prior attempt may have half-run, and the tool cannot dedupe a repeat from
     the attempt key, so a second execution could duplicate a send or an upload.
-    The operator releases it by setting ``metadata.operator_retry_ok``.
+    The operator releases it by setting ``metadata.operator_retry_ok``. A row an
+    operator's node retry created (``operator_retry``) counts as a re-run from its
+    FIRST claim: the failed attempt it replaces may have half-run.
     """
     if declared.idempotent:
         return False
-    retried = task.attempts > 1 or bool(task.metadata.get("reclaimed_at"))
+    retried = (
+        task.attempts > 1
+        or bool(task.metadata.get("reclaimed_at"))
+        or bool(task.metadata.get("operator_retry"))
+    )
     return retried and not task.metadata.get("operator_retry_ok")
 
 

@@ -970,7 +970,14 @@ class WorkflowRunner:
             )
         return await self._require_run(run_id)
 
-    async def retry_node(self, run_id: str, node_id: str, *, actor_did: str) -> RunRecord:
+    async def retry_node(
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        actor_did: str,
+        accept_side_effect_repeat: bool = False,
+    ) -> RunRecord:
         """Re-run one failed node of a finished run, keeping everything that completed.
 
         Only a run that ended in failure can retry (a running run is still being
@@ -980,6 +987,11 @@ class WorkflowRunner:
         Nodes that already finished are untouched, and never run again.
         Like ``cancel``, this is an operator control-plane action and does not
         need the runner lease.
+
+        The new row is stamped ``operator_retry`` so the executing agent knows a
+        prior attempt may have half-run. A non-idempotent tool is then refused
+        unless the operator said ``accept_side_effect_repeat``, which stamps
+        ``operator_retry_ok`` — the one release the executor honours.
         """
         run = await self._require_run(run_id)
         if run.status not in RETRYABLE_RUN_STATUSES:
@@ -1006,6 +1018,10 @@ class WorkflowRunner:
             state.scope(run.input),
             self._legs_for(run, state),
         )
+        stamped: dict[str, Any] = {**task.metadata, "operator_retry": True}
+        if accept_side_effect_repeat:
+            stamped["operator_retry_ok"] = True
+        task = task.model_copy(update={"metadata": stamped})
         created = await self._tasks.create_batch([task], actor_did=actor_did)
         await self._record_materialization(run, state, created[0])
         reopened = await self._runs.set_status(
@@ -1027,6 +1043,7 @@ class WorkflowRunner:
                 "run_id": run_id,
                 "iteration": iteration,
                 "previous_error": latest.task.last_error,
+                "accepted_repeat": accept_side_effect_repeat,
             },
         )
         return await self._require_run(run_id)
