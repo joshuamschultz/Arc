@@ -24,6 +24,9 @@ def _pin_operator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key_path.parent.mkdir(parents=True)
     OperatorKey.generate().save(key_path)
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: key_path)
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path", lambda base=None: key_path
+    )
 
 
 def _agent_root(tmp_path: Path) -> Path:
@@ -120,6 +123,10 @@ def test_without_an_operator_key_it_refuses_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: tmp_path / "none.key")
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path",
+        lambda base=None: tmp_path / "none.key",
+    )
     root = _agent_root(tmp_path)
     (root / "workspace" / "identity.md").write_text("# Persona\n", encoding="utf-8")
 

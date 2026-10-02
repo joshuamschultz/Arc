@@ -208,19 +208,12 @@ def _operator_public_key() -> bytes | None:
     Unresolvable → ``None``: no tombstone counts as a demotion (fail closed); a
     demoted document still stays hidden, because its bytes were retired. Read-only:
     an in-process deployment's key is read, never bootstrapped; a vault-transit
-    deployment asks the transit for its public key.
+    deployment asks the transit for its public key (both through
+    :func:`arccli.commands.operator.operator_public_key`, the one resolver).
     """
-    from arctrust.signer import VAULT_TRANSIT
-
-    from arccli.commands.operator import (
-        _machine_security,
-        operator_public_key,
-        resolve_operator_signer,
-    )
+    from arccli.commands.operator import operator_public_key
 
     try:
-        if _machine_security().custody == VAULT_TRANSIT:
-            return resolve_operator_signer().public_key
         return operator_public_key()
     except Exception as exc:  # reason: any custody failure means "no anchor", never a guess
         _logger.warning("operator key unresolvable; shared demotions unanchored: %s", exc)

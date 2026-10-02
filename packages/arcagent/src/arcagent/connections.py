@@ -51,7 +51,7 @@ from typing import Any, Literal
 import httpx
 from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.paths import arc_team, config_file, default_operator_key_path
+from arctrust.paths import arc_team, config_file
 from arctrust.signer import Signer
 
 from arcagent.connection_catalog import AuditChain, CatalogEntry, ClosableSink, catalog
@@ -404,18 +404,19 @@ def _read_toml(path: Path) -> dict[str, Any]:
     return parsed
 
 
-def _operator_key(arc_dir: Path) -> Any:
-    """The deployment's operator key, or ``None`` when it has none.
+def _operator_signer(arc_dir: Path) -> Any:
+    """The deployment's operator signer, or ``None`` when it has none.
 
     Read-only: never mints a key, so an install above personal tier on a machine
     with no operator key is refused by the loader rather than quietly satisfied by
-    a keypair this call generated moments earlier (REQ-283).
+    a keypair this call generated moments earlier (REQ-283). Resolved through the
+    one arctrust resolver so a vault-held key answers the same as an on-disk one.
     """
-    from arctrust import OperatorKey
+    from arctrust import SignerError, operator_signer_for
 
     try:
-        return OperatorKey.load(default_operator_key_path(arc_dir), generate_if_absent=False)
-    except (FileNotFoundError, OSError):
+        return operator_signer_for(base=arc_dir)
+    except (OSError, SignerError):  # no key file, or a transit that cannot serve one
         return None
 
 
@@ -430,10 +431,10 @@ def _operator_did(arc_dir: Path) -> str:
     """
     from arctrust.policy import OperatorApprovalAuthority
 
-    key = _operator_key(arc_dir)
-    if key is None:
+    signer = _operator_signer(arc_dir)
+    if signer is None:
         return UNKEYED_OPERATOR_DID
-    return str(OperatorApprovalAuthority(key.into_signer()).did)
+    return str(OperatorApprovalAuthority(signer).did)
 
 
 def _data_dir(given: Path | str | None) -> Path:
@@ -1841,21 +1842,18 @@ class Connections:
 
     def _bundle_signer(self, tier: Tier) -> tuple[Signer, str]:
         """The operator key as a signer. Minted at personal tier only, never above it."""
-        from arctrust import OperatorKey
+        from arctrust import bootstrap_operator_signer
         from arctrust.policy import OperatorApprovalAuthority
 
-        key = _operator_key(self._world.arc_dir)
-        if key is None:
+        signer = _operator_signer(self._world.arc_dir)
+        if signer is None:
             if tier is not Tier.PERSONAL:
                 raise _refuse(
                     "MCP_NO_OPERATOR_KEY",
                     "this deployment has no operator key to sign the bundle with; "
                     "create one with `arc init` first",
                 )
-            key = OperatorKey.load(
-                default_operator_key_path(self._world.arc_dir), generate_if_absent=True
-            )
-        signer = key.into_signer()
+            signer = bootstrap_operator_signer(base=self._world.arc_dir)
         return signer, str(OperatorApprovalAuthority(signer).did)
 
     def _mcp_audit(
@@ -2317,8 +2315,8 @@ class Connections:
 
     def _pinned_key(self) -> bytes | None:
         """The operator key an extension bundle's signatures are pinned to (REQ-283)."""
-        key = _operator_key(self._world.arc_dir)
-        return None if key is None else bytes(key.public_key)
+        signer = _operator_signer(self._world.arc_dir)
+        return None if signer is None else bytes(signer.public_key)
 
     async def _credential_checks(
         self, plan: ConnectorPlan, instance: str, sink: AuditSink

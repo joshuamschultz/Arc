@@ -41,6 +41,9 @@ def _operator(tmp_path: Path, monkeypatch: Any) -> tuple[OperatorKey, str]:
     op = OperatorKey.generate()
     op.save(key_path)
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: key_path)
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path", lambda base=None: key_path
+    )
     did = OperatorApprovalAuthority(op.into_signer()).did
     return op, did
 

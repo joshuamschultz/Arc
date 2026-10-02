@@ -34,6 +34,9 @@ def _pin_operator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     op = OperatorKey.generate()
     op.save(key_path)
     monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: key_path)
+    monkeypatch.setattr(
+        "arctrust.operator_resolver.default_operator_key_path", lambda base=None: key_path
+    )
     return OperatorApprovalAuthority(op.into_signer()).did
 
 

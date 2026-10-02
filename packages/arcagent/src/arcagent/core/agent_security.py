@@ -19,6 +19,8 @@ from arctrust import (
     assert_fips_if_required,
     build_signer,
     derive_record_key,
+    operator_key_file,
+    operator_transit_for,
     read_verified_anchor,
     verify_local_head_witnessed,
 )
@@ -55,12 +57,7 @@ def operator_key_path(sec: Any) -> Path:
     their config named, so it passed a fleet green in which every turn died on a
     missing key.
     """
-    from arctrust.paths import OPERATOR_KEY_FILENAME, default_operator_key_path
-
-    configured = sec.operator_key_dir
-    if not configured:
-        return default_operator_key_path()
-    return Path(configured).expanduser() / OPERATOR_KEY_FILENAME
+    return operator_key_file(sec)
 
 
 def resolve_operator_signer(agent: Any, sec: Any) -> Signer:
@@ -98,22 +95,8 @@ def resolve_record_cipher(agent: Any) -> RecordCipher | None:
 
 
 def resolve_transit(_agent: Any, sec: Any) -> FileNotaryTransit:
-    keystore = (
-        Path(sec.notary_keystore).expanduser()
-        if sec.notary_keystore
-        else operator_key_path(sec).parent / "notary"
-    )
-    transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
-    try:
-        transit.public_key(_OPERATOR_KEY_REF)
-    except OSError as exc:
-        raise SignerError(
-            f"custody=vault_transit but the transit at {keystore} cannot serve "
-            f"the operator key {_OPERATOR_KEY_REF!r} — refusing to fall back to "
-            "in-process signing (fail-closed, NFR-3). Provision the notary "
-            "keystore (or configure a production Vault Transit/HSM adapter)."
-        ) from exc
-    return transit
+    """The out-of-process transit, via the one arctrust resolver (fail-closed)."""
+    return operator_transit_for(sec)
 
 
 def witness_medium_path(sec: Any) -> Path:

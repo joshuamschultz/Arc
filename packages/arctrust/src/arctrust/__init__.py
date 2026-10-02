@@ -24,6 +24,10 @@ Operator (audit authority):
     OperatorKey         — deployment audit-signing seed, deliberately NOT an
                           AgentIdentity (no sign/did); signs every WORM chain
 
+    operator_public_key_for / operator_signer_for — the ONE resolver for the
+                          operator's verify key / signer under any custody
+                          (key file in_process, transit handle vault_transit)
+
 Audit:
     AuditEvent          — Pydantic schema for structured audit events
     AuditSink           — Protocol for sink implementations
@@ -162,6 +166,14 @@ from arctrust.monotonic import (
     MonotonicAnchor,
 )
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
+from arctrust.operator_resolver import (
+    bootstrap_operator_signer,
+    machine_security,
+    operator_key_file,
+    operator_public_key_for,
+    operator_signer_for,
+    operator_transit_for,
+)
 from arctrust.paths import (
     activate_runtime,
     arc_config,
@@ -526,6 +538,7 @@ __all__ = [
     "assert_fips_if_required",
     "audit_dir",
     "blueprints_dir",
+    "bootstrap_operator_signer",
     "build_pipeline",
     "build_signer",
     "bundles_dir",
@@ -561,11 +574,16 @@ __all__ = [
     "load_operator_pubkey",
     "load_validators",
     "luhn_valid",
+    "machine_security",
     "module_root",
     "nats_dir",
     "open_account_authority",
     "open_vault_lease",
     "operator_dir",
+    "operator_key_file",
+    "operator_public_key_for",
+    "operator_signer_for",
+    "operator_transit_for",
     "parse_classification",
     "parse_did",
     "persist_validators",

@@ -382,7 +382,7 @@ async def _team_bindings(key_path: Path) -> tuple[Any, Any]:
     try:
         owners, narrator = await build_team_bindings(
             backend=team_backend,
-            operator_signer=_operator_signer(key_path),
+            operator_signer=_operator_signer(),
             identity=identity,
         )
     except Exception:
@@ -407,11 +407,15 @@ def _nats_url() -> str:
     return default_nats_url()
 
 
-def _operator_signer(key_path: Path) -> Any:
-    """The deployment authority that signs the messaging audit chain (AU-9/10)."""
-    from arctrust import OperatorKey
+def _operator_signer() -> Any:
+    """The deployment authority that signs the messaging audit chain (AU-9/10).
 
-    return OperatorKey.load(key_path, generate_if_absent=False).into_signer()
+    A signer handle through the one resolver, so a vault-held (federal) key signs
+    here exactly as an on-disk one does.
+    """
+    from arctrust import operator_signer_for
+
+    return operator_signer_for()
 
 
 async def start_runner_host(
