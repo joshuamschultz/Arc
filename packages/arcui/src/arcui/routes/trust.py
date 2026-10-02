@@ -37,6 +37,7 @@ able to authorize its own capability.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tomllib
 from pathlib import Path
@@ -307,6 +308,12 @@ async def _read_body(request: Request) -> tuple[str, str] | JSONResponse:
     return agent_id, name
 
 
+def _skill_failures(skill_md: Path) -> str:
+    """Validator diagnostics for the skill at ``skill_md``; empty when it passes."""
+    result = arcagent.validate_skill_folder(skill_md.parent, "skills")
+    return "; ".join(f"{e.code}: {e.detail}" for e in result.errors)
+
+
 async def approve(request: Request) -> JSONResponse:
     """POST /api/trust/approve — sign a capability (operator).
 
@@ -370,6 +377,20 @@ async def approve(request: Request) -> JSONResponse:
         )
         return _error(detail, 404)
 
+    # A skill the validator rejects is refused by the loader whatever its
+    # signature says, so signing it would only look like a no-op to the operator.
+    if item.kind == "skill":
+        failures = await asyncio.to_thread(_skill_failures, Path(item.path))
+        if failures:
+            emit_mutation_audit(
+                request,
+                target=target,
+                operation="trust.approve",
+                outcome="denied",
+                detail="validation failed",
+            )
+            return JSONResponse({"error": "skill_invalid", "detail": failures}, status_code=422)
+
     # Read BEFORE signing: afterwards every artifact has a sidecar, so this is
     # the only moment that can tell a first signature from a re-signature.
     resigned = arcagent.sidecar_path(Path(item.path)).exists()
@@ -378,7 +399,9 @@ async def approve(request: Request) -> JSONResponse:
         # ``audit_sink`` is the chain this process already holds, so the
         # capability-level ``capability.signed`` record (REQ-323) lands beside
         # the HTTP-level mutation record below rather than opening a second one.
-        arcagent.sign_capability(
+        # Signing (and a vault transit call) blocks; keep it off the event loop.
+        await asyncio.to_thread(
+            arcagent.sign_capability,
             Path(item.path),
             signer_did=approver,
             signer=signer,

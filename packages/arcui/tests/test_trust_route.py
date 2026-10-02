@@ -225,6 +225,29 @@ def test_operator_approve_signs_the_artifact(tmp_path: Path) -> None:
     assert _audit(client).outcomes_for("trust.approve") == ["applied"]
 
 
+def test_approve_refuses_a_skill_that_fails_validation_and_signs_nothing(tmp_path: Path) -> None:
+    """Signing cannot fix a content failure, so the route refuses before signing."""
+    _bootstrap_operator_key(tmp_path)
+    team_root = tmp_path / "team"
+    team_root.mkdir()
+    _build_agent(team_root, "olivia", tier="enterprise", sign=False)
+    skill_md = _skill_md(team_root, "olivia")
+    skill_md.write_text(
+        _VALID_SKILL.split("\n## Resources")[0] + "\nNo sections here.\n", encoding="utf-8"
+    )
+    client = _make_client(team_root)
+
+    resp = client.post(
+        "/api/trust/approve", headers=_OPERATOR, json={"agent_id": "olivia", "name": "reporter"}
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "skill_invalid"
+    assert "missing_section" in resp.json()["detail"]
+    assert not artifact_signing.sidecar_path(skill_md).exists()
+    assert _audit(client).outcomes_for("trust.approve") == ["denied"]
+
+
 def test_disapprove_removes_the_sidecar_and_unpins_the_key(tmp_path: Path) -> None:
     """Revocation is the exact inverse: signature gone, key unpinned, gated again."""
     _bootstrap_operator_key(tmp_path)

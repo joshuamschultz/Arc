@@ -36,7 +36,7 @@ const STATUS_CHIP: Record<GatedCapability['status'], string> = {
   deny: 'denied',
   new_sighting: 'new sighting',
   unsigned: 'unsigned',
-  invalid: 'invalid signature',
+  invalid: 'fails validation',
   error: 'error',
   loaded: 'loaded',
 }
@@ -87,6 +87,7 @@ function GatedCard({ c }: { c: GatedCapability }) {
   const [operatorMode] = useOperatorMode()
   const [busy, setBusy] = useState<'approve' | 'disapprove' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const source = useCapabilitySource(c.agent_id, c.name, open)
   const panelId = useId()
@@ -114,11 +115,27 @@ function GatedCard({ c }: { c: GatedCapability }) {
   const resolve = async (decision: 'approve' | 'disapprove') => {
     setBusy(decision)
     setError(null)
+    setNotice(null)
     try {
-      await apiPost(`/api/trust/${decision}`, { agent_id: c.agent_id, name: c.name })
+      const row = await apiPost<GatedCapability>(`/api/trust/${decision}`, {
+        agent_id: c.agent_id,
+        name: c.name,
+      })
+      // Signing can succeed and the loader still refuse the artifact; say why.
+      if (decision === 'approve' && row?.status && row.status !== 'loaded') {
+        setNotice(`Signed, but still held back: ${row.detail || row.status}`)
+      }
       await queryClient.invalidateQueries({ queryKey: ['trust', 'gated'] })
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : `Could not ${decision}`)
+      const why = e instanceof ApiError ? e.body?.detail : undefined
+      setError(
+        typeof why === 'string'
+          ? `Not signed: ${why}`
+          : e instanceof ApiError
+            ? e.message
+            : `Could not ${decision}`,
+      )
+    } finally {
       setBusy(null)
     }
   }
@@ -220,6 +237,7 @@ function GatedCard({ c }: { c: GatedCapability }) {
                 </Button>
                 {error && <span className="text-xs text-destructive">{error}</span>}
               </div>
+              {notice && <p className="text-xs text-status-warning">{notice}</p>}
               {!reviewed && (
                 <p id={hintId} className="text-xs text-muted-foreground">
                   {APPROVE_LOCKED}
