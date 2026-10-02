@@ -25,6 +25,7 @@ from arcskill.improver.goldencase import (
     rubric_digest,
 )
 from arcskill.improver.improver import ArcSkillImprover
+from arcskill.improver.reader import ImproverState, ImproverStateReader
 from arcskill.improver.trace_join import (
     CurationUnavailable,
     JoinedTrace,
@@ -40,6 +41,8 @@ __all__ = [
     "CurationUnavailable",
     "EmittedGolden",
     "ImproverConfig",
+    "ImproverState",
+    "ImproverStateReader",
     "JoinedTrace",
     "PinnedJudgeError",
     "TraceJoin",

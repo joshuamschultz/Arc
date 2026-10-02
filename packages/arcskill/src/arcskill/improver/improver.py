@@ -17,20 +17,35 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from arcprompt import PromptSource, StockPromptSource
 
+from arcskill.hub.errors import SandboxRequired
 from arcskill.improver._util import read_frontmatter
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.codepatch import apply_bundle_patch, build_bundle_view
 from arcskill.improver.config import ChangeBoundConfig, ImproverConfig
+from arcskill.improver.controls import (
+    MIN_MANUAL_TRACES,
+    Preview,
+    PreviewStash,
+    audit_extra,
+    eval_run_result,
+    gate_payload,
+    regen_refusal,
+    sha256_text,
+    status_result,
+    unified_diff,
+)
 from arcskill.improver.engine import SkillOptimizer
 from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
+from arcskill.improver.gate_log import GateLog, GateRecord
 from arcskill.improver.guardrails import ChangeBound, Guardrails
 from arcskill.improver.lifecycle import ConsolidationCandidate, SkillLifecycle
 from arcskill.improver.models import (
@@ -52,7 +67,7 @@ from arcskill.improver.seams import (
     Mutator,
     Signer,
 )
-from arcskill.improver.suitegen import SuiteGenerator
+from arcskill.improver.suitegen import GenerationResult, SuiteGenerator
 from arcskill.improver.trace_store import TraceStore
 
 _logger = logging.getLogger("arcskill.improver.improver")
@@ -74,8 +89,11 @@ class SuiteTrigger(Protocol):
     concrete :class:`~arcskill.improver.suitegen.SuiteGenerator`.
     """
 
-    async def generate(self, *, skill_name: str, skill_dir: Path, kind: str) -> None:
-        """Bootstrap (``kind="create"``) or add-only extend (``kind="extend"``) a suite."""
+    async def generate(
+        self, *, skill_name: str, skill_dir: Path, kind: str
+    ) -> GenerationResult | None:
+        """Bootstrap (``create``), add-only extend (``extend``) or operator-``regen`` a
+        suite; the generation result when the trigger reports one."""
         ...
 
 
@@ -89,9 +107,23 @@ class _SuiteGeneratorTrigger:
     def __init__(self, generator: SuiteGenerator) -> None:
         self._generator = generator
 
-    async def generate(self, *, skill_name: str, skill_dir: Path, kind: str) -> None:
+    async def generate(
+        self, *, skill_name: str, skill_dir: Path, kind: str
+    ) -> GenerationResult | None:
         view = build_bundle_view(skill_name, skill_dir / "SKILL.md")
-        await self._generator.generate(skill_name, view)
+        return await self._generator.generate(skill_name, view)
+
+
+@dataclass(frozen=True)
+class _Proposal:
+    """One prose candidate the optimize pass proposed, with what applying it needs."""
+
+    current_text: str
+    candidate: Candidate
+    seed_scores: dict[str, float]
+    trace_ids: list[str]
+    stop_reason: str = ""
+    iterations_run: int = 0
 
 
 class ArcSkillImprover:
@@ -192,6 +224,10 @@ class ArcSkillImprover:
         # per skill at a time; the in-flight set lets the sweep skip without blocking.
         self._skill_locks: dict[str, asyncio.Lock] = {}
         self._generating: set[str] = set()
+        # Operator controls (alpha-2 P8): the gate-verdict log the read model shows,
+        # and the short-lived previews an operator may apply.
+        self._gate_log = GateLog(workspace)
+        self._previews = PreviewStash()
 
     @property
     def tier(self) -> str:
@@ -496,40 +532,75 @@ class ArcSkillImprover:
             return
 
         # Prose path needs the eval LLM (judge + reflector); code path used the mutator.
-        if self._llm is None:
+        proposal = await self._propose_prose(skill_name, skill_path, traces, persist_seed=True)
+        if proposal is None:
             return
-        try:
-            current_text = skill_path.read_text(encoding="utf-8")
-        except OSError:
-            return
+        result = await self._apply_proposal(skill_name, skill_path, proposal, source="auto")
+        if result["status"] == "applied" and self._config.suite.extend_after_mutation:
+            # Post-mutation extension (REQ-106): add-only anchors covering the new prose;
+            # adopted anchor files are never rewritten (the generator owns add-only).
+            await self._generate_suite(skill_name, skill_path.parent, kind="extend")
 
-        engine = SkillOptimizer(
+    def _prose_engine(self, llm: LLMInvoker) -> SkillOptimizer:
+        """The judge + reflector optimizer the prose path runs."""
+        return SkillOptimizer(
             config=self._config,
-            evaluator=SkillEvaluator(self._config, llm=self._llm, prompt_source=self._prompts),
-            reflector=SkillReflector(self._config, llm=self._llm, prompt_source=self._prompts),
+            evaluator=SkillEvaluator(self._config, llm=llm, prompt_source=self._prompts),
+            reflector=SkillReflector(self._config, llm=llm, prompt_source=self._prompts),
             guardrails=self._guardrails,
             store=self._candidate_store,
             signer=self._signer,
         )
-        result = await engine.optimize(skill_name, current_text, traces)
-        if result is None or result.best_candidate.id == "seed":
-            return
 
-        # HARD GATE (REQ-022): the golden-task suite decides acceptance; the judge only
-        # ranked the frontier above. A candidate applies only on strict improvement.
-        candidate = result.best_candidate
-        decision = await self._gate(skill_name, skill_path, current_text, candidate.text)
+    async def _propose_prose(
+        self, skill_name: str, skill_path: Path, traces: list[SkillTrace], *, persist_seed: bool
+    ) -> _Proposal | None:
+        """Run the optimize pass; the best non-seed candidate, or ``None``.
+
+        Shared by the usage-triggered pass and the operator's improve-now, so both
+        propose exactly the same way. ``persist_seed=False`` keeps a preview write-free.
+        """
+        if self._llm is None:
+            return None
+        try:
+            current_text = skill_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        result = await self._prose_engine(self._llm).optimize(
+            skill_name, current_text, traces, persist_seed=persist_seed
+        )
+        if result is None or result.best_candidate.id == "seed":
+            return None
+        return _Proposal(
+            current_text=current_text,
+            candidate=result.best_candidate,
+            seed_scores=result.seed_scores,
+            trace_ids=[t.trace_id for t in traces],
+            stop_reason=result.stop_reason,
+            iterations_run=result.iterations_run,
+        )
+
+    async def _apply_proposal(
+        self, skill_name: str, skill_path: Path, proposal: _Proposal, *, source: str
+    ) -> dict[str, Any]:
+        """Gate → authorize → apply one prose candidate; every outcome is gate-logged.
+
+        HARD GATE (REQ-022): the golden-task suite decides acceptance; the judge only
+        ranked the frontier. Then the operator-approval ladder (D-10) plus the
+        judge-gate guard (H-041c) in ``_authorize`` — fail-closed when approval is
+        required but unwired. Only then ``apply_result`` writes, signs and audits.
+        """
+        if self._llm is None:  # a proposal needs the eval model; narrow for the type checker
+            return status_result("unavailable", skill_name, "improvement needs the eval model")
+        candidate = proposal.candidate
+        decision = await self._gate(skill_name, skill_path, proposal.current_text, candidate.text)
+        gate = gate_payload(decision)
         if not decision.accepted:
             _logger.info(
                 "skill %s candidate rejected by eval gate: %s", skill_name, decision.reason
             )
-            return
-
-        # Operator-approval gate (D-10) + judge-gate guard (H-041c): federal approves every
-        # mutation; and at ANY tier a suite carrying a judge_rubric case forces the review
-        # route (the deterministic sandbox can't score that case — it waved through the
-        # strict-improvement gate unevaluated). Both rules live in _authorize; here we just
-        # hand it the suite. Fail-closed if approval is required but unwired.
+            self._log_gate(skill_name, source, "prose", decision, "rejected", candidate.id)
+            return {**status_result("rejected", skill_name, decision.reason), "gate": gate}
         if not await self._authorize(
             "skill.mutation",
             "prose",
@@ -537,22 +608,50 @@ class ArcSkillImprover:
             decision.reason,
             cases=load_suite(skill_path.parent),
         ):
-            return
-
-        engine.apply_result(
+            self._log_gate(skill_name, source, "prose", decision, "denied", candidate.id)
+            reason = "operator approval is required and was not granted"
+            return {**status_result("denied", skill_name, reason), "gate": gate}
+        self._prose_engine(self._llm).apply_result(
             skill_name,
             candidate,
             skill_path=skill_path,
-            seed_scores=result.seed_scores,
-            trace_ids=[t.trace_id for t in traces],
+            seed_scores=proposal.seed_scores,
+            trace_ids=proposal.trace_ids,
         )
         self._guardrails.set_generation(skill_name, candidate.generation)
+        self._log_gate(skill_name, source, "prose", decision, "applied", candidate.id)
         if self._reload is not None:
             self._reload()
-        if self._config.suite.extend_after_mutation:
-            # Post-mutation extension (REQ-106): add-only anchors covering the new prose;
-            # adopted anchor files are never rewritten (the generator owns add-only).
-            await self._generate_suite(skill_name, skill_path.parent, kind="extend")
+        return {
+            **status_result("applied", skill_name, decision.reason),
+            "candidate_id": candidate.id,
+            "generation": candidate.generation,
+            "gate": gate,
+        }
+
+    def _log_gate(
+        self,
+        skill_name: str,
+        source: str,
+        kind: str,
+        decision: GateDecision,
+        outcome: str,
+        candidate_id: str = "",
+    ) -> None:
+        self._gate_log.record(
+            GateRecord(
+                skill_name=skill_name,
+                source=source,
+                kind=kind,
+                accepted=decision.accepted,
+                reason=decision.reason,
+                outcome=outcome,
+                candidate_id=candidate_id,
+                before_pass=decision.before_pass,
+                after_pass=decision.after_pass,
+                newly_passing=decision.newly_passing,
+            )
+        )
 
     def _should_repair_code(self, skill_path: Path, traces: list[SkillTrace]) -> bool:
         """Code-repair is eligible: mutator present, scripts + golden suite exist, and a
@@ -607,6 +706,7 @@ class ArcSkillImprover:
         if not decision.accepted:
             _logger.info("skill %s code patch rejected: %s", skill_name, decision.reason)
             self._record_rejection(skill_name, patch, decision.reason)
+            self._log_gate(skill_name, "auto", "code", decision, "rejected")
             return
         # Operator-approval gate (D-10) + judge-gate guard (H-041c): enterprise + federal
         # approve code mutations; and at ANY tier a judge_rubric case in the suite forces the
@@ -616,8 +716,10 @@ class ArcSkillImprover:
         if not await self._authorize(
             "skill.mutation", "code", skill_name, patch.summary, cases=cases
         ):
+            self._log_gate(skill_name, "auto", "code", decision, "denied")
             return
         apply_bundle_patch(skill_dir, patch, signer=self._signer)
+        self._log_gate(skill_name, "auto", "code", decision, "applied")
         self._audit_code_mutation(skill_name, current, patch, [t.trace_id for t in traces])
         self._guardrails.set_generation(
             skill_name, self._guardrails.get_generation(skill_name) + 1
@@ -860,6 +962,222 @@ class ArcSkillImprover:
             return []
         tags = fm.get("tags", [])
         return list(tags) if isinstance(tags, list) else []
+
+    # -- operator controls (alpha-2 P8) ---------------------------------------
+    #
+    # improve-now, eval run and regen: operator-initiated, single-flight per skill
+    # (a pass already running answers ``busy``), bounded by ``manual_timeout_s``, and
+    # each audited on the improver's WORM chain. Improve-now reuses the SAME optimize
+    # pass, EvalGate, _authorize and apply_result the usage trigger runs.
+
+    async def improve_now(
+        self, *, skill_name: str, dry_run: bool, preview_id: str | None = None
+    ) -> dict[str, Any]:
+        """Run one improvement pass now; a dry run returns the diff + gate verdict only.
+
+        ``dry_run=True`` stops before ``apply_result`` and writes nothing; the result
+        carries a ``preview_id``. Applying with that id re-checks that the skill is
+        unchanged, re-runs the eval gate and authorization, then applies the
+        previewed candidate. Applying without one runs a fresh pass and applies it.
+        """
+        action = "skill.improve_now.preview" if dry_run else "skill.improve_now.apply"
+        target = self._control_target(skill_name)
+        if isinstance(target, dict):
+            result = target
+        else:
+            result = await self._bounded(
+                skill_name, self._improve_now(skill_name, target, dry_run, preview_id)
+            )
+        self._emit_audit(skill_name, action, str(result["status"]), extra=audit_extra(result))
+        return result
+
+    async def run_evals(self, *, skill_name: str) -> dict[str, Any]:
+        """Run the skill's golden suite now against its current bundle; pass/fail per case."""
+        target = self._control_target(skill_name)
+        if isinstance(target, dict):
+            result = target
+        else:
+            result = await self._bounded(skill_name, self._run_evals(skill_name, target))
+        self._emit_audit(
+            skill_name, "skill.evals.run", str(result["status"]), extra=audit_extra(result)
+        )
+        return result
+
+    async def regen_evals(self, *, skill_name: str) -> dict[str, Any]:
+        """Regenerate the machine-authored golden anchors for real (needs the eval model).
+
+        Refused when a person edited the generated file. The adoption cascade is the
+        same one the automatic bootstrap runs; if no candidate survives it the
+        existing suite is kept (``no_change``).
+        """
+        target = self._control_target(skill_name)
+        if isinstance(target, dict):
+            result = target
+        elif self._suite_generator is None:
+            result = status_result(
+                "unavailable", skill_name, "suite generation needs the eval model"
+            )
+        else:
+            refusal = regen_refusal(skill_name, target.parent)
+            result = refusal or await self._bounded(skill_name, self._regen(skill_name, target))
+        self._emit_audit(
+            skill_name, "skill.evals.regen", str(result["status"]), extra=audit_extra(result)
+        )
+        return result
+
+    def _control_target(self, skill_name: str) -> Path | dict[str, Any]:
+        """The skill's SKILL.md, or a ``not_found`` result (before any lock is made)."""
+        path = self._skill_path(skill_name) if self._skill_path is not None else None
+        if path is None or not path.is_file():
+            return status_result("not_found", skill_name, "no such skill on this agent")
+        return path
+
+    async def _bounded(
+        self, skill_name: str, work: Coroutine[Any, Any, dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Single-flight per skill + wall-clock ceiling for an operator control."""
+        lock = self._skill_lock(skill_name)
+        if lock.locked():
+            work.close()
+            return status_result("busy", skill_name, "an improvement pass is already running")
+        async with lock:
+            try:
+                return await asyncio.wait_for(work, timeout=self._config.manual_timeout_s)
+            except TimeoutError:
+                reason = f"stopped after {self._config.manual_timeout_s:g}s"
+                return status_result("timeout", skill_name, reason)
+
+    async def _improve_now(
+        self, skill_name: str, skill_path: Path, dry_run: bool, preview_id: str | None
+    ) -> dict[str, Any]:
+        if not dry_run and preview_id is not None:
+            return await self._apply_preview(skill_name, skill_path, preview_id)
+        traces = self._store.load_traces(skill_name)
+        refusal = self._improve_refusal(skill_name, len(traces))
+        if refusal is not None:
+            return refusal
+        proposal = await self._propose_prose(
+            skill_name, skill_path, traces, persist_seed=not dry_run
+        )
+        if proposal is None:
+            reason = "the optimize pass found no candidate better than the current skill"
+            return status_result("no_candidate", skill_name, reason)
+        if not dry_run:
+            return await self._apply_manual(skill_name, skill_path, proposal)
+        return await self._preview(skill_name, skill_path, proposal)
+
+    def _improve_refusal(self, skill_name: str, trace_count: int) -> dict[str, Any] | None:
+        """Why an improve-now cannot run, or ``None``. Exempt tags hold for operators too."""
+        if self._llm is None:
+            return status_result("unavailable", skill_name, "improvement needs the eval model")
+        state = self._candidate_store.lifecycle_state(skill_name)
+        if state in ("retired", "merged"):
+            return status_result("retired", skill_name, f"skill is {state}; revive it first")
+        exempt = set(self._config.exempt_tags) & set(self._skill_tags(skill_name))
+        if exempt:
+            reason = f"tagged {', '.join(sorted(exempt))}; never auto-improved"
+            return status_result("exempt", skill_name, reason)
+        if trace_count < MIN_MANUAL_TRACES:
+            reason = f"needs at least {MIN_MANUAL_TRACES} usage traces (has {trace_count})"
+            return status_result("insufficient_traces", skill_name, reason)
+        return None
+
+    async def _preview(
+        self, skill_name: str, skill_path: Path, proposal: _Proposal
+    ) -> dict[str, Any]:
+        """Gate the candidate without applying it; stash it for a later apply."""
+        candidate = proposal.candidate
+        decision = await self._gate(skill_name, skill_path, proposal.current_text, candidate.text)
+        preview_id = self._previews.put(
+            Preview(
+                skill_name=skill_name,
+                base_sha256=sha256_text(proposal.current_text),
+                candidate=candidate,
+                seed_scores=proposal.seed_scores,
+                trace_ids=proposal.trace_ids,
+            )
+        )
+        needs_review = self._approval_required("prose") or (
+            self._judge_review_reason(load_suite(skill_path.parent)) is not None
+        )
+        return {
+            **status_result("preview", skill_name, decision.reason),
+            "preview_id": preview_id,
+            "candidate_id": candidate.id,
+            "generation": candidate.generation,
+            "diff": unified_diff(proposal.current_text, candidate.text),
+            "scores": dict(candidate.aggregate_scores),
+            "seed_scores": dict(proposal.seed_scores),
+            "stop_reason": proposal.stop_reason,
+            "iterations_run": proposal.iterations_run,
+            "gate": gate_payload(decision),
+            "approval_required": needs_review,
+        }
+
+    async def _apply_preview(
+        self, skill_name: str, skill_path: Path, preview_id: str
+    ) -> dict[str, Any]:
+        preview = self._previews.take(preview_id, skill_name)
+        if preview is None:
+            return status_result("preview_expired", skill_name, "preview it again, then apply")
+        try:
+            current = skill_path.read_text(encoding="utf-8")
+        except OSError:
+            return status_result("not_found", skill_name, "skill file is unreadable")
+        if sha256_text(current) != preview.base_sha256:
+            reason = "the skill changed since the preview; preview it again"
+            return status_result("stale_preview", skill_name, reason)
+        proposal = _Proposal(
+            current_text=current,
+            candidate=preview.candidate,
+            seed_scores=preview.seed_scores,
+            trace_ids=preview.trace_ids,
+        )
+        return await self._apply_manual(skill_name, skill_path, proposal)
+
+    async def _apply_manual(
+        self, skill_name: str, skill_path: Path, proposal: _Proposal
+    ) -> dict[str, Any]:
+        """Apply through the shared path; suite extension runs after, off the request."""
+        result = await self._apply_proposal(skill_name, skill_path, proposal, source="manual")
+        if result["status"] == "applied" and self._config.suite.extend_after_mutation:
+            self._spawn(self._extend_suite(skill_name, skill_path.parent))
+        return result
+
+    async def _extend_suite(self, skill_name: str, skill_dir: Path) -> None:
+        async with self._skill_lock(skill_name):
+            await self._generate_suite(skill_name, skill_dir, kind="extend")
+
+    async def _run_evals(self, skill_name: str, skill_path: Path) -> dict[str, Any]:
+        cases = load_suite(skill_path.parent)
+        if not cases:
+            return status_result("no_suite", skill_name, "this skill has no golden cases yet")
+        view = build_bundle_view(skill_name, skill_path)
+        try:
+            outcomes = await self._eval_runner.run(view, cases)
+        except SandboxRequired as exc:
+            return status_result("unavailable", skill_name, str(exc))
+        return eval_run_result(skill_name, cases, outcomes)
+
+    async def _regen(self, skill_name: str, skill_path: Path) -> dict[str, Any]:
+        if self._suite_generator is None:  # narrowed by the caller; kept for the type checker
+            return status_result(
+                "unavailable", skill_name, "suite generation needs the eval model"
+            )
+        generated = await self._suite_generator.generate(
+            skill_name=skill_name, skill_dir=skill_path.parent, kind="regen"
+        )
+        total = len(load_suite(skill_path.parent))
+        if generated is not None and not generated.adopted:
+            reason = "no candidate case survived the adoption cascade; the suite is unchanged"
+            return {**status_result("no_change", skill_name, reason), "total": total}
+        quarantined = generated.quarantined if generated is not None else []
+        return {
+            **status_result("completed", skill_name),
+            "total": total,
+            "adopted": len(generated.adopted) if generated is not None else None,
+            "quarantined": [{"nodeid": q.nodeid, "reason": q.reason} for q in quarantined],
+        }
 
     # -- operator-facing golden curation (H-041) -----------------------------
     #

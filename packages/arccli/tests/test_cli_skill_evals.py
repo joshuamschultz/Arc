@@ -7,7 +7,8 @@ stripping on human edit (REQ-111):
 * ``arc skill evals edit <skill_path> <file> [--force]`` — $VISUAL/$EDITOR on a
   temp copy, validate-on-save, atomic commit, git-style abort semantics.
 * ``arc skill evals regen <skill_path> [--yes]`` — unified-diff preview + confirm;
-  bare CLI has no LLM invoker, so post-confirm regen errors with "agent context".
+  without --agent the CLI cannot reach the eval model, so regen errors with "agent context"
+  (the running-agent path is pinned in test_cli_skill_improve.py).
 
 Skill resolution matches ``arc skill validate``: a path to the skill folder.
 Concurrent-edit guard marker: ``<skill>/evals/.improver.lock`` (lock.py naming).
@@ -547,7 +548,7 @@ class TestEvalsRegen:
         assert target.read_bytes() == original
 
     def test_regen_confirmed_requires_agent_context(self, tmp_path: Path) -> None:
-        """The CLI embeds no LLM: a confirmed regen (--yes) errors clearly — regeneration
+        """Without --agent a confirmed regen (--yes) errors clearly — regeneration
         needs agent context (LLM invoker + sandbox runner) — and overwrites nothing."""
         skill_dir = _make_skill(tmp_path, machine_cases=["test_gen_1", "test_gen_2", "test_gen_3"])
         target = skill_dir / "evals" / _GENERATED

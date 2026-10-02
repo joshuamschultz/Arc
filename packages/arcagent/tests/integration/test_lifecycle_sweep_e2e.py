@@ -7,7 +7,7 @@ CapabilityRegistry (so it stops being offered) → operator-signed WORM audit. N
 facade ``review_lifecycle()`` call.
 
 Finding 3b: the skills module reads the REAL CapabilityRegistry (``_skills`` dict,
-``SkillEntry.location``) delivered at ``agent:ready`` — so ``_skill_path`` resolves in
+``SkillEntry.location``) delivered at ``agent:ready`` — so ``resolve_skill_path`` resolves in
 production, not just against a test double.
 """
 
@@ -101,8 +101,8 @@ async def test_ac5_background_sweep_retires_and_suppresses_with_operator_audit(
     registry = await _registry_with("old-skill", skill_md)
     await skills_ready(_Ctx(skill_registry=registry))
 
-    # 3b: the real registry is wired — _skill_path resolves to the real SKILL.md location.
-    assert _runtime._skill_path("old-skill") == skill_md
+    # 3b: the real registry is wired — the state resolves the real SKILL.md location.
+    assert _runtime.state().resolve_skill_path("old-skill") == skill_md
 
     # Drive the background loop's poll body — the real producer (not a facade call).
     await _runtime.run_lifecycle_sweep()

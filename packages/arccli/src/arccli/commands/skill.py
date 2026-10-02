@@ -20,6 +20,7 @@ from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
 from arccli.commands.skill_evals import evals_handler
+from arccli.commands.skill_improve import add_remote_arguments, improve_handler
 
 _SKILL_TEMPLATE = """\
 ---
@@ -331,7 +332,7 @@ def _search(args: argparse.Namespace) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arc skill",
-        description="Skill folder management — list, create, validate, search.",
+        description="Skill folder management — list, create, validate, search, evals, improve.",
         add_help=True,
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
@@ -361,19 +362,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p = subs.add_parser(
-        "evals", help="List, edit, regen, promote-to-golden, or judge a skill's eval suite."
+        "evals",
+        help="List, edit, run, regen, promote-to-golden, or judge a skill's eval suite.",
     )
     p.add_argument(
         "target",
         nargs="+",
         help=(
-            "<skill_path> | edit <skill_path> <file> | regen <skill_path> "
+            "<skill_path> | edit <skill_path> <file> | run <skill> | regen <skill_path> "
             "| promote <skill_path> <spec.json> | judge <skill_path> <candidate_output>"
         ),
     )
     p.add_argument("--force", action="store_true", help="Commit an edit despite warnings.")
     p.add_argument("--yes", action="store_true", help="Skip the regen confirmation prompt.")
-    p.add_argument("--json", action="store_true", help="Emit judge verdicts as JSON.")
+    p.add_argument("--json", action="store_true", help="Emit results as JSON.")
+    add_remote_arguments(p, required=False)
+
+    p = subs.add_parser(
+        "improve",
+        help="Improve a skill now on the running agent: preview the diff, then apply.",
+    )
+    p.add_argument("skill", help="Skill name (or its folder).")
+    p.add_argument("--dry-run", action="store_true", help="Preview only; never apply.")
+    p.add_argument("--yes", action="store_true", help="Apply without the confirmation prompt.")
+    p.add_argument("--json", action="store_true", help="Emit results as JSON.")
+    add_remote_arguments(p, required=True)
 
     return parser
 
@@ -384,6 +397,7 @@ _SUBCOMMAND_MAP = {
     "validate": _validate,
     "search": _search,
     "evals": evals_handler,
+    "improve": improve_handler,
 }
 
 

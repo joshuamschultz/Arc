@@ -411,11 +411,33 @@ arc skill evals <skill_path>                        # list cases + provenance
 arc skill evals edit <skill_path> <file> [--force]   # edit a case in $VISUAL/$EDITOR;
                                                       # warns on suite-floor breach or
                                                       # passing-anchor loss before commit
-arc skill evals regen <skill_path> [--yes]           # preview a diff of what regenerating
-                                                      # the machine-authored files would
-                                                      # touch (actual regen needs a live
-                                                      # agent — run it from inside one)
+arc skill evals run <skill> --agent A --email E     # run the golden suite now on the
+                                                      # running agent; PASS/FAIL per case
+arc skill evals regen <skill_path> --agent A --email E [--yes]
+                                                      # preview a diff of the machine-
+                                                      # authored files, then regenerate
+                                                      # them on the running agent
+arc skill improve <skill> --agent A --email E [--dry-run] [--yes]
+                                                      # improve now: preview the diff and
+                                                      # gate verdict, then apply exactly
+                                                      # that candidate
 ```
+
+The three remote commands log in to the serve process (ArcUI's HTTP API) as an
+operator, like `arc agent promotion run`; the running agent owns the eval model,
+the sandbox, the gate and the audit chain, and every call is audited.
+
+**Operator controls in ArcUI** (alpha-2): the skill drawer's **Evals** tab lists
+the golden cases, runs the suite (`POST .../skills/{name}/evals/run`),
+regenerates the machine anchors (`POST .../evals/regen`) and promotes a new case
+(`POST .../promote`). The **Improver** tab reads `GET .../improver` (lifecycle
+state, candidates with judge scores, recent gate verdicts and reasons — written by
+`arcskill.improver.gate_log`) and drives `POST .../improve`: `?dry_run=1` returns
+the diff and gate verdict with no write; `?dry_run=0` with `confirm` applies the
+previewed candidate (`preview_id`, single use, refused if the skill changed)
+through the same `EvalGate`, `_authorize` and `apply_result` as the automatic
+pass. The adapter holds one pass per skill (`busy`) and stops a pass after
+`manual_timeout_s` (default 600s).
 
 Editing a machine-generated file by hand — even without a `@generated`
 removal — reclassifies it human-authored the moment its bytes no longer

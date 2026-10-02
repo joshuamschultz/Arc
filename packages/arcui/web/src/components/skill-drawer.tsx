@@ -13,6 +13,9 @@ import { Button } from '@/components/ui/button'
 import { MarkdownFile } from '@/components/frontmatter'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { CapabilityStatusBadge, SourceRootBadge } from '@/components/capability-table'
+import { SkillEvalsPanel } from '@/components/skill-evals-panel'
+import { SkillImproverCard } from '@/components/skill-improver-card'
+import { UnifiedDiff } from '@/components/unified-diff'
 import {
   useAgentSkillDetail,
   useAgentSkillVersionDiff,
@@ -106,6 +109,8 @@ export function SkillDrawer({
           <TabsList className="mx-5 mt-3 w-fit">
             <TabsTrigger value="body">Body</TabsTrigger>
             <TabsTrigger value="versions">Versions</TabsTrigger>
+            <TabsTrigger value="evals">Evals</TabsTrigger>
+            <TabsTrigger value="improver">Improver</TabsTrigger>
           </TabsList>
 
           <TabsContent value="body" className="flex flex-1 flex-col overflow-hidden">
@@ -163,6 +168,14 @@ export function SkillDrawer({
 
           <TabsContent value="versions" className="flex-1 overflow-auto p-5">
             <SkillVersionsPanel agentId={agentId} skillName={skillName} />
+          </TabsContent>
+
+          <TabsContent value="evals" className="flex-1 overflow-auto p-5">
+            <SkillEvalsPanel agentId={agentId} skillName={skillName} />
+          </TabsContent>
+
+          <TabsContent value="improver" className="flex-1 overflow-auto p-5">
+            <SkillImproverCard agentId={agentId} skillName={skillName} />
           </TabsContent>
         </Tabs>
       </SheetContent>
@@ -244,31 +257,6 @@ function VersionRow({
         )}
       </div>
     </div>
-  )
-}
-
-/** Renders a server-computed unified diff with +/- line coloring (plain text parse —
- *  no diff library needed for a format this simple). */
-function UnifiedDiff({ diff }: { diff: string }) {
-  if (!diff.trim()) {
-    return <p className="text-xs text-muted-foreground">No textual difference between these two versions.</p>
-  }
-  return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-muted/20 p-3 font-mono text-[11px] leading-relaxed">
-      {diff.split('\n').map((line, i) => (
-        <div
-          key={i}
-          className={cn(
-            line.startsWith('+') && !line.startsWith('+++') && 'bg-status-online/10 text-status-online',
-            line.startsWith('-') && !line.startsWith('---') && 'bg-destructive/10 text-destructive',
-            (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) &&
-              'text-muted-foreground',
-          )}
-        >
-          {line || ' '}
-        </div>
-      ))}
-    </pre>
   )
 }
 

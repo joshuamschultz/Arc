@@ -84,6 +84,12 @@ from arcui.routes.agent_detail.sessions import (
     get_sessions,
     get_tasks,
 )
+from arcui.routes.agent_detail.skill_improver import (
+    get_skill_improver,
+    post_skill_evals_regen,
+    post_skill_evals_run,
+    post_skill_improve,
+)
 from arcui.routes.agent_detail.skill_versions import (
     get_skill_evals,
     get_skill_version_body,
@@ -128,6 +134,16 @@ routes = [
     Route(
         "/api/agents/{id}/skills/{skill_name}/promote",
         post_skill_promote_golden,
+        methods=["POST"],
+    ),
+    Route("/api/agents/{id}/skills/{skill_name}/improver", get_skill_improver, methods=["GET"]),
+    Route("/api/agents/{id}/skills/{skill_name}/improve", post_skill_improve, methods=["POST"]),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/evals/run", post_skill_evals_run, methods=["POST"]
+    ),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/evals/regen",
+        post_skill_evals_regen,
         methods=["POST"],
     ),
     Route("/api/agents/{id}/prompts", get_prompts, methods=["GET"]),

@@ -92,6 +92,28 @@ class SkillAdapter(Protocol):
         """Names of currently-retired (or merged-away) skills — excluded from the offering."""
         ...
 
+    # -- operator controls (alpha-2 P8) --------------------------------------
+    #
+    # Operator-initiated, bounded and audited by the implementation. Each returns a
+    # primitive dict with at least ``status``, ``skill_name`` and ``reason``; an
+    # implementation that cannot serve a control answers ``status="unavailable"``.
+
+    async def improve_now(
+        self, *, skill_name: str, dry_run: bool, preview_id: str | None = None
+    ) -> dict[str, Any]:
+        """Run one improvement pass now. ``dry_run`` returns the diff + gate verdict
+        and writes nothing; otherwise the candidate (the previewed one when
+        ``preview_id`` is given) goes through the gate, authorization and apply."""
+        ...
+
+    async def run_evals(self, *, skill_name: str) -> dict[str, Any]:
+        """Run the skill's golden suite now; pass/fail per case."""
+        ...
+
+    async def regen_evals(self, *, skill_name: str) -> dict[str, Any]:
+        """Regenerate the skill's machine-authored golden anchors."""
+        ...
+
 
 class NullSkillAdapter:
     """The default no-op adapter: improvement off, zero files, never errors.
@@ -136,5 +158,25 @@ class NullSkillAdapter:
     def retired_skills(self) -> frozenset[str]:
         return frozenset()
 
+    async def improve_now(
+        self, *, skill_name: str, dry_run: bool, preview_id: str | None = None
+    ) -> dict[str, Any]:
+        return unavailable_result(skill_name)
 
-__all__ = ["LLMInvoker", "NullSkillAdapter", "SkillAdapter"]
+    async def run_evals(self, *, skill_name: str) -> dict[str, Any]:
+        return unavailable_result(skill_name)
+
+    async def regen_evals(self, *, skill_name: str) -> dict[str, Any]:
+        return unavailable_result(skill_name)
+
+
+def unavailable_result(skill_name: str) -> dict[str, Any]:
+    """The typed answer of an adapter that does not improve skills (the default)."""
+    return {
+        "status": "unavailable",
+        "skill_name": skill_name,
+        "reason": "skill improvement is not enabled for this agent",
+    }
+
+
+__all__ = ["LLMInvoker", "NullSkillAdapter", "SkillAdapter", "unavailable_result"]

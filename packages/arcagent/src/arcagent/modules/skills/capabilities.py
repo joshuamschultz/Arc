@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.modules.skills import _runtime
-from arcagent.tools._decorator import background_task, hook
+from arcagent.skilladapt import SkillAdapter
+from arcagent.tools._decorator import background_task, capability, hook
 from arcagent.tools._secret_guard import find_secret
 from arcagent.utils.periodic import PeriodicRunner
 
@@ -302,7 +303,34 @@ def _poll_interval() -> float:
         return _SWEEP_POLL_DEFAULT
 
 
+@capability(name="skill_adapter")
+class SkillAdapterControl:
+    """Serves ``ArcAgent.skill_adapter`` — the operator's improve-now / evals surface.
+
+    Registered under the ``skill_adapter`` operation contract so the agent core
+    reaches it without naming this module (ADR-033). ``setup`` runs in the agent
+    task that configured the module and captures THIS agent's adapter; the adapter
+    resolves skill paths from its own state, so operator surfaces may call it from
+    their own task.
+    """
+
+    def __init__(self) -> None:
+        self._adapter: SkillAdapter | None = None
+
+    async def setup(self, ctx: Any) -> None:
+        del ctx  # state lives in _runtime
+        self._adapter = _runtime.state().adapter
+
+    async def teardown(self) -> None:
+        self._adapter = None
+
+    @property
+    def adapter(self) -> SkillAdapter | None:
+        return self._adapter
+
+
 __all__ = [
+    "SkillAdapterControl",
     "skills_llm_call_complete",
     "skills_post_plan",
     "skills_post_tool",
