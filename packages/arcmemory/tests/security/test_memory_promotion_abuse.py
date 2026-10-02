@@ -154,7 +154,13 @@ class FakePublisher:
         self.references: list[str] = []
 
     async def publish(
-        self, reference: str, *, content_sha256: str, confidence: float, classifier_version: str
+        self,
+        reference: str,
+        *,
+        content_sha256: str,
+        confidence: float,
+        classifier_version: str,
+        classification: str,
     ) -> str:
         self.references.append(reference)
         return f"shared:{reference}"

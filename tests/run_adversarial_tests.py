@@ -202,6 +202,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/integration/test_knowledge_shared_routes.py",
         "packages/arcui/tests/test_memory_share_routes.py",
     ),
+    # Alpha-2 item 16 follow-up: a card shares at its OWN stored label when that is
+    # below the agent's clearance (declassified-at-source), and nowhere else. A
+    # label above the clearance is refused; a missing or unknown label is the
+    # clearance (fail upward); a caller-named or unattested lower label, an
+    # undecided write and a direct backend save are all still no-write-down.
+    "classification laundering via a forged lower shared label (alpha-2 item 16)": (
+        "packages/arcteam/tests/security/test_declassified_share.py",
+        "packages/arcagent/tests/modules/memory/test_promotion_bridge.py",
+        "packages/arcmemory/tests/unit/test_memory_export.py",
+        "packages/arcmemory/tests/promotion/test_sweep.py",
+    ),
     "memory promotion decision integrity and forged shared-knowledge ports": (
         "packages/arcteam/tests/test_promotion_audit_and_revoke.py",
         "packages/arcteam/tests/test_promotion_error_typing.py",

@@ -301,7 +301,7 @@ class ProceduralStore:
             # Absent on every card written before the two counters were split, and
             # 0 is the truthful answer for those: nothing recorded their revisions.
             revisions=int(fm.get("revisions", 0)),
-            classification=str(fm.get("classification", "unclassified")),
+            classification=str(fm.get("classification", "")),
         )
 
     def list_summaries(self) -> list[ProcedureSummary]:

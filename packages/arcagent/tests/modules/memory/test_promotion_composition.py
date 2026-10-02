@@ -269,6 +269,7 @@ async def test_composed_publisher_promotes_as_the_runtime_identity(
         content_sha256=render_candidate(insight).content_sha256,
         confidence=0.97,
         classifier_version="jev-1.13.0",
+        classification="UNCLASSIFIED",
     )
 
     assert shared_ref == "shared-1"

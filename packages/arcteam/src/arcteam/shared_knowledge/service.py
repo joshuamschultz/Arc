@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from arctrust.audit import AuditEvent, emit
+from arctrust.classification import dominates, parse_classification
 from arctrust.identity import did_from_public_key
 
 from arcteam.shared_knowledge.backend import (
@@ -86,6 +87,7 @@ class _Draft:
     classification: str
     tags: tuple[str, ...]
     document_type: str
+    declassified_at_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -268,12 +270,16 @@ class FleetSharedKnowledgeService:
         self._validate_promotion(source)
         self._enforce_promotable_type(source)
         collection = self._collection(access.caller_did, signer, audit_sink)
+        declassified = _is_declassified_at_source(source, access, decided)
+        if declassified:
+            decision_extra.update(_declassified_extra(source, access))
         draft = _Draft(
             title=source.title,
             content=source.content.strip(),
             classification=source.classification,
             tags=source.tags,
             document_type=source.document_type,
+            declassified_at_source=declassified,
         )
         # Owner, clearance, signer-vs-DID, TOFU pin and "not demoted" are checked
         # BEFORE the decision is recorded, so a refused promotion never leaves an
@@ -407,6 +413,31 @@ class FleetSharedKnowledgeService:
         digest = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
         if digest != source.digest:
             raise ValueError("knowledge promotion digest mismatch")
+
+
+def _is_declassified_at_source(source: _Source, access: _Access, decided: bool) -> bool:
+    """True only for the one audited exception to no-write-down.
+
+    A below-clearance label is honoured when ALL hold: the source attests the label
+    is the card's own stored label (``label_from_card``, set only by the consolidated
+    exporter), a classifier or operator decision is being recorded for this write,
+    and the label is strictly below the writer's clearance. A label above the
+    clearance, or any other source, stays under the strict rule (the backend refuses).
+    """
+    if not decided or getattr(source, "label_from_card", False) is not True:
+        return False
+    clearance = parse_classification(access.clearance, strict=True)
+    label = parse_classification(source.classification, strict=True)
+    return label != clearance and dominates(clearance, label)
+
+
+def _declassified_extra(source: _Source, access: _Access) -> dict[str, Any]:
+    return {
+        "declassified_at_source": True,
+        "shared_label": parse_classification(source.classification, strict=True).name,
+        "clearance": parse_classification(access.clearance, strict=True).name,
+        "declassified_why": "card's stored label is below the writer's clearance",
+    }
 
 
 def _operator_did(signer: _Signer) -> str:

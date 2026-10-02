@@ -57,17 +57,20 @@ class PromotionPublisher(Protocol):
         content_sha256: str,
         confidence: float,
         classifier_version: str,
+        classification: str,
     ) -> str:
         """Publish ``reference`` (``"<kind>:<id>"``) and return the shared ref.
 
         ``content_sha256`` is the digest the classifier judged; the shared side
         must refuse (:class:`PublisherUnavailableError`) when the bytes it pulls
-        no longer hash to it.
+        no longer hash to it. ``classification`` is the label the sweep read from
+        the card's stored classification; the publisher must refuse when the card
+        it pulls carries any other label (the label is bound like the digest).
         """
         ...
 
     async def publish_by_operator(
-        self, reference: str, *, content_sha256: str, decided_by: str
+        self, reference: str, *, content_sha256: str, decided_by: str, classification: str
     ) -> str:
         """Publish ``reference`` on an operator's decision (no classifier verdict).
 

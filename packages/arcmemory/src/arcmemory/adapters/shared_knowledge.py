@@ -25,6 +25,10 @@ class SharedKnowledgeDraft:
     signature: str
     public_key: str
     algorithm: str
+    #: Set by the promotion service for an attested declassified-at-source share
+    #: (a label below the writer's clearance). Never signed or stored: it only
+    #: tells the backend this write is that one audited exception.
+    declassified_at_source: bool = False
 
 
 class _Access(Protocol):
@@ -187,6 +191,7 @@ class SharedKnowledgeAdapter:
             signature=self._signer.sign(canonical_json(payload)).hex(),
             public_key=b64encode(self._signer.public_key).decode("ascii"),
             algorithm=self._signer.algorithm,
+            declassified_at_source=bool(getattr(draft, "declassified_at_source", False)),
         )
 
     async def _delegated(

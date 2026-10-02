@@ -352,7 +352,18 @@ def test_classifier_row_bytes_are_unchanged_by_the_operator_fields(
 ) -> None:
     """Rows signed before operator fields existed must still verify (no re-judging)."""
     row = _row()
-    legacy = json.loads(row.model_dump_json(exclude={"signature", "decided_by", "reason"}))
+    legacy = json.loads(
+        row.model_dump_json(
+            exclude={
+                "signature",
+                "decided_by",
+                "reason",
+                "shared_label",
+                "share_clearance",
+                "declassified_why",
+            }
+        )
+    )
     from arctrust import canonical_json
 
     legacy["signature"] = signer.sign(canonical_json(legacy)).hex()

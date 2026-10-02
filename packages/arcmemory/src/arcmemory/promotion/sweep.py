@@ -68,7 +68,13 @@ from arcmemory.promotion.classifier import (
 )
 from arcmemory.promotion.config import PromotionConfig, is_federal_tier
 from arcmemory.promotion.decide import decide
-from arcmemory.promotion.ledger import LedgerDecision, LedgerRow, PromotionLedger, needs_judging
+from arcmemory.promotion.ledger import (
+    DECLASSIFIED_WHY,
+    LedgerDecision,
+    LedgerRow,
+    PromotionLedger,
+    needs_judging,
+)
 from arcmemory.promotion.operator import (
     OperatorShareResult,
     demoted_row,
@@ -87,6 +93,7 @@ from arcmemory.promotion.render import (
     PromotionText,
     render_candidate,
     require_card_id,
+    shared_label,
 )
 from arcmemory.promotion.secret_gate import contains_secret
 from arcmemory.types import Entity, Insight, Procedure
@@ -324,7 +331,10 @@ class PromotionSweep:
         refusal = await asyncio.to_thread(self._share_refusal, kind, item_id, demotions, now)
         if isinstance(refusal, OperatorShareResult):
             return refusal
-        return await self._publish_by_operator(publisher, refusal, decided_by, now)
+        label = self._shared_label(refusal)
+        if label is None:  # unreachable: _share_refusal already cleared it
+            return OperatorShareResult("clearance_refused")
+        return await self._publish_by_operator(publisher, refusal, label, decided_by, now)
 
     def _share_refusal(
         self, kind: PromotableKind, item_id: str, demotions: dict[str, Demotion], now: datetime
@@ -352,12 +362,20 @@ class PromotionSweep:
         return text
 
     async def _publish_by_operator(
-        self, publisher: PromotionPublisher, text: PromotionText, decided_by: str, now: datetime
+        self,
+        publisher: PromotionPublisher,
+        text: PromotionText,
+        label: Classification,
+        decided_by: str,
+        now: datetime,
     ) -> OperatorShareResult:
         reference = f"{text.item_kind}:{text.item_id}"
         try:
             shared_ref = await publisher.publish_by_operator(
-                reference, content_sha256=text.content_sha256, decided_by=decided_by
+                reference,
+                content_sha256=text.content_sha256,
+                decided_by=decided_by,
+                classification=label.name,
             )
         except PublisherUnavailableError:
             return OperatorShareResult("refused")
@@ -368,11 +386,17 @@ class PromotionSweep:
                 now=now,
                 publish_state="outcome_unknown",
                 shared_ref=None,
+                declassified=self._declassified(label),
             )
             await asyncio.to_thread(self._record, row)
             return OperatorShareResult("outcome_unknown")
         row = operator_promoted_row(
-            text, decided_by=decided_by, now=now, publish_state="published", shared_ref=shared_ref
+            text,
+            decided_by=decided_by,
+            now=now,
+            publish_state="published",
+            shared_ref=shared_ref,
+            declassified=self._declassified(label),
         )
         await asyncio.to_thread(self._record, row)
         return OperatorShareResult("published", shared_ref)
@@ -499,16 +523,31 @@ class PromotionSweep:
             return None
         return _Candidate(text=text, modified=modified)
 
+    def _shared_label(self, text: PromotionText) -> Classification | None:
+        """The label this card would be shared under; ``None`` when above our clearance.
+
+        Read from the card's own stored classification only (:func:`shared_label`);
+        a missing or unknown label is our clearance, never unclassified.
+        """
+        return shared_label(text.classification, self._clearance)
+
     def _cleared(self, text: PromotionText) -> bool:
         """Only cards the shared side could accept at our clearance are ever sent.
 
-        The shared store publishes a card under its OWN label and accepts only a
-        label equal to the writer's clearance (no-write-down; alpha-2 Q16-a), so
-        the exporter refuses any other label. Sending such a card's bytes to the
+        A card above our clearance is refused up front: sending its bytes to the
         classifier would be disclosure for nothing.
         """
-        label = _parse_label(text.classification)
-        return label is not None and label == self._clearance
+        return self._shared_label(text) is not None
+
+    def _declassified(self, label: Classification) -> dict[str, str]:
+        """The ledger fields recording a share BELOW our clearance; empty at it."""
+        if label == self._clearance:
+            return {}
+        return {
+            "shared_label": label.name,
+            "share_clearance": self._clearance.name,
+            "declassified_why": DECLASSIFIED_WHY,
+        }
 
     # -- pre-egress + verdict recording (worker thread) ------------------------------
 
@@ -671,27 +710,35 @@ class PromotionSweep:
         published = 0
         for row in pending:
             latest = ledger.get((row.item_kind, row.item_id))
-            if await asyncio.to_thread(self._still_publishable, row, latest):
-                published += await self._publish_one(publisher, row)
+            label = await asyncio.to_thread(self._publishable_label, row, latest)
+            if label is not None:
+                published += await self._publish_one(publisher, row, label)
         return published
 
-    def _still_publishable(self, row: LedgerRow, latest: LedgerRow | None) -> bool:
-        """Re-read the card: publish only the exact bytes the classifier judged.
+    def _publishable_label(
+        self, row: LedgerRow, latest: LedgerRow | None
+    ) -> Classification | None:
+        """Re-read the card: its share label when it is still the exact judged bytes.
 
         The newest verified row must still be this pending ``promote`` (an operator
-        decision appended since supersedes it) and the card must still hash to it.
+        decision appended since supersedes it), the card must still hash to it and
+        its label must still be at or below our clearance. ``None`` publishes nothing.
         """
         text = self._render(row.item_kind, row.item_id)
-        return (
-            text is not None
-            and latest is not None
-            and latest.decision == "promote"
-            and latest.publish_state == "pending"
-            and latest.content_sha256 == row.content_sha256
-            and text.content_sha256 == row.content_sha256
-        )
+        if (
+            text is None
+            or latest is None
+            or latest.decision != "promote"
+            or latest.publish_state != "pending"
+            or latest.content_sha256 != row.content_sha256
+            or text.content_sha256 != row.content_sha256
+        ):
+            return None
+        return self._shared_label(text)
 
-    async def _publish_one(self, publisher: PromotionPublisher, row: LedgerRow) -> int:
+    async def _publish_one(
+        self, publisher: PromotionPublisher, row: LedgerRow, label: Classification
+    ) -> int:
         """Publish one row; ledger the outcome. Returns 1 when the item became shared."""
         if row.confidence is None or row.classifier_version is None:
             return 0  # unreachable: a promote row always carries its verdict
@@ -701,15 +748,18 @@ class PromotionSweep:
                 content_sha256=row.content_sha256,
                 confidence=row.confidence,
                 classifier_version=row.classifier_version,
+                classification=label.name,
             )
         except PublisherUnavailableError:
             self._emit_publish(row, "refused")  # nothing written; row stays pending
             return 0
         except PublishOutcomeUnknownError:
-            await self._mark(row, {"publish_state": "outcome_unknown"})
+            outcome = {"publish_state": "outcome_unknown"}
+            await self._mark(row, {**outcome, **self._declassified(label)})
             self._emit_publish(row, "outcome_unknown")  # never retried
             return 0
-        await self._mark(row, {"publish_state": "published", "shared_ref": shared_ref})
+        published = {"publish_state": "published", "shared_ref": shared_ref}
+        await self._mark(row, {**published, **self._declassified(label)})
         self._emit_publish(row, "published")
         return 1
 
@@ -791,14 +841,6 @@ def _result(
         deferred=plan.deferred,
         demoted=len(plan.demoted),
     )
-
-
-def _parse_label(value: str) -> Classification | None:
-    """The card's own label; an unknown label is never cleared (fail closed)."""
-    try:
-        return parse_classification(value, strict=True)
-    except ValueError:
-        return None
 
 
 def _reference(row: LedgerRow) -> str:

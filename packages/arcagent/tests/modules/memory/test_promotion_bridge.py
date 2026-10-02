@@ -126,9 +126,18 @@ def _publisher(
     )
 
 
-async def _publish(publisher: Any, reference: str = _REF, digest: str = _DIGEST) -> str:
+async def _publish(
+    publisher: Any,
+    reference: str = _REF,
+    digest: str = _DIGEST,
+    classification: str = "UNCLASSIFIED",
+) -> str:
     result: str = await publisher.publish(
-        reference, content_sha256=digest, confidence=0.97, classifier_version="jev-1.13.0"
+        reference,
+        content_sha256=digest,
+        confidence=0.97,
+        classifier_version="jev-1.13.0",
+        classification=classification,
     )
     return result
 
@@ -164,7 +173,7 @@ async def test_publish_by_operator_sends_the_decider_and_no_verdict(tmp_path: Pa
     port = _FakeSharedPort()
 
     shared_ref = await _publisher(_workspace(tmp_path), port).publish_by_operator(
-        _REF, content_sha256=_DIGEST, decided_by=_OPERATOR
+        _REF, content_sha256=_DIGEST, decided_by=_OPERATOR, classification="UNCLASSIFIED"
     )
 
     assert shared_ref == "shared-7"
@@ -184,10 +193,57 @@ async def test_publish_by_operator_refuses_changed_bytes_before_the_port(tmp_pat
 
     with pytest.raises(PublisherUnavailableError):
         await _publisher(_workspace(tmp_path), port).publish_by_operator(
-            _REF, content_sha256="sha256:" + "0" * 64, decided_by=_OPERATOR
+            _REF,
+            content_sha256="sha256:" + "0" * 64,
+            decided_by=_OPERATOR,
+            classification="UNCLASSIFIED",
         )
 
     assert port.promoted == []
+
+
+async def test_publisher_forged_lower_label_is_refused_before_the_port(tmp_path: Path) -> None:
+    """Classification laundering: the label the sweep names must be the card's own."""
+    card = _INSIGHT.model_copy(update={"classification": "cui"})
+    port = _FakeSharedPort()
+    cui = KnowledgeAccess(caller_did=_DID_A, clearance="CUI")
+
+    with pytest.raises(PublisherUnavailableError, match="label"):
+        await _publish(
+            _publisher(_workspace(tmp_path, card), port, access=cui), classification="UNCLASSIFIED"
+        )
+    with pytest.raises(PublisherUnavailableError, match="label"):
+        await _publisher(_workspace(tmp_path, card), port, access=cui).publish_by_operator(
+            _REF, content_sha256=_DIGEST, decided_by=_OPERATOR, classification="UNCLASSIFIED"
+        )
+
+    assert port.promoted == []
+
+
+async def test_card_relabelled_above_after_judging_is_refused(tmp_path: Path) -> None:
+    """The label is re-read at write time: a card that moved up is no longer the judged one."""
+    card = _INSIGHT.model_copy(update={"classification": "cui"})
+    port = _FakeSharedPort()
+    cui = KnowledgeAccess(caller_did=_DID_A, clearance="CUI")
+
+    with pytest.raises(PublisherUnavailableError):
+        await _publish(
+            _publisher(_workspace(tmp_path, card), port, access=cui), classification="SECRET"
+        )
+
+    assert port.promoted == []
+
+
+async def test_unclassified_card_from_a_cui_agent_reaches_the_port_as_unclassified(
+    tmp_path: Path,
+) -> None:
+    port = _FakeSharedPort()
+    cui = KnowledgeAccess(caller_did=_DID_A, clearance="CUI")
+
+    await _publish(_publisher(_workspace(tmp_path), port, access=cui))
+
+    [(source, _access, _kwargs)] = port.promoted
+    assert (source.classification, source.label_from_card) == ("UNCLASSIFIED", True)
 
 
 async def test_demotions_map_the_ports_verified_demotions(tmp_path: Path) -> None:

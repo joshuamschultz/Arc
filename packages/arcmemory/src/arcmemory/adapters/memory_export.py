@@ -6,11 +6,12 @@ card from disk and renders it with :func:`render_candidate`, so the published
 bytes are exactly the bytes the classifier saw — or the digest no longer matches.
 
 Only the owning agent may export (``access.caller_did == agent_did``, ASI03). The
-shared label is the CARD's own label (alpha-2 Q16-a), never the caller's clearance
-written over it. The shared store's no-write-down rule accepts only a label equal
-to the writer's clearance, so a card labelled anything else is refused here —
-above clearance is never read up, below it is never relabelled up, so the label a
-shared card shows is always true.
+shared label is the CARD's own stored label (alpha-2 Q16-a), never the caller's
+clearance written over it: a card at or below the clearance is exported under its
+own label (a "declassified-at-source share"; ``label_from_card`` says the label
+came from the card), a card above it is refused, and a missing or unknown label
+is the clearance (fail upward, never read as unclassified). The shared store
+honours a below-clearance label only from this attested source.
 """
 
 from __future__ import annotations
@@ -24,7 +25,12 @@ from arctrust.classification import parse_classification
 
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.promotion.render import PromotionText, render_candidate, require_card_id
+from arcmemory.promotion.render import (
+    PromotionText,
+    render_candidate,
+    require_card_id,
+    shared_label,
+)
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -77,6 +83,9 @@ class _PromotionSource:
     title: str
     tags: tuple[str, ...]
     document_type: str
+    #: True: the label is the card's own stored label, read by this exporter. The
+    #: shared side lets only such a source publish below the writer's clearance.
+    label_from_card: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,21 +123,19 @@ class ConsolidatedMemoryExporter:
         self._stores = stores
 
     async def export_for_promotion(self, reference: str, access: _Access) -> _PromotionSource:
-        """Re-read and render ``reference`` (``<kind>:<id>``) at the caller's clearance.
+        """Re-read and render ``reference`` (``<kind>:<id>``) under its own label.
 
-        Raises ``PermissionError`` for a foreign caller or a card whose label is not
-        the caller's clearance, ``ValueError`` for a non-promotable or malformed
+        Raises ``PermissionError`` for a foreign caller or a card whose label is
+        above the caller's clearance, ``ValueError`` for a non-promotable or malformed
         reference, and ``LookupError`` for a missing card.
         """
         if access.caller_did != self._agent_did:
             raise PermissionError("consolidated memory belongs to a different agent")
         clearance = parse_classification(access.clearance, strict=True)
         text = await asyncio.to_thread(self._render, reference)
-        label = parse_classification(text.classification, strict=True)
-        if label != clearance:
-            raise PermissionError(
-                "memory card label differs from the caller's clearance; it is never relabelled"
-            )
+        label = shared_label(text.classification, clearance)
+        if label is None:
+            raise PermissionError("memory card label is above the caller's clearance")
         return _PromotionSource(
             reference=_Reference("personal", reference, text.content_sha256),
             digest=text.content_sha256,
@@ -137,6 +144,7 @@ class ConsolidatedMemoryExporter:
             title=text.title,
             tags=(),
             document_type=text.item_kind,
+            label_from_card=True,
         )
 
     def _render(self, reference: str) -> PromotionText:

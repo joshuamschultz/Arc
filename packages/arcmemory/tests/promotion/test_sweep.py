@@ -140,6 +140,7 @@ class PublishCall:
     content_sha256: str
     confidence: float
     classifier_version: str
+    classification: str = ""
 
 
 class FakePublisher:
@@ -158,19 +159,29 @@ class FakePublisher:
         self._before = before
         self.calls: list[PublishCall] = []
         self.operator_calls: list[tuple[str, str, str]] = []
+        self.operator_labels: list[str] = []
         #: The shared side's verified demotions; ``None`` -> unreadable.
         self.demoted: dict[str, Demotion] | None = demoted if demoted is not None else {}
 
     async def publish(
-        self, reference: str, *, content_sha256: str, confidence: float, classifier_version: str
+        self,
+        reference: str,
+        *,
+        content_sha256: str,
+        confidence: float,
+        classifier_version: str,
+        classification: str,
     ) -> str:
-        self.calls.append(PublishCall(reference, content_sha256, confidence, classifier_version))
+        self.calls.append(
+            PublishCall(reference, content_sha256, confidence, classifier_version, classification)
+        )
         return self._outcome(reference)
 
     async def publish_by_operator(
-        self, reference: str, *, content_sha256: str, decided_by: str
+        self, reference: str, *, content_sha256: str, decided_by: str, classification: str
     ) -> str:
         self.operator_calls.append((reference, content_sha256, decided_by))
+        self.operator_labels.append(classification)
         return self._outcome(reference)
 
     async def demotions(self) -> dict[str, Demotion]:
@@ -268,6 +279,7 @@ class Env:
         classifier: Any = "default",
         publisher: Any = "default",
         sink: Any = None,
+        clearance: str = "unclassified",
     ) -> PromotionSweep:
         return PromotionSweep(
             cfg=cfg if cfg is not None else PromotionConfig(enabled=True),
@@ -277,7 +289,7 @@ class Env:
             classifier=FakeClassifier(self.timeline) if classifier == "default" else classifier,
             publisher=FakePublisher(self.timeline) if publisher == "default" else publisher,
             audit_sink=sink if sink is not None else RecordingSink(self.timeline),
-            clearance="unclassified",
+            clearance=clearance,
         )
 
     def ledger_text(self) -> str:
@@ -1078,3 +1090,119 @@ async def test_history_lists_the_cards_decisions_oldest_first(env: Env) -> None:
         ("promote", "published"),
         ("demoted_by_operator", "none"),
     ]
+
+
+# -- declassified-at-source share (alpha-2 item 16 follow-up) -------------------
+
+
+def _add_labelled_insight(env: Env, insight_id: str, label: str) -> None:
+    env.insights.write(
+        Insight(
+            id=insight_id,
+            statement=f"{insight_id} closes at $42k/yr.",
+            trigger="a renewal",
+            classification=label,
+        )
+    )
+
+
+def _strip_label(env: Env, insight_id: str) -> None:
+    path = env.insights.path_for(insight_id)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    path.write_text(
+        "".join(line for line in lines if not line.startswith("classification:")),
+        encoding="utf-8",
+    )
+
+
+async def test_cui_agent_publishes_an_unclassified_card_as_unclassified(env: Env) -> None:
+    _add_labelled_insight(env, "acme-renewal", "unclassified")
+    publisher = FakePublisher(env.timeline)
+
+    result = await env.sweep(publisher=publisher, clearance="cui").run(_NIGHT_1)
+
+    assert result.promoted == 1
+    assert [call.classification for call in publisher.calls] == ["UNCLASSIFIED"]
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert (row.shared_label, row.share_clearance) == ("UNCLASSIFIED", "CUI")
+    assert row.declassified_why
+
+
+async def test_a_card_at_the_clearance_records_no_declassification(env: Env) -> None:
+    _add_labelled_insight(env, "acme-renewal", "cui")
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(publisher=publisher, clearance="cui").run(_NIGHT_1)
+
+    assert [call.classification for call in publisher.calls] == ["CUI"]
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert (row.shared_label, row.share_clearance, row.declassified_why) == (None, None, None)
+
+
+async def test_secret_card_from_a_cui_agent_is_never_sent_or_published(env: Env) -> None:
+    _add_labelled_insight(env, "acme-renewal", "secret")
+    classifier = FakeClassifier(env.timeline)
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(classifier=classifier, publisher=publisher, clearance="cui").run(_NIGHT_1)
+
+    assert classifier.inputs == []
+    assert publisher.calls == []
+
+
+async def test_unlabelled_card_from_a_cui_agent_is_shared_as_cui(env: Env) -> None:
+    _add_labelled_insight(env, "acme-renewal", "unclassified")
+    _strip_label(env, "acme-renewal")
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(publisher=publisher, clearance="cui").run(_NIGHT_1)
+
+    assert [call.classification for call in publisher.calls] == ["CUI"]
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert row.shared_label is None
+
+
+async def test_operator_share_of_an_unclassified_card_from_a_cui_agent_keeps_its_label(
+    env: Env,
+) -> None:
+    _add_labelled_insight(env, "acme-renewal", "unclassified")
+    publisher = FakePublisher(env.timeline)
+
+    result = await env.sweep(publisher=publisher, clearance="cui").share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert result.status == "published"
+    assert publisher.operator_labels == ["UNCLASSIFIED"]
+    row = env.ledger.latest("insight", "acme-renewal")
+    assert row is not None
+    assert (row.shared_label, row.share_clearance) == ("UNCLASSIFIED", "CUI")
+
+
+async def test_operator_share_of_a_secret_card_from_a_cui_agent_is_clearance_refused(
+    env: Env,
+) -> None:
+    _add_labelled_insight(env, "acme-renewal", "secret")
+    publisher = FakePublisher(env.timeline)
+
+    result = await env.sweep(publisher=publisher, clearance="cui").share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert result.status == "clearance_refused"
+    assert publisher.operator_calls == []
+
+
+async def test_operator_share_of_an_unlabelled_card_is_shared_as_the_clearance(env: Env) -> None:
+    _add_labelled_insight(env, "acme-renewal", "unclassified")
+    _strip_label(env, "acme-renewal")
+    publisher = FakePublisher(env.timeline)
+
+    await env.sweep(publisher=publisher, clearance="cui").share(
+        "insight", "acme-renewal", decided_by=_OPERATOR, now=_NIGHT_1
+    )
+
+    assert publisher.operator_labels == ["CUI"]

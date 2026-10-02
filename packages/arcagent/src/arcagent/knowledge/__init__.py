@@ -64,6 +64,10 @@ class PromotionSource:
     title: str = ""
     tags: tuple[str, ...] = ()
     document_type: str = "note"
+    #: True only from the consolidated-memory exporter: the label is the card's own
+    #: stored label. The shared side honours a label below the writer's clearance
+    #: only from such a source.
+    label_from_card: bool = False
 
 
 class KnowledgePort(Protocol):

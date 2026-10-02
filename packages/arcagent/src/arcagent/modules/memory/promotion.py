@@ -15,6 +15,10 @@ Trust rules:
   The same access authorizes the export AND the shared promote.
 * The bytes are re-exported and must still hash to the digest the classifier
   judged; a changed card is refused before the port is called.
+* The label is bound the same way: the sweep read it from the card's stored
+  classification, and the re-exported card must carry exactly that label. A
+  label that moved (or a caller-supplied label that was never the card's) is
+  refused, so a lower label cannot be smuggled in between judging and writing.
 * Errors are mapped to the sweep's two ledger outcomes: a refusal before any write
   is :class:`PublisherUnavailableError` (row stays ``pending``); anything that
   may have written is :class:`PublishOutcomeUnknownError` (never auto-retried).
@@ -73,6 +77,7 @@ class SharedKnowledgePublisher:
         content_sha256: str,
         confidence: float,
         classifier_version: str,
+        classification: str,
     ) -> str:
         """Promote ``reference`` if its bytes still hash to ``content_sha256``.
 
@@ -87,13 +92,14 @@ class SharedKnowledgePublisher:
         return await self._promote(
             reference,
             content_sha256,
+            classification,
             decision=_CLASSIFIER_DECISION,
             confidence=confidence,
             classifier_version=classifier_version,
         )
 
     async def publish_by_operator(
-        self, reference: str, *, content_sha256: str, decided_by: str
+        self, reference: str, *, content_sha256: str, decided_by: str, classification: str
     ) -> str:
         """Promote ``reference`` on an operator's decision (alpha-2 item 16).
 
@@ -101,7 +107,11 @@ class SharedKnowledgePublisher:
         the shared side records ``decided_by`` durably before it writes.
         """
         return await self._promote(
-            reference, content_sha256, decision=_OPERATOR_DECISION, decided_by=decided_by
+            reference,
+            content_sha256,
+            classification,
+            decision=_OPERATOR_DECISION,
+            decided_by=decided_by,
         )
 
     async def demotions(self) -> dict[str, Demotion]:
@@ -125,6 +135,7 @@ class SharedKnowledgePublisher:
         self,
         reference: str,
         content_sha256: str,
+        classification: str,
         *,
         decision: str,
         confidence: float | None = None,
@@ -132,7 +143,7 @@ class SharedKnowledgePublisher:
         decided_by: str | None = None,
     ) -> str:
         access = self._access_factory()
-        source = await self._verified_source(reference, content_sha256, access)
+        source = await self._verified_source(reference, content_sha256, classification, access)
         try:
             shared = await self._port.promote(
                 source,
@@ -153,7 +164,7 @@ class SharedKnowledgePublisher:
         return shared.identifier
 
     async def _verified_source(
-        self, reference: str, content_sha256: str, access: KnowledgeAccess
+        self, reference: str, content_sha256: str, classification: str, access: KnowledgeAccess
     ) -> PromotionSource:
         try:
             source = await self._exporter.export_for_promotion(reference, access)
@@ -165,6 +176,8 @@ class SharedKnowledgePublisher:
             or source.digest != content_sha256
         ):
             raise PublisherUnavailableError("memory card changed since it was classified")
+        if source.classification.strip().upper() != classification.strip().upper():
+            raise PublisherUnavailableError("memory card label differs from the label judged")
         return source
 
 
