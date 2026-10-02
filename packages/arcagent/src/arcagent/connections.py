@@ -45,7 +45,7 @@ import tomllib
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -113,7 +113,12 @@ from arcagent.extension.manifest import (
     SecretRequirement,
     load_manifest,
 )
-from arcagent.extension.oauth import build_authorize_url, exchange_authorization_code, post_form
+from arcagent.extension.oauth import (
+    OAuthTokens,
+    build_authorize_url,
+    exchange_authorization_code,
+    post_form,
+)
 from arcagent.extension.remote_login import (
     REMOTE_LOGIN_FAILED,
     REMOTE_LOGIN_NEEDS_CONFIRMATION,
@@ -1184,11 +1189,7 @@ class Connections:
                 client_secret=client_secret,
                 post=post_form,
             )
-            await store.put(
-                SecretRef(connection=instance, field=flow.refresh_token_secret),
-                tokens.refresh_token,
-                caller_did=causal.actor_did(),
-            )
+            await self._store_grant(instance, flow.refresh_token_secret, tokens, store, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
@@ -1196,6 +1197,47 @@ class Connections:
         await self._push_credential_change(instance)
         return _authorization(
             instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
+        )
+
+    async def _store_grant(
+        self,
+        instance: str,
+        refresh_field: str,
+        tokens: OAuthTokens,
+        store: SecretStore,
+        sink: AuditSink,
+    ) -> None:
+        """Persist what the code exchange issued.
+
+        With an access token and a lifetime, the refresh token and the access token
+        are committed in ONE write, so the first call uses the exchanged access token
+        instead of spending a refresh. Otherwise only the refresh token is stored.
+        """
+        ref = SecretRef(connection=instance, field=refresh_field)
+        if not tokens.access_token or tokens.expires_in <= 0:
+            await store.put(ref, tokens.refresh_token, caller_did=causal.actor_did())
+            return
+        custody = await self._custody(sink)
+        issued = self._clock()
+        generation = await custody.rows.put_grant(
+            instance,
+            refresh_field=refresh_field,
+            refresh_token=tokens.refresh_token,
+            access_token=tokens.access_token,
+            issued_at=issued,
+            expires_at=issued + timedelta(seconds=tokens.expires_in),
+            scope=None,
+            actor_did=causal.actor_did(),
+        )
+        emit(
+            AuditEvent(
+                actor_did=causal.actor_did(),
+                action="secret.write",
+                target=f"secret:{ref}",
+                outcome="allow",
+                extra={"store": "sealed", "kind": "oauth_grant", "generation": generation},
+            ),
+            sink,
         )
 
     async def _oauth_authorize_url(self, plan: ConnectorPlan, sink: AuditSink) -> str:

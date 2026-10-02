@@ -128,6 +128,36 @@ async def test_sealed_backend_serves_secret_store(backend: InterleavingBackend) 
     assert raw is not None and "xoxp-1" not in str(raw)
 
 
+async def test_put_grant_stores_refresh_and_access_in_one_write(
+    backend: InterleavingBackend, rows: CredentialRowStore
+) -> None:
+    await rows.put_fields("box", {"app_key": "k"}, actor_did=ACTOR)
+    before = await rows.read("box")
+    assert before is not None
+    issued = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
+    writes = len(backend.update_if_calls)
+
+    generation = await rows.put_grant(
+        "box",
+        refresh_field="refresh_token",
+        refresh_token="r-1",
+        access_token="a-1",
+        issued_at=issued,
+        expires_at=issued + timedelta(hours=4),
+        scope=None,
+        actor_did=ACTOR,
+    )
+
+    assert len(backend.update_if_calls) == writes + 1
+    row = await rows.read("box")
+    assert row is not None and row.generation == generation == before.generation + 1
+    assert rows.open_field(row, "refresh_token").reveal() == "r-1"  # type: ignore[union-attr]
+    assert rows.open_field(row, "app_key").reveal() == "k"  # type: ignore[union-attr]
+    access = rows.open_access(row)
+    assert access is not None and access.token.reveal() == "a-1"
+    assert access.expires_at == issued + timedelta(hours=4)
+
+
 async def test_lease_is_exclusive_and_fenced(rows: CredentialRowStore) -> None:
     await rows.put_fields("c", {"refresh_token": "r"}, actor_did=ACTOR)
     ttl = timedelta(seconds=60)

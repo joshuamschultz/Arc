@@ -174,7 +174,10 @@ async def test_complete_oauth_stores_a_durable_refresh_token_and_connects(
     assert await _refresh_token(backend) == "rt-durable-xyz", (
         "the durable refresh token the exchange returned must be persisted"
     )
-    assert refreshed_with == ["rt-durable-xyz"], "the stored refresh token drove the renewal"
+    assert refreshed_with == [], (
+        "the access token the exchange issued is stored with the refresh token and used; "
+        "no refresh is spent right after connecting"
+    )
     assert "ak-123" in auth.authorize_url
     assert "token_access_type=offline" in auth.authorize_url
     # The rebuilt attachment was handed the stored refresh token, so it probes authenticated —
