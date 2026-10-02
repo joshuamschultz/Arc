@@ -278,6 +278,11 @@ class FlowRunStore:
         fence: Any | None = None,
     ) -> RunRow:
         del trigger_digest
+        # Idempotent on the run id, like the real store: a repeated occurrence
+        # returns the existing run and never erases its progress.
+        existing = await self.get(run_id)
+        if existing is not None:
+            return existing
         row = RunRow(
             run_id=run_id,
             workflow_id=workflow_id,

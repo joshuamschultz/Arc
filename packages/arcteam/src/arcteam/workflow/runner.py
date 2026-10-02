@@ -400,6 +400,7 @@ class WorkflowRunner:
         # A caller-supplied run id becomes part of every task key this run
         # writes. Check it before the Run row exists, not after.
         _assert_safe_name("run id", run_id)
+        replayed = await self._runs.get(run_id) is not None
         run = await self._runs.create_run(
             run_id=run_id,
             workflow_id=definition.id,
@@ -415,6 +416,18 @@ class WorkflowRunner:
             fence=self._mutation_fence(),
         )
         self._open_run_workspace(run_id)
+        if replayed:
+            # The same occurrence fired again (a retry after a lost response, a
+            # double fire): the existing run carries on. Nothing is restarted,
+            # re-announced or re-audited as a start.
+            self._audit(
+                "workflow.run.start_replayed",
+                target=f"{definition.id}/{run_id}",
+                outcome="replayed",
+                actor_did=initiator_did,
+                extra={"initiator": initiator},
+            )
+            return run if detached else await self.advance(run_id)
         self._audit(
             "workflow.run.started",
             target=f"{definition.id}/{run_id}",
