@@ -447,8 +447,16 @@ class GoogleAttachment:
         """Read the Gmail profile: proves auth, reach and that the account is the bound one."""
         try:
             profile = await self._http.request("GET", _PROFILE_URL)
-        except (ToolError, ArcAgentError) as exc:
-            return ProbeResult(reachable=False, detail=_failure_text(exc))
+        except ArcAgentError as exc:
+            return ProbeResult(
+                reachable=False,
+                detail=(
+                    f"google_workspace has no usable credential ({exc.code}): "
+                    "click Connect on its card to sign in."
+                ),
+            )
+        except ToolError as exc:
+            return ProbeResult(reachable=False, detail=f"google_workspace: {exc}")
         address = str(profile.get("emailAddress", ""))
         if self._account and address.casefold() != self._account.casefold():
             return ProbeResult(reachable=False, detail=_MISMATCH_DETAIL)

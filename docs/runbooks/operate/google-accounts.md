@@ -1,98 +1,119 @@
-# Google accounts — connect, reconnect, and stop the weekly expiry
+# Google accounts — set up once, connect in one click
 
 > **Runbooks** · Operate · **For** operators connecting Gmail, Calendar and Drive
 
 Each Google account is its own connection of the **Google Workspace** bundle.
-Arc drives the `gog` program on the Arc host to sign each one in from the
-browser. Arc checks each one in the background with a real read-only Gmail call
+Arc talks to Google directly over its REST APIs. Arc holds the sign-in (a
+refresh token) in its own sealed storage and renews the short-lived access
+token itself. No helper program and no keyring are involved.
+
+Arc checks each connection in the background with a real read-only Gmail call
 made as that account, and keeps the answer in one health record per connection.
-The refresh token stays in `gog`'s keyring on the host; Arc never sees it.
 
 ## What the card tells you
 
 | Card says | What it means | What to do |
 |---|---|---|
-| **Healthy · checked 4 min ago** | Arc's last check read this account's inbox label successfully. | Nothing. |
-| **Needs you: Google sign-in expired or was revoked** | A token is stored but Google no longer accepts it (`invalid_grant`). | Click **Reconnect Google** and sign in again. See [why it keeps happening](#stop-the-weekly-expiry). |
-| **Needs you: Not connected yet** | No token for this account on the host. | Click **Reconnect Google** (the sign-in button). |
-| **Needs you: gog is not installed on this computer** | `gog` is not on the host's `PATH`. | Click **Install gog**, or use **Install** on the bundle card. |
+| **Healthy · checked 4 min ago** | Arc's last check read this account's mailbox successfully. | Nothing. |
+| **Needs you: Google sign-in expired or was revoked** | Google no longer accepts the saved sign-in (`invalid_grant`). | Click **Reconnect Google**. See [honest limits](#honest-limits) for why it happens. |
+| **Needs you: Not connected yet** | No sign-in is stored for this connection. | Click **Reconnect Google**. |
+| **Needs you: signed in as a different account** | Google signed in an address other than the one the connection names. | Click **Reconnect Google** and pick the right account in Google's chooser. |
 | **Syncing** | An agent is indexing this account right now. | Nothing. |
-| **Error: Google is not answering** | Google, or the network, failed three checks in a row over at least ten minutes. Arc keeps retrying. | Usually nothing. Use **Advanced > Check now** to look again. |
-| **Not checked yet** | Arc has not looked at this connection yet. The first check runs within a minute of starting ArcUI. | Wait, or use **Advanced > Check now**. |
+| **Error: Google is not answering** | Google, or the network, failed three checks in a row. Arc keeps retrying. | Usually nothing. Use **Advanced > Check now**. |
+| **Not checked yet** | Arc has not looked at this connection yet. | Wait a minute, or use **Advanced > Check now**. |
 
-One chip, one button. The chip is a stored fact, not a live read: opening the
-Connections page never contacts Google and never reads a credential. Arc
-re-checks every 30 minutes, every 10 while the status is **Error**, and every
-5 while it is **Needs you** (so signing in from the terminal turns the card
-green by itself). When a connection starts needing you, Arc sends you one
-message on the channel you last used (for example Telegram) with a link to the
-card, and one more when it is working again. A connection that flaps does not
-repeat itself: at most six messages per connection per hour. If no agent could
-reach you, the card says **Could not notify you** under the chip.
+One chip, one button. The chip is a stored fact: opening the Connections page
+never contacts Google and never reads a credential. Arc re-checks every 30
+minutes, every 10 while the status is **Error**, and every 5 while it is
+**Needs you**. When a connection starts needing you, Arc sends you one message
+on the channel you last used, and one more when it works again.
 
-`gog auth list` is no longer the check. It only proves a token is *stored*: an
-account whose token Google revoked lists exactly like a working one.
+## One-time setup (Google Cloud console)
+
+Do this once per Arc install. All accounts share the one client.
+
+1. Open the Google Cloud console and pick (or create) a project.
+2. **APIs & Services > Library**: enable the **Gmail API**, the **Google
+   Calendar API** and the **Google Drive API**.
+3. **OAuth consent screen** (Branding and Audience):
+    - User type **External**. Choose **Internal** only if every account is in
+      one Google Workspace organization.
+    - Add these scopes: `openid`, `email`, `gmail.readonly`,
+      `calendar.readonly`, `drive.readonly`.
+    - Also add `gmail.modify`, `gmail.compose` and `gmail.send` if any
+      connection will use `read_only = no`.
+    - **Publish the app to Production.** An app left in **Testing** has its
+      sign-ins expire after 7 days.
+4. **Clients > Create client**:
+    - Choose **Desktop app** when you reach ArcUI on the same machine at
+      `http://127.0.0.1:<port>`. Desktop clients accept any loopback port and
+      path, so there is nothing to register.
+    - Choose **Web application** when `[ui] public_base_url` is set. Under
+      **Authorized redirect URIs** add exactly
+      `https://<public_base_url host>/oauth/callback`. A Web client may also
+      register `http://127.0.0.1:8420/oauth/callback` for local use.
+5. Copy the **client ID** and **client secret**.
+
+## Give Arc the client
+
+In ArcUI open **Connections**, find the Google card, and click **Set up Google
+sign-in**. The panel shows the redirect address Arc will use (with a **Copy**
+button). Paste the client ID and client secret and click **Save app**. The
+secret is stored once and never shown again.
+
+From a terminal on the host: `arc connector oauth-app google`.
 
 ## Add an account
 
-Do [the durable fix](#stop-the-weekly-expiry) first, once per host, so you have
-an OAuth client name (below: `arc`).
-
-1. Open **Connections**. On the **Google Workspace** bundle card click **Add an
-   account**.
+1. On the **Google Workspace** bundle card click **Add an account**.
 2. Fill in:
 
     | Field | Type exactly | Meaning |
     |---|---|---|
     | name | `hello` | The connection's short name. |
     | account | `hello@joshuaschultz.com` | The Google address this connection reads. |
-    | client | `arc` | Your OAuth client's name on this host. |
     | read_only | `yes` | Read mail, calendar and Drive only (recommended). Choose `no` only if an agent must draft or send mail. |
 
     Choose which agents may use it. Save.
-3. On the new connection's card click its button (**Reconnect Google**; the card reads
-   **Needs you: Not connected yet**), then **Open Google sign-in**.
-4. In the Google page, sign in **as that exact address** and click **Allow**.
-5. The browser lands on a `http://127.0.0.1:…/oauth2/callback?…` page that fails
-   to load. That is expected. Copy the **whole** address from the browser bar.
-6. Paste it into the card and click **Finish sign-in**. The card re-checks the
-   account and shows **Healthy**.
+3. On the new connection's card click **Connect** (one click). Google opens in
+   a new tab.
+4. Sign in **as that exact address** and click **Allow**.
+5. The tab says **Connected. You can close this tab.** The card turns
+   **Healthy** by itself.
 
-Repeat for every account. Accounts are independent: `blackarc`
-(`josh@blackarcindustrial.com`), `systems` (`josh@blackarcsystems.com`) and
-`hello` (`hello@joshuaschultz.com`) each have their own connection, their own
-sign-in and their own check.
+If the browser is on another machine than Arc, or the card does not update:
+open the card's **Didn't come back? Paste the address you landed on** box and
+paste the whole address from the browser bar. From a terminal, run
+`arc connector authorize <name>`; it prints the Google link and asks for that
+address.
+
+Accounts are independent: each has its own connection, its own sign-in and its
+own check.
 
 What the sign-in asks Google for:
 
 | read_only | Google permissions requested |
 |---|---|
 | `yes` (default) | Gmail read-only, Calendar read-only, Drive read-only |
-| `no` | Gmail full (read, draft, send), Calendar, Drive read-only |
+| `no` | Gmail read, modify, compose and send; Calendar read-only; Drive read-only |
 
-Nothing else — no Chat, Photos, Ads or other services. Changing `read_only`
-takes effect at the next **Reconnect**. With `yes`, the draft and send tools
-fail with a permission error, by design.
+Nothing else. Changing `read_only` takes effect at the next **Reconnect**. With
+`yes`, the draft, label, trash and send tools refuse with a plain sentence and
+make no request to Google.
 
-Rules the card enforces:
+Rules Arc enforces:
 
-- One Google sign-in may be waiting at a time on a host. Finish it (or wait
-  about nine minutes for it to expire) before starting another account.
-- The pasted address must be the loopback callback from *this* sign-in. An
-  address from an older attempt, another host, or with extra parts is refused
-  before anything runs.
 - If Google signs in a different address than the connection names, the
-  sign-in is refused ("authorized as X, expected Y"). Start again and pick the
-  right account in Google's account chooser.
-- A pasted address is single-use. After a failed finish, click **Open Google
-  sign-in** again.
+  sign-in is refused. Start again and pick the right account.
+- A sign-in link and its returned address are single-use and expire after a
+  few minutes. After a failed finish, click **Connect** again.
 
 ## Reconnect an account
 
-Click **Reconnect** on the card and follow steps 3–6 above. Knowledge sync for
+Click **Reconnect Google** on the card, then **Reconnect**. Knowledge sync for
 that account resumes on its own: a source stopped by a dead credential is
-rechecked about once an hour. To sync at once, use **Sync now** for the source
-under **Knowledge → Connections**.
+rechecked about once an hour. To sync at once, use **Sync now** under
+**Knowledge > Connections**.
 
 ## How agents use several accounts
 
@@ -104,18 +125,15 @@ not one per account. Each call names the account it is for:
 - An agent granted several must name one. If it does not, the call fails and
   lists the accounts that agent may use.
 - The address must match a connection **granted to that agent**. Case does not
-  matter; spaces, look-alike letters, gog aliases and connection names do not
-  match. An address the agent was not granted is refused and audited
-  (`connector.account.denied`).
-- The call always runs as the matched connection's own account and OAuth
-  client. No tool can pass `--account`, `--client` or `--home` to gog; a value
-  that tries is refused before gog runs.
+  matter; spaces, look-alike letters and connection names do not match. An
+  address the agent was not granted, or one with no connection at all, is
+  refused by name in the tool result and audited (`connector.account.denied`).
+- The call always runs as the matched connection's own account and sign-in.
 - Every answer says which connection and account it came from, and the audit
   record (`connector.account.routed`) names the same.
 
 To keep an agent from writing at all, leave the connection's `read_only` at
-`yes`: every draft, label, trash and send tool then refuses with a sentence.
-To stop one agent from using a single tool (for example
+`yes`. To stop one agent from using a single tool (for example
 `google_gmail_send`) while another may, add it to that agent's tool policy deny
 list in its `arcagent.toml`:
 
@@ -137,7 +155,7 @@ the connection's approval mode.
 | `google_gmail_message` | Read one message: headers, text, attachment names | read |
 | `google_gmail_thread`, `google_gmail_thread_attachments` | Read a whole thread; list its attachments | read |
 | `google_gmail_history` | Changes since a history id (also used by Knowledge sync) | read |
-| `google_gmail_attachment` | Download one attachment (max 25 MB) into `downloads/google_workspace/<connection>/` in the agent's workspace | read |
+| `google_gmail_attachment` | Download one attachment (max 25 MB) into the agent's workspace downloads folder | read |
 | `google_gmail_drafts`, `google_gmail_draft_get` | List drafts; read one | read |
 | `google_gmail_draft`, `google_gmail_draft_update`, `google_gmail_draft_delete` | Create, change, delete a draft | write |
 | `google_gmail_modify`, `google_gmail_thread_modify` | Add or remove labels (star, archive, read state) | write |
@@ -147,8 +165,9 @@ the connection's approval mode.
 | `google_drive_list` | List or filter Drive files | read |
 | `google_calendar_list`, `google_calendar_events`, `google_calendar_freebusy` | Calendars, events, availability | read |
 
-Mail, thread, draft, search, Drive and Calendar results are marked as untrusted
-content: an agent must never follow instructions found in them.
+Mail, thread, draft and search results are framed as untrusted content: an
+agent must never follow instructions found in them. A recipient or subject with
+a line break is refused before anything is sent.
 
 ## After an update: Approve each Google connection
 
@@ -156,108 +175,66 @@ Arc pins each connection's tool list (its "contract"). When an update adds or
 changes Google tools, those tools stay switched off for a connection until you
 approve them once:
 
-- **Arc web:** Connections → the Google connection's card → **Approve** (with
+- **Arc web:** Connections > the Google connection's card > **Approve** (with
   operator controls on). Repeat for each Google connection.
-- **Terminal:** `arc connector approve <connection>`, for example
-  `arc connector approve blackarc`.
+- **Terminal:** `arc connector approve <connection>`.
 
-The agents pick the change up on their next reconcile or restart. Until you
-approve, the audit log shows `connector.tool.contract.unapproved` (a tool that
-is new) or `connector.tool.contract.suspend` (a tool that changed) for that
-connection; a call routed to it for a switched-off tool is refused with
-"approve it with Approve on that connection's card". An approved contract is
-not reported again on restart.
+Until you approve, the audit log shows `connector.tool.contract.unapproved` (a
+new tool) or `connector.tool.contract.suspend` (a changed tool) for that
+connection, and a call to a switched-off tool is refused.
 
-## Stop the weekly expiry
+## Moving an existing install off `gog` (DGX)
 
-**Why tokens die every week.** Google expires refresh tokens after seven days
-for an OAuth app whose consent screen is in **Testing**. `gog`'s client, or any
-client you created and left in Testing, has this limit. The fix is your own
-Google Cloud OAuth client with its app **published to "In production"**.
+Connections made before native sign-in have no stored sign-in, so they show
+**Reconnect Google**. That is expected.
 
-### 1. Create the client (Google Cloud console, once)
+1. Do the [one-time setup](#one-time-setup-google-cloud-console). The existing
+   `arc` client works: a Desktop app client needs nothing registered.
+2. **Set up Google sign-in** on the card with that client's ID and secret.
+3. Click **Reconnect Google** on each connection (for example `blackarc` and
+   `systems`). Wait for both to read **Healthy**.
+4. Then clean up the host:
+    - remove `GOG_KEYRING_PASSWORD` from `arc.env`;
+    - delete `~/.local/share/gogcli` and `~/.config/gogcli` (they hold the old
+      sign-ins);
+    - uninstall `gog`.
+5. Bind or retire `hello@joshuaschultz.com`. An account with no connection is
+   refused by name in the tool result: add a connection for it, or fix the job
+   prompt that names it.
 
-1. Go to <https://console.cloud.google.com/> and create a project (for example
-   `arc-google`).
-2. **APIs & Services → Library**: enable **Gmail API**, **Google Calendar API**
-   and **Google Drive API**.
-3. **Google Auth Platform → Branding** (older consoles: **OAuth consent
-   screen**): set an app name and your support email.
-4. **Audience**: choose **External**, then click **Publish app** so the status
-   reads **In production**. Do not leave it in Testing.
-5. **Data access**: add the Gmail, Calendar and Drive scopes (the sign-in asks
-   for Gmail, Calendar, and Drive read-only).
-6. **Clients → Create client**: application type **Desktop app**. Download the
-   JSON file (`client_secret_….json`).
+## Dropbox
 
-If every account lives in ONE Google Workspace organisation, you can instead set
-the audience to **Internal**: no warning screen, no user cap, no weekly expiry.
-That does not work across different domains or for a personal @gmail.com
-address.
-
-### 2. Store it on the Arc host (terminal on the host, once)
-
-Copy the JSON to the host, then, as the user that runs Arc, with the same
-keyring settings as the Arc service (`GOG_KEYRING_PASSWORD` set,
-`DBUS_SESSION_BUS_ADDRESS=/dev/null` on a headless host):
-
-```bash
-gog auth credentials set ~/client_secret.json --client arc
-gog auth credentials list        # shows the "arc" client
-shred -u ~/client_secret.json    # the copy gog stored is the one that is used
-```
-
-`gog auth credentials set - --client arc` reads the JSON from stdin instead of a
-file. `arc` is the client name; any lowercase name (letters, digits, `-`, `_`)
-works — type the same name into each connection's **client** field.
-
-### 3. Point each connection at it (Arc)
-
-On each Google connection card click **Edit details**, set **client** to `arc`,
-save, then **Reconnect**. The sign-in runs `gog auth add <account> --client=arc
---readonly=yes --services gmail,calendar,drive --drive-scope readonly …`; the
-token is stored under the `arc` client and every `gog` call for that connection
-uses it (`GOG_CLIENT=arc`).
-
-### Legacy fallback: no client
-
-A connection with a blank **client** uses `gog`'s built-in client. Its sign-ins
-expire after about 7 days. The card shows that warning, and signing in without
-a client needs an explicit **Sign in with the built-in client anyway**. Use it
-only until your own client exists.
+Dropbox uses the same flow. Once, click **Set up Dropbox sign-in** on the
+Dropbox card and paste the app key and app secret. A connection that already
+has a refresh token keeps working as soon as the app slot exists. New
+connections use **Connect**; Dropbox shows a code on its own page, so the card
+asks you to paste that code.
 
 ## Honest limits
 
-- **Warning screen.** An unverified External app shows "Google hasn't verified
-  this app". Click **Advanced → Go to <app name> (unsafe)**. It is your own app.
-  A Workspace admin can remove the warning for their domain by marking the app
-  **Trusted** under **Admin console → Security → API controls**.
-- **100-user cap.** An unverified External app may be used by at most 100
-  distinct Google accounts, ever. Plenty for a few operator mailboxes.
-- **Restricted Gmail scopes.** Full Gmail access is a *restricted* scope. Google
-  requires verification and a security assessment only to lift the warning and
-  the cap for a public app; personal use under the cap works unverified.
-- **Tokens can still die.** In production a token no longer expires weekly, but
-  Google still revokes it when the account's password changes, when access is
-  removed at <https://myaccount.google.com/permissions>, after six months unused,
-  or when more than 100 tokens exist for one client and account. The card will
-  show **Needs you**; reconnect as above.
-- **Service accounts do not help personal accounts.** `gog` supports service
-  accounts only with Workspace domain-wide delegation. A personal @gmail.com
-  address has no domain to delegate from, so the browser sign-in above is the
-  only way in.
+- **Unverified-app screen.** Gmail scopes are sensitive or restricted. Until
+  Google verifies your app, each person signing in sees a "Google hasn't
+  verified this app" warning and must click through it.
+- **100-user cap.** An unverified app can have at most 100 signed-in users.
+  Going beyond that needs Google's verification (and, for restricted Gmail
+  scopes, a security assessment).
+- **Sign-ins can still die.** Google revokes a refresh token when:
+    - the account password changes (for Gmail scopes);
+    - the user removes Arc's access in their Google account;
+    - it is unused for 6 months;
+    - the app is still in **Testing** status (7 days);
+    - the account already has more than 100 live tokens for this client.
+
+  The card then reads **Needs you**; click **Reconnect Google**.
 
 ## Troubleshooting
 
-| Message | Fix |
-|---|---|
-| "a sign-in for X is still waiting" | Finish that sign-in, or wait for it to expire. |
-| "no sign-in is waiting …" | The begun sign-in expired or was spent. Click **Open Google sign-in** again. |
-| "that address does not point at this computer" | Copy the address of the page that failed to load, not the Google page. |
-| "authorized as X, expected Y" | Sign in as the connection's address; use Google's account chooser. |
-| "this connection's account is not a plain email address" | **Edit details** and fix the account. |
-| Needs you again after a week | The connection is not using a published client. Do [the durable fix](#stop-the-weekly-expiry). |
-| "this agent holds several google_workspace connections; pass account …" | Name the account in the call, or grant the agent only one. |
-| "account does not name a connection this agent may use" | Grant that connection to the agent, or use one of the listed accounts. |
-| "… is signed in read-only, so … cannot run" | Set `read_only` to `no` with **Edit details**, then **Reconnect**. |
-| "… is not approved for the connection …" | Click **Approve** on that connection's card. |
+| What you see | Cause | Fix |
+|---|---|---|
+| The Google card has **Set up Google sign-in** but no **Connect** | No client is stored yet. | Paste the client ID and secret. |
+| Google shows `redirect_uri_mismatch` | A Web client does not list the redirect address Arc used. | Add the address the panel shows to **Authorized redirect URIs**, or use a Desktop client. |
+| Google shows `access_denied` or "app not verified" with no Continue | The account is not a test user and the app is in Testing, or the 100-user cap is reached. | Publish to Production, or add the account as a test user. |
+| The tab says the link expired | The sign-in took too long. | Click **Connect** again. |
+| **Needs you: signed in as a different account** | You picked another address in Google. | Reconnect and choose the named account. |
+| Sign-in dies about a week after connecting | The app is in Testing. | Publish to Production, then reconnect. |
+| The browser is on another machine and the tab fails to load | The redirect points at an address only Arc's machine reaches. | Copy the full address from the browser bar into **Didn't come back?** or `arc connector authorize <name>`. |

@@ -59,7 +59,7 @@ authorize` · **OAuth (host)** = provider's own binary/MCP owns the token.
 | **Dropbox** | `dropbox` | **OAuth (native)** | `app_key`, `app_secret`; run `arc connector authorize` for the refresh token |
 | **OneDrive** | `microsoft365` | OAuth (host) | Entra `MS365_MCP_CLIENT_ID` / `_TENANT_ID` / `_CLIENT_SECRET`; `ms-365-mcp-server --login` |
 | **Outlook** | `microsoft365` *(same bundle)* | OAuth (host) | same MS365 Entra values / device-code login |
-| **Gmail** | `google_workspace` | OAuth (host) | `gog auth add` browser consent; token in host keyring |
+| **Gmail** | `google_workspace` | OAuth (Arc) | Set up Google sign-in once, then Connect per account; token sealed in Arc custody |
 | **Slack** | `slack` | key/token (Bearer) | User OAuth token `xoxp-…` in secret `user_token` |
 | **Confluence** | `confluence` | key/token (Basic) | `api_token`, `email`, `base_url` |
 
@@ -88,12 +88,12 @@ provider matrix.)*
   application values through the connector secret surface, and complete its
   device-code login. **One grant contributes two distinct sources** (Outlook and
   OneDrive), each with its own resources and mapping.
-- **Gmail / Google Workspace** (`extensions/google_workspace/`). Install the
-  pinned `gogcli` binary and run `gog auth add` as a person on the host; the
-  OAuth refresh token stays in the platform keyring — **Arc never holds it**. For
-  multiple accounts, set `account` → `GOG_ACCOUNT`; a headless box needs
-  `GOG_KEYRING_PASSWORD` in the service environment. Select the mailbox or labels
-  after granting.
+- **Gmail / Google Workspace** (`extensions/google_workspace/`). No binary.
+  Set up Google sign-in once (the OAuth client ID and secret), then click
+  **Connect** on each account's card; Arc seals the refresh token and checks the
+  signed-in address against the connection's `account`. One connection per
+  mailbox. Select the mailbox or labels after granting. See
+  [Google accounts](../runbooks/operate/google-accounts.md).
 - **Slack** (`extensions/slack/`). Provide a **User OAuth token** (`xoxp-…`) as
   `user_token`, sent as a Bearer header; these tokens don't expire, so there is
   no refresh dance. History rate limits require an internal/Marketplace app. One

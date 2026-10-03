@@ -1,24 +1,24 @@
 """The native OAuth connect flow, end to end against a real store.
 
-``complete_oauth`` is the whole in-harness sign-in: read the operator-supplied
-app key/secret, swap the one-time code for a DURABLE refresh token, store it, and
-probe. These tests drive it the way a surface does — install a real connection,
-supply only the app key/secret, then complete the code exchange — and assert the
-refresh token was PERSISTED and delivered to the rebuilt attachment, not merely
-returned. The only thing faked is the provider's HTTP endpoint (the one external
-boundary), injected exactly as the exchange's own unit tests inject it.
+One click is ``begin_oauth`` (a consent URL bound to the operator's session) then
+``complete_oauth`` (swap the code for a DURABLE refresh token, seal it, probe). These
+tests drive both the way a surface does — set the provider's app up once, install a
+connection that holds no credential, consent at the fake provider, hand the address
+the browser landed on back — and assert the refresh token was PERSISTED and delivered
+to the rebuilt attachment, not merely returned. Only the provider's HTTP is faked.
 """
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
 from packages.arcagent.tests.custody_fakes import make_cipher
+from packages.arcagent.tests.oauth_fakes import FakeOAuthProvider
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.errors import ExtensionError
@@ -40,6 +40,8 @@ _BUNDLE = "oauth_reference"
 _INSTANCE = "primary"
 _AGENT = "oauth_agent"
 _CALLER = "did:arc:testorg:executor/oauth"
+_REDIRECT = "http://127.0.0.1:8420/oauth/callback"
+_SESSION = "session-A"
 
 
 class _Sink:
@@ -90,7 +92,9 @@ async def _state(backend: FakeBackend) -> ConnectionStateStore:
     return await open_connection_state(opener=lambda: _open_fake(backend))
 
 
-def _connections(tmp_path: Path, root: Path, backend: FakeBackend) -> Connections:
+def _connections(
+    tmp_path: Path, root: Path, backend: FakeBackend, provider: FakeOAuthProvider
+) -> Connections:
     return Connections.for_deployment(
         arc_dir=_arc_dir(tmp_path),
         data_dir=tmp_path / "data",
@@ -98,11 +102,13 @@ def _connections(tmp_path: Path, root: Path, backend: FakeBackend) -> Connection
         audit=AuditChain.held(_Sink()),
         state_opener=lambda: _open_fake(backend),
         credential_cipher=make_cipher(),
+        oauth_redirect_uri=_REDIRECT,
+        token_post=provider.post,
     )
 
 
-async def _install_with_app_creds(tmp_path: Path, root: Path, backend: FakeBackend) -> None:
-    """Install the connection holding only the app key/secret — no refresh token yet."""
+async def _install(tmp_path: Path, root: Path, backend: FakeBackend) -> None:
+    """Install the connection holding no credential yet: the refresh token is Arc's to write."""
     arc_dir = _arc_dir(tmp_path)
     custody = _custody(backend)
     plan = _plan(root)
@@ -111,7 +117,7 @@ async def _install_with_app_creds(tmp_path: Path, root: Path, backend: FakeBacke
         plan,
         connections=ConnectionRegistry(arc_dir),
         agents=[_AGENT],
-        secret_values={"app_key": "ak-123", "app_secret": "as-456"},
+        secret_values={},
         store=custody.store,
         caller_did=_CALLER,
         state=await _state(backend),
@@ -129,92 +135,91 @@ async def _refresh_token(backend: FakeBackend) -> str | None:
     return found.reveal() if found is not None else None
 
 
-async def _ok_post(
-    url: str, data: dict[str, str], auth: tuple[str, str]
-) -> tuple[int, dict[str, Any]]:
-    assert data["grant_type"] == "authorization_code"
-    assert auth == ("ak-123", "as-456"), "the stored app key/secret authenticate the exchange"
-    return 200, {"refresh_token": "rt-durable-xyz", "access_token": "at", "expires_in": 14400}
-
-
-async def _dead_code_post(
-    url: str, data: dict[str, str], auth: tuple[str, str]
-) -> tuple[int, dict[str, Any]]:
-    return 400, {
-        "error": "invalid_grant",
-        "error_description": "code doesn't exist or has expired",
-    }
-
-
-async def test_complete_oauth_stores_a_durable_refresh_token_and_connects(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The whole point: a code becomes a stored refresh token, and the connection answers."""
+async def _ready(tmp_path: Path) -> tuple[Connections, FakeOAuthProvider, FakeBackend]:
+    """An installed connection and its provider's app set up once for the deployment."""
     root = _bundle_root(tmp_path)
     backend = FakeBackend()
-    await _install_with_app_creds(tmp_path, root, backend)
-    monkeypatch.setattr("arcagent.connections.post_form", _ok_post)
-    refreshed_with: list[str] = []
-
-    async def _refresh_post(
-        url: str, data: dict[str, str], auth: tuple[str, str]
-    ) -> tuple[int, dict[str, Any]]:
-        assert data["grant_type"] == "refresh_token"
-        refreshed_with.append(data["refresh_token"])
-        return 200, {"access_token": "at-renewed", "expires_in": 14400}
-
-    # The rebuilt attachment reads a bearer through its handle, which renews from the
-    # STORED refresh token: the provider endpoint is the one boundary faked here.
-    monkeypatch.setattr("arcagent.extension.custody_select.post_form", _refresh_post)
-
-    auth = await _connections(tmp_path, root, backend).complete_oauth(
-        _INSTANCE, code="one-time-code"
+    provider = FakeOAuthProvider()
+    await _install(tmp_path, root, backend)
+    connections = _connections(tmp_path, root, backend, provider)
+    await connections.set_oauth_app(
+        _BUNDLE, client_id=provider.client_id, client_secret=provider.client_secret
     )
+    return connections, provider, backend
 
-    assert await _refresh_token(backend) == "rt-durable-xyz", (
+
+async def test_one_click_stores_a_durable_refresh_token_and_connects(tmp_path: Path) -> None:
+    """The whole point: a consent becomes a stored refresh token, and the connection answers."""
+    connections, provider, backend = await _ready(tmp_path)
+
+    begun = await connections.begin_oauth(_INSTANCE, session_id=_SESSION)
+    assert begun.redirect_mode == "callback"
+    landed = provider.consent(begun.authorize_url, email="anyone@example.com")
+    record = await connections.complete_oauth(session_id=_SESSION, redirect_url=landed)
+
+    assert record.connection == _INSTANCE
+    stored = await _refresh_token(backend)
+    assert stored is not None and stored in provider.secrets_seen(), (
         "the durable refresh token the exchange returned must be persisted"
     )
-    assert refreshed_with == [], (
-        "the access token the exchange issued is stored with the refresh token and used; "
-        "no refresh is spent right after connecting"
-    )
-    assert "ak-123" in auth.authorize_url
-    assert "token_access_type=offline" in auth.authorize_url
-    # The rebuilt attachment was handed the stored refresh token, so it probes authenticated —
+    assert provider.exchanges == 1
+    # The rebuilt attachment bears the stored credential, so it probes authenticated:
     # delivery, not just a return value (the producers-unwired lesson).
+    auth = await connections.authorization(_INSTANCE)
     assert auth.working
     assert "authenticated" in auth.detail
 
 
-async def test_authorization_offers_the_url_and_never_asks_for_the_managed_token(
+async def test_authorization_marks_an_oauth_connector_and_never_asks_for_a_credential(
     tmp_path: Path,
 ) -> None:
-    """An OAuth connector's operator supplies app key/secret and opens a URL — never a token."""
-    root = _bundle_root(tmp_path)
-    backend = FakeBackend()
-    await _install_with_app_creds(tmp_path, root, backend)
+    """An OAuth connector's operator clicks Connect — there is no token or app key to type."""
+    connections, _provider, _backend = await _ready(tmp_path)
 
-    auth = await _connections(tmp_path, root, backend).authorization(_INSTANCE)
+    auth = await connections.authorization(_INSTANCE)
 
     assert auth.oauth is True
-    assert auth.oauth_connect is True
-    assert "ak-123" in auth.authorize_url
-    supplied = {credential.name for credential in auth.credentials}
-    assert "refresh_token" not in supplied, "the managed token is never an operator field"
-    assert {"app_key", "app_secret"} <= supplied
+    assert "refresh_token" not in {credential.name for credential in auth.credentials}
 
 
-async def test_a_dead_code_refuses_and_stores_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """invalid_grant is terminal: the operator re-authorizes, and no bad token is persisted."""
+async def test_begin_refuses_until_the_provider_app_is_set_up(tmp_path: Path) -> None:
+    """No app slot: the refusal names the redirect address to register, and starts nothing."""
     root = _bundle_root(tmp_path)
     backend = FakeBackend()
-    await _install_with_app_creds(tmp_path, root, backend)
-    monkeypatch.setattr("arcagent.connections.post_form", _dead_code_post)
+    provider = FakeOAuthProvider()
+    await _install(tmp_path, root, backend)
+    connections = _connections(tmp_path, root, backend, provider)
 
     with pytest.raises(ExtensionError) as exc:
-        await _connections(tmp_path, root, backend).complete_oauth(_INSTANCE, code="expired")
+        await connections.begin_oauth(_INSTANCE, session_id=_SESSION)
 
-    assert "invalid_grant" in str(exc.value)
+    assert exc.value.code == "OAUTH_APP_MISSING"
+    assert _REDIRECT in str(exc.value)
+
+
+async def test_a_dead_code_refuses_and_stores_nothing(tmp_path: Path) -> None:
+    """invalid_grant is terminal: the operator reconnects, and no bad token is persisted."""
+    connections, provider, backend = await _ready(tmp_path)
+    begun = await connections.begin_oauth(_INSTANCE, session_id=_SESSION)
+    landed = provider.consent(begun.authorize_url, email="anyone@example.com")
+    spent_code = parse_qs(urlsplit(landed).query)["code"][0]
+    provider._codes.pop(spent_code)  # the provider no longer knows this code
+
+    with pytest.raises(ExtensionError) as exc:
+        await connections.complete_oauth(session_id=_SESSION, redirect_url=landed)
+
+    assert exc.value.code == "OAUTH_EXCHANGE_FAILED"
     assert await _refresh_token(backend) is None, "a failed exchange stores nothing"
+
+
+async def test_a_sign_in_cannot_be_completed_from_another_session(tmp_path: Path) -> None:
+    """The pending sign-in is bound to the session that began it; nothing is stored otherwise."""
+    connections, provider, backend = await _ready(tmp_path)
+    begun = await connections.begin_oauth(_INSTANCE, session_id=_SESSION)
+    landed = provider.consent(begun.authorize_url, email="anyone@example.com")
+
+    with pytest.raises(ExtensionError) as exc:
+        await connections.complete_oauth(session_id="someone-else", redirect_url=landed)
+
+    assert exc.value.code == "OAUTH_STATE_INVALID"
+    assert await _refresh_token(backend) is None

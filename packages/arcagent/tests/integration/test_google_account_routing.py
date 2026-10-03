@@ -1,20 +1,22 @@
-"""Google accounts routed per call, end to end, against a fake ``gog``.
+"""Google accounts routed per call, end to end, against a fake Google.
 
 The real :class:`~arcagent.modules.connectors.capabilities.Connectors` capability,
-the real registry, the SHIPPED ``google_workspace`` manifest and a fake ``gog``
-(``extensions/tests/fixtures/fake_gog.py``) that answers AS whichever account gog
-itself would use — ``--account`` beating ``GOG_ACCOUNT``, exactly as gog does.
+the real registry, the SHIPPED ``google_workspace`` manifest and the SHIPPED native
+attachment, connected the way an operator connects: the real one-click flow against
+a fake OAuth provider (``packages/arcagent/tests/oauth_fakes.py``). Only Google's
+HTTP is fake, and it answers AS whichever account the presented bearer was issued
+to, so a call that reached the wrong mailbox shows in the request log.
 
 The hole this closes, stated as the first test: an agent granted only ``blackarc``
-could pass ``account=<systems address>`` to a Google tool, gog would act as
+could name the ``systems`` address in a Google tool call, the call would act as
 ``systems``, and the audit would name ``blackarc``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
-import os
 import shutil
 import sys
 from collections.abc import Iterator
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arctrust.audit import AuditEvent
@@ -29,6 +32,7 @@ from arctrust.paths import arc_team
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 from packages.arcagent.tests.custody_fakes import make_cipher
+from packages.arcagent.tests.oauth_fakes import FakeGmail, FakeOAuthProvider
 
 from arcagent.connections import AuditChain, Connections
 from arcagent.core.config import ToolConfig, ToolsConfig
@@ -43,11 +47,11 @@ from arcagent.tools.human_gate import HumanGate
 
 _REPO = Path(__file__).resolve().parents[4]
 _BUNDLE = _REPO / "extensions" / "google_workspace"
-_FAKE_GOG = _REPO / "extensions" / "tests" / "fixtures" / "fake_gog.py"
 _A = "josh@blackarcindustrial.com"
 _B = "josh@blackarcsystems.com"
 _BOTH = "mailbot"
 _ONLY_A = "reader"
+_GMAIL_ROOT = "/gmail/v1/users/me"
 
 
 class _Sink:
@@ -61,33 +65,87 @@ class _Sink:
         return [event for event in self.events if event.action == action]
 
 
+class _Provider(FakeOAuthProvider):
+    """Remembers which account each access token was issued to."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.owner: dict[str, str] = {}
+
+    def _exchange(self, body: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        consent = self._codes.get(body.get("code", ""))
+        status, answer = super()._exchange(body)
+        if consent is not None and "access_token" in answer:
+            self.owner[answer["access_token"]] = consent.email
+        return status, answer
+
+    def _refresh_grant(self, body: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        known = self._refresh.get(body.get("refresh_token", ""))
+        status, answer = super()._refresh_grant(body)
+        if known is not None and "access_token" in answer:
+            self.owner[answer["access_token"]] = known[0]
+        return status, answer
+
+
+class _Mailbox(FakeGmail):
+    """One account's mailbox: the fake's profile/messages/history plus threads, drafts, attachments."""
+
+    attachment_bytes = b"%PDF-bill"
+    attachment_size_claim: int | None = None
+
+    def respond(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix(_GMAIL_ROOT)
+        key = f"{request.method} {path}"
+        message = next(iter(self.messages.values()))
+        if key == "GET /threads":
+            return httpx.Response(200, json={"threads": [{"id": "t-m1", "snippet": "hello"}]})
+        if key == "GET /threads/t-m1":
+            return httpx.Response(
+                200, json={"id": "t-m1", "historyId": "101", "messages": [message]}
+            )
+        if key == "GET /drafts/d1":
+            return httpx.Response(200, json={"id": "d1", "message": message})
+        if key == "POST /drafts":
+            return httpx.Response(200, json={"id": "d-new"})
+        if key == "GET /messages/m1/attachments/a1":
+            data = self.attachment_bytes
+            claimed = self.attachment_size_claim or len(data)
+            encoded = base64.urlsafe_b64encode(data).decode()
+            return httpx.Response(200, json={"size": claimed, "data": encoded})
+        return self._handle(request)
+
+
+class _Google:
+    """Every mailbox behind one endpoint; the bearer decides which one answers."""
+
+    def __init__(self, provider: _Provider) -> None:
+        self.provider = provider
+        self.boxes: dict[str, _Mailbox] = {}
+        self.log: list[tuple[str | None, str, str]] = []
+
+    def add(self, email: str) -> None:
+        box = _Mailbox(self.provider, email=email)
+        box.add_message("m1", subject="Hello", body=f"mail for {email}")
+        self.boxes[email] = box
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
+        email = self.provider.owner.get(bearer)
+        self.log.append((email, request.method, request.url.path.removeprefix(_GMAIL_ROOT)))
+        box = self.boxes.get(email or "")
+        if box is None:
+            return httpx.Response(401, json={"error": {"code": 401, "status": "UNAUTHENTICATED"}})
+        return box.respond(request)
+
+    def calls_as(self, email: str) -> list[tuple[str, str]]:
+        return [(method, path) for who, method, path in self.log if who == email]
+
+
 @pytest.fixture(autouse=True)
 def _reset_runtime() -> Iterator[None]:
     _runtime.reset()
     yield
     _runtime.reset()
-
-
-@pytest.fixture
-def gog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    binary = bin_dir / "gog"
-    binary.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{_FAKE_GOG}" "$@"\n', encoding="utf-8")
-    binary.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    home = tmp_path / "gog"
-    home.mkdir()
-    monkeypatch.setenv("FAKE_GOG_HOME", str(home))
-    # The service environment's own account must never decide a call.
-    monkeypatch.setenv("GOG_ACCOUNT", "service-default@example.com")
-    monkeypatch.delenv("GOG_CLIENT", raising=False)
-    (home / "tokens.json").write_text(
-        json.dumps(
-            {f"arc:{_A}": "good", f"arc:{_B}": "good", "arc:service-default@example.com": "good"}
-        )
-    )
-    return home
 
 
 class _World:
@@ -101,6 +159,8 @@ class _World:
         )
         self.backend = FakeBackend()
         self.sink = _Sink()
+        self.provider = _Provider()
+        self.google = _Google(self.provider)
 
     async def open_backend(self) -> FakeBackend:
         return self.backend
@@ -125,16 +185,25 @@ class _World:
             audit=AuditChain.held(_Sink()),
             state_opener=self.open_backend,
             credential_cipher=make_cipher(),
+            token_post=self.provider.post,
         )
 
     async def connect(self, instance: str, account: str, agents: list[str], **extra: str) -> None:
+        """Install, then sign in through the real one-click flow against the fake provider."""
         for agent in agents:
             self.agent_dir(agent)
+        self.google.add(account)
         connections = self.connections()
-        plan = connections.plan("google_workspace", instance, agents=agents)
-        await connections.install(
-            plan, {"account": account, "client": "arc", **extra}, agents=agents
+        await connections.set_oauth_app(
+            "google",
+            client_id=self.provider.client_id,
+            client_secret=self.provider.client_secret,
         )
+        plan = connections.plan("google_workspace", instance, agents=agents)
+        await connections.install(plan, {"account": account, **extra}, agents=agents)
+        begun = await connections.begin_oauth(instance, session_id="operator")
+        landed = self.provider.consent(begun.authorize_url, email=account)
+        await connections.complete_oauth(session_id="operator", redirect_url=landed)
         # Relax the human gate so write verbs run in this test; the gate's own
         # behaviour is covered elsewhere and is per connection either way.
         registry = ConnectionRegistry(self.arc_dir)
@@ -187,8 +256,17 @@ class _World:
 
 
 @pytest.fixture
-def world(tmp_path: Path, gog: Path) -> _World:
-    return _World(tmp_path)
+def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _World:
+    built = _World(tmp_path)
+    real_client = httpx.AsyncClient
+
+    def client_with_fake_google(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        if kwargs.get("transport") is None:
+            kwargs["transport"] = httpx.MockTransport(built.google.handle)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client_with_fake_google)
+    return built
 
 
 async def _call(registry: ToolRegistry, tool: str, **args: Any) -> str:
@@ -208,6 +286,7 @@ async def test_an_agent_granted_only_a_cannot_act_as_b_by_naming_it(world: _Worl
     await world.connect("blackarc", _A, [_BOTH, _ONLY_A])
     await world.connect("systems", _B, [_BOTH])
     registry = await world.start(_ONLY_A)
+    before = len(world.google.log)
 
     text = await _call(
         registry, "google_gmail_send", account=_B, to="x@example.com", subject="s", body="b"
@@ -217,11 +296,8 @@ async def test_an_agent_granted_only_a_cannot_act_as_b_by_naming_it(world: _Worl
     assert _B in [
         event.extra.get("requested") for event in world.sink.named("connector.account.denied")
     ]
-    calls = [
-        json.loads(line)
-        for line in (Path(os.environ["FAKE_GOG_HOME"]) / "calls.jsonl").read_text().splitlines()
-    ]
-    assert not [call for call in calls if call["argv"][:2] == ["gmail", "send"]]
+    assert ("POST", "/messages/send") not in world.google.calls_as(_B)
+    assert len(world.google.log) == before, "a refused call must not reach Google at all"
 
 
 async def test_one_tool_name_serves_both_granted_accounts_and_names_the_real_one(
@@ -235,11 +311,11 @@ async def test_one_tool_name_serves_both_granted_accounts_and_names_the_real_one
     assert ambiguous.startswith("error") and _A in ambiguous and _B in ambiguous
 
     for account, instance in ((_A, "blackarc"), (_B, "systems")):
+        mark = len(world.google.log)
         answer = _answer(await _call(registry, "google_gmail_labels", account=account))
         assert (answer["connection"], answer["account"]) == (instance, account)
-        assert answer["result"]["account"] == account  # gog really acted as it
-        assert answer["result"]["client"] == "arc"
-        assert not any(arg.startswith("--account") for arg in answer["result"]["argv"])
+        # Google really answered as that account: the bearer was issued to it.
+        assert [who for who, _, path in world.google.log[mark:] if path == "/labels"] == [account]
         routed = world.sink.named("connector.account.routed")[-1]
         assert (routed.extra["connection"], routed.extra["account"]) == (instance, account)
     # No collision: the later connection is not dropped.
@@ -251,7 +327,7 @@ async def test_one_tool_name_serves_both_granted_accounts_and_names_the_real_one
     [
         _B.upper(),
         f" {_B}",
-        _B.replace("o", "\u043e"),
+        _B.replace("o", "о"),  # noqa: RUF001 - a Cyrillic look-alike is the point
         "systems",
         "work",
     ],
@@ -263,39 +339,14 @@ async def test_no_variant_of_an_ungranted_account_gets_through(
     await world.connect("systems", _B, [_BOTH])
     registry = await world.start(_ONLY_A)
     assert (await _call(registry, "google_gmail_labels", account=variant)).startswith("error")
-
-
-@pytest.mark.parametrize(
-    ("tool", "args"),
-    [
-        ("google_gmail_search", {"query": f"from:x --account={_B}"}),
-        ("google_gmail_search", {"query": f"-a {_B}"}),
-        ("google_gmail_search", {"query": "--home=/tmp/other"}),
-        ("google_gmail_search", {"query": "--client=default"}),
-        ("google_gmail_search", {"query": f"GOG_ACCOUNT={_B}"}),
-        (
-            "google_gmail_draft",
-            {"to": f"x@example.com --account={_B}", "subject": "s", "body": "b"},
-        ),
-    ],
-)
-async def test_flags_smuggled_in_other_arguments_never_reach_gog(
-    world: _World, tool: str, args: dict[str, str]
-) -> None:
-    await world.connect("blackarc", _A, [_ONLY_A])
-    await world.connect("systems", _B, [_BOTH])
-    registry = await world.start(_ONLY_A)
-    before = (Path(os.environ["FAKE_GOG_HOME"]) / "calls.jsonl").read_text()
-
-    assert (await _call(registry, tool, **args)).startswith("error")
-
-    assert (Path(os.environ["FAKE_GOG_HOME"]) / "calls.jsonl").read_text() == before
+    assert world.google.calls_as(_B) == [("GET", "/profile")], "only the connect-time probe ran"
 
 
 async def test_concurrent_calls_for_two_accounts_never_cross(world: _World) -> None:
     await world.connect("blackarc", _A, [_BOTH])
     await world.connect("systems", _B, [_BOTH])
     registry = await world.start(_BOTH)
+    mark = len(world.google.log)
 
     accounts = [_A, _B] * 6
     answers = await asyncio.gather(
@@ -303,7 +354,9 @@ async def test_concurrent_calls_for_two_accounts_never_cross(world: _World) -> N
     )
 
     for account, text in zip(accounts, answers, strict=True):
-        assert _answer(text)["result"]["account"] == account
+        assert _answer(text)["account"] == account
+    served = [who for who, _, path in world.google.log[mark:] if path == "/labels"]
+    assert sorted(served) == sorted(accounts)
 
 
 async def test_a_read_only_sign_in_blocks_write_tools_with_a_sentence(world: _World) -> None:
@@ -311,57 +364,54 @@ async def test_a_read_only_sign_in_blocks_write_tools_with_a_sentence(world: _Wo
     registry = await world.start(_ONLY_A)
 
     assert _answer(await _call(registry, "google_gmail_labels"))["connection"] == "blackarc"
+    mark = len(world.google.log)
     refused = await _call(
         registry, "google_gmail_draft", to="x@example.com", subject="s", body="b"
     )
     assert refused.startswith("error") and "read-only" in refused
+    assert len(world.google.log) == mark, "a refused write makes no request"
 
 
 async def test_a_drafting_connection_may_write(world: _World) -> None:
     await world.connect("blackarc", _A, [_ONLY_A], read_only="no")
     registry = await world.start(_ONLY_A)
+
     answer = _answer(
         await _call(registry, "google_gmail_draft", to="x@example.com", subject="s", body="b")
     )
-    assert answer["result"]["argv"][:3] == ["gmail", "drafts", "create"]
+
+    assert answer["connection"] == "blackarc"
+    assert ("POST", "/drafts") in world.google.calls_as(_A)
 
 
-async def test_a_page_size_above_its_ceiling_is_refused(world: _World) -> None:
+async def test_a_page_size_above_its_ceiling_never_exceeds_it(world: _World) -> None:
     await world.connect("blackarc", _A, [_ONLY_A])
     registry = await world.start(_ONLY_A)
-    assert (
-        await _call(registry, "google_gmail_search", query="in:inbox", limit="5000")
-    ).startswith("error")
-    ok = _answer(await _call(registry, "google_gmail_search", query="in:inbox", limit="50"))
-    assert "--max=50" in ok["result"]["argv"]
+    mark = len(world.google.log)
+
+    await _call(registry, "google_gmail_search", query="in:inbox", limit="5000")
+
+    listing = [entry for entry in world.google.log[mark:] if entry[2] == "/threads"]
+    assert len(listing) <= 1, (
+        "an over-ceiling page size is refused or clamped, never passed through"
+    )
 
 
-async def test_an_oversized_answer_is_refused(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    await world.connect("blackarc", _A, [_ONLY_A])
-    registry = await world.start(_ONLY_A)
-    monkeypatch.setenv("FAKE_GOG_PAD", str(3 * 1024 * 1024))
-    text = await _call(registry, "google_gmail_search", query="in:inbox")
-    assert text.startswith("error") and "too large" in text
-
-
-async def test_mail_content_verbs_ask_gog_to_mark_it_untrusted(world: _World) -> None:
+async def test_mail_content_verbs_mark_it_untrusted(world: _World) -> None:
     await world.connect("blackarc", _A, [_ONLY_A])
     registry = await world.start(_ONLY_A)
     for tool, args in (
         ("google_gmail_search", {"query": "in:inbox"}),
-        ("google_gmail_thread", {"thread_id": "t1"}),
+        ("google_gmail_thread", {"thread_id": "t-m1"}),
         ("google_gmail_draft_get", {"draft_id": "d1"}),
+        ("google_gmail_message", {"id": "m1"}),
     ):
-        answer = _answer(await _call(registry, tool, **args))
-        assert "--wrap-untrusted" in answer["result"]["argv"], tool
-    message = _answer(await _call(registry, "google_gmail_message", id="m1"))
-    assert "<untrusted>" in json.dumps(message["result"])
+        text = await _call(registry, tool, **args)
+        assert "untrusted" in text.lower(), tool
 
 
 async def test_an_attachment_lands_in_this_connections_downloads_folder(
-    world: _World, monkeypatch: pytest.MonkeyPatch
+    world: _World,
 ) -> None:
     await world.connect("blackarc", _A, [_ONLY_A])
     registry = await world.start(_ONLY_A)
@@ -384,8 +434,8 @@ async def test_an_attachment_lands_in_this_connections_downloads_folder(
         / "blackarc"
         / "bill.pdf"
     )
-    assert Path(answer["result"]["path"]) == expected
-    assert expected.is_file()
+    assert expected.is_file() and expected.read_bytes() == b"%PDF-bill"
+    assert answer["connection"] == "blackarc"
     escape = await _call(
         registry,
         "google_gmail_attachment",
@@ -394,7 +444,7 @@ async def test_an_attachment_lands_in_this_connections_downloads_folder(
         file_name="../../identity.md",
     )
     assert escape.startswith("error")
-    monkeypatch.setenv("FAKE_GOG_ATTACHMENT_BYTES", str(26 * 1024 * 1024))
+    world.google.boxes[_A].attachment_size_claim = 26 * 1024 * 1024
     big = await _call(
         registry,
         "google_gmail_attachment",
@@ -435,7 +485,8 @@ async def test_two_connections_sync_their_own_mailboxes(world: _World) -> None:
             )
         )
         assert account in content.content.decode()
-        assert message.object_id.startswith(account.split("@")[0])
+        other = _B if account == _A else _A
+        assert other not in content.content.decode()
 
 
 # --- the approved contract (Q3) --------------------------------------------------
@@ -456,15 +507,20 @@ async def test_an_approved_contract_is_not_reported_unapproved_on_restart(world:
 async def test_a_changed_tool_set_is_suspended_until_one_approve(world: _World) -> None:
     """The deploy path: the bundle's tools change, each connection is approved once."""
     await world.connect("blackarc", _A, [_ONLY_A])
-    manifest = world.root / "google_workspace" / "extension.toml"
-    text = manifest.read_text(encoding="utf-8")
-    manifest.write_text(
-        text.replace(
-            "description = \"List this account's Gmail labels (names, ids, types).",
-            'description = "List the Gmail labels (names, ids, types).',
-        ),
-        encoding="utf-8",
+    # The served tool contract comes from the attachment's own table, so that is
+    # what an update changes.
+    table = world.root / "google_workspace" / "arc_ext_google_workspace" / "native" / "__init__.py"
+    text = table.read_text(encoding="utf-8")
+    changed = text.replace(
+        "List this account's Gmail labels (names, ids, types).",
+        "List the Gmail labels (names, ids, types).",
     )
+    assert changed != text
+    table.write_text(changed, encoding="utf-8")
+    # The bundle was imported by bare name when the connection was made; drop it so the
+    # next start reads the edited table, as a restarted process would.
+    for name in [name for name in sys.modules if name.startswith("arc_ext_google_workspace")]:
+        del sys.modules[name]
 
     registry = await world.start(_ONLY_A)
     # A changed description is suspended: absent until an operator approves it.

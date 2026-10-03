@@ -349,6 +349,8 @@ def test_every_credential_is_prompted_for_in_words_a_person_can_follow(
     click — which no length check can prove, but a one-clause label always fails.
     """
     for declared in manifest.secrets:
+        if declared.name == "refresh_token":
+            continue  # Arc writes it when the operator clicks Connect; nobody pastes it.
         assert len(declared.prompt) > 80, (
             f"{manifest.extension.name}.{declared.name} prompts with "
             f"{declared.prompt!r}, which does not tell anyone where to get one"
@@ -392,7 +394,7 @@ def test_nothing_that_reads_like_a_credential_is_declared_visible(
 #: adding a bundle here is a deliberate act a reviewer sees, and the failure it
 #: would otherwise mask (a real credential marked visible) stays caught for
 #: everything else.
-_HOST_AUTHORIZED = frozenset({"sqlite", "google_workspace"})
+_HOST_AUTHORIZED = frozenset({"sqlite"})
 
 
 def test_a_bundle_that_asks_for_values_asks_for_at_least_one_credential(
@@ -615,25 +617,6 @@ def test_a_declared_expired_pattern_really_separates_a_dead_credential(
         assert not expired_verdict(required, in_code, in_text)
 
 
-def test_a_remote_login_declares_matching_steps(manifest: ExtensionManifest) -> None:
-    """gog resumes a step-1 state only when the steps ask for the same scopes and flags.
-
-    A complete step that asked for different services than its begin would fail
-    every sign-in with a state mismatch the operator cannot see the cause of.
-    """
-    for required in manifest.host_requires:
-        login = required.remote_login
-        if login is None:
-            continue
-        begin = login.begin.split()
-        complete = login.complete.split()
-        step = begin.index("1")
-        assert begin[step - 1] == "--step" and complete[step] == "2"
-        shared = [token for token in complete if token not in ("{redirect_url}", "--auth-url")]
-        shared[step] = "1"
-        assert shared == begin, "begin and complete must differ only in step and the address"
-
-
 def test_a_bundle_with_no_sign_in_check_is_recorded_as_a_deliberate_choice(
     bundle: Path, manifest: ExtensionManifest
 ) -> None:
@@ -787,7 +770,8 @@ def test_native_implementation_lives_below_the_bundle_root(
         pytest.skip("not a native bundle")
     assert not list(bundle.glob("*.py"))
     entrypoint = str(manifest.config["native"]["entrypoint"])
-    assert (bundle / entrypoint).is_dir()
+    # A dotted entrypoint ("pkg.native") is a package nested below the bundle root.
+    assert bundle.joinpath(*entrypoint.split(".")).is_dir()
 
 
 def test_native_entrypoints_do_not_collide_across_bundles() -> None:

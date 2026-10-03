@@ -857,7 +857,7 @@ class TestGrantAndRevoke:
 # --- native OAuth authorize flow (SPEC-062 connect) ---------------------------
 
 
-def _oauth_auth(instance: str, *, reachable: bool, detail: str) -> Any:
+def _oauth_auth(instance: str) -> Any:
     import arcagent
 
     return arcagent.Authorization(
@@ -865,74 +865,107 @@ def _oauth_auth(instance: str, *, reachable: bool, detail: str) -> Any:
         extension="dropbox",
         credentials=(),
         hosts=(),
-        reachable=reachable,
-        detail=detail,
+        reachable=False,
+        detail="unauthenticated",
         oauth=True,
-        authorize_url=(
-            "https://www.dropbox.com/oauth2/authorize"
-            "?client_id=ak-123&response_type=code&token_access_type=offline"
-        ),
     )
 
 
-def test_authorize_oauth_shows_the_url_takes_a_code_and_completes(
-    monkeypatch: pytest.MonkeyPatch, capsys: Any
-) -> None:
-    """The whole operator flow: an OAuth connector prints its URL, reads the pasted
-    code, and hands it to complete_oauth — never a token field, never a host command."""
+class _OAuthConnections:
+    """Stands in for ``Connections``: records what the terminal flow hands it."""
+
+    def __init__(self, *, redirect_mode: str = "callback") -> None:
+        self.redirect_mode = redirect_mode
+        self.began: list[str] = []
+        self.completed: dict[str, str] = {}
+
+    async def authorization(self, instance: str) -> Any:
+        return _oauth_auth(instance)
+
+    async def begin_oauth(self, instance: str, *, session_id: str) -> Any:
+        from types import SimpleNamespace
+
+        self.began.append(session_id)
+        return SimpleNamespace(
+            authorize_url="https://www.dropbox.com/oauth2/authorize?client_id=ak-123&state=s1",
+            state="s1",
+            redirect_mode=self.redirect_mode,
+        )
+
+    async def complete_oauth(self, *, session_id: str, **found: str) -> Any:
+        from types import SimpleNamespace
+
+        assert session_id == self.began[0], "begin and complete share one session"
+        self.completed = found
+        return SimpleNamespace(status="healthy", reason_text=None)
+
+
+def _run_authorize(monkeypatch: pytest.MonkeyPatch, connections: Any, pasted: str) -> None:
     import argparse
 
     from arccli.commands.connector import _authorize
 
-    completed: dict[str, str] = {}
-
-    class _FakeConnections:
-        async def authorization(self, instance: str) -> Any:
-            return _oauth_auth(instance, reachable=False, detail="unauthenticated")
-
-        async def complete_oauth(self, instance: str, *, code: str) -> Any:
-            completed["code"] = code
-            return _oauth_auth(instance, reachable=True, detail="dropbox answered")
-
-    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: _FakeConnections())
-    monkeypatch.setattr("builtins.input", lambda _prompt="": "  the-one-time-code  ")
-
+    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: connections)
+    monkeypatch.setattr("arccli.commands.connector.getpass.getpass", lambda _prompt="": pasted)
     _authorize(argparse.Namespace(instance="personal_dropbox"))
 
-    assert completed["code"] == "the-one-time-code", "the pasted code is trimmed and exchanged"
-    out = capsys.readouterr().out
-    assert "dropbox.com/oauth2/authorize" in out, "the operator is shown the consent URL"
-    assert "Connected" in out
 
-
-def test_authorize_oauth_without_app_key_says_supply_it_first(
+def test_authorize_oauth_shows_the_link_takes_the_landed_address_and_completes(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    """No app key stored yet means no URL to open — the honest next step is named."""
-    import argparse
+    """An OAuth connector prints its link, reads the pasted address, completes — no token field."""
+    connections = _OAuthConnections()
+    landed = "http://127.0.0.1:8420/oauth/callback?code=c1&state=s1"
 
-    from arccli.commands.connector import _authorize
+    _run_authorize(monkeypatch, connections, f"  {landed}  ")
 
-    class _FakeConnections:
-        async def authorization(self, instance: str) -> Any:
-            import arcagent
+    assert connections.completed == {"redirect_url": landed}, "the pasted address is trimmed"
+    out = capsys.readouterr().out
+    assert "dropbox.com/oauth2/authorize" in out, "the operator is shown the consent link"
+    assert "Connected" in out
+    assert landed not in out, "a pasted code is never echoed back"
 
-            return arcagent.Authorization(
-                instance=instance,
-                extension="dropbox",
-                credentials=(),
-                hosts=(),
-                reachable=False,
-                detail="unauthenticated",
-                oauth=True,
-                authorize_url="",
-            )
 
-    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: _FakeConnections())
+def test_authorize_oauth_for_a_code_showing_provider_sends_state_and_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    connections = _OAuthConnections(redirect_mode="none")
+
+    _run_authorize(monkeypatch, connections, "the-one-time-code")
+
+    assert connections.completed == {"state": "s1", "code": "the-one-time-code"}
+    assert "copy the code" in capsys.readouterr().out
+
+
+def test_authorize_oauth_with_nothing_pasted_completes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    connections = _OAuthConnections()
 
     with pytest.raises(SystemExit):
-        _authorize(argparse.Namespace(instance="personal_dropbox"))
-    assert "app key" in capsys.readouterr().err.lower()
+        _run_authorize(monkeypatch, connections, "   ")
+
+    assert connections.completed == {}
+    assert "nothing pasted" in capsys.readouterr().err
+
+
+def test_authorize_oauth_without_the_provider_app_says_set_it_up_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """No app slot yet means no link to open: the refusal names what to register."""
+    import arcagent
+
+    class _NoApp(_OAuthConnections):
+        async def begin_oauth(self, instance: str, *, session_id: str) -> Any:
+            raise arcagent.ExtensionError(
+                code="OAUTH_APP_MISSING",
+                message="set up the dropbox sign-in app first (arc connector oauth-app dropbox)",
+            )
+
+    with pytest.raises(SystemExit):
+        _run_authorize(monkeypatch, _NoApp(), "unused")
+
+    assert "oauth-app dropbox" in capsys.readouterr().err
 
 
 class TestSemanticLayer:

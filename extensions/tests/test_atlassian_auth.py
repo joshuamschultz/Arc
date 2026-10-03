@@ -326,7 +326,7 @@ async def test_a_credential_pasted_with_invisible_whitespace_still_authenticates
         "the service must receive the clean credential, not what the paste carried"
     )
     ref = SecretRef(connection="primary", field="api_token")
-    stored = await store.get(ref, caller_did=_CALLER)
+    stored = await store.get(ref)
     assert stored is not None and stored.reveal() == _TOKEN, (
         "every later agent run resolves the credential out of the store, so the "
         "clean value has to be what is stored — not something cleaned at probe time"

@@ -47,7 +47,7 @@ clean teardown ("disconnect = delete the pool").
 
 ## Headless nodes hang on the keyring
 
-A connector whose auth lives in the OS keyring (Gmail's `gog`, for example) will
+A connector whose auth lives in the OS keyring (a vendor CLI such as `acli`) will
 **hang a CLI** on a headless box because the keyring tries to reach a D-Bus
 session that isn't there. Your deploy automation should neutralize this by
 exporting `DBUS_SESSION_BUS_ADDRESS=/dev/null` for the service and for deploy
@@ -58,8 +58,8 @@ set that variable in your shell:
 export DBUS_SESSION_BUS_ADDRESS=/dev/null
 ```
 
-A headless Gmail box also needs `GOG_KEYRING_PASSWORD` in the service environment
-so the keyring can unlock without an interactive prompt.
+Google accounts no longer touch a keyring: Arc holds their sign-in itself (see
+[Google accounts](../runbooks/operate/google-accounts.md)).
 
 ## Don't force it
 
