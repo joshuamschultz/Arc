@@ -1291,27 +1291,46 @@ class ConnectedDataService:
         top_k: int = 10,
     ) -> list[DocHit]:
         """Search exactly one approved source's document pool."""
+        return await self.search_pool(
+            query, self._source_id(source), clearance=clearance, top_k=top_k
+        )
+
+    async def search_pool(
+        self,
+        query: str,
+        source_id: str,
+        *,
+        clearance: str = "unclassified",
+        top_k: int | None = None,
+    ) -> list[DocHit]:
+        """Search one pool by its source id, dropping every hit above ``clearance``.
+
+        By id, because a reader of a connection-scoped store (P18-4) holds the
+        pool's id from its subscription, not the provider's description of it.
+        ``top_k`` falls back to the operator's ``doc_search_top_k``.
+        """
         from arctrust.classification import dominates, parse_classification
 
         hits = await self._doc_index().document_search(
-            query,
-            self._agent_did,
-            source_id=self._source_id(source),
-            top_k=top_k,
+            query, self._agent_did, source_id=source_id, top_k=top_k
         )
-        caller = parse_classification(clearance, strict=self._config.tier == "federal")
+        strict = self._config.tier == "federal"
+        caller = parse_classification(clearance, strict=strict)
         kept: list[DocHit] = []
         for hit in hits:
             try:
-                label = parse_classification(
-                    hit.classification,
-                    strict=self._config.tier == "federal",
-                )
+                label = parse_classification(hit.classification, strict=strict)
             except ValueError:
                 continue
             if dominates(caller, label):
                 kept.append(hit)
         return kept
+
+    async def list_pool(self, source_id: str, *, limit: int = 50) -> list[DocHit]:
+        """The documents one pool holds, newest first, without a query."""
+        return await self._doc_index().list_documents(
+            self._agent_did, source_id=source_id, limit=limit
+        )
 
     def _document_target(
         self,

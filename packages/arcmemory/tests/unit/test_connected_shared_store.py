@@ -182,6 +182,31 @@ async def test_an_adopted_object_is_not_fetched_again_by_the_next_sync(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_a_reader_searches_and_lists_a_pool_by_its_id_below_its_clearance(
+    tmp_path: Path,
+) -> None:
+    """A subscriber holds the pool id, not the provider's description; no read-up."""
+    writer = _shared(tmp_path / "shared", _Authority("approval-a"))
+    mapping = await writer.require_approved_mapping(_source())
+    await _ingest(writer, mapping, "the billing portal ships in August")
+    secret, content = _page("page-secret", "the billing portal secret launch code")
+    await writer.ingest(
+        _source(), secret.model_copy(update={"classification": "SECRET"}), content, mapping
+    )
+    reader = ConnectedDataService(
+        tmp_path / "shared", _PRINCIPAL, approval_store=None, config=_CONFIG
+    )
+
+    hits = await reader.search_pool("billing portal", mapping.source_id)
+    secret_hits = await reader.search_pool("billing portal", mapping.source_id, clearance="SECRET")
+    listed = await reader.list_pool(mapping.source_id)
+
+    assert [hit.classification.upper() for hit in hits] == ["UNCLASSIFIED"]
+    assert len(secret_hits) == 2
+    assert len(listed) == 2
+
+
+@pytest.mark.asyncio
 async def test_adoption_needs_an_authorizing_subscriber(tmp_path: Path) -> None:
     agent, mapping = await _agent_store(tmp_path / "agent")
     await _ingest(agent, mapping, "the billing portal ships in August")
