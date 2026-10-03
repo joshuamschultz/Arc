@@ -254,6 +254,7 @@ class ConnectedDataService:
         self._inspections: dict[str, asyncio.Task[None]] = {}
         self._paused: set[str] = set()
         self._wake = asyncio.Event()
+        self._stop_listening: Callable[[], None] | None = None
         self._closed = False
         # Proactive credential renewal (COMP-007, P18-2) and terminal-failure
         # health (COMP-008). ``renewals`` is the agent's credential broker
@@ -287,12 +288,18 @@ class ConnectedDataService:
         self._store = await self._open_store()
         self._resource_store = await self._open_resource_store()
         self._mapping_store = await self._open_mapping_store()
+        # A source attached, replaced or removed after start is seen at once, not
+        # an interval later: the monitor otherwise slept on an empty catalog.
+        self._stop_listening = self._catalog.on_change(self._wake.set)
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
         self._wake.set()
 
     async def close(self) -> None:
         """Cancel workers and release only resources owned by this service."""
         self._closed = True
+        if self._stop_listening is not None:
+            self._stop_listening()
+            self._stop_listening = None
         for task in tuple(self._inspections.values()):
             task.cancel()
         self._inspections.clear()

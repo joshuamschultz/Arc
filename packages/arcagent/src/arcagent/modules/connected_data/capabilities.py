@@ -16,9 +16,14 @@ _logger = logging.getLogger("arcagent.modules.connected_data.capabilities")
 _CATALOG_PRIORITY = 60
 
 
-@capability(name="connected_data")
+@capability(name="connected_data", depends_on=("connectors",))
 class ConnectedData:
-    """Start source synchronization only when all optional seams are present."""
+    """Start source synchronization only when all optional seams are present.
+
+    Starts after ``connectors``, which fills the source catalog. The catalog's
+    change signal still wakes the monitor for a source attached later; the order
+    only means the first tick already sees what is attached at boot.
+    """
 
     def __init__(self) -> None:
         self._service: ConnectedDataService | None = None

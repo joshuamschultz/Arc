@@ -150,3 +150,44 @@ async def test_close_waits_for_retired_adapters_to_close() -> None:
 
     assert adapter.closed
     assert sync.done()
+
+
+@pytest.mark.asyncio
+async def test_every_change_to_the_catalog_tells_its_listeners() -> None:
+    """D1: a consumer must hear about a source the moment it is attached.
+
+    The sync monitor started with an empty catalog and slept a full interval,
+    because nothing told it the connectors had since registered their sources.
+    """
+    catalog = SourceCatalog()
+    changes: list[str] = []
+    stop = catalog.on_change(lambda: changes.append("changed"))
+    first, second = _Adapter(), _Adapter()
+
+    await catalog.register("dropbox", first)
+    await catalog.register("dropbox", first)  # the same adapter: nothing changed
+    await catalog.register("dropbox", second)
+    await catalog.unregister("dropbox")
+    await catalog.unregister("dropbox")  # already gone: nothing changed
+    assert changes == ["changed", "changed", "changed"]
+
+    stop()
+    await catalog.register("slack", _Adapter())
+    assert len(changes) == 3, "an unsubscribed listener was still told"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_listener_never_breaks_a_registration() -> None:
+    catalog = SourceCatalog()
+
+    def broken() -> None:
+        raise RuntimeError("listener bug")
+
+    heard: list[bool] = []
+    catalog.on_change(broken)
+    catalog.on_change(lambda: heard.append(True))
+
+    await catalog.register("dropbox", _Adapter())
+
+    assert [entry.connection_id for entry in await catalog.snapshot()] == ["dropbox"]
+    assert heard == [True]
