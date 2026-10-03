@@ -15,9 +15,11 @@ env-var write; only a variable some packaged provider declares is accepted.
 from __future__ import annotations
 
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from arctrust import causal
 from arctrust.audit import AuditEvent
 from arctrust.paths import arc_config
 
@@ -25,6 +27,15 @@ from arcagent.core.errors import ExtensionError
 from arcagent.keys import ENV_FILENAME, KeyStatus, KeyStore, default_env_file
 
 CALLER = "did:arc:local:operator"
+
+
+@pytest.fixture(autouse=True)
+def _bound_caller() -> Iterator[None]:
+    """The caller is the bound causal initiator; the store reads it from there (item 20)."""
+    with causal.bind(causal.root("operator", CALLER)):
+        yield
+
+
 KEY_VALUE = "sk-ant-api03-do-not-leak-me-4f2c9e"
 
 
@@ -62,30 +73,30 @@ async def test_list_covers_every_provider_and_classifier_arcllm_declares(
 ) -> None:
     from arcllm import list_classifier_keys, list_provider_keys
 
-    statuses = await store.list(caller_did=CALLER)
+    statuses = await store.list()
     declared = [*list_provider_keys(), *list_classifier_keys()]
     assert {status.provider for status in statuses} == {key.provider for key in declared}
 
 
 async def test_list_reports_presence_for_a_set_and_an_unset_key(store: KeyStore) -> None:
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
 
-    statuses = await store.list(caller_did=CALLER)
+    statuses = await store.list()
     assert _status(statuses, "anthropic").present is True
     assert _status(statuses, "openai").present is False
 
 
 async def test_list_carries_the_declared_requirement(store: KeyStore) -> None:
-    statuses = await store.list(caller_did=CALLER)
+    statuses = await store.list()
     assert _status(statuses, "anthropic").required is True
     assert _status(statuses, "ollama").required is False
 
 
 async def test_a_status_never_carries_the_value_in_any_field(store: KeyStore) -> None:
     """D-583 — presence is the whole answer. No value, no prefix, no length, no hash."""
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
 
-    status = _status(await store.list(caller_did=CALLER), "anthropic")
+    status = _status(await store.list(), "anthropic")
     rendered = repr(status)
     for fragment in (KEY_VALUE, KEY_VALUE[:8], str(len(KEY_VALUE))):
         assert fragment not in rendered
@@ -101,7 +112,7 @@ async def test_set_refuses_an_env_var_no_provider_declares(
     store: KeyStore, env_file: Path
 ) -> None:
     with pytest.raises(ExtensionError) as excinfo:
-        await store.set("PATH", KEY_VALUE, caller_did=CALLER)
+        await store.set("PATH", KEY_VALUE)
 
     assert excinfo.value.code == "PROVIDER_KEY_UNKNOWN"
     assert not env_file.exists()
@@ -109,11 +120,11 @@ async def test_set_refuses_an_env_var_no_provider_declares(
 
 async def test_set_refuses_a_value_containing_a_newline(store: KeyStore, env_file: Path) -> None:
     """The store is line-oriented: an unchecked newline forges an entry nobody asked for."""
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
     before = env_file.read_bytes()
 
     with pytest.raises(ExtensionError) as excinfo:
-        await store.set("OPENAI_API_KEY", "sk-openai\nPATH=/tmp/evil", caller_did=CALLER)
+        await store.set("OPENAI_API_KEY", "sk-openai\nPATH=/tmp/evil")
 
     assert excinfo.value.code == "PROVIDER_KEY_VALUE_INVALID"
     assert env_file.read_bytes() == before
@@ -121,13 +132,13 @@ async def test_set_refuses_a_value_containing_a_newline(store: KeyStore, env_fil
 
 async def test_set_refuses_a_value_containing_a_nul(store: KeyStore) -> None:
     with pytest.raises(ExtensionError) as excinfo:
-        await store.set("OPENAI_API_KEY", "sk-openai\x00truncated", caller_did=CALLER)
+        await store.set("OPENAI_API_KEY", "sk-openai\x00truncated")
     assert excinfo.value.code == "PROVIDER_KEY_VALUE_INVALID"
 
 
 async def test_set_refuses_an_empty_value(store: KeyStore) -> None:
     with pytest.raises(ExtensionError) as excinfo:
-        await store.set("OPENAI_API_KEY", "", caller_did=CALLER)
+        await store.set("OPENAI_API_KEY", "")
     assert excinfo.value.code == "PROVIDER_KEY_EMPTY"
 
 
@@ -137,7 +148,7 @@ async def test_a_refusal_names_the_coordinate_and_never_the_rejected_material(
     """An error message travels to a log, a terminal, and an HTTP body. It carries no key."""
     rejected = f"{KEY_VALUE}\nPATH=/tmp/evil"
     with pytest.raises(ExtensionError) as excinfo:
-        await store.set("OPENAI_API_KEY", rejected, caller_did=CALLER)
+        await store.set("OPENAI_API_KEY", rejected)
 
     rendered = f"{excinfo.value.message} {excinfo.value.details} {excinfo.value!s}"
     assert KEY_VALUE not in rendered
@@ -147,9 +158,9 @@ async def test_a_refusal_names_the_coordinate_and_never_the_rejected_material(
 async def test_set_replaces_the_previous_value_and_keeps_its_neighbours(
     store: KeyStore, env_file: Path
 ) -> None:
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
-    await store.set("OPENAI_API_KEY", "sk-openai-value", caller_did=CALLER)
-    await store.set("ANTHROPIC_API_KEY", "sk-ant-rotated", caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
+    await store.set("OPENAI_API_KEY", "sk-openai-value")
+    await store.set("ANTHROPIC_API_KEY", "sk-ant-rotated")
 
     body = env_file.read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY=sk-ant-rotated" in body
@@ -158,16 +169,16 @@ async def test_set_replaces_the_previous_value_and_keeps_its_neighbours(
 
 
 async def test_the_env_file_is_owner_only_after_a_write(store: KeyStore, env_file: Path) -> None:
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
 async def test_a_loosened_env_file_is_refused(store: KeyStore, env_file: Path) -> None:
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
     env_file.chmod(0o644)
 
     with pytest.raises(ExtensionError) as excinfo:
-        await store.list(caller_did=CALLER)
+        await store.list()
     assert excinfo.value.code == "SECRET_STORE_LOOSE_PERMS"
 
 
@@ -177,14 +188,14 @@ async def test_a_loosened_env_file_is_refused(store: KeyStore, env_file: Path) -
 
 
 async def test_delete_reports_whether_a_key_was_there(store: KeyStore) -> None:
-    await store.set("GROQ_API_KEY", "gsk-value", caller_did=CALLER)
-    assert await store.delete("GROQ_API_KEY", caller_did=CALLER) is True
-    assert await store.delete("GROQ_API_KEY", caller_did=CALLER) is False
+    await store.set("GROQ_API_KEY", "gsk-value")
+    assert await store.delete("GROQ_API_KEY") is True
+    assert await store.delete("GROQ_API_KEY") is False
 
 
 async def test_delete_refuses_an_env_var_no_provider_declares(store: KeyStore) -> None:
     with pytest.raises(ExtensionError) as excinfo:
-        await store.delete("PATH", caller_did=CALLER)
+        await store.delete("PATH")
     assert excinfo.value.code == "PROVIDER_KEY_UNKNOWN"
 
 
@@ -195,7 +206,7 @@ async def test_delete_refuses_an_env_var_no_provider_declares(store: KeyStore) -
 
 async def test_a_write_is_audited_by_coordinate_and_caller(env_file: Path) -> None:
     sink = RecordingSink()
-    await KeyStore(env_file, sink=sink).set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
+    await KeyStore(env_file, sink=sink).set("ANTHROPIC_API_KEY", KEY_VALUE)
 
     assert [event.action for event in sink.events] == ["provider_key.write"]
     event = sink.events[0]
@@ -207,9 +218,9 @@ async def test_a_write_is_audited_by_coordinate_and_caller(env_file: Path) -> No
 async def test_a_delete_is_audited_with_its_outcome(env_file: Path) -> None:
     sink = RecordingSink()
     store = KeyStore(env_file, sink=sink)
-    await store.set("GROQ_API_KEY", "gsk-value", caller_did=CALLER)
-    await store.delete("GROQ_API_KEY", caller_did=CALLER)
-    await store.delete("GROQ_API_KEY", caller_did=CALLER)
+    await store.set("GROQ_API_KEY", "gsk-value")
+    await store.delete("GROQ_API_KEY")
+    await store.delete("GROQ_API_KEY")
 
     outcomes = [(event.action, event.outcome) for event in sink.events]
     assert outcomes == [
@@ -222,8 +233,8 @@ async def test_a_delete_is_audited_with_its_outcome(env_file: Path) -> None:
 async def test_no_audit_event_ever_carries_the_value(env_file: Path) -> None:
     sink = RecordingSink()
     store = KeyStore(env_file, sink=sink)
-    await store.set("ANTHROPIC_API_KEY", KEY_VALUE, caller_did=CALLER)
-    await store.delete("ANTHROPIC_API_KEY", caller_did=CALLER)
+    await store.set("ANTHROPIC_API_KEY", KEY_VALUE)
+    await store.delete("ANTHROPIC_API_KEY")
 
     for event in sink.events:
         assert KEY_VALUE not in event.model_dump_json()

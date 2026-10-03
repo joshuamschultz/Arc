@@ -13,13 +13,16 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from arcstore.backends.memory import FakeBackend
 from arctrust import causal
 from arctrust.audit import AuditEvent, WormSink, emit, verify_chain
 from arctrust.keypair import generate_keypair
 from arctrust.signer import InProcessSigner
+from packages.arcagent.tests.custody_fakes import make_cipher
 
 from arcagent.core.telemetry import DurableTelemetryAuditSink
-from arcagent.extension.secrets import EnvFile, SecretRef, SecretStore
+from arcagent.extension.custody import CredentialRowStore, SealedCredentialBackend
+from arcagent.extension.secrets import SecretRef, SecretStore
 
 _AGENT = "did:arc:example:org:agent:abc"
 
@@ -37,7 +40,9 @@ def _actions(path: Path) -> list[dict[str, object]]:
 async def test_a_secret_read_with_a_value_is_on_the_signed_chain(tmp_path: Path) -> None:
     worm, path, public_key = _chain(tmp_path)
     sink = DurableTelemetryAuditSink(MagicMock(), worm)
-    store = SecretStore(EnvFile(tmp_path / "secrets.env"), sink=sink)
+    store = SecretStore(
+        SealedCredentialBackend(CredentialRowStore(FakeBackend(), make_cipher())), sink=sink
+    )
     ref = SecretRef(connection="work_gmail", field="token")
 
     with (
@@ -68,8 +73,13 @@ def test_a_denied_act_is_on_the_signed_chain_and_routine_events_are_not(
     worm, path, public_key = _chain(tmp_path)
     sink = DurableTelemetryAuditSink(MagicMock(), worm)
     with causal.bind(causal.root("agent", _AGENT)):
-        emit(AuditEvent(actor_did=_AGENT, action="capability.added", target="x", outcome="ok"), sink)
-        emit(AuditEvent(actor_did=_AGENT, action="connector.refused", target="y", outcome="deny"), sink)
+        emit(
+            AuditEvent(actor_did=_AGENT, action="capability.added", target="x", outcome="ok"), sink
+        )
+        emit(
+            AuditEvent(actor_did=_AGENT, action="connector.refused", target="y", outcome="deny"),
+            sink,
+        )
 
     worm.close()
     assert verify_chain(path, public_key)

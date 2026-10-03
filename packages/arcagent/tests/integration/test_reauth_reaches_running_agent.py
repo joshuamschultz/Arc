@@ -267,7 +267,5 @@ async def test_mcp_bundle_reauth_reconciles(tmp_path: Path) -> None:
     # change is pushed to every granted agent, whose rebuild reads the new value.
     assert world.control.reconciled == [AGENT]
     store = await connections._store(NullSink())
-    rebuilt = await resolve_secrets(
-        plan.manifest, connection="composio", store=store, caller_did=DID
-    )
+    rebuilt = await resolve_secrets(plan.manifest, connection="composio", store=store)
     assert rebuilt["api_key"].reveal() == "key-second"

@@ -207,7 +207,7 @@ def test_the_cli_and_the_key_store_agree_on_the_file(
     keys_handler(["set", "anthropic", *paths])
 
     store = KeyStore(default_env_file(arc_dir))
-    statuses = asyncio.run(store.list(caller_did="did:arc:local:operator"))
+    statuses = asyncio.run(store.list())
     assert next(s for s in statuses if s.provider == "anthropic").present is True
 
 

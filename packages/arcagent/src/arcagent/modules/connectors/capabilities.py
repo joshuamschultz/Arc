@@ -53,10 +53,12 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
@@ -90,6 +92,7 @@ from arcagent.modules.connectors.install import (
 from arcagent.modules.connectors.routing import RoutedAttachment, RoutedMember
 from arcagent.modules.connectors.source_authorization import SourceAuthorizationBinding
 from arcagent.tools._decorator import capability
+from arcagent.utils.causality import principal_of
 
 _logger = logging.getLogger("arcagent.modules.connectors.capabilities")
 
@@ -376,6 +379,23 @@ class _Prepared:
     served: list[ToolSpec]
 
 
+def _attaching(state: _runtime._State, instance: str) -> AbstractContextManager[Any]:
+    """The agent reads its own connection's credentials when it attaches it (item 20).
+
+    Attachment runs at startup or in the reconcile loop, far from whoever granted
+    the connection, so the agent is the actor — on behalf of the bound principal
+    when there is one — and the read names the connection.
+    """
+    did = str(state.identity.did)
+    root = causal.root(
+        "agent",
+        did,
+        on_behalf_of=principal_of(causal.current(), did),
+        connection_id=instance,
+    )
+    return causal.bind(root)
+
+
 async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -> _Prepared | None:
     """Load, credential and review one connection. Any failure denies this one only."""
     state = ctx.state
@@ -384,13 +404,13 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
         # The credentials the operator connected this account with, read from the one
         # store every surface writes to. Absent, the connection is refused by name
         # rather than attached to serve verbs that answer 401.
-        secrets = await resolve_secrets(
-            loaded.manifest,
-            connection=instance,
-            store=ctx.secrets,
-            caller_did=state.identity.did,
-            include_sensitive=loaded.manifest.extension.attachment == "mcp",
-        )
+        with _attaching(state, instance):
+            secrets = await resolve_secrets(
+                loaded.manifest,
+                connection=instance,
+                store=ctx.secrets,
+                include_sensitive=loaded.manifest.extension.attachment == "mcp",
+            )
         # Sensitive values reach a native/cli attachment only through this handle,
         # fresh on every call and re-checked against the grant (P18-2).
         handle = (

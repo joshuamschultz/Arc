@@ -1242,7 +1242,7 @@ class Connections:
         """
         ref = SecretRef(connection=instance, field=refresh_field)
         if not tokens.access_token or tokens.expires_in <= 0:
-            await store.put(ref, tokens.refresh_token, caller_did=causal.actor_did())
+            await store.put(ref, tokens.refresh_token)
             return
         custody = await self._custody(sink)
         issued = self._clock()
@@ -1283,9 +1283,7 @@ class Connections:
 
     async def _read_secret(self, store: SecretStore, instance: str, field: str) -> str:
         """One connector secret's value, or empty when nothing is stored yet."""
-        found = await store.get(
-            SecretRef(connection=instance, field=field), caller_did=causal.actor_did()
-        )
+        found = await store.get(SecretRef(connection=instance, field=field))
         return found.reveal() if found is not None else ""
 
     @_on_connection
@@ -1419,7 +1417,6 @@ class Connections:
         for required in checks:
             result = await run_authorization_check(
                 required,
-                caller_did=causal.actor_did(),
                 audit_sink=sink,
                 tier=self._world.tier,
                 env=placed,
@@ -2124,7 +2121,7 @@ class Connections:
                 if not value:
                     continue
                 ref = SecretRef(connection=plan.instance, field=required.name)
-                await store.put(ref, value, caller_did=causal.actor_did())
+                await store.put(ref, value)
                 written.append(required.name)
         if written:
             await self._push_credential_change(plan.instance)
@@ -2477,7 +2474,6 @@ class Connections:
             plan.manifest,
             connection=plan.instance,
             store=custody.store,
-            caller_did=causal.actor_did(),
             include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
         return self._factory(
@@ -2516,7 +2512,7 @@ class Connections:
             value = ""
             if not declared.sensitive:
                 ref = SecretRef(connection=plan.instance, field=declared.name)
-                found = await store.get(ref, caller_did=causal.actor_did())
+                found = await store.get(ref)
                 value = found.reveal() if found is not None else ""
             rows.append(
                 SuppliedCredential(
@@ -2550,7 +2546,6 @@ class Connections:
                 plan.manifest,
                 connection=plan.instance,
                 store=await self._store(sink),
-                caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}

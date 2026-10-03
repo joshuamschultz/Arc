@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import shlex
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from arctrust import causal
 from arctrust.audit import AuditEvent
 
 from arcagent.core.tier import Tier
@@ -41,6 +43,13 @@ from arcagent.extension.host_login import (
 from arcagent.extension.manifest import HostRequirement
 
 _CALLER = "did:arc:test-caller"
+
+
+@pytest.fixture(autouse=True)
+def _bound_caller() -> Iterator[None]:
+    """The caller is the bound causal initiator; the store reads it from there (item 20)."""
+    with causal.bind(causal.root("operator", _CALLER)):
+        yield
 
 
 class _RecordingSink:
@@ -83,7 +92,6 @@ async def _check(
 ) -> AuthorizationCheck:
     return await run_authorization_check(
         requirement,
-        caller_did=_CALLER,
         audit_sink=sink,
         tier=Tier.PERSONAL,
         timeout=timeout,

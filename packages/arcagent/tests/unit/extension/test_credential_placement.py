@@ -308,7 +308,6 @@ async def test_the_sign_in_check_sees_the_placed_credential() -> None:
     sink = _RecordingSink()
     result = await run_authorization_check(
         _check_requirement(),
-        caller_did=_CALLER,
         audit_sink=sink,
         tier=Tier.PERSONAL,
         env={"ACME_TOKEN": Secret(_SENTINEL)},
@@ -320,7 +319,7 @@ async def test_the_sign_in_check_without_the_credential_reports_signed_out() -> 
     """The negative half: the check has to be able to fail, or it proves nothing."""
     sink = _RecordingSink()
     result = await run_authorization_check(
-        _check_requirement(), caller_did=_CALLER, audit_sink=sink, tier=Tier.PERSONAL, env={}
+        _check_requirement(), audit_sink=sink, tier=Tier.PERSONAL, env={}
     )
     assert result.known and not result.authorized
 
@@ -330,7 +329,6 @@ async def test_the_sign_in_check_audits_the_coordinate_and_never_the_value() -> 
     sink = _RecordingSink()
     await run_authorization_check(
         _check_requirement(),
-        caller_did=_CALLER,
         audit_sink=sink,
         tier=Tier.PERSONAL,
         env={"ACME_TOKEN": Secret(_SENTINEL)},

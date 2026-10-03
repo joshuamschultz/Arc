@@ -121,8 +121,8 @@ async def migrate_connector_secrets(
             details={"path": str(env_path)},
         )
     for key, ref in to_move.items():
-        await secret_store.put(ref, entries[key], caller_did=actor_did)
-    await _verify(to_move, entries, verify_store(), actor_did)
+        await secret_store.put(ref, entries[key])
+    await _verify(to_move, entries, verify_store())
     _delete(env_path)
     emit(
         AuditEvent(
@@ -151,10 +151,9 @@ async def _verify(
     moved: Mapping[str, SecretRef],
     entries: Mapping[str, str],
     store: SecretStore,
-    actor_did: str,
 ) -> None:
     for key, ref in moved.items():
-        found = await store.get(ref, caller_did=actor_did)
+        found = await store.get(ref)
         stored = found.reveal() if found is not None else ""
         if not hmac.compare_digest(stored.encode(), entries[key].encode()):
             raise ExtensionError(

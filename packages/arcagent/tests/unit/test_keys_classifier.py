@@ -12,10 +12,12 @@ an arbitrary env-var write and must still be refused.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import arcrun
 import pytest
+from arctrust import causal
 from arctrust.audit import AuditEvent
 
 from arcagent.core.errors import ExtensionError
@@ -24,6 +26,15 @@ from arcagent.modules.memory.config import MemoryConfig, MemoryPromotionConfig
 
 JEV_KEY = "TYPESAFE_API_KEY"
 CALLER = "did:arc:local:operator"
+
+
+@pytest.fixture(autouse=True)
+def _bound_caller() -> Iterator[None]:
+    """The caller is the bound causal initiator; the store reads it from there (item 20)."""
+    with causal.bind(causal.root("operator", CALLER)):
+        yield
+
+
 KEY_VALUE = "ts-live-do-not-leak-me-7a1b3c"
 
 
@@ -77,16 +88,16 @@ def test_model_provider_keys_still_carries_every_llm_provider() -> None:
 
 
 async def test_keystore_set_accepts_the_jev_key(env_file: Path) -> None:
-    await KeyStore(env_file).set(JEV_KEY, KEY_VALUE, caller_did=CALLER)
+    await KeyStore(env_file).set(JEV_KEY, KEY_VALUE)
 
     assert f"{JEV_KEY}=" in env_file.read_text()
 
 
 async def test_keystore_list_reports_jev_key_presence_without_a_value(env_file: Path) -> None:
     store = KeyStore(env_file)
-    before = {s.env_var: s.present for s in await store.list(caller_did=CALLER)}
-    await store.set(JEV_KEY, KEY_VALUE, caller_did=CALLER)
-    after = await store.list(caller_did=CALLER)
+    before = {s.env_var: s.present for s in await store.list()}
+    await store.set(JEV_KEY, KEY_VALUE)
+    after = await store.list()
 
     assert before[JEV_KEY] is False
     status = next(s for s in after if s.env_var == JEV_KEY)
@@ -96,7 +107,7 @@ async def test_keystore_list_reports_jev_key_presence_without_a_value(env_file: 
 
 async def test_keystore_set_of_the_jev_key_is_audited_without_the_value(env_file: Path) -> None:
     sink = RecordingSink()
-    await KeyStore(env_file, sink=sink).set(JEV_KEY, KEY_VALUE, caller_did=CALLER)
+    await KeyStore(env_file, sink=sink).set(JEV_KEY, KEY_VALUE)
 
     assert [event.action for event in sink.events] == ["provider_key.write"]
     event = sink.events[0]
@@ -109,9 +120,9 @@ async def test_keystore_set_of_the_jev_key_is_audited_without_the_value(env_file
 async def test_keystore_delete_of_the_jev_key_is_accepted_and_audited(env_file: Path) -> None:
     sink = RecordingSink()
     store = KeyStore(env_file, sink=sink)
-    await store.set(JEV_KEY, KEY_VALUE, caller_did=CALLER)
+    await store.set(JEV_KEY, KEY_VALUE)
 
-    assert await store.delete(JEV_KEY, caller_did=CALLER) is True
+    assert await store.delete(JEV_KEY) is True
     assert JEV_KEY not in env_file.read_text()
     assert [e.action for e in sink.events] == ["provider_key.write", "provider_key.delete"]
     for event in sink.events:
@@ -129,7 +140,7 @@ async def test_keystore_delete_of_the_jev_key_is_accepted_and_audited(env_file: 
 )
 async def test_keystore_still_refuses_an_undeclared_env_var(env_file: Path, env_var: str) -> None:
     with pytest.raises(ExtensionError) as excinfo:
-        await KeyStore(env_file).set(env_var, KEY_VALUE, caller_did=CALLER)
+        await KeyStore(env_file).set(env_var, KEY_VALUE)
 
     assert excinfo.value.code == "PROVIDER_KEY_UNKNOWN"
     assert not env_file.exists() or env_var not in env_file.read_text()
