@@ -756,7 +756,7 @@ def test_probe_http_failure_is_not_reachable() -> None:
 
 def test_describe_tools_covers_every_tool_with_timeouts() -> None:
     specs = {s.name: s for s in asyncio.run(_attachment(Wire()).describe_tools())}
-    assert len(specs) == 30
+    assert len(specs) == 35
     assert specs["google_gmail_attachment"].timeout_seconds == 120
     assert specs["google_gmail_message"].timeout_seconds == 60
     assert specs["google_gmail_labels"].timeout_seconds is None
