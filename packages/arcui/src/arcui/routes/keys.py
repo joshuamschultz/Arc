@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit, operator_audit_sink
+from arcui.audit import emit_mutation_audit, emit_read_audit, operator_audit_sink
 from arcui.routes.agent_detail.config_files import (
     BodyTooLargeError,
     _error,
@@ -67,6 +67,7 @@ async def get_keys(request: Request) -> JSONResponse:
     except arcagent.ExtensionError as exc:
         return _error(exc.message, 400)
 
+    emit_read_audit(request, target="provider_keys", operation="provider_key.list", outcome="ok")
     return JSONResponse(
         ProviderKeysResponse(
             keys=[

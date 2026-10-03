@@ -367,6 +367,10 @@ def emit_read_audit(
 _UI_ACTOR_DID = "did:arc:ui:operator"
 
 
+#: A read changes nothing, so it never appends to the signed chain.
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 def operator_audit_sink(request: Any) -> Any:
     """The chain arcagent components (key store, secret store, catalog) write into.
 
@@ -377,13 +381,18 @@ def operator_audit_sink(request: Any) -> Any:
     in the file the Observe ingest tails, which is what makes them visible on the
     Security screen.
 
+    A read request (GET/HEAD) gets a discarding sink: the chain records changes,
+    and the read itself is recorded by :func:`emit_read_audit` (log + OTel).
+
     Falls back to a discarding sink when no operator key exists, matching
     :func:`emit_mutation_audit`'s degrade rather than minting a signing authority.
     """
     from arctrust.audit import NullSink
 
     worm = getattr(request.app.state, "audit_worm", None)
-    return worm.sink if worm is not None else NullSink()
+    if worm is None or request.method in _READ_METHODS:
+        return NullSink()
+    return worm.sink
 
 
 def operator_actor_did(request: Any) -> str:

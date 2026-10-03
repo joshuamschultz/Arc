@@ -53,7 +53,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit, operator_audit_sink
+from arcui.audit import emit_mutation_audit, emit_read_audit, operator_audit_sink
 from arcui.connection_view import CardContext, connect_kind, load_card_context, probe_view
 from arcui.routes.agent_detail._common import _agent_did, _agent_root
 from arcui.routes.agent_detail.config_files import (
@@ -915,12 +915,15 @@ async def get_connector_auth_status(request: Request) -> JSONResponse:
 
     Readable by ``viewer``: it probes and names commands, never a credential.
     """
+    instance = request.path_params["instance"]
     try:
-        return _auth_status(
-            await _connections(request).authorization(request.path_params["instance"])
-        )
+        response = _auth_status(await _connections(request).authorization(instance))
     except ExtensionError as exc:
         return _refused(exc)
+    emit_read_audit(
+        request, target=f"connector:{instance}", operation="connector.auth_status", outcome="ok"
+    )
+    return response
 
 
 async def post_connector_authorize(request: Request) -> JSONResponse:

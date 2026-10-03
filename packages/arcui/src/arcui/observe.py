@@ -429,11 +429,16 @@ class Observe:
         agent: str | None = None,
         target: str | None = None,
         category: AuditFilter | None = None,
+        causal_filters: dict[str, str] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Newest-first ledger page; ``category`` narrows to denials or control actions."""
+        """Newest-first ledger page; ``category`` narrows to denials or control actions.
+
+        ``causal_filters`` maps a causal column (``run_id``, ``initiator``,
+        ``tool_call_id``, ...) to the value a row must carry.
+        """
         await self._ensure()
-        where: dict[str, Any] = {}
+        where: dict[str, Any] = dict(causal_filters or {})
         if agent:
             where["actor_did"] = agent
         if target:
@@ -451,6 +456,10 @@ class Observe:
             "audit_chain", where=where or None, order_by="ts DESC", limit=limit
         )
         return [_project_audit_event(r) for r in rows]
+
+    async def run_audit(self, run_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        """Every audit row whose causal chain names this run, newest first."""
+        return await self.audit(causal_filters={"run_id": run_id}, limit=limit)
 
     async def audit_totals(self) -> dict[str, int]:
         """Ledger-wide ``{total, verified, broken}`` — the summary counts the ledger."""
