@@ -273,21 +273,10 @@ class SessionRouter:
         """
         self._adapters[_adapter_key(adapter)] = adapter
         self._pairing.register_adapter(adapter.name, adapter)
-        set_disconnect_handler = getattr(adapter, "set_disconnect_handler", None)
-        if callable(set_disconnect_handler):
-            set_disconnect_handler(self.cancel_web_session)
 
     def set_adapter(self, adapter: BasePlatformAdapter) -> None:
         """Backwards-compatible alias for :meth:`register_adapter`."""
         self.register_adapter(adapter)
-
-    async def cancel_web_session(self, _chat_id: str, agent_did: str, user_did: str) -> None:
-        """Cancel a browser-only live run after its final socket disconnects."""
-        cancel_session = getattr(self._executor, "cancel_session", None)
-        if not callable(cancel_session):
-            return
-        session_key = self.current_session_key(agent_did, user_did)
-        await cancel_session(agent_did, session_key)
 
     async def send(self, target: DeliveryTarget, message: str, *, agent_did: str = "") -> None:
         """Deliver an unsolicited outbound message to ``target``'s platform.
