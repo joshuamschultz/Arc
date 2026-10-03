@@ -401,6 +401,26 @@ def next_health(
     return _with_transition(record, signal, patch)
 
 
+def restates_settled(record: ConnectionRecord, signal: HealthSignal) -> bool:
+    """True when a background credential failure only repeats the recorded terminal state.
+
+    The proactive renewer re-reports a dead or missing credential on every pass.
+    Writing that again changes nothing anyone reads (status, reason, action and
+    credential generation are already recorded) but bumps ``revision`` every
+    minute, so it is not written. A probe or an operator check is always recorded.
+    """
+    if signal.ok or signal.source != "credential" or signal.reason_code is None:
+        return False
+    if REASONS[signal.reason_code].kind == "counted":
+        return False
+    generation = signal.credential_generation
+    return (
+        record.status == REASONS[signal.reason_code].status
+        and record.reason_code == signal.reason_code
+        and (generation is None or generation == record.credential_generation)
+    )
+
+
 def _sticky_hold(record: ConnectionRecord, signal: HealthSignal) -> bool:
     """A changed tool contract is not fixed by the credential working."""
     return (
@@ -646,6 +666,8 @@ class ConnectionHealthAuthority:
         moment = now or datetime.now(UTC)
 
         def decide(record: ConnectionRecord) -> tuple[dict[str, Any], HealthTransition] | None:
+            if restates_settled(record, signal):
+                return None
             return next_health(record, signal, moment)
 
         transition = await self._store.cas_update(connection, decide, actor_did=signal.checked_by)
@@ -1062,4 +1084,5 @@ __all__ = [
     "parse_time",
     "probe_interval",
     "reason_text",
+    "restates_settled",
 ]
