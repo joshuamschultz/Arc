@@ -674,6 +674,23 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_auto_migration_requires_grant.py",
         "tests/journeys/test_journey_shared_knowledge.py",
     ),
+    # SPEC-035 OQ-3 (Josh, 2026-10-03): an operator's "Always allow" on a trifecta
+    # approval stands for that agent. A grant for combination A never satisfies a
+    # wider combination B; a grant for agent X never satisfies agent Y; a grant
+    # for destination D1 (or one verb) never covers D2 (or another verb, or an
+    # added recipient); a revoked grant prompts again on the next call; a forged,
+    # foreign-key, agent-self-signed, edited or unsigned grant row is ignored; a
+    # stored standing grant is refused at federal and never offered there; a
+    # viewer can neither grant nor revoke; an interactive grant never stands in
+    # for an automated driver.
+    "standing trifecta approvals — widened, travelling, revoked or forged grants": (
+        "packages/arctrust/tests/test_interactive_grant.py",
+        "packages/arcstore/tests/unit/test_standing_grants.py",
+        "packages/arcagent/tests/security/test_trifecta_repeat_prompts.py",
+        "packages/arcui/tests/test_standing_grants_route.py",
+        "packages/arccli/tests/test_approve_standing.py",
+        "tests/journeys/test_journey_always_allow.py",
+    ),
 }
 
 

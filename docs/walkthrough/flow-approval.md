@@ -79,7 +79,7 @@ rejected at the gate (ASI09 — human-agent trust exploitation).
 
 ## Scenario grants — approve automation once
 
-Interactive approvals are per-call. A recurring, non-interactive driver (a
+A plain interactive Approve is per-call. A recurring, non-interactive driver (a
 workflow, a schedule) would otherwise re-prompt forever. A **scenario grant**
 (`packages/arctrust/src/arctrust/policy.py:123`) binds five facts: `agent_did`,
 `tool_name`, `composition` (the frozenset of trifecta legs), `origin`, and
@@ -95,6 +95,39 @@ therefore matches no grant."* The rule is explicit at `policy.py:640` — if
 `origin is None or connection is None: return False`. So a standing grant approved
 for `schedule:nightly-ingest` cannot be replayed by a user's live chat turn.
 Self-approval is barred here too (`:642`).
+
+## "Always allow" — interactive standing grants
+
+A plain **Approve** stays one-shot. On 2026-10-03 an operator clicked Approve 103
+times for one chat, so the operator can now answer **Always allow** instead
+(SPEC-035 OQ-3). The choice is on the approval card in arcui and on the CLI as
+`arc approve <id> --always`. Both run `arcstore.standing_grants.approve_always`.
+It approves the waiting call and stores an operator-signed `ScenarioGrant` with
+`origin = "interactive"` in the arcstore `standing_grants` collection.
+
+The grant applies only to its scope. That scope is the agent DID, the leg
+composition, and the verb and destination of the egress it approved. For a
+connector tool, the destination is the connection id. Arc's own binding code
+supplies that id, not the model. `verify_interactive_grant` covers a later call
+by the same agent only in this case:
+
+- The session's legs plus the call's legs fit inside the composition.
+- Any egress that the call adds goes to the same destination through the same
+  verb.
+
+A new destination prompts again. So do another verb, an added recipient, a wider
+combination, or another agent. The agent's `HumanGate` reads the active rows
+fresh on every gate hit. It verifies each row and pins it to the deployment
+operator. It counts the use only while the row is still active. Each use is
+audited as `human_gate.standing_grant_used`, with the grant id and call hash.
+
+To revoke a grant, use the agent's **Policy** tab (Standing approvals) or
+`arc approve revoke <grant>`. The agent's next call prompts again. Federal tier
+never offers the button, and its gate refuses every stored standing grant.
+
+One click also covers the connection's own outbound gate (SPEC-062). That gate
+honours the trifecta gate's approval for the same call. A standing grant for the
+connection also satisfies it.
 
 ## Why it is built this way
 
