@@ -1164,6 +1164,8 @@ export interface ConnectorSecret {
    *  blank-warning text; on a connection's auth read it is non-empty only
    *  when the stored value IS blank. */
   warning?: string
+  /** True for the OAuth refresh token: Connect fills it in, so the form never asks for it. */
+  managed?: boolean
 }
 
 /** A binary (or similar) the bundle needs on this host. `satisfied` is this
@@ -1199,6 +1201,11 @@ export interface CatalogBundle {
   host_requires: HostRequirement[]
   tools: ConnectorTool[]
   root: string
+  /** False when Arc can never place this bundle's host program itself, so no Install
+   *  button is offered and the page says so plainly. */
+  auto_installable: boolean
+  /** The sign-in app a one-click connect uses; empty unless the bundle is OAuth. */
+  oauth_provider: string
 }
 
 /** A bundle on the search path whose manifest would not parse — surfaced
@@ -1238,6 +1245,9 @@ export interface ConnectorInstance {
   connect_kind: ConnectionConnectKind
   /** The OAuth provider behind a `connect_kind` of `oauth`; empty otherwise. */
   oauth_provider: string
+  /** A one-click connection whose sign-in app is not set up: the card's action opens
+   *  that form first. */
+  app_missing: boolean
   knowledge_sync: ConnectionKnowledgeSync[]
 }
 
@@ -1471,6 +1481,9 @@ export interface HostSetupResponse {
   installed: boolean
   detail: string
   manual_steps?: string
+  /** What to offer next as a code, never prose naming a command. `restart_arc` means
+   *  the program is placed but only a restarted Arc can see it; empty asks nothing. */
+  action?: string
 }
 
 /** Sign-in state of a connector that holds its own credentials (no declared

@@ -9,6 +9,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { HostSetupPanel } from '@/components/host-setup-panel'
+import { HostNeedsNote } from '@/components/host-needs-note'
+import { OAuthConnectPanel } from '@/components/oauth-connect-panel'
+import { useQueryClient } from '@tanstack/react-query'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useConnectorAuthorization, useInstallConnector, useReauthConnector } from '@/lib/queries'
 import type { ConnectorProbeResponse, ConnectorSecret } from '@/lib/types'
@@ -56,6 +59,7 @@ export function ConnectorSecretsSheet({
   // one actually runs.
   const install = useInstallConnector()
   const reauth = useReauthConnector(instance ?? '')
+  const queryClient = useQueryClient()
   const [name, setName] = useState(instance ?? '')
   const [values, setValues] = useState<Record<string, string>>({})
   const [granted, setGranted] = useState<string[]>([])
@@ -65,6 +69,8 @@ export function ConnectorSecretsSheet({
 
   const [okMsg, setOkMsg] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
+  // A one-click (OAuth) connection that was just added and now needs its Connect step.
+  const [connecting, setConnecting] = useState<string | null>(null)
   const rotating = instance !== undefined
   const busy = install.isPending || reauth.isPending || verifying
 
@@ -97,7 +103,11 @@ export function ConnectorSecretsSheet({
   const authNames = configured.data?.oauth
     ? new Set((configured.data.credentials ?? []).map((c) => c.name))
     : null
-  const fields = authNames ? bundle.secrets.filter((s) => authNames.has(s.name)) : bundle.secrets
+  // The catalog also marks the field Connect fills in (`managed`), so a fresh add form
+  // never shows a box the customer cannot meaningfully fill.
+  const fields = (
+    authNames ? bundle.secrets.filter((s) => authNames.has(s.name)) : bundle.secrets
+  ).filter((s) => !s.managed)
   const submitted = () => Object.fromEntries(fields.map((s) => [s.name, valueFor(s.name)]))
 
   // Only a field the server explicitly marks optional may stay blank; one that
@@ -111,6 +121,7 @@ export function ConnectorSecretsSheet({
     setError(null)
     setUnsatisfied([])
     setOkMsg(null)
+    setConnecting(null)
   }
 
   // Writing a credential and reporting nothing is what made a good save look
@@ -138,6 +149,8 @@ export function ConnectorSecretsSheet({
       setOkMsg('Saved. A live check could not be run right now.')
     } finally {
       setVerifying(false)
+      // The probe wrote the connection's stored status; the card must re-read it.
+      queryClient.invalidateQueries({ queryKey: ['connections'] })
     }
   }
 
@@ -181,7 +194,13 @@ export function ConnectorSecretsSheet({
         agents: granted,
         secrets: submitted(),
       },
-      { onSuccess: () => verify(newInstance), onError: fail },
+      {
+        // A one-click connection has nothing to probe until it is authorized: go straight
+        // into Connect instead of reporting that it "did not answer".
+        onSuccess: () =>
+          bundle.oauth_provider ? setConnecting(newInstance) : verify(newInstance),
+        onError: fail,
+      },
     )
   }
 
@@ -212,14 +231,37 @@ export function ConnectorSecretsSheet({
               {okMsg}
             </div>
           )}
-          {(unsatisfied.length > 0 || bundle.host_requires.length > 0) && (
-            <HostSetupPanel
-              extension={bundle.name}
-              requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
-              operatorMode={operatorMode}
-              blocking={unsatisfied.length > 0}
-            />
-          )}
+          {connecting !== null ? (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {connecting} is added. One more step: sign in to {bundle.display_name} so Arc can
+                use it.
+              </p>
+              <OAuthConnectPanel
+                instance={connecting}
+                provider={bundle.oauth_provider}
+                reconnect={false}
+                onDone={done}
+              />
+              <Button className="w-full" variant="ghost" onClick={done}>
+                Do this later
+              </Button>
+            </div>
+          ) : (
+            <>
+          {(unsatisfied.length > 0 || bundle.host_requires.length > 0) &&
+            (bundle.auto_installable ? (
+              <HostSetupPanel
+                extension={bundle.name}
+                requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
+                operatorMode={operatorMode}
+                blocking={unsatisfied.length > 0}
+              />
+            ) : (
+              <HostNeedsNote
+                requirements={unsatisfied.length > 0 ? unsatisfied : bundle.host_requires}
+              />
+            ))}
           {!rotating && (
             <div className="space-y-1.5">
               <label
@@ -334,12 +376,11 @@ export function ConnectorSecretsSheet({
               )}
             </div>
           ))}
-          {bundle.secrets.length === 0 && (
+          {fields.length === 0 && (
             <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-              There is nothing to type here. {bundle.display_name} keeps its own sign-in on this computer,
-              so Arc just points at it. Use{' '}
-              <span className="font-medium text-foreground">Sign in</span> on the connection row to
-              check or renew that sign-in.
+              {bundle.oauth_provider
+                ? `There is nothing to type here. After you add it, you sign in to ${bundle.display_name} with one click.`
+                : `There is nothing to type here. ${bundle.display_name} keeps its own sign-in on this computer, so Arc just points at it. Use Sign in on the connection row to check or renew that sign-in.`}
             </p>
           )}
           {okMsg ? (
@@ -350,6 +391,8 @@ export function ConnectorSecretsSheet({
             <Button className="w-full" disabled={!canSubmit} onClick={submit}>
               {busy ? 'Working…' : rotating ? 'Replace credentials' : 'Connect'}
             </Button>
+          )}
+            </>
           )}
         </div>
       </SheetContent>

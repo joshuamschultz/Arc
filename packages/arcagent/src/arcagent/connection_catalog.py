@@ -20,11 +20,13 @@ from arcagent.extension.catalog import (
 )
 from arcagent.extension.manifest import (
     DeclaredTool,
+    ExtensionManifest,
     HostRequirement,
     OAuthFlow,
     SecretRequirement,
     load_manifest,
 )
+from arcagent.extension.platforms import host_platform
 
 
 class ClosableSink(Protocol):
@@ -94,6 +96,10 @@ class CatalogEntry:
     oauth_console_url: str = ""
     #: The whole ``[oauth]`` flow, for surfaces that set its app slot up (tenant, clouds).
     oauth_flow: OAuthFlow | None = None
+    #: True when the bundle pins a single binary Arc can place on THIS host. False for a
+    #: bundle with no pin, a pin for another platform, or a tarball with no ``member`` (an
+    #: npm package): an install button for those can never succeed, so a surface hides it.
+    auto_installable: bool = False
 
 
 def catalog(
@@ -157,7 +163,16 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         oauth_provider=manifest.oauth.provider if manifest.oauth is not None else "",
         oauth_console_url=(manifest.oauth.console_url or "") if manifest.oauth is not None else "",
         oauth_flow=manifest.oauth,
+        auto_installable=_places_a_binary_here(manifest),
     )
+
+
+def _places_a_binary_here(manifest: ExtensionManifest) -> bool:
+    """True when ``[artifact]`` names an executable member for this host's platform."""
+    if manifest.artifact is None:
+        return False
+    build = manifest.artifact.for_host(host_platform())
+    return build is not None and bool(build.member)
 
 
 __all__ = ["AuditChain", "CatalogEntry", "ClosableSink", "catalog"]

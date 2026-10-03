@@ -78,6 +78,7 @@ class _Provider:
         self.tool_text = ""
         self.delay = 0.0
         self.build_error: Exception | None = None
+        self.extra_tools: list[str] = []
 
 
 class _Attachment:
@@ -97,7 +98,10 @@ class _Attachment:
         )
 
     async def describe_tools(self) -> list[ToolSpec]:
-        return [ToolSpec(name="x_ping", description="Ping Acme.")]
+        extra = [
+            ToolSpec(name=name, description="Added later.") for name in self._provider.extra_tools
+        ]
+        return [ToolSpec(name="x_ping", description="Ping Acme."), *extra]
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         self._provider.invoked.append((tool, args))
@@ -362,3 +366,69 @@ async def test_a_dead_arc_held_credential_is_not_probed_until_its_generation_cha
 
     assert provider.probe_calls > calls_after_first
     assert (after_reconnect.status, after_reconnect.credential_generation) == ("healthy", 4)
+
+
+async def test_reconnect_reviews_the_contract_so_the_approve_step_shows_in_the_same_visit(
+    tmp_path: Path, provider: _Provider
+) -> None:
+    """D4 bug 2: a tool added while the credential was dead is asked about right after Reconnect."""
+    world = _world(tmp_path, provider, '[health]\nprobe = "attachment"')
+    await world.install()
+    provider.extra_tools = ["x_new"]
+    plan = world.connections.plan(_EXTENSION, _INSTANCE)
+
+    await world.connections.reauth(plan, {"api_token": "tok-2"})
+
+    record = await world.record()
+    assert (record.status, record.action, record.reason_code) == (
+        "needs_you",
+        "approve",
+        "contract_changed",
+    )
+    # Abuse case: signing in again is never an approval. The new verb stays uncallable.
+    from arcagent.extension.contract_ledger import ToolContractLedger
+
+    ledger = ToolContractLedger(
+        ConnectionStateStore(world.backend), connection=_INSTANCE, sink=world.sink
+    )
+    served = await _Attachment(provider).describe_tools()
+    assert [s.name for s in await ledger.callable_tools(served)] == ["x_ping"]
+
+
+async def test_reconnect_with_an_unchanged_contract_ends_healthy(
+    tmp_path: Path, provider: _Provider
+) -> None:
+    world = _world(tmp_path, provider, '[health]\nprobe = "attachment"')
+    await world.install()
+    plan = world.connections.plan(_EXTENSION, _INSTANCE)
+
+    await world.connections.reauth(plan, {"api_token": "tok-2"})
+
+    assert (await world.record()).status == "healthy"
+
+
+async def test_an_installed_binary_arc_cannot_see_yet_is_a_restart_action_not_a_path_lesson(
+    tmp_path: Path, provider: _Provider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """J-H3: the answer is a code the UI renders, and a plain sentence with no PATH edit."""
+    from arcagent import connections as connections_module
+
+    world = _world(tmp_path, provider, '[health]\nprobe = "attachment"')
+    await world.install()
+    manifest = world.connections.world.extension_roots[0] / _EXTENSION / "extension.toml"
+    manifest.write_text(
+        manifest.read_text() + _HOST.replace("acmecli", "definitely-not-on-path-1")
+    )
+
+    async def placed(*_args: Any, **_kwargs: Any) -> Path:
+        return tmp_path / "bin" / "definitely-not-on-path-1"
+
+    monkeypatch.setattr(connections_module, "install_pinned_binary", placed)
+    plan = world.connections.plan(_EXTENSION, _INSTANCE)
+
+    with world.connections._audit.open() as sink:
+        report = await world.connections._install_host(object(), plan, "", sink)  # type: ignore[arg-type] # reason: the pin is only forwarded to the stubbed installer
+
+    assert report.installed is False
+    assert report.action == "restart_arc"
+    assert "PATH" not in report.detail

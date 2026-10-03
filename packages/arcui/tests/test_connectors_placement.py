@@ -372,6 +372,7 @@ def test_the_web_never_learns_that_a_placement_exists(world: Path) -> None:
             "choices": [],
             "default": "",
             "warning": "",
+            "managed": False,
         }
     ]
     assert "placement" not in str(body)

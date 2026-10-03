@@ -906,6 +906,9 @@ class ConnectorSecretField(BaseModel):
     #: Catalog: the bundle's warning for leaving this field blank. A connected
     #: instance: the same text, present only while the stored value IS blank.
     warning: str = ""
+    #: True for the OAuth refresh token: Connect fills it in, so a form never asks a person
+    #: to type it.
+    managed: bool = False
 
 
 class ConnectorHostRequirement(BaseModel):
@@ -955,6 +958,12 @@ class ConnectorCatalogEntry(BaseModel):
     host_requires: list[ConnectorHostRequirement]
     tools: list[ConnectorTool]
     root: str
+    #: True when Arc can place this bundle's host program itself on this machine. False
+    #: means an Install button could never succeed, so the page hides it.
+    auto_installable: bool = False
+    #: The deployment sign-in app a one-click connect uses ("" when the bundle is not OAuth).
+    #: Non-empty means: after adding it, go straight into Connect.
+    oauth_provider: str = ""
 
 
 class ConnectorUnreadableBundle(BaseModel):
@@ -1033,6 +1042,9 @@ class ConnectionHealthView(BaseModel):
     last_checked_at: str | None = None
     last_success_at: str | None = None
     last_notice: LastNoticeView | None = None
+    #: True for a one-click connection whose deployment sign-in app is not set up yet:
+    #: nothing can connect until it is, so the card's action opens that form first.
+    app_missing: bool = False
 
 
 class ConnectorInstance(ConnectionHealthView):
@@ -1268,6 +1280,9 @@ class ConnectorHostSetupResponse(BaseModel):
     installed: bool
     detail: str
     manual_steps: str
+    #: What the page should offer next, as a code rather than prose naming a command.
+    #: ``""`` asks nothing; ``restart_arc`` means the program is placed but Arc must restart.
+    action: str = ""
 
 
 class ConnectorAuthorizationResponse(BaseModel):

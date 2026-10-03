@@ -505,6 +505,7 @@ def test_catalog_lists_a_readable_bundle(world: Path, monkeypatch: pytest.Monkey
             "choices": [],
             "default": "",
             "warning": "",
+            "managed": False,
         }
     ]
     assert entry["root"] == str(fleet)

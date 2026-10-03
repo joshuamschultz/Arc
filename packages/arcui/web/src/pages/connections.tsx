@@ -22,6 +22,7 @@ import { OAuthConnectPanel } from '@/components/oauth-connect-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { AddMcpServerDialog } from '@/components/add-mcp-server-dialog'
 import { HostRequirementLine } from '@/components/host-setup-panel'
+import { HostNeedsNote } from '@/components/host-needs-note'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -229,16 +230,26 @@ function ConnectionCard({
   }, [focused])
 
   const busy = probe.isPending || approve.isPending || remove.isPending
-  // No declared secrets means the host binary holds the credential: there is
-  // nothing to type, so there is no key form to open.
-  const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
+  // Nothing a person can type (no declared field, or only the one Connect fills in)
+  // means there is no key form to open.
+  const holdsOwnLogin =
+    bundle !== undefined && bundle.secrets.filter((secret) => !secret.managed).length === 0
   const kind = inst.connect_kind
   const reauthLabel = kind === 'oauth' ? 'Edit details' : 'Re-auth'
   const togglePanel = (next: Exclude<OpenPanel, null>) =>
     setPanel((current) => (current === next ? null : next))
 
+  // Reconnect goes where the customer can finish it. A token connection (GitHub,
+  // Slack, S3, Postgres, 1Password, Composio) is repaired by pasting a new token into
+  // the re-auth form that stores it; only a host login has a sign-in panel, and only
+  // OAuth has Connect. A connection with nothing to sign in to shows the doctor.
+  const reconnect = () => {
+    if (kind === 'token' && bundle) return onReauth(bundle, inst.instance)
+    return togglePanel(kind === 'oauth' || kind === 'host_login' ? 'auth' : 'doctor')
+  }
+
   const primaryClick: Partial<Record<ConnectionAction, () => void>> = {
-    reconnect: () => togglePanel('auth'),
+    reconnect,
     approve: () => approve.mutate(),
     install_host: () => togglePanel('doctor'),
   }
@@ -535,7 +546,11 @@ export function BundleCard({
       </p>
       {bundle.host_requires.length > 0 && (
         <div className="mt-2">
-          <HostRequirementLine requirements={bundle.host_requires} />
+          {bundle.auto_installable ? (
+            <HostRequirementLine requirements={bundle.host_requires} />
+          ) : (
+            <HostNeedsNote requirements={bundle.host_requires} />
+          )}
         </div>
       )}
       <div className="mt-3 pt-1">

@@ -621,6 +621,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_mcp_server_routes.py",
         "packages/arccli/tests/test_cli_connector_add_mcp.py",
     ),
+    # Connection-card truth (alpha-2 UJ-0, D4): a tool the upstream added while the
+    # credential was dead, or that nobody approved, stays uncallable; a reconnect is never
+    # an approval; the card asks for the approval in the same visit.
+    "connector rug-pull: new tools stay uncallable and the card asks (alpha-2 D4)": (
+        "packages/arcagent/tests/unit/modules/connectors/test_contract_card.py",
+        "packages/arcagent/tests/unit/test_check_health.py",
+    ),
     # P12: a hostname judged safe when the operator added the server can be re-pointed
     # afterwards (DNS rebinding). The http client resolves the host itself on every
     # connect, judges EVERY address (link-local, metadata, multicast, unspecified always;
