@@ -15,9 +15,13 @@ import hashlib
 import json
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
+
+import httpx
 
 from arcagent.extension.oauth import TokenPost
 
@@ -51,6 +55,9 @@ class FakeOAuthProvider:
     refreshes: int = 0
     revoked: set[str] = field(default_factory=set)
     issued_access: list[str] = field(default_factory=list)
+    #: When set, each access token's expiry is tracked so a resource fake can 401 it.
+    clock: Callable[[], datetime] | None = None
+    expiry: dict[str, datetime] = field(default_factory=dict)
     _codes: dict[str, _Consent] = field(default_factory=dict)
     _refresh: dict[str, tuple[str, str]] = field(default_factory=dict)  # rt -> (email, scope)
 
@@ -135,7 +142,16 @@ class FakeOAuthProvider:
     def _access(self, scope: str) -> dict[str, Any]:
         access = "ya29." + secrets.token_urlsafe(24)
         self.issued_access.append(access)
+        self.expiry[access] = self._now() + timedelta(seconds=self.access_lifetime)
         return {"access_token": access, "expires_in": self.access_lifetime, "scope": scope}
+
+    def _now(self) -> datetime:
+        return self.clock() if self.clock is not None else datetime.now(UTC)
+
+    def access_valid(self, token: str) -> bool:
+        """True for an unexpired access token this provider issued."""
+        expires = self.expiry.get(token)
+        return expires is not None and expires > self._now()
 
     def revoke_all(self) -> None:
         """The account owner removed the app: every refresh token is dead."""
@@ -158,4 +174,82 @@ class FakeOAuthProvider:
         return [*self._refresh, *self.revoked, *self.issued_access]
 
 
-__all__ = ["GOOGLE_ISSUER", "FakeOAuthProvider"]
+class FakeGmail:
+    """Gmail REST over ``httpx.MockTransport``: profile, labels, messages, history.
+
+    Every request must carry a bearer the provider issued and has not expired;
+    anything else answers 401, exactly as Google does.
+    """
+
+    def __init__(self, provider: FakeOAuthProvider, *, email: str) -> None:
+        self.provider = provider
+        self.email = email
+        self.calls = 0
+        self.rejected = 0
+        self.messages: dict[str, dict[str, Any]] = {}
+        self.history_id = 100
+        self.history: list[dict[str, Any]] = []
+
+    def add_message(self, message_id: str, *, subject: str, body: str) -> None:
+        self.history_id += 1
+        encoded = base64.urlsafe_b64encode(body.encode()).rstrip(b"=").decode()
+        self.messages[message_id] = {
+            "id": message_id,
+            "threadId": f"t-{message_id}",
+            "labelIds": ["INBOX"],
+            "snippet": body[:40],
+            "historyId": str(self.history_id),
+            "internalDate": "1790000000000",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    {"name": "Subject", "value": subject},
+                    {"name": "From", "value": "ann@example.com"},
+                    {"name": "Date", "value": "Fri, 2 Oct 2026 10:00:00 +0000"},
+                ],
+                "body": {"size": len(body), "data": encoded},
+            },
+        }
+        self.history.append(
+            {
+                "id": str(self.history_id),
+                "messagesAdded": [{"message": {"id": message_id, "threadId": f"t-{message_id}"}}],
+            }
+        )
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if not self.provider.access_valid(bearer):
+            self.rejected += 1
+            return httpx.Response(401, json={"error": {"code": 401, "status": "UNAUTHENTICATED"}})
+        path = request.url.path.removeprefix("/gmail/v1/users/me")
+        if path == "/history":
+            since = int(request.url.params.get("startHistoryId") or 0)
+            changes = [entry for entry in self.history if int(entry["id"]) > since]
+            return httpx.Response(
+                200, json={"history": changes, "historyId": str(self.history_id)}
+            )
+        return self._route(path)
+
+    def _route(self, path: str) -> httpx.Response:
+        if path == "/profile":
+            return httpx.Response(
+                200, json={"emailAddress": self.email, "historyId": str(self.history_id)}
+            )
+        if path == "/labels":
+            return httpx.Response(200, json={"labels": [{"id": "INBOX", "name": "INBOX"}]})
+        if path == "/messages":
+            listed = [{"id": key, "threadId": f"t-{key}"} for key in sorted(self.messages)]
+            return httpx.Response(
+                200, json={"messages": listed, "resultSizeEstimate": len(listed)}
+            )
+        if path.startswith("/messages/") and path.rsplit("/", 1)[-1] in self.messages:
+            return httpx.Response(200, json=self.messages[path.rsplit("/", 1)[-1]])
+        return httpx.Response(404, json={"error": {"code": 404, "status": "NOT_FOUND"}})
+
+
+__all__ = ["GOOGLE_ISSUER", "FakeGmail", "FakeOAuthProvider"]

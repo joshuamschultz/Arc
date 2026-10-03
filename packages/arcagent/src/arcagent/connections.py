@@ -1713,7 +1713,11 @@ class Connections:
                 audit_sink=sink,
                 trusted_public_key=self._pinned_key(),
             )
-        await self._operator_check(plan.instance)
+        if plan.manifest.oauth is None:
+            # A one-click connector holds no grant until Connect; complete_oauth runs
+            # its first check. Checking now would page the operator about a step
+            # they are about to take.
+            await self._operator_check(plan.instance)
         return report
 
     async def preview_mcp_server(

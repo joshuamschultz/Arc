@@ -297,3 +297,70 @@ async def test_a_redirect_changed_since_begin_is_refused(world: World, tmp_path:
         await world.connections.complete_oauth(session_id="op", state=begun.state, code=code)
     assert caught.value.code == "OAUTH_STATE_INVALID"
     assert not world.provider.posts
+
+
+def _planner(world: World, owner: str) -> Any:
+    from arcagent.extension.connection_health import StoreHealthReporter
+    from arcagent.extension.credentials import RenewalPlanner
+    from arcagent.extension.oauth import refresh_access_token
+    from arcagent.extension.state import ConnectionStateStore
+
+    async def opener() -> FakeBackend:
+        return world.backend
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    return RenewalPlanner(
+        rows=CredentialRowStore(world.backend, make_cipher()),
+        refresh=lambda request: refresh_access_token(request, post=world.provider.post),
+        health=StoreHealthReporter(opener),
+        owner_id=owner,
+        client=OAuthAppStore(world.backend, make_cipher()).client_for,
+        state=ConnectionStateStore(world.backend),
+        sleep=no_sleep,
+    )
+
+
+async def _flow(world: World) -> Any:
+    return world.connections.plan_for(INSTANCE).manifest.oauth
+
+
+async def test_refresh_keeps_a_non_rotating_token_and_persists_a_rotated_one(
+    world: World,
+) -> None:
+    await world.connect()
+    first = await world.field("refresh_token")
+    assert await _planner(world, "p").ensure_fresh(INSTANCE, flow=await _flow(world), force=True)
+    assert await world.field("refresh_token") == first, "Google does not rotate"
+
+    world.provider.rotate_refresh = True
+    assert await _planner(world, "p").ensure_fresh(INSTANCE, flow=await _flow(world), force=True)
+    rotated = await world.field("refresh_token")
+    assert rotated != first and first in world.provider.revoked
+    assert await _planner(world, "q").ensure_fresh(INSTANCE, flow=await _flow(world), force=True)
+    assert await world.field("refresh_token") not in (first, rotated)
+
+
+async def test_invalid_grant_sets_needs_you_once_and_stops_calling(world: World) -> None:
+    from arcagent.extension.credentials import CredentialRenewalError
+
+    await world.connect()
+    world.provider.revoke_all()
+    with pytest.raises(CredentialRenewalError) as caught:
+        await _planner(world, "p").ensure_fresh(INSTANCE, flow=await _flow(world), force=True)
+    assert caught.value.error_code == "invalid_grant"
+    records = await world.connections.health_records()
+    assert records[INSTANCE].status == "needs_you"
+    notices = records[INSTANCE].notice_seq
+    posts = len(world.provider.posts)
+    for owner in ("p", "q", "restarted"):
+        with pytest.raises(CredentialRenewalError):
+            await _planner(world, owner).ensure_fresh(
+                INSTANCE, flow=await _flow(world), force=True
+            )
+    assert len(world.provider.posts) == posts, "a dead refresh token was presented again"
+    records = await world.connections.health_records()
+    assert records[INSTANCE].notice_seq == notices, "the operator was told more than once"
+    record = await world.connect()
+    assert record.status == "healthy", "reconnecting clears it"
