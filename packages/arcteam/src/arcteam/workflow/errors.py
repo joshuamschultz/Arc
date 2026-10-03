@@ -66,6 +66,10 @@ class PlaceholderOwnerError(WorkflowError):
         super().__init__(
             f"workflow {workflow_id!r} is still owned by the template placeholder {owner!r}, "
             f"which no agent answers to; node(s) {', '.join(node_ids)} would wait on nobody. "
+            "Pick a real agent as the owner, or as the agent for the node(s) named."
+        )
+        #: Command-line wording for the same fix. A terminal may print it; a page never does.
+        self.cli_hint = (
             f"Set a real owner with `arc workflow edit {workflow_id} --owner @<agent>` "
             f"(add `--node <id>` to set one node's agent instead), or re-create it with "
             f"`arc workflow new {workflow_id} --from <template> --owner @<agent>`."

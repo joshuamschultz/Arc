@@ -38,7 +38,7 @@ export function AgentsPage() {
             <EmptyState
               icon={<Boxes className="size-7" />}
               title="No agents registered"
-              description="Register an agent with `arc team register` and restart the UI to see it here."
+              description="Agents appear here once they are set up and registered with this team."
             />
           }
         >

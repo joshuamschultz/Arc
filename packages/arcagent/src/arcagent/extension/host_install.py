@@ -101,6 +101,10 @@ _REFUSED = "HOST_INSTALL_REFUSED"
 _BINARY_REFUSED = "HOST_BINARY_REFUSED"
 
 
+#: The refusal reason a federal deployment gets for a digest nobody approved.
+FEDERAL_NOT_ALLOWLISTED = "federal_not_allowlisted"
+
+
 def host_install_dir() -> Path:
     """Where a verified host binary lands: the operator's own ``~/.local/bin``.
 
@@ -283,7 +287,7 @@ async def install_pinned_binary(
             caller_did=caller_did,
             sink=audit_sink,
             tier=tier,
-            reason="federal_not_allowlisted",
+            reason=FEDERAL_NOT_ALLOWLISTED,
             expected="a digest on the signed allowlist",
             actual=build.sha256,
             message=(
@@ -466,6 +470,11 @@ def _place(body: bytes, install_dir: Path, name: str) -> Path:
     path.write_bytes(body)
     path.chmod(_BINARY_MODE)
     return path
+
+
+def installer_can_place(build: PlatformArtifact) -> bool:
+    """True when the installer can place this build: a member binary or an npm tarball."""
+    return bool(build.member) or _is_npm_tarball(build.url)
 
 
 def _is_npm_tarball(url: str) -> bool:
@@ -761,12 +770,14 @@ async def https_get(url: str) -> bytes:
 
 
 __all__ = [
+    "FEDERAL_NOT_ALLOWLISTED",
     "Fetcher",
     "NpmRunner",
     "host_install_dir",
     "host_tools_dir",
     "https_get",
     "install_pinned_binary",
+    "installer_can_place",
     "recorded_install_path",
     "run_npm",
     "verified_install_path",

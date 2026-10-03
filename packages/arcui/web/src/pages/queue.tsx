@@ -43,8 +43,7 @@ function NamedOperatorPrompt() {
       <p className="text-sm text-muted-foreground">
         You are connected with the shared operator token, which names no one. Queue changes
         are recorded against a person, so they need an operator account. If none exists yet,
-        run <code className="rounded bg-muted px-1 py-0.5 text-xs">arc user add you@example.com</code> on
-        the server first.
+        ask the person who set up this computer to create one first.
       </p>
       <Button size="sm" onClick={signInWithAccount}>Sign in with an account</Button>
     </section>

@@ -78,15 +78,20 @@ class OperatorNoticeRelay:
 
     def __init__(self) -> None:
         self._agents: Callable[[], Sequence[Any]] | None = None
-        self._public_base_url = ""
+        self._public_base_url: Callable[[], str | None] = lambda: None
 
     def bind(self, agents: Callable[[], Sequence[Any]]) -> None:
         """Name where the live agents come from. Re-binding replaces the source."""
         self._agents = agents
 
-    def bind_public_base_url(self, url: str | None) -> None:
-        """Name the operator-configured public ArcUI origin; ``None`` drops the links."""
-        self._public_base_url = (url or "").rstrip("/")
+    def bind_public_base_url(self, resolver: Callable[[], str | None]) -> None:
+        """Name where the operator's public ArcUI origin is read from, at send time.
+
+        A resolver rather than a value: the operator can change the address in Settings
+        while Arc runs, and the next notice must carry the new one. ``None`` drops the
+        links.
+        """
+        self._public_base_url = resolver
 
     async def notify(
         self, text: str, idempotency_key: str, link_path: str | None = None
@@ -99,8 +104,9 @@ class OperatorNoticeRelay:
         """
         if self._agents is None:
             return None
-        if link_path and self._public_base_url:
-            text = f"{text} {self._public_base_url}{link_path}"
+        base = (self._public_base_url() or "").rstrip("/")
+        if link_path and base:
+            text = f"{text} {base}{link_path}"
         for agent in self._agents():
             try:
                 channel = await agent.notify_operator(text, idempotency_key=idempotency_key)

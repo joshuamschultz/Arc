@@ -34,6 +34,7 @@ from arctrust import causal
 from arctrust.audit import NullSink
 
 from arcui.identity import resolve_agent_did
+from arcui.public_address import public_base_url_now
 
 logger = logging.getLogger("arcui.connection_health")
 
@@ -65,7 +66,7 @@ class ConnectionHealthMonitor:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         initial_delay_seconds: float = DEFAULT_INITIAL_DELAY_SECONDS,
         probe_concurrency: int = 4,
-        ui_base: str = "",
+        ui_base: Callable[[], str] = lambda: "",
     ) -> None:
         self._connections_factory = connections_factory
         self._store_opener = store_opener
@@ -115,7 +116,7 @@ class ConnectionHealthMonitor:
         due = await authority.claim_due_checks(now)
         await asyncio.gather(*(self._check(connections, authority, r.connection) for r in due))
         await authority.dispatch_notices(
-            self._deliver, owner=self._owner, now=self._clock(), ui_base=self._ui_base
+            self._deliver, owner=self._owner, now=self._clock(), ui_base=self._ui_base()
         )
 
     async def _run(self) -> None:
@@ -222,7 +223,6 @@ def build_connection_health_monitor(
         return None
     worm = getattr(app.state, "audit_worm", None)
     sink = worm.sink if worm is not None else NullSink()
-    ui_base = str(getattr(app.state, "public_base_url", "") or "")
 
     async def open_backend() -> Any:
         return backend
@@ -243,7 +243,7 @@ def build_connection_health_monitor(
         fallback_agents=lambda: embedded_agents(app),
         sink=sink,
         initial_delay_seconds=initial_delay_seconds,
-        ui_base=ui_base,
+        ui_base=lambda: public_base_url_now(app),
     )
 
 

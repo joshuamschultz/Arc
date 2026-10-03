@@ -649,10 +649,7 @@ async def _call_cipher(
 
 def _cipher_mismatch(sealed_by: str, current: str) -> str:
     if sealed_by == "xc1" and current == "transit1":
-        return (
-            "it is still sealed under the in-process key; run "
-            "`arc connector migrate-secrets --reseal` to move it into the vault"
-        )
+        return "it is still sealed under the in-process key and has to be moved into the vault"
     return "it was sealed by a different cipher"
 
 

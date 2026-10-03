@@ -26,7 +26,7 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .errors import GateNotAuthorizedError, WorkflowError
+from .errors import GateNotAuthorizedError, PlaceholderOwnerError, WorkflowError
 from .runner import TEST_RUN_MAX_COST_USD, NodeRetryRefusedError, WorkflowRunner
 from .runner_contracts import (
     BundleSpec,
@@ -73,6 +73,14 @@ class OperationIssue:
     error: str
     observed: Any = None
     admissible: tuple[str, ...] = ()
+    #: Command-line wording for the fix. A terminal may print it; a page never does.
+    cli_hint: str = ""
+
+
+def _refusal_issue(exc: Exception) -> OperationIssue:
+    """A refused run as an issue, carrying the command hint the error holds (if any)."""
+    hint = exc.cli_hint if isinstance(exc, PlaceholderOwnerError) else ""
+    return OperationIssue(None, None, str(exc), cli_hint=hint)
 
 
 @dataclass(frozen=True)
@@ -309,7 +317,7 @@ class WorkflowControlPlane:
                 _Operation("workflow.test_run", workflow_id, "refused", {"error": str(exc)}),
                 actor_did,
             )
-            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+            return ControlPlaneResult(ok=False, errors=(_refusal_issue(exc),))
         self._emit(
             _Operation(
                 "workflow.test_run",
@@ -353,7 +361,7 @@ class WorkflowControlPlane:
                 _Operation("workflow.run.started", workflow_id, "refused", {"error": str(exc)}),
                 actor_did,
             )
-            return ControlPlaneResult(ok=False, errors=(OperationIssue(None, None, str(exc)),))
+            return ControlPlaneResult(ok=False, errors=(_refusal_issue(exc),))
         self._emit(
             _Operation(
                 "workflow.run.started",

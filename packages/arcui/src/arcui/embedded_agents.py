@@ -144,8 +144,10 @@ def install_embedded_agent_hooks(app: Any, *, cache_maxsize: int = _DEFAULT_CACH
     # Workflow failure notices reach the operator through a live agent.
     from arcgateway.workflow_runner_host import OPERATOR_NOTICES
 
+    from arcui.public_address import public_base_url_now
+
     OPERATOR_NOTICES.bind(cache.values)
-    OPERATOR_NOTICES.bind_public_base_url(getattr(app.state, "public_base_url", None))
+    OPERATOR_NOTICES.bind_public_base_url(lambda: public_base_url_now(app))
 
 
 def adopt_agent(app: Any, agent_did: str, agent: Any) -> None:

@@ -18,6 +18,7 @@ from arcagent.extension.catalog import (
     ExtensionCatalog,
     ExtensionResolution,
 )
+from arcagent.extension.host_install import installer_can_place
 from arcagent.extension.manifest import (
     DeclaredTool,
     ExtensionManifest,
@@ -96,9 +97,9 @@ class CatalogEntry:
     oauth_console_url: str = ""
     #: The whole ``[oauth]`` flow, for surfaces that set its app slot up (tenant, clouds).
     oauth_flow: OAuthFlow | None = None
-    #: True when the bundle pins a single binary Arc can place on THIS host. False for a
-    #: bundle with no pin, a pin for another platform, or a tarball with no ``member`` (an
-    #: npm package): an install button for those can never succeed, so a surface hides it.
+    #: True when the bundle pins a build the host installer can place on THIS host: a member
+    #: binary or an npm tarball. False for a bundle with no pin or a pin for another platform;
+    #: an install button for those can never succeed, so a surface hides it.
     auto_installable: bool = False
 
 
@@ -168,11 +169,11 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
 
 
 def _places_a_binary_here(manifest: ExtensionManifest) -> bool:
-    """True when ``[artifact]`` names an executable member for this host's platform."""
+    """True when ``[artifact]`` pins a build the host installer can place on this platform."""
     if manifest.artifact is None:
         return False
     build = manifest.artifact.for_host(host_platform())
-    return build is not None and bool(build.member)
+    return build is not None and installer_can_place(build)
 
 
 __all__ = ["AuditChain", "CatalogEntry", "ClosableSink", "catalog"]

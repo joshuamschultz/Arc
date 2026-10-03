@@ -1,4 +1,5 @@
 import { CheckCircle2, Download, LoaderCircle, TriangleAlert } from 'lucide-react'
+import { ActionPrompt } from '@/components/action-prompt'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api'
 import { useHostSetup } from '@/lib/queries'
@@ -147,7 +148,7 @@ export function HostSetupPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         {operatorMode ? (
-          <Button size="sm" disabled={setup.isPending} onClick={() => setup.mutate()}>
+          result?.action === 'ask_administrator' ? null : <Button size="sm" disabled={setup.isPending} onClick={() => setup.mutate()}>
             <Download /> {setup.isPending ? 'Installing…' : 'Install on this computer'}
           </Button>
         ) : (
@@ -163,6 +164,7 @@ export function HostSetupPanel({
           {failedDetail}
         </p>
       )}
+      {operatorMode && <ActionPrompt code={result?.action} />}
     </div>
   )
 }

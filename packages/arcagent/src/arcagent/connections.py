@@ -110,7 +110,11 @@ from arcagent.extension.grants import (
     ConnectionRegistry,
 )
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
-from arcagent.extension.host_install import host_install_dir, install_pinned_binary
+from arcagent.extension.host_install import (
+    FEDERAL_NOT_ALLOWLISTED,
+    host_install_dir,
+    install_pinned_binary,
+)
 from arcagent.extension.host_login import run_authorization_check, run_token_login
 from arcagent.extension.manifest import (
     ArtifactPin,
@@ -698,7 +702,8 @@ class HostSetupReport:
     manual_steps: str = ""
     #: A code a surface renders as a button, never prose naming a command. ``""`` means
     #: nothing is asked of the person; ``restart_arc`` means the program was placed but
-    #: only a restarted Arc can find it.
+    #: only a restarted Arc can find it; ``ask_administrator`` means this deployment's
+    #: stringency forbids the download and only an administrator can approve it.
     action: str = ""
 
 
@@ -1864,7 +1869,12 @@ class Connections:
                 tier=self._world.tier,
             )
         except ExtensionError as exc:
-            return HostSetupReport(False, exc.message, steps)
+            # No deployment config carries a signed digest allowlist yet, so at federal
+            # stringency this refusal is final: say who can change it instead of
+            # inviting a retry that cannot win.
+            refused_by_tier = exc.details.get("reason") == FEDERAL_NOT_ALLOWLISTED
+            action = "ask_administrator" if refused_by_tier else ""
+            return HostSetupReport(False, exc.message, steps, action=action)
 
         remaining = HostPrerequisiteDirector().unsatisfied(plan.manifest.host_requires)
         if remaining:
@@ -2312,7 +2322,7 @@ class Connections:
                 raise _refuse(
                     "MCP_NO_OPERATOR_KEY",
                     "this deployment has no operator key to sign the bundle with; "
-                    "create one with `arc init` first",
+                    "the administrator has to set the operator key up first",
                 )
             signer = bootstrap_operator_signer(base=self._world.arc_dir)
         return signer, str(OperatorApprovalAuthority(signer).did)

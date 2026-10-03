@@ -627,7 +627,7 @@ async def test_operator_relay_appends_the_run_link_only_when_a_public_base_url_i
     relay.bind(lambda: [agent])
 
     await relay.notify("run failed", "k1", "/workflows/nightly?run=r1")
-    relay.bind_public_base_url("https://arc.example.com")
+    relay.bind_public_base_url(lambda: "https://arc.example.com")
     await relay.notify("run failed", "k2", "/workflows/nightly?run=r1")
     await relay.notify("run failed", "k3", None)
 
@@ -635,4 +635,23 @@ async def test_operator_relay_appends_the_run_link_only_when_a_public_base_url_i
         "run failed",
         "run failed https://arc.example.com/workflows/nightly?run=r1",
         "run failed",
+    ]
+
+
+async def test_operator_relay_reads_the_public_address_again_on_every_notice() -> None:
+    from arcgateway.workflow_runner_host import OperatorNoticeRelay
+
+    agent = _Agent("telegram")
+    relay = OperatorNoticeRelay()
+    relay.bind(lambda: [agent])
+    address = {"now": "https://old.example.com"}
+    relay.bind_public_base_url(lambda: address["now"])
+
+    await relay.notify("run failed", "k1", "/workflows/n?run=r1")
+    address["now"] = "https://new.example.com"
+    await relay.notify("run failed", "k2", "/workflows/n?run=r1")
+
+    assert [text for text, _ in agent.seen] == [
+        "run failed https://old.example.com/workflows/n?run=r1",
+        "run failed https://new.example.com/workflows/n?run=r1",
     ]

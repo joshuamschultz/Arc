@@ -84,6 +84,7 @@ from arcui.schemas import (
     ConnectorSecretField,
     ConnectorTool,
     ConnectorUnreadableBundle,
+    ErrorResponse,
     OAuthAppResponse,
     OAuthBeginResponse,
     OAuthCloudChoice,
@@ -206,7 +207,17 @@ def _not_found(exc: ExtensionError) -> bool:
 
 
 def _refused(exc: ExtensionError) -> JSONResponse:
-    return _error(exc.message, 404 if _not_found(exc) else 400)
+    """The refusal as a 4xx. A refusal that names what to do next carries it as a code.
+
+    The code (``reseal_credentials``, ``sign_bundle``) is for the page to turn into a
+    sentence and a button; the message stays plain on its own.
+    """
+    status = 404 if _not_found(exc) else 400
+    action = exc.details.get("action")
+    if not isinstance(action, str) or not action:
+        return _error(exc.message, status)
+    body = ErrorResponse(error=exc.message).model_dump(mode="json")
+    return JSONResponse({**body, "action": action}, status_code=status)
 
 
 async def _card(

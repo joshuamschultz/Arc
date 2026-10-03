@@ -318,7 +318,7 @@ const readwiseBundle = (): CatalogBundle => ({
   ...bundle(false), name: 'readwise_reader', display_name: 'Readwise Reader', attachment: 'cli',
   secrets: [],
   host_requires: [{ name: 'readwise', instruction: 'npm i -g @readwise/cli', satisfied: false }],
-  auto_installable: false,
+  auto_installable: true,
 })
 
 describe('Reconnect by connection kind (J-U6, J-U9)', () => {
@@ -389,8 +389,22 @@ describe('Reconnect by connection kind (J-U6, J-U9)', () => {
 })
 
 describe('the Install button is only offered when it can succeed (D18)', () => {
-  it('a bundle Arc can never install gets a plain sentence and no Install wording', () => {
+  it('Readwise, an npm package Arc installs, says Arc can install it on connect', () => {
     wrap(<BundleCard bundle={readwiseBundle()} connectedCount={0} operatorMode onConnect={() => {}} />)
+    expect(screen.getByText(/can install it when you connect/)).toBeTruthy()
+    expect(screen.queryByText(/cannot install/i)).toBeNull()
+    expect(screen.queryByText(/npm i -g/)).toBeNull()
+  })
+
+  it('a bundle Arc can never install gets a plain sentence and no Install wording', () => {
+    wrap(
+      <BundleCard
+        bundle={{ ...readwiseBundle(), auto_installable: false }}
+        connectedCount={0}
+        operatorMode
+        onConnect={() => {}}
+      />,
+    )
     expect(screen.getByText(/cannot install/i)).toBeTruthy()
     expect(screen.queryByText(/can install it when you connect/)).toBeNull()
     expect(screen.queryByText(/npm i -g/)).toBeNull()

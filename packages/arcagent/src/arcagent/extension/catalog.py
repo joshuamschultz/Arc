@@ -293,7 +293,7 @@ class ExtensionCatalog:
                     reason="code_in_operator_tree",
                     message=(
                         f"{name!r} at {path} carries code, and nothing executes from the "
-                        "operator tree; install it with `arc connector install-bundle`"
+                        "operator tree; it has to be installed as a signed bundle first"
                     ),
                 )
             return path

@@ -162,7 +162,7 @@ describe('Loopback return address', () => {
     wrap('google')
     expect(await screen.findByText(/only works when your browser runs on the Arc computer/)).toBeTruthy()
     const link = screen.getByRole('link', { name: /Settings/ })
-    expect(link.getAttribute('href')).toBe('/settings')
+    expect(link.getAttribute('href')).toBe('/settings?tab=access')
   })
 
   it('shows no warning for a public https address', async () => {

@@ -75,7 +75,7 @@ def _monitor(
         store_opener=opener,
         agents_resolver=agents or (lambda instance: []),
         fallback_agents=fallback or (lambda: []),
-        ui_base=ui_base,
+        ui_base=lambda: ui_base,
         clock=clock,
         rng=lambda: 0.5,
         initial_delay_seconds=0,
@@ -311,17 +311,25 @@ async def test_notice_carries_no_link_when_public_base_url_is_unset() -> None:
     assert "http" not in agent.calls[0][0]
 
 
-async def test_built_monitor_links_to_the_apps_public_base_url_and_never_a_host_header() -> None:
+async def test_built_monitor_reads_the_public_address_again_for_every_notice() -> None:
+    """Changing the address in Settings changes the next notice's link, with no restart."""
     from types import SimpleNamespace
 
     from arcui.connection_health import build_connection_health_monitor
 
-    state = SimpleNamespace(
-        arcstore_backend=FakeBackend(), public_base_url="https://arc.example.com"
-    )
-    monitor = build_connection_health_monitor(SimpleNamespace(state=state))
-    assert monitor is not None and monitor._ui_base == "https://arc.example.com"
+    class _Address:
+        value: str | None = "https://old.example.com"
 
-    state.public_base_url = None
-    unset = build_connection_health_monitor(SimpleNamespace(state=state))
-    assert unset is not None and unset._ui_base == ""
+        def current(self) -> str | None:
+            return self.value
+
+    address = _Address()
+    state = SimpleNamespace(arcstore_backend=FakeBackend(), public_address=address)
+    monitor = build_connection_health_monitor(SimpleNamespace(state=state))
+    assert monitor is not None and monitor._ui_base() == "https://old.example.com"
+
+    address.value = "https://new.example.com"
+    assert monitor._ui_base() == "https://new.example.com"
+
+    address.value = None
+    assert monitor._ui_base() == ""

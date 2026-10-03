@@ -1,4 +1,5 @@
 import { Check, Loader2, Plus, TriangleAlert } from 'lucide-react'
+import { RefusalNotice } from '@/components/action-prompt'
 import { agentLabel, grantName } from '@/lib/agent-names'
 import { useGrantConnection, useRevokeConnection } from '@/lib/queries'
 import type { Agent } from '@/lib/types'
@@ -111,7 +112,7 @@ export function AgentGrantChips({
           {operatorMode ? ' — pick one above.' : '. An operator has to grant it.'}
         </p>
       )}
-      {error && <p className="text-[11px] text-destructive">{error.message}</p>}
+      {error && <RefusalNotice error={error} />}
       {(grant.isSuccess || revoke.isSuccess) && !busy && (
         <p className="text-[11px] text-muted-foreground">
           {activations.every((activation) => activation.status === 'applied')

@@ -119,16 +119,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <p className="mt-1 text-sm text-muted-foreground">
               {loginAvailable === false ? (
                 <>
-                  No accounts exist yet. Create one with
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">
-                    arc user add you@example.com
-                  </code>
-                  , or paste a viewer or operator token.
+                  No accounts exist yet. Ask the person who set up this computer to create
+                  the first account, or paste a viewer or operator token.
                 </>
               ) : (
                 <>
-                  Paste a viewer or operator token. The CLI prints these on
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">arc ui start</code>.
+                  Paste a viewer or operator token. The person who started Arc on this
+                  computer has them.
                 </>
               )}
             </p>

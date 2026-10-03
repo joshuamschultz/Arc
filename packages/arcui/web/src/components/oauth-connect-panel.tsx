@@ -139,7 +139,7 @@ function LoopbackNote() {
     <p data-loopback-note className="rounded-md border border-status-warning/30 bg-status-warning/10 px-2.5 py-2 text-foreground">
       This return address only works when your browser runs on the Arc computer. To sign in from other
       computers, set the public address in{' '}
-      <Link to="/settings" className="font-medium underline">
+      <Link to="/settings?tab=access" className="font-medium underline">
         Settings → Access
       </Link>{' '}
       first.

@@ -111,7 +111,7 @@ export function CreateChannelSheet({ open, onOpenChange }: { open: boolean; onOp
       <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="text-sm">New channel</SheetTitle>
-          <SheetDescription>Creates a real arcteam channel — visible to `arc team channels`.</SheetDescription>
+          <SheetDescription>Creates a real team channel that every member of the team can see.</SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-4 overflow-auto p-5">
           {error && (

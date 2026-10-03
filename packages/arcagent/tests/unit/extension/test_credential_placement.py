@@ -419,3 +419,28 @@ def test_a_field_the_login_delivers_is_not_also_put_in_the_child_environment(
     manifest = load_manifest(_SIGN_IN_BUNDLE, tier=Tier.PERSONAL)
 
     assert placement_environment(manifest, {"site": Secret("acme.example")}) == {}
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def write(self, event: AuditEvent) -> None:
+        self.events.append(event)
+
+
+def test_the_module_audit_sink_reaches_a_cli_attachment_so_a_refused_binary_is_recorded(
+    tmp_path: Path,
+) -> None:
+    """A tampered host binary's deny event had no sink in production: the attachment was
+    built without one, so the refusal was only logged."""
+    sink = _RecordingSink()
+    attachment = build_attachment(_parsed(), tmp_path, {}, credential=_handle(), audit_sink=sink)
+
+    attachment._refuse_host_binary(  # type: ignore[attr-defined] # reason: CliAttachment-only
+        ExtensionError(
+            code="HOST_BINARY_TAMPERED", message="refused", details={"reason": "digest"}
+        )
+    )
+
+    assert [(e.action, e.outcome) for e in sink.events] == [("extension.host.exec", "deny")]

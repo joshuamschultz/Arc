@@ -258,7 +258,8 @@ async def test_in_process_row_under_transit_names_the_reseal_verb(world: World) 
         await world.rows.open_field(row, "user_token")
 
     assert caught.value.code == "CREDENTIAL_UNREADABLE"
-    assert "migrate-secrets --reseal" in caught.value.message
+    assert "moved into the vault" in caught.value.message
+    assert "arc " not in caught.value.message
 
 
 def test_custody_selects_the_cipher_in_one_place(tmp_path: Path) -> None:

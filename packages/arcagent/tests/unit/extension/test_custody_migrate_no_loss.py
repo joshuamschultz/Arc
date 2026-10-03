@@ -89,7 +89,8 @@ async def test_undeclared_value_refuses_and_keeps_the_file(tmp_path: Path) -> No
 
     assert caught.value.code == "MIGRATION_UNDECLARED_KEYS"
     assert "JIRA_API_TOKEN" in caught.value.message
-    assert "--drop-undeclared" in caught.value.message
+    assert "`arc " not in caught.value.message and "--" not in caught.value.message
+    assert "--drop-undeclared" in caught.value.details["cli_hint"]
     assert caught.value.details["keys"] == ["JIRA_API_TOKEN"]
     assert env.read_text() == DGX_BODY
     assert await backend.mutable_query(CREDENTIAL_COLLECTION) == []

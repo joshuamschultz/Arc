@@ -498,12 +498,19 @@ def _refuse(plan: _Plan, env_path: Path, actor_did: str, sink: AuditSink) -> Ext
         code=MIGRATION_UNDECLARED_KEYS,
         message=(
             f"{env_path} holds {len(keys)} value(s) Arc cannot move: {listing}. Nothing was "
-            "moved and the file was kept. Review with `arc connector migrate-secrets "
-            "--dry-run`, re-enter any you still need (for example `arc connector oauth-app "
-            "<provider>`), then run `arc connector migrate-secrets --drop-undeclared` to "
-            "drop the rest on purpose."
+            "moved and the file was kept. Open the credential review to re-enter any you "
+            "still need and to choose, one by one, what to drop."
         ),
-        details={"keys": keys, "path": str(env_path)},
+        details={
+            "keys": keys,
+            "path": str(env_path),
+            # The same fix in command-line words; a terminal prints it, a page never does.
+            "cli_hint": (
+                "Review with `arc connector migrate-secrets --dry-run`, re-enter any you still "
+                "need (for example `arc connector oauth-app <provider>`), then run "
+                "`arc connector migrate-secrets --drop-undeclared` to drop the rest on purpose."
+            ),
+        },
     )
 
 

@@ -22,11 +22,17 @@ def _entry(name: str):  # type: ignore[no-untyped-def] # reason: test helper
     return entries[name]
 
 
-def test_a_tarball_pin_with_no_binary_is_not_auto_installable() -> None:
-    assert _entry("readwise_reader").auto_installable is False
+def test_an_npm_tarball_pin_is_auto_installable_because_the_installer_places_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("arcagent.connection_catalog.host_platform", lambda: "linux/amd64")
+    assert _entry("readwise_reader").auto_installable is True
 
 
-def test_a_bundle_pinning_no_build_at_all_is_not_auto_installable() -> None:
+def test_a_pin_for_another_platform_is_not_auto_installable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("arcagent.connection_catalog.host_platform", lambda: "plan9/mips")
     assert _entry("onepassword").auto_installable is False
 
 

@@ -731,7 +731,7 @@ def _migrate_secrets(args: argparse.Namespace) -> None:
             connections.migrate_secrets(dry_run=args.dry_run, drop_undeclared=args.drop_undeclared)
         )
     except arcagent.ExtensionError as exc:
-        _fail(f"{exc.message} (the legacy file was kept)")
+        _fail(f"{exc.message} {exc.details.get('cli_hint', '')} (the legacy file was kept)")
     if report.skipped:
         _out(f"Nothing to migrate: {report.path} does not exist.")
         return

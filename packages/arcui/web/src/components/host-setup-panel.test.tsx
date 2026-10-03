@@ -95,4 +95,49 @@ describe('HostSetupPanel', () => {
     await waitFor(() => expect(screen.getByRole('status')).toBeTruthy())
     expect(screen.getByText(/checking it is exactly what was approved/i)).toBeTruthy()
   })
+
+  it('offers a Restart Arc button, wired to the stack restart route, when the program is placed but Arc cannot see it', async () => {
+    localStorage.setItem('arcui_operator_mode', '1')
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) =>
+      String(args[0]).includes('/host-setup')
+        ? new Response(
+            JSON.stringify({
+              installed: false,
+              detail: 'Installed readwise, but Arc cannot see it yet. Restart Arc, then check again.',
+              action: 'restart_arc',
+            }),
+          )
+        : new Response(JSON.stringify({ ok: true })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel(['readwise'])
+
+    await userEvent.click(screen.getByRole('button', { name: /install on this computer/i }))
+    const restart = await screen.findByRole('button', { name: 'Restart Arc' })
+    expect(screen.queryByText(/Include databases/)).toBeNull()
+
+    await userEvent.click(restart)
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm restart' }))
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/stack/restart'))
+      expect(call).toBeTruthy()
+      expect((call?.[1] as RequestInit).method).toBe('POST')
+    })
+    localStorage.removeItem('arcui_operator_mode')
+  })
+
+  it('says only an administrator can approve the download and hides the Install button', async () => {
+    stubHostSetup({
+      installed: false,
+      detail: 'readwise is not on this deployment\'s approved list, so Arc will not download it. Ask your administrator to approve it.',
+      action: 'ask_administrator',
+    })
+    renderPanel(['readwise'])
+
+    await userEvent.click(screen.getByRole('button', { name: /install on this computer/i }))
+
+    expect(await screen.findByText(/only installs programs its administrator has approved/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /install on this computer/i })).toBeNull()
+  })
 })

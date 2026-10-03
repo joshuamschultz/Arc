@@ -38,7 +38,8 @@ async def test_start_run_refuses_a_placeholder_owner(stores: Any, registry: Any)
 
     assert caught.value.node_ids == ("draft",)
     assert "draft" in str(caught.value)
-    assert "--owner" in str(caught.value)
+    assert "arc " not in str(caught.value) and "--" not in str(caught.value)
+    assert "--owner" in caught.value.cli_hint
 
 
 async def test_test_run_refuses_a_placeholder_owner_too(stores: Any, registry: Any) -> None:

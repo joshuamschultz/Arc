@@ -139,13 +139,26 @@ it('adding a one-click connection goes straight into Connect and never probes it
   expect(calls.some((c) => c.url.endsWith('/probe'))).toBe(false)
 })
 
-it('a bundle Arc can never install shows no Install button, only the honest sentence', () => {
+it('Readwise (an npm package Arc installs) shows the Install button', () => {
+  localStorage.setItem('arcui_operator_mode', '1')
   const readwise: CatalogBundle = {
-    ...bundle([]), name: 'readwise_reader', display_name: 'Readwise Reader', auto_installable: false,
+    ...bundle([]), name: 'readwise_reader', display_name: 'Readwise Reader', auto_installable: true,
     host_requires: [{ name: 'readwise', instruction: 'npm i -g @readwise/cli', satisfied: false }],
   }
   renderSheet(readwise)
-  expect(screen.queryByRole('button', { name: /Install on this host/ })).toBeNull()
+  expect(screen.getByRole('button', { name: /Install on this computer/ })).toBeTruthy()
+  expect(screen.queryByText(/cannot install it from here yet/)).toBeNull()
+  expect(screen.queryByText(/npm i -g/)).toBeNull()
+  localStorage.removeItem('arcui_operator_mode')
+})
+
+it('a bundle Arc can never install shows no Install button, only the honest sentence', () => {
+  const pinless: CatalogBundle = {
+    ...bundle([]), name: 'pinless', display_name: 'Pinless', auto_installable: false,
+    host_requires: [{ name: 'pinless', instruction: 'npm i -g pinless', satisfied: false }],
+  }
+  renderSheet(pinless)
+  expect(screen.queryByRole('button', { name: /Install on this computer/ })).toBeNull()
   expect(screen.getByText(/cannot install it from here yet/)).toBeTruthy()
   expect(screen.queryByText(/npm i -g/)).toBeNull()
 })

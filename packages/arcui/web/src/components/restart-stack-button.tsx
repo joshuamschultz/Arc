@@ -12,7 +12,17 @@ import { apiPost, ApiError } from '@/lib/api'
  *  (store + memory index) — off by default, since a routine restart should not
  *  drop the data plane. Two-click confirm; the server enforces operator role
  *  regardless of this gate. */
-export function RestartStackButton({ size = 'sm' }: { size?: 'sm' | 'default' }) {
+export function RestartStackButton({
+  size = 'sm',
+  label = 'Restart stack',
+  offerDatabases = true,
+}: {
+  size?: 'sm' | 'default'
+  /** The idle button text; a page that restarts Arc for one reason names that reason. */
+  label?: string
+  /** False hides the "Include databases" choice, so a routine restart cannot drop the data plane. */
+  offerDatabases?: boolean
+}) {
   const [operatorMode] = useOperatorMode()
   const [armed, setArmed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -37,17 +47,21 @@ export function RestartStackButton({ size = 'sm' }: { size?: 'sm' | 'default' })
   return (
     <div className="flex items-center gap-2">
       {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
-        <input
-          type="checkbox"
-          className="size-3.5 accent-current"
-          checked={withDb}
-          disabled={busy}
-          onChange={(e) => setWithDb(e.target.checked)}
-        />
-        Include databases
-      </label>
-      <FieldHelp helpKey="settings.restart.include_databases" route="settings" />
+      {offerDatabases && (
+        <>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-current"
+              checked={withDb}
+              disabled={busy}
+              onChange={(e) => setWithDb(e.target.checked)}
+            />
+            Include databases
+          </label>
+          <FieldHelp helpKey="settings.restart.include_databases" route="settings" />
+        </>
+      )}
       <Button
         type="button"
         size={size}
@@ -64,7 +78,7 @@ export function RestartStackButton({ size = 'sm' }: { size?: 'sm' | 'default' })
             ? withDb
               ? 'Confirm restart + DB'
               : 'Confirm restart'
-            : 'Restart stack'}
+            : label}
       </Button>
     </div>
   )

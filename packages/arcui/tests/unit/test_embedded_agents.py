@@ -204,3 +204,38 @@ async def test_lru_cache_evicts_lock_alongside_agent() -> None:
 
     new_lock_a = cache.lock_for("did:a")
     assert new_lock_a is not lock_a, "evicted agent gets a fresh lock on re-load"
+
+
+async def test_workflow_notice_links_follow_the_saved_public_address_at_send_time() -> None:
+    """The relay used to take the address once at startup; now each notice reads it."""
+    from arcgateway.workflow_runner_host import OPERATOR_NOTICES
+
+    class _Address:
+        value = "https://old.example.com"
+
+        def current(self) -> str:
+            return self.value
+
+    class _Notified:
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        async def notify_operator(self, text: str, *, idempotency_key: str) -> str:
+            self.seen.append(text)
+            return "telegram"
+
+    app = _make_app(_FakeExecutor(lambda did: None))
+    address = _Address()
+    app.state.public_address = address
+    install_embedded_agent_hooks(app)
+    agent = _Notified()
+    OPERATOR_NOTICES.bind(lambda: [agent])
+
+    await OPERATOR_NOTICES.notify("failed", "k1", "/workflows/n?run=r1")
+    address.value = "https://new.example.com"
+    await OPERATOR_NOTICES.notify("failed", "k2", "/workflows/n?run=r1")
+
+    assert agent.seen == [
+        "failed https://old.example.com/workflows/n?run=r1",
+        "failed https://new.example.com/workflows/n?run=r1",
+    ]

@@ -1926,3 +1926,56 @@ def test_agent_connectors_renders_healthy_and_door_off_without_an_embedded_agent
     row = next(r for r in body["instances"] if r["instance"] == _INSTANCE)
     assert row["needs_attention"] is False
     assert body["mcp_door_enabled"] is False
+
+
+def test_host_setup_at_federal_tier_refuses_in_plain_words_and_names_who_can_approve(
+    world: Path, host_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No signed digest allowlist is configured, so a federal install is refused before
+    any download, and the reason is a code the page renders as a sentence."""
+    from arcagent.core.tier import Tier
+    from arcagent.extension.catalog import OFFICIAL_EXTENSIONS
+
+    payload = _helper_tarball()
+    requested = _serving(payload, monkeypatch)
+    monkeypatch.setattr("arcagent.connections.deployment_tier", lambda _root=None: Tier.FEDERAL)
+    monkeypatch.setitem(OFFICIAL_EXTENSIONS, _EXTENSION, "arc-acme")
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(
+        _bundles(world),
+        manifest=_host_setup_manifest(
+            platform=host_platform(), digest=hashlib.sha256(payload).hexdigest()
+        ),
+    )
+
+    body = _setup_host(client).json()
+
+    assert body["installed"] is False
+    assert body["action"] == "ask_administrator"
+    assert "administrator" in body["detail"]
+    assert requested == []
+    assert not host_setup.exists() or list(host_setup.iterdir()) == []
+
+
+def test_a_refusal_that_names_a_next_step_carries_it_as_a_code_not_a_command() -> None:
+    """The page turns the code into a sentence and a button; the server sends no command."""
+    import json
+
+    from arcagent.core.errors import ExtensionError
+
+    from arcui.routes.connectors import _refused
+
+    refusal = ExtensionError(
+        code="CONNECTION_TIER_WOULD_RISE",
+        message="the vault has to hold this credential first",
+        details={"action": "reseal_credentials"},
+    )
+    plain = ExtensionError(code="BAD_NAME", message="bad name", details={})
+
+    sent = _refused(refusal)
+    assert sent.status_code == 400
+    assert json.loads(sent.body) == {
+        "error": "the vault has to hold this credential first",
+        "action": "reseal_credentials",
+    }
+    assert json.loads(_refused(plain).body) == {"error": "bad name"}

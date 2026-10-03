@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { KeyRound } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { FieldHelp } from "@/components/help";
@@ -47,7 +48,9 @@ export function SettingsPage() {
   const scope = picked ?? agents[0]?.agent_id ?? null;
   const isSystem = scope === SYSTEM_SCOPE;
   const [operatorMode] = useOperatorMode();
-  const [tab, setTab] = useState("arcllm");
+  // `?tab=access` lets a link (the sign-in warning) land on the Access tab directly.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") ?? "arcllm");
   // The Memory sharing tab exists only in agent scope; fall back when the
   // operator switches to System while it is open.
   const activeTab = isSystem && tab === MEMORY_SHARING_TAB ? "arcllm" : tab;

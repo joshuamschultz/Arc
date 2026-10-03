@@ -59,6 +59,7 @@ from arcteam.workflow.control_plane import (
     OperationIssue,
     WorkflowControlPlane,
 )
+from arcteam.workflow.errors import PlaceholderOwnerError
 from arcteam.workflow.migrate import check_bundle, check_store, migrate_store
 from arcteam.workflow.models import WORKFLOW_ID_PATTERN
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
@@ -420,6 +421,8 @@ def _ok_or_exit(result: ControlPlaneResult) -> ControlPlaneResult:
         return result
     for issue in result.errors:
         err(f"  {_issue_line(issue)}")
+        if isinstance(issue, OperationIssue) and issue.cli_hint:
+            err(f"  {issue.cli_hint}")
     sys.exit(1)
 
 
@@ -434,12 +437,19 @@ def _bundle_row(bundle: WorkflowBundle) -> list[str]:
     ]
 
 
+def _terminal_text(exc: BaseException) -> str:
+    """An error as a terminal prints it: the plain message, plus its command hint if it has one."""
+    if isinstance(exc, PlaceholderOwnerError):
+        return f"{exc} {exc.cli_hint}"
+    return str(exc)
+
+
 def _run_or_report(body: Callable[[], Coroutine[Any, Any, None]]) -> None:
     """Run an async handler, turning an arcteam refusal into a clean CLI error."""
     try:
         asyncio.run(body())
     except (WorkflowError, RuntimeError) as exc:
-        err(f"Error: {exc}")
+        err(f"Error: {_terminal_text(exc)}")
         sys.exit(1)
 
 
@@ -532,7 +542,7 @@ def _sign(args: argparse.Namespace) -> None:
             signer=signer,
         )
     except WorkflowError as exc:
-        err(f"Error: {exc}")
+        err(f"Error: {_terminal_text(exc)}")
         sys.exit(1)
     finally:
         sink.close()
@@ -554,7 +564,7 @@ def _verify(args: argparse.Namespace) -> None:
     try:
         bundle = store.load(bundle_dir.name)
     except WorkflowError as exc:
-        err(f"Error: {exc}")
+        err(f"Error: {_terminal_text(exc)}")
         sys.exit(1)
     if bundle.is_verified:
         write(f"VALID — signed by {bundle.signer_did} (pinned operator key)")
@@ -639,7 +649,7 @@ def _show(args: argparse.Namespace) -> None:
             return
         bundle = store.load(args.id)
     except WorkflowError as exc:
-        err(f"Error: {exc}")
+        err(f"Error: {_terminal_text(exc)}")
         sys.exit(1)
     print_json(
         {
@@ -685,7 +695,7 @@ def _owner_edit(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     try:
         bundle = _store(args).load(args.id)
     except WorkflowError as exc:
-        err(f"Error: {exc}")
+        err(f"Error: {_terminal_text(exc)}")
         sys.exit(1)
     document = bundle.definition.to_document()
     if args.node is None:

@@ -470,6 +470,7 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
             config_dir=state.workspace / ".connector" / loaded.name / instance / "config",
             tier=Tier(state.tier),
             egress_audit=_egress_audit(state, ctx.sink, instance),
+            audit_sink=ctx.sink,
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
     except ExtensionError as exc:

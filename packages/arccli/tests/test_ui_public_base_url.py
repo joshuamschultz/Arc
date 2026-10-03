@@ -41,11 +41,14 @@ def test_default_start_reads_gateway_toml_ui_section(config_dir: Path) -> None:
 
 def test_default_start_notice_carries_the_deep_link(config_dir: Path) -> None:
     from arcui.connection_health import build_connection_health_monitor
+    from arcui.public_address import PublicAddress
 
     (config_dir / "gateway.toml").write_text('[ui]\npublic_base_url = "https://arc.example.com"\n')
-    state = SimpleNamespace(arcstore_backend=FakeBackend(), public_base_url=_resolve(_args()))
+    state = SimpleNamespace(
+        arcstore_backend=FakeBackend(), public_address=PublicAddress(ui_port=8420)
+    )
     monitor = build_connection_health_monitor(SimpleNamespace(state=state))
-    assert monitor is not None and monitor._ui_base == "https://arc.example.com"
+    assert monitor is not None and monitor._ui_base() == "https://arc.example.com"
 
 
 def test_missing_gateway_toml_leaves_it_unset(config_dir: Path) -> None:

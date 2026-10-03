@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from arctrust.audit import AuditSink
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
@@ -249,12 +250,15 @@ def build_attachment(
     config_dir: Path | None = None,
     tier: Tier | None = None,
     egress_audit: RefusalSink | None = None,
+    audit_sink: AuditSink | None = None,
 ) -> ExtensionAttachment:
     """Build the declared attachment at the sole credential-reveal boundary.
 
     ``tier`` is the tier an ``http`` MCP server's connect-time address policy is judged
     at; omitted, it is the deployment's own tier. ``egress_audit`` is told of every
     connect the policy refuses, so a rebinding attempt leaves an audit record.
+    ``audit_sink`` receives a ``cli`` attachment's own verdicts, such as a refused tampered
+    host binary.
 
     ``credential`` is the connection's :class:`AccessTokenHandle` (P18-2). A
     ``native`` or ``cli`` attachment receives sensitive values ONLY through it, at
@@ -325,6 +329,7 @@ def build_attachment(
             static_env=declared.static_env,
             isolated_config_env=declared.isolated_config_env,
             config_dir=config_dir,
+            audit_sink=audit_sink,
         )
         return _with_source_adapter(
             manifest,

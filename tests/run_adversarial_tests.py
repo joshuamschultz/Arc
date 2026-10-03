@@ -39,6 +39,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
+        # The refusal reaches the module's audit sink in production, not only a log.
+        "packages/arcagent/tests/unit/extension/test_credential_placement.py",
     ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never
@@ -737,6 +739,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "federal fetch (alpha-2 J1-3)": (
         "packages/arcagent/tests/security/test_host_install_abuse.py",
         "packages/arcagent/tests/unit/extension/test_host_install.py",
+        # A federal deployment has no signed digest allowlist configured: the button's
+        # install is refused before any download and answers with a typed reason.
+        "packages/arcui/tests/test_connectors_routes.py",
     ),
     # P18-2: nothing executes from the operator tree. A code-bearing bundle planted
     # in ~/arc/extensions is refused by name (audited) and one in

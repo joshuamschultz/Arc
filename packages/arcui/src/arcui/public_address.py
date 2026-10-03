@@ -122,6 +122,21 @@ class PublicAddress:
         return canonical
 
 
+def public_base_url_now(app: Any) -> str:
+    """The saved public address, read again on every call; ``""`` when there is none.
+
+    For notices that carry a deep link. An unusable stored address yields no link
+    rather than a wrong one: a link into a stale address is worse than none.
+    """
+    address = getattr(app.state, "public_address", None)
+    if address is None:
+        return ""
+    try:
+        return address.current() or ""
+    except arcagent.ExtensionError:
+        return ""
+
+
 def _load_document(path: Path) -> Any:
     if not path.is_file():
         return tomlkit.document()

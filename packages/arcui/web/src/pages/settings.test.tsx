@@ -62,11 +62,11 @@ function stubFetch() {
   )
 }
 
-function renderSettings() {
+function renderSettings(initialEntry = '/settings') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <SettingsPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -74,6 +74,13 @@ function renderSettings() {
 }
 
 describe('SettingsPage — Access tab', () => {
+  it('opens on the Access tab when the link says ?tab=access', async () => {
+    stubFetch()
+    renderSettings('/settings?tab=access')
+    const tab = await screen.findByRole('tab', { name: 'Access' })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+  })
+
   it('shows the Access tab in agent scope and System scope', async () => {
     stubFetch()
     renderSettings()
