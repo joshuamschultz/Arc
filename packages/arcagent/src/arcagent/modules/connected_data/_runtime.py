@@ -53,7 +53,7 @@ class _State:
         #: ArcMemory ingest and an ArcStore to hold the subscriptions.
         self.shared_knowledge: SharedKnowledge | None = (
             _shared_knowledge(self.agent_did, self.arcstore_opener, self.telemetry)
-            if supplied_factory is None
+            if supplied_factory is None and config.shared_stores
             else None
         )
         self.service: ConnectedDataService | None = None

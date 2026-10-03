@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +49,7 @@ from .test_journey_knowledge import (
     grant,
     start_knowledge_agent,
     sync_service,
+    sync_to_completion,
 )
 from .test_journey_knowledge import _module_source as _module_source
 from .test_journey_knowledge import arcstore as arcstore
@@ -71,19 +73,27 @@ class Account(Provider):
         return await super().fetch_source(request)
 
 
-def _write_second_agent(deployment: Deployment, *, limits: dict[str, float] | None) -> Path:
-    """A second agent in the same fleet, written before ``arc install`` runs."""
+def _write_second_agent(
+    deployment: Deployment,
+    *,
+    limits: dict[str, float] | None,
+    sync: dict[str, Any] | None = None,
+) -> Path:
+    """A second agent in the same fleet, written before ``arc install`` runs.
+
+    Written again on a restart; its key is kept, so its DID is too.
+    """
     from arccli.commands.agent.create import _mint_agent_identity
 
     agent_dir = deployment.team_root / "second_agent"
-    (agent_dir / "workspace").mkdir(parents=True)
+    (agent_dir / "workspace").mkdir(parents=True, exist_ok=True)
     body = agent_toml(
         agent_dir,
         name="second",
         modules=("memory", "connected_data"),
         module_config={
             "memory": {"__config__": {"brain": "arcmemory"}},
-            "connected_data": {"__config__": dict(_SYNC)},
+            "connected_data": {"__config__": {**_SYNC, **(sync or {})}},
         },
     )
     if limits:
@@ -97,12 +107,18 @@ def _write_second_agent(deployment: Deployment, *, limits: dict[str, float] | No
 
 
 async def two_agents(
-    deployment: Deployment, enable_modules: Any, *, limits: dict[str, float] | None = None
+    deployment: Deployment,
+    enable_modules: Any,
+    *,
+    limits: dict[str, float] | None = None,
+    sync: dict[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     import arcagent
 
-    second_dir = _write_second_agent(deployment, limits=limits)
-    first = await start_knowledge_agent(deployment, enable_modules, sync=_SYNC, limits=limits)
+    second_dir = _write_second_agent(deployment, limits=limits, sync=sync)
+    first = await start_knowledge_agent(
+        deployment, enable_modules, sync={**_SYNC, **(sync or {})}, limits=limits
+    )
     config_path = second_dir / "arcagent.toml"
     second = arcagent.ArcAgent(arcagent.load_config(config_path), config_path=config_path)
     await second.startup()
@@ -386,3 +402,103 @@ async def test_a_crawl_that_dies_mid_run_is_resumed_by_the_other_agent_under_the
     # The dead run, cancelled at shutdown, is fenced: it cannot undo the resumed one.
     final = await store.get_state(principal, "wiki")
     assert final.status.value == "complete" and final.cursor == "c2"
+
+
+# ---------------------------------------------------------------------------
+# Migrating stores the agents already hold
+# ---------------------------------------------------------------------------
+
+
+async def _upgraded(deployment: Deployment, enable_modules: Any) -> tuple[Any, Any]:
+    """Restart both agents with shared stores on, keeping each one's identity."""
+    import arcagent
+
+    for agent_dir in (deployment.agent_dir, deployment.team_root / "second_agent"):
+        toml = agent_dir / "arcagent.toml"
+        text = toml.read_text(encoding="utf-8")
+        assert "shared_stores = false" in text
+        toml.write_text(text.replace("shared_stores = false", "shared_stores = true"), "utf-8")
+    first = await start_knowledge_agent(deployment, enable_modules, installed=True)
+    config_path = deployment.team_root / "second_agent" / "arcagent.toml"
+    second = arcagent.ArcAgent(arcagent.load_config(config_path), config_path=config_path)
+    await second.startup()
+    return first, second
+
+
+async def _registered(agent: Any, account: Provider) -> None:
+    """After a restart the connectors module registers the grant again; so does the test."""
+    await agent._runtime_deps.source_catalog.register(account.connection_id, account)
+
+    async def described() -> bool:
+        return (await _row(agent, account.connection_id)).description is not None
+
+    assert await _until(described)
+
+
+async def test_stores_the_agents_already_hold_move_into_one_without_a_fetch(
+    deployment: Deployment,
+    enable_modules: Any,
+    scripted_llm: ScriptedLLM,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The DGX upgrade: two agents each synced the wiki; afterwards there is one copy.
+
+    The first agent's documents are re-keyed into the shared store, the second's are
+    found already there by object id and version, the store continues from the
+    agents' own cursor, and no provider is asked for anything.
+    """
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    first, second = await two_agents(deployment, enable_modules, sync={"shared_stores": False})
+    try:
+        await connect(first, account)
+        await connect(second, account)
+    finally:
+        await second.shutdown()
+        await first.shutdown()
+    assert account.fetched == {page.page_id: 2 for page in WIKI_PAGES}
+
+    first, second = await _upgraded(deployment, enable_modules)
+    try:
+        for agent in (first, second):
+            await _registered(agent, account)
+            # Until it is migrated an agent keeps reading its own copy.
+            held = await ask(agent, scripted_llm, "document_search", {"query": "billing portal"})
+            assert "in August" in held, held
+        fetched = dict(account.fetched)
+
+        preview = await sync_service(first).migrate_to_shared(dry_run=True)
+        assert [(row.status, row.adopted, row.deduplicated) for row in preview] == [
+            ("would_migrate", 3, 0)
+        ], preview
+        assert _documents_under(_store_root("wiki")) == [], "a dry run moved documents"
+
+        with caplog.at_level(logging.INFO, logger="arcagent.audit"):
+            moved = await sync_service(first).migrate_to_shared(dry_run=False)
+            deduped = await sync_service(second).migrate_to_shared(dry_run=False)
+        assert [(row.status, row.adopted) for row in moved] == [("migrated", 3)], moved
+        assert [(row.status, row.adopted, row.deduplicated) for row in deduped] == [
+            ("migrated", 0, 3)
+        ], deduped
+        assert caplog.text.count("connected_data.knowledge.migration") >= 2
+
+        assert len(_documents_under(_store_root("wiki"))) == 3
+        for agent in (first, second):
+            assert _documents_under(Path(agent._config.agent.workspace)) == []
+        assert account.fetched == fetched, "the migration fetched from the provider"
+
+        # The next sync continues from where the agents' crawl stopped.
+        before = len(account.checkpoints)
+        await sync_to_completion(first, "wiki")
+        assert account.checkpoints[before:] == ["c1"], account.checkpoints
+        assert account.fetched == fetched
+        for agent in (first, second):
+            found = await ask(agent, scripted_llm, "document_search", {"query": "billing portal"})
+            assert "in August" in found, found
+            pointers = re.findall(r'<memory-result source="([^"]*)"', found)
+            assert len(pointers) == len(set(pointers)), f"a document was read twice: {pointers}"
+
+        again = await sync_service(first).migrate_to_shared(dry_run=False)
+        assert [row.status for row in again] == ["already_shared"], again
+    finally:
+        await second.shutdown()
+        await first.shutdown()

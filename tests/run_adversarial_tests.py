@@ -607,6 +607,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "planted extension code in the operator tree (alpha-2 P18-2)": (
         "packages/arcagent/tests/security/test_operator_tree_extensions.py",
     ),
+    # P18-4: one store per connection, shared by every agent granted it. A read is
+    # the reading agent's own (another DID is refused and audited), only through its
+    # own subscription (never granted, not yet approved or revoked reads nothing,
+    # even naming the pool id outright); a writer whose subscription is gone or was
+    # verified against another approval writes nothing; a reader's port writes
+    # nothing; a store embedded one way is never read with another embedder.
+    "connection-scoped knowledge — cross-agent read, revoked or forged writer (alpha-2 P18-4)": (
+        "packages/arcagent/tests/security/test_shared_knowledge_isolation.py",
+        "packages/arcmemory/tests/unit/test_connected_shared_store.py",
+        "tests/journeys/test_journey_shared_knowledge.py",
+    ),
 }
 
 

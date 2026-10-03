@@ -30,6 +30,10 @@ class ConnectedDataConfig(ModuleConfig):
     # default for an unknown error is "retry"), is escalated to the operator rather
     # than retried silently for a month. A run that completes resets the count.
     consecutive_failure_ceiling: int = Field(default=5, gt=0)
+    # One sync and one document store per connection, shared by every agent granted
+    # it and read through each agent's own grant (P18-4). Off: every agent syncs its
+    # own copy, as before; an operator who must keep agents' copies apart says so.
+    shared_stores: bool = True
 
 
 __all__ = ["ConnectedDataConfig"]

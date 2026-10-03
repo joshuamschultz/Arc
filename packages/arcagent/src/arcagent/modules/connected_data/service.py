@@ -46,6 +46,7 @@ from arcagent.modules.connected_data.health import (
     ConnectionHealthTracker,
     is_terminal_sync_failure,
 )
+from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
 from arcagent.modules.connected_data.shared import (
     SHARED_HOMES,
     SharedKnowledge,
@@ -174,6 +175,20 @@ class SourceOperationResult:
     connection_id: str
     status: str
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class MigrationResult:
+    """What moving one connection into its shared store did (P18-4)."""
+
+    connection_id: str
+    #: migrated | would_migrate | already_shared | nothing_to_migrate | not_eligible | refused
+    status: str
+    detail: str = ""
+    documents: int = 0
+    adopted: int = 0
+    deduplicated: int = 0
+    skipped: int = 0
 
 
 @dataclass(frozen=True)
@@ -1452,6 +1467,196 @@ class ConnectedDataService:
         finally:
             await _release(reader)
 
+    # -- migrating an agent's own store into the shared one (P18-4) ----------
+
+    async def migrate_to_shared(self, *, dry_run: bool) -> tuple[MigrationResult, ...]:
+        """Move this agent's own stores of shareable connections into their shared stores.
+
+        Re-keys the documents it already holds into the connection's store (deduping
+        any the store already has), seeds the store's cursor from the agent's own
+        when the store has never synced, empties the agent's own copy and subscribes
+        it. Nothing is fetched from a provider. ``dry_run`` reports what would move
+        and changes nothing. Every connection's outcome is audited.
+        """
+        results: list[MigrationResult] = []
+        for registration in sorted(
+            await self._catalog.snapshot(), key=lambda entry: entry.connection_id
+        ):
+            result = await self._migrate(registration, dry_run=dry_run)
+            results.append(result)
+            await self._emit(
+                "connected_data.knowledge.migration",
+                {
+                    "source": _safe_id(result.connection_id),
+                    "status": result.status,
+                    "detail": result.detail,
+                    "dry_run": dry_run,
+                    "documents": result.documents,
+                    "adopted": result.adopted,
+                    "deduplicated": result.deduplicated,
+                    "skipped": result.skipped,
+                },
+            )
+        return tuple(results)
+
+    async def _migrate(
+        self, registration: SourceRegistration, *, dry_run: bool
+    ) -> MigrationResult:
+        connection_id = registration.connection_id
+        if self._shared is None or self._store is None or self._ingest_factory is None:
+            return MigrationResult(connection_id, "refused", "shared_store_unavailable")
+        was_paused = connection_id in self._paused
+        if not dry_run:
+            # The agent's own sync is held while its store moves.
+            self._paused.add(connection_id)
+            await self._cancel(connection_id)
+        try:
+            return await self._migrate_held(registration, dry_run=dry_run)
+        except Exception as exc:  # reason: one connection's failure must not stop the rest
+            _logger.exception("connected-data migration failed: %s", connection_id)
+            return MigrationResult(connection_id, "refused", f"migration_failed:{_name(exc)}")
+        finally:
+            if not dry_run and not was_paused:
+                self._paused.discard(connection_id)
+
+    async def _migrate_held(
+        self, registration: SourceRegistration, *, dry_run: bool
+    ) -> MigrationResult:
+        connection_id = registration.connection_id
+        shared, store, factory = self._shared, self._store, self._ingest_factory
+        if shared is None or store is None or factory is None:
+            return MigrationResult(connection_id, "refused", "shared_store_unavailable")
+        raw = self._descriptions.get(connection_id) or await self._inspect(registration)
+        candidate = factory(raw)
+        private = await candidate if inspect.isawaitable(candidate) else candidate
+        try:
+            if not isinstance(private, ArcMemoryIngestAdapter):
+                return MigrationResult(connection_id, "refused", "migration_unsupported")
+            description = await self._with_generation(raw, private)
+            plan = await private.approved_mapping(description)
+            if plan is None or set(plan.homes) != SHARED_HOMES:
+                return MigrationResult(connection_id, "not_eligible", "mapping_not_shared")
+            if await self._documents_indexed(private, description) == 0:
+                if not dry_run:
+                    await self._lane_for(connection_id, raw, private)
+                shared_now = connection_id in self._lanes
+                return MigrationResult(
+                    connection_id, "already_shared" if shared_now else "nothing_to_migrate"
+                )
+            if not shared.profile_compatible(connection_id):
+                return MigrationResult(connection_id, "refused", "embedding_profile_differs")
+            writer = await shared.migration_writer(connection_id, plan.mapping_id)
+            try:
+                target = await self._with_generation(raw, writer)
+                if dry_run:
+                    counts = await writer.adopt_documents(
+                        target, private, description, dry_run=True
+                    )
+                    return MigrationResult(connection_id, "would_migrate", "", **counts)
+                if not shared.claim_profile(connection_id):
+                    return MigrationResult(connection_id, "refused", "embedding_profile_differs")
+                adopted = await self._adopt_under_lease(
+                    connection_id, writer, target, private, description
+                )
+            finally:
+                await _release(writer)
+            if adopted is None:
+                return MigrationResult(connection_id, "refused", "shared_sync_active")
+            await private.reset_source(description)
+            await store.reset(self._agent_did, connection_id)
+            await self._lane_for(connection_id, raw, private)
+        finally:
+            await _release(private)
+        return MigrationResult(connection_id, "migrated", "", **adopted)
+
+    async def _adopt_under_lease(
+        self,
+        connection_id: str,
+        writer: Any,
+        target: SourceDescription,
+        private: IngestPort,
+        description: SourceDescription,
+    ) -> dict[str, int] | None:
+        """Adopt the agent's documents while holding the shared store's sync lease.
+
+        The lease keeps a subscriber's sync from writing the store mid-adoption; it
+        is renewed while the documents are re-indexed. ``None``: a sync holds it.
+        """
+        store = self._store
+        if store is None:
+            return None
+        principal = knowledge_principal(connection_id)
+        owner = f"{self._agent_did}:migration:{uuid.uuid4().hex}"
+        ttl = self._limits.max_seconds
+        prior: SyncState = await store.get_state(principal, connection_id)
+        lease = await store.acquire_lease(principal, connection_id, owner, ttl_seconds=ttl)
+        if lease is None:
+            return None
+        token = lease.fencing_token
+        heartbeat = asyncio.create_task(
+            _keep_lease(store, principal, connection_id, owner, token, ttl),
+            name=f"connected-data-migration-lease:{connection_id}",
+        )
+        try:
+            counts: dict[str, int] = await writer.adopt_documents(
+                target, private, description, dry_run=False
+            )
+            await self._seed_shared_state(connection_id, owner, token, prior)
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            await store.release_lease(
+                principal, connection_id, owner_id=owner, fencing_token=token
+            )
+        return counts
+
+    async def _seed_shared_state(
+        self, connection_id: str, owner: str, token: int, prior: SyncState
+    ) -> None:
+        """Start a never-synced shared store from the agent's own cursor; else leave it be.
+
+        A store some subscriber already synced keeps its own cursor and status (the
+        lease set it running; it is put back). One that never synced continues from
+        where the agent's own crawl stopped, so the next sync is incremental.
+        """
+        store = self._store
+        if store is None:
+            return
+        principal = knowledge_principal(connection_id)
+        mine: SyncState = await store.get_state(self._agent_did, connection_id)
+        never_synced = prior.cursor is None and prior.last_synced_at is None and not prior.pages
+        if never_synced and mine.cursor is not None:
+            await store.commit_page(
+                principal,
+                connection_id,
+                expected_cursor=None,
+                next_cursor=mine.cursor,
+                page_id=f"migration:{_safe_id(self._agent_did)}",
+                page_count=mine.pages,
+                page_bytes=mine.bytes_processed,
+                owner_id=owner,
+                fencing_token=token,
+            )
+            status = SyncStatus.COMPLETE if mine.status is SyncStatus.COMPLETE else SyncStatus.IDLE
+            await store.set_status(
+                principal,
+                connection_id,
+                status,
+                owner_id=owner,
+                fencing_token=token,
+                budget_reached=mine.budget_reached,
+            )
+            return
+        await store.set_status(
+            principal,
+            connection_id,
+            prior.status,
+            owner_id=owner,
+            fencing_token=token,
+            error_code=prior.error_code,
+            budget_reached=prior.budget_reached,
+        )
+
     async def _cancel(self, connection_id: str) -> None:
         task = self._tasks.pop(connection_id, None)
         if task is not None:
@@ -1629,6 +1834,16 @@ class ConnectedDataService:
         return description.model_copy(update={"generation": int(value)})
 
 
+async def _keep_lease(
+    store: Any, principal: str, connection_id: str, owner: str, token: int, ttl: float
+) -> None:
+    """Renew a held lease every third of its life until cancelled or lost."""
+    while await store.renew_lease(
+        principal, connection_id, owner_id=owner, fencing_token=token, ttl_seconds=ttl
+    ):
+        await asyncio.sleep(ttl / 3)
+
+
 async def _search_pool(
     query: str, source_id: str, reader: Any, *, clearance: str, top_k: int | None
 ) -> list[Any]:
@@ -1678,6 +1893,7 @@ __all__ = [
     "ConnectedDataService",
     "IngestPortFactory",
     "MappingProposalStatus",
+    "MigrationResult",
     "SourceOperationResult",
     "SourceRuntimeStatus",
 ]

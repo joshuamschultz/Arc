@@ -167,6 +167,16 @@ class SubscriberAuthority:
         return self._approval_id, tuple(SHARED_HOMES)
 
 
+class _VerifiedNow:
+    """A migrating agent's own approval, verified moments before it subscribes."""
+
+    def __init__(self, approval_id: str) -> None:
+        self._approval_id = approval_id
+
+    async def authorized_homes(self) -> tuple[str, tuple[KnowledgeHome, ...]] | None:
+        return self._approval_id, tuple(SHARED_HOMES)
+
+
 class _ReadOnly:
     """The authority of a reader's port: it authorizes no write at all."""
 
@@ -214,6 +224,15 @@ class SharedKnowledge:
         authority = SubscriberAuthority(registry, self.agent_did, connection_id, approval_id)
         return await self._port(connection_id, authority)
 
+    async def migration_writer(
+        self, connection_id: str, approval_id: str
+    ) -> ArcMemoryIngestAdapter:
+        """A port that adopts this agent's own store under the approval it just verified.
+
+        Used before the agent subscribes, so the store is whole before it is read.
+        """
+        return await self._port(connection_id, _VerifiedNow(approval_id))
+
     async def reader(self, connection_id: str) -> ArcMemoryIngestAdapter:
         """A port that reads the store and can write nothing."""
         return await self._port(connection_id, _ReadOnly())
@@ -235,6 +254,16 @@ class SharedKnowledge:
             self._embedder = self._build_embedder()
             self._embedder_built = True
         return self._embedder
+
+    def profile_compatible(self, connection_id: str) -> bool:
+        """Whether this agent could read the store; claims nothing (a dry run)."""
+        marker = self.root(connection_id) / _PROFILE_FILE
+        try:
+            return marker.read_text(encoding="utf-8").strip() == self._profile()
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
 
     def claim_profile(self, connection_id: str) -> bool:
         """True when this agent embeds the way the store was (or is now first) embedded.
