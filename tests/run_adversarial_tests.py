@@ -66,6 +66,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # The operator's repository-index view walks folders, verified deep, and
         # refuses a folder argument outside the source.
         "packages/arcui/tests/integration/test_doc_repo_index_route.py",
+        # Alpha-2 D7: a connection's shared store is sealed by its knowledge principal
+        # (did:arc:knowledge:<hash>), a key only arctrust custody holds. A seal signed
+        # by an agent's key or by another connection's principal is refused, a
+        # tampered index.md with a recomputed digest fails verification, and an
+        # unprovisioned custody key signs nothing (fail closed).
+        "packages/arcagent/tests/security/test_shared_knowledge_seal.py",
+        "packages/arctrust/tests/test_knowledge_signer.py",
+        "packages/arcmemory/tests/unit/test_okf_seal_hold.py",
     ),
     "prompt replacement and instruction-boundary attacks": (
         "packages/arcprompt/tests/unit/test_verifier.py",
