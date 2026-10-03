@@ -8,14 +8,15 @@ from typing import Any
 
 import pytest
 from arcstore.backends.memory import FakeBackend
-from arctrust import OperatorKey, causal, default_operator_key_path
+from arcstore.ingest import UI_WORM_FILENAME
+from arctrust import causal
 from arctrust.audit import AuditEvent, NullSink, WormSink
 from arctrust.keypair import generate_keypair
 from arctrust.signer import InProcessSigner
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from arcui.audit import build_mutation_worm_writer, operator_audit_sink
+from arcui.audit import MutationWormWriter, operator_audit_sink
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.observe import Observe
 from arcui.routes.observe_run import routes as run_routes
@@ -56,13 +57,17 @@ def _seed(worm: Path) -> bytes:
 
 
 @pytest.fixture
-async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
-    OperatorKey.load(default_operator_key_path(), generate_if_absent=True)
+async def client(tmp_path: Path) -> TestClient:
     worm = tmp_path / "data" / "worm"
     worm.mkdir(parents=True)
     key = _seed(worm)
-    writer = build_mutation_worm_writer(tmp_path / "data")
+    # An in-test signing key: the global operator-key resolver is process state
+    # that other suites in the battery reconfigure.
+    operator = generate_keypair()
+    writer = MutationWormWriter(
+        sink=WormSink(worm / UI_WORM_FILENAME, InProcessSigner(operator.private_key)),
+        operator_did="did:arc:operator:test",
+    )
     observe = Observe(data_dir=tmp_path / "data", backend=FakeBackend(), worm_public_key=key)
     await observe.refresh()
     auth = AuthConfig(_AUTH)
