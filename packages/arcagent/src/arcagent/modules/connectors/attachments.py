@@ -252,11 +252,16 @@ def build_attachment(
     kind = manifest.extension.attachment
     if kind == "native":
         entrypoint = _NativeConfig.model_validate(manifest.config.get("native", {})).entrypoint
+        visible = visible_values(manifest, secrets)
         context: dict[str, Any] = {"bundle": str(bundle), "connection_id": connection_id}
-        context.update(visible_values(manifest, secrets))
+        context.update(visible)
         context["credential"] = credential
+        context["download_dir"] = str(download_dir) if download_dir is not None else ""
         with _importable(bundle):
-            return NativeAttachment(entrypoint, context)
+            native = NativeAttachment(entrypoint, context)
+        return _with_source_adapter(
+            manifest, bundle, native, {"connection_id": connection_id, **visible}
+        )
     if kind == "cli":
         unplaced = unplaced_secrets(manifest)
         if unplaced:
@@ -290,7 +295,12 @@ def build_attachment(
             download_dir=download_dir,
             credential_env=_placed_by_handle(manifest, credential),
         )
-        return _with_source_adapter(manifest, bundle, cli_attachment)
+        return _with_source_adapter(
+            manifest,
+            bundle,
+            cli_attachment,
+            {"connection_id": connection_id, **visible_values(manifest, secrets)},
+        )
     if kind == "mcp":
         from arcagent.extension.mcp_attachment import SdkMcpClient
 
@@ -430,17 +440,26 @@ def _namespaced(attachment: ExtensionAttachment, namespace: str) -> ExtensionAtt
 
 
 def _with_source_adapter(
-    manifest: ExtensionManifest, bundle: Path, attachment: ExtensionAttachment
+    manifest: ExtensionManifest,
+    bundle: Path,
+    attachment: ExtensionAttachment,
+    identity: Mapping[str, str] | None = None,
 ) -> ExtensionAttachment:
+    """Wrap ``attachment`` with the bundle's ``[config.source]`` adapter, if it declares one.
+
+    ``identity`` (the connection id and the non-sensitive fields) lets an adapter
+    name WHICH account it syncs, so two mailboxes are two sources.
+    """
     source_config = manifest.config.get("source")
     if source_config is None:
         return attachment
     entrypoint = _SourceConfig.model_validate(source_config).entrypoint
+    context: dict[str, Any] = {**(identity or {}), "attachment": attachment}
     with _importable(bundle):
         module = importlib.import_module(entrypoint)
         factories = getattr(module, "build_source_adapters", None)
         if callable(factories):
-            sources = factories({"attachment": attachment})
+            sources = factories(context)
             if (
                 not isinstance(sources, dict)
                 or not sources
@@ -451,7 +470,7 @@ def _with_source_adapter(
                 )
             return _MultiSourceEnabledAttachment(attachment, sources)
         factory = getattr(module, "build_source_adapter", None)
-        source = factory({"attachment": attachment}) if callable(factory) else None
+        source = factory(context) if callable(factory) else None
     if not isinstance(source, SourceAdapter):
         raise _refuse("source entrypoint did not return a SourceAdapter", entrypoint=entrypoint)
     return _SourceEnabledAttachment(attachment, source)

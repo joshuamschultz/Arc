@@ -94,3 +94,9 @@ class FakeCredentialHandle:
 
 
 __all__ = ["FakeCredentialHandle", "InterleavingBackend", "make_cipher", "once_per_task"]
+
+
+async def static_client(flow: Any) -> tuple[str, Secret] | None:
+    """A renewer client source standing in for the deployment's OAuth app slot."""
+    del flow
+    return "app-key", Secret("app-secret")

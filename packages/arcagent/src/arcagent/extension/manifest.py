@@ -29,10 +29,10 @@ from __future__ import annotations
 import copy
 import logging
 import re
-import shlex
 import tomllib
 from collections.abc import Mapping
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -173,56 +173,6 @@ class ArtifactPin(_ManifestModel):
         return self.platforms.get(host) or self.platforms.get(ANY_PLATFORM)
 
 
-#: The one slot a remote login's complete step fills with what the operator
-#: pasted. Reserved: no ``[[secrets]]`` field may be called this, because the value
-#: is typed at sign-in time and never stored.
-REDIRECT_URL_SLOT = "redirect_url"
-
-#: A consent host is a bare DNS name: no scheme, no port, no path. Arc hands the
-#: operator a link only when it points at exactly this host.
-_CONSENT_HOST = r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
-
-
-class RemoteLogin(_ManifestModel):
-    """``[host_requires.remote_login]`` — a two-step sign-in a browser can finish.
-
-    The shape a headless OAuth login has: ``begin`` prints a consent URL on
-    ``consent_host``; the person signs in there in their own browser, lands on a
-    loopback redirect that fails to load, and pastes that address; ``complete``
-    exchanges it. Nothing waits on a prompt, so unlike ``authorize_command`` Arc
-    can run both steps and report a sign-in only when the binary reports one.
-
-    ``complete`` carries the pasted address in the reserved ``{redirect_url}``
-    slot, as one whole argument. Every other slot names a non-sensitive field of
-    this bundle — the same argv rule every declared command obeys.
-    """
-
-    begin: str = Field(min_length=1)
-    complete: str = Field(min_length=1)
-    consent_host: str = Field(pattern=_CONSENT_HOST)
-
-    @model_validator(mode="after")
-    def _redirect_slot_is_complete_only(self) -> RemoteLogin:
-        """The pasted address goes to the exchange step, whole, and nowhere else."""
-        slot = "{" + REDIRECT_URL_SLOT + "}"
-        if REDIRECT_URL_SLOT in placeholders(self.begin):
-            raise ValueError("remote_login.begin may not name {redirect_url}")
-        if REDIRECT_URL_SLOT not in placeholders(self.complete):
-            raise ValueError("remote_login.complete must carry the pasted {redirect_url}")
-        try:
-            tokens = shlex.split(self.complete)
-        except ValueError as exc:
-            raise ValueError(f"remote_login.complete does not parse: {exc}") from exc
-        holders = [token for token in tokens if slot in token]
-        if holders != [slot]:
-            raise ValueError("remote_login.complete must pass {redirect_url} as its own argument")
-        return self
-
-    def commands(self) -> tuple[tuple[str, str], ...]:
-        """Both steps, labelled for a refusal that names which one is wrong."""
-        return (("remote_login.begin", self.begin), ("remote_login.complete", self.complete))
-
-
 class HostRequirement(_ManifestModel):
     """``[[host_requires]]`` — a prerequisite the operator installs on the host (REQ-262).
 
@@ -258,9 +208,6 @@ class HostRequirement(_ManifestModel):
     Both are failures, but they send an operator to different places: an OAuth
     refresh token the provider revoked (``invalid_grant``) is a *Reconnect*, and
     rendering it as never-signed-in hides that the account was working last week.
-
-    ``remote_login`` is the two-step headless sign-in (:class:`RemoteLogin`) — the
-    kind a web page can drive, where ``authorize_command`` is only ever shown.
     """
 
     name: str
@@ -271,7 +218,6 @@ class HostRequirement(_ManifestModel):
     verify_command: str = ""
     verify_pattern: str = ""
     verify_expired_pattern: str = ""
-    remote_login: RemoteLogin | None = None
 
     @field_validator("verify_pattern", "verify_expired_pattern")
     @classmethod
@@ -295,21 +241,6 @@ class HostRequirement(_ManifestModel):
         if (self.verify_pattern or self.verify_expired_pattern) and not self.verify_command:
             raise ValueError("a verify pattern is set but no verify_command runs it")
         return self
-
-    @model_validator(mode="after")
-    def _remote_login_runs_this_binary(self) -> HostRequirement:
-        """Each step authorises this one program, never a program of the manifest's choosing."""
-        if self.remote_login is None:
-            return self
-        for label, command in self.remote_login.commands():
-            try:
-                first = shlex.split(command)[:1]
-            except ValueError as exc:
-                raise ValueError(f"{label} does not parse: {exc}") from exc
-            if first != [self.name]:
-                raise ValueError(f"{label} must invoke {self.name} and nothing else")
-        return self
-
 
 class CredentialPlacement(_ManifestModel):
     """``[secrets.placement]`` — where this bundle's own tool reads this credential.
@@ -422,28 +353,93 @@ class SecretRequirement(_ManifestModel):
 class OAuthFlow(_ManifestModel):
     """``[oauth]`` — a native OAuth2 authorization-code connect flow, done in-harness.
 
-    The host-login path signs in a host BINARY that owns its own credential. A
-    native connector (no binary) that speaks OAuth2 has no such path, so without
-    this the operator has to obtain a refresh token by hand — running the
-    code→token exchange themselves. Declaring this block lets ``arc connector
-    authorize`` do the whole sign-in: build the provider's authorize URL from the
-    stored client id, take the one-time code the provider shows, exchange it for a
-    durable refresh token, and store that under ``refresh_token_secret``. The
-    operator never obtains, types, or sees a refresh token, and no adapter
-    reimplements the exchange.
+    The operator sets a provider's OAuth app up ONCE (the deployment's app slot,
+    :mod:`arcagent.extension.oauth_apps`); every connection of that provider is
+    then one click. ``provider`` names that app slot, so two mailboxes share one
+    app and no connection carries a client id or secret of its own.
 
-    ``client_id_secret`` / ``client_secret_secret`` name the ``[[secrets]]`` the
-    operator supplies (the app key and secret). ``refresh_token_secret`` names the
-    ``[[secrets]]`` this flow WRITES — since the operator never types it, that
-    secret's entry carries no prompt.
+    ``refresh_token_secret`` names the ``[[secrets]]`` field this flow WRITES —
+    the operator never types it, so that entry carries no prompt.
+
+    ``redirect = "callback"`` sends the provider back to ArcUI's
+    ``/oauth/callback`` page (the redirect URI is computed from deployment config,
+    never from a request). ``"none"`` is the provider-shows-a-code mode (Dropbox).
+    ``account`` names how the signed-in account is checked BEFORE anything is
+    stored: ``openid_email`` reads the ``id_token`` the token endpoint returned.
     """
 
+    provider: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     authorize_url: str
     token_url: str
-    client_id_secret: str
-    client_secret_secret: str
     refresh_token_secret: str
+    scopes: list[str] = Field(default_factory=list)
+    scopes_read_only: list[str] | None = None
+    scope_separator: str = " "
     authorize_params: dict[str, str] = Field(default_factory=dict)
+    pkce: bool = True
+    client_auth: Literal["basic", "post_form", "post_json"] = "basic"
+    redirect: Literal["callback", "none"] = "callback"
+    account: Literal["openid_email", "none"] = "none"
+    #: The ``iss`` values an ``id_token`` may carry (``account = "openid_email"``).
+    id_token_issuers: list[str] = Field(default_factory=list)
+    revoke_url: str | None = None
+    revoke_style: Literal["form_token", "bearer"] = "form_token"
+
+    @model_validator(mode="after")
+    def _account_check_is_complete(self) -> OAuthFlow:
+        """An ``openid_email`` check needs ``openid`` + ``email`` scopes and an issuer list."""
+        if self.account != "openid_email":
+            return self
+        if not self.id_token_issuers:
+            raise ValueError('[oauth].account = "openid_email" needs id_token_issuers')
+        for scopes in (self.scopes, self.scopes_read_only or self.scopes):
+            if not {"openid", "email"} <= set(scopes):
+                raise ValueError(
+                    '[oauth].account = "openid_email" needs the openid and email scopes'
+                )
+        return self
+
+    @field_validator("authorize_url", "token_url", "revoke_url")
+    @classmethod
+    def _https_endpoint(cls, value: str | None) -> str | None:
+        """Every provider endpoint is ``https://`` with a host and no userinfo or fragment."""
+        if value is None:
+            return value
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.fragment
+        ):
+            raise ValueError(f"[oauth] endpoint {value!r} must be https:// with no userinfo")
+        return value
+
+    @field_validator("authorize_params")
+    @classmethod
+    def _no_reserved_params(cls, value: dict[str, str]) -> dict[str, str]:
+        """The parameters the flow itself owns cannot be overridden by a manifest."""
+        reserved = sorted(set(value) & _RESERVED_AUTHORIZE_PARAMS)
+        if reserved:
+            raise ValueError(f"[oauth].authorize_params may not set {', '.join(reserved)}")
+        return value
+
+
+#: Authorize-URL parameters the flow computes; a manifest that set one could
+#: downgrade PKCE, swap the redirect or fix the ``state``.
+_RESERVED_AUTHORIZE_PARAMS = frozenset(
+    {
+        "client_id",
+        "response_type",
+        "redirect_uri",
+        "state",
+        "code_challenge",
+        "code_challenge_method",
+        "scope",
+        "login_hint",
+    }
+)
 
 
 class CredentialDeclaration(_ManifestModel):
@@ -762,16 +758,16 @@ class ExtensionManifest(_ManifestModel):
         """
         if self.oauth is None:
             return self
-        declared = {secret.name for secret in self.secrets}
-        for role, name in (
-            ("client_id_secret", self.oauth.client_id_secret),
-            ("client_secret_secret", self.oauth.client_secret_secret),
-            ("refresh_token_secret", self.oauth.refresh_token_secret),
-        ):
-            if name not in declared:
-                raise ValueError(
-                    f"[oauth].{role} = {name!r} names no [[secrets]] this bundle declares"
-                )
+        declared = {secret.name: secret for secret in self.secrets}
+        name = self.oauth.refresh_token_secret
+        target = declared.get(name)
+        if target is None:
+            raise ValueError(
+                f"[oauth].refresh_token_secret = {name!r} names no [[secrets]] this bundle "
+                "declares"
+            )
+        if not target.sensitive:
+            raise ValueError(f"[oauth].refresh_token_secret {name!r} must be sensitive")
         return self
 
     @model_validator(mode="after")
@@ -791,16 +787,9 @@ class ExtensionManifest(_ManifestModel):
         """
         visible = {declared.name for declared in self.secrets if not declared.sensitive}
         declared_names = {declared.name for declared in self.secrets}
-        if REDIRECT_URL_SLOT in declared_names:
-            raise ValueError(
-                f"[[secrets]] may not be named {REDIRECT_URL_SLOT!r}: that slot carries the "
-                f"address an operator pastes at sign-in, and it is never stored"
-            )
         for source, command in self._commands_naming_fields():
             for field in placeholders(command):
-                if field in visible or (
-                    field == REDIRECT_URL_SLOT and source.endswith("remote_login.complete")
-                ):
+                if field in visible:
                     continue
                 reason = (
                     "is a credential and may never reach argv"
@@ -822,7 +811,6 @@ class ExtensionManifest(_ManifestModel):
             field
             for _, command in self._commands_naming_fields()
             for field in placeholders(command)
-            if field != REDIRECT_URL_SLOT
         }
 
     def _commands_naming_fields(self) -> list[tuple[str, str]]:
@@ -830,12 +818,6 @@ class ExtensionManifest(_ManifestModel):
         sources = [
             (f"{required.name}'s token_command", required.token_command)
             for required in self.host_requires
-        ]
-        sources += [
-            (f"{required.name}'s {label}", command)
-            for required in self.host_requires
-            if required.remote_login is not None
-            for label, command in required.remote_login.commands()
         ]
         declared: Any = self.config.get("cli", {}).get("commands", [])
         for command in declared if isinstance(declared, list) else []:
@@ -885,7 +867,6 @@ def load_manifest(text: str, *, tier: Tier) -> ExtensionManifest:
 
 
 __all__ = [
-    "REDIRECT_URL_SLOT",
     "ApprovalPolicy",
     "ArtifactPin",
     "CredentialDeclaration",
@@ -897,7 +878,6 @@ __all__ = [
     "KnowledgeDeclaration",
     "PlatformArtifact",
     "ReadOnlyMode",
-    "RemoteLogin",
     "SecretRequirement",
     "ToolPolicy",
     "ToolRouting",

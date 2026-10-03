@@ -55,18 +55,14 @@ class CredentialPlan:
     bearer_field: str | None
     #: Sensitive fields ``field()`` may return (``api_token``, ``database_dsn``).
     handle_fields: frozenset[str]
-    #: Never returned: the refresh token and the OAuth client secret.
+    #: Never returned: the refresh token (the OAuth client secret lives in the app slot).
     withheld: frozenset[str]
 
 
 def credential_plan(manifest: ExtensionManifest) -> CredentialPlan:
     """The plan a manifest implies. Pure."""
     oauth = manifest.oauth
-    withheld = (
-        frozenset({oauth.refresh_token_secret, oauth.client_secret_secret})
-        if oauth is not None
-        else frozenset()
-    )
+    withheld = frozenset({oauth.refresh_token_secret}) if oauth is not None else frozenset()
     sensitive = frozenset(declared.name for declared in manifest.secrets if declared.sensitive)
     bearer = manifest.credential.bearer if manifest.credential is not None else None
     return CredentialPlan(

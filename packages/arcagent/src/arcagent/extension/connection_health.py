@@ -180,6 +180,10 @@ _CODE_ALIASES: Final[Mapping[str, ReasonCode]] = {
 }
 
 _TOKEN_REVOKED_MARKERS = ("token_revoked", "invalid_auth", "account_inactive")
+#: A native probe that reached the provider as the wrong account (P18-3).
+_ACCOUNT_MISMATCH_MARKERS = ("signed in as a different account",)
+#: A provider refusing for a permission the consent did not grant (Google 403).
+_SCOPE_MARKERS = ("insufficientpermissions", "access_token_scope_insufficient")
 _SYNC_MARKERS = (
     "sync_stalled",
     "leaselost",
@@ -209,6 +213,10 @@ def classify(code: str | None, text: str) -> ReasonCode:
     lowered = text.lower()
     if any(marker in lowered for marker in _TOKEN_REVOKED_MARKERS):
         return "token_revoked"
+    if any(marker in lowered for marker in _ACCOUNT_MISMATCH_MARKERS):
+        return "account_mismatch"
+    if any(marker in lowered for marker in _SCOPE_MARKERS):
+        return "scope_missing"
     if any(marker in lowered for marker in _SYNC_MARKERS):
         return "sync_failed"
     verdict = classify_cli_failure(text)

@@ -1717,8 +1717,7 @@ name = "refresh_token"
 [oauth]
 authorize_url = "https://provider.example/oauth2/authorize"
 token_url = "https://provider.example/oauth2/token"
-client_id_secret = "app_key"
-client_secret_secret = "app_secret"
+provider = "example"
 refresh_token_secret = "refresh_token"
 authorize_params = { token_access_type = "offline" }
 

@@ -14,7 +14,12 @@ from typing import Any
 
 import pytest
 from arctrust.audit import AuditEvent
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, once_per_task
+from packages.arcagent.tests.custody_fakes import (
+    InterleavingBackend,
+    make_cipher,
+    once_per_task,
+    static_client,
+)
 
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.extension.credentials import (
@@ -25,15 +30,14 @@ from arcagent.extension.credentials import (
 )
 from arcagent.extension.custody import CREDENTIAL_COLLECTION, CredentialRowStore
 from arcagent.extension.manifest import OAuthFlow
-from arcagent.extension.oauth import refresh_access_token
+from arcagent.extension.oauth import TokenPost, refresh_access_token
 from arcagent.extension.secrets import Secret
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 
 FLOW = OAuthFlow(
     authorize_url="https://auth.example/authorize",
     token_url="https://auth.example/token",
-    client_id_secret="app_key",
-    client_secret_secret="app_secret",
+    provider="example",
     refresh_token_secret="refresh_token",
 )
 CONN = "blackarc"
@@ -139,6 +143,7 @@ class World:
             refresh=provider,
             health=StoreHealthReporter(self.open, sink=self.sink),
             owner_id=owner,
+            client=static_client,
             state=self.state,
             sink=self.sink,
             clock=self.clock,
@@ -326,9 +331,9 @@ async def test_waiter_sees_fresh_token_and_skips_the_provider(world: World) -> N
 
 
 async def test_invalid_client_is_terminal_consent_required(world: World) -> None:
-    async def post(url: str, data: dict[str, str], auth: tuple[str, str]) -> tuple[int, Any]:
-        assert data == {"grant_type": "refresh_token", "refresh_token": "r0"}
-        assert auth == ("app-key", "app-secret")
+    async def post(request: TokenPost) -> tuple[int, Any]:
+        assert request.form == {"grant_type": "refresh_token", "refresh_token": "r0"}
+        assert request.basic_auth == ("app-key", "app-secret")
         return 401, {"error": "invalid_client"}
 
     async def refresh(request: RefreshRequest) -> RenewedCredential:

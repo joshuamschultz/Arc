@@ -138,26 +138,13 @@ Sleep = Callable[[float], Awaitable[None]]
 
 
 class ClientCredentialSource(Protocol):
-    """Where a connection's OAuth client id/secret come from.
+    """Where a provider's OAuth client id/secret come from: the deployment's app slot.
 
-    P18-2 reads them from the connection's own custody fields; P18-3 swaps in the
-    deployment's OAuth app slot.
+    :meth:`arcagent.extension.oauth_apps.OAuthAppStore.client_for` is the
+    production source; ``None`` means no app is set up for ``flow.provider``.
     """
 
-    def __call__(
-        self, rows: CredentialRowStore, row: CredentialRow, flow: OAuthFlow
-    ) -> tuple[str, Secret] | None: ...
-
-
-def connection_client(
-    rows: CredentialRowStore, row: CredentialRow, flow: OAuthFlow
-) -> tuple[str, Secret] | None:
-    """The OAuth client id/secret stored on the connection itself (its app key/secret)."""
-    client_id = rows.open_field(row, flow.client_id_secret)
-    client_secret = rows.open_field(row, flow.client_secret_secret)
-    if client_id is None or client_secret is None:
-        return None
-    return client_id.reveal(), client_secret
+    async def __call__(self, flow: OAuthFlow) -> tuple[str, Secret] | None: ...
 
 
 def _utcnow() -> datetime:
@@ -195,8 +182,8 @@ class RenewalPlanner:
     refresh: RefreshFn
     health: HealthReporter
     owner_id: str
+    client: ClientCredentialSource
     state: ConnectionStateStore | None = None
-    client: ClientCredentialSource = connection_client
     sink: AuditSink | None = None
     actor_did: str = RENEWER_DID
     clock: Clock = _utcnow
@@ -347,7 +334,7 @@ class RenewalPlanner:
         connection = row.connection
         try:
             refresh = self.rows.open_field(row, flow.refresh_token_secret)
-            client = self.client(self.rows, row, flow)
+            client = await self.client(flow)
         except ExtensionError as exc:
             if exc.code != "CREDENTIAL_UNREADABLE":
                 raise
@@ -464,6 +451,5 @@ __all__ = [
     "RefreshRequest",
     "RenewalPlanner",
     "RenewedCredential",
-    "connection_client",
     "is_due",
 ]

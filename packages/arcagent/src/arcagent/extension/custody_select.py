@@ -45,7 +45,8 @@ from arcagent.extension.custody import (
     SealedCredentialBackend,
 )
 from arcagent.extension.grants import ConnectionRegistry
-from arcagent.extension.oauth import post_form, refresh_access_token
+from arcagent.extension.oauth import PostToken, refresh_access_token, send_token_post
+from arcagent.extension.oauth_apps import OAuthAppStore
 from arcagent.extension.secrets import SecretStore
 from arcagent.extension.state import ConnectionStateStore
 
@@ -101,9 +102,10 @@ def owner_id() -> str:
 
 @dataclass(frozen=True)
 class Custody:
-    """One process's view of connector custody: rows, the field store, the renewer."""
+    """One process's view of connector custody: rows, app slots, the field store, the renewer."""
 
     rows: CredentialRowStore
+    apps: OAuthAppStore
     store: SecretStore
     planner: RenewalPlanner
     health: HealthReporter
@@ -134,20 +136,27 @@ def open_custody(
     health: HealthReporter,
     sink: AuditSink | None = None,
     actor_did: str = RENEWER_DID,
+    token_post: PostToken = send_token_post,
 ) -> Custody:
-    """Compose custody over an open arcstore backend."""
+    """Compose custody over an open arcstore backend.
+
+    ``token_post`` is the one HTTP call to a provider's token endpoint; tests and
+    journeys inject a fake provider here and nowhere else.
+    """
     rows = CredentialRowStore(backend, cipher, sink=sink)
+    apps = OAuthAppStore(backend, cipher, sink=sink)
     planner = RenewalPlanner(
         rows=rows,
-        refresh=lambda request: refresh_access_token(request, post=post_form),
+        refresh=lambda request: refresh_access_token(request, post=token_post),
         health=health,
         owner_id=owner_id(),
+        client=apps.client_for,
         state=ConnectionStateStore(backend, sink=sink),
         sink=sink,
         actor_did=actor_did,
     )
     store = SecretStore(SealedCredentialBackend(rows), sink=sink)
-    return Custody(rows=rows, store=store, planner=planner, health=health, sink=sink)
+    return Custody(rows=rows, apps=apps, store=store, planner=planner, health=health, sink=sink)
 
 
 __all__ = [

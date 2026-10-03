@@ -291,24 +291,35 @@ class CredentialRowStore:
         expires_at: datetime,
         scope: str | None,
         actor_did: str,
+        fields: Mapping[str, str] | None = None,
     ) -> int:
         """Store a fresh OAuth grant (refresh + access) in ONE write. Returns the generation.
 
         Used right after an authorization-code exchange, so the access token the
         exchange already issued is used instead of spending a refresh at once.
+        ``fields`` are other values the connect resolved (the verified account) and
+        land in the same compare-and-set, so no reader sees a token without them.
         """
         _check_coordinate("connection", connection)
         _check_coordinate("field", refresh_field)
+        extra = dict(fields or {})
+        for name in extra:
+            _check_coordinate("field", name)
         sealed_refresh = self._seal(connection, refresh_field, refresh_token)
         sealed_access = self._seal(connection, ACCESS_SLOT, access_token)
+        sealed_extra = {
+            name: {"sealed": self._seal(connection, name, value), "updated_at": _iso(issued_at)}
+            for name, value in extra.items()
+        }
         for _ in range(_CAS_ATTEMPTS):
             row = await self._read_or_create(connection, actor_did)
             self._require_cipher(row)
-            fields = {name: value.model_dump() for name, value in row.fields.items()}
-            fields[refresh_field] = {"sealed": sealed_refresh, "updated_at": _iso(issued_at)}
+            fields_now = {name: value.model_dump() for name, value in row.fields.items()}
+            fields_now.update(sealed_extra)
+            fields_now[refresh_field] = {"sealed": sealed_refresh, "updated_at": _iso(issued_at)}
             generation = row.generation + 1
             patch = {
-                "fields": fields,
+                "fields": fields_now,
                 "access": {
                     "sealed": sealed_access,
                     "issued_at": _iso(issued_at),

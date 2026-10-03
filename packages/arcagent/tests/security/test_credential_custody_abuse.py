@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from arctrust.audit import AuditEvent
 from arctrust.secrets import SECRET_PATTERNS
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher
+from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, static_client
 
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.connection_health import StoreHealthReporter
@@ -38,8 +38,7 @@ from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 FLOW = OAuthFlow(
     authorize_url="https://auth.example/authorize",
     token_url="https://auth.example/token",
-    client_id_secret="app_key",
-    client_secret_secret="app_secret",
+    provider="example",
     refresh_token_secret="refresh_token",
 )
 PLAN = CredentialPlan(
@@ -120,6 +119,7 @@ class World:
             refresh=self.provider,
             health=StoreHealthReporter(self.open),
             owner_id=owner,
+            client=static_client,
             state=self.state,
             sink=self.sink,
             clock=self.clock,

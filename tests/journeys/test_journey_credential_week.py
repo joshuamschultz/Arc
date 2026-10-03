@@ -28,13 +28,12 @@ from arcagent.extension.secrets import Secret
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore
 from arcstore.backends.memory import FakeBackend
 
-from packages.arcagent.tests.custody_fakes import make_cipher
+from packages.arcagent.tests.custody_fakes import make_cipher, static_client
 
 FLOW = OAuthFlow(
     authorize_url="https://auth.example/authorize",
     token_url="https://auth.example/token",
-    client_id_secret="app_key",
-    client_secret_secret="app_secret",
+    provider="example",
     refresh_token_secret="refresh_token",
 )
 PLAN = CredentialPlan(
@@ -84,6 +83,7 @@ class Week:
             refresh=self.provider,
             health=StoreHealthReporter(self.opener),
             owner_id=owner,
+            client=static_client,
             state=self.state,
             clock=self.clock,
             sleep=no_sleep,

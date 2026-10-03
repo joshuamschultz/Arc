@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from arctrust.audit import AuditEvent
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher
+from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher, static_client
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -56,8 +56,7 @@ name = "api_token"
 [oauth]
 authorize_url = "https://auth.example/authorize"
 token_url = "https://auth.example/token"
-client_id_secret = "app_key"
-client_secret_secret = "app_secret"
+provider = "example"
 refresh_token_secret = "refresh_token"
 
 [health]
@@ -135,7 +134,8 @@ class World:
     def broker(self, *, agent: str = AGENT, did: str = AGENT_DID) -> AccessTokenBroker:
         health = StoreHealthReporter(self.open)
         planner = RenewalPlanner(
-            rows=self.rows, refresh=self.provider, health=health, owner_id="p", sink=self.sink
+            rows=self.rows, refresh=self.provider, health=health, owner_id="p", sink=self.sink,
+            client=static_client,
         )
         return AccessTokenBroker(
             self.rows,
@@ -208,7 +208,7 @@ async def test_agent_gets_short_lived_handle_and_never_refresh_token(
     rendered = repr(context)
     for value in ("refresh-x", "app-secret-x", "api-token-x"):
         assert value not in rendered
-    for withheld in ("refresh_token", "app_secret", "app_key"):
+    for withheld in ("refresh_token", "app_key"):
         with pytest.raises(ExtensionError) as caught:
             await handle.field(withheld)
         assert caught.value.code == "CREDENTIAL_FIELD_WITHHELD"

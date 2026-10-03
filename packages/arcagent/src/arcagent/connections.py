@@ -42,12 +42,12 @@ import os
 import shutil
 import time
 import tomllib
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -99,12 +99,7 @@ from arcagent.extension.grants import (
 )
 from arcagent.extension.host import HostPrerequisiteDirector, HostVerdict
 from arcagent.extension.host_install import host_install_dir, install_pinned_binary
-from arcagent.extension.host_login import (
-    run_authorization_check,
-    run_remote_login_begin,
-    run_remote_login_complete,
-    run_token_login,
-)
+from arcagent.extension.host_login import run_authorization_check, run_token_login
 from arcagent.extension.manifest import (
     ArtifactPin,
     DeclaredTool,
@@ -114,18 +109,28 @@ from arcagent.extension.manifest import (
     load_manifest,
 )
 from arcagent.extension.oauth import (
+    OAUTH_CALLBACK_INVALID,
+    OAUTH_STATE_INVALID,
+    PENDING_TTL_SECONDS,
+    CallbackParams,
+    OAuthPendingLedger,
     OAuthTokens,
+    PendingAuthorization,
+    PostToken,
     build_authorize_url,
+    checked_callback,
+    declined,
     exchange_authorization_code,
-    post_form,
+    missing_scopes,
+    new_pkce,
+    new_state,
+    require_account,
+    revoke,
+    scopes_for,
+    send_token_post,
+    verified_id_token_email,
 )
-from arcagent.extension.remote_login import (
-    REMOTE_LOGIN_FAILED,
-    REMOTE_LOGIN_NEEDS_CONFIRMATION,
-    PendingLogin,
-    RemoteLoginLedger,
-    checked_account,
-)
+from arcagent.extension.oauth_apps import OAUTH_APP_MISSING, OAuthApp, OAuthAppStatus
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import (
     ConnectionRecord,
@@ -190,6 +195,53 @@ _STRINGENCY = (Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL)
 #: Refusal code for a credential no manifest declares — the allowlist that stops
 #: a rotation from writing an arbitrary entry into the agent's credential file.
 UNDECLARED_CREDENTIAL = "CONNECTOR_SECRET_UNDECLARED"
+
+#: Refusal code for a consent that granted fewer permissions than were asked for.
+SCOPE_MISSING = "SCOPE_MISSING"
+
+#: The redirect URI a deployment with no configured public origin uses: ArcUI's own
+#: loopback callback page on its default port.
+DEFAULT_OAUTH_REDIRECT_URI = "http://127.0.0.1:8420/oauth/callback"
+
+
+def oauth_redirect_uri(public_base_url: str | None, *, port: int = 8420) -> str:
+    """The redirect URI a deployment registers with its OAuth apps, from config only.
+
+    ``public_base_url`` (``[ui] public_base_url``) when the dashboard is reached at a
+    public name, else ArcUI's loopback callback on its port. Never derived from a
+    request (design O3): a ``Host`` header is attacker-controlled.
+
+    Raises:
+        ValueError: A base that is not https (or http on a loopback host), or one
+            carrying userinfo, a path, a query or a fragment.
+    """
+    if not public_base_url:
+        return f"http://127.0.0.1:{port}/oauth/callback"
+    parts = urlsplit(public_base_url.strip())
+    loopback = (parts.hostname or "") in {"127.0.0.1", "localhost"}
+    if (
+        not parts.hostname
+        or (parts.scheme != "https" and not (parts.scheme == "http" and loopback))
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError("the public base URL must be an https origin with no path")
+    return f"{parts.scheme}://{parts.netloc}/oauth/callback"
+
+
+def _oauth_flow(plan: ConnectorPlan) -> OAuthFlow:
+    """The connection's ``[oauth]`` flow, or a refusal for a connector that has none."""
+    flow = plan.manifest.oauth
+    if flow is None:
+        raise _refuse(
+            "NOT_OAUTH",
+            f"{plan.instance!r} does not connect with a sign-in; supply its credentials instead",
+            instance=plan.instance,
+        )
+    return flow
 
 
 def _refuse(code: str, message: str, **details: Any) -> ExtensionError:
@@ -499,26 +551,21 @@ class HostAuthorization:
     command: str
     instruction: str
     token_command: str = ""
-    #: True when the manifest declares a two-step remote sign-in Arc can drive
-    #: from a browser, so a surface offers that instead of a terminal command.
-    remote_login: bool = False
 
 
 @dataclass(frozen=True)
-class RemoteLoginStart:
-    """A begun remote sign-in: the link to open, and how long it stays completable.
+class OAuthBegin:
+    """A begun one-click connect: the consent URL to open and how long it stays open.
 
-    ``consent_url`` is the provider's own consent page, checked to be on the host
-    the manifest declares. It carries only public values (the client id, a CSRF
-    ``state``, a PKCE challenge), never a credential.
+    ``authorize_url`` carries only public values (the client id, ``state``, a PKCE
+    challenge, the redirect URI). The verifier never leaves the server.
     """
 
     instance: str
-    account: str
-    consent_url: str
+    authorize_url: str
+    state: str
+    redirect_mode: Literal["callback", "none"]
     expires_in: int
-    #: Blank-field warnings the operator accepted to start this sign-in.
-    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -610,22 +657,10 @@ class Authorization:
     detail: str
     sign_in: SignInState = "unknown"
     sign_in_detail: str = ""
-    #: True when the connector's manifest declares an ``[oauth]`` flow — the shape
-    #: is "supply the app key/secret, then finish by pasting a consent code", not a
-    #: host binary or a typed token. Set independently of ``authorize_url`` so a
-    #: surface can tell an OAuth connector whose app key is not supplied yet (no URL
-    #: to open) from one that is not OAuth at all.
+    #: True when the connector's manifest declares an ``[oauth]`` flow: the
+    #: operator connects with one click (:meth:`Connections.begin_oauth`), never by
+    #: typing a credential or running a host command.
     oauth: bool = False
-    #: The provider consent URL for a native OAuth connector — empty for every
-    #: other shape, and empty for an OAuth connector until its app key is supplied
-    #: (there is no URL before the connector knows which app it is). It names no
-    #: secret (only the public client id), so it is safe to render.
-    authorize_url: str = ""
-
-    @property
-    def oauth_connect(self) -> bool:
-        """True when the next step is opening the URL and pasting a consent code."""
-        return bool(self.authorize_url)
 
     @property
     def working(self) -> bool:
@@ -666,14 +701,9 @@ class Authorization:
         completed is the same lie told in the other direction.
         """
         for host in self.hosts:
-            if not host.token_command and not host.remote_login:
+            if not host.token_command:
                 return host.command
         return ""
-
-    @property
-    def remote_login(self) -> bool:
-        """True when the next step is the browser sign-in Arc drives in two steps."""
-        return any(host.remote_login for host in self.hosts)
 
 
 def _optional_fields(plan: ConnectorPlan) -> frozenset[str]:
@@ -703,7 +733,6 @@ def _authorization(
     credentials: tuple[SuppliedCredential, ...],
     *,
     note: str = "",
-    authorize_url: str = "",
 ) -> Authorization:
     """The one shape both the read and the sign-in answer with.
 
@@ -723,17 +752,15 @@ def _authorization(
                 command=required.authorize_command,
                 instruction=required.instruction,
                 token_command=required.token_command,
-                remote_login=required.remote_login is not None,
             )
             for required in plan.manifest.host_requires
-            if required.authorize_command or required.remote_login is not None
+            if required.authorize_command
         ),
         reachable=probe.status == "reachable",
         detail=f"{note} {probe.detail}".strip() if note else probe.detail,
         sign_in=state,
         sign_in_detail=sign_in_detail,
         oauth=plan.manifest.oauth is not None,
-        authorize_url=authorize_url,
     )
 
 
@@ -755,7 +782,9 @@ class Connections:
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
-        remote_logins: RemoteLoginLedger | None = None,
+        oauth_pending: OAuthPendingLedger | None = None,
+        oauth_redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
+        token_post: PostToken = send_token_post,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
@@ -773,7 +802,13 @@ class Connections:
         # A begun sign-in lives as long as the process that can complete it, so the
         # ledger belongs to the long-lived caller; a fresh one here serves a
         # one-shot surface (a CLI verb) whose begin and complete are one process.
-        self._remote_logins = remote_logins if remote_logins is not None else RemoteLoginLedger()
+        self._oauth_pending = oauth_pending if oauth_pending is not None else OAuthPendingLedger()
+        self._oauth_pending_clock: Callable[[], float] = time.monotonic
+        # Computed by the surface from ITS config ([ui] public_base_url, the UI port)
+        # and never from a request's Host header (design O3).
+        self._oauth_redirect_uri = oauth_redirect_uri
+        # The one HTTP call to a provider's token endpoint (injectable for tests).
+        self._token_post = token_post
         self._host_step_timeout = host_step_timeout
         # The time a health check is stamped with. Injectable so a test can walk the
         # ten-minute and 24-hour escalation bounds without waiting for them.
@@ -791,7 +826,9 @@ class Connections:
         install_dir: Path | None = None,
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
-        remote_logins: RemoteLoginLedger | None = None,
+        oauth_pending: OAuthPendingLedger | None = None,
+        oauth_redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
+        token_post: PostToken = send_token_post,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
@@ -809,7 +846,9 @@ class Connections:
             install_dir=install_dir,
             state_opener=state_opener,
             connector_control=connector_control,
-            remote_logins=remote_logins,
+            oauth_pending=oauth_pending,
+            oauth_redirect_uri=oauth_redirect_uri,
+            token_post=token_post,
             host_step_timeout=host_step_timeout,
             clock=clock,
             credential_cipher=credential_cipher,
@@ -1138,128 +1177,294 @@ class Connections:
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
-            authorize_url = await self._oauth_authorize_url(plan, sink)
-        return _authorization(
-            instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
-        )
+        return _authorization(instance, plan, probe, sign_in, supplied)
 
-    async def complete_oauth(self, instance: str, *, code: str) -> Authorization:
-        """Finish a native OAuth connection by swapping its code for a refresh token.
+    # --- native OAuth connect (P18-3) --------------------------------------
 
-        The whole in-harness sign-in: read the operator-supplied app key/secret,
-        exchange the one-time ``code`` the provider showed for a DURABLE refresh
-        token (never a short-lived access token), store that under the manifest's
-        ``refresh_token_secret``, and probe. The operator never obtains, types, or
-        sees a refresh token, and Arc keeps only the refresh token — the access
-        tokens the connection needs are minted from it on demand.
+    @property
+    def oauth_redirect_uri(self) -> str:
+        """The redirect URI every callback-mode connect uses: from config, never a request."""
+        return self._oauth_redirect_uri
+
+    async def oauth_app_status(self, provider: str) -> OAuthAppStatus:
+        """Whether ``provider``'s sign-in app is set up, and a hint of its client id."""
+        with self._audit.open() as sink:
+            return await (await self._custody(sink)).apps.status(provider)
+
+    async def set_oauth_app(self, provider: str, *, client_id: str, client_secret: str) -> None:
+        """Set up (or replace) ``provider``'s sign-in app once for the whole deployment."""
+        with self._audit.open() as sink:
+            custody = await self._custody(sink)
+            await custody.apps.put(
+                provider,
+                client_id=client_id,
+                client_secret=client_secret,
+                actor_did=causal.actor_did(),
+            )
+
+    async def begin_oauth(self, instance: str, *, session_id: str) -> OAuthBegin:
+        """Start a one-click connect: the provider consent URL, bound to this session.
+
+        The pending sign-in (``state``, PKCE verifier, redirect URI, intended
+        account, requested scopes) stays in this process's ledger; only the URL and
+        the ``state`` leave. Audited without either.
 
         Raises:
-            ExtensionError: The connection is not an OAuth connector, its app
-                key/secret have not been supplied yet, or the exchange failed
-                (a terminal ``invalid_grant`` means the code is dead — authorize
-                again).
+            ExtensionError: Not an OAuth connector (``NOT_OAUTH``), no sign-in app
+                set up for its provider (``OAUTH_APP_MISSING``, with the redirect URI
+                to register), or too many sign-ins waiting (``OAUTH_BUSY``).
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
-            flow = plan.manifest.oauth
-            if flow is None:
-                raise ExtensionError(
-                    code="NOT_OAUTH",
-                    message=(
-                        f"{instance!r} is not an OAuth connector; supply its credentials instead"
-                    ),
-                    details={"instance": instance},
+            flow = _oauth_flow(plan)
+            app = await self._oauth_app(flow, sink)
+            values = await self._visible_values(plan, sink)
+            account = values.get("account", "")
+            scopes = scopes_for(flow, read_only=values.get("read_only", "") != "no")
+            pkce = new_pkce() if flow.pkce else None
+            redirect_uri = self._oauth_redirect_uri if flow.redirect == "callback" else ""
+            state = new_state()
+            self._oauth_pending.admit(
+                PendingAuthorization(
+                    state=state,
+                    instance=instance,
+                    session_id=session_id,
+                    code_verifier=pkce.verifier if pkce is not None else None,
+                    redirect_uri=redirect_uri,
+                    created_at=self._oauth_pending_clock(),
+                    intended_account=account,
+                    scopes=tuple(scopes),
                 )
-            store = await self._store(sink)
-            client_id = await self._read_secret(store, instance, flow.client_id_secret)
-            client_secret = await self._read_secret(store, instance, flow.client_secret_secret)
-            if not client_id or not client_secret:
-                raise ExtensionError(
-                    code="OAUTH_CLIENT_MISSING",
-                    message=(
-                        f"supply {flow.client_id_secret} and {flow.client_secret_secret} for "
-                        f"{instance!r} before authorizing"
-                    ),
-                    details={"instance": instance},
-                )
-            tokens = await exchange_authorization_code(
-                flow,
-                code=code.strip(),
-                client_id=client_id,
-                client_secret=client_secret,
-                post=post_form,
             )
-            await self._store_grant(instance, flow.refresh_token_secret, tokens, store, sink)
-            probe = await self._reachability(plan, sink)
-            sign_in = await self._sign_in_state(plan, sink)
-            supplied = await self._supplied(plan, sink)
-            authorize_url = await self._oauth_authorize_url(plan, sink)
-        await self._push_credential_change(instance)
-        return _authorization(
-            instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
+            url = build_authorize_url(
+                flow,
+                client_id=app.client_id,
+                redirect_uri=redirect_uri,
+                state=state,
+                code_challenge=pkce.challenge if pkce is not None else None,
+                scopes=scopes,
+                login_hint=account if flow.account == "openid_email" else "",
+            )
+            self._oauth_audit(sink, "begin", instance, "allow", provider=flow.provider)
+        return OAuthBegin(
+            instance=instance,
+            authorize_url=url,
+            state=state,
+            redirect_mode=flow.redirect,
+            expires_in=int(PENDING_TTL_SECONDS),
         )
 
-    async def _store_grant(
-        self,
-        instance: str,
-        refresh_field: str,
-        tokens: OAuthTokens,
-        store: SecretStore,
-        sink: AuditSink,
-    ) -> None:
-        """Persist what the code exchange issued.
+    async def complete_oauth(
+        self, *, session_id: str, state: str = "", code: str = "", redirect_url: str = ""
+    ) -> ConnectionRecord:
+        """Finish a connect: swap the code, verify the account, seal the grant, probe.
 
-        With an access token and a lifetime, the refresh token and the access token
-        are committed in ONE write, so the first call uses the exchanged access token
-        instead of spending a refresh. Otherwise only the refresh token is stored.
+        Order is the security property: the pending sign-in is taken (single use,
+        session-bound) before any provider call; the signed-in account and the
+        granted scopes are checked before ANYTHING is stored; the refresh token,
+        the access token and the verified account land in one custody write; then
+        running agents are reconciled and the connection is probed. Audited as
+        ``connection.oauth.complete`` without a code, token or email.
+
+        Raises:
+            ExtensionError: ``OAUTH_STATE_INVALID``, ``OAUTH_CALLBACK_INVALID``,
+                ``OAUTH_DECLINED``, ``OAUTH_EXCHANGE_FAILED``, ``ACCOUNT_MISMATCH``
+                or ``SCOPE_MISSING``. Nothing is stored on any of them.
         """
-        ref = SecretRef(connection=instance, field=refresh_field)
-        if not tokens.access_token or tokens.expires_in <= 0:
-            await store.put(ref, tokens.refresh_token, caller_did=causal.actor_did())
-            return
+        with self._audit.open() as sink:
+            try:
+                instance, checked = await self._complete_oauth(
+                    sink, session_id=session_id, state=state, code=code, redirect_url=redirect_url
+                )
+            except ExtensionError as refusal:
+                self._oauth_audit(sink, "complete", "", "deny", reason=refusal.code)
+                raise
+            self._oauth_audit(sink, "complete", instance, "allow", account_checked=checked)
+        await self._push_credential_change(instance)
+        return await self._health_record(instance)
+
+    async def _complete_oauth(
+        self, sink: AuditSink, *, session_id: str, state: str, code: str, redirect_url: str
+    ) -> tuple[str, bool]:
+        """The body of :meth:`complete_oauth`. Returns ``(instance, account_checked)``."""
+        params = self._callback_params(state=state, code=code, redirect_url=redirect_url)
+        pending = self._oauth_pending.take(params.state, session_id=session_id)
+        if params.error is not None:
+            raise declined(params.error)
+        plan = self._plan_for(pending.instance, sink)
+        flow = _oauth_flow(plan)
+        if params.code is None or pending.redirect_uri != (
+            self._oauth_redirect_uri if flow.redirect == "callback" else ""
+        ):
+            raise _refuse(OAUTH_STATE_INVALID, "this sign-in no longer matches; start again")
         custody = await self._custody(sink)
+        app = await self._oauth_app(flow, sink)
+        tokens = await exchange_authorization_code(
+            flow,
+            code=params.code,
+            client_id=app.client_id,
+            client_secret=app.client_secret,
+            redirect_uri=pending.redirect_uri,
+            code_verifier=pending.code_verifier,
+            post=self._token_post,
+        )
+        resolved = await self._accepted_grant(plan, flow, app, tokens, pending, sink)
         issued = self._clock()
-        generation = await custody.rows.put_grant(
-            instance,
-            refresh_field=refresh_field,
-            refresh_token=tokens.refresh_token,
-            access_token=tokens.access_token,
+        await custody.rows.put_grant(
+            pending.instance,
+            refresh_field=flow.refresh_token_secret,
+            refresh_token=tokens.refresh_token.reveal(),
+            access_token=tokens.access_token.reveal(),
             issued_at=issued,
             expires_at=issued + timedelta(seconds=tokens.expires_in),
-            scope=None,
+            scope=tokens.scope,
             actor_did=causal.actor_did(),
+            fields=resolved,
         )
+        return pending.instance, flow.account != "none"
+
+    def _callback_params(self, *, state: str, code: str, redirect_url: str) -> CallbackParams:
+        """The callback's state and code, from the pasted/landed address or a shown code."""
+        if redirect_url:
+            params = checked_callback(redirect_url, expected_redirect_uri=self._oauth_redirect_uri)
+            if state and state != params.state:
+                raise _refuse(OAUTH_STATE_INVALID, "that address is from a different sign-in")
+            return params
+        if not state or not code.strip():
+            raise _refuse(OAUTH_CALLBACK_INVALID, "paste the address you landed on, or the code")
+        if any(not character.isprintable() or character.isspace() for character in code.strip()):
+            raise _refuse(OAUTH_CALLBACK_INVALID, "that code has unexpected characters in it")
+        return CallbackParams(state=state, code=Secret(code.strip()))
+
+    async def _accepted_grant(
+        self,
+        plan: ConnectorPlan,
+        flow: OAuthFlow,
+        app: OAuthApp,
+        tokens: OAuthTokens,
+        pending: PendingAuthorization,
+        sink: AuditSink,
+    ) -> dict[str, str]:
+        """Check the signed-in account and the granted scopes; refuse before storing.
+
+        Returns the resolved non-sensitive fields to store with the grant (the
+        account, when the connection had none yet). A refused grant is revoked at
+        the provider, best effort, so it does not linger there either.
+        """
+        try:
+            resolved: dict[str, str] = {}
+            if flow.account == "openid_email":
+                email = verified_id_token_email(
+                    tokens.id_token, client_id=app.client_id, issuers=flow.id_token_issuers
+                )
+                intended = (await self._visible_values(plan, sink)).get("account", "")
+                require_account(email, intended=intended or pending.intended_account)
+                if not intended:
+                    resolved["account"] = email
+            lacking = missing_scopes(pending.scopes, tokens.scope)
+            if lacking:
+                await self._report_scope_missing(plan.instance, lacking, sink)
+                raise _refuse(
+                    SCOPE_MISSING,
+                    f"the provider did not grant {len(lacking)} of the requested permissions. "
+                    "Connect again and leave every box ticked.",
+                    instance=plan.instance,
+                )
+        except ExtensionError:
+            await revoke(flow, token=tokens.refresh_token, post=self._token_post)
+            raise
+        return resolved
+
+    async def _report_scope_missing(
+        self, instance: str, lacking: Sequence[str], sink: AuditSink
+    ) -> None:
+        state = await self._connection_state()
+        authority = ConnectionHealthAuthority(state, sink=sink)
+        await authority.record(
+            instance,
+            HealthSignal(
+                ok=False,
+                source="credential",
+                checked_by=causal.actor_did(),
+                reason_code="scope_missing",
+                detail=f"{len(lacking)} requested permission(s) were not granted",
+            ),
+            now=self._clock(),
+        )
+
+    async def _oauth_app(self, flow: OAuthFlow, sink: AuditSink) -> OAuthApp:
+        app = await (await self._custody(sink)).apps.get(flow.provider)
+        if app is None:
+            raise _refuse(
+                OAUTH_APP_MISSING,
+                f"set up the {flow.provider} sign-in app first; register this redirect URI "
+                f"with it: {self._oauth_redirect_uri}",
+                provider=flow.provider,
+                redirect_uri=self._oauth_redirect_uri,
+            )
+        return app
+
+    async def _visible_values(self, plan: ConnectorPlan, sink: AuditSink) -> dict[str, str]:
+        """The non-sensitive fields as stored (or their declared default)."""
+        return {
+            field.name: (field.value or field.default).strip()
+            for field in await self._supplied(plan, sink)
+            if not field.sensitive
+        }
+
+    async def _health_record(self, instance: str) -> ConnectionRecord:
+        state = await self._connection_state()
+        return await self._record_of(ConnectionHealthAuthority(state), instance)
+
+    def _oauth_audit(
+        self, sink: AuditSink, step: str, instance: str, outcome: str, **extra: Any
+    ) -> None:
+        """One event per begin/complete. Never a code, token, state, URL or email."""
         emit(
             AuditEvent(
                 actor_did=causal.actor_did(),
-                action="secret.write",
-                target=f"secret:{ref}",
-                outcome="allow",
-                extra={"store": "sealed", "kind": "oauth_grant", "generation": generation},
+                action=f"connection.oauth.{step}",
+                target=f"connection:{instance}" if instance else "connection:unknown",
+                outcome=outcome,
+                tier=self._world.tier.value,
+                extra=extra,
             ),
             sink,
         )
 
-    async def _oauth_authorize_url(self, plan: ConnectorPlan, sink: AuditSink) -> str:
-        """The provider consent URL for a native OAuth connector, or empty.
-
-        Built from the operator-supplied client id (never a secret), so a surface
-        can render it. Empty until the app key is supplied — there is no URL to
-        open before the connector knows which app it is.
-        """
+    async def _revoke_on_removal(self, instance: str, sink: AuditSink) -> None:
+        """Best effort: revoke an OAuth connection's refresh token before its row goes."""
+        try:
+            plan = self._plan_for(instance, sink)
+        except ExtensionError:
+            return
         flow = plan.manifest.oauth
-        if flow is None:
-            return ""
-        store = await self._store(sink)
-        client_id = await self._read_secret(store, plan.instance, flow.client_id_secret)
-        return build_authorize_url(flow, client_id=client_id) if client_id else ""
-
-    async def _read_secret(self, store: SecretStore, instance: str, field: str) -> str:
-        """One connector secret's value, or empty when nothing is stored yet."""
-        found = await store.get(
-            SecretRef(connection=instance, field=field), caller_did=causal.actor_did()
+        if flow is None or flow.revoke_url is None:
+            return
+        rows = (await self._custody(sink)).rows
+        try:
+            row = await rows.read(instance)
+            token = rows.open_field(row, flow.refresh_token_secret) if row is not None else None
+        except ExtensionError:
+            token = None
+        if token is None:
+            return
+        try:
+            async with asyncio.timeout(10):
+                revoked = await revoke(flow, token=token, post=self._token_post)
+        except TimeoutError:
+            revoked = False
+        emit(
+            AuditEvent(
+                actor_did=causal.actor_did(),
+                action="connection.credential.revoked",
+                target=f"connection:{instance}",
+                outcome="allow",
+                tier=self._world.tier.value,
+                extra={"ok": revoked},
+            ),
+            sink,
         )
-        return found.reveal() if found is not None else ""
 
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
@@ -1414,188 +1619,6 @@ class Connections:
     def _timeout_kwargs(self) -> dict[str, float]:
         """The step timeout a caller pinned, or nothing so each verb keeps its default."""
         return {} if self._host_step_timeout is None else {"timeout": self._host_step_timeout}
-
-    # --- remote sign-in ----------------------------------------------------
-
-    async def begin_remote_login(
-        self, instance: str, *, accept_warnings: bool = False
-    ) -> RemoteLoginStart:
-        """Start the browser sign-in for one connection and return the link to open.
-
-        One sign-in per host binary may be waiting at a time (see
-        :class:`~arcagent.extension.remote_login.RemoteLoginLedger`); starting the
-        same connection again replaces its own, and a different connection is
-        refused by name rather than silently taking its place.
-
-        A blank field its bundle warns about (``blank_warning`` — for Google, no
-        OAuth client of the operator's own, so sign-ins expire in a week) refuses
-        the begin with that warning until the operator accepts it: the fallback
-        exists, and it is labelled rather than silent.
-
-        Raises:
-            ExtensionError: No such connection (``code`` :data:`NOT_INSTALLED`), the
-                bundle declares no remote sign-in, another account's sign-in is
-                waiting, the connection's account is not a plain address, or the
-                binary refused or printed no safe link (``code``
-                :data:`~arcagent.extension.remote_login.REMOTE_LOGIN_FAILED`).
-        """
-        with self._audit.open() as sink:
-            plan = self._plan_for(instance, sink)
-            required = self._remote_login_host(plan)
-            async with self._remote_logins.lock(required.name):
-                with self._refusal_recorded(sink, "begin", instance, required.name):
-                    values = await self._login_values(plan, sink)
-                    account = values.get("account", "")
-                    warnings = await self._blank_warnings(plan, sink)
-                    if warnings and not accept_warnings:
-                        raise _refuse(
-                            REMOTE_LOGIN_NEEDS_CONFIRMATION,
-                            " ".join(warnings),
-                            connection=instance,
-                        )
-                    self._remote_logins.admit_begin(
-                        required.name, instance=instance, account=account
-                    )
-                step = await run_remote_login_begin(
-                    required,
-                    values=values,
-                    caller_did=causal.actor_did(),
-                    audit_sink=sink,
-                    tier=self._world.tier,
-                    instance=instance,
-                    env=await self._placement(plan, sink),
-                    visible=_visible_placements(plan),
-                    optional=_optional_fields(plan),
-                    **self._timeout_kwargs(),
-                )
-                if not step.completed or step.link is None:
-                    raise _refuse(REMOTE_LOGIN_FAILED, step.detail, connection=instance)
-                self._remote_logins.record(
-                    required.name,
-                    PendingLogin(
-                        instance=instance,
-                        account=account,
-                        redirect_base=step.link.redirect_base,
-                        state=step.link.state,
-                        started=self._remote_logins.now(),
-                    ),
-                )
-        return RemoteLoginStart(
-            instance=instance,
-            account=account,
-            consent_url=step.link.url,
-            expires_in=int(self._remote_logins.ttl),
-            warnings=warnings,
-        )
-
-    async def complete_remote_login(self, instance: str, *, redirect_url: str) -> Authorization:
-        """Finish the browser sign-in with the address the operator pasted, then check it.
-
-        The address is checked against the sign-in :meth:`begin_remote_login`
-        started for this same connection before the binary runs. Once the binary
-        has run, the begun sign-in is spent whatever it answered — its code is
-        single-use — so a failure asks the operator to start again rather than
-        retry a dead code. The answer is the manifest's own check, run afterwards
-        with this connection's account: the only evidence the account WORKS.
-
-        Raises:
-            ExtensionError: As :meth:`begin_remote_login`, plus no waiting sign-in
-                for this connection (``code`` :data:`~arcagent.extension.
-                remote_login.REMOTE_LOGIN_NOT_STARTED`) or a pasted address that
-                fails its checks or that the binary refused.
-        """
-        with self._audit.open() as sink:
-            plan = self._plan_for(instance, sink)
-            required = self._remote_login_host(plan)
-            placed = await self._placement(plan, sink)
-            async with self._remote_logins.lock(required.name):
-                with self._refusal_recorded(sink, "complete", instance, required.name):
-                    values = await self._login_values(plan, sink)
-                    pending = self._remote_logins.admit_complete(
-                        required.name, instance=instance, account=values.get("account", "")
-                    )
-                step = await run_remote_login_complete(
-                    required,
-                    values=values,
-                    redirect_url=redirect_url,
-                    expected=pending,
-                    caller_did=causal.actor_did(),
-                    audit_sink=sink,
-                    tier=self._world.tier,
-                    instance=instance,
-                    env=placed,
-                    visible=_visible_placements(plan),
-                    optional=_optional_fields(plan),
-                    **self._timeout_kwargs(),
-                )
-                if step.reason != "invalid_input":
-                    self._remote_logins.clear(required.name)
-            if not step.completed:
-                raise _refuse(REMOTE_LOGIN_FAILED, step.detail, connection=instance)
-            probe = await self._reachability(plan, sink)
-            sign_in = await self._sign_in_state(plan, sink)
-            supplied = await self._supplied(plan, sink)
-        await self._operator_check(instance)
-        return _authorization(instance, plan, probe, sign_in, supplied, note=step.detail)
-
-    @contextmanager
-    def _refusal_recorded(
-        self, sink: AuditSink, step: str, instance: str, binary: str
-    ) -> Iterator[None]:
-        """Audit a sign-in step refused before its binary ran, then let the refusal go.
-
-        The runner records every step it starts; this records the ones stopped
-        earlier — a busy ledger, a bad account, a complete with nothing begun — so
-        a repeated forged or out-of-order attempt is visible in the chain too.
-        """
-        try:
-            yield
-        except ExtensionError as refusal:
-            emit(
-                AuditEvent(
-                    actor_did=causal.actor_did(),
-                    action=f"extension.host.remote_login.{step}",
-                    target=f"host:{binary}",
-                    outcome="deny",
-                    tier=self._world.tier.value,
-                    extra={"binary": binary, "connection": instance, "reason": refusal.code},
-                ),
-                sink,
-            )
-            raise
-
-    def _remote_login_host(self, plan: ConnectorPlan) -> HostRequirement:
-        """The prerequisite whose sign-in a browser can drive, or a refusal naming why not."""
-        for required in plan.manifest.host_requires:
-            if required.remote_login is not None:
-                return required
-        raise _refuse(
-            REMOTE_LOGIN_FAILED,
-            f"{plan.extension} has no sign-in Arc can run from a browser",
-            connection=plan.instance,
-        )
-
-    async def _login_values(self, plan: ConnectorPlan, sink: AuditSink) -> dict[str, str]:
-        """The non-sensitive fields a sign-in step may name, shaped for argv.
-
-        A field the manifest declares as an email address is held to the strict
-        address rule before it can become an argument: the stored value passed
-        the looser entry check, and argv is where a leading ``-`` becomes a flag.
-        """
-        formats = {declared.name: declared.format for declared in plan.secrets}
-        values: dict[str, str] = {}
-        for field in await self._supplied(plan, sink):
-            value = field.value or field.default
-            if field.sensitive or not value:
-                continue
-            values[field.name] = (
-                checked_account(value) if formats.get(field.name) == "email" else value
-            )
-        return values
-
-    async def _blank_warnings(self, plan: ConnectorPlan, sink: AuditSink) -> tuple[str, ...]:
-        """The bundle's warnings for fields this connection left blank, in order."""
-        return tuple(field.warning for field in await self._supplied(plan, sink) if field.warning)
 
     async def _run_login(self, plan: ConnectorPlan, token: str, sink: AuditSink) -> str:
         """Run the one login Arc can finish, or say plainly why it did not run one.
@@ -2231,6 +2254,7 @@ class Connections:
         that already has nothing to do.
         """
         with self._audit.open() as sink:
+            await self._revoke_on_removal(instance, sink)
             return await remove_connector(
                 connections=self.registry,
                 instance=instance,
@@ -2473,7 +2497,7 @@ class Connections:
         """
         store = await self._store(sink)
         # An OAuth connector's refresh token is WRITTEN by ``complete_oauth``, never
-        # typed — the operator supplies only the app key/secret. Listing it as a
+        # typed — the app credentials live in the deployment's app slot. Listing it as a
         # field to fill would send them looking for a value they can't get by hand,
         # which is the exact confusion the OAuth flow exists to remove.
         managed = plan.manifest.oauth.refresh_token_secret if plan.manifest.oauth else None
@@ -2544,6 +2568,7 @@ class Connections:
             health=StoreHealthReporter(opened, sink=sink),
             sink=sink,
             actor_did=causal.actor_did(),
+            token_post=self._token_post,
         )
 
     async def _custody_backend(self) -> Any:
@@ -2619,6 +2644,7 @@ __all__ = [
     "BAD_NAME",
     "BUNDLES_DIRNAME",
     "CREDENTIAL_LOCATION",
+    "DEFAULT_OAUTH_REDIRECT_URI",
     "NOT_INSTALLED",
     "PLAN_TIER_TOO_LOW",
     "TIER_WOULD_RISE",
@@ -2650,9 +2676,9 @@ __all__ = [
     "InstallReport",
     "McpServerAdded",
     "MigrationReport",
+    "OAuthBegin",
+    "OAuthPendingLedger",
     "ProbeResult",
-    "RemoteLoginLedger",
-    "RemoteLoginStart",
     "RemovalReport",
     "SecretRequirement",
     "SignInState",
@@ -2664,6 +2690,7 @@ __all__ = [
     "deployment_egress_allow",
     "deployment_mcp_stdio_allow",
     "deployment_tier",
+    "oauth_redirect_uri",
     "resolve_deployment",
     "resolve_roots",
 ]

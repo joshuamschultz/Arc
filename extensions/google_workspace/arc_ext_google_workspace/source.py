@@ -1,4 +1,4 @@
-"""Gmail source adapter over the already-authorized ``gog`` attachment."""
+"""Gmail source adapter over the native REST attachment (Arc holds the credential)."""
 
 from __future__ import annotations
 
@@ -231,6 +231,8 @@ class GmailSourceAdapter:
 
 
 def build_source_adapter(context: dict[str, Any]) -> GmailSourceAdapter:
+    # Two mailboxes are already two sources: the source key includes the
+    # connection id. ``account_id`` stays constant so an existing index keeps its key.
     return GmailSourceAdapter(context["attachment"])
 
 

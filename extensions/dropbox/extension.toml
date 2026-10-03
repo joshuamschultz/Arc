@@ -44,30 +44,24 @@ mode = "source"
 entrypoint = "arc_ext_dropbox"
 
 [[secrets]]
-name = "app_key"
-prompt = "Your Dropbox app's App key. Go to dropbox.com/developers/apps, open your app (or Create app — Scoped access, Full Dropbox), and copy the App key shown on its Settings tab. It names the app and is safe to store in the clear."
-sensitive = false
-
-[[secrets]]
-name = "app_secret"
-prompt = "Your Dropbox app's App secret. On the same Settings tab at dropbox.com/developers/apps, click Show beside App secret and copy the value. Keep it private — Arc holds it in the secret store and never shows it again."
-format = "api_token"
-
-[[secrets]]
 name = "refresh_token"
-prompt = "Set for you by `arc connector authorize` — you never paste this. On your app's Permissions tab at dropbox.com/developers/apps tick files.metadata.read, files.content.read and files.content.write and Submit, then run `arc connector authorize` and paste the one-time code Dropbox shows. Arc exchanges it for a durable refresh token and stores it here."
+prompt = "Set for you when you connect: you never paste this. Set up Dropbox sign-in once (your app's App key and App secret from dropbox.com/developers/apps; Permissions tab: files.metadata.read, files.content.read, files.content.write), then click Connect and paste the one-time code Dropbox shows."
 
-# Native OAuth2 connect: `arc connector authorize` builds the authorize URL from
-# the app key, takes the one-time code Dropbox shows, exchanges it for a DURABLE
-# refresh token (token_access_type=offline), and stores that under refresh_token.
-# The operator supplies only the app key/secret; no short-lived access token is
-# ever stored, and Arc mints access tokens from the refresh token on demand.
+# One-click connect in the provider-shows-a-code mode (`redirect = "none"`): the
+# operator pastes the code Dropbox shows, so nothing has to be registered with the
+# Dropbox app. The app key/secret live in the deployment's "dropbox" app
+# slot (set up once), not on the connection. Dropbox does not rotate refresh
+# tokens, so an existing one keeps working.
 [oauth]
+provider = "dropbox"
 authorize_url = "https://www.dropbox.com/oauth2/authorize"
 token_url = "https://api.dropbox.com/oauth2/token"
-client_id_secret = "app_key"
-client_secret_secret = "app_secret"
+revoke_url = "https://api.dropboxapi.com/2/auth/token/revoke"
+revoke_style = "bearer"
 refresh_token_secret = "refresh_token"
+client_auth = "basic"
+redirect = "none"
+pkce = true
 authorize_params = { token_access_type = "offline" }
 
 # The cheapest real authenticated call: what the health probe loop runs.
