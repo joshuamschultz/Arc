@@ -5,7 +5,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from arcagent.extension.attachment import ToolResult
 from arcagent.extension.source import SourceError, SourceFailureCode, classify_cli_failure
+
+
+class CredentialFailureResult(ToolResult):
+    """A tool failure whose cause is Arc's own typed credential error.
+
+    It is still a plain ``ToolResult`` to the agent (``content`` is the readable
+    text); a source adapter reads ``failure`` instead of guessing from the prose.
+    """
+
+    failure: SourceFailureCode
+    retry_after: float | None = None
 
 
 def tool_payload(result: Any, label: str, *, list_key: str) -> dict[str, Any]:
@@ -15,6 +27,8 @@ def tool_payload(result: Any, label: str, *, list_key: str) -> dict[str, Any]:
     reported "returned invalid JSON" over every real cause (an expired grant, a
     revoked scope, a rate limit) and left an operator with nothing to act on.
     """
+    if isinstance(result, CredentialFailureResult):
+        raise SourceError(result.failure, result.content[:256], retry_after=result.retry_after)
     if getattr(result, "outcome", None) is not None and str(result.outcome) != "ok":
         # Classify on the WHOLE message, report a truncated one. Google puts the
         # reason at the END, after a request URL long enough that a 256-character

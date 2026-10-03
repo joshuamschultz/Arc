@@ -734,6 +734,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/tools/test_approval_channel_expiry.py",
         "packages/arcui/tests/test_approvals_expiry_route.py",
     ),
+    "dead credential hammered by a retry storm (typed failure flattened to prose)": (
+        # A missing or revoked credential stays typed to the sync outcome:
+        # auth_required, zero retries. A real 503 still retries.
+        "extensions/tests/test_typed_credential_failure.py",
+    ),
 }
 
 
