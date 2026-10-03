@@ -22,13 +22,26 @@ from arcui.schemas import ConnectedDataActivationResponse, ErrorResponse
 _HOMES = frozenset({"document", "memory", "profile", "blob", "datastore"})
 
 
-def _refused(error: Any) -> JSONResponse:
+def _refused(error: arcagent.SourceRefusedError) -> JSONResponse:
     """A source that understood the request and said no.
 
     Retrying changes nothing, so this is the operator's to fix and the adapter's
     own message is the instruction — "select one folder" must reach the person
     clicking, not be flattened into a generic outage.
+
+    The one exception is a missing, expired or revoked credential: only the
+    account's owner can fix it, so the answer is a 409 that names the remedy
+    (``action: reconnect``) in plain words, never the provider's raw error.
     """
+    if error.needs_reconnect:
+        return JSONResponse(
+            {
+                "error": "This account is signed out. Reconnect it to see and choose "
+                "what Arc may read.",
+                "action": "reconnect",
+            },
+            status_code=409,
+        )
     return JSONResponse(
         ErrorResponse(error=str(error)).model_dump(),
         status_code=400,
@@ -133,6 +146,8 @@ def _status_wire(status: Any) -> dict[str, Any]:
         ),
         "documents_indexed": int(_value(status, "documents_indexed", 0) or 0),
         "allowed_homes": [str(home) for home in _value(status, "allowed_homes", ())],
+        # own | migrating | shared: which store the agent reads this connection from.
+        "lane": str(_value(status, "lane", "own")),
     }
 
 

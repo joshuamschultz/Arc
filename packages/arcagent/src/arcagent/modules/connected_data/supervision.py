@@ -75,6 +75,14 @@ class SyncSchedule:
         self._due[connection_id] = self._clock() + delay
         return delay
 
+    def deferred(self, connection_id: str, seconds: float) -> None:
+        """The provider asked us to come back in ``seconds``: wait, count nothing.
+
+        A rate limit is the provider pacing us, not a broken source; it never
+        moves the source toward the consecutive-failure ceiling.
+        """
+        self._due[connection_id] = self._clock() + max(0.0, seconds)
+
     def failures(self, connection_id: str) -> int:
         """Consecutive failures since the source last completed."""
         return self._failures.get(connection_id, 0)

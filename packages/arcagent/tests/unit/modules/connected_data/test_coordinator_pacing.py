@@ -97,16 +97,6 @@ class Ingest:
         return None
 
 
-class CountingStore(InMemorySourceSyncStore):
-    def __init__(self) -> None:
-        super().__init__()
-        self.renewals = 0
-
-    async def renew_lease(self, *args: Any, **kwargs: Any) -> bool:
-        self.renewals += 1
-        return await super().renew_lease(*args, **kwargs)
-
-
 @pytest.mark.asyncio
 async def test_a_source_works_at_most_its_share_of_wall_time() -> None:
     fake = FakeTime()
@@ -131,9 +121,10 @@ async def test_a_source_works_at_most_its_share_of_wall_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rest_does_not_count_against_the_time_budget_and_the_lease_is_kept() -> None:
+async def test_rest_does_not_count_against_the_time_budget() -> None:
+    """Lease renewal is a wall-clock heartbeat now; see test_connections_sweep_sync_loop."""
     fake = FakeTime()
-    store = CountingStore()
+    store = InMemorySourceSyncStore()
 
     result = await ConnectedDataCoordinator(
         Source(4), Ingest(fake), store, clock=fake.clock, sleep=fake.sleep
@@ -146,7 +137,6 @@ async def test_rest_does_not_count_against_the_time_budget_and_the_lease_is_kept
 
     # 4 s of work and 9 s of rest: well past max_seconds of wall time, still fine.
     assert result.status is SyncStatus.COMPLETE
-    assert store.renewals > 1, "a long paced page must keep renewing its lease"
 
 
 @pytest.mark.asyncio

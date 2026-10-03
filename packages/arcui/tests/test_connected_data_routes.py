@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+import arcagent
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -40,6 +41,7 @@ class _SourceStatus:
     last_synced_at: str | None = None
     documents_indexed: int = 12
     allowed_homes: tuple[str, ...] = ("document", "blob")
+    lane: str = "migrating"
 
 
 @dataclass(frozen=True)
@@ -250,6 +252,8 @@ def test_connected_sources_exposes_connected_account_before_ingest() -> None:
         "last_synced_at": "2026-08-29T01:00:00+00:00",
         "documents_indexed": 12,
         "allowed_homes": ["document", "blob"],
+        # J-K3: which store the agent reads it from, so the card can say so.
+        "lane": "migrating",
     }
 
 
@@ -385,3 +389,56 @@ def test_profile_review_is_operator_only_and_exposes_provenance() -> None:
     assert resolved.status_code == 200
     assert resolved.json()["status"] == "approved"
     assert service.review_decision == ("fact-1", "approve")
+
+
+# --- connections sweep D11: a failed resource list says who can fix it -------------------
+
+_RESOURCES = "/api/agents/olivia/knowledge/connected-sources/dropbox-olivia/resources"
+
+
+def _failing(error: Exception) -> TestClient:
+    client, service = _client()
+
+    async def fail(connection_id: str, **_: Any) -> tuple[_Resource, ...]:
+        raise error
+
+    service.list_resources = fail  # type: ignore[method-assign]  # reason: per-test failure
+    service.select_resources = fail  # type: ignore[method-assign]  # reason: per-test failure
+    return client
+
+
+def test_a_signed_out_account_answers_409_with_a_reconnect_action() -> None:
+    client = _failing(
+        arcagent.SourceRefusedError(
+            "dropbox-olivia", "auth_required", "oauth2: invalid_grant", needs_reconnect=True
+        )
+    )
+    listed = client.get(_RESOURCES, headers={"Authorization": "Bearer viewer"})
+    chosen = client.post(
+        _RESOURCES,
+        headers={"Authorization": "Bearer operator"},
+        json={"resource_ids": ["folder:projects"]},
+    )
+
+    for response in (listed, chosen):
+        assert response.status_code == 409
+        body = response.json()
+        assert body["action"] == "reconnect"
+        assert "invalid_grant" not in body["error"], "a raw provider error reached the browser"
+        assert "connect" in body["error"].lower()
+
+
+def test_a_provider_outage_answers_503_never_400() -> None:
+    client = _failing(arcagent.SourceUnreachableError("dropbox-olivia"))
+    response = client.get(_RESOURCES, headers={"Authorization": "Bearer viewer"})
+    assert response.status_code == 503
+    assert "action" not in response.json()
+
+
+def test_a_real_refusal_keeps_400_and_the_sources_own_words() -> None:
+    client = _failing(
+        arcagent.SourceRefusedError("dropbox-olivia", "not_found", "select one folder")
+    )
+    response = client.get(_RESOURCES, headers={"Authorization": "Bearer viewer"})
+    assert response.status_code == 400
+    assert response.json() == {"error": "select one folder"}
