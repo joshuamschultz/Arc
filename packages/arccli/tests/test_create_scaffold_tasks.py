@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import tomllib
 
-from arccli.commands.agent._common import render_agent_config
+from arcagent.scaffold import render_agent_config
 
 
 def test_default_config_declares_tasks_module_enabled() -> None:

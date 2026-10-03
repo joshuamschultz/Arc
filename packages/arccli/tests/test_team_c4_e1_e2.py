@@ -70,7 +70,7 @@ def _register_user(root: Path, handle: str) -> None:
 
 class TestMessagingEnabledByDefault:
     def test_default_config_enables_messaging_module(self) -> None:
-        from arccli.commands.agent._common import render_agent_config
+        from arcagent.scaffold import render_agent_config
 
         cfg = render_agent_config(name="probe")
         assert "[modules.messaging]" in cfg
@@ -89,7 +89,7 @@ class TestSkillsEnabledByDefault:
     """
 
     def test_default_config_enables_skills_module(self) -> None:
-        from arccli.commands.agent._common import render_agent_config
+        from arcagent.scaffold import render_agent_config
 
         cfg = render_agent_config(name="probe")
         assert "[modules.skills]" in cfg
@@ -107,8 +107,7 @@ class TestSkillsEnabledByDefault:
 
         from arcagent.core.config import ModuleEntry
         from arcagent.modules.skills.config import SkillsConfig
-
-        from arccli.commands.agent._common import render_agent_config
+        from arcagent.scaffold import render_agent_config
 
         cfg = render_agent_config(name="probe")
         parsed = tomllib.loads(cfg)

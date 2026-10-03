@@ -34,9 +34,12 @@ class TestIdentityRequired:
         s = str(err)
         assert "IDENTITY_REQUIRED" in s
 
-    def test_identity_required_has_hint_in_details(self) -> None:
+    def test_identity_required_carries_an_action_not_a_command(self) -> None:
+        """The fix is a UI action code; no surface shows a command to copy."""
         err = IdentityRequired()
-        assert "arc agent init" in err.details.get("hint", "")
+        assert err.details.get("action") == "create_agent"
+        assert "arc " not in str(err)
+        assert "arc " not in str(err.details)
 
 
 class TestArcAgentRequiresDID:

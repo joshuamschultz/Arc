@@ -20,11 +20,9 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
+from arcagent.scaffold import DEFAULT_ARCRUN_CONFIG as _DEFAULT_ARCRUN_CONFIG
+from arcagent.scaffold import render_agent_config
 from arccli.commands.agent import _scaffold_workspace
-from arccli.commands.agent._common import (
-    _DEFAULT_ARCRUN_CONFIG,
-    render_agent_config,
-)
 from pydantic import BaseModel, ConfigDict
 
 from evaluations.ingest.agent_factory import (

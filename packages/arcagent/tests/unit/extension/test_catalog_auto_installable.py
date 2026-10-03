@@ -36,6 +36,14 @@ def test_a_pin_for_another_platform_is_not_auto_installable(
     assert _entry("onepassword").auto_installable is False
 
 
+def test_onepassword_pins_its_op_binary_and_is_auto_installable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # J1-3 pinned the official `op` zips per platform (member `op`).
+    monkeypatch.setattr("arcagent.connection_catalog.host_platform", lambda: "linux/arm64")
+    assert _entry("onepassword").auto_installable is True
+
+
 def test_a_bundle_with_no_host_program_is_not_auto_installable() -> None:
     assert _entry("sqlite").auto_installable is False
 

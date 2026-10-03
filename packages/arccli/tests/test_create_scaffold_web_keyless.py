@@ -24,8 +24,7 @@ from typing import Any
 import pytest
 from arcagent.core.config import ModuleEntry
 from arcagent.modules.web.config import WebConfig
-
-from arccli.commands.agent._common import AGENT_TIERS, render_agent_config
+from arcagent.scaffold import AGENT_TIERS, render_agent_config
 
 #: Services that bill for access. None of these may be a scaffold default.
 _PAID_PROVIDERS = frozenset({"tavily", "firecrawl", "parallel"})

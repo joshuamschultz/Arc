@@ -19,13 +19,11 @@ from typing import Any
 
 import pytest
 from arcagent.core.config import ArcAgentConfig, ArcRunConfig, BudgetConfig, EvalConfig, LLMConfig
+from arcagent.scaffold import DEFAULT_ARCRUN_CONFIG as _DEFAULT_ARCRUN_CONFIG
+from arcagent.scaffold import render_agent_config
 from pydantic import BaseModel
 
-from arccli.commands.agent._common import (
-    _DEFAULT_ARCLLM_CONFIG,
-    _DEFAULT_ARCRUN_CONFIG,
-    render_agent_config,
-)
+from arccli.commands.agent._common import _DEFAULT_ARCLLM_CONFIG
 
 # arcagent.toml's sibling files own these ArcAgentConfig fields (arcllm.toml:
 # [llm]/[eval]/[budget]; arcrun.toml: arcrun at its own root) — they get their

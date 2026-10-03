@@ -43,6 +43,7 @@ from arcllm.config import (
     load_telemetry_retention_config,
     model_config_path,
 )
+from arcllm.config_surface import BUDGET_BLOCK, EVAL_BLOCK, commented_module_surface
 from arcllm.exceptions import (
     ArcLLMAPIError,
     ArcLLMConfigError,
@@ -174,7 +175,9 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "BUDGET_BLOCK",
     "DEFAULT_EMBED_MODEL",
+    "EVAL_BLOCK",
     "MODULE_NAMES",
     "AnthropicAdapter",
     "ArcLLMAPIError",
@@ -292,6 +295,7 @@ __all__ = [
     "classify",
     "clear_cache",
     "clear_embedder_cache",
+    "commented_module_surface",
     "configured_redactor",
     "embed",
     "list_classifier_keys",

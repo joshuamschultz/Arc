@@ -7,6 +7,7 @@ from typing import Any
 
 import arcrun
 
+from arcagent import scaffold
 from arcagent.capabilities.artifact_signing import (
     load_signature,
     sidecar_path,
@@ -480,6 +481,7 @@ __all__ = [
     "reviewed_bundle_digest",
     "revoke_capability",
     "revoke_skill_folder",
+    "scaffold",
     "serve_mcp_stdio",
     "set_workflow_runner",
     "sidecar_path",

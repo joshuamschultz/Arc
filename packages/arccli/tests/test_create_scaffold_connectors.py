@@ -22,7 +22,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from arccli.commands.agent._common import render_agent_config
+from arcagent.scaffold import render_agent_config
 
 
 def test_default_config_declares_connectors_module_enabled() -> None:

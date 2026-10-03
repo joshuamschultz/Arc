@@ -201,13 +201,19 @@ def test_profile_rejects_non_object_json(client, body):
 
 
 def test_the_login_screen_can_ask_whether_accounts_exist(client):
-    assert client.get("/api/auth/mode").json() == {"login_available": True}
+    assert client.get("/api/auth/mode").json() == {
+        "login_available": True,
+        "setup_available": False,
+    }
 
 
 def test_a_fresh_install_reports_no_accounts(auth, tmp_path, monkeypatch, authority):
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty"))
     fresh = TestClient(create_app(auth_config=auth, user_store_factory=authority))
-    assert fresh.get("/api/auth/mode").json() == {"login_available": False}
+    assert fresh.get("/api/auth/mode").json() == {
+        "login_available": False,
+        "setup_available": True,
+    }
 
 
 def test_an_unauthenticated_request_is_still_refused(client):

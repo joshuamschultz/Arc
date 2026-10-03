@@ -13,8 +13,9 @@ import argparse
 import sys
 from pathlib import Path
 
+import arcagent
+
 from arccli.commands._shared import dispatch
-from arccli.commands.agent._common import AGENT_TIERS
 from arccli.commands.agent.build import _build
 from arccli.commands.agent.chat import _chat
 from arccli.commands.agent.config import _config
@@ -48,12 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dir", dest="parent_dir", default=".", help="Parent directory (default: .)")
     p.add_argument(
         "--model",
-        default="anthropic/claude-sonnet-4-5-20250929",
+        default=arcagent.scaffold.DEFAULT_MODEL,
         help="LLM model.",
     )
     p.add_argument(
         "--tier",
-        choices=AGENT_TIERS,
+        choices=arcagent.scaffold.AGENT_TIERS,
         default="personal",
         help="Deployment tier for every subsystem (default: personal).",
     )
@@ -87,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--check", action="store_true", help="Validate only; write nothing.")
     p.add_argument(
         "--tier",
-        choices=AGENT_TIERS,
+        choices=arcagent.scaffold.AGENT_TIERS,
         default="personal",
         help="Deployment tier for every subsystem (default: personal).",
     )

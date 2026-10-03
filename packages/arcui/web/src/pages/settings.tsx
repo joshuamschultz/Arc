@@ -20,6 +20,7 @@ import { KeysPanel } from "@/components/keys-panel";
 import { MemoryPromotionPanel } from "@/components/memory-promotion-panel";
 import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
 import { PublicAccessPanel } from "@/components/settings-view/public-access-panel";
+import { UsersPanel } from "@/pages/users";
 import { useOperatorMode } from "@/hooks/use-operator-mode";
 import { useRoster } from "@/lib/queries";
 
@@ -45,7 +46,10 @@ export function SettingsPage() {
   const roster = useRoster();
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden);
   const [picked, setPicked] = useState<string | null>(null);
-  const scope = picked ?? agents[0]?.agent_id ?? null;
+  // A fresh install has no agents yet; open on System so its tabs (Keys,
+  // People) are reachable without first knowing to switch scope.
+  const scope =
+    picked ?? agents[0]?.agent_id ?? (roster.isSuccess ? SYSTEM_SCOPE : null);
   const isSystem = scope === SYSTEM_SCOPE;
   const [operatorMode] = useOperatorMode();
   // `?tab=access` lets a link (the sign-in warning) land on the Access tab directly.
@@ -133,6 +137,7 @@ export function SettingsPage() {
               {/* Where the dashboard is reached from; sign-in return addresses
                   and the https certificate hang off it, so it is fleet-wide too. */}
               <TabsTrigger value="access">Access</TabsTrigger>
+              <TabsTrigger value="people">People</TabsTrigger>
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
@@ -190,6 +195,9 @@ export function SettingsPage() {
               </ContextNote>
               <KeysPanel editable={operatorMode} />
             </div>
+          </TabsContent>
+          <TabsContent value="people" className="flex-1 overflow-auto p-4 md:p-6">
+            <UsersPanel />
           </TabsContent>
         </Tabs>
       )}

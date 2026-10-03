@@ -8,10 +8,12 @@ export function EmptyState({
   icon,
   title,
   description,
+  action,
 }: {
   icon?: ReactNode
   title: string
   description?: string
+  action?: ReactNode
 }) {
   return (
     <div
@@ -29,6 +31,7 @@ export function EmptyState({
       {description && (
         <p className="max-w-sm text-xs text-muted-foreground">{description}</p>
       )}
+      {action}
     </div>
   )
 }

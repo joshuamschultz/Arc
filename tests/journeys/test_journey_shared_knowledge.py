@@ -83,7 +83,7 @@ def _write_second_agent(
 
     Written again on a restart; its key is kept, so its DID is too.
     """
-    from arccli.commands.agent.create import _mint_agent_identity
+    from arcagent.scaffold import mint_agent_identity as _mint_agent_identity
 
     agent_dir = deployment.team_root / "second_agent"
     (agent_dir / "workspace").mkdir(parents=True, exist_ok=True)

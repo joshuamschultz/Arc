@@ -25,10 +25,10 @@ from pathlib import Path
 
 import tomlkit
 from arcagent.core.config import AgentConfig, ArcAgentConfig, ContextConfig, LLMConfig
+from arcagent.scaffold import render_agent_config, write_config_snapshot
 from arcagent.utils import config_render
 
-from arccli.commands.agent._common import render_agent_config
-from arccli.commands.agent._config_sync import refresh_agent_config, write_config_snapshot
+from arccli.commands.agent._config_sync import refresh_agent_config
 
 _PROBE_NAME = "probe"
 _PROBE_MODEL = "anthropic/claude-sonnet-4-5-20250929"

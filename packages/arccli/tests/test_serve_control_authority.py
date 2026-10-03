@@ -13,11 +13,11 @@ from pathlib import Path
 
 import arcagent
 import pytest
+from arcagent.scaffold import mint_agent_identity as _mint_agent_identity
 from arctrust import LocalControlArtifactAuthority, arc_config
 
 from arccli.commands import _serve
 from arccli.commands.agent import _common
-from arccli.commands.agent.create import _mint_agent_identity
 from arccli.commands.operator import ensure_operator_key
 
 
