@@ -274,7 +274,7 @@ async def select_strategy(
         invoke_kwargs: dict[str, Any] = {}
         if state.deadline is not None:
             invoke_kwargs["_arc_deadline"] = state.deadline
-        with llm_call_scope(state.turn_count):
+        with llm_call_scope(state):
             response = await state.await_work(
                 model.invoke(selection_messages, tools=[select_tool], **invoke_kwargs)
             )

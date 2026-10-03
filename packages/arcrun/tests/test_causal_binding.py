@@ -100,6 +100,30 @@ async def test_every_llm_call_and_tool_step_carries_distinct_causal_ids() -> Non
 
 
 @pytest.mark.asyncio
+async def test_a_tool_step_names_the_model_call_that_asked_for_it() -> None:
+    """The tool call's policy row must say which LLM call requested it (P20-7).
+
+    The model call's scope closes before its tool calls dispatch, so without
+    carrying the id forward every tool record lost its ``llm_call_id``.
+    """
+    llm_seen: list[causal.CausalContext | None] = []
+    tool_seen: list[causal.CausalContext | None] = []
+    model = _ObservingModel(
+        [_tool_response(), _tool_response(), LLMResponse(content="done", stop_reason="end_turn")],
+        llm_seen,
+    )
+    with causal.bind(causal.root("agent", "did:arc:agent:a")):
+        await arcrun.run(
+            model, _echo_provider(tool_seen), "sys", "task", allowed_strategies=["react"]
+        )
+        after = causal.current()
+        assert after is not None and after.llm_call_id is None
+    asked = [c.llm_call_id for c in llm_seen[:2] if c]
+    assert len(asked) == 2 and all(asked)
+    assert [c.llm_call_id for c in tool_seen if c] == asked
+
+
+@pytest.mark.asyncio
 async def test_background_task_spawned_mid_run_never_inherits_run_ids() -> None:
     """Forced interleaving: the detached task is alive WHILE the run is mid-tool."""
     started = asyncio.Event()

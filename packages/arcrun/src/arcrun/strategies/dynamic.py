@@ -175,7 +175,7 @@ class DynamicStrategy(Strategy):
             )
 
         try:
-            with llm_call_scope(state.turn_count):
+            with llm_call_scope(state):
                 response = await model.invoke(messages, tools=[_EMIT_SCRIPT])
         except Exception as exc:  # reason: fail-open — the ReAct fallback covers it
             bus.emit("dynamic.author.error", {"attempt": attempt, "error": str(exc)})

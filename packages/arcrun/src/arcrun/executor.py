@@ -99,7 +99,7 @@ async def execute_tool_call(
     The call runs under its own causal ``tool_call_id`` and turn, so the policy
     check, the tool body and every audit record they emit are attributable to it.
     """
-    with tool_call_scope(tc.id, state.turn_count):
+    with tool_call_scope(tc.id, state):
         return await _execute_tool_call(tc, state, sandbox)
 
 

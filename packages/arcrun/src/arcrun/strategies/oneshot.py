@@ -71,7 +71,7 @@ class OneShotStrategy(Strategy):
             if state.max_tokens is not None
             else {}
         )
-        with llm_call_scope(state.turn_count):
+        with llm_call_scope(state):
             response = await model.invoke(state.messages, **cap)
         accumulate_usage(state, response)
         state.turn_count = 1
