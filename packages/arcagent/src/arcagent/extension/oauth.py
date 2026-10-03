@@ -109,7 +109,7 @@ class TokenPost:
 PostToken = Callable[[TokenPost], Awaitable[tuple[int, dict[str, Any]]]]
 
 
-async def send_token_post(request: TokenPost) -> tuple[int, dict[str, Any]]:
+async def send_token_post(call: TokenPost) -> tuple[int, dict[str, Any]]:
     """The one HTTP call to a token endpoint.
 
     A transport failure becomes ``ConnectionError`` (an ``OSError``) so callers
@@ -118,16 +118,16 @@ async def send_token_post(request: TokenPost) -> tuple[int, dict[str, Any]]:
     """
     headers = {"Accept": "application/json"}
     extra: dict[str, Any] = {}
-    if request.basic_auth is not None:
-        extra["auth"] = httpx.BasicAuth(*request.basic_auth)
-    if request.bearer is not None:
-        headers["Authorization"] = f"Bearer {request.bearer}"
+    if call.basic_auth is not None:
+        extra["auth"] = httpx.BasicAuth(*call.basic_auth)
+    if call.bearer is not None:
+        headers["Authorization"] = f"Bearer {call.bearer}"
     try:
         async with httpx.AsyncClient(timeout=_POST_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                request.url,
-                data=request.form,
-                json=request.json_body,
+                call.url,
+                data=call.form,
+                json=call.json_body,
                 **extra,
                 headers=headers,
             )
