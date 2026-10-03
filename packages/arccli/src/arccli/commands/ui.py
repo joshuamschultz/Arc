@@ -429,6 +429,17 @@ def _start(args: argparse.Namespace) -> None:
 
     app.state._extra_startup_hooks.append(_announce_ready)
 
+    if _loop_lag_monitor_enabled(gateway_config):
+        from arcui.loop_lag import LoopLagMonitor
+
+        async def _start_loop_lag_monitor() -> None:
+            import asyncio
+
+            task = asyncio.create_task(LoopLagMonitor().run(), name="arcui:loop-lag")
+            app.state._extra_background_tasks.append(task)
+
+        app.state._extra_startup_hooks.append(_start_loop_lag_monitor)
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info", **_uvicorn_tls(tls))
     try:
         uvicorn.Server(config).run()
@@ -482,6 +493,20 @@ def _public_base_url(gateway_config: Any | None) -> str | None:
     if configured is None:
         configured = GatewayConfig.load().ui.public_base_url
     return cast("str | None", configured)
+
+
+def _loop_lag_monitor_enabled(gateway_config: Any | None) -> bool:
+    """Whether ``[ui] loop_lag_monitor`` opts this start into lag logging.
+
+    Same resolution as :func:`_public_base_url`: the default start builds an
+    in-memory gateway config, so ``gateway.toml`` is read through the one
+    Arc-home resolver too.
+    """
+    from arcgateway.config import GatewayConfig
+
+    if gateway_config is not None and gateway_config.ui.loop_lag_monitor:
+        return True
+    return bool(GatewayConfig.load().ui.loop_lag_monitor)
 
 
 def _serving_tls(host: str) -> Any | None:

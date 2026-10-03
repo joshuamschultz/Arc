@@ -734,14 +734,8 @@ class ConnectedDataService:
             raise ConnectedObjectError(
                 f"connected object extraction failed: {type(exc).__name__}"
             ) from exc
-        clean = document_sanitize(
-            extracted,
-            actor_did=self._agent_did,
-            tier=self._config.tier,
-            audit_sink=self._audit,
-        )
+        clean, digest = await self._sanitized(extracted)
         profile_candidate = self._profile_candidate(source_object, mapping.homes)
-        digest = content_hash(clean)
         path = self._document_target(source_id, source_object, prior)
         if MemoryHome.DOCUMENT in mapping.homes:
             await self._write_and_index_document(
@@ -792,6 +786,29 @@ class ConnectedDataService:
             ),
         )
         self._audit_object(source_id, source_object, "indexed")
+
+    async def _sanitized(self, extracted: str) -> tuple[str, str]:
+        """Sanitize and hash an extracted body in a worker thread.
+
+        NFKC normalization, the regex passes and SHA-256 over a megabyte body
+        are CPU work; on the loop they stalled chat, NATS and health once per
+        large document. An injection audit raised there is held and emitted
+        here, on the loop, so sinks only ever see one thread.
+        """
+        held = _HeldAudit()
+
+        def run() -> tuple[str, str]:
+            clean = document_sanitize(
+                extracted,
+                actor_did=self._agent_did,
+                tier=self._config.tier,
+                audit_sink=held if self._audit is not None else None,
+            )
+            return clean, content_hash(clean)
+
+        result = await asyncio.to_thread(run)
+        held.release(self._audit)
+        return result
 
     async def reset_source(self, source: ConnectedSource) -> None:
         """Clear a source snapshot while preserving its approved mapping."""

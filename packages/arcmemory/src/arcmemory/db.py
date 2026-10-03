@@ -118,6 +118,10 @@ class MemoryDB:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
+        # Commits run on the event-loop thread. FULL waited on an fsync per
+        # commit; NORMAL in WAL mode never corrupts and loses at most the last
+        # commits on an OS crash, which a re-derivable index can afford.
+        conn.execute("PRAGMA synchronous=NORMAL")
         self._vec_available = _load_sqlite_vec(conn)
         self._conn = conn
         self._create_schema(conn)

@@ -246,3 +246,16 @@ async def test_post_migration_embed_pass_does_not_re_embed_an_already_embedded_r
 
     assert reindexed == 0, "a chunk backfilled as already-embedded must not be re-selected"
     assert embedder.calls == 0, "the migration must not trigger a corpus-wide re-embed"
+
+
+def test_commits_do_not_fsync_on_the_event_loop(tmp_path: Path) -> None:
+    """WAL + ``synchronous=NORMAL``: a commit appends to the WAL, no fsync.
+
+    Every index write runs on the agent's event-loop thread. Under the default
+    ``FULL`` each commit waited on the disk (``submit_bio_wait``/``jbd2`` on the
+    DGX loop thread). ``NORMAL`` in WAL mode cannot corrupt the database; an OS
+    crash can lose only the last commits, and this index is re-derivable.
+    """
+    conn = MemoryDB(tmp_path).connect()
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL

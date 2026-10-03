@@ -146,3 +146,9 @@ def test_ui_public_base_url_allows_loopback_http_at_personal(url: str) -> None:
 def test_ui_public_base_url_rejects_insecure_or_credentialed_urls(toml: str) -> None:
     with pytest.raises(ValueError):
         GatewayConfig.from_toml_str(toml)
+
+
+def test_loop_lag_monitor_is_off_unless_the_operator_enables_it() -> None:
+    assert GatewayConfig.from_toml_str("[platforms.web]\n").ui.loop_lag_monitor is False
+    enabled = GatewayConfig.from_toml_str("[ui]\nloop_lag_monitor = true\n")
+    assert enabled.ui.loop_lag_monitor is True
