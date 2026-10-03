@@ -66,10 +66,9 @@ class PlaceholderOwnerError(WorkflowError):
         super().__init__(
             f"workflow {workflow_id!r} is still owned by the template placeholder {owner!r}, "
             f"which no agent answers to; node(s) {', '.join(node_ids)} would wait on nobody. "
-            f"Set a real owner: change `owner` in workflow.toml and run "
-            f"`arc workflow edit {workflow_id} --document <path> --expected-version <n>`, "
-            f"or re-create it with `arc workflow new {workflow_id} --from <template> "
-            f"--owner @<agent>`."
+            f"Set a real owner with `arc workflow edit {workflow_id} --owner @<agent>` "
+            f"(add `--node <id>` to set one node's agent instead), or re-create it with "
+            f"`arc workflow new {workflow_id} --from <template> --owner @<agent>`."
         )
 
 

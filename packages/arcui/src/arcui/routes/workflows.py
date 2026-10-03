@@ -232,9 +232,9 @@ class WorkflowControlPlane(Protocol):
         ...
 
     async def create_from_template(
-        self, template: str, workflow_id: str, *, actor: OperatorActor
+        self, template: str, workflow_id: str, *, owner: str, actor: OperatorActor
     ) -> ControlPlaneResult:
-        """Copy a starter template in as a new unsigned draft."""
+        """Copy a starter template in as a new unsigned draft owned by ``owner``."""
         ...
 
     async def write_file(
@@ -408,6 +408,22 @@ async def get_workflow(request: Request) -> JSONResponse:
     return JSONResponse(definition)
 
 
+def _owner_refusal(owner: object) -> JSONResponse | None:
+    """A 400 unless ``owner`` is a non-empty string; the plane refuses the placeholder."""
+    if isinstance(owner, str) and owner.strip():
+        return None
+    return _errors_response(
+        [
+            WorkflowFieldError(
+                node_id="",
+                field="owner",
+                error="choose the agent that owns this workflow",
+                observed=owner if isinstance(owner, str) else None,
+            )
+        ]
+    )
+
+
 async def create_workflow(request: Request) -> JSONResponse:
     """POST /api/workflows — create a new draft (operator only)."""
     target = "workflow:new"
@@ -418,6 +434,11 @@ async def create_workflow(request: Request) -> JSONResponse:
     body = await _json_body(request)
     if body is None:
         return _error("expected a JSON object body", 400)
+
+    if "workflow" not in body:  # a full document carries its own owner
+        refusal = _owner_refusal(body.get("owner"))
+        if refusal is not None:
+            return refusal
 
     plane = _control_plane(request)
     if plane is None:
@@ -448,6 +469,10 @@ async def patch_workflow(request: Request) -> JSONResponse:
     if not isinstance(expected_version, int):
         return _error("expected_version must be an integer", 400)
     patch = {k: v for k, v in body.items() if k != "expected_version"}
+    if "owner" in patch:
+        refusal = _owner_refusal(patch["owner"])
+        if refusal is not None:
+            return refusal
 
     plane = _control_plane(request)
     if plane is None:
@@ -701,7 +726,7 @@ async def list_workflow_templates(request: Request) -> JSONResponse:
 async def create_from_template(request: Request) -> JSONResponse:
     """POST /api/workflows/from-template — start a draft from a template (operator only).
 
-    Body: ``{"template": str, "workflow_id": str}``. The copy lands unsigned,
+    Body: ``{"template": str, "workflow_id": str, "owner": str}``. The copy lands unsigned,
     through the same create path every author uses.
     """
     denial = _require_operator(
@@ -714,13 +739,19 @@ async def create_from_template(request: Request) -> JSONResponse:
     template = (body or {}).get("template")
     workflow_id = (body or {}).get("workflow_id")
     if not isinstance(template, str) or not isinstance(workflow_id, str):
-        return _error('expected {"template": str, "workflow_id": str}', 400)
+        return _error('expected {"template": str, "workflow_id": str, "owner": str}', 400)
+    refusal = _owner_refusal((body or {}).get("owner"))
+    if refusal is not None:
+        return refusal
+    owner = str((body or {})["owner"])
 
     plane = _control_plane(request)
     if plane is None:
         return _error("workflow_control_plane_unavailable", 503)
 
-    result = await plane.create_from_template(template, workflow_id, actor=_actor(request))
+    result = await plane.create_from_template(
+        template, workflow_id, owner=owner, actor=_actor(request)
+    )
     return _relay(
         request,
         result,
