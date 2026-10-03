@@ -416,6 +416,9 @@ class ConnectedDataService:
         self._health.clear(connection_id)
         self._timing.forget(connection_id)
         await self._catalog.unregister(connection_id)
+        # The pause only fenced the purge. A connection granted again under the same
+        # name is a new source and must be free to sync.
+        self._paused.discard(connection_id)
         return SourceOperationResult(connection_id, "revoked")
 
     async def reindex(self, connection_id: str) -> SourceOperationResult:
