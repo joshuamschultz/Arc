@@ -756,6 +756,22 @@ def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
     )
 
 
+def _vaulted_token_field(plan: ConnectorPlan) -> str | None:
+    """The vault field a pasted token belongs in, when no host login takes it.
+
+    A host binary that reads a token on stdin owns its own credential and wins.
+    Otherwise the bundle's declared bearer, or its one sensitive secret; with
+    several and no bearer the token is ambiguous and nothing is stored.
+    """
+    if any(required.token_command for required in plan.manifest.host_requires):
+        return None
+    credential = plan.manifest.credential
+    if credential is not None and credential.bearer:
+        return credential.bearer
+    sensitive = [required.name for required in plan.secrets if required.sensitive]
+    return sensitive[0] if len(sensitive) == 1 else None
+
+
 def _authorization(
     instance: str,
     plan: ConnectorPlan,
@@ -1584,11 +1600,12 @@ class Connections:
         a token on stdin IS run, and the answer is the probe taken afterwards —
         the only evidence a sign-in worked.
 
-        **The token enters and does not come back.** It reaches the binary's stdin
-        and nothing else: it is in no field of the returned
-        :class:`Authorization`, no log record, and no audit event (LLM02, LLM07).
-        Arc stores no copy — the binary owns its own credential, and a second copy
-        would be a second place to leak it from.
+        **The token enters and does not come back.** It is in no field of the
+        returned :class:`Authorization`, no log record, and no audit event (LLM02,
+        LLM07). A binary that reads it on stdin owns its own credential, so Arc
+        stores no copy. A bundle with no such login, whose credential Arc places
+        itself (GitHub's ``GH_TOKEN``), gets it sealed in its vault field instead —
+        the one place that bundle reads it from.
 
         Args:
             instance: The connected account to sign in.
@@ -1604,7 +1621,15 @@ class Connections:
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
-            note = await self._run_login(plan, token, sink)
+        vaulted = _vaulted_token_field(plan) if token else None
+        if vaulted is not None:
+            # No host login takes this token: Arc itself places it (GitHub's
+            # GH_TOKEN since P18-3). Vault it, exactly as a re-auth would.
+            await self.reauth(plan, {vaulted: token})
+            note = f"Stored the token for {plan.extension}."
+        with self._audit.open() as sink:
+            if vaulted is None:
+                note = await self._run_login(plan, token, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
