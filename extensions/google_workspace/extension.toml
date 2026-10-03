@@ -49,6 +49,7 @@ authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
 token_url = "https://oauth2.googleapis.com/token"
 revoke_url = "https://oauth2.googleapis.com/revoke"
 revoke_style = "form_token"
+console_url = "https://console.cloud.google.com/auth/clients"
 refresh_token_secret = "refresh_token"
 client_auth = "post_form"
 pkce = true

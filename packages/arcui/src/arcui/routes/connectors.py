@@ -1088,7 +1088,7 @@ async def get_oauth_app(request: Request) -> JSONResponse:
             configured=status.configured,
             client_id_hint=status.client_id_hint,
             redirect_uri=connections.oauth_redirect_uri,
-            console_url=_CONSOLE_URLS.get(provider, ""),
+            console_url=_console_url(connections, provider),
         ).model_dump(mode="json")
     )
 
@@ -1131,11 +1131,17 @@ async def put_oauth_app(request: Request) -> JSONResponse:
     return JSONResponse({"configured": True})
 
 
-#: Where an operator creates each provider's OAuth app (shown by the setup panel).
-_CONSOLE_URLS = {
-    "google": "https://console.cloud.google.com/auth/clients",
-    "dropbox": "https://www.dropbox.com/developers/apps",
-}
+def _console_url(connections: Connections, provider: str) -> str:
+    """Where to create ``provider``'s OAuth app, as a bundle using that slot declares it."""
+    try:
+        entries = _catalog_entries(connections)
+    except ExtensionError:
+        return ""
+    for entry in entries.values():
+        if entry.oauth_provider == provider and entry.oauth_console_url:
+            return entry.oauth_console_url
+    return ""
+
 
 #: ``POST /api/oauth/complete`` attempts allowed per session per minute.
 _OAUTH_COMPLETE_PER_MINUTE = 10

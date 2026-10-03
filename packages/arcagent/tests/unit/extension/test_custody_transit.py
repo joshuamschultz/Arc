@@ -17,7 +17,11 @@ import pytest
 from arctrust import FileNotaryTransit, OperatorKey, TransitConnectorCipher
 from arctrust.connector_cipher import ConnectorSecretCipher
 from arctrust.transit_cipher import TransitUnavailableError
-from packages.arcagent.tests.custody_fakes import InterleavingBackend, make_cipher
+from packages.arcagent.tests.custody_fakes import (
+    InterleavingBackend,
+    make_cipher,
+    static_client,
+)
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -79,8 +83,7 @@ name = "refresh_token"
 [oauth]
 authorize_url = "https://auth.example/authorize"
 token_url = "https://auth.example/token"
-client_id_secret = "app_key"
-client_secret_secret = "app_secret"
+provider = "example"
 refresh_token_secret = "refresh_token"
 
 [health]
@@ -141,7 +144,11 @@ class World:
     def broker(self) -> AccessTokenBroker:
         health = StoreHealthReporter(self.open)
         planner = RenewalPlanner(
-            rows=self.rows, refresh=self.provider, health=health, owner_id="p"
+            rows=self.rows,
+            refresh=self.provider,
+            health=health,
+            owner_id="p",
+            client=static_client,
         )
         return AccessTokenBroker(
             self.rows,

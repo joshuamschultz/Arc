@@ -364,7 +364,7 @@ class OAuthFlow(_ManifestModel):
 
     ``redirect = "callback"`` sends the provider back to ArcUI's
     ``/oauth/callback`` page (the redirect URI is computed from deployment config,
-    never from a request). ``"none"`` is the provider-shows-a-code mode (Dropbox).
+    never from a request). ``"none"`` is the mode where the provider shows a code to paste.
     ``account`` names how the signed-in account is checked BEFORE anything is
     stored: ``openid_email`` reads the ``id_token`` the token endpoint returned.
     """
@@ -385,6 +385,8 @@ class OAuthFlow(_ManifestModel):
     id_token_issuers: list[str] = Field(default_factory=list)
     revoke_url: str | None = None
     revoke_style: Literal["form_token", "bearer"] = "form_token"
+    #: Where an operator creates this provider's OAuth app (shown by the setup panel).
+    console_url: str | None = None
 
     @model_validator(mode="after")
     def _account_check_is_complete(self) -> OAuthFlow:
@@ -400,7 +402,7 @@ class OAuthFlow(_ManifestModel):
                 )
         return self
 
-    @field_validator("authorize_url", "token_url", "revoke_url")
+    @field_validator("authorize_url", "token_url", "revoke_url", "console_url")
     @classmethod
     def _https_endpoint(cls, value: str | None) -> str | None:
         """Every provider endpoint is ``https://`` with a host and no userinfo or fragment."""

@@ -846,7 +846,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser(
         "oauth-app", help="Set a provider's sign-in app up once (client ID and secret)."
     )
-    p.add_argument("provider", help="Provider app slot, e.g. google or dropbox.")
+    p.add_argument(
+        "provider", help="Provider app slot, as the bundle's [oauth] provider names it."
+    )
     _add_common(p)
 
     p = subs.add_parser(

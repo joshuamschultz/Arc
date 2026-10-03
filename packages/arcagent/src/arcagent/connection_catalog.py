@@ -89,6 +89,8 @@ class CatalogEntry:
     oauth: bool = False
     #: The deployment app slot an ``[oauth]`` flow uses ("" when there is none).
     oauth_provider: str = ""
+    #: Where the operator creates that provider's OAuth app ("" when undeclared).
+    oauth_console_url: str = ""
 
 
 def catalog(
@@ -150,6 +152,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         tools=tuple(manifest.tools.declared),
         oauth=manifest.oauth is not None,
         oauth_provider=manifest.oauth.provider if manifest.oauth is not None else "",
+        oauth_console_url=(manifest.oauth.console_url or "") if manifest.oauth is not None else "",
     )
 
 
