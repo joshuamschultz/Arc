@@ -330,6 +330,8 @@ class ConnectedDataService:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if self._shared is not None:
+            self._shared.close()
         self._store = None
         self._resource_store = None
 

@@ -608,3 +608,26 @@ async def test_a_real_refusal_stays_a_refusal_without_a_reconnect() -> None:
         await service.list_resources("systems")
     assert not refused.value.needs_reconnect
     assert refused.value.detail == "select one folder"
+
+
+# --- D7 seam: closing the service releases the shared stores' pinned keys ---------------
+
+
+class _SharedSpy:
+    """Only the teardown seam of SharedKnowledge: close() releases every pinned key."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+async def test_closing_the_service_releases_the_shared_store_keys() -> None:
+    shared = _SharedSpy()
+    service = _service(SourceCatalog(), InMemorySourceSyncStore(), shared=shared)
+    await service.start()
+
+    await service.close()
+
+    assert shared.closed == 1
