@@ -112,6 +112,14 @@ class _State:
     mail_service: Any = None
     inbox_backend: Any = None
     inbox_init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Digest publishes made before the fleet joined, waiting for it (held so the
+    # loop does not garbage-collect them mid-wait).
+    pending_publishes: set[asyncio.Task[None]] = field(default_factory=set)
+
+    @property
+    def fleet_pending(self) -> bool:
+        """A fleet is configured but not joined yet: shared reads and writes would refuse."""
+        return bool(self.config.nats_url) and not self.live_backend_ready
 
     @property
     def live_backend_ready(self) -> bool:
@@ -408,6 +416,19 @@ def state() -> _State:
     return current
 
 
+async def wait_until_ready(timeout: float, *, poll: float = 0.1) -> bool:
+    """Wait up to ``timeout`` seconds for the configured fleet to join; True once joined."""
+    st = state()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while st.fleet_pending:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(poll, remaining))
+    return True
+
+
 def bind(state_obj: _State) -> None:
     """Idempotently bind an already-built ``_State`` into the CURRENT task.
 
@@ -433,4 +454,5 @@ __all__ = [
     "ensure_live_backend",
     "reset",
     "state",
+    "wait_until_ready",
 ]

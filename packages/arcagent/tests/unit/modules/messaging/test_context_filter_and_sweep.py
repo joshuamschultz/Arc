@@ -183,6 +183,8 @@ class _SweepState:
     registry: Any
     svc: Any
     swept: set[str] = field(default_factory=set)
+    #: The real state's "configured fleet not joined yet" (the sweep skips then).
+    fleet_pending: bool = False
 
 
 def _state(

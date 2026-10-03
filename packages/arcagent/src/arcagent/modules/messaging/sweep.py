@@ -125,12 +125,22 @@ async def run_once(st: Any, deliver: Any) -> int:
     """
     if not st.config.sweep_enabled:
         return 0
-    from arcteam import RetryableDeliveryError
+    if st.fleet_pending:
+        # Not joined yet (startup, or a reconnect): every read would refuse. The
+        # next tick sweeps; a backstop that runs a few minutes late loses nothing.
+        _logger.debug("deferred sweep skipped: the fleet has not joined yet")
+        return 0
+    from arcteam import RetryableDeliveryError, is_fleet_transport_error
 
     try:
         missed = await find_missed(st)
-    except Exception:  # reason: a backstop must never take down the inbox loop
-        _logger.warning("deferred sweep could not read the channels", exc_info=True)
+    except Exception as exc:  # reason: a backstop must never take down the inbox loop
+        if is_fleet_transport_error(exc):
+            _logger.warning(
+                "deferred sweep skipped: the fleet is unavailable (%s)", type(exc).__name__
+            )
+        else:
+            _logger.warning("deferred sweep could not read the channels", exc_info=True)
         return 0
 
     picked = 0

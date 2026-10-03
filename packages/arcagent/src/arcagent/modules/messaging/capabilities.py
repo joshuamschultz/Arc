@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from arctrust import causal
 from arctrust.session_identity import build_session_key
 
 from arcagent.core import known_channels, turn_context
@@ -76,6 +77,10 @@ _POLL_TICK = 1.0
 # ``sweep_after_seconds`` is the knob that decides *when* a message counts as
 # missed; this only decides how often we look.
 _SWEEP_TICK = 300.0
+
+# How long a digest publish made before the fleet joined waits for it. The inbox
+# loop joins about a second after start and backs off to 30 s between attempts.
+FLEET_READY_WAIT_SECONDS = 60.0
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -483,7 +488,12 @@ async def publish_ingest_to_digest(ctx: Any) -> None:
 
 
 async def _publish_digest_entry(text: str, *, kind: str, artifact_id: str = "") -> None:
-    """Fold one pointer into this agent's published digest. Never raises."""
+    """Fold one pointer into this agent's published digest. Never raises.
+
+    Before the configured fleet has joined (the first second after start) the
+    write would only refuse, so it is handed to a detached task that waits for
+    the fleet and publishes then; the caller's work is never held up.
+    """
     from arcteam.digest import summarize_artifact
 
     st = _runtime.state()
@@ -492,10 +502,54 @@ async def _publish_digest_entry(text: str, *, kind: str, artifact_id: str = "") 
     entry = summarize_artifact(text, artifact_id=artifact_id or _artifact_id(text), kind=kind)
     if not entry.title:
         return
+    if st.fleet_pending:
+        task = causal.spawn_detached(
+            _publish_when_ready(entry),
+            initiator_id=st.identity.did,
+            name="messaging:digest-publish",
+        )
+        st.pending_publishes.add(task)
+        task.add_done_callback(st.pending_publishes.discard)
+        return
+    await _add_digest_entry(entry, retry=True)
+
+
+async def _publish_when_ready(entry: Any) -> None:
+    if await _runtime.wait_until_ready(FLEET_READY_WAIT_SECONDS):
+        await _add_digest_entry(entry, retry=True)
+        return
+    _logger.warning(
+        "digest entry not published: the fleet did not join within %gs",
+        FLEET_READY_WAIT_SECONDS,
+    )
+
+
+async def _add_digest_entry(entry: Any, *, retry: bool) -> None:
+    """One write, and one retry after the fleet is back when the bus refused it."""
+    from arcteam import is_fleet_transport_error
+
+    st = _runtime.state()
+    if st.identity is None:
+        return
     try:
         await st.digests.add_entry(st.identity.did, st.config.entity_name or st.agent_name, entry)
-    except Exception:  # reason: a routing index must never break the work it indexes
-        _logger.warning("could not publish digest entry", exc_info=True)
+    except Exception as exc:  # reason: a routing index must never break the work it indexes
+        if not st.config.nats_url or not is_fleet_transport_error(exc):
+            _logger.warning("could not publish digest entry", exc_info=True)
+        elif retry and await _runtime.wait_until_ready(FLEET_READY_WAIT_SECONDS):
+            await _add_digest_entry(entry, retry=False)
+        else:
+            _logger.warning(
+                "could not publish digest entry: the fleet is unavailable (%s)",
+                type(exc).__name__,
+            )
+
+
+async def drain_pending_publishes() -> None:
+    """Wait for digest publishes queued before the fleet joined (shutdown and tests)."""
+    pending = list(_runtime.state().pending_publishes)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _artifact_id(text: str) -> str:
