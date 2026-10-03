@@ -9,9 +9,9 @@ NOT in ``connector_credentials``: a slot is not a connection, so the proactive
 renewer's scan never meets one and no connection name can collide with one. The
 client secret is sealed by the same :class:`~arcagent.extension.custody.CredentialCipher`
 as connector credentials, with associated data binding it to ``(app_<provider>,
-oauth_app_secret)``, so a sealed secret copied to another provider's slot does not open. The client id is
-not a secret (it rides every authorize URL) and is stored in the clear so a surface
-can show a hint of it.
+oauth_app_secret)``, so a sealed secret copied to another provider's slot does not
+open. The client id is not a secret (it rides every authorize URL) and is stored
+in the clear so a surface can show a hint of it.
 """
 
 from __future__ import annotations

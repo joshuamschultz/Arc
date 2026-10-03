@@ -242,6 +242,7 @@ class HostRequirement(_ManifestModel):
             raise ValueError("a verify pattern is set but no verify_command runs it")
         return self
 
+
 class CredentialPlacement(_ManifestModel):
     """``[secrets.placement]`` — where this bundle's own tool reads this credential.
 

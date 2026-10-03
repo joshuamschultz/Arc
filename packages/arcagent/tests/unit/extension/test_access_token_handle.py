@@ -134,7 +134,11 @@ class World:
     def broker(self, *, agent: str = AGENT, did: str = AGENT_DID) -> AccessTokenBroker:
         health = StoreHealthReporter(self.open)
         planner = RenewalPlanner(
-            rows=self.rows, refresh=self.provider, health=health, owner_id="p", sink=self.sink,
+            rows=self.rows,
+            refresh=self.provider,
+            health=health,
+            owner_id="p",
+            sink=self.sink,
             client=static_client,
         )
         return AccessTokenBroker(
