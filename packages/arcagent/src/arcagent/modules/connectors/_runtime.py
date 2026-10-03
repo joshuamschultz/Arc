@@ -42,6 +42,7 @@ from arcagent.modules.connectors.config import ConnectorsConfig
 
 if TYPE_CHECKING:
     from arctrust import AgentIdentity
+    from arctrust.audit import AuditSink
 
     from arcagent.core.tool_registry import ToolRegistry
     from arcagent.extension.credential_broker import CredentialRenewals
@@ -69,6 +70,8 @@ class _State:
     credential_cipher: CredentialCipher | None = None
     #: Where this agent's credential broker is published for the sync loop.
     credential_renewals: CredentialRenewals | None = None
+    #: The agent's audit sink: telemetry plus its signed chain for security events.
+    audit_sink: AuditSink | None = None
 
     @property
     def agent_dir(self) -> Path:
@@ -115,6 +118,7 @@ def configure(
     source_catalog: SourceCatalog | None = None,
     credential_cipher: CredentialCipher | None = None,
     credential_renewals: CredentialRenewals | None = None,
+    audit_sink: AuditSink | None = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     cfg = config if isinstance(config, ConnectorsConfig) else ConnectorsConfig(**(config or {}))
@@ -134,6 +138,7 @@ def configure(
             source_catalog=source_catalog,
             credential_cipher=credential_cipher,
             credential_renewals=credential_renewals,
+            audit_sink=audit_sink,
         )
     )
 

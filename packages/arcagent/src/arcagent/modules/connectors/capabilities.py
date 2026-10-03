@@ -65,6 +65,7 @@ from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.connector_control import ConnectorReconcileResult
 from arcagent.connector_reconcile import ConnectorReconcileQueue
 from arcagent.core.errors import ExtensionError
+from arcagent.core.telemetry import TelemetryAuditSink
 from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry, ToolTransport
 from arcagent.extension.approval import ApprovalBinding
@@ -270,7 +271,7 @@ class Connectors:
                 tier=state.tier,
                 extra={"detail": str(exc)},
             ),
-            _audit_sink(state.telemetry),
+            _audit_sink(state),
         )
 
     # --- attaching ----------------------------------------------------------
@@ -279,7 +280,7 @@ class Connectors:
         self, state: _runtime._State, registry: ToolRegistry | _PreparedRegistry
     ) -> tuple[str, ...]:
         """Attach every configured connection, containing the failure of any one."""
-        sink = _audit_sink(state.telemetry)
+        sink = _audit_sink(state)
         if state.tool_registry is None or state.human_gate is None:
             # Both are the envelope: without the registry a verb has no governed
             # dispatch path, and without the gate an outbound call has nothing to
@@ -611,7 +612,7 @@ def _register_sources(ctx: _AttachContext, prepared: _Prepared) -> None:
                     agent_did=state.identity.did,
                     tier=state.tier,
                     grant_active=lambda: _source_grant_active(state, instance),
-                    audit_sink=_audit_sink(state.telemetry),
+                    audit_sink=_audit_sink(state),
                 )
 
 
@@ -668,7 +669,7 @@ async def _revoke_connected_source(state: _runtime._State, connection_id: str) -
         service = None
     if service is None:
         _refused(
-            _audit_sink(state.telemetry),
+            _audit_sink(state),
             state,
             "source_revoke_deferred",
             "connected-data purge service unavailable",
@@ -678,7 +679,7 @@ async def _revoke_connected_source(state: _runtime._State, connection_id: str) -
     result = await service.revoke(connection_id)
     if result.status not in {"revoked", "not_found"}:
         _refused(
-            _audit_sink(state.telemetry),
+            _audit_sink(state),
             state,
             "source_revoke_deferred",
             result.detail or result.status,
@@ -870,32 +871,12 @@ def _pinned_key(state: _runtime._State) -> bytes | None:
     return None if signer is None else bytes(signer.public_key)
 
 
-class _TelemetryAuditSink:
-    """Adapt the agent's ``telemetry.audit_event`` to arctrust's ``AuditSink.write``.
-
-    The same adaptation ``core/prompt_context.py`` makes for prompt provenance:
-    a module is handed telemetry, and every component under ``extension/`` speaks
-    the arctrust sink protocol.
-    """
-
-    def __init__(self, telemetry: Any) -> None:
-        self._telemetry = telemetry
-
-    def write(self, event: AuditEvent) -> None:
-        self._telemetry.audit_event(
-            event.action,
-            {
-                "target": event.target,
-                "outcome": event.outcome,
-                "tier": event.tier,
-                **event.extra,
-            },
-        )
-
-
-def _audit_sink(telemetry: Any) -> AuditSink:
-    """Where this module's verdicts land. Never nowhere, when telemetry exists."""
-    return _TelemetryAuditSink(telemetry) if telemetry is not None else NullSink()
+def _audit_sink(state: _runtime._State) -> AuditSink:
+    """Where this module's verdicts land: the agent's sink, which puts security
+    events on its signed chain (item 20). Never nowhere, when telemetry exists."""
+    if state.audit_sink is not None:
+        return state.audit_sink
+    return TelemetryAuditSink(state.telemetry) if state.telemetry is not None else NullSink()
 
 
 def _refused(
