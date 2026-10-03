@@ -72,7 +72,7 @@ def _operator_tree(root: Path) -> None:
 
 def _run(block: str, env: dict[str, str], tail: str = "") -> str:
     result = subprocess.run(
-        ["bash", "-c", f"set -euo pipefail\n{block}\n{tail}"],
+        [shutil.which("bash") or "/bin/bash", "-c", f"set -euo pipefail\n{block}\n{tail}"],
         env={**os.environ, **env},
         capture_output=True,
         text=True,
