@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from arcmemory.collection_index import memory_maintainer, routing_text, source_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.index.backend import IndexBackend, open_index_backend
+from arcmemory.index.backend import ChunkWrite, IndexBackend, open_index_backend
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import SourceChunk, bounded_chunks
 from arcmemory.index.surface import SurfaceIndex
@@ -147,17 +147,21 @@ class DocIndex:
         scope = doc_scope(agent_did, source_id)
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
         embeddings = await self._embed(backend, [c.text for c in chunks])
-        for i, chunk in enumerate(chunks):
-            await backend.upsert_chunk(
-                scope=scope.key,
-                chunk_id=chunk.chunk_id,
-                source_path=chunk.source_path,
-                mtime=chunk.mtime,
-                classification=chunk.classification,
-                content_hash=content_hash(chunk.text),
-                text=chunk.text,
-                embedding=embeddings[i] if embeddings is not None else None,
-            )
+        await backend.upsert_chunks(
+            scope.key,
+            [
+                ChunkWrite(
+                    chunk_id=chunk.chunk_id,
+                    source_path=chunk.source_path,
+                    mtime=chunk.mtime,
+                    classification=chunk.classification,
+                    content_hash=content_hash(chunk.text),
+                    text=chunk.text,
+                    embedding=embeddings[i] if embeddings is not None else None,
+                )
+                for i, chunk in enumerate(chunks)
+            ],
+        )
         return len(chunks)
 
     async def delete_object(self, source_id: str, agent_did: str, object_id: str) -> None:

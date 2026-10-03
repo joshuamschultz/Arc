@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Literal
 
 try:  # optional [vec] extra — guarded, never fatal
     import sqlite_vec
@@ -25,6 +26,11 @@ except ImportError:  # pragma: no cover - exercised only where the extra is abse
     _SQLITE_VEC_IMPORTABLE = False
 
 from arcmemory.degrade import warn_once
+
+#: ``full`` fsyncs every commit. ``normal`` (WAL) skips that fsync: it never
+#: corrupts, but an OS crash can lose the last commits, so it is only for a
+#: store whose whole content can be rebuilt from its provider.
+Durability = Literal["full", "normal"]
 
 # Default embedding width (bge-small / MiniLM are both 384-dim).
 DEFAULT_DIMS = 384
@@ -87,9 +93,12 @@ class MemoryDB:
     workspace is a no-op beyond opening the file.
     """
 
-    def __init__(self, workspace: Path, *, dims: int = DEFAULT_DIMS) -> None:
+    def __init__(
+        self, workspace: Path, *, dims: int = DEFAULT_DIMS, durability: Durability = "full"
+    ) -> None:
         self._workspace = Path(workspace)
         self._dims = dims
+        self._durability = durability
         self._db_path = self._workspace / "memory" / "index.db"
         self._conn: sqlite3.Connection | None = None
         self._vec_available = False
@@ -118,6 +127,13 @@ class MemoryDB:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
+        # Commits run on the event-loop thread; under FULL each one waits on an
+        # fsync. Only a provider-rebuildable store opts into NORMAL.
+        conn.execute(
+            "PRAGMA synchronous=NORMAL"
+            if self._durability == "normal"
+            else "PRAGMA synchronous=FULL"
+        )
         self._vec_available = _load_sqlite_vec(conn)
         self._conn = conn
         self._create_schema(conn)

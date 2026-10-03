@@ -30,6 +30,8 @@ import os
 import re
 import sqlite3
 import struct
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from arcmemory.db import MemoryDB
@@ -40,6 +42,19 @@ try:  # optional [vec] extra — guarded, mirrors db.py
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover - exercised only where the extra is absent
     _SQLITE_VEC_IMPORTABLE = False
+
+
+@dataclass(frozen=True)
+class ChunkWrite:
+    """One chunk to write through :meth:`IndexBackend.upsert_chunks`."""
+
+    chunk_id: str
+    source_path: str
+    mtime: float | None
+    classification: str
+    content_hash: str
+    text: str
+    embedding: list[float] | None
 
 
 @runtime_checkable
@@ -69,6 +84,14 @@ class IndexBackend(Protocol):
         embedding: list[float] | None,
     ) -> None:
         """Write/refresh one chunk's provenance row, FTS text, and (if given) vector."""
+        ...
+
+    async def upsert_chunks(self, scope: str, chunks: Sequence[ChunkWrite]) -> None:
+        """Write every chunk of one object as one transaction (all or none).
+
+        One commit per object, not per chunk: a commit per chunk cost one WAL
+        sync and one FTS segment flush each, on the event loop.
+        """
         ...
 
     async def stored_hashes(self, scope: str) -> dict[str, str]:
@@ -167,7 +190,32 @@ class SqliteIndexBackend:
         text: str,
         embedding: list[float] | None,
     ) -> None:
+        await self.upsert_chunks(
+            scope,
+            [
+                ChunkWrite(
+                    chunk_id=chunk_id,
+                    source_path=source_path,
+                    mtime=mtime,
+                    classification=classification,
+                    content_hash=content_hash,
+                    text=text,
+                    embedding=embedding,
+                )
+            ],
+        )
+
+    async def upsert_chunks(self, scope: str, chunks: Sequence[ChunkWrite]) -> None:
         conn = self._db.connect()
+        try:
+            for chunk in chunks:
+                self._write_chunk(conn, scope, chunk)
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
+
+    def _write_chunk(self, conn: sqlite3.Connection, scope: str, chunk: ChunkWrite) -> None:
         # ``ON CONFLICT ... DO UPDATE`` (not ``INSERT OR REPLACE``): REPLACE deletes
         # and re-inserts the row, so any column omitted from the statement — here
         # ``embedded_hash`` — would silently reset to NULL on every lexical-only
@@ -175,17 +223,17 @@ class SqliteIndexBackend:
         # (H-REG-1). The UPDATE form touches exactly the columns named, so a
         # ``None`` embedding preserves whatever ``embedded_hash`` was already
         # stored, and a real embedding stamps it to this write's content_hash.
-        embedded_hash = content_hash if embedding is not None else None
+        embedded_hash = chunk.content_hash if chunk.embedding is not None else None
         # The text row is replaced through the rowid its chunk row remembers —
         # a lookup by ``fts_chunks.chunk_id`` (UNINDEXED) reads the whole index.
         prior = conn.execute(
-            "SELECT fts_rowid FROM chunks WHERE chunk_id=? AND scope=?", (chunk_id, scope)
+            "SELECT fts_rowid FROM chunks WHERE chunk_id=? AND scope=?", (chunk.chunk_id, scope)
         ).fetchone()
         if prior is not None and prior[0] is not None:
             conn.execute("DELETE FROM fts_chunks WHERE rowid=?", (prior[0],))
         fts_rowid = conn.execute(
             "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-            (chunk_id, scope, text),
+            (chunk.chunk_id, scope, chunk.text),
         ).lastrowid
         conn.execute(
             "INSERT INTO chunks "
@@ -198,23 +246,22 @@ class SqliteIndexBackend:
             "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash), "
             "fts_rowid=excluded.fts_rowid",
             (
-                chunk_id,
+                chunk.chunk_id,
                 scope,
-                source_path,
-                mtime,
-                classification,
-                content_hash,
+                chunk.source_path,
+                chunk.mtime,
+                chunk.classification,
+                chunk.content_hash,
                 embedded_hash,
                 fts_rowid,
             ),
         )
-        if embedding is not None and self.vec_available:
-            conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk_id,))
+        if chunk.embedding is not None and self.vec_available:
+            conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk.chunk_id,))
             conn.execute(
                 "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
-                (chunk_id, sqlite_vec.serialize_float32(embedding)),
+                (chunk.chunk_id, sqlite_vec.serialize_float32(chunk.embedding)),
             )
-        conn.commit()
 
     async def stored_hashes(self, scope: str) -> dict[str, str]:
         conn = self._db.connect()
@@ -516,15 +563,44 @@ class PostgresIndexBackend:
         text: str,
         embedding: list[float] | None,
     ) -> None:
+        await self.upsert_chunks(
+            scope,
+            [
+                ChunkWrite(
+                    chunk_id=chunk_id,
+                    source_path=source_path,
+                    mtime=mtime,
+                    classification=classification,
+                    content_hash=content_hash,
+                    text=text,
+                    embedding=embedding,
+                )
+            ],
+        )
+
+    async def upsert_chunks(self, scope: str, chunks: Sequence[ChunkWrite]) -> None:
         pool = await self._pool()
         # H-REG-1: a lexical-only write (``embedding is None``) must neither wipe an
         # existing vector nor claim (via ``embedded_hash``) that a vector was written
         # for content it never embedded — ``COALESCE(EXCLUDED.x, chunks.x)`` on both
         # columns preserves the prior value whenever this write carries no embedding,
         # exactly mirroring the sqlite backend's ``ON CONFLICT`` behavior.
-        embedded_hash = content_hash if embedding is not None else None
-        async with pool.acquire() as conn:
-            await conn.execute(
+        rows = [
+            (
+                scope,
+                chunk.chunk_id,
+                chunk.text,
+                chunk.embedding,
+                chunk.source_path,
+                chunk.mtime,
+                chunk.classification,
+                chunk.content_hash,
+                chunk.content_hash if chunk.embedding is not None else None,
+            )
+            for chunk in chunks
+        ]
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(
                 "INSERT INTO chunks "
                 "(scope, chunk_id, text, embedding, tsv, source_path, mtime, "
                 "classification, content_hash, embedded_hash) "
@@ -536,15 +612,7 @@ class PostgresIndexBackend:
                 "mtime = EXCLUDED.mtime, classification = EXCLUDED.classification, "
                 "content_hash = EXCLUDED.content_hash, "
                 "embedded_hash = COALESCE(EXCLUDED.embedded_hash, chunks.embedded_hash)",
-                scope,
-                chunk_id,
-                text,
-                embedding,
-                source_path,
-                mtime,
-                classification,
-                content_hash,
-                embedded_hash,
+                rows,
             )
 
     async def stored_hashes(self, scope: str) -> dict[str, str]:

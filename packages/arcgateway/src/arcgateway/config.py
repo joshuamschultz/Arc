@@ -98,9 +98,11 @@ def validate_public_base_url(url: str, tier: str) -> str:
 
 
 class UiSection(BaseModel):
-    """[ui] section: how the dashboard is reached from outside this machine."""
+    """[ui] section: how the dashboard is reached, and how it is observed."""
 
     public_base_url: str | None = None
+    # Log the event loop's p50/p99/max lag once a minute (arcui.loop_lag).
+    loop_lag_monitor: bool = False
 
 
 class SecuritySection(BaseModel):

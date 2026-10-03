@@ -246,3 +246,26 @@ async def test_post_migration_embed_pass_does_not_re_embed_an_already_embedded_r
 
     assert reindexed == 0, "a chunk backfilled as already-embedded must not be re-selected"
     assert embedder.calls == 0, "the migration must not trigger a corpus-wide re-embed"
+
+
+def _synchronous(db: MemoryDB) -> int:
+    conn = db.connect()
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    return int(conn.execute("PRAGMA synchronous").fetchone()[0])
+
+
+def test_default_durability_is_full(tmp_path: Path) -> None:
+    """An agent's own memory (the episodic raw stream) fsyncs every commit."""
+    assert _synchronous(MemoryDB(tmp_path)) == 2  # FULL
+
+
+def test_rebuildable_store_can_skip_the_fsync_per_commit(tmp_path: Path) -> None:
+    """``normal``: WAL commits without an fsync; never corrupts, may lose the
+    last commits on an OS crash. Only for stores rebuildable from a provider.
+    """
+    assert _synchronous(MemoryDB(tmp_path, durability="normal")) == 1  # NORMAL
+
+
+async def test_agent_own_memory_store_keeps_full_durability(tmp_path: Path) -> None:
+    operator = MemoryOperator(tmp_path, agent_did="did:arc:own")
+    assert _synchronous(operator._db) == 2

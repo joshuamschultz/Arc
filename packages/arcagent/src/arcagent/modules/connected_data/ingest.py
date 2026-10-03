@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from arcagent.connected_data import (
     IngestPort,
@@ -188,6 +188,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         embedder: Any | None = None,
         audit_sink: Any | None = None,
         authority: DelegatedAuthority | None = None,
+        durability: Literal["full", "normal"] = "full",
     ) -> None:
         self._workspace = Path(workspace)
         self._agent_did = agent_did
@@ -200,6 +201,9 @@ class ArcMemoryIngestAdapter(IngestPort):
         #: agent: it has no Brain of its own to read settings from or attach to,
         #: and its writes are authorized by the writing subscriber's approval.
         self._authority = authority
+        #: ``normal`` only for a store rebuildable from its provider (the shared
+        #: connection store); an agent's own workspace store stays ``full``.
+        self._durability = durability
         self._service: Any | None = None
 
     def _connected_service(self) -> Any:
@@ -222,6 +226,7 @@ class ArcMemoryIngestAdapter(IngestPort):
             embedder=self._embedder if shared else self._embedder or self._memory_embedder(),
             audit_sink=self._audit_sink,
             authority=_MemoryAuthority(authority) if authority is not None else None,
+            durability=self._durability,
         )
         return self._service
 

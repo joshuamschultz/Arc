@@ -163,6 +163,8 @@ class SharedKnowledge:
             embedder=self._embedder_once(),
             audit_sink=self._audit_sink,
             authority=authority,
+            # The store is rebuildable from the provider: skip the per-commit fsync.
+            durability="normal",
         )
 
     async def _hold_seal_key(self, connection_id: str, principal: str) -> None:
