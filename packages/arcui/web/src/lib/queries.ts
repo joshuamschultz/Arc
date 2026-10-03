@@ -182,6 +182,12 @@ export interface PendingApproval {
   arguments?: Record<string, string>
   provenance?: ApprovalProvenance[]
   session_id?: string
+  /** "Always allow" scope (SPEC-035 OQ-3): where the egress goes (null: none),
+   *  the verb a standing grant would cover, and whether the agent's tier lets
+   *  the operator make it stand (never federal). */
+  destination?: string | null
+  grant_tool?: string
+  standing_eligible?: boolean
   /** Why this approval was requested (workflow approvals). */
   reason?: string
   /** What the approval changes: node-level and per-file diffs. */
@@ -203,6 +209,52 @@ export const useApprovals = () =>
     queryFn: ({ signal }) => apiGet<ApprovalsResponse>('/api/approvals', signal),
     refetchInterval: 4000,
   })
+
+/** One operator "Always allow" — scope, grantor, and how often it was used. */
+export interface StandingGrant {
+  id: string
+  agent_did: string
+  agent_label: string
+  tool: string
+  composition: string[]
+  /** Destination class of the approved egress; empty when it added none. */
+  destination: string
+  status: 'active' | 'revoked'
+  granted_by: string
+  granted_at: string | null
+  source_approval_id: string
+  revoked_by: string | null
+  revoked_at: string | null
+  use_count: number
+  last_used_at: string | null
+}
+export interface StandingGrantsResponse {
+  grants: StandingGrant[]
+}
+
+// Active standing approvals for one agent. Polls like approvals so a grant made
+// from the card (and its use count) shows up without a refresh.
+export const useStandingGrants = (agentDid: string | null | undefined) =>
+  useQuery<StandingGrantsResponse>({
+    queryKey: ['standing-grants', agentDid],
+    queryFn: ({ signal }) =>
+      apiGet<StandingGrantsResponse>(
+        `/api/standing-grants?agent_did=${encodeURIComponent(agentDid ?? '')}`,
+        signal,
+      ),
+    enabled: !!agentDid,
+    refetchInterval: 4000,
+  })
+
+/** Revoke a standing approval — operator only; the agent's next call prompts. */
+export const useRevokeStandingGrant = () => {
+  const client = useQueryClient()
+  return useMutation<StandingGrant, Error, string>({
+    mutationFn: (grantId) =>
+      apiPost<StandingGrant>(`/api/standing-grants/${encodeURIComponent(grantId)}/revoke`),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['standing-grants'] }),
+  })
+}
 
 export interface GatedCapability {
   agent_id: string

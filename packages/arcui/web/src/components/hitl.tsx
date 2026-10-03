@@ -1,6 +1,16 @@
 import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, X, ShieldCheck, Database, Send, Bug, Info, ArrowRight } from 'lucide-react'
+import {
+  Check,
+  X,
+  ShieldCheck,
+  Database,
+  Send,
+  Bug,
+  Info,
+  ArrowRight,
+  Infinity as InfinityIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FieldHelp } from '@/components/help'
 import { apiPost, ApiError } from '@/lib/api'
@@ -224,8 +234,9 @@ function Provenance({ trail }: { trail: NonNullable<PendingApproval['provenance'
 /**
  * The flagship approval / HITL card. Shows who is asking, the exact call and
  * its target, why it was gated (with the leg provenance), and — in operator
- * mode — a clear Approve / Deny. Self-resolving against
- * `/api/approvals/:id/{approve,deny}`.
+ * mode — a clear Approve / Deny, plus "Always allow" when the agent's tier lets
+ * the operator make this scope stand (never federal). Self-resolving against
+ * `/api/approvals/:id/{approve,deny,always}`.
  */
 export function ApprovalRequest({
   a,
@@ -236,15 +247,18 @@ export function ApprovalRequest({
 }) {
   const queryClient = useQueryClient()
   const roster = useRoster()
-  const [busy, setBusy] = useState<'approve' | 'deny' | null>(null)
+  const [busy, setBusy] = useState<'approve' | 'deny' | 'always' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const resolve = async (decision: 'approve' | 'deny') => {
+  const resolve = async (decision: 'approve' | 'deny' | 'always') => {
     setBusy(decision)
     setError(null)
     try {
       await apiPost(`/api/approvals/${encodeURIComponent(a.id)}/${decision}`)
       await queryClient.invalidateQueries({ queryKey: ['approvals'] })
+      if (decision === 'always') {
+        await queryClient.invalidateQueries({ queryKey: ['standing-grants'] })
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : `Could not ${decision}`)
       setBusy(null)
@@ -279,6 +293,13 @@ export function ApprovalRequest({
           .map(legLabel)
           .join(', ')}. Approving signs and unlocks exactly this one call.`
       : `Your security tier requires your sign-off before ${who} runs this tool. Approving signs and unlocks exactly this one call.`
+
+  // What "Always allow" would cover: this agent, this combination, and — if the
+  // call sends something out — only this verb to this destination.
+  const verb = a.grant_tool || a.tool
+  const alwaysScope = a.destination
+    ? `Always allow lets ${who} run ${verb} to ${a.destination} with this combination without asking again. A new destination still asks. Revoke it under the agent's Policy tab.`
+    : `Always allow lets ${who} keep working with this combination without asking again, as long as it sends nothing to a new destination. Revoke it under the agent's Policy tab.`
 
   return (
     <div className="overflow-hidden rounded-xl border border-signed/25 bg-card shadow-sm">
@@ -332,6 +353,10 @@ export function ApprovalRequest({
 
         {a.provenance && a.provenance.length > 0 && <Provenance trail={a.provenance} />}
 
+        {operatorMode && a.standing_eligible && (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">{alwaysScope}</p>
+        )}
+
         {a.session_id && (
           <div className="text-[11px] text-muted-foreground">
             Session{' '}
@@ -344,6 +369,17 @@ export function ApprovalRequest({
             <Button size="sm" onClick={() => resolve('approve')} disabled={busy !== null}>
               <Check className="size-3.5" /> Approve &amp; sign
             </Button>
+            {a.standing_eligible && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => resolve('always')}
+                disabled={busy !== null}
+                title={alwaysScope}
+              >
+                <InfinityIcon className="size-3.5" /> Always allow
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

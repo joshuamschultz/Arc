@@ -98,6 +98,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { AgentIdentity } from '@/components/AgentIdentity'
+import { StandingApprovals } from '@/components/standing-approvals'
 import { newRequestId } from '@/lib/request-id'
 import type { ColumnDef } from '@tanstack/react-table'
 import type {
@@ -1194,6 +1195,7 @@ export function PolicyTab({ agentId }: { agentId: string }) {
 
       <PolicyConfigCards config={cfg} />
       <SystemPolicyRules config={cfg} />
+      <StandingApprovals agentId={agentId} />
 
       <QueryState
         query={policy}

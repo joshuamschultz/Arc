@@ -3,6 +3,10 @@
 ``GET  /api/approvals``              — list pending trifecta-block requests (any role).
 ``POST /api/approvals/{id}/approve`` — mint an operator-signed grant (operator only).
 ``POST /api/approvals/{id}/deny``    — deny the request (operator only).
+``POST /api/approvals/{id}/always``  — approve AND store an operator "Always allow"
+                                       standing grant for the request's scope
+                                       (operator only; never for a federal
+                                       request — SPEC-035 OQ-3, 2026-10-03).
 
 Approval never rides on agent chat (forgeable); it is an operator-role action that
 attaches an operator-signed grant the agent's gate verifies AND pins to the
@@ -17,6 +21,7 @@ import logging
 from typing import Any
 
 from arcstore.approvals import ApprovalStore
+from arcstore.standing_grants import StandingGrantRefusedError, approve_always
 from arctrust import operator_signer_for
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 from starlette.requests import Request
@@ -24,6 +29,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit
+from arcui.routes.standing_grants import grant_row, standing_store
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.approvals")
@@ -274,6 +280,56 @@ async def approve_request(request: Request) -> JSONResponse:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
+async def always_allow_request(request: Request) -> JSONResponse:
+    """POST /api/approvals/{id}/always — approve this call and make its scope stand.
+
+    The scope is the request's own: agent + verb + leg composition + egress
+    destination, as the agent's gate recorded it. The agent marks a federal
+    request ineligible and its gate refuses any standing grant anyway.
+    """
+    approval_id = request.path_params["id"]
+    target = f"approval:{approval_id}"
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="approval.always_allow",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return _error("operator_role_required", 403)
+    store = _store(request)
+    row = await store.get(approval_id)
+    if row is None:
+        return _error("not found", 404)
+    try:
+        operator = _operator_authority()
+    except (FileNotFoundError, OSError) as exc:
+        logger.exception("operator key unavailable for standing approval")
+        return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
+    try:
+        resolved, stored = await approve_always(store, standing_store(request), row, operator)
+    except StandingGrantRefusedError as exc:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="approval.always_allow",
+            outcome="denied",
+            detail=str(exc),
+        )
+        return _error(f"standing_grant_refused: {exc}", 409)
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="approval.always_allow",
+        outcome="applied",
+        detail=f"standing_grant:{stored.id}",
+    )
+    return JSONResponse(
+        {"approval": resolved.model_dump(mode="json"), "standing_grant": grant_row(stored)}
+    )
+
+
 async def deny_request(request: Request) -> JSONResponse:
     """POST /api/approvals/{id}/deny — deny the request (operator only)."""
     approval_id = request.path_params["id"]
@@ -310,10 +366,12 @@ routes = [
     ),
     Route("/api/approvals/{id}/approve", approve_request, methods=["POST"]),
     Route("/api/approvals/{id}/deny", deny_request, methods=["POST"]),
+    Route("/api/approvals/{id}/always", always_allow_request, methods=["POST"]),
 ]
 
 __all__ = [
     "acknowledge_notification",
+    "always_allow_request",
     "approve_request",
     "deny_request",
     "list_approvals",
