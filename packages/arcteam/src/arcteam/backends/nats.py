@@ -131,6 +131,8 @@ class NatsBackend:
     def __init__(self, js: JetStreamContext, nc: Client | None = None) -> None:
         self._js = js
         self._nc = nc
+        self._kv_cache: dict[str, KeyValue] = {}
+        self._kv_epoch = 0
 
     @property
     def available(self) -> bool:
@@ -168,18 +170,40 @@ class NatsBackend:
 
     # --- Records (KV) ---
 
+    def _kv_cache_for_connection(self) -> dict[str, KeyValue]:
+        """Return the handle cache, dropped whenever the connection reconnected.
+
+        ``js.key_value`` costs a JetStream ``stream_info`` round trip, so the
+        handle is cached per bucket. nats-py counts reconnects in
+        ``stats["reconnects"]``; a change means the server may have restarted,
+        so handles are rebuilt rather than trusted.
+        """
+        epoch = 0 if self._nc is None else int(self._nc.stats["reconnects"])
+        if epoch != self._kv_epoch:
+            self._kv_cache.clear()
+            self._kv_epoch = epoch
+        return self._kv_cache
+
     async def _open_kv(self, collection: str) -> KeyValue | None:
+        cache = self._kv_cache_for_connection()
+        bucket = _bucket_name(collection)
+        if bucket in cache:
+            return cache[bucket]
         try:
-            return await self._js.key_value(_bucket_name(collection))
+            kv = await self._js.key_value(bucket)
         except BucketNotFoundError:
-            return None
+            return None  # not cached: the bucket may be created later
+        cache[bucket] = kv
+        return kv
 
     async def _ensure_kv(self, collection: str) -> KeyValue:
+        kv = await self._open_kv(collection)
+        if kv is not None:
+            return kv
         bucket = _bucket_name(collection)
-        try:
-            return await self._js.key_value(bucket)
-        except BucketNotFoundError:
-            return await self._js.create_key_value(config=KeyValueConfig(bucket=bucket))
+        kv = await self._js.create_key_value(config=KeyValueConfig(bucket=bucket))
+        self._kv_cache_for_connection()[bucket] = kv
+        return kv
 
     async def read(self, collection: str, key: str) -> dict[str, Any] | None:
         """Read a single JSON record."""
