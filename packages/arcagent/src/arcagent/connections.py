@@ -83,6 +83,7 @@ from arcagent.extension.connection_health import (
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
+from arcagent.extension.credentials import holds_grant
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
     LegacyApp,
@@ -1172,6 +1173,11 @@ class Connections:
             return None
         if health.probe == "host_verify":
             return await self._host_verify_verdict(plan, sink)
+        flow = plan.manifest.oauth
+        if flow is not None and not await self._holds_grant(plan.instance, flow, sink):
+            # Never signed in: the bundle's probe can only say so in free text,
+            # which would classify as a provider outage ("wait").
+            return ("credential_missing", "not connected yet: click Connect to sign in")
         attachment = await self._attachment(plan, sink)
         tool = health.tool
         if tool is not None:
@@ -1185,6 +1191,11 @@ class Connections:
             )
         probe = await attachment.probe()
         return None if probe.reachable else (None, probe.detail)
+
+    async def _holds_grant(self, instance: str, flow: OAuthFlow, sink: AuditSink) -> bool:
+        """True when sealed custody holds an OAuth grant for ``instance``."""
+        custody = await self._custody(sink)
+        return holds_grant(await custody.rows.read(instance), flow)
 
     async def _expiry_verdict(
         self, instance: str, pattern: str, output: str

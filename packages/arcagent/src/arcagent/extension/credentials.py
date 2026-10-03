@@ -163,6 +163,15 @@ def is_due(row: CredentialRow, *, now: datetime) -> bool:
     return now >= issued + (expires - issued) * RENEWAL_FRACTION
 
 
+def holds_grant(row: CredentialRow | None, flow: OAuthFlow) -> bool:
+    """True when custody holds an OAuth grant: an access token or the refresh token.
+
+    False means the operator never signed in (or the sign-in was removed): the
+    connection is "not connected yet", never a provider outage.
+    """
+    return row is not None and (row.access is not None or flow.refresh_token_secret in row.fields)
+
+
 #: Custody refusals and the health reason each one reports.
 _CUSTODY_REASONS: Final[Mapping[str, str]] = {
     "CREDENTIAL_UNREADABLE": "credential_unreadable",
@@ -212,7 +221,7 @@ class RenewalPlanner:
         authority.
         """
         row = await self.rows.read(connection)
-        if row is None or (row.access is None and flow.refresh_token_secret not in row.fields):
+        if row is None or not holds_grant(row, flow):
             await self._report(connection, "credential_missing", "not connected yet", row)
             raise _missing(connection, "credential")
         await self._refuse_dead_credential(connection, row)
@@ -457,5 +466,6 @@ __all__ = [
     "RefreshRequest",
     "RenewalPlanner",
     "RenewedCredential",
+    "holds_grant",
     "is_due",
 ]
