@@ -38,10 +38,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Final, Protocol
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
@@ -144,17 +144,17 @@ class ClientCredentialSource(Protocol):
     deployment's OAuth app slot.
     """
 
-    def __call__(
+    async def __call__(
         self, rows: CredentialRowStore, row: CredentialRow, flow: OAuthFlow
     ) -> tuple[str, Secret] | None: ...
 
 
-def connection_client(
+async def connection_client(
     rows: CredentialRowStore, row: CredentialRow, flow: OAuthFlow
 ) -> tuple[str, Secret] | None:
     """The OAuth client id/secret stored on the connection itself (its app key/secret)."""
-    client_id = rows.open_field(row, flow.client_id_secret)
-    client_secret = rows.open_field(row, flow.client_secret_secret)
+    client_id = await rows.open_field(row, flow.client_id_secret)
+    client_secret = await rows.open_field(row, flow.client_secret_secret)
     if client_id is None or client_secret is None:
         return None
     return client_id.reveal(), client_secret
@@ -174,6 +174,13 @@ def is_due(row: CredentialRow, *, now: datetime) -> bool:
     if expires - now <= EXPIRY_FLOOR:
         return True
     return now >= issued + (expires - issued) * RENEWAL_FRACTION
+
+
+#: Custody refusals and the health reason each one reports.
+_CUSTODY_REASONS: Final[Mapping[str, str]] = {
+    "CREDENTIAL_UNREADABLE": "credential_unreadable",
+    "CREDENTIAL_CUSTODY_UNAVAILABLE": "custody_unavailable",
+}
 
 
 def _missing(connection: str, what: str) -> CredentialRenewalError:
@@ -346,15 +353,14 @@ class RenewalPlanner:
     async def _request(self, row: CredentialRow, flow: OAuthFlow) -> RefreshRequest:
         connection = row.connection
         try:
-            refresh = self.rows.open_field(row, flow.refresh_token_secret)
-            client = self.client(self.rows, row, flow)
+            refresh = await self.rows.open_field(row, flow.refresh_token_secret)
+            client = await self.client(self.rows, row, flow)
         except ExtensionError as exc:
-            if exc.code != "CREDENTIAL_UNREADABLE":
+            reason = _CUSTODY_REASONS.get(exc.code)
+            if reason is None:
                 raise
-            await self._report(connection, "credential_unreadable", exc.message, row)
-            raise CredentialRenewalError(
-                error_code="credential_unreadable", message=exc.message
-            ) from exc
+            await self._report(connection, reason, exc.message, row)
+            raise CredentialRenewalError(error_code=reason, message=exc.message) from exc
         if refresh is None:
             await self._report(connection, "credential_missing", "no refresh token", row)
             raise _missing(connection, "refresh token")

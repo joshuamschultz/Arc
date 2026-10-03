@@ -5,13 +5,15 @@ cipher:
 
 * ``in_process`` custody (personal, and enterprise when chosen): the operator seed
   is in this process, so :class:`~arctrust.ConnectorSecretCipher` derives the key.
-* ``vault_transit`` custody (enterprise default, federal mandatory): the key never
-  leaves Vault. Until the Transit row cipher is wired (P18-2F) such a deployment
-  REFUSES to store connector credentials, exactly as it refused before, rather
-  than falling back to anything on the host.
+* ``vault_transit`` custody (enterprise default, federal mandatory): the custody
+  key never leaves the transit. :class:`~arctrust.TransitConnectorCipher` seals
+  every value by reference (AES-256-GCM, FIPS-approved) through the deployment's
+  transit (P18-2F). A transit that cannot serve is a refusal
+  (``SECRET_STORE_VAULT_REQUIRED``), never a fall back to anything on the host.
 
-The operator key is resolved through the one arctrust resolver
-(:func:`arctrust.operator_key_for`); nothing here re-derives a key location.
+The operator key and the transit are resolved through the one arctrust resolver
+(:func:`arctrust.operator_key_for`, :func:`arctrust.operator_transit_for`);
+nothing here re-derives a key location.
 """
 
 from __future__ import annotations
@@ -28,11 +30,14 @@ from arctrust import (
     ConnectorSecretCipher,
     OperatorKey,
     OperatorKeyIntegrityError,
+    TransitConnectorCipher,
     machine_security,
     operator_key_for,
 )
 from arctrust.audit import AuditSink
-from arctrust.signer import IN_PROCESS
+from arctrust.operator_resolver import operator_transit_for
+from arctrust.signer import IN_PROCESS, VAULT_TRANSIT, SignerError
+from arctrust.transit_cipher import TransitCipher
 
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
@@ -53,22 +58,35 @@ VAULT_REQUIRED = "SECRET_STORE_VAULT_REQUIRED"
 
 
 def connector_cipher(
-    *, custody: str, operator_key: OperatorKey | None, require_fips: bool = False
+    *,
+    custody: str,
+    operator_key: OperatorKey | None,
+    transit: TransitCipher | None = None,
+    require_fips: bool = False,
 ) -> CredentialCipher:
-    """The row cipher for this custody, or a refusal naming what to configure.
+    """The row cipher for this custody: the ONE place it is chosen.
+
+    ``in_process`` with the operator seed here gives the in-process cipher;
+    ``vault_transit`` with a transit gives the Transit cipher. Nothing else, and
+    never the in-process cipher for a ``vault_transit`` deployment.
 
     Raises:
-        ExtensionError: ``SECRET_STORE_VAULT_REQUIRED`` when the seed is not in
-            this process (``vault_transit``) and no Transit row cipher exists yet.
+        ExtensionError: ``SECRET_STORE_VAULT_REQUIRED`` when the custody's cipher
+            cannot be built (no seed in process, or no servable transit).
+        ArcTrustFipsError: ``require_fips`` and the cipher or backend is not approved.
     """
     if custody == IN_PROCESS and operator_key is not None:
         return ConnectorSecretCipher.for_operator_key(operator_key, require_fips=require_fips)
+    if custody == VAULT_TRANSIT and transit is not None:
+        return TransitConnectorCipher(transit, require_fips=require_fips)
+    needs = (
+        "the operator key in this process"
+        if custody == IN_PROCESS
+        else "the deployment's Vault Transit, which cannot serve right now"
+    )
     raise ExtensionError(
         code=VAULT_REQUIRED,
-        message=(
-            "this deployment keeps its operator key in a vault (custody=vault_transit), and "
-            "connector credentials need the Vault Transit row cipher, which is not configured"
-        ),
+        message=f"connector credentials under custody={custody} need {needs}",
         details={"custody": custody},
     )
 
@@ -80,6 +98,10 @@ def deployment_cipher(arc_dir: Path, *, tier: Tier) -> CredentialCipher:
     bundle signer follows; above personal a missing key is a refusal.
     """
     security = machine_security(arc_dir)
+    if security.custody == VAULT_TRANSIT:
+        return connector_cipher(
+            custody=VAULT_TRANSIT, operator_key=None, transit=_transit(security, arc_dir)
+        )
     try:
         key = operator_key_for(security, base=arc_dir, bootstrap=tier is Tier.PERSONAL)
     except (OSError, OperatorKeyIntegrityError) as exc:
@@ -92,6 +114,14 @@ def deployment_cipher(arc_dir: Path, *, tier: Tier) -> CredentialCipher:
             details={"tier": tier.value},
         ) from exc
     return connector_cipher(custody=security.custody, operator_key=key)
+
+
+def _transit(security: Any, arc_dir: Path) -> TransitCipher | None:
+    """The deployment's transit, or ``None`` (a refusal) when it cannot serve."""
+    try:
+        return operator_transit_for(security, base=arc_dir)
+    except SignerError:
+        return None
 
 
 def owner_id() -> str:

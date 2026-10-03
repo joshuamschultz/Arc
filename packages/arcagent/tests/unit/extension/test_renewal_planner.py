@@ -150,7 +150,7 @@ class World:
         rows = self.rows()
         row = await rows.read(CONN)
         assert row is not None
-        token = rows.open_access(row)
+        token = await rows.open_access(row)
         assert token is not None
         return token.token.reveal()
 
@@ -158,7 +158,7 @@ class World:
         rows = self.rows()
         row = await rows.read(CONN)
         assert row is not None
-        found = rows.open_field(row, "refresh_token")
+        found = await rows.open_field(row, "refresh_token")
         assert found is not None
         return found.reveal()
 

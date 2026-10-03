@@ -46,8 +46,8 @@ async def test_put_fields_is_cas_and_loses_no_field(
     after = await rows.read("blackarc")
     assert after is not None
     assert {name for name in after.fields} == {"app_key", "app_secret"}
-    assert rows.open_field(after, "app_key").reveal() == "k1"  # type: ignore[union-attr]
-    assert rows.open_field(after, "app_secret").reveal() == "s1"  # type: ignore[union-attr]
+    assert (await rows.open_field(after, "app_key")).reveal() == "k1"  # type: ignore[union-attr]
+    assert (await rows.open_field(after, "app_secret")).reveal() == "s1"  # type: ignore[union-attr]
     assert after.generation == before.generation + 2
     # Both writers really did race: three CAS attempts for two writes.
     attempts = [call for call in backend.update_if_calls if call[0] == CREDENTIAL_COLLECTION]
@@ -78,7 +78,7 @@ async def test_cipher_kind_mismatch_is_unreadable(
     row = await rows.read("blackarc")
     assert row is not None
     with pytest.raises(ExtensionError) as caught:
-        rows.open_field(row, "refresh_token")
+        await rows.open_field(row, "refresh_token")
     assert caught.value.code == "CREDENTIAL_UNREADABLE"
 
 
@@ -90,7 +90,7 @@ async def test_value_sealed_under_another_key_is_unreadable(
     row = await other.read("blackarc")
     assert row is not None
     with pytest.raises(ExtensionError) as caught:
-        other.open_field(row, "refresh_token")
+        await other.open_field(row, "refresh_token")
     assert caught.value.code == "CREDENTIAL_UNREADABLE"
 
 
@@ -151,9 +151,9 @@ async def test_put_grant_stores_refresh_and_access_in_one_write(
     assert len(backend.update_if_calls) == writes + 1
     row = await rows.read("box")
     assert row is not None and row.generation == generation == before.generation + 1
-    assert rows.open_field(row, "refresh_token").reveal() == "r-1"  # type: ignore[union-attr]
-    assert rows.open_field(row, "app_key").reveal() == "k"  # type: ignore[union-attr]
-    access = rows.open_access(row)
+    assert (await rows.open_field(row, "refresh_token")).reveal() == "r-1"  # type: ignore[union-attr]
+    assert (await rows.open_field(row, "app_key")).reveal() == "k"  # type: ignore[union-attr]
+    access = await rows.open_access(row)
     assert access is not None and access.token.reveal() == "a-1"
     assert access.expires_at == issued + timedelta(hours=4)
 

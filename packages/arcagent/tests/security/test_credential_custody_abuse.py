@@ -259,7 +259,7 @@ async def test_db_reader_without_operator_key_learns_nothing(world: World) -> No
     row = await stranger.read("blackarc")
     assert row is not None
     with pytest.raises(ExtensionError) as caught:
-        stranger.open_field(row, "refresh_token")
+        await stranger.open_field(row, "refresh_token")
     assert caught.value.code == "CREDENTIAL_UNREADABLE"
 
 
@@ -295,7 +295,7 @@ async def test_symlinked_connections_env_is_refused_by_migrator(
     assert env.is_symlink() and os.path.exists(target)
     row = await world.rows().read("blackarc")
     assert row is not None
-    assert world.rows().open_field(row, "app_secret").reveal() == CLIENT_SECRET  # type: ignore[union-attr]
+    assert (await world.rows().open_field(row, "app_secret")).reveal() == CLIENT_SECRET  # type: ignore[union-attr]
 
 
 async def test_downgrade_restore_of_old_row_is_honest(world: World) -> None:

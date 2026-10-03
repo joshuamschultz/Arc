@@ -119,6 +119,15 @@ REASONS: Final[Mapping[ReasonCode, ReasonSpec]] = {
     "renewer_unavailable": ReasonSpec(
         "counted", "error", "wait", "Credential renewal is not running"
     ),
+    # Settles at once (not counted): while the vault is down EVERY credential read
+    # fails closed, so the card must say so now. "wait", never "reconnect": the
+    # stored credential is fine. The next successful read clears it.
+    "custody_unavailable": ReasonSpec(
+        "terminal",
+        "error",
+        "wait",
+        "Arc's credential vault is not answering; the credential is locked until it is back",
+    ),
     "provider_unavailable": ReasonSpec(
         "counted", "error", "wait", "{provider} is not answering: {detail}"
     ),

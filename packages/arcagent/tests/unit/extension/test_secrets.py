@@ -113,7 +113,7 @@ async def test_stored_row_is_sealed_never_plaintext(
 
     row = await rows.read(ref.connection)
     assert row is not None
-    opened = rows.open_field(row, ref.field)
+    opened = await rows.open_field(row, ref.field)
     assert opened is not None
     assert opened.reveal() == SECRET_VALUE
     assert SECRET_VALUE not in await _raw_row_json(backend, ref.connection)

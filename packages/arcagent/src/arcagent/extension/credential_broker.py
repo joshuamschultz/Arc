@@ -223,7 +223,7 @@ class AccessTokenBroker:
     ) -> Secret | None:
         row = await self._row(connection)
         try:
-            found = self._rows.open_field(row, name)
+            found = await self._rows.open_field(row, name)
         except ExtensionError as exc:
             await self._report_unreadable(connection, exc, row)
             raise
@@ -241,7 +241,7 @@ class AccessTokenBroker:
     async def _access_token(self, connection: str, flow: OAuthFlow, *, force: bool) -> Secret:
         row = await self._row(connection)
         if not force:
-            fresh = self._open_fresh(connection, row)
+            fresh = await self._open_fresh(connection, row)
             if fresh is not None:
                 return fresh
         if self._renewals is None:
@@ -252,7 +252,9 @@ class AccessTokenBroker:
                 details={"connection": connection, "retryable": True},
             )
         await self._renewals.ensure_fresh(connection, flow=flow, force=force)
-        renewed = self._open_fresh(connection, await self._row(connection), floor=timedelta(0))
+        renewed = await self._open_fresh(
+            connection, await self._row(connection), floor=timedelta(0)
+        )
         if renewed is None:
             raise ExtensionError(
                 code="CREDENTIAL_STALE",
@@ -261,10 +263,14 @@ class AccessTokenBroker:
             )
         return renewed
 
-    def _open_fresh(
+    async def _open_fresh(
         self, connection: str, row: CredentialRow, *, floor: timedelta = EXPIRY_FLOOR
     ) -> Secret | None:
-        token = self._rows.open_access(row)
+        try:
+            token = await self._rows.open_access(row)
+        except ExtensionError as exc:
+            await self._report_unreadable(connection, exc, row)
+            raise
         if token is None or token.expires_at - self._clock() <= floor:
             return None
         return token.token
@@ -274,6 +280,8 @@ class AccessTokenBroker:
     ) -> None:
         if exc.code == "CREDENTIAL_UNREADABLE":
             await self._report(connection, "credential_unreadable", exc.message, row)
+        elif exc.code == "CREDENTIAL_CUSTODY_UNAVAILABLE":
+            await self._report(connection, "custody_unavailable", exc.message, row)
 
     async def _report(self, connection: str, code: str, detail: str, row: CredentialRow) -> None:
         if self._health is None:

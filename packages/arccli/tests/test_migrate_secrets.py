@@ -72,7 +72,7 @@ async def test_migrates_declared_drops_orphans_deletes_file_and_audits(tmp_path:
     rows = CredentialRowStore(backend, CIPHER)
     row = await rows.read("work_slack")
     assert row is not None
-    assert rows.open_field(row, "user_token").reveal() == "xoxp-secret-1"  # type: ignore[union-attr]
+    assert (await rows.open_field(row, "user_token")).reveal() == "xoxp-secret-1"  # type: ignore[union-attr]
     raw = str(await backend.mutable_query(CREDENTIAL_COLLECTION))
     assert "secret-1" not in raw and "orphan" not in raw
     migrated = [event for event in sink.events if event.action == "connection.credential.migrated"]

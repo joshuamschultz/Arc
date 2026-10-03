@@ -2324,6 +2324,17 @@ class Connections:
             required_tier=required.value,
         )
 
+    def _federal_grade_cipher(self) -> bool:
+        """True when this deployment seals credentials by reference in its transit."""
+        if self._credential_cipher is None:
+            try:
+                self._credential_cipher = deployment_cipher(
+                    self._world.arc_dir, tier=self._world.tier
+                )
+            except ExtensionError:
+                return False
+        return self._credential_cipher.kind == "transit1"
+
     def _refuse_silent_rehome(self, instance: str, agents: Sequence[str], sink: AuditSink) -> None:
         """Refuse a grant that would raise the tier past the store holding the credential.
 
@@ -2346,14 +2357,17 @@ class Connections:
         if required is not Tier.FEDERAL:
             return
         # Federal custody is Vault Transit only (FIPS forbids the in-process
-        # XChaCha20 cipher); until the Transit row cipher ships (P18-2F) there is no
-        # store that can hold this credential at federal stringency.
+        # XChaCha20 cipher). A deployment whose credentials are sealed by the
+        # Transit row cipher (P18-2F) already holds them at federal stringency.
+        if self._federal_grade_cipher():
+            return
         raise _refuse(
             TIER_WOULD_RISE,
             f"granting {instance!r} to these agents raises it to {required.value}, "
             f"and this deployment cannot hold its credential at that tier "
             f"({VAULT_REQUIRED}: connector credentials need the Vault Transit row cipher). "
-            f"Configure it, then connect {instance!r} again.",
+            f'Set [security] custody = "vault_transit" with a serving transit, run '
+            f"`arc connector migrate-secrets --reseal`, then connect {instance!r} again.",
             connection=instance,
             required_tier=required.value,
         )

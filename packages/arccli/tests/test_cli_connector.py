@@ -20,6 +20,7 @@ Two properties get most of the attention here:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shlex
 import sys
@@ -594,7 +595,9 @@ class TestAuthAndApprove:
         out = capsys.readouterr().out
         assert "rotated-value" not in out
         row, store = _custody(_arcstore_backend, arc_dir, _INSTANCE)
-        assert store.open_field(row, "api_token").reveal() == "rotated-value"
+        opened = asyncio.run(store.open_field(row, "api_token"))
+        assert opened is not None
+        assert opened.reveal() == "rotated-value"
         raw = _raw_rows(_arcstore_backend)
         assert "rotated-value" not in raw
         assert _TOKEN not in raw
