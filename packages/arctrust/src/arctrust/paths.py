@@ -220,6 +220,16 @@ def arc_team(name: str = "team", base: Base = None) -> Path:
     return operator_root(base) / name
 
 
+def connected_knowledge_dir(base: Base = None) -> Path:
+    """Return the fleet's connection-scoped knowledge: ``<arc_team>/shared/connected``.
+
+    One document store per connected account, shared by every agent granted it
+    (P18-4). It belongs to no agent, so it lives beside the agents rather than in
+    any one workspace, and follows the fleet wherever the fleet is relocated.
+    """
+    return arc_team(base=base) / "shared" / "connected"
+
+
 # ---------------------------------------------------------------------------
 # config/ — preserved across an update
 # ---------------------------------------------------------------------------
@@ -573,6 +583,7 @@ __all__ = [
     "bundles_dir",
     "capabilities_dir",
     "config_file",
+    "connected_knowledge_dir",
     "control_artifact_journal_dir",
     "default_operator_key_path",
     "default_witness_medium_path",

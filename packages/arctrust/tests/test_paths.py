@@ -87,6 +87,17 @@ def test_arc_config_dir_carries_the_fleet_into_isolation(arc_root: Path) -> None
     assert paths.arc_team() == arc_root / "team"
 
 
+def test_connected_knowledge_follows_the_fleet(
+    arc_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Shared connection stores sit beside the agents, and move when the fleet moves."""
+    assert paths.connected_knowledge_dir() == arc_root / "team" / "shared" / "connected"
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "fleet"))
+
+    assert paths.connected_knowledge_dir() == tmp_path / "fleet" / "team" / "shared" / "connected"
+
+
 def test_arc_team_accepts_an_alternate_fleet_name(arc_root: Path) -> None:
     """``arc init --team coding`` names the fleet directory."""
     assert paths.arc_team("coding") == arc_root / "coding"
