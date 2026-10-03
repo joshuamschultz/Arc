@@ -541,6 +541,7 @@ export interface EntityRecord {
   links_to: string[]
   facts: string[]
   tags: string[]
+  aliases: string[] // earlier names this entity was merged from (recall still finds them)
 }
 
 export interface LinkRecord {

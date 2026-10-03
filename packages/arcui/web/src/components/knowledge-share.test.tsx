@@ -13,7 +13,7 @@ import { EntityBrowser } from '@/components/knowledge-entities'
 
 const INSIGHT = { id: 'ins-1', statement: 'Retry things', trigger: '', cues: [], instances: [], confidence: 0.9, classification: 'unclassified' }
 const PROC = { slug: 'deploy', title: 'Deploy', when_to_use: '', steps: [], use_count: 2, revisions: 1, classification: 'unclassified' }
-const ENTITY = { slug: 'acme', name: 'Acme', entity_type: 'org', classification: 'unclassified', confidence: 0.9, importance: 5, source: 'x', links_to: [], facts: [], tags: [] }
+const ENTITY = { slug: 'acme', name: 'Acme', entity_type: 'org', classification: 'unclassified', confidence: 0.9, importance: 5, source: 'x', links_to: [], facts: [], tags: [], aliases: [] }
 
 type Call = { path: string; method: string; body: unknown }
 function stub(share: { status: number; body: unknown } = { status: 200, body: { status: 'published', shared_ref: 'r' } }) {
