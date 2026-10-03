@@ -306,14 +306,16 @@ class _MemoryToolFactory:
             name=args.get("name"),
             entity_type=entity_type,
             classification=str(args.get("classification", "unclassified")),
+            tags=[str(t) for t in args.get("tags", []) if str(t).strip()],
         )
         return f"wrote {resolved}:{args.get('predicate')}"
 
     async def _merge_entities(self, args: dict[str, Any]) -> str:
         canonical = canonical_slug(str(args.get("canonical", "")))
         other = canonical_slug(str(args.get("other", "")))
-        if self._semantic.merge_into(canonical, other):
+        if self._semantic.merge_into(canonical, other, strict=self._cfg.tier == "federal"):
             self._graph.rename_node(self._scope.key, other, canonical)
+            self._semantic.repoint_links(other, canonical)
             return f"merged {other}->{canonical}"
         return f"no merge ({other}->{canonical})"
 
@@ -479,6 +481,7 @@ class _MemoryToolFactory:
                         "name": _str(),
                         "entity_type": _str(),
                         "classification": _str(),
+                        "tags": _arr(),
                     },
                     required=["slug", "predicate", "value"],
                 ),

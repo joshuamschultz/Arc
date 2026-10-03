@@ -25,6 +25,7 @@ from arcmemory.distill import (
     InsightMint,
     ProcedureExtraction,
 )
+from arcmemory.entity_dedup import EntityDeduper, EntityDedupPlan
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
@@ -125,7 +126,8 @@ async def test_entity_clustering_does_not_block_the_loop(
         embedder=_AllOnes(),
         confirmer=_ConfirmNothing(),
     )
-    monkeypatch.setattr(consolidator, "_candidate_clusters", _block_returning([]))
+    # The pairwise sweep lives in the shared de-dup engine; patch it there.
+    monkeypatch.setattr(EntityDeduper, "_plan_sync", _block_returning(EntityDedupPlan()))
 
     ticks = await _ticks_during(consolidator.merge_entities())
     assert ticks >= _MIN_TICKS, f"entity clustering blocked the loop ({ticks} ticks)"
