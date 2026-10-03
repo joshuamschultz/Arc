@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from arcui.audit import SessionStartFields, UIAuditEvent
+from arcui.audit import SessionStartFields, UIAuditEvent, record_unaudited_refusal
 from arcui.sessions import Session, SessionRegistry
 
 logger = logging.getLogger(__name__)
@@ -323,7 +323,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # session that made it — never to the operator key that signs the audit.
         # Built from the auth layer's own state, never from request headers.
         with causal.bind(causal.root("ui_session", ui_session_actor(request))):
-            return await call_next(request)
+            response = await call_next(request)
+            record_unaudited_refusal(request, response.status_code)
+            return response
 
     @staticmethod
     def _set_session_id(request: Request, token: str) -> None:
