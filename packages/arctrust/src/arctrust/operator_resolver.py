@@ -161,6 +161,17 @@ def operator_key_for(
     return OperatorKey.load(operator_key_file(sec, base), generate_if_absent=bootstrap)
 
 
+def prior_in_process_operator_key(security: Any = None, *, base: Base = None) -> OperatorKey:
+    """The on-disk operator key a deployment used BEFORE it moved to ``vault_transit``.
+
+    Read-only, never minted. Only the operator-run re-seal of connector custody
+    asks for it (P18-2F), to open rows sealed under the old in-process key once.
+    Raises ``FileNotFoundError`` / ``OperatorKeyIntegrityError`` when unusable.
+    """
+    sec = security if security is not None else machine_security(base)
+    return OperatorKey.load(operator_key_file(sec, base), generate_if_absent=False)
+
+
 def bootstrap_operator_signer(security: Any = None, *, base: Base = None) -> Signer:
     """Mint the on-disk operator key if absent (personal tier), then sign with it.
 

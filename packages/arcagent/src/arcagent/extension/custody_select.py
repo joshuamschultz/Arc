@@ -35,7 +35,11 @@ from arctrust import (
     operator_key_for,
 )
 from arctrust.audit import AuditSink
-from arctrust.operator_resolver import operator_key_file, operator_transit_for
+from arctrust.operator_resolver import (
+    operator_key_file,
+    operator_transit_for,
+    prior_in_process_operator_key,
+)
 from arctrust.signer import IN_PROCESS, VAULT_TRANSIT, SignerError
 from arctrust.transit_cipher import TransitCipher
 
@@ -140,7 +144,7 @@ def reseal_source_cipher(arc_dir: Path) -> CredentialCipher:
         )
     path = operator_key_file(security, base=arc_dir)
     try:
-        key = OperatorKey.load(path, generate_if_absent=False)
+        key = prior_in_process_operator_key(security, base=arc_dir)
     except (OSError, OperatorKeyIntegrityError) as exc:
         raise ExtensionError(
             code="RESEAL_SOURCE_KEY_MISSING",
