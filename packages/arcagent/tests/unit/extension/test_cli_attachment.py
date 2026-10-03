@@ -35,6 +35,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -148,6 +149,15 @@ class _SpawnRecorder:
 
 async def _shell_is_forbidden(*args: Any, **kwargs: Any) -> Any:
     raise AssertionError("a shell was used to run a CLI tool — argv must go straight to exec")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A binary the developer happens to have in ~/.local/bin must not steer these tests."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
 
 
 @pytest.fixture
@@ -731,3 +741,63 @@ def test_a_templated_flag_argument_still_renders_as_one_token() -> None:
     )
 
     assert command.argv_for({"label": "INBOX"}) == ["search", "--query=label:INBOX"]
+
+
+async def test_absorbed_absence_on_stderr_does_not_log_a_warning(
+    cli: CliAttachment, spawn: _SpawnRecorder, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A repo with issues switched off is a normal state callers absorb, not a fault."""
+    spawn.returncode = 1
+    spawn.stdout = b""
+    spawn.stderr = b"the 'arc/arc' repository has disabled issues"
+
+    with caplog.at_level(logging.DEBUG):
+        await cli.invoke("create_issue", {"title": "hello"})
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(
+        r.levelno == logging.DEBUG and "has disabled issues" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_a_real_failure_on_stderr_still_warns_with_its_error_class(
+    cli: CliAttachment, spawn: _SpawnRecorder, caplog: pytest.LogCaptureFixture
+) -> None:
+    spawn.returncode = 1
+    spawn.stdout = b""
+    spawn.stderr = b"HTTP 401: Bad credentials"
+
+    with caplog.at_level(logging.DEBUG):
+        await cli.invoke("create_issue", {"title": "hello"})
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "auth_required" in warnings[0]
+    assert "Bad credentials" in warnings[0]
+
+
+async def test_a_host_installed_binary_is_spawned_by_its_recorded_path(
+    cli: CliAttachment, spawn: _SpawnRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binary Arc installed is found without the operator touching PATH."""
+    from arcagent.extension.host_install import _record_install, host_tools_dir
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "operator"))
+    installed = host_tools_dir() / "bin" / _BINARY
+    installed.parent.mkdir(parents=True)
+    installed.write_text("#!/bin/sh\n")
+    installed.chmod(0o755)
+    _record_install(_BINARY, installed)
+
+    await cli.invoke("create_issue", {"title": "hello"})
+
+    assert spawn.argv[0] == str(installed)
+
+
+async def test_a_binary_not_host_installed_is_left_to_the_path_lookup(
+    cli: CliAttachment, spawn: _SpawnRecorder
+) -> None:
+    await cli.invoke("create_issue", {"title": "hello"})
+
+    assert spawn.argv[0] == _BINARY

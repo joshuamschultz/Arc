@@ -37,6 +37,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # TOCTOU: swapping runtime/current after boot never redirects an extension load.
         "packages/arctrust/tests/unit/test_runtime_extensions_pin.py",
     ),
+    "host-installed CLI binary swapped after install": (
+        "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
+    ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never
         # trusted by the once-per-run incremental refresh; a non-canonical one

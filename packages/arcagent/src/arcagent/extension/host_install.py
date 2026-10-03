@@ -50,7 +50,7 @@ import zipfile
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import operator_root
@@ -98,6 +98,8 @@ _ACTION = "extension.host.install"
 
 _REFUSED = "HOST_INSTALL_REFUSED"
 
+_BINARY_REFUSED = "HOST_BINARY_REFUSED"
+
 
 def host_install_dir() -> Path:
     """Where a verified host binary lands: the operator's own ``~/.local/bin``.
@@ -121,36 +123,98 @@ def _record_file() -> Path:
     return host_tools_dir() / "installed.json"
 
 
+def _read_record() -> dict[str, dict[str, str]]:
+    """The install record: ``name -> {"path": ..., "sha256": ...}``."""
+    try:
+        loaded = json.loads(_record_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {
+        str(name): {"path": str(entry["path"]), "sha256": str(entry["sha256"])}
+        for name, entry in loaded.items()
+        if isinstance(entry, dict) and "path" in entry and "sha256" in entry
+    }
+
+
+def _executable_digest(path: Path) -> str:
+    """The digest of what running ``path`` would execute.
+
+    A program Arc installs from npm is a shim symlinked at the package's entry file,
+    so the digest covers the link's target and the bytes it resolves to: retargeting
+    the link and rewriting the entry file are both a change.
+    """
+    digest = hashlib.sha256()
+    if path.is_symlink():
+        digest.update(os.readlink(path).encode())
+        digest.update(b"\0")
+    digest.update(path.resolve().read_bytes())
+    return digest.hexdigest()
+
+
 def recorded_install_path(name: str) -> Path | None:
     """Where Arc put ``name``, or ``None`` when it never installed it.
 
     The answer is the executable's own path, not a directory to search, so a
     connector runs exactly the program whose digest was checked. A recorded path
     whose file is gone or no longer executable is not an answer: the install was
-    removed behind Arc's back and the prerequisite is missing again.
+    removed behind Arc's back and the prerequisite is missing again. This is
+    presence only; :func:`verified_install_path` is what a spawn must use.
     """
-    try:
-        recorded = json.loads(_record_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    entry = _read_record().get(name)
+    if entry is None:
         return None
-    raw = recorded.get(name) if isinstance(recorded, dict) else None
-    if not isinstance(raw, str):
-        return None
-    path = Path(raw)
+    path = Path(entry["path"])
     return path if path.is_file() and os.access(path, os.X_OK) else None
 
 
+def verified_install_path(name: str) -> Path | None:
+    """The Arc-installed program, only while it is still what was installed.
+
+    Returns ``None`` when Arc never recorded ``name`` (the caller keeps its PATH
+    lookup). A recorded program that is gone or whose digest changed raises, with no
+    fallback: running something else, or whatever PATH offers, would let a file edit
+    choose what the agent executes.
+
+    Raises:
+        ExtensionError: ``reason`` is ``needs_host_setup`` (recorded, now missing) or
+            ``tampered`` (present, digest differs).
+    """
+    entry = _read_record().get(name)
+    if entry is None:
+        return None
+    path = Path(entry["path"])
+    try:
+        actual = _executable_digest(path)
+    except OSError:
+        raise ExtensionError(
+            code=_BINARY_REFUSED,
+            message=f"{name} was installed by host setup but is no longer there; "
+            "run host setup again",
+            details={"binary": name, "reason": "needs_host_setup"},
+        ) from None
+    if actual != entry["sha256"]:
+        raise ExtensionError(
+            code=_BINARY_REFUSED,
+            message=f"{name} no longer matches what host setup installed (tampered); "
+            "refusing to run it. Run host setup again",
+            details={
+                "binary": name,
+                "reason": "tampered",
+                "expected": entry["sha256"],
+                "actual": actual,
+            },
+        )
+    return path
+
+
 def _record_install(name: str, path: Path) -> None:
-    """Merge one ``name -> path`` entry into the record, atomically."""
+    """Merge one ``name -> path + digest`` entry into the record, atomically."""
     record = _record_file()
     record.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        current = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        current = {}
-    if not isinstance(current, dict):
-        current = {}
-    current[name] = str(path)
+    current: dict[str, Any] = dict(_read_record())
+    current[name] = {"path": str(path), "sha256": _executable_digest(path)}
     staged = record.with_suffix(".json.tmp")
     staged.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
     staged.replace(record)
@@ -705,4 +769,5 @@ __all__ = [
     "install_pinned_binary",
     "recorded_install_path",
     "run_npm",
+    "verified_install_path",
 ]

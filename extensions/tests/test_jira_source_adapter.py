@@ -177,3 +177,11 @@ def test_jira_manifest_declares_source_entrypoint() -> None:
     path = Path(__file__).resolve().parents[1] / "jira" / "extension.toml"
     manifest = load_manifest(path.read_text(encoding="utf-8"), tier=Tier.PERSONAL)
     assert manifest.config["source"]["entrypoint"] == "arc_ext_jira"
+
+
+async def test_jira_completion_checkpoint_is_none_not_zero() -> None:
+    """A finished crawl commits no cursor, so the next run is a full, reconciling pass."""
+    adapter = JiraSourceAdapter(_Attachment())
+    page = await adapter.sync_source(SyncSource(connection_id="jira", page_size=200))
+    assert not page.has_more
+    assert page.next_checkpoint is None

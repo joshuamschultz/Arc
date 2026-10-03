@@ -201,7 +201,9 @@ class SyncSourcePage(_Contract):
     """A page whose checkpoint is committed only after its objects are durable."""
 
     objects: tuple[SourceObject, ...] = ()
-    next_checkpoint: str
+    #: ``None`` on the final page: a finished crawl commits no cursor, so the next run is
+    #: a fresh full pass that can reconcile deletes.
+    next_checkpoint: str | None
     has_more: bool = False
 
 

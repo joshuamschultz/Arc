@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+from arctrust.audit import AuditEvent, AuditSink, emit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
@@ -48,13 +49,27 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.environment import scrubbed_environment
+from arcagent.extension.host_install import verified_install_path
 from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
+from arcagent.extension.source import classify_cli_failure
 
 #: Resolves the sensitive placed credentials (env name -> value) for one spawn.
 CredentialEnv = Callable[[], Awaitable[Mapping[str, Secret]]]
 
 _logger = logging.getLogger(__name__)
+
+#: What a CLI says when the thing asked for simply is not there: a feature switched
+#: off for a repository, or a repository with no commits yet. Callers absorb these as
+#: a normal state, so the attachment must not raise an alarm for them.
+_ABSENCE_MARKERS = ("has disabled", "repository is empty")
+
+
+def is_absence_refusal(detail: str) -> bool:
+    """True when a refusal means "there is none", not "something went wrong"."""
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _ABSENCE_MARKERS)
+
 
 #: The token that ends flag parsing. A manifest puts it last in a command's fixed
 #: ``argv`` to make that command's positional arguments unreadable as flags.
@@ -348,8 +363,10 @@ class CliAttachment:
         static_env: Mapping[str, str] | None = None,
         isolated_config_env: str = "",
         config_dir: Path | None = None,
+        audit_sink: AuditSink | None = None,
     ) -> None:
         self._binary = binary
+        self._audit_sink = audit_sink
         # Fixed manifest settings (never credentials), and the variable that
         # points the binary at an EMPTY per-connection config directory, so it
         # can never fall back to the operator's own signed-in configuration.
@@ -412,7 +429,9 @@ class CliAttachment:
     async def probe(self) -> ProbeResult:
         """Run the declared probe command; probing *is* the reachability test."""
         try:
-            returncode, stdout, stderr = await self._spawn([self._binary, *self._probe_argv])
+            returncode, stdout, stderr = await self._spawn([self._executable(), *self._probe_argv])
+        except ExtensionError as exc:
+            return ProbeResult(reachable=False, detail=self._refuse_host_binary(exc))
         except OSError as exc:
             return ProbeResult(
                 reachable=False, detail=f"{self._binary} could not be started: {exc}"
@@ -457,7 +476,11 @@ class CliAttachment:
             args = {
                 name: value for name, value in args.items() if name != command.download.argument
             }
-        argv = [self._binary, *command.argv_for(args)]
+        try:
+            executable = self._executable()
+        except ExtensionError as exc:
+            return self._error(tool, self._refuse_host_binary(exc))
+        argv = [executable, *command.argv_for(args)]
         if target is not None and command.download is not None:
             argv = _with_flag(argv, f"{command.download.flag}={target}")
 
@@ -612,16 +635,65 @@ class CliAttachment:
             ),
         )
 
+    def _executable(self) -> str:
+        """The binary to exec: the verified host-installed one, else a PATH lookup.
+
+        Host setup records the digest of what it installs. A recorded binary runs only
+        while its bytes still match; a swapped or vanished one raises, and there is no
+        fallback to PATH, so editing a file can never change what the agent executes.
+        Nothing recorded keeps the PATH lookup. Resolved per spawn.
+
+        Raises:
+            ExtensionError: The recorded binary is missing or tampered with.
+        """
+        installed = verified_install_path(self._binary)
+        return str(installed) if installed is not None else self._binary
+
+    def _refuse_host_binary(self, exc: ExtensionError) -> str:
+        """Log and audit a refused host binary; return the reason the agent reads."""
+        reason = str(exc.details.get("reason", "refused"))
+        _logger.warning("%s refused to run: %s (%s)", self._binary, exc.message, reason)
+        if self._audit_sink is not None:
+            emit(
+                AuditEvent(
+                    actor_did="arcagent:cli-attachment",
+                    action="extension.host.exec",
+                    target=f"binary:{self._binary}",
+                    outcome="deny",
+                    extra={"binary": self._binary, "reason": reason},
+                ),
+                self._audit_sink,
+            )
+        return exc.message
+
+    def _log_stderr(self, command: CliCommand, returncode: int, stderr: str) -> None:
+        """Surface stderr to the operator without letting it decide the outcome.
+
+        Countless CLIs write progress on a good run, so stderr never itself fails a
+        call. A refusal that only says the thing asked for does not exist is a normal
+        state its caller absorbs; it is a DEBUG line, not an operator alarm. A real
+        failure stays a WARNING and carries its error class.
+        """
+        if returncode == 0:
+            _logger.warning("%s %s wrote to stderr: %s", self._binary, command.tool, stderr)
+        elif is_absence_refusal(stderr):
+            _logger.debug("%s %s reported absence: %s", self._binary, command.tool, stderr)
+        else:
+            _logger.warning(
+                "%s %s failed (%s) and wrote to stderr: %s",
+                self._binary,
+                command.tool,
+                classify_cli_failure(stderr).value,
+                stderr,
+            )
+
     def _result(
         self, command: CliCommand, returncode: int, stdout: str, stderr: str
     ) -> ToolResult:
         """Turn one finished run into a result the agent can act on."""
         stdout, stderr = self._redacted(stdout), self._redacted(stderr)
         if stderr:
-            # Countless CLIs write progress and warnings here on a perfectly good run,
-            # so stderr is captured and surfaced to the operator but never itself
-            # decides the outcome.
-            _logger.warning("%s %s wrote to stderr: %s", self._binary, command.tool, stderr)
+            self._log_stderr(command, returncode, stderr)
 
         if returncode != 0:
             return self._error(

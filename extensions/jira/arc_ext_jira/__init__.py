@@ -104,7 +104,7 @@ class JiraSourceAdapter:
         has_more = end < len(records)
         return SyncSourcePage(
             objects=objects,
-            next_checkpoint=str(end) if has_more else "0",
+            next_checkpoint=str(end) if has_more else None,
             has_more=has_more,
         )
 
