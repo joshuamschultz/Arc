@@ -204,10 +204,9 @@ the fact from recall.
 - **S3/MinIO:** provide vault-backed access key material, region and an HTTPS
   endpoint. Grant the credential read-only list/get access only to intended
   buckets; then select buckets or narrower prefixes.
-- **Gmail:** install the pinned `gog` binary, then add one Google Workspace
-  connection per account and sign each in from its card (**Sign in → Open Google
-  sign-in → paste the address the browser lands on**). The OAuth refresh token
-  stays in `gog`'s keyring on the host. Select the mailbox or labels after
+- **Gmail:** set up Google sign-in once, then add one Google Workspace
+  connection per account and click **Connect** on its card. Arc talks to Google
+  directly and keeps the refresh token in its own sealed storage. Select the mailbox or labels after
   granting the connection. See [Google accounts](google-accounts.md), including
   how to stop tokens expiring every week.
 - **Confluence, GitHub, Jira and Readwise Reader:** connect and grant the account

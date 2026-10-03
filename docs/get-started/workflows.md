@@ -130,7 +130,7 @@ Key fields:
   channel.
 - **`needs`** — a node's dependency list. A node runs once every named upstream
   reaches `done` (or `skipped`). A skipped upstream skips the node too. A workflow
-  is a DAG: there are no loops and no `join = "any"`, and a node may not need
+  is a DAG, and a node may not need
   nodes from two exclusive routes of one router. Retry a failed node with
   `arc workflow retry <run> <node>`; finished nodes never run again.
 - **`on_failure`** — what a failed node does to the run: `fail_run` (default:

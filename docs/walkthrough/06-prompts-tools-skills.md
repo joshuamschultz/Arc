@@ -252,20 +252,17 @@ members (`packages/arcagent/src/arcagent/tools/_transport.py:27`).
 > registry. Building an HTTP- or process-backed tool means writing the wiring,
 > not configuring it.
 
-> **MCP is a live capability, reached through extensions — there is no `ToolTransport.MCP`
-> enum value and no `tools.mcp_servers` config (both were dead and are deleted).** ADR-018 originally excluded an MCP client from
-> scope, and older documentation still reads that way, but ADR-030
-> reversed exactly that exclusion (leaving the migration-tooling and ACP
-> exclusions standing). An MCP client ships today as an *extension attachment*:
-> `McpAttachment` in `packages/arcagent/src/arcagent/extension/mcp_attachment.py`,
-> speaking the stateless 2026-07-28 revision over httpx with no vendor SDK, with
-> tool trust metadata coming from the manifest via `McpToolPolicy` rather than
+> **MCP is a live capability, reached through extensions, not through the tool
+> registry's transports.** ADR-030 reversed ADR-018's exclusion of an MCP client
+> (leaving the migration-tooling and ACP exclusions standing). An MCP client
+> ships as an *extension attachment*: `McpAttachment` in
+> `packages/arcagent/src/arcagent/extension/mcp_attachment.py`, built on the
+> official `mcp` SDK, with tool trust metadata coming from the manifest via `McpToolPolicy` rather than
 > from server-supplied annotations. It reaches the agent through the same
 > `ExtensionAttachment` methods a local binary uses, so an MCP tool call rides the
 > ordinary envelope — signed `ToolCall`, `caller_did`, `PolicyPipeline`,
 > `HumanGate`, audit. Nothing in `arcagent` outside that module knows the protocol
-> exists. So "the `MCP` enum is unwired" and "Arc has no MCP" are two different
-> statements, and only the first is true.
+> exists.
 
 **Builtins split across two packages, by ownership (the "don't mix
 concerns" rule):**
