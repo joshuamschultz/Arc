@@ -100,6 +100,7 @@ from arcagent.extension.custody_select import (
     open_custody,
     reseal_source_cipher,
 )
+from arcagent.extension.egress_guard import EgressPolicy, IPNetwork, parse_allow_cidrs
 from arcagent.extension.grants import (
     BAD_NAME,
     NO_SUCH_CONNECTION,
@@ -321,6 +322,9 @@ class ConnectionWorld:
     #: ``[tools.policy] mcp_stdio_allow`` — the programs an operator-added MCP server
     #: may launch above personal tier.
     mcp_stdio_allow: tuple[str, ...] = ()
+    #: ``[tools.policy] egress_allow_cidrs`` — private ranges an operator-added HTTP MCP
+    #: server may be reached at above personal tier.
+    private_allowlist: tuple[IPNetwork, ...] = ()
     #: True when the caller named exactly one bundle root, so a generated bundle goes
     #: there rather than into ``<arc_dir>/extensions``.
     extensions_override: bool = False
@@ -398,6 +402,7 @@ def resolve_deployment(
         extension_roots=resolve_roots(root, extensions_root=extensions_root),
         egress_allow=deployment_egress_allow(root),
         mcp_stdio_allow=deployment_mcp_stdio_allow(root),
+        private_allowlist=deployment_egress_policy(deployment_tier(root), root).private_allowlist,
         extensions_override=extensions_root is not None,
     )
 
@@ -465,6 +470,31 @@ def deployment_mcp_stdio_allow(arc_dir: Path | str | None = None) -> tuple[str, 
     policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
     allow = policy.get("mcp_stdio_allow", []) if isinstance(policy, dict) else []
     return tuple(str(name) for name in allow) if isinstance(allow, list) else ()
+
+
+def deployment_egress_policy(tier: Tier, arc_dir: Path | str | None = None) -> EgressPolicy:
+    """The HTTP-MCP address policy at deployment scope, for ``tier``.
+
+    Reads ``[tools.policy] egress_allow_cidrs`` and ``mcp_via_proxy`` from the fleet-wide
+    file. A malformed or never-reachable CIDR list grants nothing (fail closed, logged)
+    rather than half-applying.
+    """
+    raw = _read_toml(config_file(_FLEET_CONFIG, _root(arc_dir)))
+    tools = raw.get("tools", {})
+    policy = tools.get("policy", {}) if isinstance(tools, dict) else {}
+    if not isinstance(policy, dict):
+        policy = {}
+    cidrs = policy.get("egress_allow_cidrs", [])
+    try:
+        allowlist = parse_allow_cidrs([str(c) for c in cidrs]) if isinstance(cidrs, list) else ()
+    except ValueError as exc:
+        _logger.error("ignoring [tools.policy] egress_allow_cidrs: %s", exc)
+        allowlist = ()
+    return EgressPolicy(
+        tier=tier,
+        private_allowlist=allowlist,
+        via_proxy=policy.get("mcp_via_proxy") is True,
+    )
 
 
 def _strictest(tiers: Sequence[Tier]) -> Tier:
@@ -1838,6 +1868,7 @@ class Connections:
                     tier=tier,
                     secret_values=secret_values,
                     stdio_allow=self._world.mcp_stdio_allow,
+                    private_allowlist=self._world.private_allowlist,
                     builder=self._factory,
                     timeout=timeout,
                 )
@@ -1940,7 +1971,12 @@ class Connections:
     ) -> tuple[McpServerSpec, Signer, str]:
         """Everything that can be refused before a byte is written."""
         try:
-            checked = validate_spec(spec, tier=tier, stdio_allow=self._world.mcp_stdio_allow)
+            checked = validate_spec(
+                spec,
+                tier=tier,
+                stdio_allow=self._world.mcp_stdio_allow,
+                private_allowlist=self._world.private_allowlist,
+            )
             require_exactly(checked, secret_values)
             if name in self.registry.all():
                 raise _refuse("MCP_NAME_TAKEN", f"a connection named {name!r} already exists")
@@ -2882,6 +2918,7 @@ __all__ = [
     "agent_tier",
     "catalog",
     "deployment_egress_allow",
+    "deployment_egress_policy",
     "deployment_mcp_stdio_allow",
     "deployment_tier",
     "oauth_redirect_uri",

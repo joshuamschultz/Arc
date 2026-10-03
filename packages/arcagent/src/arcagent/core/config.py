@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import tomlkit
 from arctrust import ValidatorsConfig, VaultTransitConfig
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arcagent.core.config_loading import (
     apply_env_overrides as _apply_env_overrides,
@@ -216,6 +216,23 @@ class ToolConfig(BaseModel):
     # (``arc connector add-mcp``). Absolute paths or bare program names; empty means
     # no arbitrary binary becomes a server. Federal accepts no operator-added server.
     mcp_stdio_allow: list[str] = []
+    # Private ranges (CIDR) an operator-added HTTP MCP server may be reached at above
+    # personal tier — an internal 10.x server. Link-local, metadata, multicast and
+    # reserved space is refused here and again at connect time, whatever is listed.
+    egress_allow_cidrs: list[str] = []
+    # Opt-in above personal tier: HTTP MCP connections go through HTTPS_PROXY/NO_PROXY.
+    # The proxy resolves names, so connect-time DNS pinning does not cover proxied hosts.
+    mcp_via_proxy: bool = False
+
+    @field_validator("egress_allow_cidrs")
+    @classmethod
+    def _valid_egress_cidrs(cls, entries: list[str]) -> list[str]:
+        # Imported here: the guard lives in the extension layer, which imports core.
+        from arcagent.extension.egress_guard import parse_allow_cidrs
+
+        parse_allow_cidrs(entries)
+        return entries
+
     # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
     # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
     # Unlabeled tools default to UNCLASSIFIED (no gating).

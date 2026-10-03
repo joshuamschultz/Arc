@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -664,6 +665,66 @@ def targets() -> list[str]:
     return ordered
 
 
+def _fail(message: str) -> None:
+    sys.stderr.write(f"ADVERSARIAL BATTERY FAILED: {message}\n")
+    sys.stderr.flush()
+
+
+def _describe_exit(code: int) -> str:
+    """A negative code is a signal (a crashed interpreter), not a pytest verdict."""
+    if code < 0:
+        return f"was killed by signal {-code}"
+    return f"exited {code}"
+
+
+def _failing_cases(report: Path) -> list[str]:
+    """``file::test: first line of the reason`` for every failed or errored case."""
+    lines: list[str] = []
+    for case in ET.parse(report).getroot().iter("testcase"):  # noqa: S314 - our own pytest report
+        problem = case.find("failure")
+        if problem is None:
+            problem = case.find("error")
+        if problem is None:
+            continue
+        reason = (problem.get("message") or problem.text or "").strip().splitlines()
+        shown = reason[0] if reason else "no message"
+        lines.append(f"{case.get('classname', '')}::{case.get('name', '')}: {shown}")
+    return lines
+
+
+def _tests_run(report: Path) -> int:
+    return sum(
+        int(suite.get("tests", "0"))
+        for suite in ET.parse(report).getroot().iter("testsuite")  # noqa: S314
+    )
+
+
+def verdict(report: Path, returncode: int) -> int:
+    """Print what happened, on stderr, and return the exit status to use.
+
+    The status is never zero unless pytest exited zero AND at least one test ran, and a
+    non-zero status always comes with the failing suite and the reason.
+    """
+    if not report.is_file() or report.stat().st_size == 0:
+        _fail(
+            f"pytest {_describe_exit(returncode)} and wrote no test report; the run died "
+            "before or outside the tests (collection crash, interpreter crash, or an "
+            "exit in a conftest). Re-run the pytest command above directly to see why."
+        )
+        return returncode or 1
+    failures = _failing_cases(report)
+    for line in failures:
+        _fail(line)
+    if returncode != 0:
+        if not failures:
+            _fail(f"pytest {_describe_exit(returncode)} with no failing test in the report")
+        return returncode
+    if _tests_run(report) == 0:
+        _fail("pytest exited 0 but ran no tests; the battery is not guarding anything")
+        return 3
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run pytest over the curated battery and return its exact exit status."""
     missing = [path for path in targets() if not (ROOT / path).is_file()]
@@ -674,18 +735,22 @@ def main(argv: list[str] | None = None) -> int:
 
     for threat, paths in SCENARIOS.items():
         sys.stdout.write(f"{threat}: {len(paths)} suite(s)\n")
-    command = [sys.executable, "-m", "pytest", *targets(), *(argv or [])]
     with tempfile.TemporaryDirectory(prefix="arc-adversarial-") as isolated_home:
+        report = Path(isolated_home) / "report.xml"
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"--junitxml={report}",
+            *targets(),
+            *(argv or []),
+        ]
         environment = os.environ.copy()
         environment["HOME"] = isolated_home
         environment["ARC_CONFIG_DIR"] = str(Path(isolated_home) / ".arc")
         environment["ARC_TEAM_ROOT"] = str(Path(isolated_home) / "arc")
-        return subprocess.run(
-            command,
-            cwd=ROOT,
-            env=environment,
-            check=False,
-        ).returncode
+        returncode = subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+        return verdict(report, returncode)
 
 
 if __name__ == "__main__":

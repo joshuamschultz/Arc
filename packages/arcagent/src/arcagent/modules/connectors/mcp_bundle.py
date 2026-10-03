@@ -54,6 +54,7 @@ from arcagent.extension.attachment import Classification, ExtensionAttachment
 from arcagent.extension.catalog import BUNDLES_DIRNAME, MANIFEST_NAME
 from arcagent.extension.egress_guard import (
     EgressPolicy,
+    IPNetwork,
     always_blocked,
     parse_address,
     system_resolver,
@@ -219,6 +220,7 @@ def validate_spec(
     *,
     tier: Tier,
     stdio_allow: Sequence[str] = (),
+    private_allowlist: Sequence[IPNetwork] = (),
     resolver: Resolver | None = None,
     which: Which | None = None,
 ) -> McpServerSpec:
@@ -235,7 +237,7 @@ def validate_spec(
         )
     resolved = spec
     if spec.transport == "http":
-        _check_url(spec.url, tier, resolver or system_resolver)
+        _check_url(spec.url, tier, resolver or system_resolver, tuple(private_allowlist))
         _check_header(spec.auth_header, spec.auth_scheme)
     else:
         resolved = spec.model_copy(
@@ -246,7 +248,9 @@ def validate_spec(
     return resolved
 
 
-def _check_url(url: str, tier: Tier, resolver: Resolver) -> None:
+def _check_url(
+    url: str, tier: Tier, resolver: Resolver, private_allowlist: tuple[IPNetwork, ...] = ()
+) -> None:
     try:
         parts = urlsplit(url)
         host = (parts.hostname or "").lower()
@@ -287,7 +291,7 @@ def _check_url(url: str, tier: Tier, resolver: Resolver) -> None:
             "use an https address",
             reason="loopback",
         )
-    policy = EgressPolicy(tier=tier)
+    policy = EgressPolicy(tier=tier, private_allowlist=private_allowlist)
     for address in addresses:
         why = None if address.is_loopback else policy.refusal(address)
         if why is not None:
@@ -666,6 +670,7 @@ async def discover_tools(
     tier: Tier,
     secret_values: Mapping[str, str],
     stdio_allow: Sequence[str] = (),
+    private_allowlist: Sequence[IPNetwork] = (),
     resolver: Resolver | None = None,
     which: Which | None = None,
     timeout: float = 30.0,
@@ -682,7 +687,12 @@ async def discover_tools(
         ExtensionError: The spec is refused, or the server did not answer in time.
     """
     checked = validate_spec(
-        spec, tier=tier, stdio_allow=stdio_allow, resolver=resolver, which=which
+        spec,
+        tier=tier,
+        stdio_allow=stdio_allow,
+        private_allowlist=private_allowlist,
+        resolver=resolver,
+        which=which,
     )
     _require_exactly(checked, secret_values)
     bare = checked.model_copy(update={"tools": {}})
