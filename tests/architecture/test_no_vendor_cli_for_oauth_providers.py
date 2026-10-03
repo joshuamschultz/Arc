@@ -18,7 +18,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 
 #: Bundles whose credential Arc holds through ``[oauth]``.
-_NATIVE_OAUTH = ("google_workspace", "dropbox")
+_NATIVE_OAUTH = ("google_workspace", "dropbox", "jira", "confluence")
 
 
 @pytest.mark.parametrize("bundle", _NATIVE_OAUTH)
