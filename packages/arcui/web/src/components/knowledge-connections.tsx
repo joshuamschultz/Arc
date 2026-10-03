@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import {
   Activity,
   Database,
-  FileText,
   FolderTree,
   Library,
   LogIn,
@@ -38,6 +37,9 @@ import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
+import { GuidesSection } from '@/components/connection-guides'
+import { Chip, MonoChip, SourceSelect, Th } from '@/components/knowledge-connection-bits'
+import { isDatastoreKind } from '@/lib/connection-kind'
 import { fmtBytes } from '@/lib/format'
 import { EmptyState, QueryState } from '@/components/states'
 import { ApiError } from '@/lib/api'
@@ -50,16 +52,13 @@ import {
   useConnectionChunkSearch,
   useConnectionTables,
   useDatastoreQuery,
-  useDatastoreTables,
   useDocuments,
   useSourceIndex,
   useIndexHealth,
   useProvenance,
   useMappingProposal,
   useResolveApproval,
-  useResolveProfileReview,
   useConnectedResources,
-  useProfileReviews,
   useSelectConnectedResources,
   useStageSourceMapping,
   usePreviewSharedMigration,
@@ -69,33 +68,23 @@ import type {
   ChunkPage,
   ChunkSearchMode,
   ChunkSearchResponse,
+  CollectionIndexView,
   ConnectedSourceItem,
   EntityRecord,
 } from '@/lib/types'
 
 const SECTIONS = [
   { value: 'sources', label: 'Sources' },
-  { value: 'explorer', label: 'Explorer' },
-  { value: 'repository', label: 'Repository' },
-  { value: 'documents', label: 'Documents' },
-  { value: 'datastore', label: 'Datastore' },
-  { value: 'blob', label: 'Blob folders' },
-  { value: 'provenance', label: 'Provenance' },
-  { value: 'reviews', label: 'Profile review' },
-  { value: 'health', label: 'Index health' },
+  { value: 'browse', label: 'Browse' },
+  { value: 'guides', label: 'Guides' },
 ] as const
 
 type Section = (typeof SECTIONS)[number]['value']
 type DatastoreOp = 'get_record' | 'find' | 'list'
 
+const SECTION_HEADING = 'text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground'
+
 // --- Shared bits ------------------------------------------------------------
-
-const TH_CLASS =
-  'px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground'
-
-function Th({ children }: { children: ReactNode }) {
-  return <th className={TH_CLASS}>{children}</th>
-}
 
 /** A source entity's facts, rendered as plain metadata rows (the connector
  *  facts are free-form, so they are shown verbatim rather than parsed). */
@@ -114,58 +103,6 @@ function FactList({ facts }: { facts: string[] }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-function Chip({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
-      {children}
-    </span>
-  )
-}
-
-function MonoChip({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-      {children}
-    </span>
-  )
-}
-
-/** A picker over an agent's connector sources. Value is the raw source id. */
-function SourceSelect({
-  agentId,
-  value,
-  onChange,
-  placeholder = 'Select source',
-}: {
-  agentId: string
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
-}) {
-  const sources = useConnectedSources(agentId)
-  const items = sources.data?.items ?? []
-  return (
-    <div className="flex items-center gap-1"><Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-56">
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {/* A source whose inspection failed carries no source_id, and every call
-            below is keyed by it. Radix also throws on an empty Select value, so an
-            unaddressable source is left out of the picker rather than crashing the
-            page — the connection card still shows it, with its failure. */}
-        {items
-          .filter((s) => Boolean(s.source_id))
-          .map((s) => (
-            <SelectItem key={s.connection_id} value={s.source_id}>
-              {s.label || s.connection_id}
-            </SelectItem>
-          ))}
-      </SelectContent>
-    </Select><FieldHelp helpKey="knowledge.source" route="knowledge" /></div>
   )
 }
 
@@ -246,28 +183,29 @@ const SIGNED_OUT_CODES = new Set([
 ])
 
 /** What went wrong, in words a person can act on. Never the raw code or exception text. */
-function sourceProblem(source: ConnectedSourceItem): { text: string; reconnect: boolean } | null {
+function sourceProblem(source: ConnectedSourceItem): { text: string; short: string; reconnect: boolean } | null {
   const code = source.error_code ?? (source.status === 'needs_attention' ? source.detail : '')
   if (SIGNED_OUT_CODES.has(code ?? '') || SIGNED_OUT_CODES.has(source.detail)) {
-    return { text: 'This account is signed out. Reconnect it so Arc can read it again.', reconnect: true }
+    return { text: 'This account is signed out. Reconnect it so Arc can read it again.', short: 'Signed out', reconnect: true }
   }
   if (code === 'rate_limited' || source.detail === 'rate_limited') {
-    return { text: 'The provider asked Arc to slow down. The next sync starts on its own.', reconnect: false }
+    return { text: 'The provider asked Arc to slow down. The next sync starts on its own.', short: 'Waiting on the provider', reconnect: false }
   }
   if (code === 'repeated_failures' || source.status === 'needs_attention') {
     return {
       text: 'Syncing failed several times in a row, so Arc stopped trying. Try again, or reconnect the account if it keeps failing.',
+      short: 'Sync keeps failing',
       reconnect: true,
     }
   }
   if (code === 'interrupted') {
-    return { text: 'The last sync stopped when Arc restarted. It continues from where it stopped.', reconnect: false }
+    return { text: 'The last sync stopped when Arc restarted. It continues from where it stopped.', short: 'Resuming after a restart', reconnect: false }
   }
   if (source.detail === 'source_inspection_failed') {
-    return { text: 'Arc could not reach this account just now. It tries again on its own.', reconnect: false }
+    return { text: 'Arc could not reach this account just now. It tries again on its own.', short: 'Could not reach the account', reconnect: false }
   }
   if (source.status === 'failed' || source.status === 'degraded') {
-    return { text: 'The last sync did not finish. Arc tries again on its own.', reconnect: false }
+    return { text: 'The last sync did not finish. Arc tries again on its own.', short: 'Last sync did not finish', reconnect: false }
   }
   return null
 }
@@ -600,6 +538,7 @@ function SourcesSection({
   }
   return (
     <div className="space-y-3">
+      <HealthStrip agentId={agentId} />
       <SharedMigrationPreview agentId={agentId} />
       <QueryState
         query={sources}
@@ -619,11 +558,16 @@ function SourcesSection({
               <tbody className="divide-y divide-border/60">
                 {data.items.map((source) => (
                   <tr key={source.connection_id} onClick={() => setSelected(source)} className="cursor-pointer transition-colors hover:bg-muted/40">
-                    <td className="px-3 py-2 text-foreground">{source.label || source.connection_id}</td>
+                    <td className="px-3 py-2 text-foreground">
+                      <div>{source.label || source.connection_id}</div>
+                      {sourceProblem(source) && (
+                        <p className="mt-0.5 max-w-xs text-xs text-status-warning">{sourceProblem(source)?.short}</p>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.source_kind}</td>
                     <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs ${sourceStatusTone(source.status)}`}>{source.status}</span></td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{LANE_LABELS[source.lane]}</td>
-                    <td className="px-3 py-2 text-xs tabular-nums text-muted-foreground">{source.pages} batches · {fmtBytes(source.bytes_processed)} downloaded</td>
+                    <td className="px-3 py-2 text-xs tabular-nums text-muted-foreground">{source.documents_indexed} documents · {source.pages} batches · {fmtBytes(source.bytes_processed)} downloaded</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.last_synced_at ?? 'Never'}</td>
                   </tr>
                 ))}
@@ -714,190 +658,244 @@ function SharedMigrationPreview({ agentId }: { agentId: string }) {
   )
 }
 
-// --- Repository index -------------------------------------------------------
+// --- Index health strip -----------------------------------------------------
 
-/** The per-source OKF `index.md` — "what's in this repo and what's it for"
- *  (H-026). The server verifies the index fail-closed and only sends a body
- *  when it is trusted; an unverified index shows a tamper banner, never its
- *  contents. Operator-gated + audited server-side. */
-function RepoIndexSection({ agentId }: { agentId: string }) {
-  const [source, setSource] = useState('')
-  // A source mirrors its remote tree: the root lists folders, each opened in place.
-  const [folder, setFolder] = useState('')
-  const index = useSourceIndex(agentId, source, folder)
-  const ready = !!source
-  const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
-
+function HealthTile({
+  label,
+  value,
+  icon,
+}: {
+  label: string
+  value: ReactNode
+  icon: ReactNode
+}) {
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <SourceSelect
-          agentId={agentId}
-          value={source}
-          onChange={(next) => {
-            setSource(next)
-            setFolder('')
-          }}
-        />
-        {folder && (
-          <>
-            <MonoChip>{folder}/</MonoChip>
-            <Button size="sm" variant="ghost" onClick={() => setFolder(parent)}>
-              Up
-            </Button>
-          </>
-        )}
+    <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2">
+      <span className="shrink-0 text-muted-foreground/70">{icon}</span>
+      <div className="min-w-0">
+        <div className="font-display text-lg font-bold leading-none tabular-nums tracking-tight text-foreground">
+          {value}
+        </div>
+        <div className="truncate text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {label}
+        </div>
       </div>
-      {!ready ? (
-        <EmptyState
-          icon={<Library className="size-5" />}
-          title="Pick a source"
-          description="Choose a connected document source to see what its repository holds and what it is for."
-        />
-      ) : (
-        <QueryState
-          query={index}
-          isEmpty={(d) => !d.present}
-          empty={
-            <EmptyState
-              title="No repository index yet"
-              description="This source has not written an index. Run a sync from the Sources tab."
-            />
-          }
-        >
-          {(data) =>
-            !data.verified ? (
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-                <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" />
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-foreground">
-                    Index could not be verified —{' '}
-                    {data.guidance ?? 'Re-sync this source to restore its repository index.'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    The repository index failed verification and is not shown, so a local
-                    edit can never be read as trusted knowledge.
-                    {data.error ? ` Reason: ${data.error}.` : ''}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Chip>
-                    {data.document_count} document{data.document_count === 1 ? '' : 's'}
-                  </Chip>
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <ShieldCheck className="size-3.5 text-emerald-500" />
-                    verified
+    </div>
+  )
+}
+
+const yesNo = (b: boolean) => (b ? 'On' : 'Off')
+
+/** The honest index probe, as a compact strip above the sources: is search live,
+ *  how much is indexed, and what is degraded. */
+function HealthStrip({ agentId }: { agentId: string }) {
+  const health = useIndexHealth(agentId)
+  return (
+    <QueryState query={health} isEmpty={(d) => d.item == null}>
+      {(data) => {
+        const s = data.item
+        const indexed = s.workspaces.reduce((sum, w) => sum + w.indexed_chunks, 0)
+        const embedded = s.workspaces.reduce((sum, w) => sum + w.embedded_chunks, 0)
+        return (
+          <section aria-label="Index health" className="space-y-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <HealthTile label="Search by meaning" value={yesNo(s.live)} icon={<Activity className="size-4" />} />
+              <HealthTile
+                label={`Embedder (${s.embedder_backend})`}
+                value={yesNo(s.embedder_live)}
+                icon={<Plug className="size-4" />}
+              />
+              <HealthTile label="Chunks indexed" value={indexed} icon={<Database className="size-4" />} />
+              <HealthTile label="Chunks embedded" value={embedded} icon={<Waypoints className="size-4" />} />
+            </div>
+            {s.detail && <p className="text-xs text-muted-foreground">{s.detail}</p>}
+            {s.degraded_reasons.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {s.degraded_reasons.map((r) => (
+                  <span
+                    key={r}
+                    className="rounded-full border border-status-warning/30 bg-status-warning/15 px-2 py-0.5 text-xs text-status-warning"
+                  >
+                    {r}
                   </span>
-                </div>
-                {data.entries.length === 0 ? (
-                  <EmptyState title="Repository is empty" description="No documents are indexed for this source yet." />
-                ) : (
-                  <ul className="space-y-2">
-                    {data.entries.map((entry) => (
-                      <li
-                        key={entry.path}
-                        className="space-y-1 rounded-lg border border-border bg-muted/20 px-3 py-2"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          {entry.kind === 'folder' ? (
-                            <button
-                              type="button"
-                              className="text-sm font-medium text-foreground underline-offset-2 hover:underline"
-                              onClick={() => setFolder(entry.path)}
-                            >
-                              {entry.title}
-                            </button>
-                          ) : (
-                            <span className="text-sm font-medium text-foreground">{entry.title}</span>
-                          )}
-                          {entry.kind === 'folder' ? (
-                            <Chip>
-                              {entry.count} document{entry.count === 1 ? '' : 's'}
-                            </Chip>
-                          ) : (
-                            <MonoChip>{entry.path}</MonoChip>
-                          )}
-                        </div>
-                        {entry.summary && (
-                          <p className="text-sm text-muted-foreground">{entry.summary}</p>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                ))}
               </div>
-            )
-          }
-        </QueryState>
+            )}
+          </section>
+        )
+      }}
+    </QueryState>
+  )
+}
+
+// --- Browse: a file or document source --------------------------------------
+
+/** The source's repository index: what it holds and what it is for. The server
+ *  verifies the index fail-closed and only sends a body when it is trusted; an
+ *  unverified index shows a tamper notice, never its contents. */
+function IndexSummary({ data }: { data: CollectionIndexView }) {
+  if (!data.verified) {
+    return (
+      <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+        <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" />
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium text-foreground">
+            Index could not be verified. {data.guidance ?? 'Re-sync this source to restore its index.'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            The index failed its check and is not shown, so an edit made outside Arc is never read as trusted knowledge.
+            {data.error ? ` Reason: ${data.error}.` : ''}
+          </p>
+        </div>
+      </div>
+    )
+  }
+  const topics = data.entries.slice(0, 6).map((e) => e.title)
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip>
+          {data.document_count} document{data.document_count === 1 ? '' : 's'}
+        </Chip>
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <ShieldCheck className="size-3.5 text-emerald-500" />
+          verified
+        </span>
+      </div>
+      {topics.length > 0 && (
+        <p className="text-sm text-foreground">
+          This source holds: {topics.join(', ')}
+          {data.entries.length > topics.length ? ', and more.' : '.'}
+        </p>
       )}
     </div>
   )
 }
 
-// --- Documents --------------------------------------------------------------
+function IndexEntries({ data, onOpenFolder }: { data: CollectionIndexView; onOpenFolder: (path: string) => void }) {
+  return (
+    <ul className="space-y-2">
+      {data.entries.map((entry) => (
+        <li key={entry.path} className="min-w-0 space-y-1 rounded-lg border border-border bg-muted/20 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {entry.kind === 'folder' ? (
+              <button
+                type="button"
+                className="text-left text-sm font-medium text-foreground underline-offset-2 hover:underline"
+                onClick={() => onOpenFolder(entry.path)}
+              >
+                {entry.title}
+              </button>
+            ) : (
+              <span className="text-sm font-medium text-foreground">{entry.title}</span>
+            )}
+            {entry.kind === 'folder' ? (
+              <Chip>
+                {entry.count} document{entry.count === 1 ? '' : 's'}
+              </Chip>
+            ) : (
+              <MonoChip>{entry.path}</MonoChip>
+            )}
+          </div>
+          {entry.summary && <p className="text-sm text-muted-foreground">{entry.summary}</p>}
+        </li>
+      ))}
+    </ul>
+  )
+}
 
-function DocumentsSection({ agentId }: { agentId: string }) {
-  const [source, setSource] = useState('')
+/** One view of a file or document source: what it is for, its folders, and its
+ *  documents with a search box. */
+function FileSourceBrowse({ agentId, source }: { agentId: string; source: string }) {
   const [q, setQ] = useState('')
+  // A source mirrors its remote tree: the root lists folders, each opened in place.
+  const [folder, setFolder] = useState('')
+  const index = useSourceIndex(agentId, source, folder)
   const docs = useDocuments(agentId, source, q)
-  // A source alone is enough: with no query the panel lists what that source
-  // holds. Demanding a query first meant a source that had indexed perfectly
-  // well looked empty until someone guessed the right word.
-  const ready = !!source
+  const blob = useBlobFolders(agentId, source)
+  const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
+  const needle = q.trim().toLowerCase()
+  const blobFolders = (blob.data?.items ?? []).filter((f) =>
+    `${f.name} ${f.facts.join(' ')}`.toLowerCase().includes(needle),
+  )
+  const entries = index.data?.present && index.data.verified ? index.data.entries : []
+  const noFolders = entries.length === 0 && blobFolders.length === 0
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Filter documents…"
-          className="max-w-sm"
-        />
-        <FieldHelp helpKey="knowledge.resource_filter" route="knowledge" />
-      </div>
-      {!ready ? (
-        <EmptyState
-          icon={<FileText className="size-5" />}
-          title="Pick a source"
-          description="Choose a connected source to see the documents it has indexed."
-        />
-      ) : (
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h3 className={SECTION_HEADING}>What this source is for</h3>
+        <QueryState
+          query={index}
+          isEmpty={(d) => !d.present}
+          empty={<p className="text-xs text-muted-foreground">This source has not written an index yet. Run a sync from the Sources tab.</p>}
+        >
+          {(data) => <IndexSummary data={data} />}
+        </QueryState>
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className={SECTION_HEADING}>Folders</h3>
+          {folder && (
+            <>
+              <MonoChip>{folder}/</MonoChip>
+              <Button size="sm" variant="ghost" onClick={() => setFolder(parent)}>
+                Up
+              </Button>
+            </>
+          )}
+        </div>
+        {index.data?.present && index.data.verified && <IndexEntries data={index.data} onOpenFolder={setFolder} />}
+        {blobFolders.length > 0 && (
+          <ul className="space-y-2">
+            {blobFolders.map((f) => (
+              <li key={f.slug} className="min-w-0 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-foreground">{f.name}</span>
+                  <Chip>{f.classification}</Chip>
+                </div>
+                <FactList facts={f.facts} />
+              </li>
+            ))}
+          </ul>
+        )}
+        {noFolders && <p className="text-xs text-muted-foreground">No folders are indexed for this source yet.</p>}
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className={SECTION_HEADING}>Documents</h3>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search documents and folders…"
+            aria-label="Search documents and folders"
+            className="w-full max-w-sm"
+          />
+          <FieldHelp helpKey="knowledge.resource_filter" route="knowledge" />
+        </div>
         <QueryState
           query={docs}
           isEmpty={(d) => d.items.length === 0}
           empty={
-            <EmptyState
-              title={q.trim() ? 'No matching documents' : 'Nothing indexed yet'}
-              description={
-                q.trim()
-                  ? undefined
-                  : 'This source has not written any documents. Run a sync from the Sources tab.'
-              }
-            />
+            <p className="text-xs text-muted-foreground">
+              {q.trim() ? 'No matching documents.' : 'This source has not written any documents. Run a sync from the Sources tab.'}
+            </p>
           }
         >
           {(data) => (
             <ul className="space-y-2">
               {data.items.map((h) => (
-                <li
-                  key={h.chunk_id}
-                  className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2"
-                >
+                <li key={h.chunk_id} className="min-w-0 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <MonoChip>{h.pointer || h.chunk_id}</MonoChip>
                     <Chip>{h.classification}</Chip>
                     {q.trim().length > 0 && (
-                      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                        score {h.score.toFixed(3)}
-                      </span>
+                      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">score {h.score.toFixed(3)}</span>
                     )}
                   </div>
-                  <p className="text-sm text-foreground">{h.text}</p>
+                  <p className="break-words text-sm text-foreground">{h.text}</p>
                   {h.provenance.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {h.provenance.map((p, i) => (
@@ -910,136 +908,21 @@ function DocumentsSection({ agentId }: { agentId: string }) {
             </ul>
           )}
         </QueryState>
-      )}
-    </div>
-  )
-}
-
-// --- Connection explorer (H-024) --------------------------------------------
-
-const SECTION_HEADING =
-  'text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground'
-
-/** Operator-only read of ONE connection: its datastore schema + its indexed
- *  chunks. Schema is read from the PERSISTED ontology (works with the backing
- *  datastore unreachable); chunks are bound to that connection's document pool,
- *  gated no-read-up, and a ?mode=vector search degrades LOUD rather than looking
- *  empty. Schema only — no row values are ever shown here (H-024). */
-function ConnectionExplorerSection({ agentId }: { agentId: string }) {
-  const [source, setSource] = useState('')
-  const [q, setQ] = useState('')
-  const [mode, setMode] = useState<ChunkSearchMode>('literal')
-  const sourceId = source || null
-  const tables = useConnectionTables(agentId, sourceId)
-  const browse = useConnectionChunks(agentId, sourceId)
-  const search = useConnectionChunkSearch(agentId, sourceId, q, mode)
-  const searching = q.trim().length > 0
-
-  if (!source) {
-    return (
-      <div className="space-y-3">
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
-        <EmptyState
-          icon={<Database className="size-5" />}
-          title="Pick a connection"
-          description="Choose a connected source to explore its tables and indexed chunks."
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      <SourceSelect agentId={agentId} value={source} onChange={setSource} />
-
-      <section className="space-y-2">
-        <h3 className={SECTION_HEADING}>Tables &amp; schema</h3>
-        <QueryState
-          query={tables}
-          isEmpty={(d) => d.items.length === 0}
-          empty={
-            <EmptyState
-              icon={<Database className="size-5" />}
-              title="No datastore tables"
-              description="This connection exposes no introspected datastore schema."
-            />
-          }
-        >
-          {(data) => <EntityTable items={data.items} typeLabel="Type" />}
-        </QueryState>
-      </section>
-
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className={SECTION_HEADING}>Chunks</h3>
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search chunks…"
-            className="max-w-sm"
-          />
-          <FieldHelp helpKey="knowledge.chunk_search" route="knowledge" />
-          <div className="flex gap-1">
-            {(['literal', 'vector'] as ChunkSearchMode[]).map((m) => (
-              <Button
-                key={m}
-                size="sm"
-                variant={mode === m ? 'default' : 'outline'}
-                onClick={() => setMode(m)}
-              >
-                {m}
-              </Button>
-            ))}
-          </div>
-        </div>
-        {searching && search.data?.degraded && (
-          <p className="flex items-center gap-1.5 text-xs text-amber-600">
-            <TriangleAlert className="size-3.5" />
-            Vector search is unavailable for this agent — showing literal (BM25) results.
-          </p>
-        )}
-        <QueryState<ChunkPage | ChunkSearchResponse>
-          query={searching ? search : browse}
-          isEmpty={(d) => d.items.length === 0}
-          empty={
-            <EmptyState
-              icon={<FileText className="size-5" />}
-              title={searching ? 'No matching chunks' : 'No chunks indexed'}
-              description={
-                searching
-                  ? undefined
-                  : 'This connection has indexed no document chunks. Run a sync from the Sources tab.'
-              }
-            />
-          }
-        >
-          {(data) => (
-            <ul className="space-y-2">
-              {data.items.map((c) => (
-                <li
-                  key={c.chunk_id}
-                  className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <MonoChip>{c.source || c.chunk_id}</MonoChip>
-                    <Chip>{c.classification}</Chip>
-                    {c.truncated && <Chip>truncated</Chip>}
-                  </div>
-                  <p className="whitespace-pre-wrap text-sm text-foreground">{c.text}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryState>
       </section>
     </div>
   )
 }
 
-// --- Datastore --------------------------------------------------------------
+// --- Browse: a datastore source ---------------------------------------------
 
-function DatastoreLookup({ agentId }: { agentId: string }) {
-  const [source, setSource] = useState('')
+const LOOKUP_OPERATIONS: Array<{ value: DatastoreOp; label: string }> = [
+  { value: 'get_record', label: 'Get one record by id' },
+  { value: 'find', label: 'Find records by value' },
+  { value: 'list', label: 'List records' },
+]
+
+/** A live read of one record, row set, or listing from the picked datastore. */
+function RecordLookup({ agentId, source }: { agentId: string; source: string }) {
   const [table, setTable] = useState('')
   const [op, setOp] = useState<DatastoreOp>('get_record')
   const [pkValue, setPkValue] = useState('')
@@ -1056,26 +939,23 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
   if (op !== 'get_record' && limit) args.limit = limit
 
   const result = useDatastoreQuery(agentId, source, op, table, args)
+  const field = 'w-full min-w-0 sm:w-40'
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} />
-        <Input
-          value={table}
-          onChange={(e) => setTable(e.target.value)}
-          placeholder="table"
-          className="w-40"
-        />
+        <Input value={table} onChange={(e) => setTable(e.target.value)} placeholder="Table name" aria-label="Table name" className={field} />
         <FieldHelp helpKey="knowledge.datastore.table" route="knowledge" />
         <Select value={op} onValueChange={(v) => setOp(v as DatastoreOp)}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-full sm:w-56" aria-label="What to look up">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="get_record">get_record</SelectItem>
-            <SelectItem value="find">find</SelectItem>
-            <SelectItem value="list">list</SelectItem>
+            {LOOKUP_OPERATIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <FieldHelp helpKey="knowledge.datastore.operation" route="knowledge" />
@@ -1083,49 +963,27 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
       <div className="flex flex-wrap items-center gap-2">
         {op === 'get_record' && (
           <>
-            <Input
-              value={pkValue}
-              onChange={(e) => setPkValue(e.target.value)}
-              placeholder="pk_value"
-              className="w-40"
-            />
+            <Input value={pkValue} onChange={(e) => setPkValue(e.target.value)} placeholder="Record id" aria-label="Record id" className={field} />
             <FieldHelp helpKey="knowledge.datastore.primary_key" route="knowledge" />
           </>
         )}
         {op === 'find' && (
           <>
-            <Input
-              value={column}
-              onChange={(e) => setColumn(e.target.value)}
-              placeholder="column"
-              className="w-40"
-            />
+            <Input value={column} onChange={(e) => setColumn(e.target.value)} placeholder="Column" aria-label="Column" className={field} />
             <FieldHelp helpKey="knowledge.datastore.column" route="knowledge" />
-            <Input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="value"
-              className="w-40"
-            />
+            <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Value to find" aria-label="Value to find" className={field} />
             <FieldHelp helpKey="knowledge.datastore.value" route="knowledge" />
           </>
         )}
         {op !== 'get_record' && (
           <>
-            <Input
-              value={limit}
-              onChange={(e) => setLimit(e.target.value)}
-              placeholder="limit"
-              className="w-28"
-            />
+            <Input value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="How many" aria-label="How many" className="w-full min-w-0 sm:w-28" />
             <FieldHelp helpKey="knowledge.datastore.limit" route="knowledge" />
           </>
         )}
       </div>
-      {!source || !table ? (
-        <p className="text-xs text-muted-foreground">
-          Pick a source and enter a table to run a live read.
-        </p>
+      {!table ? (
+        <p className="text-xs text-muted-foreground">Enter a table name to read from this datastore.</p>
       ) : (
         <QueryState
           query={result}
@@ -1139,109 +997,115 @@ function DatastoreLookup({ agentId }: { agentId: string }) {
   )
 }
 
-function DatastoreSection({ agentId }: { agentId: string }) {
-  const tables = useDatastoreTables(agentId)
+/** The picked datastore: its tables and schema, the chunks it has indexed, and a
+ *  way to look up one record. Schema is read from the persisted ontology, so it
+ *  works with the backing database unreachable; chunk search degrades loudly. */
+function DatastoreBrowse({ agentId, source }: { agentId: string; source: string }) {
+  const [q, setQ] = useState('')
+  const [mode, setMode] = useState<ChunkSearchMode>('literal')
+  const tables = useConnectionTables(agentId, source)
+  const browse = useConnectionChunks(agentId, source)
+  const search = useConnectionChunkSearch(agentId, source, q, mode)
+  const searching = q.trim().length > 0
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <section className="space-y-2">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Tables
-        </h3>
+        <h3 className={SECTION_HEADING}>Tables</h3>
         <QueryState
           query={tables}
           isEmpty={(d) => d.items.length === 0}
-          empty={
-            <EmptyState
-              icon={<Database className="size-5" />}
-              title="No datastore tables"
-              description="No connected datastore has been introspected for this agent."
-            />
-          }
+          empty={<p className="text-xs text-muted-foreground">This datastore exposes no tables yet.</p>}
         >
           {(data) => <EntityTable items={data.items} typeLabel="Type" />}
         </QueryState>
       </section>
+
       <section className="space-y-2">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Lookup
-        </h3>
-        <DatastoreLookup agentId={agentId} />
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className={SECTION_HEADING}>Indexed chunks</h3>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search chunks…"
+            aria-label="Search chunks"
+            className="w-full max-w-sm"
+          />
+          <FieldHelp helpKey="knowledge.chunk_search" route="knowledge" />
+          <div className="flex gap-1">
+            {(['literal', 'vector'] as ChunkSearchMode[]).map((m) => (
+              <Button key={m} size="sm" variant={mode === m ? 'default' : 'outline'} aria-pressed={mode === m} onClick={() => setMode(m)}>
+                {m === 'literal' ? 'Exact words' : 'By meaning'}
+              </Button>
+            ))}
+          </div>
+        </div>
+        {searching && search.data?.degraded && (
+          <p className="flex items-center gap-1.5 text-xs text-amber-600">
+            <TriangleAlert className="size-3.5" />
+            Search by meaning is unavailable for this agent, so these are exact-word results.
+          </p>
+        )}
+        <QueryState<ChunkPage | ChunkSearchResponse>
+          query={searching ? search : browse}
+          isEmpty={(d) => d.items.length === 0}
+          empty={
+            <p className="text-xs text-muted-foreground">
+              {searching ? 'No matching chunks.' : 'Nothing is indexed from this datastore yet. Run a sync from the Sources tab.'}
+            </p>
+          }
+        >
+          {(data) => (
+            <ul className="space-y-2">
+              {data.items.map((c) => (
+                <li key={c.chunk_id} className="min-w-0 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <MonoChip>{c.source || c.chunk_id}</MonoChip>
+                    <Chip>{c.classification}</Chip>
+                    {c.truncated && <Chip>truncated</Chip>}
+                  </div>
+                  <p className="whitespace-pre-wrap break-words text-sm text-foreground">{c.text}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className={SECTION_HEADING}>Look up a record</h3>
+        <RecordLookup agentId={agentId} source={source} />
       </section>
     </div>
   )
 }
 
-// --- Blob folders -----------------------------------------------------------
+// --- Browse: advanced -------------------------------------------------------
 
-function BlobSection({ agentId }: { agentId: string }) {
-  const [source, setSource] = useState('')
-  const [query, setQuery] = useState('')
-  const folders = useBlobFolders(agentId, source || undefined)
-  const visible = (folders.data?.items ?? []).filter((folder) =>
-    `${folder.name} ${folder.facts.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()),
-  )
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} placeholder="All sources" />
-        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter folders and objects…" className="max-w-sm" />
-      </div>
-      <QueryState
-        query={folders}
-        isEmpty={() => visible.length === 0}
-        empty={
-          <EmptyState
-            icon={<FolderTree className="size-5" />}
-            title={query ? 'No matching blob folders' : 'No blob folders'}
-            description="Choose a source mapped to blob storage, then browse its indexed folder inventory."
-          />
-        }
-      >
-        {() => (
-          <ul className="space-y-2">
-            {visible.map((f) => (
-              <li key={f.slug} className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-foreground">{f.name}</span>
-                  <Chip>{f.classification}</Chip>
-                </div>
-                <FactList facts={f.facts} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </QueryState>
-    </div>
-  )
-}
-
-// --- Provenance -------------------------------------------------------------
-
-function ProvenanceSection({ agentId }: { agentId: string }) {
+function TraceItem({ agentId }: { agentId: string }) {
   const [itemId, setItemId] = useState('')
   const trimmed = itemId.trim()
   const prov = useProvenance(agentId, trimmed || null)
 
   return (
     <div className="space-y-3">
-      <Input
-        value={itemId}
-        onChange={(e) => setItemId(e.target.value)}
-        placeholder="Canonical item id…"
-        className="max-w-md"
-      />
-      <FieldHelp helpKey="knowledge.provenance.item_id" route="knowledge" />
-      {!trimmed ? (
-        <EmptyState
-          icon={<Waypoints className="size-5" />}
-          title="Enter an item id"
-          description="Type a canonical item id to see every source that claims it."
+      <div className="flex items-center gap-2">
+        <Input
+          value={itemId}
+          onChange={(e) => setItemId(e.target.value)}
+          placeholder="Item id…"
+          aria-label="Item id"
+          className="w-full max-w-md"
         />
+        <FieldHelp helpKey="knowledge.provenance.item_id" route="knowledge" />
+      </div>
+      {!trimmed ? (
+        <p className="text-xs text-muted-foreground">Type an item id to see every source that claims it.</p>
       ) : (
         <QueryState
           query={prov}
           isEmpty={(d) => d.items.length === 0}
-          empty={<EmptyState title="No provenance recorded" />}
+          empty={<p className="text-xs text-muted-foreground">No sources are recorded for this item.</p>}
         >
           {(data) => (
             <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
@@ -1260,9 +1124,7 @@ function ProvenanceSection({ agentId }: { agentId: string }) {
                       <td className="px-3 py-2 align-top">
                         <MonoChip>{p.external_id || '—'}</MonoChip>
                       </td>
-                      <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-                        {p.classification}
-                      </td>
+                      <td className="px-3 py-2 align-top text-xs text-muted-foreground">{p.classification}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1275,205 +1137,50 @@ function ProvenanceSection({ agentId }: { agentId: string }) {
   )
 }
 
-// --- Profile review ---------------------------------------------------------
+function AdvancedBrowse({ agentId }: { agentId: string }) {
+  return (
+    <details className="rounded-lg border border-border bg-card/40 px-3 py-2">
+      <summary className="cursor-pointer text-sm font-medium text-foreground">Advanced</summary>
+      <div className="mt-3 space-y-2">
+        <h3 className={SECTION_HEADING}>Trace an item id</h3>
+        <TraceItem agentId={agentId} />
+      </div>
+    </details>
+  )
+}
 
-function ProfileReviewSection({ agentId }: { agentId: string }) {
-  const [status, setStatus] = useState('pending')
+/** One source picker, then the view that fits what the source is. */
+function BrowseSection({ agentId }: { agentId: string }) {
+  const sources = useConnectedSources(agentId)
   const [source, setSource] = useState('')
-  const reviews = useProfileReviews(agentId, status, source)
-  const resolve = useResolveProfileReview(agentId)
+  const picked = (sources.data?.items ?? []).find((s) => s.source_id === source)
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="pending">Pending review</SelectItem>
-            <SelectItem value="approved">Approved profile</SelectItem>
-            <SelectItem value="declined">Declined</SelectItem>
-            <SelectItem value="undone">Undone</SelectItem>
-          </SelectContent>
-        </Select>
-        <FieldHelp helpKey="knowledge.mapping.status" route="knowledge" />
-        <SourceSelect agentId={agentId} value={source} onChange={setSource} placeholder="All sources" />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Inferred profile facts never enter agent context until you approve them. Approved facts are the only profile facts agents can recall.
-      </p>
-      <QueryState
-        query={reviews}
-        isEmpty={(data) => data.items.length === 0}
-        empty={<EmptyState title={status === 'pending' ? 'No profile facts awaiting review' : 'No profile facts in this state'} />}
-      >
-        {(data) => (
-          <ul className="space-y-2">
-            {data.items.map((item) => (
-              <li key={item.fact_id} className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">{item.field}</span>
-                  <Chip>{item.kind}</Chip><Chip>{item.classification}</Chip><Chip>{item.status}</Chip>
-                  <span className="font-mono text-[11px] text-muted-foreground">{item.source_id}</span>
-                </div>
-                <p className="text-sm text-foreground">{item.value}</p>
-                <div className="flex flex-wrap gap-2">
-                  {item.status === 'pending' && (
-                    <>
-                      <Button size="sm" disabled={resolve.isPending} onClick={() => resolve.mutate({ factId: item.fact_id, decision: 'approve' })}>
-                        <ShieldCheck className="size-3.5" /> Approve
-                      </Button>
-                      <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => resolve.mutate({ factId: item.fact_id, decision: 'decline' })}>
-                        <ShieldX className="size-3.5" /> Decline
-                      </Button>
-                    </>
-                  )}
-                  {item.status === 'approved' && (
-                    <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => resolve.mutate({ factId: item.fact_id, decision: 'undo' })}>
-                      <RotateCcw className="size-3.5" /> Undo approval
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <SourceSelect agentId={agentId} value={source} onChange={setSource} placeholder="Pick a source" />
+        {!source ? (
+          <EmptyState
+            icon={<Library className="size-5" />}
+            title="Pick a source"
+            description="Choose a connected source to see its folders, documents or tables."
+          />
+        ) : isDatastoreKind(picked?.source_kind ?? '') ? (
+          <DatastoreBrowse key={source} agentId={agentId} source={source} />
+        ) : (
+          <FileSourceBrowse key={source} agentId={agentId} source={source} />
         )}
-      </QueryState>
-      {resolve.isError && <p role="alert" className="text-xs text-destructive">{resolve.error.message}</p>}
-    </div>
-  )
-}
-
-// --- Index health -----------------------------------------------------------
-
-function HealthTile({
-  label,
-  value,
-  icon,
-}: {
-  label: string
-  value: ReactNode
-  icon: ReactNode
-}) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2">
-      <span className="shrink-0 text-muted-foreground/70">{icon}</span>
-      <div className="min-w-0">
-        <div className="font-display text-lg font-bold leading-none tabular-nums tracking-tight text-foreground">
-          {value}
-        </div>
-        <div className="truncate text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          {label}
-        </div>
       </div>
+      <AdvancedBrowse agentId={agentId} />
     </div>
-  )
-}
-
-const yesNo = (b: boolean) => (b ? 'On' : 'Off')
-
-function HealthSection({ agentId }: { agentId: string }) {
-  const health = useIndexHealth(agentId)
-  return (
-    <QueryState query={health} isEmpty={(d) => d.item == null}>
-      {(data) => {
-        const s = data.item
-        return (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <HealthTile
-                label="Semantic recall"
-                value={yesNo(s.live)}
-                icon={<Activity className="size-4" />}
-              />
-              <HealthTile
-                label="vec extension"
-                value={yesNo(s.vec_extension)}
-                icon={<Database className="size-4" />}
-              />
-              <HealthTile
-                label={`Embedder (${s.embedder_backend})`}
-                value={yesNo(s.embedder_live)}
-                icon={<Plug className="size-4" />}
-              />
-              <HealthTile
-                label="Embedding dims"
-                value={s.embedder_dims ?? '—'}
-                icon={<Waypoints className="size-4" />}
-              />
-            </div>
-
-            {s.detail && <p className="text-xs text-muted-foreground">{s.detail}</p>}
-
-            {s.degraded_reasons.length > 0 && (
-              <section className="space-y-2">
-                <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Degraded
-                </h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {s.degraded_reasons.map((r) => (
-                    <span
-                      key={r}
-                      className="rounded-full border border-status-warning/30 bg-status-warning/15 px-2 py-0.5 text-xs text-status-warning"
-                    >
-                      {r}
-                    </span>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            <section className="space-y-2">
-              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                Workspaces
-              </h3>
-              {s.workspaces.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No indexed workspace.</p>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40">
-                      <tr className="border-b border-border">
-                        <Th>Workspace</Th>
-                        <Th>Indexed chunks</Th>
-                        <Th>Embedded chunks</Th>
-                        <Th>Insight triggers</Th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {s.workspaces.map((w) => (
-                        <tr key={w.workspace}>
-                          <td className="max-w-xs truncate px-3 py-2 align-top font-mono text-xs text-muted-foreground">
-                            {w.workspace}
-                          </td>
-                          <td className="px-3 py-2 align-top tabular-nums text-foreground">
-                            {w.indexed_chunks}
-                          </td>
-                          <td className="px-3 py-2 align-top tabular-nums text-foreground">
-                            {w.embedded_chunks}
-                          </td>
-                          <td className="px-3 py-2 align-top tabular-nums text-muted-foreground">
-                            {w.insight_triggers}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          </div>
-        )
-      }}
-    </QueryState>
   )
 }
 
 // --- Browser shell ----------------------------------------------------------
 
-/** The Connections offshoot of Knowledge (SPEC-073): read-only views of an
- *  agent's connected data sources — sources and their routing, indexed
- *  documents, connected datastores, blob folders, item provenance, and the
- *  honest index-health probe. */
+/** The Connections offshoot of Knowledge (SPEC-073): an agent's connected data
+ *  sources and their health, a browser that fits each source's kind, and the
+ *  guides agents use to find their way around each connection. */
 export function ConnectionsBrowser({
   agentId,
   initialConnectionId,
@@ -1494,29 +1201,11 @@ export function ConnectionsBrowser({
       <TabsContent value="sources">
         <SourcesSection agentId={agentId} initialConnectionId={initialConnectionId} />
       </TabsContent>
-      <TabsContent value="explorer">
-        <ConnectionExplorerSection agentId={agentId} />
+      <TabsContent value="browse">
+        <BrowseSection agentId={agentId} />
       </TabsContent>
-      <TabsContent value="repository">
-        <RepoIndexSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="documents">
-        <DocumentsSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="datastore">
-        <DatastoreSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="blob">
-        <BlobSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="provenance">
-        <ProvenanceSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="reviews">
-        <ProfileReviewSection agentId={agentId} />
-      </TabsContent>
-      <TabsContent value="health">
-        <HealthSection agentId={agentId} />
+      <TabsContent value="guides">
+        <GuidesSection agentId={agentId} />
       </TabsContent>
     </Tabs>
   )

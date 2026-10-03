@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarClock, HeartPulse, PackageCheck, Plug, ShieldCheck } from 'lucide-react'
+import { CalendarClock, HeartPulse, PackageCheck, Plug, ShieldCheck, UserCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DiffBlock } from '@/components/pulse-panel'
+import { ProfileReviewSection } from '@/components/profile-review-section'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ApiError } from '@/lib/api'
 import { agentLabel, grantName } from '@/lib/agent-names'
 import { humanizeInterval } from '@/lib/schedule-format'
@@ -11,6 +13,7 @@ import {
   useApproveAgentSchedule,
   useConnections,
   useHomeNeeds,
+  usePendingProfileReviewCounts,
   useRoster,
   type HomeNeedsPulse,
   type HomeNeedsSchedule,
@@ -153,6 +156,36 @@ function ScheduleRow({ item, operatorMode }: { item: HomeNeedsSchedule; operator
   )
 }
 
+/** Inferred profile facts wait here until an operator approves them; the review
+ *  panel opens in place, so approving never leaves the inbox. */
+function ProfileReviewRow({ agentId, label, count }: { agentId: string; label: string; count: number }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <InboxRow
+      testId={`needs-profile-${agentId}`}
+      icon={<UserCheck className="size-4" />}
+      agent={label}
+      title={`${count} profile fact${count === 1 ? '' : 's'} waiting for review`}
+      why="Facts Arc worked out about a person never reach the agent until you approve them."
+    >
+      <Button size="sm" variant="outline" aria-label={`Review profile facts for ${label}`} onClick={() => setOpen(true)}>
+        Review
+      </Button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+          <SheetHeader className="border-b border-border px-5 py-4">
+            <SheetTitle className="text-sm">Profile facts waiting for review</SheetTitle>
+            <SheetDescription>{label}</SheetDescription>
+          </SheetHeader>
+          <div className="min-w-0 flex-1 overflow-auto p-5">
+            <ProfileReviewSection agentId={agentId} />
+          </div>
+        </SheetContent>
+      </Sheet>
+    </InboxRow>
+  )
+}
+
 /**
  * The operator's one "Needs you" inbox. Pulse checks and schedules approve
  * inline through their own routes; connections that need you, new tool
@@ -161,11 +194,13 @@ function ScheduleRow({ item, operatorMode }: { item: HomeNeedsSchedule; operator
  */
 export function NeedsYouInbox({ operatorMode }: { operatorMode: boolean }) {
   const needs = useHomeNeeds().data
-  const names = new Map(
-    (useRoster().data?.agents ?? []).map((a) => [grantName(a), agentLabel(a)] as const),
-  )
+  const rosterAgents = useRoster().data?.agents ?? []
+  const names = new Map(rosterAgents.map((a) => [grantName(a), agentLabel(a)] as const))
   const connections = (useConnections().data?.connections ?? []).filter(
     (c) => c.display_status === 'needs_you',
+  )
+  const profileReviews = usePendingProfileReviewCounts(rosterAgents.map((a) => String(a.agent_id))).filter(
+    (r) => r.count > 0,
   )
   const pulse = needs?.pulse.items ?? []
   const schedules = needs?.schedules.items ?? []
@@ -200,6 +235,14 @@ export function NeedsYouInbox({ operatorMode }: { operatorMode: boolean }) {
               {c.action_label || 'Open connection'}
             </Link>
           </InboxRow>
+        ))}
+        {profileReviews.map((r) => (
+          <ProfileReviewRow
+            key={r.agentId}
+            agentId={r.agentId}
+            label={agentLabel(rosterAgents.find((a) => String(a.agent_id) === r.agentId)!)}
+            count={r.count}
+          />
         ))}
         {capabilities > 0 && (
           <InboxRow

@@ -1,15 +1,20 @@
 import { useEffect, useRef } from 'react'
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
 import { auditQuery, type AuditFilters } from './audit-query'
 import type {
   AgentConnectorsResponse,
+  ConnectionGuide,
+  ConnectionGuideHistory,
+  ConnectionGuideStarter,
   ConnectionsResponse,
   ConnectorApproveResponse,
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
   ConnectorInstance,
   OAuthAppBody,
+  SemanticLayerDocument,
+  SemanticLayerSaved,
   PublicAddressResponse,
   TlsBody,
   TlsStatus,
@@ -2188,3 +2193,87 @@ export const useRemoveTls = () => {
     onSuccess: (saved) => queryClient.setQueryData(TLS_KEY, saved),
   })
 }
+
+// --- Connection navigation guides ----------------------------------------------
+// One signed markdown guide per connection: what agents read to find their way
+// around that source. Saving signs it with the operator key server side.
+
+const guideKey = (instance: string) => ['connections', instance, 'guide']
+
+export const useConnectionGuide = (instance: string | null) =>
+  useQuery<ConnectionGuide>({
+    queryKey: guideKey(instance ?? ''),
+    queryFn: ({ signal }) => apiGet(connectionPath(instance!, '/guide'), signal),
+    enabled: !!instance,
+  })
+
+export const useSaveConnectionGuide = (instance: string) => {
+  const client = useQueryClient()
+  return useMutation<ConnectionGuide, Error, string>({
+    mutationFn: (content) => apiPut(connectionPath(instance, '/guide'), { content }),
+    onSuccess: (saved) => {
+      client.setQueryData(guideKey(instance), saved)
+      return client.invalidateQueries({ queryKey: [...guideKey(instance), 'history'] })
+    },
+  })
+}
+
+// Only fetched while the History list is open, like the other on-demand reads.
+export const useConnectionGuideHistory = (instance: string, enabled: boolean) =>
+  useQuery<ConnectionGuideHistory>({
+    queryKey: [...guideKey(instance), 'history'],
+    queryFn: ({ signal }) => apiGet(connectionPath(instance, '/guide/history'), signal),
+    enabled,
+  })
+
+export const useRestoreConnectionGuide = (instance: string) => {
+  const client = useQueryClient()
+  return useMutation<ConnectionGuide, Error, number>({
+    mutationFn: (version) => apiPost(connectionPath(instance, '/guide/restore'), { version }),
+    onSuccess: () => client.invalidateQueries({ queryKey: guideKey(instance) }),
+  })
+}
+
+export const useConnectionGuideStarter = (instance: string) =>
+  useMutation<ConnectionGuideStarter, Error, void>({
+    mutationFn: () => apiGet(connectionPath(instance, '/guide/starter')),
+  })
+
+// --- Table meanings (the datastore semantic layer) ------------------------------
+
+const semanticLayerKey = (instance: string) => ['connections', instance, 'semantic-layer']
+
+export const useSemanticLayer = (instance: string | null) =>
+  useQuery<SemanticLayerDocument>({
+    queryKey: semanticLayerKey(instance ?? ''),
+    queryFn: ({ signal }) => apiGet(connectionPath(instance!, '/semantic-layer'), signal),
+    enabled: !!instance,
+  })
+
+export const useSaveSemanticLayer = (instance: string) => {
+  const client = useQueryClient()
+  return useMutation<SemanticLayerSaved, Error, string>({
+    mutationFn: (content) => apiPut(connectionPath(instance, '/semantic-layer'), { content }),
+    onSuccess: () => client.invalidateQueries({ queryKey: semanticLayerKey(instance) }),
+  })
+}
+
+// --- Profile facts waiting for review, across the fleet ------------------------
+// The Needs-you inbox is fleet-wide, but the review route is per agent. An agent
+// without the Knowledge module answers with an error; that reads as "none".
+
+export const usePendingProfileReviewCounts = (agentIds: string[]) =>
+  useQueries({
+    queries: agentIds.map((agentId) => ({
+      queryKey: ['agent', agentId, 'knowledge', 'profile-reviews', 'pending', ''],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        apiGet<ProfileReviewsResponse>(
+          `/api/agents/${agentId}/knowledge/profile-reviews?status=pending`,
+          signal,
+        ),
+      refetchInterval: 30_000,
+      retry: false,
+    })),
+    combine: (results) =>
+      results.map((r, i) => ({ agentId: agentIds[i], count: r.data?.items?.length ?? 0 })),
+  })
