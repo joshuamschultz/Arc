@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,8 @@ _DEFAULT_QUEUE_MAXSIZE = 100
 _DEFAULT_RING_MAXLEN = 200
 _DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 _OBSERVER_PAGE_LIMIT = 500
+_DEFAULT_POLL_TIMEOUT_SECONDS = 15.0
+_MAX_BACKOFF_SECONDS = 30.0
 
 
 def default_handle_of(ref: str) -> str:
@@ -231,13 +233,44 @@ class TeamBusObserver:
                 published += 1
         return published
 
-    async def run(self, *, interval: float = _DEFAULT_POLL_INTERVAL_SECONDS) -> None:
-        """Poll the bus forever at ``interval``. Fail-open on transient errors."""
+    async def run(
+        self,
+        *,
+        interval: float = _DEFAULT_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = _DEFAULT_POLL_TIMEOUT_SECONDS,
+        max_backoff: float = _MAX_BACKOFF_SECONDS,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        """Poll the bus forever. One poll at a time, each bounded by ``poll_timeout``.
+
+        Fail-open on transient errors. The loop awaits each poll before the
+        next, and a timed-out poll is cancelled, so polls can never stack. A
+        timeout is expected under event-loop load (the broker itself answers in
+        well under a millisecond), so it logs one WARNING per outage with the
+        trace at DEBUG, backs off exponentially up to ``max_backoff``, and
+        returns to ``interval`` as soon as a poll succeeds.
+        """
+        failures = 0
         while True:
             try:
-                await self.poll_once()
+                await asyncio.wait_for(self.poll_once(), timeout=poll_timeout)
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:  # nats.errors.TimeoutError subclasses it too
+                failures += 1
+                self._log_failure(failures, f"timed out after {poll_timeout:g}s")
             except Exception:  # reason: fail-open — a bus hiccup must not kill the view
-                logger.exception("TeamBusObserver: poll failed; retrying")
-            await asyncio.sleep(interval)
+                failures += 1
+                self._log_failure(failures, "failed")
+            else:
+                if failures:
+                    logger.info("TeamBusObserver: bus answering again after %d failures", failures)
+                failures = 0
+            await sleep(min(interval * 2**failures, max_backoff) if failures else interval)
+
+    @staticmethod
+    def _log_failure(failures: int, what: str) -> None:
+        """WARNING once per outage, no traceback; the trace stays at DEBUG."""
+        if failures == 1:
+            logger.warning("TeamBusObserver: poll %s; backing off and retrying", what)
+        logger.debug("TeamBusObserver: poll %s (%d in a row)", what, failures, exc_info=True)
