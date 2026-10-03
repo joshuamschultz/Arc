@@ -52,6 +52,7 @@ class _Server:
         ]
     )
     approve_status: int = 200
+    write_status: int = 200
     requests: list[httpx.Request] = field(default_factory=list)
 
     def respond(self, request: httpx.Request) -> httpx.Response:
@@ -65,6 +66,10 @@ class _Server:
             return httpx.Response(401, json={"error": "unauthenticated"})
         if request.method == "GET" and path == LIST_PATH:
             return httpx.Response(200, json={"checks": self.checks, "authority_available": True})
+        if request.method == "POST" and path == LIST_PATH:
+            return httpx.Response(self.write_status, json={"check": "x", "status": "unapproved"})
+        if request.method in ("PUT", "DELETE") and path.startswith(LIST_PATH + "/"):
+            return httpx.Response(self.write_status, json={"check": "x"})
         if request.method == "POST" and path == APPROVE_PATH:
             if self.approve_status != 200:
                 return httpx.Response(self.approve_status, json={"error": "pulse check changed"})
@@ -248,3 +253,175 @@ def test_session_token_and_password_are_never_printed(
     captured = capsys.readouterr()
     for secret in (TOKEN, PASSWORD):
         assert secret not in captured.out and secret not in captured.err
+
+
+# -- add / edit / remove -----------------------------------------------------------
+
+
+def _writes(server: _Server) -> list[httpx.Request]:
+    return [
+        r
+        for r in server.requests
+        if r.url.path.startswith(LIST_PATH)
+        and r.method in ("POST", "PUT", "DELETE")
+        and r.url.path != APPROVE_PATH
+    ]
+
+
+def test_add_with_minimum_args_posts_the_check(server: _Server) -> None:
+    code = _run(
+        "add", "--agent", "olivia", "--email", EMAIL,
+        "--name", "inbox", "--every", "30", "--action", "Sweep the inbox",
+    )  # fmt: skip
+
+    assert code == 0
+    [req] = _writes(server)
+    assert (req.method, req.url.path) == ("POST", LIST_PATH)
+    assert json.loads(req.content) == {
+        "name": "inbox",
+        "interval_minutes": 30,
+        "action": "Sweep the inbox",
+    }
+
+
+def test_add_accepts_hours_and_days(server: _Server) -> None:
+    _run(
+        "add",
+        "--agent",
+        "olivia",
+        "--email",
+        EMAIL,
+        "--name",
+        "a",
+        "--every",
+        "2h",
+        "--action",
+        "x",
+    )
+    _run(
+        "add",
+        "--agent",
+        "olivia",
+        "--email",
+        EMAIL,
+        "--name",
+        "b",
+        "--every",
+        "1d",
+        "--action",
+        "x",
+    )
+
+    assert [json.loads(r.content)["interval_minutes"] for r in _writes(server)] == [120, 1440]
+
+
+def test_add_rejects_a_bad_interval_before_login(server: _Server) -> None:
+    code = _run(
+        "add",
+        "--agent",
+        "olivia",
+        "--email",
+        EMAIL,
+        "--name",
+        "a",
+        "--every",
+        "soon",
+        "--action",
+        "x",
+    )
+
+    assert code != 0
+    assert server.requests == []
+
+
+def test_add_requires_name_every_and_action(server: _Server) -> None:
+    assert _run("add", "--agent", "olivia", "--email", EMAIL, "--name", "a") != 0
+    assert server.requests == []
+
+
+def test_add_without_agent_and_email_is_refused(server: _Server) -> None:
+    assert _run("add", "--name", "a", "--every", "5", "--action", "x") != 0
+    assert server.requests == []
+
+
+def test_add_prints_that_approval_is_pending(
+    server: _Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(
+        "add",
+        "--agent",
+        "olivia",
+        "--email",
+        EMAIL,
+        "--name",
+        "a",
+        "--every",
+        "5",
+        "--action",
+        "x",
+    )
+
+    assert "pending approval" in capsys.readouterr().out
+
+
+def test_add_server_refusal_is_a_failure(server: _Server) -> None:
+    server.write_status = 409
+
+    assert (
+        _run(
+            "add",
+            "--agent",
+            "olivia",
+            "--email",
+            EMAIL,
+            "--name",
+            "a",
+            "--every",
+            "5",
+            "--action",
+            "x",
+        )
+        != 0
+    )
+
+
+def test_edit_sends_the_digest_it_listed_and_keeps_unchanged_fields(server: _Server) -> None:
+    code = _run("edit", "--agent", "olivia", "--email", EMAIL, "--name", "health", "--every", "15")
+
+    assert code == 0
+    [req] = _writes(server)
+    assert (req.method, req.url.path) == ("PUT", f"{LIST_PATH}/health")
+    assert json.loads(req.content) == {
+        "interval_minutes": 15,
+        "action": "Sweep",
+        "definition_digest": "digest-health",
+    }
+
+
+def test_edit_unknown_check_fails_without_writing(server: _Server) -> None:
+    assert (
+        _run("edit", "--agent", "olivia", "--email", EMAIL, "--name", "ghost", "--every", "15")
+        != 0
+    )
+    assert _writes(server) == []
+
+
+def test_edit_without_a_change_is_refused(server: _Server) -> None:
+    assert _run("edit", "--agent", "olivia", "--email", EMAIL, "--name", "health") != 0
+    assert _writes(server) == []
+
+
+def test_remove_yes_deletes_with_the_digest(server: _Server) -> None:
+    code = _run("remove", "--agent", "olivia", "--email", EMAIL, "--name", "health", "--yes")
+
+    assert code == 0
+    [req] = _writes(server)
+    assert (req.method, req.url.path) == ("DELETE", f"{LIST_PATH}/health")
+    assert json.loads(req.content) == {"definition_digest": "digest-health"}
+
+
+def test_remove_declined_deletes_nothing(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    _answer(monkeypatch, "n")
+
+    assert _run("remove", "--agent", "olivia", "--email", EMAIL, "--name", "health") != 0
+    assert _writes(server) == []

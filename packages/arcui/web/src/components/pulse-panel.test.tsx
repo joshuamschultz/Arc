@@ -106,9 +106,9 @@ describe('PulsePanel', () => {
     })
     renderPanel()
 
-    await screen.findByRole('heading', { name: /pulse approvals/i })
+    await screen.findByRole('heading', { name: /pulse checks/i })
     expect(await screen.findByText('health')).toBeTruthy()
-    expect(screen.getByText(/unapproved/i)).toBeTruthy()
+    expect(screen.getByText(/^pending approval$/i)).toBeTruthy()
     expect(screen.getByText(/changes pending approval/i)).toBeTruthy()
     expect(screen.getByText(/last ran revision 2/i)).toBeTruthy()
   })
