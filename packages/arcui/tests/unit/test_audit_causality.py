@@ -62,17 +62,24 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 class TestUiAttribution:
-    def test_a_page_view_is_attributed_to_the_ui_session_not_the_operator(
+    def test_a_page_view_writes_no_chain_row(
         self, ui: tuple[TestClient, MutationWormWriter], tmp_path: Path
     ) -> None:
         client, writer = ui
         assert client.get("/api/keys", headers=_bearer("viewer")).status_code == 200
         writer.sink.close()
+        actions = [r["event"]["action"] for r in _chain_events(tmp_path / "data")]
+        assert "provider_key.list" not in actions
+
+    def test_a_mutation_is_attributed_to_the_ui_session_not_the_operator(
+        self, ui: tuple[TestClient, MutationWormWriter], tmp_path: Path
+    ) -> None:
+        client, writer = ui
+        assert client.post("/api/x/mutate", headers=_bearer("viewer")).status_code == 200
+        writer.sink.close()
 
         (record,) = [
-            r
-            for r in _chain_events(tmp_path / "data")
-            if r["event"]["action"] == "provider_key.list"
+            r for r in _chain_events(tmp_path / "data") if r["event"]["action"] == "task.cancel"
         ]
         event = record["event"]
         assert event["actor_did"] != writer.operator_did
@@ -98,13 +105,13 @@ class TestUiAttribution:
         self, ui: tuple[TestClient, MutationWormWriter], tmp_path: Path
     ) -> None:
         client, writer = ui
-        client.get("/api/keys", headers=_bearer("viewer"))
-        client.get("/api/keys", headers=_bearer("operator"))
+        client.post("/api/x/mutate", headers=_bearer("viewer"))
+        client.post("/api/x/mutate", headers=_bearer("operator"))
         writer.sink.close()
         actors = {
             r["event"]["actor_did"]
             for r in _chain_events(tmp_path / "data")
-            if r["event"]["action"] == "provider_key.list"
+            if r["event"]["action"] == "task.cancel"
         }
         assert len(actors) == 2
 
@@ -114,9 +121,10 @@ class TestUiAttribution:
         client, writer = ui
         forged = {"initiator": "operator", "initiator_id": "did:arc:operator:root"}
         headers = {**_bearer("viewer"), "X-Arc-Causal": json.dumps(forged)}
-        client.get("/api/keys", headers=headers)
+        client.post("/api/x/mutate", headers=headers)
         writer.sink.close()
         events = [r["event"] for r in _chain_events(tmp_path / "data")]
+        assert events
         assert all(e["causal"]["initiator"] == "ui_session" for e in events)
         assert all(e["actor_did"] != "did:arc:operator:root" for e in events)
 

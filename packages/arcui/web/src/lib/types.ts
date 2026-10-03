@@ -156,8 +156,35 @@ export interface Task {
   requires_review?: boolean
 }
 
-export interface AuditEvent {
+/** The causal chain an audit row was written under (arctrust.causal, item 20). */
+export interface AuditCausal {
+  initiator?: string
+  initiator_id?: string
+  on_behalf_of?: string | null
+  run_id?: string | null
+  tool_call_id?: string | null
+  llm_call_id?: string | null
+  workflow_run_id?: string | null
+  node_id?: string | null
+  task_id?: string | null
+  connection_id?: string | null
+}
+
+/** Ledger-wide counts: every mirrored record, not the page (GET /api/team/audit). */
+export interface AuditTotals {
+  total: number
+  verified: number
+  broken: number
+}
+
+export interface AuditEvent extends AuditCausal {
   [key: string]: unknown
+  // The whole causal chain, and the same fields flattened as filterable columns.
+  causal?: AuditCausal | null
+  // Fingerprint of the key that signed this row's chain link.
+  signer?: string | null
+  // The chain this row belongs to (e.g. "audit-chain-arcui" is the operator's).
+  chain?: string
   timestamp?: string
   ts?: string
   event_type?: string
@@ -231,6 +258,14 @@ export interface StatsResponse {
 
 export interface AuditEventsResponse {
   events: AuditEvent[]
+  totals?: AuditTotals
+}
+
+/** POST /api/team/audit/reverify — what the re-walk found. */
+export interface AuditReverifyResponse {
+  events: number
+  verified: number
+  broken: number
 }
 
 export interface SessionEntry {

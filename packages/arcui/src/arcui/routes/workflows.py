@@ -62,7 +62,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit
+from arcui.audit import emit_mutation_audit, emit_read_audit
 from arcui.schemas import ErrorResponse
 
 # arcui holds no agent identity; operator-originated writes are attributed to
@@ -382,9 +382,7 @@ async def list_workflows(request: Request) -> JSONResponse:
     workflows = await plane.list_workflows(
         actor=_actor(request), include_archived=include_archived
     )
-    emit_mutation_audit(
-        request, target="workflow:list", operation="workflow.list", outcome="applied"
-    )
+    emit_read_audit(request, target="workflow:list", operation="workflow.list", outcome="ok")
     return JSONResponse({"workflows": workflows})
 
 

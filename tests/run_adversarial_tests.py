@@ -511,6 +511,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_connection_health_cas.py",
         "tests/architecture/test_connection_health_single_writer.py",
     ),
+    # P20-5: the audit trail is evidence, so a read must not write to it (a viewer
+    # could otherwise flood the signed chain), a forged causal header must not choose
+    # the actor, filter values are opaque ids (never query syntax), and only an
+    # operator may ask the ledger to re-verify itself.
+    "audit trail: read writes no chain row, forged actor, filter injection (alpha-2 P20-5)": (
+        "packages/arcui/tests/unit/test_audit_trail_api.py",
+        "packages/arcui/tests/unit/test_audit_causality.py",
+    ),
     # P12: an operator-added MCP server is third-party code on a wire or a child process.
     # The generated bundle is the trust boundary: stdio commands launch only an allowed,
     # absolute, shell-free executable; http is https-only with an SSRF guard (link-local,

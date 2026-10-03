@@ -21,6 +21,7 @@ import base64
 import binascii
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.audit import emit_mutation_audit
 from arcui.identity import resolve_agent_identity
 from arcui.observe import TaskBoardUnavailableError
 from arcui.query_validators import safe_int
@@ -502,15 +504,85 @@ async def get_audit(request: Request) -> JSONResponse:
     audit_filter = request.query_params.get("filter")
     if audit_filter is not None and audit_filter not in _AUDIT_FILTERS:
         return JSONResponse({"error": "Invalid filter"}, status_code=400)
+    causal_filters, bad = _causal_filters(request)
+    if bad is not None:
+        return JSONResponse({"error": f"Invalid {bad}"}, status_code=400)
+    roster = _roster(request)
+    agent = request.query_params.get("agent")
+    if agent is not None and not _AUDIT_VALUE_RE.match(agent):
+        return JSONResponse({"error": "Invalid agent"}, status_code=400)
     observe = request.app.state.observe
-    events = await observe.audit(limit=limit, target=target, category=audit_filter)
-    events = _attach_actor_identity(events, _roster(request))
+    events = await observe.audit(
+        agent=_agent_did(agent, roster),
+        limit=limit,
+        target=target,
+        category=audit_filter,
+        causal_filters=causal_filters,
+    )
+    events = _attach_actor_identity(events, roster)
     totals = await observe.audit_totals()
     return JSONResponse(FleetAuditResponse(events=events, totals=totals).model_dump(mode="json"))
 
 
 _AUDIT_FILTERS = frozenset({"deny", "control"})
 """``filter=`` values the Security screen's tabs send (item 20)."""
+
+_AUDIT_CAUSAL_PARAMS = (
+    "initiator",
+    "run_id",
+    "tool_call_id",
+    "llm_call_id",
+    "workflow_run_id",
+    "node_id",
+    "task_id",
+    "connection_id",
+)
+"""Query params that filter on the matching ``audit_chain`` causal column."""
+
+_AUDIT_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@=-]{1,200}$")
+"""NIST SI-10: ids are opaque tokens; anything else is refused, not escaped."""
+
+
+def _causal_filters(request: Request) -> tuple[dict[str, str], str | None]:
+    """The causal-column filters in the query, or the name of the first malformed one."""
+    found: dict[str, str] = {}
+    for name in _AUDIT_CAUSAL_PARAMS:
+        value = request.query_params.get(name)
+        if value is None:
+            continue
+        if not _AUDIT_VALUE_RE.match(value):
+            return {}, name
+        found[name] = value
+    return found, None
+
+
+def _agent_did(agent: str | None, roster: list[Any]) -> str | None:
+    """``agent`` is a DID, or a roster slug that resolves to one."""
+    if agent is None:
+        return None
+    for entry in roster:
+        if entry.did and agent in (entry.agent_id, entry.name):
+            return str(entry.did)
+    return agent
+
+
+async def reverify_audit(request: Request) -> JSONResponse:
+    """POST /api/team/audit/reverify — re-walk every chain and refresh stored verdicts.
+
+    Operator only, and itself audited: it rewrites what the Security screen shows
+    as verified, so who asked for it belongs on the chain.
+    """
+    if getattr(request.state, "role", None) != "operator":
+        return JSONResponse({"error": "Operator role required"}, status_code=403)
+    summary = await request.app.state.observe.reverify_audit()
+    emit_mutation_audit(
+        request,
+        target="audit:ledger",
+        operation="audit.reverify",
+        outcome="applied",
+        detail=json.dumps(summary, sort_keys=True),
+    )
+    return JSONResponse(summary)
 
 
 routes = [
@@ -521,4 +593,5 @@ routes = [
     Route("/api/team/tasks/summary", get_task_summary, methods=["GET"]),
     Route("/api/team/tools-skills", get_tools_skills, methods=["GET"]),
     Route("/api/team/audit", get_audit, methods=["GET"]),
+    Route("/api/team/audit/reverify", reverify_audit, methods=["POST"]),
 ]

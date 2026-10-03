@@ -144,15 +144,19 @@ def _viewer(auth: AuthConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.viewer_token}"}
 
 
-def _mutations(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+def _audited(caplog: pytest.LogCaptureFixture, event_type: str) -> list[dict[str, Any]]:
     out = []
     for record in caplog.records:
         if record.name != "arcui.audit":
             continue
         payload = json.loads(record.message)
-        if payload["event_type"] == "ui.mutation":
+        if payload["event_type"] == event_type:
             out.append(payload["details"])
     return out
+
+
+def _mutations(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
+    return _audited(caplog, "ui.mutation")
 
 
 class TestOperatorGate:
@@ -198,8 +202,11 @@ class TestListAndGet:
         assert resp.json() == {
             "workflows": [{"id": "wf-1", "name": "onboarding", "status": "signed"}]
         }
-        assert _mutations(caplog)[0]["operation"] == "workflow.list"
-        assert _mutations(caplog)[0]["outcome"] == "applied"
+        # A list changes nothing: a read record, never a signed-chain mutation.
+        assert _mutations(caplog) == []
+        (read,) = _audited(caplog, "ui.connected_data_read")
+        assert read["operation"] == "workflow.list"
+        assert read["outcome"] == "ok"
         # Archived definitions are excluded unless the operator opts in.
         assert plane.calls[0][2]["include_archived"] is False
 
