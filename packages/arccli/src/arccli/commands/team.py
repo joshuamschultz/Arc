@@ -171,6 +171,24 @@ def _print_message(msg: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _operator_key_resolves() -> bool:
+    """True when the ONE operator-key resolver can serve this deployment's key.
+
+    The same lookup every signer uses (custody-aware: an on-disk key under
+    ``in_process``, the transit under ``vault_transit``), so status can never
+    disagree with ``arc prompt sign-workspace``. A tampered key or a transit that
+    cannot serve is reported as missing; it cannot sign either.
+    """
+    from arctrust.operator import OperatorKeyIntegrityError
+    from arctrust.operator_resolver import operator_public_key_for
+    from arctrust.signer import SignerError
+
+    try:
+        return operator_public_key_for() is not None
+    except (OperatorKeyIntegrityError, SignerError, OSError):
+        return False
+
+
 def _status(args: argparse.Namespace) -> None:
     """Show team overview — entities, channels, and teams counted from the store."""
     from arcteam.team import TeamStore
@@ -188,10 +206,8 @@ def _status(args: argparse.Namespace) -> None:
             await _shutdown(backend)
         return len(entities), len(channels), len(teams)
 
-    from arccli.commands.operator import operator_key_path
-
     entity_count, channel_count, team_count = asyncio.run(_run())
-    operator_key_exists = operator_key_path(Path("~/.arc")).exists()
+    operator_key_exists = _operator_key_resolves()
 
     data = {
         "root": str(root),
@@ -247,7 +263,7 @@ def _init_cmd(args: argparse.Namespace) -> None:
     root.mkdir(parents=True, exist_ok=True)
 
     load_operator_key()  # bootstrap the audit authority (idempotent)
-    _write(f"Operator audit key: {operator_key_path(Path('~/.arc'))}")
+    _write(f"Operator audit key: {operator_key_path()}")
     _write(f"Team initialized at: {root}")
 
 

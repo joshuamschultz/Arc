@@ -86,10 +86,10 @@ class TestTeamInit:
 
     def test_init_bootstraps_operator_key(self, tmp_path: Path) -> None:
         """arc team init bootstraps the operator audit key (asymmetric signing)."""
-        from arccli.commands.operator import operator_key_path
+        from arctrust.operator_resolver import operator_public_key_for
 
-        _arc("team", "init", "--root", str(tmp_path))
-        assert operator_key_path(Path("~/.arc")).exists()
+        _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
+        assert operator_public_key_for() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +147,39 @@ class TestTeamStatus:
         _status(argparse.Namespace(root=str(tmp_path), use_json=True))
         data = json.loads(capsys.readouterr().out)
         assert data["entities"] == 1, f"expected entities=1, got {data}"
+
+    def test_status_finds_the_operator_key_the_resolver_finds(
+        self,
+        tmp_path: Path,
+        team_backend: Any,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """DGX: status said MISSING while `arc prompt sign-workspace` signed fine.
+
+        It looked under ``~/.arc`` (the install home, not the operator root, where
+        the key lives) instead of asking the one operator-key resolver. HOME is
+        moved so a developer machine's own ``~/.arc`` cannot answer for it.
+        """
+        from arctrust.operator_resolver import operator_public_key_for
+
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
+        assert operator_public_key_for() is not None
+        capsys.readouterr()
+
+        _status(argparse.Namespace(root=str(tmp_path), use_json=True))
+        assert json.loads(capsys.readouterr().out)["operator_key"] is True
+        _status(argparse.Namespace(root=str(tmp_path), use_json=False))
+        assert "MISSING" not in capsys.readouterr().out
+
+    def test_the_key_check_says_missing_when_the_resolver_finds_no_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arccli.commands.team import _operator_key_resolves
+
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        assert _operator_key_resolves() is False
 
 
 # ---------------------------------------------------------------------------
