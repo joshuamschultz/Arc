@@ -579,3 +579,34 @@ async def test_postgres_merge_rows_and_count_match_the_contract(
     assert (
         await postgres_backend.count(AUDIT_TABLE, where={"marker": marker, "verified": False}) == 0
     )
+
+
+async def test_postgres_v14_deletes_legacy_per_agent_connection_rows(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """v14 removes ``connections`` rows with no ``connection`` key, and only those."""
+    from importlib.resources import files
+
+    assert isinstance(postgres_backend, PostgresBackend)
+    suffix = uuid4().hex
+    legacy, current, other = f"coder_agent/x-{suffix}", f"current-{suffix}", f"other-{suffix}"
+    sql = files("arcstore.migrations").joinpath("v14.sql").read_text(encoding="utf-8")
+    async with postgres_backend._require_pool().acquire() as connection:
+        await connection.executemany(
+            "INSERT INTO mutable_records(collection, key, value) VALUES ($1, $2, $3::jsonb)",
+            [
+                ("connections", legacy, json.dumps({"agent": "coder_agent", "instance": "x"})),
+                ("connections", current, json.dumps({"connection": current})),
+                ("v14_probe", other, json.dumps({"agent": "a"})),
+            ],
+        )
+        async with connection.transaction():
+            await connection.execute(sql)
+        rows = await connection.fetch(
+            "SELECT key FROM mutable_records WHERE key = ANY($1::text[])",
+            [legacy, current, other],
+        )
+        await connection.execute(
+            "DELETE FROM mutable_records WHERE key = ANY($1::text[])", [current, other]
+        )
+    assert {row["key"] for row in rows} == {current, other}
