@@ -10,7 +10,7 @@ import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from arcokf import listable_dir, listable_file
 from arcstore.approvals import ApprovalStore
@@ -150,6 +150,35 @@ class RelayoutReport(BaseModel):
     refused: int = 0
 
 
+class AdoptionReport(BaseModel):
+    """What one ``adopt_documents`` pass did (or, on a dry run, would do).
+
+    ``adopted`` documents were re-keyed into this store from the donor's extracted
+    text, so no provider was asked for them again; ``deduplicated`` ones were
+    already here at the same version; ``skipped`` ones could not be read.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    documents: int = 0
+    adopted: int = 0
+    deduplicated: int = 0
+    skipped: int = 0
+
+
+class MappingAuthority(Protocol):
+    """Who authorizes writes to a store no single agent owns (P18-4).
+
+    A connection-scoped store is written by whichever subscribed agent holds the
+    connection's sync lease. Its own approval row cannot name the shared store, so
+    the writer delegates: ``authorized_homes`` answers the id of the writer's
+    verified approval and the homes it allows, or ``None`` when nothing
+    authorizes the store any more. Asked again before every write.
+    """
+
+    async def authorized_homes(self) -> tuple[str, tuple[MemoryHome, ...]] | None: ...
+
+
 class _Move(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -253,7 +282,7 @@ def _citation_metadata(source: ConnectedSource, source_object: ConnectedObject) 
 
 
 def _write_document(
-    path: Path, metadata: dict[str, str], text: str, stale: str, root: Path
+    path: Path, metadata: dict[str, Any], text: str, stale: str, root: Path
 ) -> None:
     """Render and atomically write one extracted document; drop a moved predecessor."""
     atomic_write_text(path, render_document(metadata, text))
@@ -302,10 +331,15 @@ class ConnectedDataService:
         embedder: Embedder | None = None,
         audit_sink: AuditSink | None = None,
         review_port: ReviewPort | None = None,
+        authority: MappingAuthority | None = None,
     ) -> None:
         self._workspace = Path(workspace)
         self._agent_did = agent_did
         self._approval = approval_store
+        #: Set only for a connection-scoped store (P18-4): its writes are authorized
+        #: by the writing subscriber's verified approval, never by an approval row
+        #: of its own, and it is never staged for approval.
+        self._authority = authority
         self._config = config or MemoryConfig()
         self._audit = audit_sink
         self._db = MemoryDB(self._workspace)
@@ -370,6 +404,9 @@ class ConnectedDataService:
 
     async def propose_mapping(self, source: ConnectedSource, homes: tuple[str, ...]) -> str:
         """Stage an exact, operator-selected mapping proposal."""
+        if self._authority is not None:
+            # A shared store is approved through its subscribers, one agent at a time.
+            raise SourceMappingDeniedError("a connection-scoped store is never staged")
         try:
             selected = tuple(MemoryHome(home) for home in homes)
         except ValueError as exc:
@@ -384,6 +421,8 @@ class ConnectedDataService:
     async def require_approved_mapping(self, source: ConnectedSource) -> ApprovedMapping:
         """Load an exact active approval, or stage one safe default proposal."""
         await self._require_current_generation(source)
+        if self._authority is not None:
+            return await self._delegated_mapping(source, self._authority)
         source_id = self._source_id(source)
         register = SemanticStore(
             self._workspace,
@@ -441,6 +480,131 @@ class ConnectedDataService:
             agent_did=self._agent_did,
         )
         raise SourceMappingPendingError()
+
+    async def _delegated_mapping(
+        self, source: ConnectedSource, authority: MappingAuthority
+    ) -> ApprovedMapping:
+        """Commit a shared store's mapping from the writer's verified approval."""
+        grant = await authority.authorized_homes()
+        if grant is None:
+            raise SourceMappingDeniedError("no subscriber authorizes this shared source")
+        approval_id, homes = grant
+        proposal = self._proposal(source, homes)
+        register = SemanticStore(self._workspace, WeightedGraph(self._db), self._agent_did)
+        register.write_fact(
+            f"source-{proposal.source_id}", "kind", source.source_kind, entity_type="source"
+        )
+        commit_mapping(proposal, store=register)
+        committed = load_committed_mapping(proposal.source_id, store=register)
+        if committed is None or committed.revision != proposal.revision:
+            raise SourceMappingDeniedError()
+        return ApprovedMapping(
+            mapping_id=approval_id,
+            source_id=committed.source_id,
+            homes=committed.homes,
+            revision=committed.revision,
+            content_hash=committed.content_hash,
+        )
+
+    async def object_version(self, source: ConnectedSource, object_id: str) -> str | None:
+        """The version this store holds for one object, or ``None`` (absent or deleted)."""
+        state = await self._object_state.get_object_state(self._source_id(source), object_id)
+        return None if state is None or state.deleted else state.version
+
+    async def adopt_documents(
+        self,
+        source: ConnectedSource,
+        donor: ConnectedDataService,
+        donor_source: ConnectedSource,
+        *,
+        dry_run: bool,
+    ) -> AdoptionReport:
+        """Re-key another store's extracted documents into this one, without a fetch.
+
+        The P18-4 migration: an agent's own store of a connection becomes part of
+        the connection's shared store. Each document is read from the donor's
+        extracted text and written, chunked and recorded here under this store's
+        source id, carrying its version so the next sync does not fetch it again.
+        A document already here at the same version is deduplicated. Only the
+        DOCUMENT home moves; a dry run counts and writes nothing.
+        """
+        mapping = await self.require_approved_mapping(source)
+        if MemoryHome.DOCUMENT not in mapping.homes:
+            raise SourceMappingDeniedError("shared store does not hold documents")
+        source_id = self._source_id(source)
+        counts = {"documents": 0, "adopted": 0, "deduplicated": 0, "skipped": 0}
+        for document in await donor.list_documents(donor_source):
+            counts["documents"] += 1
+            prior = await self._object_state.get_object_state(source_id, document.object_id)
+            if prior is not None and not prior.deleted and prior.version == document.version:
+                counts["deduplicated"] += 1
+                continue
+            if dry_run:
+                counts["adopted"] += 1
+                continue
+            adopted = await self._adopt_one(source_id, donor, donor_source, document, prior)
+            counts["adopted" if adopted else "skipped"] += 1
+        if not dry_run and counts["adopted"]:
+            await self.finish_sync(source)
+        return AdoptionReport(**counts)
+
+    async def _adopt_one(
+        self,
+        source_id: str,
+        donor: ConnectedDataService,
+        donor_source: ConnectedSource,
+        document: ConnectedDocument,
+        prior: ConnectedObjectState | None,
+    ) -> bool:
+        """Write one donor document here: same body, same citation, this store's id."""
+        donor_id = donor._source_id(donor_source)
+        donor_root = donor._document_root(donor_id)
+        donor_path = donor._workspace / document.path
+        root = self._document_root(source_id)
+        try:
+            relative = donor_path.relative_to(donor_root)
+            text = await asyncio.to_thread(donor_path.read_text, encoding="utf-8")
+            metadata, body = parse_document(text)
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+        target = root / relative
+        if not target.resolve().is_relative_to(root.resolve()):
+            return False
+        donor_state = await donor._object_state.get_object_state(donor_id, document.object_id)
+        stale = prior.path if prior is not None and prior.path != target.as_posix() else ""
+        rekeyed = {**metadata, "source": source_id}
+        await asyncio.to_thread(_write_document, target, rekeyed, body, stale, root)
+        source_object = ConnectedObject(
+            object_id=document.object_id,
+            locator=str(rekeyed.get("locator") or document.object_id),
+            version=document.version,
+            classification=document.classification,
+        )
+        chunks = await self._document_chunks(source_id, source_object, body, target)
+        index = self._doc_index()
+        await index.delete_object(source_id, self._agent_did, document.object_id)
+        await index.index_source(source_id, self._agent_did, chunks)
+        provenance = ProvenanceStore(self._db)
+        provenance.remove(source_id, document.object_id)
+        provenance.record(
+            document.content_hash or content_hash(body),
+            Provenance(
+                source=source_id,
+                external_id=document.object_id,
+                classification=document.classification,
+            ),
+        )
+        await self._object_state.put_object_state(
+            source_id,
+            document.object_id,
+            ConnectedObjectState(
+                version=document.version,
+                revision=donor_state.revision if donor_state is not None else None,
+                path=target.as_posix(),
+            ),
+        )
+        self._audit_object(source_id, source_object, "adopted")
+        return True
 
     async def ingest(
         self,
@@ -1086,6 +1250,15 @@ class ConnectedDataService:
         return [slug for slug in store.slugs() if slug.startswith(f"blob-{source_id}-")]
 
     async def _mapping_is_approved(self, mapping: ApprovedMapping) -> bool:
+        if self._authority is not None:
+            # Asked per write, never cached: the moment the last subscriber's
+            # approval is gone, the next object is refused.
+            grant = await self._authority.authorized_homes()
+            return (
+                grant is not None
+                and grant[0] == mapping.mapping_id
+                and set(mapping.homes) <= set(grant[1])
+            )
         if self._approval is None:
             return False
         target = mapping_call_hash(
@@ -1209,6 +1382,7 @@ class ConnectedDataService:
 
 
 __all__ = [
+    "AdoptionReport",
     "ApprovedMapping",
     "ConnectedDataService",
     "ConnectedDocument",
@@ -1222,6 +1396,7 @@ __all__ = [
     "ConnectedSourceShape",
     "DocumentStatus",
     "InMemoryObjectState",
+    "MappingAuthority",
     "RelayoutReport",
     "SourceContent",
     "SourceMappingDeniedError",
