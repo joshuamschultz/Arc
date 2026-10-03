@@ -27,11 +27,26 @@ const LIFECYCLE: Record<WorkflowStatus, { label: string; className: string }> = 
     label: 'Archived',
     className: 'border-border bg-muted/40 text-muted-foreground',
   },
+  unreadable: {
+    label: 'Unreadable',
+    className: 'border-destructive/30 bg-destructive/10 text-destructive',
+  },
+}
+
+const NEEDS_RESIGN = {
+  label: 'Needs re-sign',
+  className: 'border-destructive/30 bg-destructive/10 text-destructive',
 }
 
 /** The workflow's own lifecycle state as a quiet, plain-language chip. */
-export function WorkflowLifecycle({ status }: { status: WorkflowStatus }) {
-  const l = LIFECYCLE[status] ?? LIFECYCLE.draft
+export function WorkflowLifecycle({
+  status,
+  needsResign = false,
+}: {
+  status: WorkflowStatus
+  needsResign?: boolean
+}) {
+  const l = needsResign ? NEEDS_RESIGN : (LIFECYCLE[status] ?? LIFECYCLE.draft)
   return (
     <span
       className={cn(
@@ -86,8 +101,31 @@ export function WorkflowSummaryStrip({ workflows }: { workflows: WorkflowSummary
   )
 }
 
+/** A bundle that cannot be read: shown in red with the fix, never hidden. No detail page. */
+function UnreadableCard({ w }: { w: WorkflowSummary }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+      <div className="flex items-center gap-2">
+        <span className="truncate font-mono text-[13px] font-bold text-foreground">{w.id}</span>
+        <WorkflowLifecycle status="unreadable" />
+      </div>
+      <p className="text-xs text-foreground">{w.health_detail}</p>
+      {w.health_fix && (
+        <p className="text-xs text-muted-foreground">
+          Fix: <code className="font-mono text-foreground">{w.health_fix}</code>
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** A distinctive card for one workflow — links through to `/workflows/:id`. */
 export function WorkflowCard({ w }: { w: WorkflowSummary }) {
+  if (w.status === 'unreadable') return <UnreadableCard w={w} />
+  return <LinkedWorkflowCard w={w} />
+}
+
+function LinkedWorkflowCard({ w }: { w: WorkflowSummary }) {
   const navigate = useNavigate()
   const lastRun = w.last_run
   const triggerType =
@@ -124,8 +162,14 @@ export function WorkflowCard({ w }: { w: WorkflowSummary }) {
             )}
           </div>
         </div>
-        <WorkflowLifecycle status={w.status} />
+        <WorkflowLifecycle status={w.status} needsResign={w.health === 'needs_resign'} />
       </div>
+
+      {w.health === 'needs_resign' && (
+        <p className="text-xs text-muted-foreground">
+          {w.health_detail} Fix: <code className="font-mono text-foreground">{w.health_fix}</code>
+        </p>
+      )}
 
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Zap className="size-3 shrink-0 text-muted-foreground/70" />
