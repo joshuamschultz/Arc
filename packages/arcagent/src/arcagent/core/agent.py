@@ -351,13 +351,18 @@ class ArcAgent:
 
         return await enable_module_persisted(self, name)
 
-    async def reconcile_connectors(self) -> Any:
+    async def reconcile_connectors(self, *, wait_seconds: float = 4.0) -> Any:
         """Refresh this started agent's connector tools from durable grants.
 
         This is the narrow in-process control seam used by operator surfaces.
         A started agent without the optional connector module has successfully
         reconciled to an empty connector snapshot; only a process that cannot
         locate this agent should report activation as pending.
+
+        The fast path is bounded by ``wait_seconds``: past it the reconcile keeps
+        running under this agent's task supervisor and the caller is told
+        ``activation_pending`` (the durable queue also re-applies it), so an
+        operator request never waits on a long-running sync.
         """
         from arcagent.connector_control import ConnectorReconcileResult
         from arcagent.core.agent_lifecycle import activate_runtime_bindings
@@ -377,7 +382,14 @@ class ArcAgent:
             return ConnectorReconcileResult(
                 status="applied", detail="connector module exposes no live reconciler"
             )
-        return await reconcile()
+        task = self._background_tasks.create(reconcile(), name="connectors:reconcile")
+        done, _pending = await asyncio.wait({task}, timeout=wait_seconds)
+        if not done:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                detail="still applying on the agent; it finishes in the background",
+            )
+        return task.result()
 
     async def notify_operator(self, text: str, *, idempotency_key: str) -> str | None:
         """Put one notice in front of the operator, on the channel they last used.

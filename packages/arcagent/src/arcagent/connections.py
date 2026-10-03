@@ -819,6 +819,7 @@ class Connections:
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
+        reconcile_wait_seconds: float = 5.0,
     ) -> None:
         self._world = world
         # The cipher sealing connector credentials. Resolved from the operator key
@@ -841,6 +842,10 @@ class Connections:
         # The one HTTP call to a provider's token endpoint (injectable for tests).
         self._token_post = token_post
         self._host_step_timeout = host_step_timeout
+        # Bound on the in-process fast path. The mutation is durable (and queued)
+        # before any agent is asked, so an operator request never waits out an
+        # agent that is busy — it reports activation_pending instead.
+        self._reconcile_wait_seconds = reconcile_wait_seconds
         # The time a health check is stamped with. Injectable so a test can walk the
         # ten-minute and 24-hour escalation bounds without waiting for them.
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
@@ -863,6 +868,7 @@ class Connections:
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
+        reconcile_wait_seconds: float = 5.0,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -883,6 +889,7 @@ class Connections:
             host_step_timeout=host_step_timeout,
             clock=clock,
             credential_cipher=credential_cipher,
+            reconcile_wait_seconds=reconcile_wait_seconds,
         )
 
     @property
@@ -2459,43 +2466,50 @@ class Connections:
     async def _reconcile_agents(
         self, agents: Sequence[str]
     ) -> tuple[ConnectorReconcileResult, ...]:
-        """Queue every projection then use this process as an optional fast path."""
+        """Queue every projection then use this process as an optional, bounded fast path."""
         commands = await self._reconcile_queue().enqueue(agents)
-        outcomes: list[ConnectorReconcileResult] = []
         queue = self._reconcile_queue()
-        for command in commands:
-            agent = command.agent
-            try:
+        return tuple(
+            await asyncio.gather(*(self._fast_path(queue, command) for command in commands))
+        )
+
+    async def _fast_path(
+        self, queue: ConnectorReconcileQueue, command: Any
+    ) -> ConnectorReconcileResult:
+        """Apply one queued command live if the agent answers within the bound."""
+        agent = command.agent
+        try:
+            async with asyncio.timeout(self._reconcile_wait_seconds):
                 result = (
                     await self._connector_control.reconcile(agent)
                     if self._connector_control is not None
                     else None
                 )
-            except Exception as exc:
-                outcomes.append(
-                    ConnectorReconcileResult(
-                        status="activation_pending",
-                        agent=agent,
-                        revision=command.revision,
-                        detail=f"reconcile retry pending: {exc}",
-                    )
-                )
-                continue
-            if result is None:
-                outcomes.append(
-                    ConnectorReconcileResult(
-                        status="activation_pending",
-                        agent=agent,
-                        revision=command.revision,
-                        detail="agent is not running in this process",
-                    )
-                )
-                continue
-            outcome = replace(result, agent=agent, revision=command.revision)
-            if outcome.status == "applied":
-                await queue.acknowledge(command, outcome)
-            outcomes.append(outcome)
-        return tuple(outcomes)
+        except TimeoutError:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail="the agent is still applying this change",
+            )
+        except Exception as exc:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail=f"reconcile retry pending: {exc}",
+            )
+        if result is None:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail="agent is not running in this process",
+            )
+        outcome = replace(result, agent=agent, revision=command.revision)
+        if outcome.status == "applied":
+            await queue.acknowledge(command, outcome)
+        return outcome
 
     def _reconcile_queue(self) -> ConnectorReconcileQueue:
         return ConnectorReconcileQueue(self._open_reconcile_backend, actor_did=self._world.did)

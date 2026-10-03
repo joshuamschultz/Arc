@@ -175,3 +175,43 @@ async def test_concurrent_opens_of_one_key_share_one_manager(
             assert one is two
         finally:
             await agent.shutdown()
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_connector_reconcile_fast_path_is_bounded(
+    mock_load_model: MagicMock, agent_config: ArcAgentConfig
+) -> None:
+    """A reconcile stuck behind a long sync reports pending and finishes later.
+
+    The operator's Remove awaited it inline for 24 minutes while the browser
+    gave up at 60 seconds.
+    """
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    agent = ArcAgent(config=agent_config)
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    class _SlowConnectors:
+        async def reconcile(self) -> Any:
+            await release.wait()
+            finished.set()
+            from arcagent.connector_control import ConnectorReconcileResult
+
+            return ConnectorReconcileResult(status="applied")
+
+    entry = MagicMock(setup_done=True, instance=_SlowConnectors())
+    await agent.startup()
+    try:
+        with patch.object(
+            agent._capability_registry, "get_capability", AsyncMock(return_value=entry)
+        ):
+            async with asyncio.timeout(2):
+                result = await agent.reconcile_connectors(wait_seconds=0.2)
+            assert result.status == "activation_pending"
+            release.set()
+            async with asyncio.timeout(2):
+                await finished.wait()
+    finally:
+        release.set()
+        await agent.shutdown()

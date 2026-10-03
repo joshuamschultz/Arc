@@ -433,6 +433,42 @@ async def test_live_control_applies_grant_revoke_and_remove_to_a_running_agent(
     assert not any(tool in registry.tools for tool in _SERVED)
 
 
+async def test_remove_returns_within_its_bound_while_an_agent_reconcile_is_stuck(
+    deployment: _Deployment,
+) -> None:
+    """A stuck live reconcile must not hold the operator's Remove open.
+
+    The removal itself is durable before any agent is asked; the agent applies
+    it from the queue later, so the request reports ``activation_pending``.
+    """
+    await deployment.connect()
+    stuck = asyncio.Event()
+
+    class _StuckControl:
+        async def reconcile(self, agent: str) -> Any:
+            await stuck.wait()  # an agent waiting out a six-hour sync
+
+    connections = Connections.for_deployment(
+        arc_dir=deployment.arc_dir,
+        data_dir=deployment.data_dir,
+        extensions_root=deployment.root,
+        audit=AuditChain.held(deployment.sink),
+        state_opener=deployment.open_arcstore,
+        connector_control=_StuckControl(),
+        credential_cipher=deployment.cipher,
+        reconcile_wait_seconds=0.2,
+    )
+    try:
+        async with asyncio.timeout(2):
+            removed = await connections.remove_and_reconcile(_CONNECTION)
+    finally:
+        stuck.set()
+
+    assert removed.removal is not None and removed.removal.removed_config
+    assert {result.status for result in removed.activations} == {"activation_pending"}
+    assert len(removed.activations) == len(_GRANTED)
+
+
 async def test_durable_reconcile_commands_survive_a_management_process_restart(
     deployment: _Deployment,
 ) -> None:
