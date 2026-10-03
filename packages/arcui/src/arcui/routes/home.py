@@ -30,6 +30,7 @@ two already know, and must never be reported as "all caught up" either
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -118,20 +119,95 @@ async def _waiting_on_human(request: Request) -> list[dict[str, Any]]:
     return [q.model_dump(mode="json") for q in waiting]
 
 
+async def _pending_pulse(request: Request) -> list[dict[str, Any]]:
+    """Pulse checks that cannot run until approved — the DGX ``daily_briefing`` gap.
+
+    Read through ``arcagent.pulse_status`` (the same read ``GET /api/agents/{id}/pulse``
+    uses); approval stays on ``POST /api/agents/{id}/pulse/approve``.
+    """
+    provider = getattr(request.app.state, "roster_provider", None)
+    entries = provider() if provider is not None else []
+    pending: list[dict[str, Any]] = []
+    for entry in entries:
+        try:
+            checks = arcagent.pulse_status(Path(entry.workspace_path) / "workspace")
+        except Exception:  # reason: one unreadable pulse.md must not sink the fleet read
+            logger.warning("home needs: pulse read failed for %s", entry.agent_id)
+            continue
+        pending.extend(
+            {
+                "agent_id": entry.agent_id,
+                "agent_label": entry.display_name,
+                "check": check.name,
+                "interval_minutes": check.interval_minutes,
+                "action": check.action,
+                "definition_digest": check.definition_digest,
+                "changed": check.stale,
+            }
+            for check in checks
+            if not check.approved
+        )
+    return pending
+
+
+def _read_schedules(path: Path) -> list[Any]:
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+async def _pending_schedules(request: Request) -> list[dict[str, Any]]:
+    """Legacy schedules with no signed revision — they cannot fire until approved.
+
+    Approval stays on ``POST /api/agents/{id}/schedules/{sid}/approve``.
+    """
+    provider = getattr(request.app.state, "roster_provider", None)
+    entries = provider() if provider is not None else []
+    pending: list[dict[str, Any]] = []
+    for entry in entries:
+        rows = _read_schedules(Path(entry.workspace_path) / "workspace" / "schedules.json")
+        pending.extend(
+            {
+                "agent_id": entry.agent_id,
+                "agent_label": entry.display_name,
+                "schedule_id": row["id"],
+                "name": row.get("name") or row["id"],
+            }
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and not row.get("approval")
+        )
+    return pending
+
+
 async def get_needs(request: Request) -> JSONResponse:
     """GET /api/home/needs — the operator's aggregated pending-action queue."""
-    approvals, capabilities, review_tasks, waiting = await asyncio.gather(
+    approvals, capabilities, review_tasks, waiting, pulse, schedules = await asyncio.gather(
         _pending_approvals(request),
         _pending_capabilities(request),
         _tasks_in_review(request),
         _waiting_on_human(request),
+        _pending_pulse(request),
+        _pending_schedules(request),
     )
+    # pulse/schedules are not previewed: the inbox is the one place these
+    # are actionable, so none may be hidden behind a cap.
     body = HomeNeedsResponse(
         approvals=HomeNeedsQueue(count=len(approvals), items=approvals[:_PREVIEW_LIMIT]),
         capabilities=HomeNeedsQueue(count=len(capabilities), items=capabilities[:_PREVIEW_LIMIT]),
         review_tasks=HomeNeedsQueue(count=len(review_tasks), items=review_tasks[:_PREVIEW_LIMIT]),
         waiting_on_human=HomeNeedsQueue(count=len(waiting), items=waiting[:_PREVIEW_LIMIT]),
-        total=len(approvals) + len(capabilities) + len(review_tasks) + len(waiting),
+        pulse=HomeNeedsQueue(count=len(pulse), items=pulse),
+        schedules=HomeNeedsQueue(count=len(schedules), items=schedules),
+        total=(
+            len(approvals)
+            + len(capabilities)
+            + len(review_tasks)
+            + len(waiting)
+            + len(pulse)
+            + len(schedules)
+        ),
     )
     return JSONResponse(body.model_dump(mode="json"))
 
