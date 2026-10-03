@@ -90,19 +90,19 @@ def _backend_factory() -> Any:
 
 
 def _arc_dir(args: argparse.Namespace) -> Path:
-    """``--dir`` if given, else the deployment's config dir (``$ARC_CONFIG_DIR``).
+    """``--dir`` if given, else the OPERATOR root (``${ARC_TEAM_ROOT:-~/arc}``).
 
-    Must resolve to the SAME directory ``build_workflow_runner`` derives its
-    workspace from — the runner reads ``<config dir>/workflows``. A CLI that
-    hardcoded ``~/.arc`` while the deployment ran under ``ARC_CONFIG_DIR``
-    would sign bundles into a directory the engine never reads: both halves
-    look healthy and no workflow is ever signed, which is the silent shape
-    this feature has produced repeatedly.
+    Must resolve to the SAME tree the runner reads: ``workflows_dir()`` with no
+    base is ``<operator root>/state/workflows``. Returning the install home
+    (``arc_home()``) here made an explicit base of ``~/.arc``, which the path
+    resolvers treat as "this self-contained tree", so a bare ``arc workflow
+    check`` read ``~/.arc/state/workflows`` and reported "All 0 workflow(s)
+    readable" while the real workflows sat unread under ``~/arc``.
     """
-    from arctrust.paths import arc_home
+    from arctrust.paths import operator_root
 
     override = getattr(args, "config_dir", None)
-    return Path(override).expanduser() if override else arc_home()
+    return Path(override).expanduser() if override else operator_root()
 
 
 def _deployment_tier(arc_dir: Path) -> Tier:
@@ -997,7 +997,9 @@ def _gate(args: argparse.Namespace) -> None:
 
 def _add_dir_arg(p: argparse.ArgumentParser) -> None:
     """``--dir`` on each subparser (not the group parser) so it can follow the subcommand."""
-    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
+    p.add_argument(
+        "--dir", dest="config_dir", default=None, help="Operator root (default: ~/arc)."
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -215,7 +215,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="arc user", description="Accounts that can sign in to this deployment."
     )
     parser.add_argument(
-        "--file", default=None, help="User store path (default: ~/.arc/users.json)"
+        "--file", default=None, help="User store path (default: ~/arc/state/users.json)"
     )
     inner = parser.add_subparsers(dest="subcmd")
 

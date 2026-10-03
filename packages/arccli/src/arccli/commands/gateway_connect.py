@@ -44,6 +44,22 @@ def _agent_did(agent_dir: Path) -> str:
     return str(did)
 
 
+def _connect_paths(gateway_config: str | None, env_file: str | None) -> tuple[Path, Path]:
+    """The gateway config and env file to write: the flag, else the operator's config.
+
+    Resolved per call through the path resolvers. The operator config lives under
+    ``<operator root>/config``; a hardcoded ``~/.arc`` default wrote a gateway
+    config and token into the install home, which the running gateway never reads.
+    """
+    from arctrust.paths import config_file
+    from arctrust.paths import env_file as default_env_file
+
+    return (
+        Path(gateway_config).expanduser() if gateway_config else config_file("gateway.toml"),
+        Path(env_file).expanduser() if env_file else default_env_file(),
+    )
+
+
 def gateway_connect_telegram_handler(args: list[str]) -> None:
     """Parse argv, prompt for the token/user-id if omitted, and wire the bot."""
     parser = argparse.ArgumentParser(prog="arc gateway connect-telegram", add_help=True)
@@ -52,15 +68,16 @@ def gateway_connect_telegram_handler(args: list[str]) -> None:
     parser.add_argument("--token", default=None, help="Bot token (omit to be prompted securely).")
     parser.add_argument(
         "--gateway-config",
-        default=str(Path("~/.arc/gateway.toml").expanduser()),
-        help="Gateway config to update (default: ~/.arc/gateway.toml).",
+        default=None,
+        help="Gateway config to update (default: ~/arc/config/gateway.toml).",
     )
     parser.add_argument(
         "--env-file",
-        default=str(Path("~/.arc/arc.env").expanduser()),
-        help="Env file the gateway reads the token from (default: ~/.arc/arc.env).",
+        default=None,
+        help="Env file the gateway reads the token from (default: ~/arc/config/arc.env).",
     )
     ns = parser.parse_args(args)
+    gateway_config, env_file = _connect_paths(ns.gateway_config, ns.env_file)
 
     agent_dir = Path(ns.agent).expanduser().resolve()
     token = ns.token or getpass.getpass("Paste your Telegram bot token from @BotFather (hidden): ")
@@ -72,8 +89,8 @@ def gateway_connect_telegram_handler(args: list[str]) -> None:
             agent_did=_agent_did(agent_dir),
             token=token,
             user_id=user_id,
-            gateway_config=Path(ns.gateway_config).expanduser(),
-            env_file=Path(ns.env_file).expanduser(),
+            gateway_config=gateway_config,
+            env_file=env_file,
         )
     except ValueError as exc:
         err(f"arc gateway connect-telegram: {exc}")
@@ -81,7 +98,7 @@ def gateway_connect_telegram_handler(args: list[str]) -> None:
 
     _out(f"Connected Telegram to {agent_dir.name}.")
     _out(f"  bound to agent DID : {result['agent_did']}")
-    _out(f"  token stored in    : {ns.env_file}  (as {result['token_env']}, 0600)")
+    _out(f"  token stored in    : {env_file}  (as {result['token_env']}, 0600)")
     _out(f"  gateway block      : [platforms.{result['block']}]")
     _out("")
     _out("Last step — restart the gateway so the bot goes live:")
@@ -117,15 +134,16 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
     )
     parser.add_argument(
         "--gateway-config",
-        default=str(Path("~/.arc/gateway.toml").expanduser()),
-        help="Gateway config to update (default: ~/.arc/gateway.toml).",
+        default=None,
+        help="Gateway config to update (default: ~/arc/config/gateway.toml).",
     )
     parser.add_argument(
         "--env-file",
-        default=str(Path("~/.arc/arc.env").expanduser()),
-        help="Env file the gateway reads the token from (default: ~/.arc/arc.env).",
+        default=None,
+        help="Env file the gateway reads the token from (default: ~/arc/config/arc.env).",
     )
     ns = parser.parse_args(args)
+    gateway_config, env_file = _connect_paths(ns.gateway_config, ns.env_file)
 
     agent_dir = Path(ns.agent).expanduser().resolve()
     try:
@@ -133,8 +151,8 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
         result = connect_voice(
             wake_words=ns.wake,
             agent_did=agent_did,
-            gateway_config=Path(ns.gateway_config).expanduser(),
-            env_file=Path(ns.env_file).expanduser(),
+            gateway_config=gateway_config,
+            env_file=env_file,
             token=ns.token,
             model_dir=ns.model_dir,
             blend=ns.blend,
@@ -147,7 +165,7 @@ def gateway_connect_voice_handler(args: list[str]) -> None:
 
     _out(f"Connected voice to {agent_dir.name} (Olivia).")
     _out(f"  bound to agent DID : {result['agent_did']}")
-    _out(f"  token stored in    : {ns.env_file}  (as {result['token_env']}, 0600)")
+    _out(f"  token stored in    : {env_file}  (as {result['token_env']}, 0600)")
     _out(f"  voice blend/speed  : {ns.blend} @ {ns.speed}")
     _out("")
     _out("Next:")

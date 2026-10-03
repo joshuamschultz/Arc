@@ -215,7 +215,7 @@ def _remove(args: argparse.Namespace) -> None:
 def _add_common(parser: argparse.ArgumentParser) -> None:
     """Where this invocation's world lives, so a fleet operator can target one."""
     parser.add_argument(
-        "--arc-dir", default=None, help="Arc config dir (default: ${ARC_CONFIG_DIR:-~/.arc})."
+        "--arc-dir", default=None, help="Arc config dir (default: the operator root, ~/arc)."
     )
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit.")
 

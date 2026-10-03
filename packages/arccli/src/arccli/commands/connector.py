@@ -803,7 +803,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Use exactly this bundle root (default: the deployment search path).",
     )
-    parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
+    parser.add_argument("--arc-dir", default=None, help="Operator root (default: ~/arc).")
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit/state.")
 
 
@@ -835,7 +835,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Use exactly this bundle root (default: the deployment search path).",
     )
-    p.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
+    p.add_argument("--arc-dir", default=None, help="Operator root (default: ~/arc).")
     p.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
 
     p = subs.add_parser("add", help="Connect an account: prompt, probe, persist, grant.")
