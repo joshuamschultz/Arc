@@ -725,6 +725,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_approve_standing.py",
         "tests/journeys/test_journey_always_allow.py",
     ),
+    # D3 (connections sweep, 2026-10-03): the agent's gate gives up after its
+    # timeout (or the run ends) and the call is already denied. Approving or
+    # "Always allow"-ing that dead request must never grant, store a standing
+    # grant, or look like success: the row is closed as expired, the operator gets
+    # a 410, and an operator decision that landed first is never overwritten.
+    "approving an expired request never executes the call": (
+        "packages/arcagent/tests/unit/tools/test_approval_channel_expiry.py",
+        "packages/arcui/tests/test_approvals_expiry_route.py",
+    ),
 }
 
 

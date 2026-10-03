@@ -135,7 +135,21 @@ async def test_tool_error_spooled() -> None:
     # Security (NFR-2): the error record still carries the args digest but never a
     # body — the error string and arguments never reach the spool by default.
     assert err.args_digest is not None and err.args_size is not None
-    assert err.extra == {}
+    assert "input" not in err.extra
+    assert "args" not in err.extra
+
+
+@pytest.mark.asyncio
+async def test_tool_error_keeps_error_class_and_sanitized_detail() -> None:
+    """D13 — an errored tool event names its exception class on the spool record.
+
+    The message is the executor's sanitized, size-capped ``error_detail``; the
+    raw arguments still never ride along without ``store_raw_bodies``.
+    """
+    recorded = await _run_tool(_bus(), _tool("bomb", _explode), {"input": "x"})
+    err = next(r for r in recorded if r.kind == "tool_event" and r.phase == "error")
+    assert err.extra["error"] == "RuntimeError"
+    assert err.extra["error_detail"].startswith("RuntimeError")
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ cannot mint it.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from arcstore.approvals import ApprovalStore
@@ -145,12 +146,69 @@ async def _reap_stale_workflow_signs(
     return live
 
 
+#: Plain words an operator sees when they act on a request the agent gave up on.
+_EXPIRED_MESSAGE = "This request expired; the agent has moved on"
+_EXPIRY_REAPER_DID = "system:approval-expiry"
+
+
+def _past_expiry(row: Any) -> bool:
+    """True when the row carries an ``expires_at`` that has passed."""
+    if not row.expires_at:
+        return False
+    return datetime.fromisoformat(row.expires_at) <= datetime.now(UTC)
+
+
+async def _expire(store: ApprovalStore, row: Any) -> None:
+    await store.resolve(
+        row.id,
+        status="expired",
+        actor_did=_EXPIRY_REAPER_DID,
+        resolved_by=_EXPIRY_REAPER_DID,
+        note="expired before an operator decided",
+    )
+
+
+async def _close_if_expired(
+    request: Request, store: ApprovalStore, row: Any, *, operation: str
+) -> JSONResponse | None:
+    """410 for a request the agent stopped waiting on; close the row if it still reads pending.
+
+    The agent's gate has already failed the call closed once its timeout passed,
+    so approving now could only ever look like it worked. Refuse, and make the row
+    say so, instead of leaving a dead request the operator can keep approving.
+    """
+    if row.status == "pending" and _past_expiry(row):
+        await _expire(store, row)
+    elif row.status != "expired":
+        return None
+    emit_mutation_audit(
+        request,
+        target=f"approval:{row.id}",
+        operation=operation,
+        outcome="denied",
+        detail="approval_expired",
+    )
+    return _error(_EXPIRED_MESSAGE, 410)
+
+
+async def _live_only(store: ApprovalStore, pending: list[Any]) -> list[Any]:
+    """Drop (and close) pending rows whose agent already stopped waiting."""
+    live: list[Any] = []
+    for row in pending:
+        if _past_expiry(row):
+            await _expire(store, row)
+        else:
+            live.append(row)
+    return live
+
+
 async def list_approvals(request: Request) -> JSONResponse:
     """GET /api/approvals — pending requests (visible to any authed role)."""
     store = _store(request)
     try:
         pending = await store.list(status="pending")
         pending = await _reap_stale_workflow_signs(request, store, pending)
+        pending = await _live_only(store, pending)
     except Exception:  # reason: a saturated pool must degrade, not 500 the panel
         logger.exception("approvals read failed")
         return _error("approvals temporarily unavailable", 503)
@@ -232,6 +290,10 @@ async def approve_request(request: Request) -> JSONResponse:
     row = await store.get(approval_id)
     if row is None:
         return _error("not found", 404)
+    if (
+        gone := await _close_if_expired(request, store, row, operation="approval.approve")
+    ) is not None:
+        return gone
     if row.status != "pending":
         return _error("approval_not_pending", 409)
 
@@ -302,6 +364,10 @@ async def always_allow_request(request: Request) -> JSONResponse:
     row = await store.get(approval_id)
     if row is None:
         return _error("not found", 404)
+    if (
+        gone := await _close_if_expired(request, store, row, operation="approval.always_allow")
+    ) is not None:
+        return gone
     try:
         operator = _operator_authority()
     except (FileNotFoundError, OSError) as exc:

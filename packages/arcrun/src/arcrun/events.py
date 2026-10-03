@@ -291,6 +291,12 @@ class EventBus:
         # it is always kept — never gated behind raw-body capture.
         if isinstance(data.get("tool_extra"), dict):
             extra.update(data["tool_extra"])
+        # The failure's class and its already-redacted, size-capped message are
+        # diagnosis signal, not a body: an audit row that says only "error" is
+        # useless. Never gated behind raw capture.
+        for key in ("error", "error_detail"):
+            if is_error and data.get(key):
+                extra[key] = data[key]
         _spool_record(
             _SpoolRecord(
                 kind="tool_event",

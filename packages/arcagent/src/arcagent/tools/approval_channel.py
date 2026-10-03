@@ -154,13 +154,38 @@ class ArcStoreApprovalChannel:
 
         # Poll until an operator resolves the row. The gate wraps this in its own
         # timeout, so a never-resolved request is cancelled here and fails closed.
-        while True:
-            row = await store.get(pending.id)
-            if row is None or row.status in ("denied", "expired"):
-                return None
-            if row.status == "approved" and row.grant is not None:
-                return grant_from_wire(row.grant)
-            await asyncio.sleep(self._poll)
+        try:
+            while True:
+                row = await store.get(pending.id)
+                if row is None or row.status in ("denied", "expired"):
+                    return None
+                if row.status == "approved" and row.grant is not None:
+                    return grant_from_wire(row.grant)
+                await asyncio.sleep(self._poll)
+        finally:
+            await self._expire_if_still_pending(store, pending)
+
+    async def _expire_if_still_pending(
+        self, store: ApprovalStore, pending: PendingApproval
+    ) -> None:
+        """Close the row when nobody is waiting on it any more.
+
+        Runs on every exit: gate timeout, run cancelled, run ended. ``resolve`` is
+        conditional on ``pending``, so an operator decision that already landed is
+        never overwritten. Shielded so a second cancel cannot leave the row open.
+        """
+        try:
+            await asyncio.shield(
+                store.resolve(
+                    pending.id,
+                    status="expired",
+                    actor_did=pending.agent_did,
+                    resolved_by=pending.agent_did,
+                    note="the agent stopped waiting",
+                )
+            )
+        except Exception:  # reason: cleanup must not mask the gate's own outcome
+            _logger.warning("could not expire approval %s", pending.id, exc_info=True)
 
 
 __all__ = ["ArcStoreApprovalChannel"]
