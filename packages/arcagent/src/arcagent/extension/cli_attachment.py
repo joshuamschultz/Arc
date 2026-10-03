@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import tempfile
 import time
@@ -48,13 +49,27 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.environment import scrubbed_environment
+from arcagent.extension.host_install import host_install_dir
 from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
+from arcagent.extension.source import classify_cli_failure
 
 #: Resolves the sensitive placed credentials (env name -> value) for one spawn.
 CredentialEnv = Callable[[], Awaitable[Mapping[str, Secret]]]
 
 _logger = logging.getLogger(__name__)
+
+#: What a CLI says when the thing asked for simply is not there: a feature switched
+#: off for a repository, or a repository with no commits yet. Callers absorb these as
+#: a normal state, so the attachment must not raise an alarm for them.
+_ABSENCE_MARKERS = ("has disabled", "repository is empty")
+
+
+def is_absence_refusal(detail: str) -> bool:
+    """True when a refusal means "there is none", not "something went wrong"."""
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _ABSENCE_MARKERS)
+
 
 #: The token that ends flag parsing. A manifest puts it last in a command's fixed
 #: ``argv`` to make that command's positional arguments unreadable as flags.
@@ -412,7 +427,7 @@ class CliAttachment:
     async def probe(self) -> ProbeResult:
         """Run the declared probe command; probing *is* the reachability test."""
         try:
-            returncode, stdout, stderr = await self._spawn([self._binary, *self._probe_argv])
+            returncode, stdout, stderr = await self._spawn([self._executable(), *self._probe_argv])
         except OSError as exc:
             return ProbeResult(
                 reachable=False, detail=f"{self._binary} could not be started: {exc}"
@@ -457,7 +472,7 @@ class CliAttachment:
             args = {
                 name: value for name, value in args.items() if name != command.download.argument
             }
-        argv = [self._binary, *command.argv_for(args)]
+        argv = [self._executable(), *command.argv_for(args)]
         if target is not None and command.download is not None:
             argv = _with_flag(argv, f"{command.download.flag}={target}")
 
@@ -612,16 +627,47 @@ class CliAttachment:
             ),
         )
 
+    def _executable(self) -> str:
+        """The binary to exec: where host setup installed it, else a PATH lookup.
+
+        Host setup lands a verified build in :func:`host_install_dir`, which is not on
+        PATH for every launcher. Preferring that absolute path finds a binary Arc
+        installed without the operator editing PATH. Resolved per spawn, so an install
+        made while the service runs is picked up by the next call.
+        """
+        installed = host_install_dir() / self._binary
+        if installed.is_file() and os.access(installed, os.X_OK):
+            return str(installed)
+        return self._binary
+
+    def _log_stderr(self, command: CliCommand, returncode: int, stderr: str) -> None:
+        """Surface stderr to the operator without letting it decide the outcome.
+
+        Countless CLIs write progress on a good run, so stderr never itself fails a
+        call. A refusal that only says the thing asked for does not exist is a normal
+        state its caller absorbs; it is a DEBUG line, not an operator alarm. A real
+        failure stays a WARNING and carries its error class.
+        """
+        if returncode == 0:
+            _logger.warning("%s %s wrote to stderr: %s", self._binary, command.tool, stderr)
+        elif is_absence_refusal(stderr):
+            _logger.debug("%s %s reported absence: %s", self._binary, command.tool, stderr)
+        else:
+            _logger.warning(
+                "%s %s failed (%s) and wrote to stderr: %s",
+                self._binary,
+                command.tool,
+                classify_cli_failure(stderr).value,
+                stderr,
+            )
+
     def _result(
         self, command: CliCommand, returncode: int, stdout: str, stderr: str
     ) -> ToolResult:
         """Turn one finished run into a result the agent can act on."""
         stdout, stderr = self._redacted(stdout), self._redacted(stderr)
         if stderr:
-            # Countless CLIs write progress and warnings here on a perfectly good run,
-            # so stderr is captured and surfaced to the operator but never itself
-            # decides the outcome.
-            _logger.warning("%s %s wrote to stderr: %s", self._binary, command.tool, stderr)
+            self._log_stderr(command, returncode, stderr)
 
         if returncode != 0:
             return self._error(

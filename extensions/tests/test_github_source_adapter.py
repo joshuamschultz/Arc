@@ -14,10 +14,26 @@ from arcagent.extension.source import (
     SelectSourceResources,
     SourceError,
     SourceFailureCode,
+    SourceObject,
     SyncSource,
+    SyncSourcePage,
 )
 
 from extensions.github.arc_ext_github import GitHubSourceAdapter
+
+
+async def _crawl(adapter: GitHubSourceAdapter, page_size: int) -> SyncSourcePage:
+    """Every page of one crawl, joined: a page is one repository segment, not a repo."""
+    objects: list[SourceObject] = []
+    checkpoint: str | None = None
+    while True:
+        page = await adapter.sync_source(
+            SyncSource(connection_id="github", page_size=page_size, checkpoint=checkpoint)
+        )
+        objects.extend(page.objects)
+        if not page.has_more:
+            return SyncSourcePage(objects=tuple(objects), next_checkpoint=None)
+        checkpoint = page.next_checkpoint
 
 
 class _Attachment:
@@ -63,7 +79,7 @@ async def test_github_source_selects_syncs_and_fetches_repository_records() -> N
     await adapter.select_source_resources(
         SelectSourceResources(connection_id="github", resource_ids=("arc/arc",))
     )
-    page = await adapter.sync_source(SyncSource(connection_id="github", page_size=10))
+    page = await _crawl(adapter, page_size=10)
     fetched = await adapter.fetch_source(
         FetchSourceObject(
             connection_id="github",
@@ -171,7 +187,7 @@ async def test_a_repository_with_issues_disabled_still_indexes_its_files() -> No
     attachment = _IssuesDisabledAttachment()
     adapter = GitHubSourceAdapter(attachment)
 
-    page = await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+    page = await _crawl(adapter, page_size=50)
 
     assert attachment.pulls_read, "a disabled feature must not stop the next collection"
     assert [obj.locator for obj in page.objects] == ["README.md"]
@@ -229,7 +245,7 @@ async def test_an_empty_repository_does_not_stop_the_crawl() -> None:
     """Nothing to index is not a failure to index — the next repo still runs."""
     adapter = GitHubSourceAdapter(_EmptyRepoAttachment())
 
-    page = await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
+    page = await _crawl(adapter, page_size=50)
 
     assert [obj.locator for obj in page.objects] == ["README.md"]
 
@@ -331,3 +347,114 @@ async def test_a_rate_limit_says_wait_not_reconnect() -> None:
         await adapter.sync_source(SyncSource(connection_id="github", page_size=50))
 
     assert caught.value.code is SourceFailureCode.RATE_LIMITED
+
+
+class _FleetAttachment:
+    """A multi-repo account whose repo list can change between pages; counts calls."""
+
+    def __init__(self, repos: dict[str, dict[str, list[int]]]) -> None:
+        self.repos = repos
+        self.calls: list[tuple[str, str]] = []
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        self.calls.append((tool, args.get("repo", "")))
+        if tool == "github_repo_list":
+            body: Any = [{"nameWithOwner": name} for name in reversed(sorted(self.repos))]
+        elif tool == "github_repo_tree":
+            body = {"tree": []}
+        else:
+            kind = "issues" if tool == "github_issue_list" else "pulls"
+            # Newest-first, as gh returns them: an order that shifts as items change.
+            numbers = sorted(self.repos[args["repo"]][kind], reverse=True)
+            body = [
+                {"number": str(n), "updatedAt": "2026-08-23T12:00:00Z"}
+                for n in numbers[: int(args["limit"])]
+            ]
+        return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps(body))
+
+
+async def _drain(adapter: GitHubSourceAdapter, checkpoint: str | None = None) -> list[str]:
+    seen: list[str] = []
+    while True:
+        page = await adapter.sync_source(
+            SyncSource(connection_id="github", page_size=2, checkpoint=checkpoint)
+        )
+        seen.extend(obj.object_id for obj in page.objects)
+        if not page.has_more:
+            assert page.next_checkpoint is None
+            return seen
+        checkpoint = page.next_checkpoint
+
+
+async def test_github_repo_added_mid_sync_fetches_each_object_exactly_once() -> None:
+    fleet = _FleetAttachment(
+        {"a/one": {"issues": [1, 2, 3], "pulls": [4]}, "c/three": {"issues": [7], "pulls": []}}
+    )
+    adapter = GitHubSourceAdapter(fleet)
+    seen: list[str] = []
+    checkpoint = None
+    added = False
+    while True:
+        page = await adapter.sync_source(
+            SyncSource(connection_id="github", page_size=2, checkpoint=checkpoint)
+        )
+        seen.extend(obj.object_id for obj in page.objects)
+        if not added:
+            # A repo sorting BEFORE the one in progress appears between pages.
+            fleet.repos["0/new"] = {"issues": [9], "pulls": [10]}
+            added = True
+        if not page.has_more:
+            break
+        checkpoint = page.next_checkpoint
+
+    assert len(seen) == len(set(seen)), seen
+    assert {"a/one:issue:1", "a/one:issue:2", "a/one:issue:3", "a/one:pull:4"} <= set(seen)
+    assert "c/three:issue:7" in seen
+
+
+async def test_github_repo_removed_mid_sync_resumes_at_the_next_repo() -> None:
+    fleet = _FleetAttachment(
+        {"a/one": {"issues": [1, 2, 3], "pulls": []}, "b/two": {"issues": [5], "pulls": []}}
+    )
+    adapter = GitHubSourceAdapter(fleet)
+    first = await adapter.sync_source(SyncSource(connection_id="github", page_size=2))
+    del fleet.repos["a/one"]
+    rest = await _drain(adapter, first.next_checkpoint)
+    assert rest == ["b/two:issue:5"]
+
+
+async def test_github_interrupted_run_resumes_from_checkpoint_without_repeats() -> None:
+    fleet = _FleetAttachment(
+        {"a/one": {"issues": [1, 2, 3], "pulls": [4, 5]}, "b/two": {"issues": [6], "pulls": [7]}}
+    )
+    whole = await _drain(GitHubSourceAdapter(fleet))
+
+    first = await GitHubSourceAdapter(fleet).sync_source(
+        SyncSource(connection_id="github", page_size=2)
+    )
+    # A fresh adapter (a restarted run) holds nothing but the committed checkpoint.
+    resumed = await _drain(GitHubSourceAdapter(fleet), first.next_checkpoint)
+
+    assert [obj.object_id for obj in first.objects] + resumed == whole
+    assert len(whole) == len(set(whole)) == 7
+
+
+async def test_github_page_lists_only_the_current_repo_not_every_repo() -> None:
+    fleet = _FleetAttachment({f"r/{i}": {"issues": [1], "pulls": [2]} for i in range(5)})
+    adapter = GitHubSourceAdapter(fleet)
+    first = await adapter.sync_source(SyncSource(connection_id="github", page_size=10))
+    fleet.calls.clear()
+    await adapter.sync_source(
+        SyncSource(connection_id="github", page_size=10, checkpoint=first.next_checkpoint)
+    )
+    touched = {repo for tool, repo in fleet.calls if tool != "github_repo_list"}
+    assert len(touched) == 1
+
+
+async def test_github_rejects_a_legacy_index_checkpoint() -> None:
+    adapter = GitHubSourceAdapter(_FleetAttachment({"a/one": {"issues": [1], "pulls": []}}))
+    with pytest.raises(SourceError) as caught:
+        await adapter.sync_source(
+            SyncSource(connection_id="github", page_size=2, checkpoint="30400")
+        )
+    assert caught.value.code is SourceFailureCode.CHECKPOINT_INVALID

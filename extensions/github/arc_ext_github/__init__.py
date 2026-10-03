@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from arcagent.extension.cli_attachment import is_absence_refusal
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
@@ -85,6 +86,14 @@ _TEXT_SUFFIXES: frozenset[str] = frozenset(
 #: vendored bundle or generated output, and indexing it buries the rest.
 _MAX_FILE_BYTES = 512 * 1024
 
+#: The collections of one repository, in crawl order. A file's "tool" is None: it
+#: comes from the repository tree, not a list command.
+_KINDS: tuple[tuple[str, str | None], ...] = (
+    ("issue", "github_issue_list"),
+    ("pull", "github_pr_list"),
+    ("file", None),
+)
+
 
 class GitHubSourceAdapter:
     """Index selected repositories: their issues, pull requests, and files."""
@@ -93,6 +102,7 @@ class GitHubSourceAdapter:
         self._attachment = attachment
         self._repos: tuple[str, ...] = ()
         self._content: dict[str, tuple[str, bytes]] = {}
+        self._listed: tuple[tuple[str, int], list[dict[str, Any]]] | None = None
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
         repos = await self._call("github_repo_list", {"limit": "1"})
@@ -135,31 +145,60 @@ class GitHubSourceAdapter:
         self._repos = request.resource_ids
 
     async def sync_source(self, request: SyncSource) -> SyncSourcePage:
+        """One page of one (repository, kind) segment, resumable from a structural cursor.
+
+        The cursor names where the crawl is - repository full name, kind, and the
+        last key delivered - never a position in a list rebuilt each page. Repositories
+        are walked in name order, so a repository added or removed between pages
+        changes nothing already behind the cursor, and a page lists only its own
+        segment instead of every repository.
+        """
+        repos = await self._ordered_repos(request.connection_id)
+        position = _resume_position(request.checkpoint, repos)
+        if position is None:
+            return SyncSourcePage(next_checkpoint=None, has_more=False)
+        repo, kind_index, after = position
+        items = await self._segment(repo, kind_index, after)
+        page, rest = items[: request.page_size], items[request.page_size :]
+        objects = tuple(self._to_object(repo, _KINDS[kind_index][0], item) for item in page)
+        if rest:
+            cursor: str | None = _encode_cursor(repo, kind_index, _item_key(kind_index, page[-1]))
+        else:
+            following = _next_segment(repos, repo, kind_index)
+            cursor = _encode_cursor(*following, None) if following else None
+        return SyncSourcePage(objects=objects, next_checkpoint=cursor, has_more=cursor is not None)
+
+    async def _ordered_repos(self, connection_id: str) -> list[str]:
+        if self._repos:
+            return sorted(self._repos)
         resources = await self.list_source_resources(
-            ListSourceResources(connection_id=request.connection_id)
+            ListSourceResources(connection_id=connection_id)
         )
-        repos = self._repos or tuple(resource.resource_id for resource in resources)
-        start = int(request.checkpoint or "0")
-        records: list[tuple[str, str, dict[str, Any]]] = []
-        for repo in repos:
-            for kind, tool in (("issue", "github_issue_list"), ("pull", "github_pr_list")):
+        return sorted(resource.resource_id for resource in resources)
+
+    async def _segment(
+        self, repo: str, kind_index: int, after: str | None
+    ) -> list[dict[str, Any]]:
+        """The items of one repository and kind past ``after``, in a stable key order.
+
+        ``gh`` lists newest-first, an order that shifts as items change; the number
+        (or path) does not. The listing is kept for the pages of one segment so a
+        large one is read once, and is re-read whenever a segment starts.
+        """
+        cache_key = (repo, kind_index)
+        if after is None or self._listed is None or self._listed[0] != cache_key:
+            tool = _KINDS[kind_index][1]
+            if tool is None:
+                listed = await self._tree(repo)
+            else:
                 args = {"repo": repo, "state": "all", "limit": "1000"}
-                for item in await self._optional_collection(tool, args):
-                    records.append((repo, kind, item))
-            # The repository itself, not only the conversation around it. Issues
-            # and pull requests are what people said; the files are the thing
-            # they were talking about, and indexing one without the other left a
-            # code search that could not find any code.
-            for entry in await self._tree(repo):
-                records.append((repo, "file", entry))
-        page_records = records[start : start + request.page_size]
-        objects = tuple(self._to_object(repo, kind, item) for repo, kind, item in page_records)
-        next_index = start + len(page_records)
-        return SyncSourcePage(
-            objects=objects,
-            next_checkpoint=str(next_index) if next_index < len(records) else "0",
-            has_more=next_index < len(records),
-        )
+                listed = await self._optional_collection(tool, args)
+            listed.sort(key=lambda item: _item_key(kind_index, item))
+            self._listed = (cache_key, listed)
+        items = self._listed[1]
+        if after is None:
+            return items
+        return [item for item in items if _item_key(kind_index, item) > after]
 
     async def _tree(self, repo: str) -> list[dict[str, Any]]:
         """Every indexable file in one repository, at its default branch.
@@ -388,8 +427,7 @@ def _github_failure_code(detail: str) -> SourceFailureCode:
 
 def _repository_simply_lacks_it(detail: str) -> bool:
     """True when a refusal means "there is none", not "something went wrong"."""
-    lowered = detail.lower()
-    return any(marker in lowered for marker in _ABSENT_MARKERS)
+    return is_absence_refusal(detail)
 
 
 def _is_indexable(entry: object) -> bool:
@@ -404,6 +442,55 @@ def _is_indexable(entry: object) -> bool:
         return False
     suffix = path[path.rfind(".") :].lower() if "." in path else ""
     return suffix in _TEXT_SUFFIXES
+
+
+def _item_key(kind_index: int, item: dict[str, Any]) -> str:
+    """The stable position of an item inside its segment, ordered as a string.
+
+    A number is zero-padded so text order is numeric order.
+    """
+    if _KINDS[kind_index][1] is None:
+        return str(item.get("path") or "")
+    return f"{int(item.get('number') or 0):012d}"
+
+
+def _encode_cursor(repo: str, kind_index: int, after: str | None) -> str:
+    return json.dumps({"repo": repo, "kind": _KINDS[kind_index][0], "after": after})
+
+
+def _invalid_cursor() -> SourceError:
+    return SourceError(SourceFailureCode.CHECKPOINT_INVALID, "invalid GitHub checkpoint")
+
+
+def _resume_position(
+    checkpoint: str | None, repos: list[str]
+) -> tuple[str, int, str | None] | None:
+    """Where to read next, or ``None`` when nothing is left.
+
+    A cursor whose repository is gone resumes at the next repository by name, not
+    at an index that now points somewhere else.
+    """
+    if not checkpoint:
+        return (repos[0], 0, None) if repos else None
+    try:
+        cursor = json.loads(checkpoint)
+        repo, kind, after = str(cursor["repo"]), str(cursor["kind"]), cursor["after"]
+        kind_index = [name for name, _ in _KINDS].index(kind)
+    except (ValueError, KeyError, TypeError):
+        raise _invalid_cursor() from None
+    if after is not None and not isinstance(after, str):
+        raise _invalid_cursor()
+    if repo in repos:
+        return repo, kind_index, after
+    later = [name for name in repos if name > repo]
+    return (later[0], 0, None) if later else None
+
+
+def _next_segment(repos: list[str], repo: str, kind_index: int) -> tuple[str, int] | None:
+    if kind_index + 1 < len(_KINDS):
+        return repo, kind_index + 1
+    later = [name for name in repos if name > repo]
+    return (later[0], 0) if later else None
 
 
 def _sha_revision(sha: str) -> int:
