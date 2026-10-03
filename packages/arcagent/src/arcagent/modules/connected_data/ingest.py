@@ -212,10 +212,34 @@ class ArcMemoryIngestAdapter(IngestPort):
             approval_store=self._approval_store,
             object_state=self._object_state,
             config=self._config,
-            embedder=self._embedder,
+            embedder=self._embedder or self._memory_embedder(),
             audit_sink=self._audit_sink,
         )
         return self._service
+
+    def _memory_embedder(self) -> Any | None:
+        """The embedder the agent's memory module recalls with, or ``None`` without one.
+
+        Documents must be embedded into the same vector space the question is asked
+        in, so this reads the memory module's own ``embed_*`` settings (the brain's
+        defaults included) rather than carrying a second copy of them here. Without
+        the memory module the index is lexical only, and says so once per process.
+        """
+        try:
+            settings = (
+                import_module("arcagent.modules.memory._runtime")
+                .state_for(self._agent_did)
+                .config.backend
+            )
+            build = import_module("arcmemory.provider").build_embedder
+        except (ImportError, RuntimeError):
+            return None
+        return build(
+            self._agent_did,
+            str(settings.get("embed_backend", "local")),
+            str(settings.get("embed_model", "")),
+            base_url=str(settings.get("embed_base_url", "")),
+        )
 
     async def aclose(self) -> None:
         """Release the memory database connection this port opened, if any."""

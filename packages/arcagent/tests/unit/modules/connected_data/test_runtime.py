@@ -326,6 +326,33 @@ async def test_revoke_purges_before_unregistering_source() -> None:
     assert await catalog.snapshot() == ()
 
 
+@pytest.mark.asyncio
+async def test_a_source_granted_again_after_revoke_can_sync() -> None:
+    """Revoke paused the id while it purged and never lifted it, so a re-grant never ran.
+
+    The operator withdraws a connection and grants it again under the same name;
+    ``sync_now`` answered ``source_paused`` until the process restarted.
+    """
+    catalog = SourceCatalog()
+    await catalog.register("mail", _SnapshotSource())
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:agent",
+        sync_store_opener=lambda: _ready(InMemorySourceSyncStore()),
+        ingest_factory=lambda _: _ApprovalGatedIngest(),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    await service.start()
+    assert (await service.revoke("mail")).status == "revoked"
+
+    await catalog.register("mail", _SnapshotSource())
+    result = await service.sync_now("mail")
+    await service.close()
+
+    assert result.status == "scheduled", result
+
+
 class _InterleavingObjectBackend(FakeBackend):
     """Force both object writes to overlap like concurrent page ingestion."""
 

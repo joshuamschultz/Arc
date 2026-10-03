@@ -416,6 +416,9 @@ class ConnectedDataService:
         self._health.clear(connection_id)
         self._timing.forget(connection_id)
         await self._catalog.unregister(connection_id)
+        # The pause only fenced the purge. A connection granted again under the same
+        # name is a new source and must be free to sync.
+        self._paused.discard(connection_id)
         return SourceOperationResult(connection_id, "revoked")
 
     async def reindex(self, connection_id: str) -> SourceOperationResult:
@@ -760,8 +763,8 @@ class ConnectedDataService:
         """
         _logger.warning("connected-data source %s: %s", event, connection_id, exc_info=exc)
         state = await self._record_failure(connection_id, detail)
-        self._statuses[connection_id] = SourceRuntimeStatus(
-            connection_id=connection_id, status="failed", detail=detail, state=state
+        self._statuses[connection_id] = self._still_described(
+            connection_id, status="failed", detail=detail, state=state
         )
         delay = self._timing.failed(connection_id)
         failures = self._timing.failures(connection_id)
@@ -1123,8 +1126,29 @@ class ConnectedDataService:
         return None
 
     def _set_degraded(self, connection_id: str, detail: str) -> None:
-        self._statuses[connection_id] = SourceRuntimeStatus(
-            connection_id=connection_id, status="degraded", detail=detail
+        self._statuses[connection_id] = self._still_described(
+            connection_id, status="degraded", detail=detail
+        )
+
+    def _still_described(
+        self, connection_id: str, *, status: str, detail: str, state: SyncState | None = None
+    ) -> SourceRuntimeStatus:
+        """A status row for a source that is unwell but still connected.
+
+        Keeps what the source is (name, kind, pool id, indexed count). A row built
+        without them dropped a failed source out of the agent's catalog and its
+        name resolution while every page it had already indexed was still searchable.
+        """
+        previous = self._statuses.get(connection_id)
+        known = previous.description if previous is not None else None
+        return SourceRuntimeStatus(
+            connection_id=connection_id,
+            status=status,
+            source_id=previous.source_id if previous is not None else "",
+            detail=detail,
+            description=known or self._descriptions.get(connection_id),
+            state=state,
+            documents_indexed=previous.documents_indexed if previous is not None else 0,
         )
 
     async def _mark_needs_attention(self, connection_id: str, reason: str) -> None:
@@ -1134,8 +1158,8 @@ class ConnectedDataService:
         if is_terminal_sync_failure(reason):
             # Durable, so the next process knows without being told again.
             await self._record_failure(connection_id, reason, force=True)
-        self._statuses[connection_id] = SourceRuntimeStatus(
-            connection_id=connection_id,
+        self._statuses[connection_id] = self._still_described(
+            connection_id,
             status="needs_attention",
             detail=reason or "",
             state=await self._persisted_state(connection_id),
