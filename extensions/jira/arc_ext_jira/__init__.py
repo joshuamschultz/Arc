@@ -187,7 +187,8 @@ class JiraSourceAdapter:
         object_id = str(issue.get("key") or issue.get("id") or "")
         if not object_id:
             raise SourceError(SourceFailureCode.TRANSIENT, "Jira returned an issue without a key")
-        fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        raw_fields = issue.get("fields")
+        fields: dict[str, Any] = raw_fields if isinstance(raw_fields, dict) else {}
         content = json.dumps(issue, ensure_ascii=False, sort_keys=True).encode()
         version = _version(content)
         self._content[object_id] = (version, content)

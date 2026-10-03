@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import re
+import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -344,8 +345,17 @@ class CliAttachment:
         visible_env: frozenset[str] = frozenset(),
         download_dir: Path | None = None,
         credential_env: CredentialEnv | None = None,
+        static_env: Mapping[str, str] | None = None,
+        isolated_config_env: str = "",
+        config_dir: Path | None = None,
     ) -> None:
         self._binary = binary
+        # Fixed manifest settings (never credentials), and the variable that
+        # points the binary at an EMPTY per-connection config directory, so it
+        # can never fall back to the operator's own signed-in configuration.
+        self._static_env = dict(static_env or {})
+        self._isolated_config_env = isolated_config_env
+        self._config_dir = config_dir
         # Sensitive placed credentials are NOT held here: they are fetched through
         # the connection's credential handle right before each spawn, so a rotated
         # or re-authorised credential reaches the very next call, and a revoked
@@ -538,10 +548,25 @@ class CliAttachment:
     def _child_environment(self, placed: Mapping[str, Secret] | None = None) -> dict[str, str]:
         """The placed values, the scrubbed inheritance, and no stray owned variable."""
         values = {**self._env, **(placed or {})}
-        env = scrubbed_environment({name: secret.reveal() for name, secret in values.items()})
+        env = scrubbed_environment(
+            {**self._static_env, **{name: secret.reveal() for name, secret in values.items()}}
+        )
         for name in self._owned_env - set(values):
             env.pop(name, None)
+        if self._isolated_config_env:
+            env[self._isolated_config_env] = str(self._isolated_config_directory())
         return env
+
+    def _isolated_config_directory(self) -> Path:
+        """The connection's own empty config directory, created private (0700) once.
+
+        A surface that gave no home for it (a management probe) gets a private
+        temporary one: still empty, which is the whole point.
+        """
+        if self._config_dir is None:
+            self._config_dir = Path(tempfile.mkdtemp(prefix="arc-cli-config-"))
+        self._config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return self._config_dir
 
     async def _attempt(self, argv: list[str]) -> tuple[int, str, str]:
         """Spawn with a bounded retry on timeouts, backing off between attempts.

@@ -80,6 +80,10 @@ class _CliConfig(BaseModel):
     probe_argv: list[str] = Field(default_factory=lambda: ["--version"])
     install_instruction: str = ""
     resilience: CliResilience = Field(default_factory=CliResilience)
+    #: Variable naming an empty per-connection config directory (``GH_CONFIG_DIR``).
+    isolated_config_env: str = ""
+    #: Fixed, non-credential variables every spawn gets (validated at manifest parse).
+    static_env: dict[str, str] = Field(default_factory=dict)
 
 
 class _McpStdioConfig(BaseModel):
@@ -229,6 +233,7 @@ def build_attachment(
     connection_id: str = "",
     download_dir: Path | None = None,
     credential: AccessTokenHandle | None = None,
+    config_dir: Path | None = None,
 ) -> ExtensionAttachment:
     """Build the declared attachment at the sole credential-reveal boundary.
 
@@ -294,6 +299,9 @@ def build_attachment(
             ),
             download_dir=download_dir,
             credential_env=_placed_by_handle(manifest, credential),
+            static_env=declared.static_env,
+            isolated_config_env=declared.isolated_config_env,
+            config_dir=config_dir,
         )
         return _with_source_adapter(
             manifest,

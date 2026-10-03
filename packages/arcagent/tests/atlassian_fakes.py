@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from packages.arcagent.tests.oauth_fakes import FakeOAuthProvider
 
 from arcagent.extension.oauth import TokenPost
-from packages.arcagent.tests.oauth_fakes import FakeOAuthProvider
 
 SITE_A = ("cloud-aaaa-1111", "https://acme.atlassian.net")
 SITE_B = ("cloud-bbbb-2222", "https://other.atlassian.net")

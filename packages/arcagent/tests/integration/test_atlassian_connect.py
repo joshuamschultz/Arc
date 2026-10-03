@@ -33,7 +33,7 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.extension.credential_broker import credential_plan
-from arcagent.extension.credentials import CredentialRenewalError, RenewalPlanner, RefreshRequest
+from arcagent.extension.credentials import CredentialRenewalError, RefreshRequest, RenewalPlanner
 from arcagent.extension.custody import CREDENTIAL_COLLECTION, CredentialRowStore
 from arcagent.extension.custody_select import Custody, open_custody
 from arcagent.extension.grants import ConnectionRegistry

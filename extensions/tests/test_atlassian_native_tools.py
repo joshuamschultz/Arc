@@ -68,7 +68,10 @@ def test_search_sends_the_bearer_to_the_cloud_id_url_and_pages_with_next_page_to
                         {
                             "id": "1",
                             "key": "ARC-1",
-                            "fields": {"summary": "One", "updated": "2026-10-02T10:00:00.000+0000"},
+                            "fields": {
+                                "summary": "One",
+                                "updated": "2026-10-02T10:00:00.000+0000",
+                            },
                         }
                     ],
                     "nextPageToken": "tok-2",
@@ -77,7 +80,9 @@ def test_search_sends_the_bearer_to_the_cloud_id_url_and_pages_with_next_page_to
         }
     )
 
-    result = _run(_jira(wire), "jira_search_issues", jql='project = "ARC"', limit="500", page_token="tok-1")
+    result = _run(
+        _jira(wire), "jira_search_issues", jql='project = "ARC"', limit="500", page_token="tok-1"
+    )
 
     assert result.outcome is ToolOutcome.OK
     request = wire.requests[0]
@@ -254,7 +259,11 @@ def _confluence(wire: Wire, credential: FakeCredentialHandle | None = None) -> A
 
 def test_confluence_goes_to_the_gateway_with_the_bearer_and_no_basic_auth() -> None:
     wire = Wire(
-        {"GET /ex/confluence/cloud-1/wiki/rest/api/space": httpx.Response(200, json={"results": []})}
+        {
+            "GET /ex/confluence/cloud-1/wiki/rest/api/space": httpx.Response(
+                200, json={"results": []}
+            )
+        }
     )
 
     result = _run(_confluence(wire), "confluence_list_spaces")
@@ -281,9 +290,7 @@ def test_confluence_retries_once_after_a_401_with_a_fresh_bearer() -> None:
 
 
 def test_confluence_probe_names_connect_when_atlassian_refuses_the_sign_in() -> None:
-    wire = Wire(
-        {"GET /ex/confluence/cloud-1/wiki/rest/api/space": httpx.Response(401, json={})}
-    )
+    wire = Wire({"GET /ex/confluence/cloud-1/wiki/rest/api/space": httpx.Response(401, json={})})
 
     probe = asyncio.run(_confluence(wire).probe())
 

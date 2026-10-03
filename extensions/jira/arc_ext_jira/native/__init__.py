@@ -1,3 +1,4 @@
+# ruff: noqa: E501  (the tool table carries the manifest descriptions verbatim)
 """Jira Cloud over Atlassian's REST API v3, on an OAuth bearer from Arc's credential handle.
 
 Arc owns the OAuth side. This attachment asks its credential handle for a fresh
@@ -197,7 +198,9 @@ def _api_error(response: httpx.Response) -> ToolError:
         elif isinstance(payload.get("message"), str):
             message = payload["message"]
     message = message[:_MESSAGE_CAP]
-    return ToolError(f"Jira API error {status}: {message}" if message else f"Jira API error {status}")
+    return ToolError(
+        f"Jira API error {status}: {message}" if message else f"Jira API error {status}"
+    )
 
 
 # --- argument readers -----------------------------------------------------------------
@@ -331,10 +334,16 @@ async def transition_issue(http: JiraHttp, args: Mapping[str, Any]) -> Any:
     status = _text(args, "status", required=True)
     listed = await http.request("GET", f"issue/{key}/transitions")
     options = [item for item in listed.get("transitions") or [] if isinstance(item, dict)]
-    chosen = [t for t in options if str((t.get("to") or {}).get("name", "")).casefold() == status.casefold()]
+    chosen = [
+        t
+        for t in options
+        if str((t.get("to") or {}).get("name", "")).casefold() == status.casefold()
+    ]
     if len(chosen) != 1:
         names = ", ".join(sorted({str((t.get("to") or {}).get("name", "")) for t in options}))
-        raise ToolError(f"cannot move {key} to {status!r}; its workflow offers: {names or 'nothing'}")
+        raise ToolError(
+            f"cannot move {key} to {status!r}; its workflow offers: {names or 'nothing'}"
+        )
     await http.request(
         "POST", f"issue/{key}/transitions", body={"transition": {"id": chosen[0]["id"]}}
     )
@@ -416,7 +425,13 @@ _HANDLERS: Final[dict[str, Callable[[JiraHttp, Mapping[str, Any]], Awaitable[Any
 }
 
 
-def _spec(name: str, description: str, classification: str, args: tuple[str, ...], required: tuple[str, ...]) -> ToolSpec:
+def _spec(
+    name: str,
+    description: str,
+    classification: str,
+    args: tuple[str, ...],
+    required: tuple[str, ...],
+) -> ToolSpec:
     return ToolSpec(
         name=name,
         description=description,

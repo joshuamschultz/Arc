@@ -479,6 +479,10 @@ class HealthProbe(_ManifestModel):
     args: dict[str, str] = Field(default_factory=dict)
     mode: Literal["probe", "none"] = "probe"
     reason: str = ""
+    #: A regex with ONE group that finds the credential's expiry time in a
+    #: ``tool:<name>`` probe's output (a token-expiry response header). The time
+    #: is mirrored for display and escalates the connection before it lapses.
+    expires_pattern: str | None = None
 
     @property
     def tool(self) -> str | None:
@@ -498,10 +502,25 @@ class HealthProbe(_ManifestModel):
             )
         if self.args and self.tool is None:
             raise ValueError("[health].args only apply to a tool:<name> probe")
+        if self.expires_pattern is not None:
+            if self.tool is None:
+                raise ValueError("[health].expires_pattern only applies to a tool:<name> probe")
+            try:
+                compiled = re.compile(self.expires_pattern)
+            except re.error as exc:
+                raise ValueError(f"[health].expires_pattern is not a regex: {exc}") from exc
+            if compiled.groups != 1:
+                raise ValueError("[health].expires_pattern needs exactly one group")
         return self
 
 
 _TOOL_PROBE = "tool:"
+
+#: An environment variable name a manifest may set: upper case, digits, underscore.
+_FIXED_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+#: A fixed setting never carries a credential, whatever it is called.
+_CREDENTIAL_SUFFIXES = ("TOKEN", "KEY", "SECRET", "PASSWORD")
 
 
 class DeclaredTool(_ManifestModel):
@@ -711,6 +730,37 @@ class ExtensionManifest(_ManifestModel):
                 if isinstance(argument, dict) and isinstance(argument.get("name"), str):
                     found.append((str(command.get("tool", "a command")), argument["name"]))
         return found
+
+    @model_validator(mode="after")
+    def _cli_environment_is_safe(self) -> ExtensionManifest:
+        """``[config.cli]`` fixed environment names carry no credential or steering name.
+
+        A fixed setting must never shadow a declared secret, the variable a secret
+        is placed in, ``GH_TOKEN``-style credential variables a bundle declares, or a
+        variable that decides which program runs.
+        """
+        cli: Any = self.config.get("cli", {})
+        static: Any = cli.get("static_env", {}) if isinstance(cli, dict) else {}
+        isolated: Any = cli.get("isolated_config_env", "") if isinstance(cli, dict) else ""
+        names = list(static) if isinstance(static, dict) else []
+        if isolated:
+            names.append(isolated)
+        owned = {s.name for s in self.secrets} | {
+            s.placement.variable for s in self.secrets if s.placement is not None
+        }
+        for name in names:
+            if not isinstance(name, str) or not _FIXED_ENV_NAME.fullmatch(name):
+                raise ValueError(f"[config.cli] environment name {name!r} is not valid")
+            if name in owned or refuses_placement(name) or name.endswith(_CREDENTIAL_SUFFIXES):
+                raise ValueError(
+                    f"[config.cli] may not set {name}: it is a credential, a declared "
+                    "secret, or a variable that steers the process"
+                )
+        if isinstance(static, dict):
+            for name, value in static.items():
+                if not isinstance(value, str) or len(value) > 256 or not value.isprintable():
+                    raise ValueError(f"[config.cli].static_env {name} must be printable text")
+        return self
 
     @model_validator(mode="after")
     def _bearer_names_a_sensitive_secret(self) -> ExtensionManifest:

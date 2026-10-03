@@ -665,8 +665,8 @@ async def resolve_site(
     items = payload.get("items")
     if status != 200 or not isinstance(items, list):
         raise _mismatch("the provider did not list the sites this sign-in can reach")
-    sites = [_site_of(item) for item in items]
-    sites = [found for found in sites if found is not None]
+    found_sites = [_site_of(item) for item in items]
+    sites = [found for found in found_sites if found is not None]
     wanted = site.strip().casefold().removeprefix("https://").rstrip("/")
     matches = [found for found in sites if not wanted or found.site == wanted]
     if len(matches) != 1:

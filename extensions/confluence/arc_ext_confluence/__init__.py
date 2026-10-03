@@ -405,7 +405,9 @@ def _refused(status: int, site: str) -> str:
     is not a Confluence site.
     """
     if status == 401:
-        return "Atlassian no longer accepts this sign-in. Click Connect on the card to sign in again."
+        return (
+            "Atlassian no longer accepts this sign-in. Click Connect on the card to sign in again."
+        )
     if status == 403:
         return (
             f"Atlassian accepted the sign-in, but this account or the app's granted scopes "

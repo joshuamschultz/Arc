@@ -27,7 +27,9 @@ class _Attachment:
         self.calls.append((tool, args))
         payload: Any
         if tool == "jira_list_projects":
-            payload = {"values": [{"key": "ARC", "name": "Arc"}, {"key": "OPS", "name": "Operations"}]}
+            payload = {
+                "values": [{"key": "ARC", "name": "Arc"}, {"key": "OPS", "name": "Operations"}]
+            }
         elif tool == "jira_search_issues":
             project = args["jql"].split('"')[1]
             payload = {

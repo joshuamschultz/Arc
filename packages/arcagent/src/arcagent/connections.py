@@ -69,6 +69,7 @@ from arcagent.extension.attachment import (
 from arcagent.extension.catalog import BUNDLES_DIRNAME, MANIFEST_NAME, resolve_extension_roots
 from arcagent.extension.connection_health import (
     AUTH_REASONS,
+    TOKEN_EXPIRY_WARNING,
     ConnectionHealthAuthority,
     HealthSignal,
     SignalSource,
@@ -76,6 +77,8 @@ from arcagent.extension.connection_health import (
     classify,
     custody_of,
     effective_probe,
+    expiry_phrase,
+    token_expiry,
 )
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
@@ -1172,9 +1175,37 @@ class Connections:
         tool = health.tool
         if tool is not None:
             result = await attachment.invoke(tool, dict(health.args))
-            return None if result.outcome is ToolOutcome.OK else (None, result.content)
+            if result.outcome is not ToolOutcome.OK:
+                return (None, result.content)
+            if health.expires_pattern is None:
+                return None
+            return await self._expiry_verdict(
+                plan.instance, health.expires_pattern, result.content
+            )
         probe = await attachment.probe()
         return None if probe.reachable else (None, probe.detail)
+
+    async def _expiry_verdict(
+        self, instance: str, pattern: str, output: str
+    ) -> tuple[str | None, str] | None:
+        """Mirror the credential's expiry and escalate it within a week of lapsing.
+
+        The provider tells us when this token dies (a response header on the
+        probe call). Nothing in Arc can renew a pasted token, so a person has to
+        be told BEFORE it stops working: ``token_expiring`` is terminal and
+        ``needs_you``. An unreadable or absent time records nothing and passes.
+        """
+        expires = token_expiry(pattern, output)
+        if expires is None:
+            return None
+        state = await self._connection_state()
+        await state.record_credential_metadata(
+            instance, expires_at=expires.isoformat(), actor_did=causal.actor_did()
+        )
+        remaining = expires - self._clock()
+        if remaining > TOKEN_EXPIRY_WARNING:
+            return None
+        return ("token_expiring", expiry_phrase(remaining))
 
     async def _host_verify_verdict(
         self, plan: ConnectorPlan, sink: AuditSink
