@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api'
 import { fmtTime } from '@/lib/format'
-import { useEnableWorkflowSchedule } from '@/lib/queries'
+import { useApproveWorkflowSchedule, useEnableWorkflowSchedule } from '@/lib/queries'
 import type { WorkflowSchedule } from '@/lib/types'
 
 function describe(schedule: WorkflowSchedule): { text: string; paused: boolean } {
@@ -15,6 +15,8 @@ function describe(schedule: WorkflowSchedule): { text: string; paused: boolean }
         text: `Paused by safety breaker since ${fmtTime(schedule.disabled_at)}`,
         paused: true,
       }
+    case 'unapproved':
+      return { text: 'Needs approval — re-create or approve', paused: true }
     case 'archived':
       return { text: 'Schedule off · workflow archived', paused: true }
     default:
@@ -36,17 +38,24 @@ export function ScheduleStatus({
   schedule: WorkflowSchedule
 }) {
   const enable = useEnableWorkflowSchedule(workflowId, schedule)
+  const approve = useApproveWorkflowSchedule(workflowId, schedule)
+  const needsApproval = schedule.disabled_reason === 'unapproved'
   const [error, setError] = useState<string | null>(null)
   const { text, paused } = describe(schedule)
 
-  const reenable = async () => {
+  const act = async () => {
     setError(null)
     try {
-      await enable.mutateAsync()
+      await (needsApproval ? approve : enable).mutateAsync()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not re-enable the schedule')
+      const fallback = needsApproval
+        ? 'Could not approve the schedule'
+        : 'Could not re-enable the schedule'
+      setError(e instanceof ApiError ? e.message : fallback)
     }
   }
+  const pending = enable.isPending || approve.isPending
+  const label = needsApproval ? 'Approve' : 'Re-enable'
 
   return (
     <span className="flex flex-wrap items-center gap-2">
@@ -55,8 +64,8 @@ export function ScheduleStatus({
         <span className="text-status-error">{schedule.last_error}</span>
       )}
       {paused && (
-        <Button size="sm" variant="outline" disabled={enable.isPending} onClick={reenable}>
-          {enable.isPending ? 'Re-enabling…' : 'Re-enable'}
+        <Button size="sm" variant="outline" disabled={pending} onClick={act}>
+          {pending ? 'Working…' : label}
         </Button>
       )}
       {error && <span className="text-status-error">{error}</span>}

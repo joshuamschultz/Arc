@@ -996,7 +996,7 @@ export interface WorkflowSchedule {
   agent_id: string
   schedule_id: string
   enabled: boolean
-  disabled_reason?: 'operator' | 'breaker' | 'archived' | null
+  disabled_reason?: 'operator' | 'breaker' | 'archived' | 'unapproved' | null
   disabled_at?: string | null
   next_fire_at?: string | null
   last_fired_at?: string | null

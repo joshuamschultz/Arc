@@ -227,6 +227,13 @@ def _pulse_handler(args: list[str]) -> None:
     pulse_handler(args)
 
 
+def _schedule_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.schedule import schedule_handler
+
+    schedule_handler(args)
+
+
 def _stop_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.stop import stop_handler
@@ -829,6 +836,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_pulse_handler,
+    ),
+    CommandDef(
+        name="schedule",
+        description="Schedules — list, approve (re-approve a legacy schedule)",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_schedule_handler,
     ),
     CommandDef(
         name="workflow",

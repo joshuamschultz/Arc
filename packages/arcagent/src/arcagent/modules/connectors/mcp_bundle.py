@@ -29,13 +29,13 @@ server needs; the values go through the existing secret path at install time.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import ipaddress
 import json
 import os
 import re
 import shutil
-import socket
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -52,6 +52,13 @@ from arcagent.core.session_internal.capability_ledger import TAG_TO_LEGS
 from arcagent.core.tier import Tier
 from arcagent.extension.attachment import Classification, ExtensionAttachment
 from arcagent.extension.catalog import BUNDLES_DIRNAME, MANIFEST_NAME
+from arcagent.extension.egress_guard import (
+    EgressPolicy,
+    always_blocked,
+    parse_address,
+    system_resolver,
+    unmapped,
+)
 from arcagent.extension.environment import refuses_placement
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.secrets import Secret
@@ -123,10 +130,6 @@ _METADATA_HOSTNAMES = frozenset(
         "instance-data.ec2.internal", "metadata.azure.com",
     }
 )  # fmt: skip
-_METADATA_ADDRESSES = frozenset(
-    ipaddress.ip_address(text)
-    for text in ("169.254.169.254", "fd00:ec2::254", "100.100.100.200", "192.0.0.192")
-)
 
 Resolver = Callable[[str], Sequence[str]]
 Which = Callable[[str], str | None]
@@ -232,7 +235,7 @@ def validate_spec(
         )
     resolved = spec
     if spec.transport == "http":
-        _check_url(spec.url, tier, resolver or _system_resolver)
+        _check_url(spec.url, tier, resolver or system_resolver)
         _check_header(spec.auth_header, spec.auth_scheme)
     else:
         resolved = spec.model_copy(
@@ -284,6 +287,11 @@ def _check_url(url: str, tier: Tier, resolver: Resolver) -> None:
             "use an https address",
             reason="loopback",
         )
+    policy = EgressPolicy(tier=tier)
+    for address in addresses:
+        why = None if address.is_loopback else policy.refusal(address)
+        if why is not None:
+            raise _refuse(f"{host} points at {address}: {why}", reason="private")
     if parts.scheme != "https" and not (loopback and tier is Tier.PERSONAL):
         raise _refuse(
             "the url must be https (plain http is allowed only to loopback at personal tier)",
@@ -306,7 +314,7 @@ def _addresses_of(
     if host in _METADATA_HOSTNAMES:
         raise _refuse(f"{host} is a cloud metadata service name", reason="ssrf")
     try:
-        return [_unmapped(ipaddress.ip_address(host))]
+        return [unmapped(ipaddress.ip_address(host))]
     except ValueError:
         pass
     if _NUMERIC_HOST.fullmatch(host):
@@ -318,39 +326,20 @@ def _addresses_of(
     if not found:
         raise _refuse(f"could not resolve {host}", reason="resolve")
     try:
-        return [_unmapped(ipaddress.ip_address(item.split("%", 1)[0])) for item in found]
+        return [parse_address(item) for item in found]
     except ValueError as exc:
         raise _refuse(
             f"{host} resolved to something that is not an address", reason="resolve"
         ) from exc
 
 
-def _unmapped(
-    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
-) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Unwrap ``::ffff:a.b.c.d`` so a mapped metadata address is judged as IPv4."""
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return address.ipv4_mapped
-    return address
-
-
 def _refuse_if_blocked(host: str, address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
-    if (
-        address in _METADATA_ADDRESSES
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_unspecified
-        or address.is_reserved
-    ):
+    if always_blocked(address):
         raise _refuse(
             f"{host} points at {address}, a link-local, metadata or otherwise unreachable "
             "address that an MCP server may not use",
             reason="ssrf",
         )
-
-
-def _system_resolver(host: str) -> list[str]:
-    return [str(info[4][0]) for info in socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)]
 
 
 def _check_header(header: str, scheme: str) -> None:
@@ -699,7 +688,7 @@ async def discover_tools(
     bare = checked.model_copy(update={"tools": {}})
     manifest = load_manifest(render_extension_toml(bare, require_tools=False), tier=tier)
     secrets = {name: Secret(value) for name, value in secret_values.items()}
-    build = builder or build_attachment
+    build = builder or functools.partial(build_attachment, tier=tier)
     try:
         attachment = build(manifest, Path(os.devnull), secrets)
         specs = await asyncio.wait_for(attachment.describe_tools(), timeout=timeout)

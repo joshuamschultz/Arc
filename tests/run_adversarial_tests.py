@@ -580,6 +580,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_mcp_server_routes.py",
         "packages/arccli/tests/test_cli_connector_add_mcp.py",
     ),
+    # P12: a hostname judged safe when the operator added the server can be re-pointed
+    # afterwards (DNS rebinding). The http client resolves the host itself on every
+    # connect, judges EVERY address (link-local, metadata, multicast, unspecified always;
+    # loopback and private above personal unless allowlisted), connects to the address it
+    # judged while keeping the name for Host and TLS SNI, and audits the refusal: a public
+    # first answer then 169.254.169.254 on the second connect never reaches the network.
+    "operator-added MCP server: DNS rebinding pinned to the validated address (alpha-2 P12)": (
+        "packages/arcagent/tests/security/test_mcp_dns_rebinding.py",
+    ),
     # P18-2: connector credentials live in sealed custody rows. A replayed or stalled
     # renewal commit is refused by the fenced lease; a ciphertext copied between
     # connections fails to open (AAD) and never reaches the provider; a handle dies

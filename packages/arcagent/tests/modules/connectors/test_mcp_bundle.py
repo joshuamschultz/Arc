@@ -202,6 +202,18 @@ def test_ssrf_guard_refuses_link_local_and_metadata_hosts(url: str) -> None:
         _validated(_http_spec(url=url), resolver=resolver)
 
 
+def test_a_name_that_resolves_to_a_private_address_is_refused_above_personal_tier() -> None:
+    """The add-time guard is the SAME policy the connect-time pinned transport applies."""
+
+    def resolver(host: str) -> list[str]:
+        return ["10.4.5.6"]
+
+    for tier in (Tier.ENTERPRISE,):
+        message = _refusal(_http_spec(), tier, resolver=resolver)
+        assert "10.4.5.6" in message
+    assert _validated(_http_spec(), Tier.PERSONAL, resolver=resolver).url
+
+
 @pytest.mark.parametrize(
     "host", ["2852039166", "0xa9fea9fe", "0251.0376.0251.0376", "169.254.43518"]
 )

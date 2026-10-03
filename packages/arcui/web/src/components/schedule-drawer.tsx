@@ -288,6 +288,11 @@ function ScheduleDetail({
           >
             {enabled ? 'enabled' : 'disabled'}
           </span>
+          {schedule.approval == null && (
+            <span className="text-[11px] font-medium text-status-warning">
+              Needs approval — re-create or approve
+            </span>
+          )}
         </SheetDescription>
       </SheetHeader>
 

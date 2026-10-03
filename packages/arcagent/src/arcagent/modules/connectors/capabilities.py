@@ -53,6 +53,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -436,6 +437,8 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
             download_dir=state.workspace / "downloads" / loaded.name / instance,
             credential=handle,
             config_dir=state.workspace / ".connector" / loaded.name / instance / "config",
+            tier=Tier(state.tier),
+            egress_audit=_egress_audit(state, ctx.sink, instance),
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
     except ExtensionError as exc:
@@ -896,6 +899,27 @@ def _refused(
         ),
         sink,
     )
+
+
+def _egress_audit(
+    state: _runtime._State, sink: AuditSink, instance: str
+) -> Callable[[str, str, str], None]:
+    """Audit one MCP connect the address policy refused (a DNS-rebinding attempt)."""
+
+    def record(host: str, address: str, reason: str) -> None:
+        emit(
+            AuditEvent(
+                actor_did=state.identity.did,
+                action="connector.egress_denied",
+                target=f"connector:{instance}",
+                outcome="deny",
+                tier=state.tier,
+                extra={"instance": instance, "host": host, "address": address, "reason": reason},
+            ),
+            sink,
+        )
+
+    return record
 
 
 __all__ = ["Connectors"]
