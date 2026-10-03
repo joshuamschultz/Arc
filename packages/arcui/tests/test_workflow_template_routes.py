@@ -160,7 +160,7 @@ async def enterprise_plane(tmp_path: Path) -> Any:
         runner_key_path=tmp_path / "operator" / "operator.key",
         workspace_root=tmp_path,
     )
-    yield build_dashboard_plane(runner=runner)
+    yield build_dashboard_plane(runner=runner, default_owner="@writer")
     await backend.stop()
 
 

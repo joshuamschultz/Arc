@@ -579,7 +579,7 @@ export function ConnectionsPage() {
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
   const [operatorMode] = useOperatorMode()
   const [searchParams] = useSearchParams()
-  const focusInstance = searchParams.get('focus')
+  const focusInstance = searchParams.get('connection')
 
   const catalog = useConnectorCatalog()
   const connections = useConnections()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { Archive, GitBranch, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
@@ -19,6 +19,7 @@ import { useOperatorMode } from '@/hooks/use-operator-mode'
 import {
   useCreateWorkflow,
   useCreateWorkflowFromTemplate,
+  useWorkflowRun,
   useWorkflows,
   useWorkflowTemplates,
 } from '@/lib/queries'
@@ -128,11 +129,23 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   )
 }
 
+/** `?run=<run_id>` (audit and notice deep links) opens that run on its workflow's page. */
+function useLinkedRunTarget(): string | null {
+  const [searchParams] = useSearchParams()
+  const runId = searchParams.get('run')
+  const run = useWorkflowRun(runId)
+  if (!runId || !run.data?.workflow_id) return null
+  return `/workflows/${encodeURIComponent(run.data.workflow_id)}?run=${encodeURIComponent(runId)}`
+}
+
 export function WorkflowsPage() {
+  const linkedRunTarget = useLinkedRunTarget()
   const [showArchived, setShowArchived] = useState(false)
   const workflows = useWorkflows(showArchived)
   const [operatorMode] = useOperatorMode()
   const [creating, setCreating] = useState(false)
+
+  if (linkedRunTarget) return <Navigate to={linkedRunTarget} replace />
 
   return (
     <div className="flex h-full flex-col">

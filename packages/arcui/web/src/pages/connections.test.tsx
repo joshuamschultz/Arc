@@ -230,3 +230,24 @@ describe('Add MCP server', () => {
     expect(screen.queryByRole('button', { name: /Add MCP server/ })).toBeNull()
   })
 })
+
+describe('?connection= deep link', () => {
+  it('highlights and scrolls to the named connection card', async () => {
+    stubApi([row({ instance: 'gmail-a' }), row({ instance: 'gmail-b' })])
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/connections?connection=gmail-b']}>
+          <ConnectionsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const label = await screen.findByText('gmail-b', { selector: '[data-connection-card] span' })
+    const card = label.closest('[data-connection-card]') as HTMLElement
+    const other = screen.getByText('gmail-a', { selector: '[data-connection-card] span' })
+    expect(card.className).toContain('ring-2')
+    expect(other.closest('[data-connection-card]')!.className).not.toContain('ring-2')
+    await waitFor(() => expect(scroll).toHaveBeenCalled())
+  })
+})
