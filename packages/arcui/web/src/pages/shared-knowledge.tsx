@@ -194,7 +194,7 @@ export function SharedKnowledgePage() {
         title="Shared knowledge"
         description="What agents have promoted into the fleet's signed knowledge collection, grouped by owner."
       />
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <div className="mb-4 flex flex-wrap items-center gap-4">
           <SearchInput
             aria-label="Search shared knowledge"

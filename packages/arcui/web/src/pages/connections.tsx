@@ -249,7 +249,7 @@ function ConnectionCard({
       ref={cardRef}
       data-connection-card
       className={cn(
-        'rounded-lg border border-border bg-card',
+        'min-w-0 rounded-lg border border-border bg-card',
         focused && 'ring-2 ring-primary',
       )}
     >
@@ -280,7 +280,7 @@ function ConnectionCard({
           )}
         </div>
         {operatorMode && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {onPrimary && inst.action_label && (
               <Button size="xs" disabled={busy} onClick={onPrimary}>
                 {inst.action_label}
@@ -614,7 +614,7 @@ export function ConnectionsPage() {
           </>
         }
       />
-      <div className="flex-1 space-y-8 overflow-auto p-6">
+      <div className="flex-1 space-y-8 overflow-auto p-4 md:p-6">
         <section className="space-y-3">
           {/* No search path here. Where bundles are read from is a fact about
               bundles, not about a connected account, and it belongs beside the
@@ -645,7 +645,7 @@ export function ConnectionsPage() {
                     `md` keeps every section (doctor, sign-in, knowledge sync)
                     readable rather than squeezed. `items-start` stops a tall
                     card from stretching its shorter neighbor to match height. */}
-                <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))] items-start gap-3">
                   {data.connections.map((inst) => (
                     <ConnectionCard
                       key={inst.instance}
@@ -678,7 +678,7 @@ export function ConnectionsPage() {
           >
             {(data) => (
               <div className="space-y-3">
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))] gap-3">
                   {data.available.map((b) => (
                     <BundleCard
                       key={b.name}

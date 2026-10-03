@@ -208,7 +208,7 @@ export function SecurityPage() {
         title="Audit"
         description="The tamper-evident signed ledger — every control action, signature, and policy denial, in order."
       />
-      <div className="flex-1 space-y-5 overflow-auto p-6">
+      <div className="flex-1 space-y-5 overflow-auto p-4 md:p-6">
         <LedgerSummary
           total={summary.total}
           verified={summary.verified}

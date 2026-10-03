@@ -216,7 +216,7 @@ function Overview() {
         {modelRows.length === 0 ? (
           <EmptyState title="No model activity yet" />
         ) : (
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 <tr className="border-b border-border">
@@ -300,7 +300,7 @@ function Overview() {
           <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Per-agent spend
           </h3>
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 <tr className="border-b border-border">
@@ -358,16 +358,16 @@ export function ArcLlmPage() {
         description="How much the fleet spends on the model — requests, tokens, latency, and cost, with the raw call trace one click deeper."
       />
       <Tabs defaultValue="overview" className="flex flex-1 flex-col overflow-hidden">
-        <div className="border-b border-border px-6">
+        <div className="border-b border-border px-4 md:px-6">
           <TabsList className="my-2">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="calls">Calls</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="overview" className="flex-1 overflow-auto p-6">
+        <TabsContent value="overview" className="flex-1 overflow-auto p-4 md:p-6">
           <Overview />
         </TabsContent>
-        <TabsContent value="calls" className="flex-1 overflow-auto p-6">
+        <TabsContent value="calls" className="flex-1 overflow-auto p-4 md:p-6">
           <Calls />
         </TabsContent>
       </Tabs>

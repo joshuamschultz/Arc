@@ -411,7 +411,7 @@ export function RunRiver({ run }: { run: RunSummary | null }) {
   )
 
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <div className="mb-5">
         <h2 className="font-display text-lg font-bold tracking-tight text-foreground">
           {run.agent} · run {run.run_id.length > 10 ? run.run_id.slice(0, 8) : run.run_id}

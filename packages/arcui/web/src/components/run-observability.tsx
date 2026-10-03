@@ -194,7 +194,7 @@ export function SpawnLineage({
     .filter((g) => g.nodes.length > 0)
 
   return (
-    <div className="border-t border-border p-6">
+    <div className="border-t border-border p-4 md:p-6">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

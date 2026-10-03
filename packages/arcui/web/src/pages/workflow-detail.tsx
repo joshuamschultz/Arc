@@ -1244,7 +1244,7 @@ export function WorkflowDetailPage() {
           </div>
         }
       />
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <QueryState query={workflow}>
           {(data) => (
             <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">

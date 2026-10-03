@@ -35,7 +35,7 @@ export function PolicyPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Policy" description="Fleet-wide ACE policy bullets." />
-      <div className="flex-1 space-y-5 overflow-auto p-6">
+      <div className="flex-1 space-y-5 overflow-auto p-4 md:p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Total" value={stats?.total ?? 0} icon={<ShieldCheck className="size-4" />} />
           <StatCard label="Active" value={stats?.active ?? 0} />

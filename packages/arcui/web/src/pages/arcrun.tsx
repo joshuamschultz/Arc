@@ -116,7 +116,7 @@ export function ArcRunPage() {
                 <LoadingRows rows={6} />
               </div>
             ) : filtered.length === 0 ? (
-              <div className="p-6">
+              <div className="p-4 md:p-6">
                 <EmptyState title="No runs recorded" description="Runs appear here as agents work." />
               </div>
             ) : (

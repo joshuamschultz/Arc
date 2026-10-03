@@ -85,7 +85,7 @@ export function KnowledgePage() {
         }
       />
       {!agentId ? (
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-4 md:p-6">
           <EmptyState
             icon={<BookOpen className="size-7" />}
             title="No agent selected"
@@ -94,7 +94,7 @@ export function KnowledgePage() {
         </div>
       ) : (
         <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col overflow-hidden">
-          <div className="border-b border-border px-6">
+          <div className="border-b border-border px-4 md:px-6">
             <TabsList className="my-2">
               {TABS.map((t) => (
                 <TabsTrigger key={t.value} value={t.value}>
@@ -104,7 +104,7 @@ export function KnowledgePage() {
             </TabsList>
           </div>
 
-          <TabsContent value="overview" className="flex-1 overflow-auto p-6">
+          <TabsContent value="overview" className="flex-1 overflow-auto p-4 md:p-6">
             <QueryState query={query} isEmpty={() => !query.data}>
               {(data) => (
                 <KnowledgeOverview data={data} agentId={agentId} onNavigate={setTab} />
@@ -112,19 +112,19 @@ export function KnowledgePage() {
             </QueryState>
           </TabsContent>
 
-          <TabsContent value="graph" className="flex-1 overflow-auto p-6">
+          <TabsContent value="graph" className="flex-1 overflow-auto p-4 md:p-6">
             <GraphViewer agentId={agentId} />
           </TabsContent>
 
-          <TabsContent value="insights" className="flex-1 overflow-auto p-6">
+          <TabsContent value="insights" className="flex-1 overflow-auto p-4 md:p-6">
             <InsightBrowser agentId={agentId} />
           </TabsContent>
 
-          <TabsContent value="procedures" className="flex-1 overflow-auto p-6">
+          <TabsContent value="procedures" className="flex-1 overflow-auto p-4 md:p-6">
             <ProcedureBrowser agentId={agentId} />
           </TabsContent>
 
-          <TabsContent value="entities" className="flex-1 overflow-auto p-6">
+          <TabsContent value="entities" className="flex-1 overflow-auto p-4 md:p-6">
             <EntityBrowser
               agentId={agentId}
               selectedSlug={selectedEntitySlug}
@@ -132,26 +132,26 @@ export function KnowledgePage() {
             />
           </TabsContent>
 
-          <TabsContent value="events" className="flex-1 overflow-auto p-6">
+          <TabsContent value="events" className="flex-1 overflow-auto p-4 md:p-6">
             <EventBrowser agentId={agentId} />
           </TabsContent>
 
-          <TabsContent value="daily-notes" className="flex-1 overflow-auto p-6">
+          <TabsContent value="daily-notes" className="flex-1 overflow-auto p-4 md:p-6">
             <DailyNotesBrowser agentId={agentId} />
           </TabsContent>
 
-          <TabsContent value="connections" className="flex-1 overflow-auto p-6">
+          <TabsContent value="connections" className="flex-1 overflow-auto p-4 md:p-6">
             <ConnectionsBrowser
               agentId={agentId}
               initialConnectionId={searchParams.get('connection')}
             />
           </TabsContent>
 
-          <TabsContent value="memories" className="flex-1 overflow-auto p-6">
+          <TabsContent value="memories" className="flex-1 overflow-auto p-4 md:p-6">
             <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
           </TabsContent>
 
-          <TabsContent value="chunks" className="flex-1 overflow-auto p-6">
+          <TabsContent value="chunks" className="flex-1 overflow-auto p-4 md:p-6">
             <ChunkBrowser agentId={agentId} />
           </TabsContent>
         </Tabs>

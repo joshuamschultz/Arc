@@ -176,7 +176,7 @@ function EntityTable({
   typeLabel?: string
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+    <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
       <table className="w-full text-sm">
         <thead className="bg-muted/40">
           <tr className="border-b border-border">
@@ -503,7 +503,7 @@ function SourcesSection({
         }
       >
         {(data) => (
-          <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+          <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
             <table className="w-full text-sm">
               <thead className="bg-muted/40"><tr className="border-b border-border"><Th>Source</Th><Th>Type</Th><Th>Status</Th><Th>Progress</Th><Th>Last sync</Th></tr></thead>
               <tbody className="divide-y divide-border/60">
@@ -1065,7 +1065,7 @@ function ProvenanceSection({ agentId }: { agentId: string }) {
           empty={<EmptyState title="No provenance recorded" />}
         >
           {(data) => (
-            <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+            <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40">
                   <tr className="border-b border-border">
@@ -1250,7 +1250,7 @@ function HealthSection({ agentId }: { agentId: string }) {
               {s.workspaces.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No indexed workspace.</p>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+                <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/40">
                       <tr className="border-b border-border">

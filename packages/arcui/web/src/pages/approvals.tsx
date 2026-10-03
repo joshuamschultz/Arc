@@ -17,7 +17,7 @@ export function ApprovalsPage() {
         description="Actions your agents can't take without your sign-off."
         actions={<OperatorModeToggle />}
       />
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <QueryState
           query={approvals}
           isEmpty={(data) => data.approvals.length === 0}

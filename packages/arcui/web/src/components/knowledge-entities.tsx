@@ -241,7 +241,7 @@ export function EntityBrowser({
         }
       >
         {(data) => (
-          <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+          <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr className="border-b border-border">

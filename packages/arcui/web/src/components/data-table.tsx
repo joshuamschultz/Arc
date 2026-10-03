@@ -135,7 +135,7 @@ export function DataTable<T>({
         </div>
 
         {rows.length === 0 && (
-          <div className="p-6">
+          <div className="p-4 md:p-6">
             <EmptyState title={emptyTitle} description={emptyDescription} />
           </div>
         )}

@@ -251,3 +251,18 @@ describe('?connection= deep link', () => {
     await waitFor(() => expect(scroll).toHaveBeenCalled())
   })
 })
+
+describe('ConnectionsPage mobile layout', () => {
+  it('reflows cards by available width and lets action rows wrap', async () => {
+    const { card } = await renderCard([row(), row({ instance: 'gmail-two' })])
+    const grid = card.parentElement as HTMLElement
+    // Auto-fit columns collapse to one at medium widths; a fixed 2-up grid clipped the second column.
+    expect(grid.className).toContain('minmax(min(100%')
+    expect(grid.className).not.toMatch(/(^|\s)md:grid-cols-2/)
+    expect(card.className).toContain('min-w-0')
+    const actions = within(card).getByRole('button', { name: /Advanced/ }).parentElement as HTMLElement
+    expect(actions.className).toContain('flex-wrap')
+    const body = actions.closest('.p-4') as HTMLElement
+    expect(body.className).toContain('flex-wrap')
+  })
+})
