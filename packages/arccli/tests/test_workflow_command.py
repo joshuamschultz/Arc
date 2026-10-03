@@ -55,6 +55,9 @@ when = "false"
 def _isolated_arc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every entry point resolves its data root from these two env vars."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    # An inherited ARC_TEAM_ROOT outranks ARC_CONFIG_DIR in operator_root();
+    # without this the test reads a tree outside tmp_path.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     from arcstore.backends.memory import FakeBackend
 
