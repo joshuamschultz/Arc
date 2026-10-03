@@ -9,16 +9,16 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import arcagent
+
 from arccli.commands.agent._common import (
     _DEFAULT_ARCLLM_CONFIG,
-    _DEFAULT_ARCRUN_CONFIG,
     _discover_tools,
     _load_agent_config,
     _load_agent_llm_config,
     _load_env,
     _resolve_agent_dir,
     _scaffold_workspace,
-    render_agent_config,
 )
 
 
@@ -186,7 +186,7 @@ def _run_scaffold(agent_dir: Path, *, tier: str, force: bool) -> None:
         did = str(existing.get("identity", {}).get("did") or "")
 
     try:
-        rendered = render_agent_config(name=name, tier=tier, did=did)
+        rendered = arcagent.scaffold.render_agent_config(name=name, tier=tier, did=did)
     except ValueError as exc:
         sys.stderr.write(f"arc agent build: {exc}\n")
         sys.exit(2)
@@ -194,7 +194,8 @@ def _run_scaffold(agent_dir: Path, *, tier: str, force: bool) -> None:
 
     written = [f"arcagent.toml  (full surface, tier={tier})"]
     written.append(_provide(agent_dir / "arcllm.toml", _DEFAULT_ARCLLM_CONFIG, "LLM-wire"))
-    written.append(_provide(agent_dir / "arcrun.toml", _DEFAULT_ARCRUN_CONFIG, "loop controls"))
+    arcrun_default = arcagent.scaffold.DEFAULT_ARCRUN_CONFIG
+    written.append(_provide(agent_dir / "arcrun.toml", arcrun_default, "loop controls"))
 
     _scaffold_workspace(agent_dir, name)
 

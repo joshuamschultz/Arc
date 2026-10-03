@@ -261,7 +261,7 @@ def _deploy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, toml_extra: str) ->
     monkeypatch.setenv("ARC_MODULE_SOURCE", str(Path(arcagent.__file__).parent / "modules"))
     monkeypatch.setenv("TYPESAFE_API_KEY", _JEV_KEY)
 
-    from arccli.commands.agent.create import _mint_agent_identity
+    from arcagent.scaffold import mint_agent_identity as _mint_agent_identity
     from arccli.commands.operator import ensure_operator_key
     from arccli.commands.up import agent_states, bootstrap_modules
 

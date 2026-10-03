@@ -38,8 +38,6 @@ from __future__ import annotations
 
 # Re-export selected internal helpers used by other arccli modules.
 from arccli.commands.agent._common import (
-    _CALCULATOR_TOOL,
-    _DEFAULT_CONFIG,
     _capability_scan_roots,
     _discover_tools,
     _iter_capability_files,
@@ -59,8 +57,6 @@ from arccli.commands.agent._common import (
 from arccli.commands.agent._dispatch import agent_handler
 
 __all__ = [
-    "_CALCULATOR_TOOL",
-    "_DEFAULT_CONFIG",
     "_capability_scan_roots",
     "_discover_tools",
     "_iter_capability_files",

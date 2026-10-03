@@ -278,7 +278,7 @@ def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Depl
     # publishes an agent with no DID, and the chat route answers "Agent not
     # found" and closes: a fixture that skipped this would be testing a state no
     # real deployment is ever in.
-    from arccli.commands.agent.create import _mint_agent_identity
+    from arcagent.scaffold import mint_agent_identity as _mint_agent_identity
 
     _mint_agent_identity(agent_dir)
 

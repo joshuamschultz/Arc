@@ -42,9 +42,9 @@ function NamedOperatorPrompt() {
       <h2 className="font-semibold">Sign in as a named operator</h2>
       <p className="text-sm text-muted-foreground">
         You are connected with the shared operator token, which names no one. Queue changes
-        are recorded against a person, so they need an operator account. If none exists yet,
-        run <code className="rounded bg-muted px-1 py-0.5 text-xs">arc user add you@example.com</code> on
-        the server first.
+        are recorded against a person, so they need an operator account. An operator can add
+        your account under Settings, then People. On a fresh install, the sign-in screen offers
+        to create the first operator account.
       </p>
       <Button size="sm" onClick={signInWithAccount}>Sign in with an account</Button>
     </section>

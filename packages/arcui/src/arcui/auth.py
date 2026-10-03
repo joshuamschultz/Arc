@@ -45,9 +45,14 @@ _UNAUTHENTICATED_PATHS = frozenset(
         "/api/health",
         "/api/ready",
         "/api/auth/login",
-        # Tells the login screen whether this deployment has any accounts yet,
-        # so a fresh install can say "run arc user add" instead of failing.
+        # Tells the sign-in screen whether this deployment has accounts yet, and
+        # whether first-run setup is open (no operator exists).
         "/api/auth/mode",
+        # First operator (the logged one-time setup code is the credential) and
+        # one-time invite/reset links (the link token is the credential).
+        "/api/auth/setup",
+        "/api/auth/invite/check",
+        "/api/auth/invite/accept",
         "/api/setup/status",
         "/api/setup/challenge",
         "/api/setup/grant",

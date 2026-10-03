@@ -20,13 +20,11 @@ from arccli.commands.prompt import prompt_handler
 
 
 def _pin_operator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    key_path = tmp_path / "operator" / "operator.key"
+    """An isolated deployment whose one operator key both signs and verifies."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    key_path = arctrust.default_operator_key_path()
     key_path.parent.mkdir(parents=True)
     OperatorKey.generate().save(key_path)
-    monkeypatch.setattr(arctrust, "default_operator_key_path", lambda: key_path)
-    monkeypatch.setattr(
-        "arctrust.operator_resolver.default_operator_key_path", lambda base=None: key_path
-    )
 
 
 def _agent_root(tmp_path: Path) -> Path:

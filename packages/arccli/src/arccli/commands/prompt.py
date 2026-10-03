@@ -388,10 +388,16 @@ def _sign_workspace(args: argparse.Namespace) -> None:
     The one-time step for an agent that predates signed workspace documents, and
     the way to re-sign after editing one of them by hand on the box.
     """
-    from arccli.workspace_signing import sign_workspace_documents
+    import arcagent
+
+    from arccli.commands.agent._common import cli_operator_signing
 
     agent_root = _require_agent_root(args)
-    signed = sign_workspace_documents(agent_root, _operator_signer())
+    operator = cli_operator_signing()
+    if operator is None:
+        err("arc prompt: operator key unavailable; run 'arc init' first.")
+        sys.exit(1)
+    signed = arcagent.scaffold.sign_workspace_documents(agent_root, operator)
     if not signed:
         _out("Nothing to sign: no identity.md or policy_pinned.md in the agent workspace.")
         return

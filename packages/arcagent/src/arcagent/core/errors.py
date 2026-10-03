@@ -53,16 +53,19 @@ class IdentityError(ArcAgentError):
 class IdentityRequired(IdentityError):  # noqa: N818 — domain convention; peers use non-Error suffix
     """Raised when ArcAgent is started without a DID configured.
 
-    Run ``arc agent init`` to generate a DID and keypair, then set the
-    resulting DID in ``arcagent.toml`` under ``[identity] did``.
+    An agent gets its DID when it is created (the Fleet page's "New agent", which
+    mints the keypair and writes ``[identity] did``). ``details["action"]`` is the
+    code a surface turns into that button; no message names a command.
     """
 
     def __init__(self, details: dict[str, Any] | None = None) -> None:
-        hint = "Run 'arc agent init' to generate a DID and keypair."
         super().__init__(
             code="IDENTITY_REQUIRED",
-            message="Agent DID is required. " + hint,
-            details={**(details or {}), "hint": "arc agent init"},
+            message=(
+                "Agent DID is required. This agent has no identity; create agents from "
+                "the Fleet page so each one gets its own."
+            ),
+            details={**(details or {}), "action": "create_agent"},
         )
 
 

@@ -42,9 +42,9 @@ from typing import Any
 
 import pytest
 from arcagent.keys import KeyStore, default_env_file
+from arcagent.scaffold import render_agent_config
 
 from arccli.commands.agent import agent_handler
-from arccli.commands.agent._common import render_agent_config
 
 JEV_KEY = "TYPESAFE_API_KEY"
 KEY_VALUE = "ts-live-do-not-leak-me-91c0ffee"

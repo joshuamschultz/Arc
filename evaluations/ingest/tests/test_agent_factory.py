@@ -59,7 +59,7 @@ def isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _write_agent_config(agent_dir: Path, name: str) -> Path:
     """Render the real per-agent TOML the factory emits and return its path."""
-    from arccli.commands.agent._common import render_agent_config
+    from arcagent.scaffold import render_agent_config
 
     agent_dir.mkdir(parents=True, exist_ok=True)
     config_path = agent_dir / "arcagent.toml"

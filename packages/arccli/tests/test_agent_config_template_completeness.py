@@ -16,9 +16,8 @@ from typing import Any, get_args
 import arcagent.modules
 import pytest
 from arcagent.core.module_config import ModuleConfig, config_model_for
+from arcagent.scaffold import render_agent_config
 from pydantic import BaseModel, ValidationError
-
-from arccli.commands.agent._common import render_agent_config
 
 # Service packages have no module lifecycle or operator settings.
 _NOT_A_CONFIGURABLE_MODULE = {"capability_import", "run_intents"}

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+from arcagent.scaffold import render_agent_config
 
-from arccli.commands.agent._common import render_agent_config
 from arccli.commands.agent._config_sync import (
     discover_agent_dirs,
     sync_agent_config,

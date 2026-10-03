@@ -715,6 +715,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_approve_standing.py",
         "tests/journeys/test_journey_always_allow.py",
     ),
+    # J1-7/J1-8 (arcui-only journeys): a replayed setup code, first-run setup on a
+    # deployment that already has an operator, a viewer creating a person or an
+    # agent, a reused invite link, a forged role escalation (accept body, direct
+    # route, own profile), and an agent name that climbs out of the fleet root or
+    # through a symlink — all refused, nothing written, every attempt audited.
+    "accounts and agents from the browser — replayed setup, forged roles, traversal": (
+        "packages/arcui/tests/test_users_routes.py",
+        "packages/arcui/tests/test_agent_create_routes.py",
+        "packages/arcagent/tests/unit/test_scaffold.py",
+        "tests/journeys/test_journey_first_run_in_browser.py",
+    ),
 }
 
 

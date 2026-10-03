@@ -615,7 +615,7 @@ def test_every_module_the_scaffold_enables_exists_in_the_catalog() -> None:
     """
     import tomllib
 
-    from arccli.commands.agent._common import render_agent_config
+    from arcagent.scaffold import render_agent_config
 
     config = tomllib.loads(render_agent_config(name="probe", tier="personal"))
     enabled = {

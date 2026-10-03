@@ -33,20 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import arcagent
 import tomlkit
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
-from arccli.commands.agent._common import render_agent_config
-
 # Identity is minted per agent and signed; a scaffold value here would hand two
 # agents the same name or DID. The sync adds settings, never identity.
 _NEVER_SYNCED = frozenset({"agent", "identity"})
-
-# Per-agent record of the value config_render last wrote at each dotted key —
-# the baseline `refresh_agent_config` diffs an existing file's values against
-# to tell "operator changed this" from "still whatever we generated".
-_SNAPSHOT_FILENAME = ".arc-config-defaults.json"
 
 
 @dataclass(frozen=True)
@@ -99,7 +93,7 @@ def plan_config_sync(agent_dir: Path) -> tuple[TOMLDocument, list[str]]:
     agent_table = existing.get("agent", {})
     identity_table = existing.get("identity", {})
     scaffold = tomlkit.parse(
-        render_agent_config(
+        arcagent.scaffold.render_agent_config(
             name=str(agent_table.get("name", agent_dir.name)),
             tier=_agent_tier(existing),
             did=str(identity_table.get("did", "")),
@@ -135,21 +129,6 @@ def discover_agent_dirs(team_root: Path) -> list[Path]:
     return sorted(toml.parent for toml in team_root.glob("*/arcagent.toml"))
 
 
-def _flatten(table: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """Dotted-key -> leaf value, treating any list (including a table array
-    parsed by ``tomllib``) as one opaque leaf rather than exploding it —
-    comparing an append-only array like ``security.validators.approved``
-    whole avoids a partial, order-sensitive refresh of it."""
-    flat: dict[str, Any] = {}
-    for key, value in table.items():
-        path = f"{prefix}{key}"
-        if isinstance(value, dict):
-            flat.update(_flatten(value, f"{path}."))
-        else:
-            flat[path] = value
-    return flat
-
-
 def _plain(document: TOMLDocument) -> dict[str, Any]:
     """Plain-Python view of a tomlkit document — round-trips through
     ``tomllib`` so no tomlkit item type ever leaks into a JSON/equality
@@ -158,7 +137,7 @@ def _plain(document: TOMLDocument) -> dict[str, Any]:
 
 
 def _snapshot_path(agent_dir: Path) -> Path:
-    return agent_dir / _SNAPSHOT_FILENAME
+    return agent_dir / arcagent.scaffold.CONFIG_SNAPSHOT_FILENAME
 
 
 def _load_snapshot(agent_dir: Path) -> dict[str, Any]:
@@ -170,24 +149,6 @@ def _load_snapshot(agent_dir: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
-
-def write_config_snapshot(agent_dir: Path) -> None:
-    """Record this agent's CURRENT arcagent.toml values as the refresh baseline.
-
-    Called right after the file is written — at scaffold creation, and again
-    after every ``refresh_agent_config`` — so the NEXT refresh can tell
-    "operator changed this since" from "still whatever we last wrote here".
-    An agent with no snapshot yet (built before this mechanism existed) is
-    simply never refreshed until one is written; it keeps working exactly as
-    ``sync_agent_config`` alone left it.
-    """
-    config_path = agent_dir / "arcagent.toml"
-    document = tomlkit.parse(config_path.read_text(encoding="utf-8"))
-    flat = _flatten(_plain(document))
-    _snapshot_path(agent_dir).write_text(
-        json.dumps(flat, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
 
 
 def _set_dotted(document: TOMLDocument, dotted_key: str, value: Any) -> None:
@@ -227,12 +188,12 @@ def plan_config_refresh(agent_dir: Path) -> tuple[TOMLDocument, ConfigRefreshRes
     """
     config_path = agent_dir / "arcagent.toml"
     existing = tomlkit.parse(config_path.read_text(encoding="utf-8"))
-    existing_before_flat = _flatten(_plain(existing))
+    existing_before_flat = arcagent.scaffold.flatten_config(_plain(existing))
     snapshot = _load_snapshot(agent_dir)
 
     agent_table = existing.get("agent", {})
     identity_table = existing.get("identity", {})
-    fresh_text = render_agent_config(
+    fresh_text = arcagent.scaffold.render_agent_config(
         name=str(agent_table.get("name", agent_dir.name)),
         tier=_agent_tier(existing),
         did=str(identity_table.get("did", "")),
@@ -249,7 +210,7 @@ def plan_config_refresh(agent_dir: Path) -> tuple[TOMLDocument, ConfigRefreshRes
         elif _is_table(value) and _is_table(existing[section]):
             _merge(value, existing[section], f"{section}.", added)
 
-    fresh_flat = _flatten(tomllib.loads(fresh_text))
+    fresh_flat = arcagent.scaffold.flatten_config(tomllib.loads(fresh_text))
     refreshed: list[str] = []
     skipped: list[str] = []
     for key, fresh_value in fresh_flat.items():
@@ -289,7 +250,7 @@ def refresh_agent_config(agent_dir: Path, *, dry_run: bool = False) -> ConfigRef
     if write:
         config_path = agent_dir / "arcagent.toml"
         config_path.write_text(tomlkit.dumps(merged), encoding="utf-8")
-        write_config_snapshot(agent_dir)
+        arcagent.scaffold.write_config_snapshot(agent_dir)
     return ConfigRefreshResult(
         path=result.path,
         added=result.added,
@@ -307,5 +268,4 @@ __all__ = [
     "plan_config_sync",
     "refresh_agent_config",
     "sync_agent_config",
-    "write_config_snapshot",
 ]
