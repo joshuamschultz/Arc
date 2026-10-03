@@ -371,6 +371,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ``ARC_EXTENSIONS_ROOT`` is cleared so a value in the developer's environment
     cannot add a bundle the assertions do not expect.
     """
+    # ARC_TEAM_ROOT outranks ARC_CONFIG_DIR for the operator root; one inherited
+    # from the environment (the battery sets it) would share a deployment across tests.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ARC_EXTENSIONS_ROOT", str(tmp_path / "bundle_root"))
