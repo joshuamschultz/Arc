@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # fixtures are imported from the e2e and re-bound as test parameters
 """Journey: the operator mails an agent from arcui, and the conversation obeys the one-reply rule.
 
 A real ``nats-server`` carries the signed mail. Real: arcui's compose and reply
@@ -30,11 +31,11 @@ from arcstore.inbox_projection import participant, thread_id_for
 from arcteam.mail import MAIL_THREAD_CLOSED, MailSendRequest
 from arcteam.types import EntityType
 from arctrust import AgentIdentity
-from starlette.applications import Starlette
-
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.routes.agent_detail import routes
+from starlette.applications import Starlette
+
 from tests.integration.test_mail_turn_e2e import (  # noqa: F401  # fixtures + helpers shared with the e2e
     _eventually,
     _Fleet,
