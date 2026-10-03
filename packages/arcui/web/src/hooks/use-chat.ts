@@ -47,21 +47,24 @@ export function useChatSession(agentId: string | null) {
   const deadline = useRef(0)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const historyLoaded = useRef(false)
+  // True once a socket dropped: the next `ready` is a return, and the run may
+  // have finished while the tab was away, so the session log is the truth.
+  const returning = useRef(false)
 
   const append = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev, m])
   }, [])
 
   const loadHistory = useCallback(
-    async (agent: string, sid: string) => {
-      if (historyLoaded.current) return
+    async (agent: string, sid: string, refresh = false) => {
+      if (historyLoaded.current && !refresh) return
       try {
         // tail=1: the NEWEST 200 turns. Page 1 is the oldest slice, which froze
         // long conversations at their beginning and made recent messages look lost.
         const data = await apiGet<SessionReplayResponse>(
           `/api/agents/${agent}/sessions/${sid}?page_size=200&tail=1`,
         )
-        if (historyLoaded.current) return
+        if (historyLoaded.current && !refresh) return
         // The session log interleaves real chat turns (role=user/assistant with
         // content) with run-completion telemetry records (type/completion_payload,
         // no role, no text). Keep only chat turns with renderable text so the
@@ -82,8 +85,15 @@ export function useChatSession(agentId: string | null) {
             (m) => m.text !== '' && (m.rawRole === 'user' || m.rawRole === 'assistant'),
           )
           .map(({ rawRole: _rawRole, ...m }) => m)
-        // Only seed if live frames haven't already populated the thread.
-        setMessages((prev) => (prev.length === 0 ? hist : prev))
+        // First load: only seed if live frames haven't populated the thread.
+        // Return after a drop: a run never stops because the tab left, so the
+        // log holds answers finished while away. Replace the thread with it,
+        // unless a reply is streaming live or a sent message is not yet logged.
+        setMessages((prev) => {
+          if (!refresh) return prev.length === 0 ? hist : prev
+          const liveWork = pending.current.size > 0 || prev.some((m) => m.streaming)
+          return liveWork ? prev : hist
+        })
         historyLoaded.current = true
       } catch {
         /* history is best-effort */
@@ -142,7 +152,10 @@ export function useChatSession(agentId: string | null) {
           chatId.current = (frame.chat_id as string) ?? null
           setSessionKey(chatId.current)
           setStatus('ready')
-          if (chatId.current) loadHistory(agentId, chatId.current)
+          if (chatId.current) {
+            loadHistory(agentId, chatId.current, returning.current)
+            returning.current = false
+          }
           for (const [requestId, message] of pending.current) {
             clientSeq.current += 1
             ws.send(JSON.stringify({
@@ -226,6 +239,7 @@ export function useChatSession(agentId: string | null) {
       ws.addEventListener('close', () => {
         wsRef.current = null
         if (disposed || agentId == null) return
+        returning.current = true
         if (deadline.current === 0) deadline.current = Date.now() + RECONNECT_MAX_WINDOW_MS
         if (Date.now() > deadline.current) {
           setStatus('closed')

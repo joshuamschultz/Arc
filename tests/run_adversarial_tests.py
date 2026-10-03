@@ -330,6 +330,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_deployment_grant.py",
         "packages/arcui/tests/test_health.py",
     ),
+    "browser leaving kills a long run, or an unwatched run never ends (DGX 2026-10-03)": (
+        # The last socket leaving past every grace window never cancels the run; its
+        # answer lands in session history; a run with no observer is still capped by
+        # max_turns; only an explicit operator cancel (RunHandle.cancel) stops it.
+        "packages/arcgateway/tests/unit/test_run_outlives_browser.py",
+        "packages/arcrun/tests/security/test_unobserved_run_bounded.py",
+        "packages/arcrun/tests/test_cancel_attribution.py",
+    ),
     "stuck sync blocking revocation or chat (DGX 2026-10-03)": (
         # A six-hour sync holding a source lease never blocks operator removal
         # or a grant change; the in-process fast path is bounded; a turn that

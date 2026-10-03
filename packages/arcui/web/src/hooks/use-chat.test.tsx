@@ -87,4 +87,29 @@ describe('useChatSession', () => {
       hook.result.current.messages.some((m) => m.role === 'system' && m.text.includes('did not start in time')),
     ).toBe(true)
   })
+
+  it('shows an answer that finished while the tab was away once the socket returns', async () => {
+    vi.useFakeTimers()
+    try {
+      const { apiGet } = await import('@/lib/api')
+      const { hook, ws } = openSession()
+      vi.mocked(apiGet).mockResolvedValueOnce({
+        messages: [{ role: 'assistant', content: 'finished research answer', timestamp: 't' }],
+      })
+      act(() => ws.emit('close'))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      const returned = FakeSocket.last!
+      expect(returned).not.toBe(ws)
+      await act(async () => {
+        returned.emit('open')
+        returned.emit('message', { type: 'ready', chat_id: 'abc' })
+        await Promise.resolve()
+      })
+      expect(hook.result.current.messages.map((m) => m.text)).toContain('finished research answer')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

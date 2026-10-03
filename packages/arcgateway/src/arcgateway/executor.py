@@ -307,7 +307,6 @@ class AsyncioExecutor:
         """
         self._agent_factory = agent_factory
         self._run_authorization_issuer = run_authorization_issuer
-        self._live_agents: dict[tuple[str, str], Any] = {}
 
     def set_run_authorization_issuer(self, issuer: RunAuthorizationIssuer) -> None:
         """Attach a trusted issuer that verifies ingress and signs exact requests."""
@@ -425,47 +424,42 @@ class AsyncioExecutor:
                             signed_authorization=signed_authorization,
                             authorization_deadline=deadline,
                         )
-                    live_key = (event.agent_did, event.session_key)
-                    self._live_agents[live_key] = agent
-                    try:
-                        async for stream_event in agent.stream_delivered_message(
-                            caller_did=event.user_did,
-                            message=event.message,
-                            session_key=event.session_key,
-                            reply_target=_reply_target(event),
-                            reply_label=_reply_label(event),
-                            **extra,
-                        ):
-                            match stream_event:
-                                case arcagent.DeliveryTextEvent(text=text):
-                                    yield Delta(
-                                        kind="token",
-                                        content=text,
-                                        turn_id=stream_event.run_id or turn_id,
-                                        sequence=stream_event.sequence,
-                                        occurrence_id=event.occurrence_id,
-                                    )
-                                case arcagent.DeliveryToolEvent(name=name):
-                                    yield Delta(
-                                        kind="tool_call",
-                                        content=name,
-                                        turn_id=stream_event.run_id or turn_id,
-                                        sequence=stream_event.sequence,
-                                        occurrence_id=event.occurrence_id,
-                                    )
-                                case arcagent.DeliveryTerminalEvent(status=status, reason=reason):
-                                    yield Delta(
-                                        kind="done",
-                                        content=reason,
-                                        is_final=True,
-                                        turn_id=stream_event.run_id or turn_id,
-                                        sequence=stream_event.sequence,
-                                        status=status,
-                                        occurrence_id=event.occurrence_id,
-                                    )
-                                    return
-                    finally:
-                        self._live_agents.pop(live_key, None)
+                    async for stream_event in agent.stream_delivered_message(
+                        caller_did=event.user_did,
+                        message=event.message,
+                        session_key=event.session_key,
+                        reply_target=_reply_target(event),
+                        reply_label=_reply_label(event),
+                        **extra,
+                    ):
+                        match stream_event:
+                            case arcagent.DeliveryTextEvent(text=text):
+                                yield Delta(
+                                    kind="token",
+                                    content=text,
+                                    turn_id=stream_event.run_id or turn_id,
+                                    sequence=stream_event.sequence,
+                                    occurrence_id=event.occurrence_id,
+                                )
+                            case arcagent.DeliveryToolEvent(name=name):
+                                yield Delta(
+                                    kind="tool_call",
+                                    content=name,
+                                    turn_id=stream_event.run_id or turn_id,
+                                    sequence=stream_event.sequence,
+                                    occurrence_id=event.occurrence_id,
+                                )
+                            case arcagent.DeliveryTerminalEvent(status=status, reason=reason):
+                                yield Delta(
+                                    kind="done",
+                                    content=reason,
+                                    is_final=True,
+                                    turn_id=stream_event.run_id or turn_id,
+                                    sequence=stream_event.sequence,
+                                    status=status,
+                                    occurrence_id=event.occurrence_id,
+                                )
+                                return
                     yield Delta(kind="done", is_final=True, turn_id=turn_id)
                     return
                 outcome = await agent.deliver_message(
@@ -542,19 +536,6 @@ class AsyncioExecutor:
             turn_id=event.session_key,
         )
         yield Delta(kind="done", content="", is_final=True, turn_id=event.session_key)
-
-    async def cancel_session(self, agent_did: str, session_key: str) -> None:
-        """Cancel the live browser stream for one agent session, if any."""
-        agent = self._live_agents.get((agent_did, session_key))
-        if agent is None:
-            return
-        active_run = getattr(agent, "active_run", None)
-        if not callable(active_run):
-            return
-        handle = active_run(session_key)
-        if handle is None:
-            return
-        await handle.cancel("did:arc:gateway", reason="browser disconnected")
 
 
 # ---------------------------------------------------------------------------
