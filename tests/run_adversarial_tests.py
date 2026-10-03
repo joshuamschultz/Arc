@@ -652,6 +652,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_migration_never_drops_credentials.py",
         "packages/arcagent/tests/unit/extension/test_custody_migrate_no_loss.py",
         "packages/arcui/tests/test_startup_migrates_connections_env.py",
+        # J1-4: the dashboard answers per key (map, keep, drop). A viewer cannot read
+        # or resolve; a drop needs the key typed back; an unanswered key still
+        # refuses; no value appears in any response; the read-back proof is unchanged.
+        "packages/arcagent/tests/unit/extension/test_custody_migrate_decisions.py",
+        "packages/arcui/tests/test_custody_routes.py",
+        # J1-5: a viewer cannot migrate a workflow; a re-sign is made only by the
+        # pinned operator key (any other signer is refused, nothing written).
+        "packages/arcui/tests/test_workflow_repair_routes.py",
+        "packages/arcteam/tests/unit/workflow/test_migrate.py",
     ),
     # Vault Transit adapter: a look-alike Vault (other CA) or a redirect never
     # receives the secret_id; a key swapped behind a pinned name cannot sign for the

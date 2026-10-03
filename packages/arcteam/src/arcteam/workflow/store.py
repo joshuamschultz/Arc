@@ -178,6 +178,11 @@ class DefinitionStore:
         self._operator_public_key = operator_public_key
         self._audit = audit
 
+    @property
+    def pinned_operator_key(self) -> bytes | None:
+        """The operator public key every signature must verify against, if pinned."""
+        return self._operator_public_key
+
     # -- reading --
 
     def path_for(self, workflow_id: str) -> Path:

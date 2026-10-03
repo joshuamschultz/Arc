@@ -15,7 +15,7 @@ import pytest
 from arctrust import InProcessSigner, generate_keypair, sign_artifact
 
 from arcteam.workflow import DefinitionStore, WorkflowParseError
-from arcteam.workflow.migrate import check_bundle, check_store, migrate_store
+from arcteam.workflow.migrate import check_bundle, check_store, migrate_bundle, migrate_store
 from arcteam.workflow.store import DEFINITION_FILE, SIDECAR_FILE
 
 LEGACY = """[workflow]
@@ -89,7 +89,7 @@ def test_legacy_bundle_is_reported_unreadable_not_missing(
     check = check_bundle(store, "morning")
     assert check.state == "unreadable"
     assert "join" in check.detail
-    assert "arc workflow migrate" in check.fix
+    assert check.fix_action == "migrate"
 
 
 def test_dry_run_lists_the_change_and_touches_nothing(store: DefinitionStore, keys: Any) -> None:
@@ -172,3 +172,39 @@ def test_canonical_document_excludes_defaults(store: DefinitionStore, keys: Any)
     document = store.load("morning").definition.canonical_document()
     assert all("on_failure" not in node for node in document["node"])
     assert document["workflow"]["schema_version"] == "1.0"
+
+
+def test_a_draft_and_a_stale_signature_name_the_sign_action(
+    store: DefinitionStore, keys: Any
+) -> None:
+    fixed = LEGACY.replace('join = "all"\n', "")
+    draft = store.root / "draft"
+    draft.mkdir(parents=True)
+    (draft / DEFINITION_FILE).write_text(fixed.replace('id = "morning"', 'id = "draft"'))
+    assert check_bundle(store, "draft").fix_action == "sign"
+
+
+def test_migrate_bundle_touches_only_the_named_workflow(store: DefinitionStore, keys: Any) -> None:
+    other = _legacy(store, keys, wid="other")
+    _legacy(store, keys)
+    before = (other / DEFINITION_FILE).read_text()
+    signer = InProcessSigner(keys.private_key)
+    result = migrate_bundle(
+        store, "morning", dry_run=False, signer=signer, signer_did="did:arc:op"
+    )
+    assert result.action == "rewritten"
+    assert store.load("morning").is_verified
+    assert (other / DEFINITION_FILE).read_text() == before
+
+
+def test_resign_refuses_a_signer_that_is_not_the_pinned_operator_key(
+    store: DefinitionStore, keys: Any
+) -> None:
+    bundle = _legacy(store, keys)
+    stranger = InProcessSigner(generate_keypair().private_key)
+    result = migrate_bundle(
+        store, "morning", dry_run=False, signer=stranger, signer_did="did:arc:stranger"
+    )
+    assert result.action == "refused"
+    assert "pinned" in result.reason
+    assert "join" in (bundle / DEFINITION_FILE).read_text()

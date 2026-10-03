@@ -10,9 +10,11 @@ loop only makes it rare for an agent to find a stale token at all.
 **Startup migration.** Before the renewer and the health monitor start, a legacy
 plaintext connector credential file is moved into sealed custody. If it cannot be
 moved completely (no cipher, a read-back mismatch, a symlinked file, or a value no
-connection declares, which startup never drops) arcui refuses to start and names
-the keys: plaintext credentials never coexist with a running service, and a
-credential is never lost without an operator dropping it on purpose.
+connection declares, which startup never drops) :func:`migrate_or_degrade` starts
+arcui DEGRADED instead of stopping it: nothing is moved, nothing is lost, and the
+dashboard's Custody panel (``routes/custody.py``) lists each key by name so the
+operator can map, keep or drop it. A credential is never lost without an operator
+dropping it on purpose.
 """
 
 from __future__ import annotations
@@ -40,19 +42,18 @@ ConnectionsFactory = Callable[[], arcagent.Connections]
 
 
 class CredentialMigrationRefusedError(RuntimeError):
-    """The legacy credential file exists and could not be migrated; arcui must not start."""
+    """The legacy credential file exists and could not be migrated."""
 
 
 async def migrate_at_startup(connections: arcagent.Connections) -> arcagent.MigrationReport:
-    """Move the legacy credential file into custody, or refuse startup (fail closed)."""
+    """Move the legacy credential file into custody, or raise (fail closed, nothing moved)."""
     with causal.bind(causal.root("system", MIGRATOR_DID)):
         try:
             report = await connections.migrate_secrets()
         except arcagent.ExtensionError as exc:
             raise CredentialMigrationRefusedError(
                 f"connector credentials could not be moved into sealed custody ({exc.code}: "
-                f"{exc.message}). Run `arc connector migrate-secrets --dry-run` and read "
-                "its report."
+                f"{exc.message}). Open the Custody panel in the dashboard to resolve it."
             ) from exc
     if not report.skipped:
         logger.warning(
@@ -64,6 +65,20 @@ async def migrate_at_startup(connections: arcagent.Connections) -> arcagent.Migr
             report.path,
         )
     return report
+
+
+async def migrate_or_degrade(connections: arcagent.Connections) -> bool:
+    """Migrate at startup; on refusal, say so loudly and let arcui start degraded.
+
+    ``True``: migrated, or nothing to migrate. ``False``: the credential file is
+    still in place and the operator must answer for its keys in the dashboard.
+    """
+    try:
+        await migrate_at_startup(connections)
+    except CredentialMigrationRefusedError:
+        logger.exception("connector credentials need review; starting in degraded custody mode")
+        return False
+    return True
 
 
 def build_credential_connections(app: Any) -> ConnectionsFactory:
@@ -139,4 +154,5 @@ __all__ = [
     "CredentialRenewer",
     "build_credential_connections",
     "migrate_at_startup",
+    "migrate_or_degrade",
 ]

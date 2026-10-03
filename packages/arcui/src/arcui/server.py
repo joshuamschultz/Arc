@@ -52,7 +52,7 @@ from arcui.connection_health import build_connection_health_monitor
 from arcui.credential_renewer import (
     CredentialRenewer,
     build_credential_connections,
-    migrate_at_startup,
+    migrate_or_degrade,
 )
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
@@ -72,6 +72,7 @@ from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connected_explorer as connected_explorer_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
+from arcui.routes import custody as custody_routes
 from arcui.routes import doc_repo_index as doc_repo_index_routes
 from arcui.routes import export as export_routes
 from arcui.routes import gateway as gateway_routes
@@ -423,6 +424,7 @@ def create_app(
         *keys_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
+        *custody_routes.routes,
         *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,
         *gateway_routes.routes,
@@ -679,11 +681,12 @@ def create_app(
             )
             await approval_dispatcher.start()
             starlette_app.state.approval_notification_dispatcher = approval_dispatcher
-        # P18-2: plaintext connector credentials never coexist with a running
-        # service. Migrate them into sealed custody first; refuse to start if that
-        # cannot complete. Then keep OAuth access tokens fresh on a timer.
+        # P18-2: migrate plaintext connector credentials into sealed custody
+        # first. If that cannot complete, start degraded: the Custody panel lets
+        # the operator answer for each key. Then keep OAuth tokens fresh on a timer.
         credential_connections = build_credential_connections(starlette_app)
-        await migrate_at_startup(credential_connections())
+        starlette_app.state.credential_connections = credential_connections
+        await migrate_or_degrade(credential_connections())
         credential_renewer = CredentialRenewer(credential_connections)
         credential_renewer.start()
         starlette_app.state.credential_renewer = credential_renewer

@@ -87,6 +87,7 @@ from arcagent.extension.credential_broker import AccessTokenHandle, credential_p
 from arcagent.extension.credentials import holds_grant
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
+    KeyDecisions,
     LegacyApp,
     MigrationReport,
     ResealReport,
@@ -2437,7 +2438,11 @@ class Connections:
         return outcome
 
     async def migrate_secrets(
-        self, *, dry_run: bool = False, drop_undeclared: bool = False
+        self,
+        *,
+        dry_run: bool = False,
+        drop_undeclared: bool = False,
+        decisions: KeyDecisions | None = None,
     ) -> MigrationReport:
         """Move the legacy plaintext credential file into sealed custody, once (P18-2).
 
@@ -2500,8 +2505,9 @@ class Connections:
                 app_store=custody.apps if custody is not None else None,
                 dry_run=dry_run,
                 drop_undeclared=drop_undeclared,
+                decisions=decisions,
             )
-        for instance in report.connections if report.deleted else ():
+        for instance in () if report.dry_run else report.connections:
             await self._push_credential_change(instance)
         return report
 
@@ -3039,6 +3045,7 @@ __all__ = [
     "HostSetupReport",
     "HostVerdict",
     "InstallReport",
+    "KeyDecisions",
     "McpServerAdded",
     "MigrationReport",
     "OAuthBegin",
