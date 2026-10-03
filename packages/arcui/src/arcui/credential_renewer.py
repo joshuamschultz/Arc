@@ -9,8 +9,10 @@ loop only makes it rare for an agent to find a stale token at all.
 
 **Startup migration.** Before the renewer and the health monitor start, a legacy
 plaintext connector credential file is moved into sealed custody. If it cannot be
-moved completely (no cipher, a read-back mismatch, a symlinked file) arcui refuses
-to start: plaintext credentials never coexist with a running service.
+moved completely (no cipher, a read-back mismatch, a symlinked file, or a value no
+connection declares, which startup never drops) arcui refuses to start and names
+the keys: plaintext credentials never coexist with a running service, and a
+credential is never lost without an operator dropping it on purpose.
 """
 
 from __future__ import annotations
@@ -49,14 +51,16 @@ async def migrate_at_startup(connections: arcagent.Connections) -> arcagent.Migr
         except arcagent.ExtensionError as exc:
             raise CredentialMigrationRefusedError(
                 f"connector credentials could not be moved into sealed custody ({exc.code}: "
-                f"{exc.message}). Run `arc connector migrate-secrets` and read its report."
+                f"{exc.message}). Run `arc connector migrate-secrets --dry-run` and read "
+                "its report."
             ) from exc
     if not report.skipped:
         logger.warning(
-            "migrated %d connector credential(s) into sealed custody; dropped %d leftover "
-            "key(s); deleted %s",
+            "migrated %d connector credential(s) and %d sign-in app(s) into sealed custody "
+            "(%d already there); deleted %s",
             len(report.migrated),
-            len(report.dropped),
+            len(report.apps),
+            len(report.already),
             report.path,
         )
     return report

@@ -391,6 +391,22 @@ class OAuthFlow(_ManifestModel):
     console_url: str | None = None
     #: The endpoint that lists the sites a token reaches (``account = "atlassian_site"``).
     resources_url: str | None = None
+    #: The suffix a pre-app-slot legacy credential-file key carried this provider's
+    #: client id / secret under (``app_key`` matches ``<INSTANCE>_APP_KEY`` and
+    #: ``ARC_SECRET_<INSTANCE>_APP_KEY``). The one-time custody migration moves such a
+    #: pair into this provider's sealed app slot instead of dropping it. Declared per
+    #: bundle so core never names a vendor. Both or neither.
+    legacy_client_id_env: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    legacy_client_secret_env: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+
+    @model_validator(mode="after")
+    def _legacy_names_are_a_pair(self) -> OAuthFlow:
+        """A legacy client id name without its secret (or the reverse) maps nothing."""
+        if (self.legacy_client_id_env is None) != (self.legacy_client_secret_env is None):
+            raise ValueError(
+                "[oauth].legacy_client_id_env and legacy_client_secret_env come as a pair"
+            )
+        return self
 
     @model_validator(mode="after")
     def _account_check_is_complete(self) -> OAuthFlow:

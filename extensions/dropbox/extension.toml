@@ -64,6 +64,11 @@ client_auth = "basic"
 redirect = "none"
 pkce = true
 authorize_params = { token_access_type = "offline" }
+# Before app slots the app key/secret were this bundle's own fields, kept in
+# connections.env as <INSTANCE>_APP_KEY / _APP_SECRET. The one-time custody
+# migration moves that pair into the "dropbox" app slot instead of dropping it.
+legacy_client_id_env = "app_key"
+legacy_client_secret_env = "app_secret"
 
 # The cheapest real authenticated call: what the health probe loop runs.
 # Reads the current account with the saved token.

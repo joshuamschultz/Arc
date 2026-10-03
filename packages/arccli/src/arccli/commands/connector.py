@@ -718,20 +718,51 @@ def _migrate_secrets(args: argparse.Namespace) -> None:
         _reseal_secrets(connections, dry_run=args.dry_run)
         return
     try:
-        report = asyncio.run(connections.migrate_secrets(dry_run=args.dry_run))
+        report = asyncio.run(
+            connections.migrate_secrets(dry_run=args.dry_run, drop_undeclared=args.drop_undeclared)
+        )
     except arcagent.ExtensionError as exc:
         _fail(f"{exc.message} (the legacy file was kept)")
     if report.skipped:
         _out(f"Nothing to migrate: {report.path} does not exist.")
         return
+    _print_migration(report, where=connections.world.credential_location)
+
+
+#: What an unresolved reason means, for the migrate-secrets report.
+_UNRESOLVED_WHY = {
+    "undeclared": "declared by no connection",
+    "custody_differs": "custody already holds a different value",
+    "app_slot_differs": "the sign-in app slot already holds a different app",
+    "app_pair_incomplete": "half of a sign-in app pair",
+    "app_values_disagree": "two connections name different apps",
+}
+
+
+def _print_migration(report: Any, *, where: str) -> None:
+    """Every key in the legacy file, and what happened (or would happen) to it."""
     verb = "Would move" if report.dry_run else "Moved"
-    where = connections.world.credential_location
     _out(f"{verb} {len(report.migrated)} credential(s) into {where}.")
     for name in report.migrated:
         _out(f"  moved   : {name}")
-    for name in report.dropped:
-        _out(f"  dropped : {name}  (declared by no connection)")
+    for name in report.already:
+        _out(f"  already : {name}  (custody holds the same value)")
+    for provider in report.apps:
+        _out(f"  app     : {provider} sign-in app slot")
+    for key in report.app_keys:
+        _out(f"  app key : {key}")
+    for key, reason in report.unresolved:
+        _out(f"  UNRESOLVED: {key}  ({_UNRESOLVED_WHY.get(reason, reason)})")
+    for key in report.dropped:
+        _out(f"  dropped : {key}  (on purpose, audited)")
+    for key in report.empty:
+        _out(f"  empty   : {key}  (no value)")
     if report.dry_run:
+        if report.unresolved:
+            _out(
+                "UNRESOLVED values would be lost. Re-enter any you still need, then run "
+                "`arc connector migrate-secrets --drop-undeclared` to drop them on purpose."
+            )
         _out(f"Nothing was written. {report.path} is unchanged.")
     elif report.deleted:
         _out(f"Deleted {report.path}.")
@@ -907,7 +938,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show which credentials would move and which leftovers would be dropped.",
+        help=(
+            "Show exactly what would move into custody, map to a sign-in app slot, "
+            "or be lost. Writes nothing."
+        ),
+    )
+    p.add_argument(
+        "--drop-undeclared",
+        action="store_true",
+        help=(
+            "Drop, on purpose, the values no connection declares (each audited by name). "
+            "Without it any such value stops the migration and the file is kept."
+        ),
     )
     p.add_argument(
         "--reseal",

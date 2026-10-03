@@ -41,15 +41,25 @@ and what to do when something goes wrong.
 arcui does this by itself at startup. To check it first, or to run it by hand:
 
 ```bash
-arc connector migrate-secrets --dry-run   # list what would move and what would be dropped
-arc connector migrate-secrets             # move, verify, delete the file
+arc connector migrate-secrets --dry-run            # show the fate of every key; writes nothing
+arc connector migrate-secrets                      # move, verify, delete the file
+arc connector migrate-secrets --drop-undeclared    # also drop the UNRESOLVED keys on purpose
 ```
 
-- Only credentials that a connection's bundle declares are moved.
-- Leftover keys that no connection declares are dropped. The report lists them by name.
-- Each value is read back and compared before the file is deleted.
-- If any step fails, the file is kept and arcui does not start. Run the command and
-  read its report.
+- Credentials that a connection's bundle declares are moved into sealed custody.
+- A bundle's old sign-in app pair (for Dropbox, `<NAME>_APP_KEY` and
+  `<NAME>_APP_SECRET`) is moved into that provider's sealed sign-in app slot. A
+  bundle names its old pair with `[oauth] legacy_client_id_env` and
+  `legacy_client_secret_env`.
+- Every other value is UNRESOLVED: no connection declares it, custody or the app slot
+  already holds a different value, or it is half of an app pair. Arc never drops an
+  UNRESOLVED value by itself. arcui does not start, names the keys, and keeps the file.
+- To continue, read `--dry-run`. Re-enter any value you still need (for example
+  `arc connector oauth-app dropbox`, or connect the account again). Then run
+  `--drop-undeclared`. Each dropped key is audited by name.
+- Each value is read back and compared before the file is deleted. There is no
+  plaintext backup: until you resolve it, the original file is the only copy.
+- If any step fails, the file is kept and arcui does not start.
 
 ## Tiers
 

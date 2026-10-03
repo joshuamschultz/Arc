@@ -43,21 +43,37 @@ def _write_env(path: Path, body: str) -> None:
 
 async def test_startup_migrates_then_starts(tmp_path: Path) -> None:
     connections, backend, env = _deployment(tmp_path)
-    _write_env(env, "ARC_SECRET_WORK_SLACK_USER_TOKEN=xoxp-secret-1\nJIRA_API_TOKEN=orphan-2\n")
+    _write_env(env, "ARC_SECRET_WORK_SLACK_USER_TOKEN=xoxp-secret-1\nEMPTY_LEFTOVER=\n")
 
     report = await migrate_at_startup(connections)
 
     assert not env.exists()
     assert report.migrated == ("work_slack/user_token",)
-    assert report.dropped == ("JIRA_API_TOKEN",)
+    assert report.dropped == () and report.empty == ("EMPTY_LEFTOVER",)
     rows = CredentialRowStore(backend, CIPHER)
     row = await rows.read("work_slack")
     assert row is not None
     assert (await rows.open_field(row, "user_token")).reveal() == "xoxp-secret-1"  # type: ignore[union-attr]
     raw = str(await backend.mutable_query(CREDENTIAL_COLLECTION))
-    assert "xoxp-secret-1" not in raw and "orphan-2" not in raw
+    assert "xoxp-secret-1" not in raw
     # A second start has nothing to do.
     assert (await migrate_at_startup(connections)).skipped
+
+
+async def test_startup_refuses_to_drop_an_undeclared_value(tmp_path: Path) -> None:
+    """Hotfix (DGX 9c280994): startup never drops a credential it cannot place."""
+    connections, backend, env = _deployment(tmp_path)
+    body = "ARC_SECRET_WORK_SLACK_USER_TOKEN=xoxp-secret-1\nJIRA_API_TOKEN=orphan-2\n"
+    _write_env(env, body)
+
+    with pytest.raises(CredentialMigrationRefusedError) as caught:
+        await migrate_at_startup(connections)
+
+    message = str(caught.value)
+    assert "JIRA_API_TOKEN" in message and "--drop-undeclared" in message
+    assert "orphan-2" not in message
+    assert env.read_text() == body
+    assert await backend.mutable_query(CREDENTIAL_COLLECTION) == []
 
 
 async def test_startup_fails_closed_when_migration_cannot_complete(tmp_path: Path) -> None:

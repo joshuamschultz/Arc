@@ -85,6 +85,7 @@ from arcagent.extension.coordinates import refusal as coordinate_refusal
 from arcagent.extension.credential_broker import AccessTokenHandle, credential_plan
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
+    LegacyApp,
     MigrationReport,
     ResealReport,
     legacy_env_path,
@@ -2260,16 +2261,21 @@ class Connections:
             await asyncio.gather(*(renew_one(instance) for instance in flows))
         return outcome
 
-    async def migrate_secrets(self, *, dry_run: bool = False) -> MigrationReport:
+    async def migrate_secrets(
+        self, *, dry_run: bool = False, drop_undeclared: bool = False
+    ) -> MigrationReport:
         """Move the legacy plaintext credential file into sealed custody, once (P18-2).
 
         Every declared credential is stored, read back through a fresh store and
-        compared, and only then is the file deleted; undeclared keys are dropped
-        by name. Running agents are pushed the change. A dry run writes nothing.
+        compared; a bundle's legacy OAuth app pair goes into the provider's sealed
+        app slot. Any other non-empty value refuses the migration unless
+        ``drop_undeclared`` drops it on purpose (audited per key). Only then is the
+        file deleted. Running agents are pushed the change. A dry run writes nothing.
 
         Raises:
-            ExtensionError: The migration could not complete (no custody cipher,
-                a read-back mismatch, a symlinked or loose file). The file is kept.
+            ExtensionError: ``MIGRATION_UNDECLARED_KEYS`` (a value would be lost),
+                or the migration could not complete (no custody cipher, a read-back
+                mismatch, a symlinked or loose file). The file is kept.
         """
         env_path = legacy_env_path(self._world.arc_dir)
         if not os.path.lexists(env_path):
@@ -2290,6 +2296,19 @@ class Connections:
                     return None
                 return tuple(required.name for required in plan.secrets)
 
+            def legacy_app(instance: str, _extension: str) -> LegacyApp | None:
+                try:
+                    flow = self._plan_for(instance, sink).manifest.oauth
+                except ExtensionError:
+                    return None
+                if flow is None or not flow.legacy_client_id_env:
+                    return None
+                return LegacyApp(
+                    provider=flow.provider,
+                    client_id_suffix=flow.legacy_client_id_env,
+                    client_secret_suffix=flow.legacy_client_secret_env or "",
+                )
+
             async def fresh_store() -> SecretStore:
                 return (await self._custody(sink)).store
 
@@ -2302,7 +2321,10 @@ class Connections:
                 verify_store=(lambda: verify) if verify is not None else None,
                 actor_did=causal.actor_did(),
                 sink=sink,
+                legacy_apps=legacy_app,
+                app_store=custody.apps if custody is not None else None,
                 dry_run=dry_run,
+                drop_undeclared=drop_undeclared,
             )
         for instance in report.connections if report.deleted else ():
             await self._push_credential_change(instance)

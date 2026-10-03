@@ -579,6 +579,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_renewal_planner.py",
         "tests/architecture/test_no_connector_secret_on_disk.py",
     ),
+    # Alpha-2 hotfix (DGX 9c280994 lost nine values): the legacy credential-file
+    # migration never silently drops a credential. An undeclared value stops it (file
+    # kept, nothing written); only an explicit --drop-undeclared drops one, audited
+    # per key; a stale or planted file never overwrites custody or an app slot.
+    "legacy credential-file migration never silently drops a credential (alpha-2 hotfix)": (
+        "packages/arcagent/tests/security/test_migration_never_drops_credentials.py",
+        "packages/arcagent/tests/unit/extension/test_custody_migrate_no_loss.py",
+        "packages/arcui/tests/test_startup_migrates_connections_env.py",
+    ),
     # P18-2F: under vault_transit the custody key never enters the process. The old
     # in-process seed opens nothing; a transplanted or downgraded (seed-planted xc1)
     # value is refused; an outage fails closed with no in-process fallback; a
