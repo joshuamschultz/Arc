@@ -636,6 +636,17 @@ log "Installing modules for every agent..."
 "$ARC_BIN" install --team-root "$TEAM_ROOT" \
   || fail "arc install could not deliver every module the configs enable (see above)"
 
+# A schema change can leave every saved workflow unreadable or unsigned while the
+# deploy still looks healthy (alpha-2: the list went silently empty and the cron
+# triggers died). Non-fatal on purpose: the deploy proceeds, but never silently.
+log "Checking every workflow bundle parses and verifies..."
+if "$ARC_BIN" workflow check; then
+  ok "all workflow bundles readable"
+else
+  echo "  ! WARNING: some workflows are unreadable or need re-signing (list above)." >&2
+  echo "  ! Fix: arc workflow migrate --dry-run, then arc workflow migrate --resign" >&2
+fi
+
 # --- 9. systemd user unit -------------------------------------------------
 UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"

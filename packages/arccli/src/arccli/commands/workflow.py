@@ -59,6 +59,7 @@ from arcteam.workflow.control_plane import (
     OperationIssue,
     WorkflowControlPlane,
 )
+from arcteam.workflow.migrate import check_bundle, check_store, migrate_store
 from arcteam.workflow.models import WORKFLOW_ID_PATTERN
 from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
 from arcteam.workflow.service import WorkflowRunnerService
@@ -568,12 +569,66 @@ def _verify(args: argparse.Namespace) -> None:
 
 
 def _list(args: argparse.Namespace) -> None:
+    """List every bundle. One that cannot be read is shown as UNREADABLE, never dropped."""
     store = _store(args)
-    rows = [_bundle_row(store.load(wid)) for wid in store.list_ids(include_archived=args.all)]
+    rows = []
+    for workflow_id in store.list_ids(include_archived=args.all):
+        check = check_bundle(store, workflow_id)
+        if check.state == "unreadable":
+            rows.append([workflow_id, "-", "UNREADABLE", "-", f"{check.detail} Fix: {check.fix}"])
+        else:
+            rows.append(_bundle_row(store.load(workflow_id)))
     if not rows:
         write("No workflows.")
         return
     print_table(["ID", "VERSION", "STATUS", "TRIGGER", "SIGNER"], rows)
+
+
+def _check(args: argparse.Namespace) -> None:
+    """Parse and verify every bundle; exit 1 listing each one that cannot run as signed.
+
+    Run by the deploy after install, so a deploy is never silently workflow-dead.
+    Unsigned drafts are listed but are not failures; unreadable and stale-signed
+    bundles are.
+    """
+    checks = check_store(_store(args))
+    for check in checks:
+        if check.state != "ok":
+            write(f"{check.workflow_id}: {check.state} - {check.detail} Fix: {check.fix}")
+    failures = [check for check in checks if check.is_failure]
+    if failures:
+        err(f"{len(failures)} of {len(checks)} workflow(s) cannot run as signed.")
+        sys.exit(1)
+    write(f"All {len(checks)} workflow(s) readable.")
+
+
+def _migrate(args: argparse.Namespace) -> None:
+    """One-time: strip fields the alpha-2 schema removed, then optionally re-sign.
+
+    Only ``join = "all"`` is removed (the one behavior that remains). A bundle
+    using ``join = "any"``, ``loop_back_to`` or ``max_iterations`` is refused
+    and left untouched. ``--resign`` signs through the operator signer handle.
+    """
+    arc_dir = _arc_dir(args)
+    tier = _deployment_tier(arc_dir)
+    root = _workflows_root(arc_dir)
+    signer = resolve_operator_signer(arc_dir) if args.resign else None
+    signer_did = f"operator:{signer.public_key.hex()[:16]}" if signer is not None else ""
+    sink = None if args.dry_run else _audit_sink()
+    try:
+        store = _resolve_bundle_signer(root, arc_dir, tier=tier, sink=sink)
+        results = migrate_store(store, dry_run=args.dry_run, signer=signer, signer_did=signer_did)
+    finally:
+        if sink is not None:
+            sink.close()
+    for result in results:
+        detail = result.reason or ", ".join(result.files)
+        write(f"{result.workflow_id}: {result.action} {detail}".rstrip())
+    if not results:
+        write("No workflows.")
+    if any(result.action == "refused" for result in results):
+        err("Some workflows were refused and left untouched; see above.")
+        sys.exit(1)
 
 
 def _show(args: argparse.Namespace) -> None:
@@ -1084,6 +1139,19 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_dir_arg(p)
 
     p = subs.add_parser(
+        "migrate",
+        help='One-time: remove fields the new schema dropped (join = "all"), optionally re-sign.',
+    )
+    p.add_argument("--dry-run", action="store_true", help="List every change; write nothing.")
+    p.add_argument(
+        "--resign", action="store_true", help="Re-sign migrated bundles with the operator key."
+    )
+    _add_dir_arg(p)
+
+    p = subs.add_parser("check", help="Parse and verify every bundle; exit 1 on any failure.")
+    _add_dir_arg(p)
+
+    p = subs.add_parser(
         "verify", help="Verify a workflow bundle's signature against the pinned operator key."
     )
     p.add_argument("target", metavar="id", help="Workflow id under the registered directory.")
@@ -1110,6 +1178,8 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "retry": _retry,
     "sign": _sign,
     "verify": _verify,
+    "migrate": _migrate,
+    "check": _check,
 }
 
 
