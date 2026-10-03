@@ -264,7 +264,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "--data-dir",
             dest="data_dir",
             default=None,
-            help="Arc data dir (default: env ARCSTORE_DATA_DIR or ~/.arc/store).",
+            help="Arc data dir (default: env ARCSTORE_DATA_DIR or ~/arc/state/store).",
         )
 
     init_p = subs.add_parser("init", help="Create the data-dir layout.")

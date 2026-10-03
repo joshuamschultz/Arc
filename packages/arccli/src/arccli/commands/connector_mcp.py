@@ -65,7 +65,7 @@ def add_mcp_arguments(parser: argparse.ArgumentParser) -> None:
         "--agents", default="", help="Comma-separated agent names granted this server."
     )
     parser.add_argument("--extensions-root", default=None, help="Use exactly this bundle root.")
-    parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
+    parser.add_argument("--arc-dir", default=None, help="Operator root (default: ~/arc).")
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit/state.")
 
 
@@ -85,7 +85,7 @@ def rewrite_command(args: Sequence[str]) -> list[str]:
 def add_sign_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("bundle", help="Path to a bundle folder holding extension.toml.")
     parser.add_argument("--extensions-root", default=None, help="Use exactly this bundle root.")
-    parser.add_argument("--arc-dir", default=None, help="Arc config dir (default: ~/.arc).")
+    parser.add_argument("--arc-dir", default=None, help="Operator root (default: ~/arc).")
     parser.add_argument("--data-dir", default=None, help="Operational data dir for audit/state.")
 
 

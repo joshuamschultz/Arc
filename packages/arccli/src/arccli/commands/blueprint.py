@@ -302,7 +302,7 @@ def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
 
 
 def _deployment_tier(target: Path, arc_dir: Path) -> str:
-    """The deployment's baseline tier: the target's own tier, else the ~/.arc default."""
+    """The deployment's baseline tier: the target's own tier, else the operator-root default."""
     for path in (target, config_file("arcagent.toml", arc_dir)):
         if path.is_file():
             try:
@@ -352,22 +352,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("show", help="Print a blueprint's resolved config overlay.")
     p.add_argument("name")
     p.add_argument("--tier", default=None, help="Deployment tier for resolution.")
-    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
+    p.add_argument(
+        "--dir", dest="config_dir", default=None, help="Operator root (default: ~/arc)."
+    )
 
     p = subs.add_parser("apply", help="Verify + deep-merge a blueprint into a config file.")
     p.add_argument("name")
     p.add_argument("--agent", dest="agent", default=None, help="Per-agent dir target.")
-    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
+    p.add_argument(
+        "--dir", dest="config_dir", default=None, help="Operator root (default: ~/arc)."
+    )
     p.add_argument("--dry-run", dest="dry_run", action="store_true", help="Print merged config.")
 
     p = subs.add_parser("verify", help="Report a blueprint's signature validity.")
     p.add_argument("name")
     p.add_argument("--tier", default=None, help="Deployment tier for the fail-closed gate.")
-    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
+    p.add_argument(
+        "--dir", dest="config_dir", default=None, help="Operator root (default: ~/arc)."
+    )
 
     p = subs.add_parser("sign", help="Operator-sign a user blueprint (.arcsig sidecar).")
     p.add_argument("path")
-    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
+    p.add_argument(
+        "--dir", dest="config_dir", default=None, help="Operator root (default: ~/arc)."
+    )
 
     return parser
 
