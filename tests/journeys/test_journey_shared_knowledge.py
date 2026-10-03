@@ -366,7 +366,9 @@ async def test_a_crawl_that_dies_mid_run_is_resumed_by_the_other_agent_under_the
     scripted_llm: ScriptedLLM,
     arcstore: FakeBackend,  # noqa: F811 — the module's shared-arcstore fixture
 ) -> None:
-    limits = {"max_seconds": 1.0, "retries": 0, "max_duty_fraction": 1.0}
+    # The lease lives max_seconds; long enough that ingesting page one (the first
+    # embed loads a model) never ends the run at its time budget before page two.
+    limits = {"max_seconds": 8.0, "retries": 0, "max_duty_fraction": 1.0}
     first, second = await two_agents(deployment, enable_modules, limits=limits)
     store = ArcStoreSourceSyncStore(arcstore)
     principal = knowledge_principal("wiki")
@@ -379,13 +381,16 @@ async def test_a_crawl_that_dies_mid_run_is_resumed_by_the_other_agent_under_the
         await asyncio.wait_for(account.wedged.wait(), timeout=30)
         # Page one is committed; the run holding the lease is now dead in the water.
         assert (await store.get_state(principal, "wiki")).cursor == "c1"
+        # A crashed process also stops renewing its lease. A merely slow one keeps
+        # it alive (the run's heartbeat), so the crash is the heartbeat going away.
+        _stop_lease_heartbeat("wiki")
 
         async def lease_expired() -> bool:
             rows = await store.list_for_connection("wiki")
             now = datetime.now(UTC)
             return not any(row.is_live(now) for row in rows if row.agent_did == principal)
 
-        assert await _until(lease_expired, seconds=10)
+        assert await _until(lease_expired, seconds=20)
         await sync_service(second).sync_now("wiki")
 
         async def resumed() -> bool:
@@ -402,6 +407,17 @@ async def test_a_crawl_that_dies_mid_run_is_resumed_by_the_other_agent_under_the
     # The dead run, cancelled at shutdown, is fenced: it cannot undo the resumed one.
     final = await store.get_state(principal, "wiki")
     assert final.status.value == "complete" and final.cursor == "c2"
+
+
+def _stop_lease_heartbeat(connection_id: str) -> None:
+    """Silence the lease heartbeat of the run that wedged, as a crash would."""
+    beats = [
+        task
+        for task in asyncio.all_tasks()
+        if task.get_name() == f"sync-lease:{connection_id}" and not task.done()
+    ]
+    assert len(beats) == 1, beats
+    beats[0].cancel()
 
 
 # ---------------------------------------------------------------------------

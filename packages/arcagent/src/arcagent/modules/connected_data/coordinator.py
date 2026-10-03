@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -66,6 +67,9 @@ _FATAL_SYNC_CODES = frozenset(
 
 
 _CHECKPOINT_INVALID = SourceFailureCode.CHECKPOINT_INVALID.value
+_RATE_LIMITED = SourceFailureCode.RATE_LIMITED.value
+
+_logger = logging.getLogger("arcagent.modules.connected_data.coordinator")
 
 
 class ConnectedDataCoordinator:
@@ -120,7 +124,6 @@ class ConnectedDataCoordinator:
             fencing_token=lease.fencing_token,
             ttl=chosen.max_seconds,
             started=self._clock(),
-            renewed_at=self._clock(),
             pacer=DutyCycleLimiter(
                 chosen.max_duty_fraction,
                 clock=self._clock,
@@ -132,6 +135,9 @@ class ConnectedDataCoordinator:
         current = await self._state.get_state(agent_did, source_id)
         await self._emit("started", source, {"owner": _safe_id(owner_id)})
         lease_lost = False
+        heartbeat = asyncio.create_task(
+            self._heartbeat(run, asyncio.current_task()), name=f"sync-lease:{source_id}"
+        )
         try:
             await self._set_status(
                 agent_did,
@@ -164,13 +170,16 @@ class ConnectedDataCoordinator:
                 self._check_cancel(cancel_event)
                 # The time budget, like the page and byte budgets, ends a run at
                 # a page boundary with its cursor committed: it bounds one run's
-                # work and is not a verdict on the account. Before the first
-                # page it is still a failure, so a run always advances.
-                if pages and self._elapsed(run) >= chosen.max_seconds:
+                # work and is not a verdict on the account. It is checked ONLY
+                # here. A deadline inside a page threw the page away, so a page
+                # that overran once overran on every retry (sweep D8); the page
+                # in hand now always lands. Before the first page it is still a
+                # failure, so a run always advances or says why it could not.
+                if self._elapsed(run) >= chosen.max_seconds:
+                    if not pages:
+                        raise SyncError("time limit exceeded")
                     budget_reached = self._stopped_at_ceiling = True
                     break
-                self._check_deadline(run, chosen)
-                await self._renew_lease(run)
                 if pages >= chosen.max_pages:
                     budget_reached = self._stopped_at_ceiling = True
                     break
@@ -245,6 +254,12 @@ class ConnectedDataCoordinator:
                 {"pages": pages, "bytes": processed, "budget_reached": budget_reached},
             )
         except asyncio.CancelledError:
+            if run.lease_lost and _absorb_own_cancel():
+                # The heartbeat lost the lease and stopped this run: nothing more
+                # may be written under a lease another writer may now hold.
+                lease_lost = True
+                await self._emit("lease_lost", source, {})
+                raise LeaseLostError() from None
             await self._mark_cancelled(source, agent_did, owner_id, lease.fencing_token)
             raise
         except _CancellationError:
@@ -270,6 +285,9 @@ class ConnectedDataCoordinator:
             await self._emit("awaiting_mapping", source, {})
         except SyncError as exc:
             await self._finish_after_failure(source, run)
+            if exc.code == _RATE_LIMITED:
+                lease_lost = await self._defer(source, run, exc)
+                raise
             try:
                 await self._set_status(
                     agent_did,
@@ -303,6 +321,8 @@ class ConnectedDataCoordinator:
             await self._emit("failed", source, {"error_code": "sync_error"})
             raise
         finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
             if not lease_lost:
                 await self._state.release_lease(
                     agent_did, source_id, owner_id=owner_id, fencing_token=lease.fencing_token
@@ -347,25 +367,13 @@ class ConnectedDataCoordinator:
             root_locator=source.root_locator,
             page_size=limits.page_size,
         )
-        for attempt in range(limits.retries + 1):
-            try:
-                page: SyncSourcePage = await self._paced(
-                    run, lambda: self._source.sync_source(request)
-                )
-                return page
-            except (TransientSyncError, SourceError) as exc:
-                if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
-                    raise SyncError(str(exc), code=str(exc.code)) from exc
-                if attempt >= limits.retries:
-                    raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
-                self._check_cancel(cancel_event)
-                self._check_deadline(run, limits)
-                await self._sleep_capped(
-                    max(exc.retry_after or 0.0, limits.retry_backoff_seconds * (attempt + 1)),
-                    run,
-                    limits,
-                )
-        raise SyncError("source retry loop exhausted")
+        page: SyncSourcePage = await self._retry_call(
+            lambda: self._paced(run, lambda: self._source.sync_source(request)),
+            limits,
+            run,
+            cancel_event,
+        )
+        return page
 
     async def _ingest_page(
         self,
@@ -382,7 +390,6 @@ class ConnectedDataCoordinator:
         fetch_failure: TransientSyncError | None = None
         for source_object in page.objects:
             self._check_cancel(cancel_event)
-            self._check_deadline(run, limits)
             # A folder is the shape of the tree, not a document. Passed on with no
             # content the ingest port refused it, and one folder in a listing
             # failed the whole sync — which is every real document account.
@@ -559,24 +566,59 @@ class ConnectedDataCoordinator:
     async def _paced(self, run: _Run, operation: Callable[[], Awaitable[Any]]) -> Any:
         """Run one unit of this source's work inside its duty cycle."""
         async with run.pacer.unit():
-            await self._keep_lease(run)
             return await operation()
 
-    async def _keep_lease(self, run: _Run) -> None:
-        """Renew within a long, paced page before a third of the lease is gone."""
-        if self._clock() - run.renewed_at >= run.ttl / 3:
-            await self._renew_lease(run)
+    async def _heartbeat(self, run: _Run, owner: asyncio.Task[Any] | None) -> None:
+        """Renew the lease every third of its life, whatever the run is doing.
 
-    async def _renew_lease(self, run: _Run) -> None:
-        if not await self._state.renew_lease(
-            run.agent_did,
-            run.source_id,
-            owner_id=run.owner_id,
-            fencing_token=run.fencing_token,
-            ttl_seconds=run.ttl,
-        ):
-            raise LeaseLostError()
-        run.renewed_at = self._clock()
+        Renewing only between units let one slow fetch or one long ingest outlive
+        the lease with no contention at all (sweep D9). This runs beside the work
+        on the event loop's own clock, the clock the store's lease expiry uses.
+        A renewal the store refuses means another writer may hold the lease now:
+        the run is stopped at once rather than discovering it at its next commit.
+        A renewal that raises is retried on the next beat; the store's fencing
+        still refuses any write made after the lease really lapsed.
+        """
+        while True:
+            await asyncio.sleep(run.ttl / 3)
+            try:
+                renewed = await self._state.renew_lease(
+                    run.agent_did,
+                    run.source_id,
+                    owner_id=run.owner_id,
+                    fencing_token=run.fencing_token,
+                    ttl_seconds=run.ttl,
+                )
+            except Exception:  # reason: a blip is retried; the fence protects the data
+                _logger.warning("connected-data lease renewal failed; retrying", exc_info=True)
+                continue
+            if not renewed:
+                run.lease_lost = True
+                if owner is not None:
+                    owner.cancel()
+                return
+
+    async def _defer(self, source: SourceDescription, run: _Run, exc: SyncError) -> bool:
+        """End a rate-limited run as deferred; True when the lease was already lost.
+
+        Pages committed before the limit stay committed and the cursor is kept.
+        The row reads ``idle`` with ``rate_limited``, not ``failed``: the account
+        is healthy and the provider named when to come back.
+        """
+        try:
+            await self._set_status(
+                run.agent_did,
+                run.source_id,
+                SyncStatus.IDLE,
+                owner_id=run.owner_id,
+                fencing_token=run.fencing_token,
+                error_code=_RATE_LIMITED,
+            )
+        except LeaseLostError:
+            await self._emit("lease_lost", source, {})
+            return True
+        await self._emit("rate_limited", source, {"retry_after": exc.retry_after})
+        return False
 
     def _elapsed(self, run: _Run) -> float:
         """Time this run has spent working: pacing rest does not count."""
@@ -617,15 +659,19 @@ class ConnectedDataCoordinator:
                 return await operation()
             except (TransientSyncError, SourceError) as exc:
                 if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
-                    raise SyncError(str(exc), code=str(exc.code)) from exc
+                    raise SyncError(
+                        str(exc), code=str(exc.code), retry_after=exc.retry_after
+                    ) from exc
                 if attempt >= limits.retries:
-                    raise TransientSyncError(str(exc), retry_after=exc.retry_after or 0.0) from exc
+                    raise TransientSyncError(str(exc), retry_after=exc.retry_after) from exc
                 self._check_cancel(cancel_event)
-                self._check_deadline(run, limits)
-                await self._sleep_capped(
-                    max(exc.retry_after or 0.0, limits.retry_backoff_seconds * (attempt + 1)),
-                    run,
-                    limits,
+                # One wait never outlasts a third of the lease; the provider's own
+                # longer delay is honoured by the scheduler (deferral), not here.
+                await self._sleep(
+                    min(
+                        max(exc.retry_after or 0.0, limits.retry_backoff_seconds * (attempt + 1)),
+                        run.ttl / 3,
+                    )
                 )
         raise SyncError("retry loop exhausted")
 
@@ -663,12 +709,6 @@ class ConnectedDataCoordinator:
             budget_reached=budget_reached,
         ):
             raise LeaseLostError()
-
-    async def _sleep_capped(self, delay: float, run: _Run, limits: SyncLimits) -> None:
-        remaining = limits.max_seconds - self._elapsed(run)
-        if remaining <= 0:
-            raise SyncError("time limit exceeded")
-        await self._sleep(min(delay, remaining))
 
     async def _emit(
         self, event: str, source: SourceDescription, payload: Mapping[str, Any]
@@ -736,10 +776,6 @@ class ConnectedDataCoordinator:
         if cancel_event is not None and cancel_event.is_set():
             raise _CancellationError()
 
-    def _check_deadline(self, run: _Run, limits: SyncLimits) -> None:
-        if self._elapsed(run) >= limits.max_seconds:
-            raise SyncError("time limit exceeded")
-
 
 @dataclass(frozen=True)
 class _PageLanded:
@@ -760,12 +796,19 @@ class _Run:
     fencing_token: int
     ttl: float
     started: float
-    renewed_at: float
     pacer: DutyCycleLimiter
+    #: Set by the heartbeat when the store refused a renewal.
+    lease_lost: bool = False
 
 
 class _CancellationError(Exception):
     pass
+
+
+def _absorb_own_cancel() -> bool:
+    """Take back the heartbeat's cancellation; False if someone else also cancelled."""
+    task = asyncio.current_task()
+    return task is None or task.uncancel() == 0
 
 
 def _declared_bytes(source_object: SourceObject) -> int:

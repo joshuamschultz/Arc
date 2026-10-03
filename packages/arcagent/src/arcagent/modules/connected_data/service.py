@@ -40,6 +40,7 @@ from arcagent.extension.source import (
     InspectSource,
     SelectSourceResources,
     SourceError,
+    SourceFailureCode,
     SourceResource,
 )
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
@@ -106,6 +107,9 @@ class MappingProposalStore(Protocol):
 #: listing knows to ask again rather than treat it as settled.
 _INSPECTION_FAILED = "source_inspection_failed"
 
+#: A run that died without ending (a killed process): its row said ``running``.
+_INTERRUPTED = "interrupted"
+
 
 class SourceRefusedError(RuntimeError):
     """The source understood the request and rejected it.
@@ -114,13 +118,21 @@ class SourceRefusedError(RuntimeError):
     changes nothing. The adapter's own words carry the remedy — a document store
     that can only follow one root says so — so they are kept and shown rather
     than flattened into "the provider did not answer".
+
+
+    ``needs_reconnect`` marks the one refusal only the account's owner can fix:
+    the credential is missing, expired or revoked. A boundary answers it with a
+    Reconnect action rather than the adapter's words.
     """
 
-    def __init__(self, connection_id: str, code: str, detail: str) -> None:
+    def __init__(
+        self, connection_id: str, code: str, detail: str, *, needs_reconnect: bool = False
+    ) -> None:
         super().__init__(detail or f"source {connection_id} refused the request")
         self.connection_id = connection_id
         self.code = code
         self.detail = detail
+        self.needs_reconnect = needs_reconnect
 
 
 class SourceUnreachableError(RuntimeError):
@@ -272,6 +284,7 @@ class ConnectedDataService:
             backoff_max_seconds=restart_backoff_max_seconds,
         )
         self._stall_grace = stall_grace_seconds
+        self._rate_limit_wait = restart_backoff_seconds
         self._failure_ceiling = failure_ceiling
         # One sync and one store per connection (P18-4). ``_lanes`` holds the
         # connections this agent reads from a shared store, by connection id; a
@@ -633,11 +646,8 @@ class ConnectedDataService:
             resources = await registration.adapter.list_source_resources(
                 ListSourceResources(connection_id=connection_id)
             )
-        except SourceError as exc:
-            raise SourceRefusedError(connection_id, str(exc.code), exc.detail) from exc
         except Exception as exc:
-            _logger.warning("connected-data resource listing failed: %s", connection_id)
-            raise SourceUnreachableError(connection_id) from exc
+            raise _operator_failure(connection_id, "resource listing", exc) from exc
         selected = self._selected_resources.get(connection_id)
         if selected is None and self._resource_store is not None:
             selected = await self._resource_store.get(connection_id)
@@ -664,11 +674,8 @@ class ConnectedDataService:
             await registration.adapter.select_source_resources(
                 SelectSourceResources(connection_id=connection_id, resource_ids=resource_ids)
             )
-        except SourceError as exc:
-            raise SourceRefusedError(connection_id, str(exc.code), exc.detail) from exc
         except Exception as exc:
-            _logger.warning("connected-data resource selection failed: %s", connection_id)
-            raise SourceUnreachableError(connection_id) from exc
+            raise _operator_failure(connection_id, "resource selection", exc) from exc
         self._selected_resources[connection_id] = resource_ids
         if self._resource_store is not None:
             await self._resource_store.put(connection_id, resource_ids)
@@ -729,6 +736,7 @@ class ConnectedDataService:
                 await asyncio.sleep(min(max(self._interval, 0.1), _CATALOG_RETRY_MAX_SECONDS))
                 continue
             try:
+                await self._reconcile_interrupted_runs(registrations)
                 self._schedule_due(registrations, await self._reporter.statuses())
             except Exception as exc:  # reason: the monitor must outlive one bad tick
                 _logger.exception("connected-data monitor tick failed")
@@ -810,10 +818,13 @@ class ConnectedDataService:
         except _SyncStalledError:
             await self._run_failed(connection_id, "stalled", "sync_stalled")
         except SyncError as exc:
-            # A terminal failure (a revoked credential) needs a human, not a
-            # retry: surface it as needs_attention, notify once, and back the
-            # source off the timer. Anything else is retried after a backoff.
-            if is_terminal_sync_failure(exc.code):
+            # A rate limit is the provider pacing us: wait the time it named and
+            # count nothing. A terminal failure (a revoked credential) needs a
+            # human, not a retry: surface it as needs_attention, notify once, and
+            # back the source off the timer. Anything else is retried after a backoff.
+            if exc.code == SourceFailureCode.RATE_LIMITED.value:
+                await self._run_deferred(connection_id, exc.retry_after)
+            elif is_terminal_sync_failure(exc.code):
                 await self._mark_needs_attention(connection_id, exc.code or "auth_required")
                 self._timing.completed(connection_id, more_work=False)
             else:
@@ -822,6 +833,25 @@ class ConnectedDataService:
             await self._run_failed(connection_id, "crashed", _name(exc), exc)
         else:
             self._timing.completed(connection_id, more_work=more_work)
+
+    async def _run_deferred(self, connection_id: str, retry_after: float | None) -> None:
+        """A rate-limited run: no strike, no traceback, next run when the provider said.
+
+        The coordinator kept every committed page and left the row ``idle`` with
+        ``rate_limited``. A provider that named no time waits one restart backoff.
+        """
+        delay = self._rate_limit_wait if retry_after is None else retry_after
+        self._timing.deferred(connection_id, delay)
+        self._statuses[connection_id] = self._still_described(
+            connection_id,
+            status="idle",
+            detail=SourceFailureCode.RATE_LIMITED.value,
+            state=await self._persisted_state(connection_id),
+        )
+        await self._emit(
+            "connected_data.sync.deferred",
+            {"source": _safe_id(connection_id), "retry_in_seconds": round(delay, 3)},
+        )
 
     async def _run_failed(
         self, connection_id: str, event: str, detail: str, exc: Exception | None = None
@@ -870,7 +900,7 @@ class ConnectedDataService:
         (a ceiling of repeated failures), which a restart must be able to read.
         """
         state = await self._persisted_state(connection_id)
-        failed = state is not None and state.status is SyncStatus.FAILED
+        failed = state is not None and state.status == SyncStatus.FAILED
         if self._store is None or (
             failed and (not force or (state is not None and state.error_code == code))
         ):
@@ -1009,7 +1039,7 @@ class ConnectedDataService:
         if self._store is None:
             return False
         state: SyncState = await self._store.get_state(lane.principal, connection_id)
-        if state.status is not SyncStatus.COMPLETE or state.budget_reached:
+        if state.status != SyncStatus.COMPLETE or state.budget_reached:
             return False
         synced = state.last_synced_at
         if synced is None:
@@ -1077,11 +1107,11 @@ class ConnectedDataService:
         )
         # A run that completed clears any prior needs-attention backoff.
         self._health.clear(connection_id)
-        if result.status is SyncStatus.COMPLETE:
+        if result.status == SyncStatus.COMPLETE:
             await self._report(connection_id, ok=True)
-        elif result.status is SyncStatus.FAILED:
+        elif result.status == SyncStatus.FAILED:
             await self._report(connection_id, ok=False, code=result.error_code)
-        return result.status is SyncStatus.COMPLETE and coordinator.stopped_at_ceiling
+        return result.status == SyncStatus.COMPLETE and coordinator.stopped_at_ceiling
 
     async def _inspect_registration(self, registration: SourceRegistration) -> None:
         """Populate the safe descriptor before the operator sees a blank source row."""
@@ -1117,7 +1147,9 @@ class ConnectedDataService:
             # The coordinator keys that durable row by ``connection_id`` (the
             # only stable id it has, being ingest-agnostic); reading it back by
             # the doc pool's canonical id found nothing, so the counters read 0.
-            state = await self._persisted_state(connection_id)
+            state = await self._reconcile_interrupted(
+                connection_id, await self._persisted_state(connection_id)
+            )
             # A durable terminal error_code (a revoked credential) survives a
             # restart: re-establish the backoff and surface needs_attention so a
             # fresh process does not resume hammering a dead credential.
@@ -1146,6 +1178,50 @@ class ConnectedDataService:
             self._statuses[connection_id] = SourceRuntimeStatus(
                 connection_id=connection_id, status="failed", detail=_INSPECTION_FAILED
             )
+
+    async def _reconcile_interrupted_runs(
+        self, registrations: tuple[SourceRegistration, ...]
+    ) -> None:
+        """Each tick: a row left ``running`` by a run nobody holds any more is settled.
+
+        Only sources already described and not running here are read; one that
+        is still being inspected is reconciled by its inspection.
+        """
+        for registration in registrations:
+            connection_id = registration.connection_id
+            if connection_id in self._inspections or connection_id not in self._statuses:
+                continue
+            if self._running_here(connection_id):
+                continue
+            await self._reconcile_interrupted(
+                connection_id, await self._persisted_state(connection_id)
+            )
+
+    async def _reconcile_interrupted(
+        self, connection_id: str, state: SyncState | None
+    ) -> SyncState | None:
+        """Mark a ``running`` row whose run died as ``failed/interrupted`` (sweep D6).
+
+        A restart killed three Jira runs and their rows read ``running`` for good.
+        The stamp goes through ``_record_failure``, which takes the row's lease
+        first: a run that is really alive (here or in another process) still
+        holds it, and its row is left alone. The cursor and the last good sync are
+        untouched, so the next run resumes where the dead one committed.
+        """
+        if state is None or state.status != SyncStatus.RUNNING:
+            return state
+        if self._running_here(connection_id):
+            return state
+        settled = await self._record_failure(connection_id, _INTERRUPTED)
+        if settled is not None and settled.error_code == _INTERRUPTED:
+            await self._emit(
+                "connected_data.sync.interrupted", {"source": _safe_id(connection_id)}
+            )
+        return settled
+
+    def _running_here(self, connection_id: str) -> bool:
+        task = self._tasks.get(connection_id)
+        return task is not None and not task.done()
 
     async def _persisted_state(self, source_id: str) -> SyncState | None:
         """The durable record of this source's last run, if there is a store."""
@@ -1728,7 +1804,7 @@ class ConnectedDataService:
                 owner_id=owner,
                 fencing_token=token,
             )
-            status = SyncStatus.COMPLETE if mine.status is SyncStatus.COMPLETE else SyncStatus.IDLE
+            status = SyncStatus.COMPLETE if mine.status == SyncStatus.COMPLETE else SyncStatus.IDLE
             await store.set_status(
                 principal,
                 connection_id,
@@ -1896,15 +1972,8 @@ class ConnectedDataService:
             return await registration.adapter.inspect_source(
                 InspectSource(connection_id=registration.connection_id)
             )
-        except SourceError as exc:
-            raise SourceRefusedError(
-                registration.connection_id, str(exc.code), exc.detail
-            ) from exc
         except Exception as exc:
-            _logger.warning(
-                "connected-data source inspection failed: %s", registration.connection_id
-            )
-            raise SourceUnreachableError(registration.connection_id) from exc
+            raise _operator_failure(registration.connection_id, "inspection", exc) from exc
 
     async def _describe(
         self, registration: SourceRegistration, ingest: IngestPort
@@ -1976,6 +2045,36 @@ _QUIET_MIGRATION_STATUSES = frozenset({"already_shared", "nothing_to_migrate", "
 
 class _SyncStalledError(RuntimeError):
     """A run outlived its time bound plus grace: it is stuck, not slow."""
+
+
+#: Source failures that pass on their own: the provider was down or pacing us.
+_TEMPORARY_SOURCE_CODES = frozenset({SourceFailureCode.TRANSIENT, SourceFailureCode.RATE_LIMITED})
+
+
+def _operator_failure(connection_id: str, operation: str, exc: Exception) -> Exception:
+    """Type a provider failure on an operator read by who can fix it (sweep D11).
+
+    A missing, expired or revoked credential is the account owner's: reconnect.
+    An outage or a rate limit passes by itself: unreachable, retry. Anything else
+    the source refused on purpose, in its own words. Every SourceError became
+    a 400 before, so a signed-out account read as a bad request.
+    """
+    if isinstance(exc, SourceError):
+        if exc.code is SourceFailureCode.AUTH_REQUIRED:
+            return SourceRefusedError(
+                connection_id, str(exc.code), exc.detail, needs_reconnect=True
+            )
+        if exc.code not in _TEMPORARY_SOURCE_CODES:
+            return SourceRefusedError(connection_id, str(exc.code), exc.detail)
+    elif isinstance(exc, CredentialRenewalError) and exc.terminal:
+        return SourceRefusedError(
+            connection_id,
+            exc.error_code,
+            "the account must be connected again",
+            needs_reconnect=True,
+        )
+    _logger.warning("connected-data source %s failed: %s", operation, connection_id)
+    return SourceUnreachableError(connection_id)
 
 
 def _name(exc: BaseException) -> str:

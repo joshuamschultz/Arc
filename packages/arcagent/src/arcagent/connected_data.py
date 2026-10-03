@@ -112,6 +112,10 @@ class SyncError(Exception):
     refusals, so a caller that knows the reason must pass it — flattening every
     non-transient refusal to the generic code told an operator with a revoked
     Google token only that something failed.
+
+    ``retry_after`` is the provider's own "come back in N seconds", when it said
+    so. A rate limit is not a crash: the scheduler waits exactly that long and
+    counts no failure. ``None`` means the provider named no time.
     """
 
     code = "sync_error"
@@ -121,11 +125,13 @@ class SyncError(Exception):
         message: str = "connected-data synchronization failed",
         *,
         code: str | None = None,
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(message[:256])
         self.public_message = message[:256]
         if code:
             self.code = code
+        self.retry_after: float | None = None if retry_after is None else max(0.0, retry_after)
 
 
 class MappingPendingError(SyncError):
@@ -140,10 +146,9 @@ class TransientSyncError(SyncError):
     code = "transient"
 
     def __init__(
-        self, message: str = "temporary source failure", *, retry_after: float = 0.0
+        self, message: str = "temporary source failure", *, retry_after: float | None = None
     ) -> None:
-        super().__init__(message)
-        self.retry_after = max(0.0, retry_after)
+        super().__init__(message, retry_after=retry_after)
 
 
 class ObjectNotIngestibleError(SyncError):

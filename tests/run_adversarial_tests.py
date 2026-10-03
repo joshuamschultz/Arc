@@ -346,6 +346,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/integration/test_connection_grants.py",
         "packages/arcagent/tests/unit/core/test_turn_start_bound.py",
     ),
+    "stale or stolen sync lease (connections sweep D6/D9)": (
+        # A writer whose lease lapsed can never renew or commit over the new
+        # holder; a renewal the store refuses stops the run at once with nothing
+        # committed; a running row whose lease is still live in another process
+        # is never stamped interrupted; a crashed holder's lease expires and the
+        # other subscriber resumes from the committed cursor.
+        "packages/arcagent/tests/modules/connected_data/test_connections_sweep_sync_loop.py",
+        "tests/journeys/test_journey_shared_knowledge.py",
+    ),
     "accepted run and intent ledger refusal": (
         "packages/arcagent/tests/architecture/test_run_owner_optional_absence.py",
         "packages/arcstore/tests/unit/test_accepted_runs.py",
