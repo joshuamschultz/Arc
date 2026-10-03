@@ -1640,6 +1640,130 @@ def test_host_setup_never_writes_outside_the_install_directory(
     assert not (host_setup.parent.parent / _HELPER).exists()
 
 
+# --- J1-3: an npm helper (Readwise-shaped) installs from the button -----------
+
+
+def _npm_helper_tarball() -> bytes:
+    manifest = f'{{"name":"acme-cli","bin":{{"{_HELPER}":"./cli.js"}}}}'.encode()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, body in (
+            ("package/package.json", manifest),
+            ("package/cli.js", b"#!/usr/bin/env node\n"),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+    return buffer.getvalue()
+
+
+def _npm_manifest(digest: str) -> str:
+    return f"""
+[extension]
+name = "{_EXTENSION}"
+version = "1.0.0"
+attachment = "native"
+description = "Acme through an npm helper this host does not have yet."
+
+[config.native]
+entrypoint = "acme_hosted_attachment"
+
+[artifact]
+package = "acme-cli"
+version = "1.0.0"
+
+[artifact.platforms.any]
+url = "https://example.invalid/acme-cli-1.0.0.tgz"
+sha256 = "{digest}"
+
+[[host_requires]]
+name = "node"
+instruction = "Install Node.js 20 or newer."
+
+[[host_requires]]
+name = "{_HELPER}"
+instruction = "Install the helper."
+
+[tools]
+allow = ["ping"]
+
+[[tools.declared]]
+name = "ping"
+description = "Report the Acme client version."
+classification = "read_only"
+
+[approval]
+default = "outbound"
+"""
+
+
+def _fake_node_world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, node: bool
+) -> list[list[str]]:
+    """A PATH holding (or lacking) node and npm, and an npm that lays out the shim."""
+    from arcagent.extension import host_install
+
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir()
+    if node:
+        for name in ("node", "npm"):
+            (bin_dir / name).write_text("#!/bin/sh\n")
+            (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    runs: list[list[str]] = []
+
+    async def npm(argv: Any) -> tuple[int, str]:
+        runs.append(list(argv))
+        prefix = Path(argv[argv.index("--prefix") + 1])
+        shim = prefix / "node_modules" / ".bin" / _HELPER
+        shim.parent.mkdir(parents=True)
+        shim.write_text("#!/bin/sh\necho acme 1.0.0\n")
+        shim.chmod(0o755)
+        return 0, ""
+
+    monkeypatch.setattr(host_install, "run_npm", npm)
+    return runs
+
+
+def test_host_setup_installs_an_npm_helper_and_the_probe_finds_it(
+    world: Path, host_setup: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arcagent.extension.host_install import recorded_install_path
+    from arcagent.extension.manifest import HostRequirement
+
+    payload = _npm_helper_tarball()
+    _serving(payload, monkeypatch)
+    runs = _fake_node_world(tmp_path, monkeypatch, node=True)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_npm_manifest(hashlib.sha256(payload).hexdigest()))
+
+    body = _setup_host(client).json()
+
+    assert body["installed"] is True, body
+    assert "--ignore-scripts" in runs[0]
+    found = recorded_install_path(_HELPER)
+    assert found is not None
+    assert found.is_relative_to(_arc_dir(world) / "host-tools")
+    director = HostPrerequisiteDirector(path_lookup=lambda _name: None)
+    assert director.unsatisfied([HostRequirement(name=_HELPER)]) == []
+
+
+def test_host_setup_says_plainly_when_node_is_missing(
+    world: Path, host_setup: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _npm_helper_tarball()
+    requested = _serving(payload, monkeypatch)
+    runs = _fake_node_world(tmp_path, monkeypatch, node=False)
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world), manifest=_npm_manifest(hashlib.sha256(payload).hexdigest()))
+
+    body = _setup_host(client).json()
+
+    assert body["installed"] is False
+    assert "Node.js" in body["detail"]
+    assert requested == [] and runs == []
+
+
 def test_host_setup_reports_a_bundle_with_nothing_to_install_rather_than_failing(
     world: Path, host_setup: Path
 ) -> None:

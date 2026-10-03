@@ -37,14 +37,34 @@ tier_floor = "personal"
 mode = "non_indexable"
 reason = "Password vault records are secrets; indexing them would create a searchable exfiltration surface."
 
-# NO `[artifact]`, and that is a decision rather than an omission. 1Password
-# publishes `op` through its own apt/brew/msi channels and a per-platform zip
-# whose digests it does not publish beside the download, so there is nothing here
-# Arc could pin and verify the way it pins `gh` and `acli`. `arc connector
-# host-setup` therefore answers "pins no downloadable build, so Arc cannot install
-# it" and hands over the steps below — which is the honest outcome, and better
-# than installing bytes against a digest nobody published. The deployment already
-# has op 2.35.0 at /usr/bin/op.
+# The official `op` 2.35.0 builds, one per platform, from 1Password's own
+# download host. 1Password publishes no digest beside the download, so each
+# sha256 below was computed over the artifact itself when this pin was written;
+# the Install button in arcui checks the download against it before anything is
+# unpacked. Each zip holds `op` and `op.sig`; only `op` is placed.
+[artifact]
+package = "1password-cli"
+version = "2.35.0"
+
+[artifact.platforms."linux/amd64"]
+url = "https://cache.agilebits.com/dist/1P/op2/pkg/v2.35.0/op_linux_amd64_v2.35.0.zip"
+sha256 = "4457ade59850b852c64c77164235b34dd0b984ef7826eb0ccd32f1fd78a2ceb7"
+member = "op"
+
+[artifact.platforms."linux/arm64"]
+url = "https://cache.agilebits.com/dist/1P/op2/pkg/v2.35.0/op_linux_arm64_v2.35.0.zip"
+sha256 = "28153b3e1b379cc117a2b8478fc29c73e4a391d0a9b7876c360d305e98390a78"
+member = "op"
+
+[artifact.platforms."darwin/amd64"]
+url = "https://cache.agilebits.com/dist/1P/op2/pkg/v2.35.0/op_darwin_amd64_v2.35.0.zip"
+sha256 = "174ed82e76002a0589aed0996fe068d8cdee9997e6b9b3acee409cdc4862cd3e"
+member = "op"
+
+[artifact.platforms."darwin/arm64"]
+url = "https://cache.agilebits.com/dist/1P/op2/pkg/v2.35.0/op_darwin_arm64_v2.35.0.zip"
+sha256 = "6dcb9528c1ace2f18f7808418afe5dd58ed1376038aa4f907af7e0462582712b"
+member = "op"
 
 # The credential is a SERVICE ACCOUNT token, and it reaches `op` through the
 # environment — which is what `[secrets.placement]` is for. Not an interactive
@@ -101,11 +121,9 @@ verify_pattern = "UserType|user_uuid|user_type"
 instruction = """
 Install 1Password's CLI on this host, then give Arc a service-account token:
 
-  1. Install op from 1Password's own channel for this machine:
+  1. Install op: press Install in Arc, or use 1Password's own channel:
        Debian/Ubuntu   https://developer.1password.com/docs/cli/get-started/#install
        macOS           brew install 1password-cli
-     Arc cannot install it for you: 1Password publishes no per-platform digest
-     beside the download, so there is nothing to verify the bytes against.
   2. op --version                              # confirm it is on PATH
   3. In 1Password: Developer, then Service Accounts, then Create Service Account.
      Grant it exactly ONE vault, and set that vault's access to READ ONLY.

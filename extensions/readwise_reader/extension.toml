@@ -27,13 +27,17 @@ mode = "source"
 
 # The published npm tarball, digest computed over the artifact itself. Keyed
 # `any` because an npm tarball is the same bytes on every machine, and carrying
-# no `member` because it is not an archive holding one executable: npm installs
-# it, so `arc connector host-setup` reports honestly that it cannot place this
-# one on PATH and hands over the steps below.
+# no `member` because it is not a single executable: the Install button in arcui
+# checks the digest, scans the archive for path traversal, then runs a fixed
+# `npm install --ignore-scripts` into an Arc-owned prefix under the operator root
+# (never `npm -g`) and records the path of the `readwise` program it produced.
+# Node must already be on the host; the button says so in plain words when not.
 #
 # Note the hole this pin does NOT close: @readwise/cli declares
-# "@modelcontextprotocol/sdk": "latest", so `npm install -g` resolves a
-# transitive dependency at install time that this digest does not cover.
+# "@modelcontextprotocol/sdk": "latest", so the install resolves a transitive
+# dependency at install time that this digest does not cover. A federal
+# deployment therefore never installs this from the network unless the digest is
+# on its signed allowlist.
 [artifact]
 package = "@readwise/cli"
 version = "0.5.9"

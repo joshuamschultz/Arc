@@ -417,3 +417,278 @@ async def test_an_archive_url_is_still_read_as_an_archive(tmp_path: Path) -> Non
 
     assert pin.for_host(host_platform()) is not None
     assert path.read_bytes() == _BINARY
+
+
+# --- J1-3: an npm tarball installs into an Arc-owned prefix, scripts off ------
+#
+# Readwise ships as an npm tarball. The old installer refused it as "not a binary"
+# and the panel handed over terminal steps. The install now runs from the UI: the
+# digest is checked, the entries are scanned, and a fixed `npm install
+# --ignore-scripts` places it under the operator root, never `npm -g`.
+
+_NPM_URL = "https://registry.invalid/@acme/cli/-/cli-1.0.0.tgz"
+
+
+def _npm_tarball(
+    *, extra: tuple[str, bytes] | None = None, link: tuple[str, str] | None = None
+) -> bytes:
+    """An npm registry tarball: everything under ``package/``, ``bin`` in package.json."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        entries = [
+            (
+                "package/package.json",
+                b'{"name":"@acme/cli","version":"1.0.0","bin":{"acme":"./cli.js"}}',
+            ),
+            ("package/cli.js", b"#!/usr/bin/env node\n"),
+        ]
+        if extra:
+            entries.append(extra)
+        for name, body in entries:
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+        if link:
+            info = tarfile.TarInfo(link[0])
+            info.type = tarfile.SYMTYPE
+            info.linkname = link[1]
+            archive.addfile(info)
+    return buffer.getvalue()
+
+
+def _npm_pin(payload: bytes, *, digest: str | None = None) -> ArtifactPin:
+    return ArtifactPin(
+        package="@acme/cli",
+        version="1.0.0",
+        platforms={
+            ANY_PLATFORM: PlatformArtifact(
+                url=_NPM_URL, sha256=digest or hashlib.sha256(payload).hexdigest()
+            )
+        },
+    )
+
+
+class _FakeNpm:
+    """Stands in for the npm process: records argv, lays out what npm would."""
+
+    def __init__(self, *, exit_code: int = 0) -> None:
+        self.calls: list[list[str]] = []
+        self.exit_code = exit_code
+
+    async def __call__(self, argv: Any) -> tuple[int, str]:
+        self.calls.append(list(argv))
+        if self.exit_code == 0:
+            prefix = Path(argv[argv.index("--prefix") + 1])
+            shim = prefix / "node_modules" / ".bin" / "acme"
+            shim.parent.mkdir(parents=True, exist_ok=True)
+            shim.write_text("#!/bin/sh\necho acme 1.0.0\n")
+            shim.chmod(0o755)
+        return self.exit_code, "npm said something"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_operator_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "operator"
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(root))
+    return root
+
+
+async def _install_npm(
+    payload: bytes,
+    tmp_path: Path,
+    *,
+    npm: _FakeNpm | None = None,
+    pin: ArtifactPin | None = None,
+    which: Any = lambda name: f"/usr/bin/{name}",
+    tier: Tier = Tier.PERSONAL,
+    allowlist: tuple[str, ...] = (),
+) -> tuple[Path, _Fetch, _FakeNpm]:
+    fetch = _Fetch(payload)
+    runner = npm or _FakeNpm()
+    path = await install_pinned_binary(
+        pin or _npm_pin(payload),
+        install_dir=tmp_path / "bin",
+        caller_did=_CALLER,
+        audit_sink=fetch.sink,
+        tier=tier,
+        fetch=fetch,
+        npm_run=runner,
+        which=which,
+        federal_allowlist=allowlist,
+    )
+    return path, fetch, runner
+
+
+async def test_an_npm_tarball_installs_into_an_arc_owned_prefix_with_scripts_off(
+    tmp_path: Path, _isolated_operator_root: Path
+) -> None:
+    payload = _npm_tarball()
+
+    path, _fetch_spy, npm = await _install_npm(payload, tmp_path)
+
+    argv = npm.calls[0]
+    assert "--ignore-scripts" in argv
+    assert "-g" not in argv and "--global" not in argv
+    prefix = Path(argv[argv.index("--prefix") + 1])
+    assert prefix.is_relative_to(_isolated_operator_root / "host-tools")
+    assert path.resolve().is_relative_to(_isolated_operator_root / "host-tools")
+
+
+async def test_the_installed_npm_program_is_found_by_its_recorded_path(
+    tmp_path: Path,
+) -> None:
+    from arcagent.extension.host_install import recorded_install_path
+
+    path, _fetch_spy, _npm = await _install_npm(_npm_tarball(), tmp_path)
+
+    found = recorded_install_path("acme")
+    assert found is not None
+    assert found.resolve() == path.resolve()
+    assert recorded_install_path("never-installed") is None
+
+
+async def test_an_npm_digest_mismatch_installs_nothing_and_never_runs_npm(
+    tmp_path: Path, _isolated_operator_root: Path
+) -> None:
+    payload = _npm_tarball()
+    npm = _FakeNpm()
+
+    with pytest.raises(ExtensionError):
+        await _install_npm(payload, tmp_path, npm=npm, pin=_npm_pin(payload, digest="0" * 64))
+
+    assert npm.calls == []
+    assert not (tmp_path / "bin").exists()
+    assert not (_isolated_operator_root / "host-tools").exists()
+
+
+async def test_an_npm_tarball_with_a_traversal_entry_is_refused(tmp_path: Path) -> None:
+    payload = _npm_tarball(extra=("package/../../../evil.js", b"x"))
+    npm = _FakeNpm()
+
+    with pytest.raises(ExtensionError) as refused:
+        await _install_npm(payload, tmp_path, npm=npm)
+
+    assert refused.value.details["reason"] == "path_traversal"
+    assert npm.calls == []
+
+
+async def test_an_npm_tarball_with_a_link_that_escapes_is_refused(tmp_path: Path) -> None:
+    payload = _npm_tarball(link=("package/escape", "../../../../etc/passwd"))
+
+    with pytest.raises(ExtensionError) as refused:
+        await _install_npm(payload, tmp_path)
+
+    assert refused.value.details["reason"] == "path_traversal"
+
+
+async def test_a_missing_node_is_refused_in_plain_words_before_downloading(
+    tmp_path: Path,
+) -> None:
+    payload = _npm_tarball()
+    fetch = _Fetch(payload)
+
+    with pytest.raises(ExtensionError) as refused:
+        await install_pinned_binary(
+            _npm_pin(payload),
+            install_dir=tmp_path / "bin",
+            caller_did=_CALLER,
+            audit_sink=fetch.sink,
+            tier=Tier.PERSONAL,
+            fetch=fetch,
+            which=lambda _name: None,
+        )
+
+    assert refused.value.details["reason"] == "node_missing"
+    assert "Node.js" in refused.value.message
+    assert fetch.urls == []
+
+
+async def test_a_failed_npm_run_leaves_no_prefix_and_no_record(
+    tmp_path: Path, _isolated_operator_root: Path
+) -> None:
+    from arcagent.extension.host_install import recorded_install_path
+
+    with pytest.raises(ExtensionError) as refused:
+        await _install_npm(_npm_tarball(), tmp_path, npm=_FakeNpm(exit_code=1))
+
+    assert refused.value.details["reason"] == "npm_failed"
+    assert not list((_isolated_operator_root / "host-tools").rglob("package.tgz"))
+    assert recorded_install_path("acme") is None
+
+
+async def test_the_real_npm_runner_never_lets_a_postinstall_script_run(
+    tmp_path: Path,
+) -> None:
+    """The scripts-off flag is exercised against real npm, not just asserted on argv."""
+    import shutil
+
+    if shutil.which("npm") is None:
+        pytest.skip("npm is not installed on this machine")
+    from arcagent.extension.host_install import _npm_argv, run_npm
+
+    package = tmp_path / "package"
+    package.mkdir()
+    marker = tmp_path / "ran"
+    (package / "package.json").write_text(
+        '{"name":"evil","version":"1.0.0","bin":{"evil":"./x.js"},'
+        f'"scripts":{{"postinstall":"touch {marker}"}}}}'
+    )
+    (package / "x.js").write_text("#!/usr/bin/env node\n")
+    tarball = tmp_path / "evil.tgz"
+    with tarfile.open(tarball, "w:gz") as archive:
+        archive.add(package, arcname="package")
+
+    code, output = await run_npm(_npm_argv(tmp_path / "prefix", tarball))
+
+    assert code == 0, output
+    assert not marker.exists()
+    assert (tmp_path / "prefix" / "node_modules" / ".bin" / "evil").exists()
+
+
+# --- federal stringency: no network install unless allowlisted ---------------
+
+
+async def test_federal_refuses_a_network_install_that_is_not_allowlisted(tmp_path: Path) -> None:
+    payload = _npm_tarball()
+
+    with pytest.raises(ExtensionError) as refused:
+        await _install_npm(payload, tmp_path, tier=Tier.FEDERAL)
+
+    assert refused.value.details["reason"] == "federal_not_allowlisted"
+
+
+async def test_federal_installs_an_allowlisted_digest(tmp_path: Path) -> None:
+    payload = _npm_tarball()
+
+    path, _fetch_spy, _npm = await _install_npm(
+        payload, tmp_path, tier=Tier.FEDERAL, allowlist=(hashlib.sha256(payload).hexdigest(),)
+    )
+
+    assert path.name == "acme"
+
+
+# --- the shipped bundles pin what the Install button installs ----------------
+
+
+def _shipped_pin(bundle: str) -> ArtifactPin:
+    import tomllib
+
+    root = Path(__file__).resolve().parents[5] / "extensions" / bundle / "extension.toml"
+    return ArtifactPin.model_validate(tomllib.loads(root.read_text())["artifact"])
+
+
+def test_the_onepassword_bundle_pins_the_official_op_for_every_supported_platform() -> None:
+    pin = _shipped_pin("onepassword")
+
+    assert set(pin.platforms) == {"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"}
+    for build in pin.platforms.values():
+        assert build.url.startswith("https://cache.agilebits.com/dist/1P/op2/pkg/")
+        assert build.member == "op"
+
+
+def test_the_readwise_bundle_pins_an_npm_tarball_the_button_can_install() -> None:
+    pin = _shipped_pin("readwise_reader")
+
+    build = pin.for_host("linux/amd64")
+    assert build is not None
+    assert build.url.endswith(".tgz") and build.member == ""
