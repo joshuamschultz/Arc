@@ -83,6 +83,7 @@ def _install_fake_broker(monkeypatch: pytest.MonkeyPatch, served: list[str]) -> 
         resilience: Any = None,
         client_name: str = "arc",
         requirements: Any = None,
+        **_egress: Any,
     ) -> SdkMcpClient:
         return SdkMcpClient(
             connected_session_factory(server),
@@ -222,6 +223,7 @@ def _install_capturing_broker(
         resilience: Any = None,
         client_name: str = "arc",
         requirements: Any = None,
+        **_egress: Any,
     ) -> SdkMcpClient:
         captured["url"] = url
         captured["headers"] = dict(headers) if headers else {}
