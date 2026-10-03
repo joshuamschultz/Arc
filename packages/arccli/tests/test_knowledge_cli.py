@@ -271,31 +271,19 @@ MIGRATION = {
 }
 
 
-def test_migrate_dry_run_previews_and_changes_nothing(
-    server: _Server, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("flags", [(), ("--dry-run",)], ids=["bare", "dry-run"])
+def test_migrate_only_previews_and_changes_nothing(
+    server: _Server, capsys: pytest.CaptureFixture[str], flags: tuple[str, ...]
 ) -> None:
-    """P18-4: an operator sees what would move into the shared stores first."""
+    """P18-4: the move is automatic; the command shows what the agent will move."""
     server.replies[f"POST {K}/shared-migration"] = (200, {"dry_run": True, "items": [MIGRATION]})
-    assert _arc("migrate", "--dry-run", *_AUTH) == 0
+    assert _arc("migrate", *flags, *_AUTH) == 0
     assert server.calls() == [f"POST {K}/shared-migration"]
     assert server.body_of(f"POST {K}/shared-migration") == {"dry_run": True}
     out = capsys.readouterr().out
-    assert "Dry run" in out and "would_migrate" in out and "40" in out
+    assert "nothing was changed" in out and "would_migrate" in out and "40" in out
 
 
-def test_migrate_requires_confirmation(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
-    def eof(_prompt: str = "") -> str:
-        raise EOFError
-
-    monkeypatch.setattr(builtins, "input", eof)
-    assert _arc("migrate", *_AUTH) == 1
+def test_migrate_no_longer_asks_for_confirmation_or_a_yes_flag(server: _Server) -> None:
+    assert _arc("migrate", "--yes", *_AUTH) != 0
     assert server.calls() == []
-
-
-def test_migrate_with_yes_applies(server: _Server) -> None:
-    server.replies[f"POST {K}/shared-migration"] = (
-        200,
-        {"dry_run": False, "items": [{**MIGRATION, "status": "migrated"}]},
-    )
-    assert _arc("migrate", "--yes", *_AUTH) == 0
-    assert server.body_of(f"POST {K}/shared-migration") == {"dry_run": False}

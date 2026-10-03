@@ -669,6 +669,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "connection-scoped knowledge — cross-agent read, revoked or forged writer (alpha-2 P18-4)": (
         "packages/arcagent/tests/security/test_shared_knowledge_isolation.py",
         "packages/arcmemory/tests/unit/test_connected_shared_store.py",
+        # The automatic move of an agent's own copy into the store needs that agent's
+        # own approved shareable mapping; a failed read-back keeps the own copy.
+        "packages/arcagent/tests/security/test_auto_migration_requires_grant.py",
         "tests/journeys/test_journey_shared_knowledge.py",
     ),
 }

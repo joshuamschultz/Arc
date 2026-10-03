@@ -102,6 +102,19 @@ durable cursor, so the next successful run resumes rather than skipping data.
 Unsupported media, expired credentials, and rate limits surface as source errors
 rather than being silently skipped.
 
+**Shared stores.** Agents granted the same connection share one sync and one
+store (`shared_stores = true`, the default). An agent that already holds its own
+copy from before moves it into the shared store by itself the next time its
+connected-data module syncs, in the background. The move needs no command and
+no operator login. It re-keys documents the agent already holds, fetches nothing
+from the provider, and runs only when the agent's own approved mapping is the
+document home and its embedding profile matches. The agent's own copy is
+deleted only after the shared store is read back and holds every document; on
+any failure the agent keeps and keeps using its own copy, logs a warning and
+retries on the next run. Each move is audited as `connected_data.knowledge.migration`
+(`trigger: "automatic"`). Set `shared_stores = false` to opt out.
+`arc knowledge migrate` is a read-only preview of what will move.
+
 ### 5 — Verify retrieval
 
 Check **Documents**, **Datastore**, **Blob folders**, **Profile review**, and

@@ -518,41 +518,32 @@ _MIGRATION_FIELDS = (
 
 
 async def migrate_shared(request: Request) -> JSONResponse:
-    """Move the agent's own stores of shared connections into their shared stores (P18-4).
+    """Preview what the automatic move into the shared stores will do (P18-4).
 
-    ``{"dry_run": true}`` (the default) reports what would move and changes
-    nothing. Nothing is fetched from a provider either way; the service audits
-    each connection's outcome and this route audits the request.
+    The move runs by itself when the agent's connected-data module syncs; this
+    only reports it and changes nothing. Operator-authenticated; the service
+    audits each connection and this route audits the request.
     """
     denied = _operator(request)
     if denied is not None:
         return denied
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
-    dry_run = body.get("dry_run", True) if isinstance(body, dict) else True
-    if not isinstance(dry_run, bool):
-        return JSONResponse(
-            ErrorResponse(error="dry_run must be true or false").model_dump(), status_code=400
-        )
     agent_id = request.path_params["agent_id"]
     service = await connected_data_service(request, agent_id)
-    migrate = getattr(service, "migrate_to_shared", None)
-    if migrate is None:
+    preview = getattr(service, "preview_migration", None)
+    if preview is None:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
         )
-    results = await migrate(dry_run=dry_run)
+    results = await preview()
     items = [{name: _value(result, name) for name in _MIGRATION_FIELDS} for result in results]
     emit_mutation_audit(
         request,
         target=f"agent:{agent_id}/knowledge",
         operation="connected_data.migrate_shared",
-        outcome="dry_run" if dry_run else "applied",
+        outcome="dry_run",
         detail=",".join(f"{item['connection_id']}={item['status']}" for item in items),
     )
-    return JSONResponse({"dry_run": dry_run, "items": items})
+    return JSONResponse({"dry_run": True, "items": items})
 
 
 routes = [

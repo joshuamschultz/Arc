@@ -56,6 +56,9 @@ from arcagent.modules.connected_data.supervision import SyncSchedule
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 _CATALOG_RETRY_MAX_SECONDS = 30.0
+#: How soon an automatic move is tried again when another agent is moving into the
+#: same shared store right now (it holds the store's lease while it adopts).
+_MIGRATION_RETRY_SECONDS = 30.0
 
 IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestPort]]
 
@@ -277,6 +280,7 @@ class ConnectedDataService:
         # Runs an operator asked for: they skip the "another subscriber synced it
         # recently" shortcut, which otherwise makes a shared connection's sync free.
         self._forced: set[str] = set()
+        self._migration_retries: dict[str, asyncio.TimerHandle] = {}
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -292,6 +296,9 @@ class ConnectedDataService:
         for task in tuple(self._inspections.values()):
             task.cancel()
         self._inspections.clear()
+        for retry in self._migration_retries.values():
+            retry.cancel()
+        self._migration_retries.clear()
         monitor = self._monitor
         self._monitor = None
         if monitor is not None:
@@ -945,6 +952,9 @@ class ConnectedDataService:
         # An operator-requested run is consumed here, whichever store it syncs.
         forced = connection_id in self._forced
         self._forced.discard(connection_id)
+        # An own copy of a shareable connection moves into the shared store before
+        # this run picks a store, so a run never syncs a copy it is about to retire.
+        await self._migrate_automatically(registration)
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         try:
@@ -1486,35 +1496,80 @@ class ConnectedDataService:
 
     # -- migrating an agent's own store into the shared one (P18-4) ----------
 
-    async def migrate_to_shared(self, *, dry_run: bool) -> tuple[MigrationResult, ...]:
-        """Move this agent's own stores of shareable connections into their shared stores.
+    async def preview_migration(self) -> tuple[MigrationResult, ...]:
+        """Report, changing nothing, what moving own stores into shared ones would do.
 
-        Re-keys the documents it already holds into the connection's store (deduping
-        any the store already has), seeds the store's cursor from the agent's own
-        when the store has never synced, empties the agent's own copy and subscribes
-        it. Nothing is fetched from a provider. ``dry_run`` reports what would move
-        and changes nothing. Every connection's outcome is audited.
+        The move itself is automatic (``_migrate_automatically``); this is the
+        read-only preview behind ``arc knowledge migrate``. Every connection's
+        outcome is audited.
         """
         results: list[MigrationResult] = []
         for registration in sorted(
             await self._catalog.snapshot(), key=lambda entry: entry.connection_id
         ):
-            result = await self._migrate(registration, dry_run=dry_run)
+            result = await self._migrate(registration, dry_run=True)
             results.append(result)
-            await self._emit(
-                "connected_data.knowledge.migration",
-                {
-                    "source": _safe_id(result.connection_id),
-                    "status": result.status,
-                    "detail": result.detail,
-                    "dry_run": dry_run,
-                    "documents": result.documents,
-                    "adopted": result.adopted,
-                    "deduplicated": result.deduplicated,
-                    "skipped": result.skipped,
-                },
-            )
+            await self._emit_migration(result, dry_run=True, trigger="operator")
         return tuple(results)
+
+    async def _migrate_automatically(self, registration: SourceRegistration) -> None:
+        """Move this agent's own copy of one connection into its shared store, if it can.
+
+        Runs inside the connection's own supervised sync task, so it never delays
+        startup or chat. A connection with nothing to move, or one this agent may
+        not share, is a silent no-op; a failure keeps the own copy, is logged and
+        audited, and is retried on the next run.
+        """
+        if self._shared is None:
+            return
+        connection_id = registration.connection_id
+        result = await self._migrate(registration, dry_run=False)
+        if result.status in _QUIET_MIGRATION_STATUSES:
+            return
+        if result.detail == "shared_sync_active":
+            # Another agent is moving into this store right now; it is not a failure.
+            self._retry_migration_soon(connection_id)
+            return
+        if result.status == "refused":
+            _logger.warning(
+                "connected-data migration kept the agent's own copy: %s (%s)",
+                connection_id,
+                result.detail,
+            )
+        await self._emit_migration(result, dry_run=False, trigger="automatic")
+
+    def _retry_migration_soon(self, connection_id: str) -> None:
+        """Run this connection again shortly, so the move is not left for the next interval."""
+        if self._closed or connection_id in self._migration_retries:
+            return
+
+        def again() -> None:
+            self._migration_retries.pop(connection_id, None)
+            self._timing.run_now(connection_id)
+            self._wake.set()
+
+        self._migration_retries[connection_id] = asyncio.get_running_loop().call_later(
+            _MIGRATION_RETRY_SECONDS, again
+        )
+
+    async def _emit_migration(
+        self, result: MigrationResult, *, dry_run: bool, trigger: str
+    ) -> None:
+        await self._emit(
+            "connected_data.knowledge.migration",
+            {
+                "source": _safe_id(result.connection_id),
+                "status": result.status,
+                "outcome": "failed" if result.status == "refused" else "ok",
+                "detail": result.detail,
+                "dry_run": dry_run,
+                "trigger": trigger,
+                "documents": result.documents,
+                "adopted": result.adopted,
+                "deduplicated": result.deduplicated,
+                "skipped": result.skipped,
+            },
+        )
 
     async def _migrate(
         self, registration: SourceRegistration, *, dry_run: bool
@@ -1522,19 +1577,16 @@ class ConnectedDataService:
         connection_id = registration.connection_id
         if self._shared is None or self._store is None or self._ingest_factory is None:
             return MigrationResult(connection_id, "refused", "shared_store_unavailable")
-        was_paused = connection_id in self._paused
-        if not dry_run:
-            # The agent's own sync is held while its store moves.
-            self._paused.add(connection_id)
-            await self._cancel(connection_id)
+        # A real move runs inside this connection's own sync task, so nothing else
+        # is syncing the agent's copy while it moves.
         try:
             return await self._migrate_held(registration, dry_run=dry_run)
+        except _ReadBackError as exc:
+            _logger.warning("connected-data migration read-back failed: %s", connection_id)
+            return MigrationResult(connection_id, "refused", f"read_back_mismatch:{exc}")
         except Exception as exc:  # reason: one connection's failure must not stop the rest
             _logger.exception("connected-data migration failed: %s", connection_id)
             return MigrationResult(connection_id, "refused", f"migration_failed:{_name(exc)}")
-        finally:
-            if not dry_run and not was_paused:
-                self._paused.discard(connection_id)
 
     async def _migrate_held(
         self, registration: SourceRegistration, *, dry_run: bool
@@ -1618,6 +1670,7 @@ class ConnectedDataService:
             counts: dict[str, int] = await writer.adopt_documents(
                 target, private, description, dry_run=False
             )
+            await self._verify_landed(writer, target, counts)
             await self._seed_shared_state(connection_id, owner, token, prior)
         finally:
             heartbeat.cancel()
@@ -1626,6 +1679,20 @@ class ConnectedDataService:
                 principal, connection_id, owner_id=owner, fencing_token=token
             )
         return counts
+
+    async def _verify_landed(
+        self, writer: IngestPort, target: SourceDescription, counts: dict[str, int]
+    ) -> None:
+        """Read the shared store back: it must hold every document the agent's copy did.
+
+        Checked before the agent's copy is emptied and before the store's cursor is
+        seeded, so a document that did not land is neither lost nor skipped by the
+        next incremental sync.
+        """
+        expected = counts.get("documents", 0)
+        held = await self._documents_indexed(writer, target)
+        if counts.get("skipped", 0) or held < expected:
+            raise _ReadBackError(f"{held}/{expected}")
 
     async def _seed_shared_state(
         self, connection_id: str, owner: str, token: int, prior: SyncState
@@ -1890,6 +1957,14 @@ async def _release(ingest: IngestPort) -> None:
         await close()
     except Exception:  # reason: releasing must not mask the operation's own result
         _logger.warning("connected-data ingest port close failed", exc_info=True)
+
+
+class _ReadBackError(RuntimeError):
+    """The shared store did not hold every document the agent's own copy did."""
+
+
+#: Outcomes of an automatic move that need no log line or audit event: nothing to do.
+_QUIET_MIGRATION_STATUSES = frozenset({"already_shared", "nothing_to_migrate", "not_eligible"})
 
 
 class _SyncStalledError(RuntimeError):

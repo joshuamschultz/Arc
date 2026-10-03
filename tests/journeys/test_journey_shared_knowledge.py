@@ -409,15 +409,18 @@ async def test_a_crawl_that_dies_mid_run_is_resumed_by_the_other_agent_under_the
 # ---------------------------------------------------------------------------
 
 
-async def _upgraded(deployment: Deployment, enable_modules: Any) -> tuple[Any, Any]:
-    """Restart both agents with shared stores on, keeping each one's identity."""
+async def _upgraded(
+    deployment: Deployment, enable_modules: Any, *, shared_stores: bool = True
+) -> tuple[Any, Any]:
+    """Restart both agents, keeping each one's identity; ``shared_stores`` is the opt-in."""
     import arcagent
 
+    wanted = "true" if shared_stores else "false"
     for agent_dir in (deployment.agent_dir, deployment.team_root / "second_agent"):
         toml = agent_dir / "arcagent.toml"
         text = toml.read_text(encoding="utf-8")
-        assert "shared_stores = false" in text
-        toml.write_text(text.replace("shared_stores = false", "shared_stores = true"), "utf-8")
+        flipped = text.replace("shared_stores = false", f"shared_stores = {wanted}")
+        toml.write_text(flipped, "utf-8")
     first = await start_knowledge_agent(deployment, enable_modules, installed=True)
     config_path = deployment.team_root / "second_agent" / "arcagent.toml"
     second = arcagent.ArcAgent(arcagent.load_config(config_path), config_path=config_path)
@@ -435,19 +438,10 @@ async def _registered(agent: Any, account: Provider) -> None:
     assert await _until(described)
 
 
-async def test_stores_the_agents_already_hold_move_into_one_without_a_fetch(
-    deployment: Deployment,
-    enable_modules: Any,
-    scripted_llm: ScriptedLLM,
-    caplog: pytest.LogCaptureFixture,
+async def _held_by_two_agents(
+    deployment: Deployment, enable_modules: Any, account: Account
 ) -> None:
-    """The DGX upgrade: two agents each synced the wiki; afterwards there is one copy.
-
-    The first agent's documents are re-keyed into the shared store, the second's are
-    found already there by object id and version, the store continues from the
-    agents' own cursor, and no provider is asked for anything.
-    """
-    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    """Both agents sync the wiki into their own stores, with shared stores off."""
     first, second = await two_agents(deployment, enable_modules, sync={"shared_stores": False})
     try:
         await connect(first, account)
@@ -457,48 +451,157 @@ async def test_stores_the_agents_already_hold_move_into_one_without_a_fetch(
         await first.shutdown()
     assert account.fetched == {page.page_id: 2 for page in WIKI_PAGES}
 
-    first, second = await _upgraded(deployment, enable_modules)
-    try:
-        for agent in (first, second):
-            await _registered(agent, account)
-            # Until it is migrated an agent keeps reading its own copy.
-            held = await ask(agent, scripted_llm, "document_search", {"query": "billing portal"})
-            assert "in August" in held, held
-        fetched = dict(account.fetched)
 
-        preview = await sync_service(first).migrate_to_shared(dry_run=True)
-        assert [(row.status, row.adopted, row.deduplicated) for row in preview] == [
-            ("would_migrate", 3, 0)
-        ], preview
-        assert _documents_under(_store_root("wiki")) == [], "a dry run moved documents"
+async def _migrated(agents: tuple[Any, ...]) -> bool:
+    """Whether every agent's own copy is gone and the shared store holds the wiki."""
+    own = [_documents_under(Path(agent._config.agent.workspace)) for agent in agents]
+    return not any(own) and len(_documents_under(_store_root("wiki"))) == 3
 
-        with caplog.at_level(logging.INFO, logger="arcagent.audit"):
-            moved = await sync_service(first).migrate_to_shared(dry_run=False)
-            deduped = await sync_service(second).migrate_to_shared(dry_run=False)
-        assert [(row.status, row.adopted) for row in moved] == [("migrated", 3)], moved
-        assert [(row.status, row.adopted, row.deduplicated) for row in deduped] == [
-            ("migrated", 0, 3)
-        ], deduped
-        assert caplog.text.count("connected_data.knowledge.migration") >= 2
 
-        assert len(_documents_under(_store_root("wiki"))) == 3
-        for agent in (first, second):
-            assert _documents_under(Path(agent._config.agent.workspace)) == []
-        assert account.fetched == fetched, "the migration fetched from the provider"
+async def test_stores_the_agents_already_hold_move_into_one_on_their_own(
+    deployment: Deployment,
+    enable_modules: Any,
+    scripted_llm: ScriptedLLM,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DGX upgrade: two agents each synced the wiki; restart, and there is one copy.
 
-        # The next sync continues from where the agents' crawl stopped.
-        before = len(account.checkpoints)
-        await sync_to_completion(first, "wiki")
-        assert account.checkpoints[before:] == ["c1"], account.checkpoints
-        assert account.fetched == fetched
-        for agent in (first, second):
-            found = await ask(agent, scripted_llm, "document_search", {"query": "billing portal"})
-            assert "in August" in found, found
-            pointers = re.findall(r'<memory-result source="([^"]*)"', found)
-            assert len(pointers) == len(set(pointers)), f"a document was read twice: {pointers}"
+    Nobody runs a command. Startup is not held up by the move; the documents are
+    re-keyed into the shared store by object id and version, the store continues
+    from the agents' own cursor, no provider is asked for anything, and a second
+    start finds nothing left to do.
+    """
+    from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
 
-        again = await sync_service(first).migrate_to_shared(dry_run=False)
-        assert [row.status for row in again] == ["already_shared"], again
-    finally:
-        await second.shutdown()
-        await first.shutdown()
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    await _held_by_two_agents(deployment, enable_modules, account)
+
+    release = asyncio.Event()
+    adopt = ArcMemoryIngestAdapter.adopt_documents
+
+    async def held(self: Any, *args: Any, dry_run: bool, **kwargs: Any) -> Any:
+        if not dry_run:
+            await release.wait()
+        return await adopt(self, *args, dry_run=dry_run, **kwargs)
+
+    monkeypatch.setattr(ArcMemoryIngestAdapter, "adopt_documents", held)
+    # The agent that finds the other one mid-move tries again soon, not in an hour.
+    monkeypatch.setattr("arcagent.modules.connected_data.service._MIGRATION_RETRY_SECONDS", 0.5)
+    with caplog.at_level(logging.INFO, logger="arcagent.audit"):
+        first, second = await _upgraded(deployment, enable_modules)  # startup returned
+        try:
+            for agent in (first, second):
+                await _registered(agent, account)
+                # Until it is moved an agent keeps reading its own copy.
+                held_copy = await ask(
+                    agent, scripted_llm, "document_search", {"query": "billing portal"}
+                )
+                assert "in August" in held_copy, held_copy
+            assert _documents_under(_store_root("wiki")) == [], "moved before it was released"
+            fetched = dict(account.fetched)
+
+            # A preview changes nothing.
+            preview = await sync_service(first).preview_migration()
+            assert [(row.status, row.adopted) for row in preview] == [("would_migrate", 3)]
+            assert _documents_under(_store_root("wiki")) == []
+
+            release.set()
+            agents = (first, second)
+
+            async def done() -> bool:
+                return await _migrated(agents)
+
+            assert await _until(done), "the agents' own copies were never moved"
+            assert account.fetched == fetched, "the migration fetched from the provider"
+            for agent in agents:
+                found = await ask(
+                    agent, scripted_llm, "document_search", {"query": "billing portal"}
+                )
+                assert "in August" in found, found
+                pointers = re.findall(r'<memory-result source="([^"]*)"', found)
+                assert len(pointers) == len(set(pointers)), (
+                    f"a document was read twice: {pointers}"
+                )
+            moved = caplog.text.count("connected_data.knowledge.migration")
+            assert moved >= 2  # one per agent (plus the preview)
+        finally:
+            await second.shutdown()
+            await first.shutdown()
+
+        # A second start has nothing to move and says nothing.
+        before = caplog.text.count("connected_data.knowledge.migration")
+        first, second = await _upgraded(deployment, enable_modules)
+        try:
+            for agent in (first, second):
+                await _registered(agent, account)
+                await sync_to_completion(agent, "wiki")
+            assert caplog.text.count("connected_data.knowledge.migration") == before
+            assert account.fetched == fetched
+            assert await _migrated((first, second))
+        finally:
+            await second.shutdown()
+            await first.shutdown()
+
+
+async def test_a_migration_that_cannot_prove_every_document_landed_keeps_the_own_copy(
+    deployment: Deployment,
+    enable_modules: Any,
+    scripted_llm: ScriptedLLM,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store that reports success but holds fewer documents never costs the agent its copy."""
+    from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
+
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    await _held_by_two_agents(deployment, enable_modules, account)
+
+    async def drops_everything(self: Any, *args: Any, dry_run: bool, **kwargs: Any) -> Any:
+        del self, args, dry_run, kwargs
+        return {"documents": 3, "adopted": 3, "deduplicated": 0, "skipped": 0}
+
+    monkeypatch.setattr(ArcMemoryIngestAdapter, "adopt_documents", drops_everything)
+    with caplog.at_level(logging.INFO, logger="arcagent"):
+        first, second = await _upgraded(deployment, enable_modules)
+        try:
+            await _registered(first, account)
+            await _registered(second, account)
+
+            async def warned() -> bool:
+                return caplog.text.count("read_back_mismatch") >= 1
+
+            assert await _until(warned), caplog.text
+            for agent in (first, second):
+                assert len(_documents_under(Path(agent._config.agent.workspace))) == 3
+                found = await ask(
+                    agent, scripted_llm, "document_search", {"query": "billing portal"}
+                )
+                assert "in August" in found, found
+            assert "connected_data.knowledge.migration" in caplog.text
+        finally:
+            await second.shutdown()
+            await first.shutdown()
+
+
+async def test_an_agent_that_opted_out_of_shared_stores_is_never_moved(
+    deployment: Deployment,
+    enable_modules: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    await _held_by_two_agents(deployment, enable_modules, account)
+
+    with caplog.at_level(logging.INFO, logger="arcagent.audit"):
+        first, second = await _upgraded(deployment, enable_modules, shared_stores=False)
+        try:
+            for agent in (first, second):
+                await _registered(agent, account)
+                await sync_to_completion(agent, "wiki")
+            assert _documents_under(_store_root("wiki")) == []
+            for agent in (first, second):
+                assert len(_documents_under(Path(agent._config.agent.workspace))) == 3
+            assert "connected_data.knowledge.migration" not in caplog.text
+        finally:
+            await second.shutdown()
+            await first.shutdown()

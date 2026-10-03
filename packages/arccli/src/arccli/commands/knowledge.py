@@ -11,7 +11,7 @@
     arc knowledge sync|reindex SOURCE
     arc knowledge revoke    SOURCE [--yes]
     arc knowledge activate
-    arc knowledge migrate   [--dry-run] [--yes]
+    arc knowledge migrate   [--dry-run]
 
 Every verb is the same call the Knowledge tab makes. The CLI holds no business
 logic and builds no offline service: the RUNNING agent owns the connected-data
@@ -255,7 +255,7 @@ def _print_migration(body: dict[str, Any]) -> None:
     if not items:
         write("No connected sources.")
         return
-    write("Dry run: nothing was changed." if body.get("dry_run") else "Migrated.")
+    write("Preview: nothing was changed. The agent moves these on its own.")
     print_table(
         ["SOURCE", "RESULT", "DOCUMENTS", "MOVED", "ALREADY SHARED", "SKIPPED", "DETAIL"],
         [
@@ -274,18 +274,13 @@ def _print_migration(body: dict[str, Any]) -> None:
 
 
 def _migrate(args: argparse.Namespace) -> None:
-    """Move the agent's own copies of shared connections into the shared stores (P18-4)."""
-    if not args.dry_run and not args.yes:
-        if not confirm(
-            "Move this agent's own copies of its connections into the shared stores? [y/N] "
-        ):
-            fail(_prog("migrate"), "not migrated (preview with --dry-run)")
+    """Preview the automatic move of own copies into the shared stores (P18-4)."""
 
     def run(call: OperatorCall, base: str) -> None:
         body = call(
             "POST",
             f"{base}/shared-migration",
-            json={"dry_run": bool(args.dry_run)},
+            json={"dry_run": True},
             timeout=_CALL_TIMEOUT_SECONDS,
         )
         _show(args, body, lambda: _print_migration(body))
@@ -352,13 +347,12 @@ def _build_parser() -> argparse.ArgumentParser:
     migrate = _verb(
         subs,
         "migrate",
-        "Move the agent's own copies of shared connections into the shared stores "
-        "(no provider fetch).",
+        "Preview the move of the agent's own copies into the shared stores. The agent "
+        "does the move on its own, with no provider fetch; this changes nothing.",
         source=False,
-        yes=True,
     )
     migrate.add_argument(
-        "--dry-run", action="store_true", help="Show what would move; change nothing."
+        "--dry-run", action="store_true", help="Same as no flag: show what would move."
     )
     return parser
 

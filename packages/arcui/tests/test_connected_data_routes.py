@@ -150,12 +150,12 @@ class _Service:
         self.action = ("revoke", connection_id)
         return True
 
-    async def migrate_to_shared(self, *, dry_run: bool) -> tuple[Any, ...]:
-        self.action = ("migrate", "dry_run" if dry_run else "apply")
+    async def preview_migration(self) -> tuple[Any, ...]:
+        self.action = ("migrate", "dry_run")
         return (
             SimpleNamespace(
                 connection_id="dropbox-olivia",
-                status="would_migrate" if dry_run else "migrated",
+                status="would_migrate",
                 detail="",
                 documents=738,
                 adopted=738,
@@ -298,8 +298,8 @@ def test_relayout_is_an_audited_operator_lifecycle_action() -> None:
     assert service.action == ("relayout", "dropbox-olivia")
 
 
-def test_shared_migration_is_operator_gated_and_dry_runs_by_default() -> None:
-    """P18-4: moving an agent's own stores into the shared ones is previewed first."""
+def test_shared_migration_route_is_operator_gated_and_only_previews() -> None:
+    """P18-4: the move is automatic; the route only reports what it will do."""
     client, service = _client()
     path = "/api/agents/olivia/knowledge/shared-migration"
 
@@ -324,16 +324,6 @@ def test_shared_migration_is_operator_gated_and_dry_runs_by_default() -> None:
             }
         ],
     }
-
-    bad = client.post(path, headers={"Authorization": "Bearer operator"}, json={"dry_run": "no"})
-    assert bad.status_code == 400
-
-    applied = client.post(
-        path, headers={"Authorization": "Bearer operator"}, json={"dry_run": False}
-    )
-    assert applied.status_code == 200
-    assert service.action == ("migrate", "apply")
-    assert applied.json()["items"][0]["status"] == "migrated"
 
 
 def test_sync_action_accepts_the_wire_source_id_not_only_the_connection_id() -> None:
