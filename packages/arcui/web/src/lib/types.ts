@@ -1537,11 +1537,31 @@ export interface ConnectedSourceItem {
   last_synced_at: string | null
   documents_indexed: number
   allowed_homes: string[]
+  /** Which store the agent reads it from: its own copy, its own copy waiting to
+   *  move into the shared store on the next sync, or the shared store. */
+  lane: 'own' | 'migrating' | 'shared'
 }
 
 export interface ConnectedSourcesResponse {
   items: ConnectedSourceItem[]
   status?: string
+}
+
+/** One connection in the shared-store move preview (connections sweep J-K3). */
+export interface SharedMigrationItem {
+  connection_id: string
+  status: string
+  detail: string
+  documents: number
+  adopted: number
+  deduplicated: number
+  skipped: number
+}
+
+/** What the automatic move into the shared stores would do; changes nothing. */
+export interface SharedMigrationPreview {
+  dry_run: true
+  items: SharedMigrationItem[]
 }
 
 /** Result of enabling the optional connected-data module for an existing agent. */

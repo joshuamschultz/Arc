@@ -42,6 +42,7 @@ import type {
   ChunkSearchResponse,
   CollectionIndexView,
   ConnectedDataActivationResponse,
+  SharedMigrationPreview,
   ConnectedSourcesResponse,
   ConnectedResourcesResponse,
   ProfileReviewsResponse,
@@ -639,6 +640,12 @@ export const useActivateConnectedData = (agentId: string | null) => {
       }),
   })
 }
+
+/** Operator preview of the automatic move into shared stores (J-K3); changes nothing. */
+export const usePreviewSharedMigration = (agentId: string | null) =>
+  useMutation<SharedMigrationPreview, Error, void>({
+    mutationFn: () => apiPost(`/api/agents/${agentId}/knowledge/shared-migration`),
+  })
 
 export const useConnectedSyncStatus = (agentId: string | null) =>
   useQuery<ConnectedSyncStatusResponse>({

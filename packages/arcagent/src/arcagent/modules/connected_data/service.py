@@ -110,6 +110,9 @@ _INSPECTION_FAILED = "source_inspection_failed"
 #: A run that died without ending (a killed process): its row said ``running``.
 _INTERRUPTED = "interrupted"
 
+#: The lane reason for an own copy the next sync moves into the shared store.
+_MIGRATION_PENDING = "migration_pending"
+
 
 class SourceRefusedError(RuntimeError):
     """The source understood the request and rejected it.
@@ -164,6 +167,10 @@ class SourceRuntimeStatus:
     #: ingest port, not the sync counters, so the card can show what is actually
     #: searchable rather than only how many transfer pages were read.
     documents_indexed: int = 0
+    #: Which store the agent reads this connection from: ``own`` (its own copy),
+    #: ``migrating`` (its own copy, waiting to move into the shared store) or
+    #: ``shared``. Filled by ``list_sources``.
+    lane: str = "own"
 
 
 @dataclass(frozen=True)
@@ -291,6 +298,8 @@ class ConnectedDataService:
         # connection absent from it is synced into the agent's own store as before.
         self._shared = shared
         self._lanes: dict[str, KnowledgeSubscription] = {}
+        #: Why a connection reads its own store, when the lane decision said so.
+        self._lane_waits: dict[str, str] = {}
         # Runs an operator asked for: they skip the "another subscriber synced it
         # recently" shortcut, which otherwise makes a shared connection's sync free.
         self._forced: set[str] = set()
@@ -366,7 +375,25 @@ class ConnectedDataService:
             elif registration.connection_id in self._lanes:
                 # A shared connection may have been synced by another subscriber.
                 await self._refresh_shared_status(registration.connection_id)
-        return tuple(self._statuses[registration.connection_id] for registration in registrations)
+        return tuple(
+            replace(
+                self._statuses[registration.connection_id],
+                lane=self.lane(registration.connection_id),
+            )
+            for registration in registrations
+        )
+
+    def lane(self, connection_id: str) -> str:
+        """Which store this agent reads ``connection_id`` from (``own``/``migrating``/``shared``).
+
+        ``migrating`` is an own copy the next sync moves into the shared store; the
+        move runs inside that sync, so an operator can see it is waiting.
+        """
+        if connection_id in self._lanes:
+            return "shared"
+        if self._lane_waits.get(connection_id) == _MIGRATION_PENDING:
+            return "migrating"
+        return "own"
 
     async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
         """Describe every connected source from what is already known.
@@ -1319,22 +1346,29 @@ class ConnectedDataService:
             description = await self._with_generation(raw_description, private)
             plan = await approved(description)
             if plan is None or set(plan.homes) != SHARED_HOMES:
-                await self._leave(connection_id, raw_description, "mapping_not_shared")
-                return None
+                return await self._stay_own(connection_id, raw_description, "mapping_not_shared")
             if await self._documents_indexed(private, description) > 0:
                 # The agent's own store still holds this connection: migrate it
                 # first, or every document would be read twice.
-                await self._leave(connection_id, raw_description, "migration_pending")
-                return None
+                return await self._stay_own(connection_id, raw_description, _MIGRATION_PENDING)
             if not shared.claim_profile(connection_id):
-                await self._leave(connection_id, raw_description, "embedding_profile_differs")
-                return None
+                return await self._stay_own(
+                    connection_id, raw_description, "embedding_profile_differs"
+                )
+            self._lane_waits.pop(connection_id, None)
             return await self._subscribe(connection_id, raw_description, plan.mapping_id)
         except Exception:
             _logger.warning(
                 "connected-data shared store undecided: %s", connection_id, exc_info=True
             )
             return self._lanes.get(connection_id)
+
+    async def _stay_own(
+        self, connection_id: str, raw_description: SourceDescription, reason: str
+    ) -> None:
+        """Read ``connection_id`` from the agent's own store, remembering why."""
+        self._lane_waits[connection_id] = reason
+        await self._leave(connection_id, raw_description, reason)
 
     async def _subscribe(
         self, connection_id: str, raw_description: SourceDescription, approval_id: str

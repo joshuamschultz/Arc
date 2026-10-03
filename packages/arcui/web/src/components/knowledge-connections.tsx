@@ -1,10 +1,13 @@
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Activity,
   Database,
   FileText,
   FolderTree,
   Library,
+  LogIn,
+  MoveRight,
   Pause,
   Play,
   Plug,
@@ -37,7 +40,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
 import { fmtBytes } from '@/lib/format'
 import { EmptyState, QueryState } from '@/components/states'
+import { ApiError } from '@/lib/api'
 import {
+  useActivateConnectedData,
   useBlobFolders,
   useConnectedSourceAction,
   useConnectedSources,
@@ -57,6 +62,7 @@ import {
   useProfileReviews,
   useSelectConnectedResources,
   useStageSourceMapping,
+  usePreviewSharedMigration,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type {
@@ -229,6 +235,73 @@ function sourceStatusTone(status: string): string {
   return 'border-border bg-muted/40 text-muted-foreground'
 }
 
+/** Failure codes that only the account's owner can fix by connecting it again. */
+const SIGNED_OUT_CODES = new Set([
+  'auth_required',
+  'invalid_grant',
+  'consent_required',
+  'interaction_required',
+  'credential_missing',
+  'credential_unreadable',
+])
+
+/** What went wrong, in words a person can act on. Never the raw code or exception text. */
+function sourceProblem(source: ConnectedSourceItem): { text: string; reconnect: boolean } | null {
+  const code = source.error_code ?? (source.status === 'needs_attention' ? source.detail : '')
+  if (SIGNED_OUT_CODES.has(code ?? '') || SIGNED_OUT_CODES.has(source.detail)) {
+    return { text: 'This account is signed out. Reconnect it so Arc can read it again.', reconnect: true }
+  }
+  if (code === 'rate_limited' || source.detail === 'rate_limited') {
+    return { text: 'The provider asked Arc to slow down. The next sync starts on its own.', reconnect: false }
+  }
+  if (code === 'repeated_failures' || source.status === 'needs_attention') {
+    return {
+      text: 'Syncing failed several times in a row, so Arc stopped trying. Try again, or reconnect the account if it keeps failing.',
+      reconnect: true,
+    }
+  }
+  if (code === 'interrupted') {
+    return { text: 'The last sync stopped when Arc restarted. It continues from where it stopped.', reconnect: false }
+  }
+  if (source.detail === 'source_inspection_failed') {
+    return { text: 'Arc could not reach this account just now. It tries again on its own.', reconnect: false }
+  }
+  if (source.status === 'failed' || source.status === 'degraded') {
+    return { text: 'The last sync did not finish. Arc tries again on its own.', reconnect: false }
+  }
+  return null
+}
+
+const LANE_LABELS: Record<ConnectedSourceItem['lane'], string> = {
+  own: 'Own copy',
+  migrating: 'Own copy, waiting to move to the shared store',
+  shared: 'Shared store',
+}
+
+/** Reconnecting happens on the Connections page, where each account signs in. */
+function ReconnectLink() {
+  return (
+    <Button asChild size="sm" variant="outline">
+      <Link to="/connections">
+        <LogIn className="size-3.5" /> Reconnect
+      </Link>
+    </Button>
+  )
+}
+
+function SourceProblem({ source }: { source: ConnectedSourceItem }) {
+  const problem = sourceProblem(source)
+  if (problem == null) return null
+  return (
+    <div role="status" className="space-y-2 rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-xs">
+      <p className="flex items-start gap-1.5">
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" /> {problem.text}
+      </p>
+      {problem.reconnect && <ReconnectLink />}
+    </div>
+  )
+}
+
 function SourceControls({ agentId, source }: { agentId: string; source: ConnectedSourceItem }) {
   const action = useConnectedSourceAction(agentId, source.connection_id)
   const busy = action.isPending
@@ -249,6 +322,15 @@ function SourceControls({ agentId, source }: { agentId: string; source: Connecte
         </Button>
         <Button size="sm" variant="outline" disabled={busy || paused} onClick={() => run('reindex')}>
           <RefreshCw className="size-3.5" /> Reindex
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || paused}
+          title="Rebuild this source's folders and routing index from what is already stored"
+          onClick={() => run('relayout')}
+        >
+          <FolderTree className="size-3.5" /> Relayout
         </Button>
         <Button size="sm" variant="destructive" disabled={busy} onClick={() => run('revoke')}>
           <Trash2 className="size-3.5" /> Revoke
@@ -389,6 +471,9 @@ function SourceResourceControl({ agentId, source }: { agentId: string; source: C
           Pick a whole category to sync everything of that kind, including ones created later, or choose individual resources. Only selected resources can be ingested.
         </p>
       </div>
+      {resources.isError ? (
+        <ResourceListProblem error={resources.error} onRetry={() => void resources.refetch()} />
+      ) : (
       <QueryState query={resources} isEmpty={(data) => data.items.length === 0} empty={<p className="text-xs text-muted-foreground">This connector has no selectable resources.</p>}>
         {(data) => {
           const categories = data.items.filter((item) => item.resource_kind === "all")
@@ -408,12 +493,42 @@ function SourceResourceControl({ agentId, source }: { agentId: string; source: C
               <Button size="sm" variant="outline" disabled={selected.length === 0 || select.isPending} onClick={() => select.mutate(selected, { onSuccess: () => setChosen(null) })}>
                 Save selected resources
               </Button>
-              {select.isError && <p role="alert" className="text-xs text-destructive">{select.error.message}</p>}
+              {select.isError && <ResourceListProblem error={select.error} />}
             </>
           )
         }}
       </QueryState>
+      )}
     </section>
+  )
+}
+
+/** A resource list or selection that failed, said plainly with the step that fixes it. */
+function ResourceListProblem({ error, onRetry }: { error: Error; onRetry?: () => void }) {
+  if (error instanceof ApiError && error.status === 409 && error.body?.action === 'reconnect') {
+    return (
+      <div role="alert" className="space-y-2 text-xs">
+        <p>{error.message}</p>
+        <ReconnectLink />
+      </div>
+    )
+  }
+  if (error instanceof ApiError && error.status === 503) {
+    return (
+      <div role="alert" className="space-y-2 text-xs">
+        <p>The provider did not answer. This is usually brief.</p>
+        {onRetry && (
+          <Button size="sm" variant="outline" onClick={onRetry}>
+            <RotateCcw className="size-3.5" /> Try again
+          </Button>
+        )}
+      </div>
+    )
+  }
+  return (
+    <p role="alert" className="text-xs text-destructive">
+      {error.message}
+    </p>
   )
 }
 
@@ -448,9 +563,9 @@ function SourceDetail({
               <dt className="text-muted-foreground">Downloaded</dt><dd>{fmtBytes(source.bytes_processed)}</dd>
               <dt className="text-muted-foreground">Documents indexed</dt><dd>{source.documents_indexed}</dd>
               <dt className="text-muted-foreground">Last sync</dt><dd>{source.last_synced_at ?? 'Never'}</dd>
-              {source.error_code && <><dt className="text-muted-foreground">Error</dt><dd className="text-destructive">{source.error_code}</dd></>}
-              {source.detail && <><dt className="text-muted-foreground">Detail</dt><dd>{source.detail}</dd></>}
+              <dt className="text-muted-foreground">Stored in</dt><dd>{LANE_LABELS[source.lane]}</dd>
             </dl>
+            <SourceProblem source={source} />
           </section>
           <SourceResourceControl agentId={agentId} source={source} />
           <SourceMappingControl agentId={agentId} source={source} />
@@ -481,16 +596,11 @@ function SourcesSection({
   )
   const openedSource = selected ?? (initialOpen ? initialSource : null) ?? null
   if (sources.data?.status === 'degraded') {
-    return (
-      <EmptyState
-        icon={<Plug className="size-5" />}
-        title="Knowledge sync is not installed"
-        description="This agent can use connector tools, but its connected-data module is unavailable. Enable and install connected_data, then restart the agent."
-      />
-    )
+    return <ActivateKnowledgeSync agentId={agentId} />
   }
   return (
     <div className="space-y-3">
+      <SharedMigrationPreview agentId={agentId} />
       <QueryState
         query={sources}
         isEmpty={(d) => d.items.length === 0}
@@ -505,13 +615,14 @@ function SourcesSection({
         {(data) => (
           <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
             <table className="w-full text-sm">
-              <thead className="bg-muted/40"><tr className="border-b border-border"><Th>Source</Th><Th>Type</Th><Th>Status</Th><Th>Progress</Th><Th>Last sync</Th></tr></thead>
+              <thead className="bg-muted/40"><tr className="border-b border-border"><Th>Source</Th><Th>Type</Th><Th>Status</Th><Th>Stored in</Th><Th>Progress</Th><Th>Last sync</Th></tr></thead>
               <tbody className="divide-y divide-border/60">
                 {data.items.map((source) => (
                   <tr key={source.connection_id} onClick={() => setSelected(source)} className="cursor-pointer transition-colors hover:bg-muted/40">
                     <td className="px-3 py-2 text-foreground">{source.label || source.connection_id}</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.source_kind}</td>
                     <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs ${sourceStatusTone(source.status)}`}>{source.status}</span></td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{LANE_LABELS[source.lane]}</td>
                     <td className="px-3 py-2 text-xs tabular-nums text-muted-foreground">{source.pages} batches · {fmtBytes(source.bytes_processed)} downloaded</td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{source.last_synced_at ?? 'Never'}</td>
                   </tr>
@@ -532,6 +643,74 @@ function SourcesSection({
         }}
       />
     </div>
+  )
+}
+
+/** The module is installed but not turned on for this agent: one click turns it on. */
+function ActivateKnowledgeSync({ agentId }: { agentId: string }) {
+  const activate = useActivateConnectedData(agentId)
+  return (
+    <div className="space-y-3">
+      <EmptyState
+        icon={<Plug className="size-5" />}
+        title="Knowledge sync is off for this agent"
+        description="The agent can use its connected tools, but it does not learn from them yet. Turn Knowledge sync on to let it read what you choose."
+      />
+      <div className="flex flex-col items-center gap-2">
+        <Button size="sm" disabled={activate.isPending || activate.isSuccess} onClick={() => activate.mutate()}>
+          <Play className="size-3.5" /> {activate.isPending ? 'Turning on…' : 'Turn on Knowledge sync'}
+        </Button>
+        {activate.isSuccess && <p className="text-xs text-status-success">Knowledge sync is on.</p>}
+        {activate.isError && (
+          <p role="alert" className="text-xs text-destructive">
+            Knowledge sync could not be turned on. Try again in a moment.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const MIGRATION_OUTCOMES: Record<string, (documents: number) => string> = {
+  would_migrate: (documents) => `Will move ${documents} documents into the shared store`,
+  migrated: (documents) => `Moved ${documents} documents`,
+  already_shared: () => 'Already in the shared store',
+  nothing_to_migrate: () => 'Nothing to move',
+  not_eligible: () => 'Stays as its own copy',
+  refused: () => 'Cannot move yet. It stays as its own copy.',
+}
+
+/** What the automatic move into shared stores will do. It runs inside the next sync;
+ *  the preview only reports it and changes nothing. */
+function SharedMigrationPreview({ agentId }: { agentId: string }) {
+  const preview = usePreviewSharedMigration(agentId)
+  return (
+    <section className="space-y-2 rounded-lg border border-border bg-card/40 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          Each account is stored once and shared by every agent granted it. An agent's own copy moves on its next sync.
+        </p>
+        <Button size="sm" variant="outline" disabled={preview.isPending} onClick={() => preview.mutate()}>
+          <MoveRight className="size-3.5" /> Preview the move
+        </Button>
+      </div>
+      {preview.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          The preview is not available right now. Try again in a moment.
+        </p>
+      )}
+      {preview.data && (
+        <ul className="space-y-1 text-xs">
+          {preview.data.items.length === 0 && <li className="text-muted-foreground">No connections to move.</li>}
+          {preview.data.items.map((item) => (
+            <li key={item.connection_id} className="flex justify-between gap-2">
+              <span className="font-mono">{item.connection_id}</span>
+              <span>{(MIGRATION_OUTCOMES[item.status] ?? (() => 'Stays as its own copy'))(item.adopted || item.documents)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 

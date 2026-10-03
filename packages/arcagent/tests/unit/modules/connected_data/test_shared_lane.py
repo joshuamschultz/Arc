@@ -149,3 +149,25 @@ async def test_an_agent_that_embeds_differently_keeps_its_own_store(tmp_path: Pa
 
     assert await second._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,))) is None
     assert await _subscribers(backend) == [_DID]
+
+
+@pytest.mark.parametrize(
+    ("private", "expected"),
+    [
+        (_Private((KnowledgeHome.DOCUMENT,)), "shared"),
+        (_Private((KnowledgeHome.DOCUMENT,), documents=3), "migrating"),
+        (_Private((KnowledgeHome.MEMORY, KnowledgeHome.DOCUMENT)), "own"),
+    ],
+    ids=["shared", "own-copy-waiting-to-move", "memory-stays-own"],
+)
+@pytest.mark.asyncio
+async def test_each_connection_names_the_store_it_reads_from(
+    tmp_path: Path, private: _Private, expected: str
+) -> None:
+    """J-K3: the card shows own copy, waiting to move, or shared, per connection."""
+    service = _service(tmp_path, FakeBackend())
+    assert service.lane("wiki") == "own", "nothing decided yet reads its own store"
+
+    await service._lane_for("wiki", _source(), private)
+
+    assert service.lane("wiki") == expected
