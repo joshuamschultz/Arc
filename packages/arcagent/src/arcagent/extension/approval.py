@@ -196,6 +196,7 @@ class ApprovalBinding:
             legs=legs,
             destination=self._instance,
             grant_tool=spec.name,
+            may_stand=True,
         )
         if grant is None:
             self._audit(spec, target, action="connector.approval_denied", outcome="deny")

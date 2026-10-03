@@ -197,6 +197,7 @@ class HumanGate:
         provenance: list[dict[str, object]] | None = None,
         destination: str | None = None,
         grant_tool: str | None = None,
+        may_stand: bool = False,
     ) -> ApprovalGrant | None:
         """Obtain a one-shot approval for ``call`` or return None (fail closed).
 
@@ -207,7 +208,10 @@ class HumanGate:
         class of the egress this call adds (``None``: it adds none) and
         ``grant_tool`` the verb a standing grant is scoped to (default: the
         call's tool) — together they decide whether an operator's standing
-        "Always allow" already covers this call.
+        "Always allow" already covers this call. ``may_stand`` is opt-in: only
+        the dispatch-time composition gates (the registry's trifecta gate and a
+        connection's outbound gate) pass it, so a standing grant never answers a
+        tier-policy approval, a workflow activation, or any other kind of ask.
         """
         from arctrust.policy import _hash_call
 
@@ -221,7 +225,7 @@ class HumanGate:
             session_id=call.session_id,
             destination=destination,
             grant_tool=grant_tool or call.tool_name,
-            standing_eligible=self._tier != "federal",
+            standing_eligible=may_stand and bool(legs) and self._tier != "federal",
         )
 
         if self._auto_approvable(legs, call.tool_name):

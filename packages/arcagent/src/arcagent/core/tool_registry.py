@@ -430,7 +430,7 @@ class ToolRegistry:
             else []
         )
         approval = await human_gate.request(
-            call, legs=union, provenance=provenance, destination=destination
+            call, legs=union, provenance=provenance, destination=destination, may_stand=True
         )
         if approval is None:
             raise PolicyDenied(decision)

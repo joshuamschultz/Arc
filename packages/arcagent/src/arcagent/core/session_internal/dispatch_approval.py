@@ -3,7 +3,7 @@
 A connector egress crosses two gates in one dispatch: the registry's trifecta
 gate, then the connection's own outbound gate (SPEC-062 ``ApprovalBinding``).
 Before 2026-10-03 each asked the operator separately for the SAME call, so one
-Dropbox upload cost two clicks.
+connector upload cost two clicks.
 
 When the trifecta gate admits a call on an operator's word (a one-shot Approve or
 a standing "Always allow", both verified and pinned to the deployment operator),

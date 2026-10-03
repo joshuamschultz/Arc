@@ -42,6 +42,7 @@ from arctrust.identity import AgentIdentity
 from arctrust.policy import (
     INTERACTIVE_ORIGIN,
     OperatorApprovalAuthority,
+    ToolCall,
     grant_to_wire,
     scenario_grant_to_wire,
     sign_approval_for_hash,
@@ -411,6 +412,37 @@ async def test_federal_refuses_a_stored_standing_grant_and_never_offers_one() ->
                 row.model_copy(update={"status": "pending"}),
                 box.operator,
             )
+
+
+@pytest.mark.parametrize(
+    ("tool", "legs"),
+    [
+        # A tier-policy approval (arcrun proactive trigger): no composition at all.
+        ("delete_everything", frozenset()),
+        # Workflow activation: a composition, but not a dispatch-time call.
+        ("workflow_activate", LETHAL_TRIFECTA),
+    ],
+)
+async def test_standing_grant_never_answers_any_other_kind_of_approval(
+    tool: str, legs: frozenset[str]
+) -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        await box.standing.put(_stored(olivia, box.operator), actor_did=box.operator.did)
+        box.choice = "deny"
+        call = ToolCall(
+            tool_name=tool,
+            arguments={"workflow_id": "nightly"},
+            agent_did=olivia.identity.did,
+            session_id=_SESSION,
+            classification="unclassified",
+        )
+
+        assert await olivia.gate.request(call, legs=legs) is None
+
+        assert box.prompts == [tool]
+        [asked] = await box.approvals.list(status="denied")
+        assert asked.standing_eligible is False
 
 
 # --- one click covers the connection's own outbound gate ------------------------
