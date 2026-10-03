@@ -284,7 +284,11 @@ def build_attachment(
         with _importable(bundle):
             native = NativeAttachment(entrypoint, context)
         return _with_source_adapter(
-            manifest, bundle, native, {"connection_id": connection_id, **visible}
+            manifest,
+            bundle,
+            native,
+            {"connection_id": connection_id, **visible},
+            credential=credential,
         )
     if kind == "cli":
         unplaced = unplaced_secrets(manifest)
@@ -473,17 +477,24 @@ def _with_source_adapter(
     bundle: Path,
     attachment: ExtensionAttachment,
     identity: Mapping[str, str] | None = None,
+    *,
+    credential: AccessTokenHandle | None = None,
 ) -> ExtensionAttachment:
     """Wrap ``attachment`` with the bundle's ``[config.source]`` adapter, if it declares one.
 
     ``identity`` (the connection id and the non-sensitive fields) lets an adapter
-    name WHICH account it syncs, so two mailboxes are two sources.
+    name WHICH account it syncs, so two mailboxes are two sources. ``credential`` is
+    the same per-connection handle a native attachment gets, so a native bundle's
+    sync can read the provider's change feeds with the same short-lived bearer
+    rather than widening its tool surface for indexing.
     """
     source_config = manifest.config.get("source")
     if source_config is None:
         return attachment
     entrypoint = _SourceConfig.model_validate(source_config).entrypoint
     context: dict[str, Any] = {**(identity or {}), "attachment": attachment}
+    if credential is not None:
+        context["credential"] = credential
     with _importable(bundle):
         module = importlib.import_module(entrypoint)
         factories = getattr(module, "build_source_adapters", None)

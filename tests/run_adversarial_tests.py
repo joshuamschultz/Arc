@@ -497,6 +497,22 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "tests/architecture/test_oauth_redirect_is_config_derived.py",
         "tests/architecture/test_no_vendor_cli_for_oauth_providers.py",
     ),
+    # Microsoft 365 over Entra ID (GCC): a state/PKCE mismatch, an id_token from
+    # another tenant/app/user, a slot swapped between begin and complete, a tenant-A
+    # refresh token presented for slot B, an app slot whose cloud or tenant could
+    # point a token at any host, a viewer connecting or reading the secret, the
+    # refresh token in logs/audit/errors, Graph paging links off the pinned host,
+    # and injected instructions in Graph data. LLM01/LLM02/LLM05, ASI02/ASI03.
+    (
+        "Microsoft 365 native OAuth abuse — tenant binding, cloud pinning, Graph egress "
+        "(alpha-2 P18-3.M)"
+    ): (
+        "packages/arcagent/tests/unit/extension/test_oauth_tenant_cloud.py",
+        "packages/arcagent/tests/security/test_microsoft365_oauth_abuse.py",
+        "packages/arcui/tests/security/test_microsoft365_oauth_routes_abuse.py",
+        "extensions/tests/test_microsoft365_native.py",
+        "extensions/tests/test_mail_source_recurring.py",
+    ),
     # One tool name, several granted accounts (Google, native REST): the account a
     # call acts as is resolved against THIS agent's grants, never believed. An
     # agent granted one account naming another (exact, case/space/Unicode

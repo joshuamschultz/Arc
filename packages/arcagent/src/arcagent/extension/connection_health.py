@@ -191,8 +191,14 @@ _CODE_ALIASES: Final[Mapping[str, ReasonCode]] = {
 _TOKEN_REVOKED_MARKERS = ("token_revoked", "invalid_auth", "account_inactive")
 #: A native probe that reached the provider as the wrong account (P18-3).
 _ACCOUNT_MISMATCH_MARKERS = ("signed in as a different account",)
-#: A provider refusing for a permission the consent did not grant (Google 403).
-_SCOPE_MARKERS = ("insufficientpermissions", "access_token_scope_insufficient")
+#: A provider refusing for a permission the consent did not grant (each REST
+#: provider's own 403 code, lowercased).
+_SCOPE_MARKERS = (
+    "insufficientpermissions",
+    "access_token_scope_insufficient",
+    "erroraccessdenied",
+    "authorization_requestdenied",
+)
 _SYNC_MARKERS = (
     "sync_stalled",
     "leaselost",

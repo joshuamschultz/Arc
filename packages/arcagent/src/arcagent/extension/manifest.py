@@ -351,6 +351,34 @@ class SecretRequirement(_ManifestModel):
         return self
 
 
+#: A DNS host name: labels of letters, digits and hyphens, at least one dot, no port.
+_HOST_NAME = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+#: The only placeholders an ``[oauth]`` endpoint template may carry.
+_ENDPOINT_PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
+_ENDPOINT_PLACEHOLDERS = frozenset({"login_host", "tenant"})
+_CLOUD_KEY = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+class OAuthCloud(_ManifestModel):
+    """``[oauth.clouds.<key>]`` — one sovereign cloud a tenant-bound app may live in.
+
+    The deployment's app slot stores only the KEY; these hosts come from the signed
+    manifest, so an operator setting can never point a token at an undeclared host.
+    """
+
+    label: str = Field(min_length=1, max_length=64)
+    login_host: str
+    api_host: str
+
+    @field_validator("login_host", "api_host")
+    @classmethod
+    def _bare_host(cls, value: str) -> str:
+        """A bare host name: no scheme, port, path or userinfo."""
+        if not _HOST_NAME.fullmatch(value):
+            raise ValueError(f"[oauth.clouds] host {value!r} must be a bare DNS host name")
+        return value
+
+
 class OAuthFlow(_ManifestModel):
     """``[oauth]`` — a native OAuth2 authorization-code connect flow, done in-harness.
 
@@ -368,7 +396,14 @@ class OAuthFlow(_ManifestModel):
     ``account`` names how the signed-in account is checked BEFORE anything is
     stored: ``openid_email`` reads the ``id_token`` the token endpoint returned;
     ``atlassian_site`` lists the sites the new token can reach and binds the one
-    this connection's ``site`` field names (its ``cloud_id`` is stored with it).
+    this connection's ``site`` field names (its ``cloud_id`` is stored with it);
+    ``openid_username`` reads a directory sign-in's ``id_token`` (``preferred_username``)
+    and, with ``app_tenant``, also requires its ``tid`` to be the app slot's tenant.
+
+    ``app_tenant`` and ``clouds`` make the flow tenant- and cloud-bound: endpoint
+    templates may then carry ``{tenant}`` and ``{login_host}``, filled from the app
+    slot's tenant id and cloud KEY by :func:`arcagent.extension.oauth.bind_flow`.
+    A connect stores the bound ``tenant_id`` and ``cloud`` with the grant.
     """
 
     provider: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
@@ -382,7 +417,7 @@ class OAuthFlow(_ManifestModel):
     pkce: bool = True
     client_auth: Literal["basic", "post_form", "post_json"] = "basic"
     redirect: Literal["callback", "none"] = "callback"
-    account: Literal["openid_email", "atlassian_site", "none"] = "none"
+    account: Literal["openid_email", "openid_username", "atlassian_site", "none"] = "none"
     #: The ``iss`` values an ``id_token`` may carry (``account = "openid_email"``).
     id_token_issuers: list[str] = Field(default_factory=list)
     revoke_url: str | None = None
@@ -398,6 +433,35 @@ class OAuthFlow(_ManifestModel):
     #: bundle so core never names a vendor. Both or neither.
     legacy_client_id_env: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
     legacy_client_secret_env: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    #: The app slot carries a directory (tenant) id; ``{tenant}`` in a template is it.
+    app_tenant: bool = False
+    #: Sovereign clouds by key; ``{login_host}`` in a template is the slot cloud's.
+    clouds: dict[str, OAuthCloud] = Field(default_factory=dict)
+    #: The cloud a slot gets when it names none. Must be a key of ``clouds``.
+    default_cloud: str = ""
+    #: The refresh grant re-sends the requested scopes (Entra ID v2 expects them).
+    refresh_scopes: bool = False
+
+    @model_validator(mode="after")
+    def _templates_are_closed(self) -> OAuthFlow:
+        """Templates name only declared placeholders; the cloud table is a closed set."""
+        for key in self.clouds:
+            if not _CLOUD_KEY.fullmatch(key):
+                raise ValueError(f"[oauth.clouds] key {key!r} must be a short lowercase name")
+        if self.clouds and self.default_cloud not in self.clouds:
+            raise ValueError("[oauth].default_cloud must name one of [oauth.clouds]")
+        if not self.clouds and self.default_cloud:
+            raise ValueError("[oauth].default_cloud needs [oauth.clouds]")
+        templates = [self.authorize_url, self.token_url, *self.id_token_issuers]
+        used = {name for text in templates for name in _ENDPOINT_PLACEHOLDER.findall(text)}
+        unknown = sorted(used - _ENDPOINT_PLACEHOLDERS)
+        if unknown:
+            raise ValueError(f"[oauth] endpoint placeholder(s) {', '.join(unknown)} are unknown")
+        if "login_host" in used and not self.clouds:
+            raise ValueError("[oauth] {login_host} needs [oauth.clouds]")
+        if "tenant" in used and not self.app_tenant:
+            raise ValueError("[oauth] {tenant} needs app_tenant = true")
+        return self
 
     @model_validator(mode="after")
     def _legacy_names_are_a_pair(self) -> OAuthFlow:
@@ -410,27 +474,37 @@ class OAuthFlow(_ManifestModel):
 
     @model_validator(mode="after")
     def _account_check_is_complete(self) -> OAuthFlow:
-        """An ``openid_email`` check needs ``openid`` + ``email`` scopes and an issuer list."""
+        """An id_token check needs its identity scopes and an issuer list.
+
+        ``openid_email`` needs ``openid`` + ``email``; ``openid_username`` needs
+        ``openid`` + ``profile`` (where ``preferred_username`` comes from).
+        """
         if self.account == "atlassian_site" and not self.resources_url:
             raise ValueError('[oauth].account = "atlassian_site" needs resources_url')
-        if self.account != "openid_email":
+        needed = {"openid_email": {"openid", "email"}, "openid_username": {"openid", "profile"}}
+        wanted = needed.get(self.account)
+        if wanted is None:
             return self
         if not self.id_token_issuers:
-            raise ValueError('[oauth].account = "openid_email" needs id_token_issuers')
+            raise ValueError(f'[oauth].account = "{self.account}" needs id_token_issuers')
         for scopes in (self.scopes, self.scopes_read_only or self.scopes):
-            if not {"openid", "email"} <= set(scopes):
+            if not wanted <= set(scopes):
                 raise ValueError(
-                    '[oauth].account = "openid_email" needs the openid and email scopes'
+                    f'[oauth].account = "{self.account}" needs the '
+                    f"{' and '.join(sorted(wanted))} scopes"
                 )
         return self
 
     @field_validator("authorize_url", "token_url", "revoke_url", "console_url", "resources_url")
     @classmethod
     def _https_endpoint(cls, value: str | None) -> str | None:
-        """Every provider endpoint is ``https://`` with a host and no userinfo or fragment."""
+        """Every provider endpoint is ``https://`` with a host and no userinfo or fragment.
+
+        A template is judged with each placeholder standing in as a plain label.
+        """
         if value is None:
             return value
-        parts = urlsplit(value)
+        parts = urlsplit(_ENDPOINT_PLACEHOLDER.sub("placeholder", value))
         if (
             parts.scheme != "https"
             or not parts.hostname
@@ -733,6 +807,22 @@ class ExtensionManifest(_ManifestModel):
                         f"{tool} declares {argument!r}, which is the routing selector; the "
                         f"selector is resolved against the connection and never reaches argv"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _bound_oauth_fields_are_declared(self) -> ExtensionManifest:
+        """A tenant/cloud-bound flow stores ``tenant_id`` / ``cloud`` as visible fields.
+
+        The connect writes them with the grant; the attachment reads ``cloud`` to
+        know its API host and the renewer compares both with the app slot.
+        """
+        flow = self.oauth
+        if flow is None:
+            return self
+        visible = {declared.name for declared in self.secrets if not declared.sensitive}
+        for name, needed in (("tenant_id", flow.app_tenant), ("cloud", bool(flow.clouds))):
+            if needed and name not in visible:
+                raise ValueError(f"[oauth] binds {name}; declare it as a non-sensitive field")
         return self
 
     def _command_arguments(self) -> list[tuple[str, str]]:

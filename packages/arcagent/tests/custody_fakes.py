@@ -15,6 +15,7 @@ from typing import Any
 from arcstore.backends.memory import FakeBackend
 from arctrust.connector_cipher import ConnectorSecretCipher
 
+from arcagent.extension.oauth_apps import OAuthApp
 from arcagent.extension.secrets import Secret
 
 
@@ -96,7 +97,8 @@ class FakeCredentialHandle:
 __all__ = ["FakeCredentialHandle", "InterleavingBackend", "make_cipher", "once_per_task"]
 
 
-async def static_client(flow: Any) -> tuple[str, Secret] | None:
+async def static_client(flow: Any) -> OAuthApp | None:
     """A renewer client source standing in for the deployment's OAuth app slot."""
-    del flow
-    return "app-key", Secret("app-secret")
+    return OAuthApp(
+        provider=flow.provider, client_id="app-key", client_secret=Secret("app-secret")
+    )

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hmac
 import logging
 import os
 import shutil
@@ -140,8 +141,15 @@ from arcagent.extension.oauth import (
     scopes_for,
     send_token_post,
     verified_id_token_email,
+    verified_id_token_username,
 )
-from arcagent.extension.oauth_apps import OAUTH_APP_MISSING, OAuthApp, OAuthAppStatus
+from arcagent.extension.oauth_apps import (
+    OAUTH_APP_MISSING,
+    OAuthApp,
+    OAuthAppStatus,
+    app_binding,
+    bind_flow,
+)
 from arcagent.extension.secrets import Secret, SecretRef, SecretStore
 from arcagent.extension.state import (
     ConnectionRecord,
@@ -254,6 +262,51 @@ def _oauth_flow(plan: ConnectorPlan) -> OAuthFlow:
             instance=plan.instance,
         )
     return flow
+
+
+#: ``[oauth].account`` modes that read the signed-in account from an ``id_token``.
+_ID_TOKEN_ACCOUNTS = frozenset({"openid_email", "openid_username"})
+
+
+def _app_fingerprint(app: OAuthApp) -> str:
+    """What a begun sign-in is bound to: the app, its tenant and its cloud (no secret)."""
+    return f"{app.client_id}|{app.tenant_id}|{app.cloud}"
+
+
+def _check_app_binding(flow: OAuthFlow, *, tenant_id: str, cloud: str) -> None:
+    """The tenant id and cloud key an app slot for ``flow`` may (and must) carry."""
+    if flow.app_tenant and not tenant_id:
+        raise _refuse(
+            "OAUTH_APP_INVALID",
+            f"the {flow.provider} sign-in app needs its directory (tenant) ID",
+            field="tenant_id",
+        )
+    if not flow.app_tenant and tenant_id:
+        raise _refuse(
+            "OAUTH_APP_INVALID",
+            f"the {flow.provider} sign-in app takes no tenant ID",
+            field="tenant_id",
+        )
+    if cloud and cloud not in flow.clouds:
+        raise _refuse(
+            "OAUTH_APP_INVALID",
+            f"that is not a cloud the {flow.provider} sign-in app can use",
+            field="cloud",
+        )
+
+
+def _signed_in_account(flow: OAuthFlow, app: OAuthApp, tokens: OAuthTokens) -> str:
+    """The verified account an id_token names, per the (bound) flow's account mode."""
+    if flow.account == "openid_username":
+        return verified_id_token_username(
+            tokens.id_token,
+            client_id=app.client_id,
+            issuers=flow.id_token_issuers,
+            tenant=app.tenant_id if flow.app_tenant else "",
+        )
+    return verified_id_token_email(
+        tokens.id_token, client_id=app.client_id, issuers=flow.id_token_issuers
+    )
 
 
 _Method = TypeVar("_Method", bound=Callable[..., Awaitable[Any]])
@@ -1317,14 +1370,52 @@ class Connections:
         with self._audit.open() as sink:
             return await (await self._custody(sink)).apps.status(provider)
 
-    async def set_oauth_app(self, provider: str, *, client_id: str, client_secret: str) -> None:
-        """Set up (or replace) ``provider``'s sign-in app once for the whole deployment."""
+    def oauth_provider_flow(self, provider: str) -> OAuthFlow | None:
+        """The ``[oauth]`` flow a bundle on the search path declares for ``provider``."""
+        for entry in self.catalog():
+            if entry.oauth_flow is not None and entry.oauth_flow.provider == provider:
+                return entry.oauth_flow
+        return None
+
+    async def set_oauth_app(
+        self,
+        provider: str,
+        *,
+        client_id: str,
+        client_secret: str,
+        tenant_id: str = "",
+        cloud: str = "",
+    ) -> None:
+        """Set up (or replace) ``provider``'s sign-in app once for the whole deployment.
+
+        A tenant-bound provider needs its directory (tenant) id; a cloud-bound one
+        takes a cloud KEY from the bundle's own declared table (blank = its default).
+        A value the provider's flow does not use is refused rather than stored.
+
+        Raises:
+            ExtensionError: ``OAUTH_APP_INVALID`` for a missing/unused tenant id or a
+                cloud the bundle does not declare.
+        """
+        flow = self.oauth_provider_flow(provider)
+        tenant_id, cloud = tenant_id.strip(), cloud.strip()
+        if flow is not None:
+            _check_app_binding(flow, tenant_id=tenant_id, cloud=cloud)
+            if flow.clouds and not cloud:
+                cloud = flow.default_cloud
+        elif tenant_id or cloud:
+            raise _refuse(
+                "OAUTH_APP_INVALID",
+                f"no installed bundle signs in with {provider}; it takes no tenant or cloud",
+                field="tenant_id" if tenant_id else "cloud",
+            )
         with self._audit.open() as sink:
             custody = await self._custody(sink)
             await custody.apps.put(
                 provider,
                 client_id=client_id,
                 client_secret=client_secret,
+                tenant_id=tenant_id,
+                cloud=cloud,
                 actor_did=causal.actor_did(),
             )
 
@@ -1343,8 +1434,8 @@ class Connections:
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
-            flow = _oauth_flow(plan)
-            app = await self._oauth_app(flow, sink)
+            app = await self._oauth_app(_oauth_flow(plan), sink)
+            flow = bind_flow(_oauth_flow(plan), app)
             values = await self._visible_values(plan, sink)
             account = values.get("account", "")
             scopes = scopes_for(flow, read_only=values.get("read_only", "") != "no")
@@ -1361,6 +1452,7 @@ class Connections:
                     created_at=self._oauth_pending_clock(),
                     intended_account=account,
                     scopes=tuple(scopes),
+                    app_binding=_app_fingerprint(app),
                 )
             )
             url = build_authorize_url(
@@ -1370,7 +1462,7 @@ class Connections:
                 state=state,
                 code_challenge=pkce.challenge if pkce is not None else None,
                 scopes=scopes,
-                login_hint=account if flow.account == "openid_email" else "",
+                login_hint=account if flow.account in _ID_TOKEN_ACCOUNTS else "",
             )
             self._oauth_audit(sink, "begin", instance, "allow", provider=flow.provider)
         return OAuthBegin(
@@ -1428,13 +1520,18 @@ class Connections:
     ) -> tuple[str, bool]:
         """Exchange, verify, seal: the part of a connect that runs for one known connection."""
         plan = self._plan_for(pending.instance, sink)
-        flow = _oauth_flow(plan)
+        unbound = _oauth_flow(plan)
         if params.code is None or pending.redirect_uri != (
-            self._oauth_redirect_uri if flow.redirect == "callback" else ""
+            self._oauth_redirect_uri if unbound.redirect == "callback" else ""
         ):
             raise _refuse(OAUTH_STATE_INVALID, "this sign-in no longer matches; start again")
         custody = await self._custody(sink)
-        app = await self._oauth_app(flow, sink)
+        app = await self._oauth_app(unbound, sink)
+        if not hmac.compare_digest(_app_fingerprint(app), pending.app_binding):
+            # The slot was replaced between begin and complete: this code was issued
+            # for the old app/tenant/cloud and is never exchanged under the new one.
+            raise _refuse(OAUTH_STATE_INVALID, "the sign-in app changed; start the sign-in again")
+        flow = bind_flow(unbound, app)
         tokens = await exchange_authorization_code(
             flow,
             code=params.code,
@@ -1488,11 +1585,9 @@ class Connections:
         the provider, best effort, so it does not linger there either.
         """
         try:
-            resolved: dict[str, str] = {}
-            if flow.account == "openid_email":
-                email = verified_id_token_email(
-                    tokens.id_token, client_id=app.client_id, issuers=flow.id_token_issuers
-                )
+            resolved: dict[str, str] = app_binding(flow, app)
+            if flow.account in _ID_TOKEN_ACCOUNTS:
+                email = _signed_in_account(flow, app, tokens)
                 intended = (await self._visible_values(plan, sink)).get("account", "")
                 require_account(email, intended=intended or pending.intended_account)
                 if not intended:
@@ -1545,6 +1640,7 @@ class Connections:
         )
 
     async def _oauth_app(self, flow: OAuthFlow, sink: AuditSink) -> OAuthApp:
+        """The flow's app slot (refused with the redirect URI to register when absent)."""
         app = await (await self._custody(sink)).apps.get(flow.provider)
         if app is None:
             raise _refuse(
@@ -2946,6 +3042,7 @@ __all__ = [
     "McpServerAdded",
     "MigrationReport",
     "OAuthBegin",
+    "OAuthFlow",
     "OAuthPendingLedger",
     "ProbeResult",
     "RemovalReport",

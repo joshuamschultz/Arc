@@ -9,6 +9,7 @@ import type {
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
   ConnectorInstance,
+  OAuthAppBody,
   OAuthAppResponse,
   OAuthBeginResponse,
   OAuthCompleteBody,
@@ -1944,7 +1945,7 @@ export const useOAuthApp = (provider: string, enabled: boolean) =>
 
 export const useSetOAuthApp = (provider: string) => {
   const queryClient = useQueryClient()
-  return useMutation<{ configured: boolean }, Error, { client_id: string; client_secret: string }>({
+  return useMutation<{ configured: boolean }, Error, OAuthAppBody>({
     mutationFn: (body) => apiPut(oauthAppPath(provider), body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: oauthAppKey(provider) }),
   })

@@ -1227,6 +1227,15 @@ class OAuthBeginResponse(BaseModel):
     expires_in: int
 
 
+class OAuthCloudChoice(BaseModel):
+    """One sovereign cloud an app slot may name: its key and what a person calls it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+
+
 class OAuthAppResponse(BaseModel):
     """Body of ``GET /api/oauth-apps/{provider}``. Never the client secret."""
 
@@ -1237,6 +1246,13 @@ class OAuthAppResponse(BaseModel):
     client_id_hint: str
     redirect_uri: str
     console_url: str
+    #: The provider's app slot needs a directory (tenant) id (Microsoft Entra ID).
+    tenant_required: bool = False
+    #: The stored tenant id and cloud key: not secrets, shown so they can be checked.
+    tenant_id: str = ""
+    cloud: str = ""
+    #: The clouds the bundle declares, as ``{id, label}``, default first; empty when none.
+    clouds: list[OAuthCloudChoice] = Field(default_factory=list)
 
 
 class ConnectorHostSetupResponse(BaseModel):

@@ -18,7 +18,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 
 #: Bundles whose credential Arc holds through ``[oauth]``.
-_NATIVE_OAUTH = ("google_workspace", "dropbox", "jira", "confluence")
+_NATIVE_OAUTH = ("google_workspace", "dropbox", "jira", "confluence", "microsoft365")
 
 
 @pytest.mark.parametrize("bundle", _NATIVE_OAUTH)
@@ -28,6 +28,7 @@ def test_oauth_bundle_declares_no_host_binary_and_no_cli(bundle: str) -> None:
     assert not manifest.get("host_requires"), f"{bundle} declares a host binary"
     assert "cli" not in manifest.get("config", {}), f"{bundle} declares [config.cli]"
     assert "artifact" not in manifest, f"{bundle} pins a vendor binary"
+    assert "mcp" not in manifest.get("config", {}), f"{bundle} spawns an MCP server"
     assert manifest["extension"]["attachment"] == "native"
 
 

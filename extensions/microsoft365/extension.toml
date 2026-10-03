@@ -1,102 +1,95 @@
-# Microsoft 365 (Outlook mail, calendar, OneDrive) over MCP.
+# Microsoft 365 (Outlook mail, calendar, OneDrive) over Microsoft Graph.
 #
-# MCP is the right transport here and not a fallback. There is no acceptable
-# Microsoft 365 CLI, and the Graph surface is 324 endpoints wide — which is
-# exactly why `allow` below is short and explicit. An omitted allowlist is the
-# same unbounded grant as "*" and is refused above personal tier.
+# No binary, no Node, no device code. Arc holds the credential (alpha-2 P18-3.M):
+# the operator sets the deployment's Microsoft sign-in app up ONCE ("Set up
+# Microsoft sign-in": the Entra app's client ID, its directory (tenant) ID, a client
+# secret, and the cloud), then each mailbox is one click. Connect opens the tenant's
+# own Entra sign-in page, Entra sends the browser back to ArcUI's /oauth/callback,
+# and Arc swaps the code (PKCE S256, state bound to the operator's session) for a
+# refresh token. The id_token is checked BEFORE anything is stored: issued to this
+# app, by this tenant's authority, with tid == this tenant, as this connection's
+# account. The refresh token is sealed in custody; tools get a short-lived access
+# token from their credential handle at call time.
+#
+# Clouds. The app slot stores only a cloud KEY; the hosts below are the only ones a
+# token or a request ever goes to. "global" is commercial AND GCC (moderate); GCC
+# High and DoD are the "usgov" and "dod" keys. A tenant ID is required: "common" is
+# refused, because a GCC tenant must sign in against its own directory.
+#
+# Ten Graph verbs, an explicit allowlist. Implementation: arc_ext_microsoft365/native/
+# (a subdirectory, because bundle-root .py files are scanned as agent capabilities).
 
 [extension]
 name = "microsoft365"
 display_name = "Microsoft 365"
-version = "1.0.0"
+version = "2.0.0"
 description = "Read and send Outlook mail, manage the calendar, and browse OneDrive files."
-attachment = "mcp"
+attachment = "native"
 tier_floor = "personal"
 
-# The published npm tarball, digest computed over the artifact itself. Keyed
-# `any` because an npm tarball is the same bytes everywhere, and carrying no
-# `member` because npm installs it rather than it being an archive holding one
-# executable — so `arc connector host-setup` says plainly that it cannot place
-# this on PATH and hands over the steps below.
-[artifact]
-package = "@softeria/ms-365-mcp-server"
-version = "0.136.0"
+[knowledge]
+mode = "source"
 
-[artifact.platforms.any]
-url = "https://registry.npmjs.org/@softeria/ms-365-mcp-server/-/ms-365-mcp-server-0.136.0.tgz"
-sha256 = "bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232"
+[config.native]
+entrypoint = "arc_ext_microsoft365.native"
 
-[[host_requires]]
-name = "node"
-minimum_version = "20.0.0"
-instruction = "Install Node.js 20 or newer on this host; the MCP server is a Node program."
+[config.source]
+entrypoint = "arc_ext_microsoft365.source"
 
-# No `token_command`: `--login` runs the Entra ID device-code flow, which prints
-# a code and waits for a person to enter it in a browser. There is no token to
-# pipe in, so the command is shown and never attempted.
-#
-# `--verify-login` is the sign-in check. It needs a `verify_pattern` because it
-# exits 0 either way: it prints the JSON its own testLogin() returned, which is
-# {"success":false,...} when there is no usable token.
-[[host_requires]]
-name = "ms-365-mcp-server"
-minimum_version = "0.136.0"
-authorize_command = "ms-365-mcp-server --login"
-verify_command = "ms-365-mcp-server --verify-login"
-verify_pattern = '"success"\s*:\s*true'
-instruction = """
-Install the server on this host, verify it, then authorise it:
+# Delegated scopes, least privilege (design: native-oauth.md section 13.2):
+#   openid, profile    the id_token Arc checks (tenant + account); no data
+#   offline_access     the refresh token
+#   User.Read          GET /me: health probe and account check
+#   Mail.Read          read mail and folders, mail delta for knowledge
+#   Mail.Send          send-mail only (egress-tagged, approval-gated)
+#   Calendars.ReadWrite  create-calendar-event (egress-tagged) and reads
+#   Files.Read         the user's own OneDrive, read only
+[oauth]
+provider = "microsoft"
+authorize_url = "https://{login_host}/{tenant}/oauth2/v2.0/authorize"
+token_url = "https://{login_host}/{tenant}/oauth2/v2.0/token"
+console_url = "https://entra.microsoft.com/"
+refresh_token_secret = "refresh_token"
+client_auth = "post_form"
+pkce = true
+account = "openid_username"
+id_token_issuers = ["https://{login_host}/{tenant}/v2.0"]
+app_tenant = true
+default_cloud = "global"
+refresh_scopes = true
+scopes = [
+  "openid",
+  "profile",
+  "offline_access",
+  "User.Read",
+  "Mail.Read",
+  "Mail.Send",
+  "Calendars.ReadWrite",
+  "Files.Read",
+]
+authorize_params = { response_mode = "query", prompt = "select_account" }
 
-  1. npm pack @softeria/ms-365-mcp-server@0.136.0
-  2. echo 'bf953dae54cef1c2ea616b964f5b72beb8910f22b6e84c60cd94c14b6935b232  softeria-ms-365-mcp-server-0.136.0.tgz' | sha256sum -c -
-  3. npm install -g ./softeria-ms-365-mcp-server-0.136.0.tgz
-  4. Register an Entra ID application. You do not need to export anything: paste
-     its client ID, tenant ID and client secret into the connector panel and Arc
-     puts them in this server's environment for you.
-  5. ms-365-mcp-server --login    # only if you are signing in AT this host
+[oauth.clouds.global]
+label = "Commercial / GCC"
+login_host = "login.microsoftonline.com"
+api_host = "graph.microsoft.com"
 
-Install it, do not `npx` it. `npx -y <pkg>` resolves and executes whatever the
-registry serves at the moment of launch, which makes the digest in [artifact]
-describe bytes that are not the bytes that ran.
-"""
+[oauth.clouds.usgov]
+label = "GCC High"
+login_host = "login.microsoftonline.us"
+api_host = "graph.microsoft.us"
 
-# These three were declared and delivered nowhere: the server reads them from its
-# own environment and nothing put them there. [secrets.placement] is that missing
-# half. The variable names are this server's, taken from its README, and they live
-# here so that a rename upstream is a change to this file and to no other.
-#
-[[secrets]]
-name = "client_id"
-prompt = "Application (client) ID of your app registration. In the Azure portal open Microsoft Entra ID, then App registrations, then your app; it is the 'Application (client) ID' on the Overview page. Looks like 11111111-2222-3333-4444-555555555555."
-sensitive = false
+[oauth.clouds.dod]
+label = "DoD"
+login_host = "login.microsoftonline.us"
+api_host = "dod-graph.microsoft.us"
 
-[secrets.placement]
-variable = "MS365_MCP_CLIENT_ID"
-
-[[secrets]]
-name = "tenant_id"
-prompt = "Directory (tenant) ID, on the same Overview page as the client ID. If this app should work for any organisation, type: common"
-sensitive = false
-
-[secrets.placement]
-variable = "MS365_MCP_TENANT_ID"
-
-[[secrets]]
-name = "client_secret"
-prompt = "Client secret for that app registration. In the Azure portal open your app, then 'Certificates & secrets', click 'New client secret', give it any description, and copy the VALUE column (not Secret ID) immediately — Azure never shows it again."
-format = "api_token"
-
-[secrets.placement]
-variable = "MS365_MCP_CLIENT_SECRET"
-
-# The cheapest real authenticated call: what the health probe loop runs.
-# The MCP server answers a tool listing only when signed in.
+# The cheapest real authenticated call: GET /me, which also checks the signed-in
+# user is still this connection's account.
 [health]
 probe = "attachment"
 
 [tools]
-# Nine names out of 324. Every one of them is a name this manifest chose; a verb
-# the server starts serving that is not on this list can never register.
 allow = [
   "list-mail-messages",
   "get-mail-message",
@@ -166,59 +159,32 @@ name = "search-onedrive-files"
 description = "Search OneDrive files by name and content."
 classification = "read_only"
 
+# WHICH mailbox this connection is. Blank: filled in at the first connect from the
+# verified sign-in. Set: a sign-in as anyone else is refused and nothing is stored.
+[[secrets]]
+name = "account"
+prompt = "Which Microsoft 365 account this connection is for, for example josh@agency.gov. Leave blank and Arc fills it in from the account you sign in with."
+sensitive = false
+required = false
+format = "email"
+
+# Written by Connect from the deployment's Microsoft sign-in app, never typed.
+[[secrets]]
+name = "tenant_id"
+prompt = "Set for you when you click Connect, from the Microsoft sign-in app: the directory (tenant) ID this sign-in belongs to. You never type it here."
+sensitive = false
+required = false
+
+[[secrets]]
+name = "cloud"
+prompt = "Set for you when you click Connect, from the Microsoft sign-in app: which Microsoft cloud (Commercial / GCC, GCC High or DoD) this sign-in uses."
+sensitive = false
+required = false
+
+[[secrets]]
+name = "refresh_token"
+prompt = "Set for you when you click Connect. You never paste this."
+required = false
+
 [approval]
 default = "outbound"
-
-# `--read-only` and `--enabled-tools` are the
-# server's own controls, applied as defence in depth behind the `allow` list
-# above: the manifest bounds what may register, and these bound what the server
-# is willing to serve in the first place.
-[config.mcp]
-transport = "stdio"
-argv = [
-  "ms-365-mcp-server",
-  "--enabled-tools",
-  "^(list-mail-messages|get-mail-message|list-mail-folders|send-mail|list-calendar-events|get-calendar-view|create-calendar-event|list-folder-files|get-onedrive-file|search-onedrive-files)$",
-  "--allowed-scopes",
-  "User.Read Mail.Read Mail.Send Calendars.ReadWrite Files.Read",
-]
-client_name = "arc"
-
-[config.source]
-entrypoint = "arc_ext_microsoft365.source"
-
-[config.mcp.resilience]
-timeout_seconds = 60.0
-max_attempts = 3
-
-[config.mcp.tools.list-mail-messages]
-classification = "read_only"
-
-[config.mcp.tools.get-mail-message]
-classification = "read_only"
-
-[config.mcp.tools.list-mail-folders]
-classification = "read_only"
-
-[config.mcp.tools.send-mail]
-classification = "state_modifying"
-capability_tags = ["network_egress"]
-
-[config.mcp.tools.list-calendar-events]
-classification = "read_only"
-
-[config.mcp.tools.get-calendar-view]
-classification = "read_only"
-
-[config.mcp.tools.create-calendar-event]
-classification = "state_modifying"
-capability_tags = ["network_egress"]
-
-[config.mcp.tools.list-folder-files]
-classification = "read_only"
-
-[config.mcp.tools.get-onedrive-file]
-classification = "read_only"
-
-[config.mcp.tools.search-onedrive-files]
-classification = "read_only"

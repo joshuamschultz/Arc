@@ -54,6 +54,7 @@ from arcagent.extension.connection_health import (
 )
 from arcagent.extension.custody import CredentialRow, CredentialRowStore, RefreshLease
 from arcagent.extension.manifest import OAuthFlow
+from arcagent.extension.oauth_apps import OAuthApp, app_binding, bind_flow
 from arcagent.extension.secrets import Secret
 from arcagent.extension.state import ConnectionStateStore
 
@@ -141,10 +142,11 @@ class ClientCredentialSource(Protocol):
     """Where a provider's OAuth client id/secret come from: the deployment's app slot.
 
     :meth:`arcagent.extension.oauth_apps.OAuthAppStore.client_for` is the
-    production source; ``None`` means no app is set up for ``flow.provider``.
+    production source; ``None`` means no app is set up for ``flow.provider``. The
+    app also carries the tenant and cloud a bound flow's endpoints are filled from.
     """
 
-    async def __call__(self, flow: OAuthFlow) -> tuple[str, Secret] | None: ...
+    async def __call__(self, flow: OAuthFlow) -> OAuthApp | None: ...
 
 
 def _utcnow() -> datetime:
@@ -176,6 +178,7 @@ def holds_grant(row: CredentialRow | None, flow: OAuthFlow) -> bool:
 _CUSTODY_REASONS: Final[Mapping[str, str]] = {
     "CREDENTIAL_UNREADABLE": "credential_unreadable",
     "CREDENTIAL_CUSTODY_UNAVAILABLE": "custody_unavailable",
+    "OAUTH_APP_INVALID": "consent_required",
 }
 
 
@@ -328,7 +331,7 @@ class RenewalPlanner:
                 ),
             )
         generation = row.generation + (1 if rotated is not None else 0)
-        await self._mirror(connection, expires_at, now, flow)
+        await self._mirror(connection, expires_at, now, request.flow)
         self._audit(
             "connection.credential.renewed",
             connection,
@@ -350,7 +353,9 @@ class RenewalPlanner:
         connection = row.connection
         try:
             refresh = await self.rows.open_field(row, flow.refresh_token_secret)
-            client = await self.client(flow)
+            app = await self.client(flow)
+            bound = bind_flow(flow, app) if app is not None else flow
+            changed = await self._binding_changed(row, flow, app)
         except ExtensionError as exc:
             reason = _CUSTODY_REASONS.get(exc.code)
             if reason is None:
@@ -360,13 +365,33 @@ class RenewalPlanner:
         if refresh is None:
             await self._report(connection, "credential_missing", "no refresh token", row)
             raise _missing(connection, "refresh token")
-        if client is None:
+        if app is None:
             await self._report(connection, "credential_missing", "no OAuth client", row)
             raise _missing(connection, "OAuth client id/secret")
-        client_id, client_secret = client
+        if changed:
+            # A refresh token minted in one directory/cloud is never presented to
+            # another's token endpoint with another app's secret.
+            detail = "the sign-in app now points at a different directory or cloud; reconnect"
+            await self._fail(connection, "consent_required", detail, row)
+            raise CredentialRenewalError(error_code="consent_required", message=detail)
         return RefreshRequest(
-            flow=flow, refresh_token=refresh, client_id=client_id, client_secret=client_secret
+            flow=bound,
+            refresh_token=refresh,
+            client_id=app.client_id,
+            client_secret=app.client_secret,
         )
+
+    async def _binding_changed(
+        self, row: CredentialRow, flow: OAuthFlow, app: OAuthApp | None
+    ) -> bool:
+        """True when the grant's stored tenant/cloud differ from the app slot's now."""
+        if app is None:
+            return False
+        for name, expected in app_binding(flow, app).items():
+            stored = await self.rows.open_field(row, name)
+            if stored is None or stored.reveal() != expected:
+                return True
+        return False
 
     async def _call_provider(
         self, connection: str, request: RefreshRequest, row: CredentialRow

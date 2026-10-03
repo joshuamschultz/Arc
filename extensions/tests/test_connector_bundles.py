@@ -498,9 +498,7 @@ def test_a_sign_in_check_invokes_the_binary_it_belongs_to(
 #: Measured on the deployment: SIGNED OUT it prints "No tokens stored" and exits
 #: **0** — the identical exit code to success. Any check reading only the exit
 #: code reports an unauthorised Google Workspace as signed in, which is what the
-#: operator is looking at right now. ``ms-365-mcp-server --verify-login`` has the
-#: same shape: it calls process.exit(0) unconditionally and puts the answer in
-#: its JSON.
+#: operator was looking at.
 #:
 #: (m) marks output measured on the deployment host; the rest is taken from the
 #: upstream that publishes the command.
@@ -555,10 +553,6 @@ _RECORDED_OUTPUT: dict[str, tuple[tuple[int, str], tuple[int, str]]] = {
             "id\tINBOX\nname\tINBOX\ntype\tsystem\nmessages_total\t1204\n"
             "messages_unread\t3\nthreads_total\t980\nthreads_unread\t3",
         ),
-    ),
-    "microsoft365": (
-        (0, '{"success":false,"message":"Login failed - no token received"}'),
-        (0, '{"success":true,"userData":{"displayName":"Joshua Schultz"}}'),
     ),
 }
 

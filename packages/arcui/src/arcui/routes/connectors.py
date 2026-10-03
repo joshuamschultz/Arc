@@ -86,6 +86,7 @@ from arcui.schemas import (
     ConnectorUnreadableBundle,
     OAuthAppResponse,
     OAuthBeginResponse,
+    OAuthCloudChoice,
 )
 
 NOT_INSTALLED = arcagent.NOT_INSTALLED
@@ -96,6 +97,7 @@ Connection = arcagent.Connection
 Connections = arcagent.Connections
 ConnectorPlan = arcagent.ConnectorPlan
 ExtensionError = arcagent.ExtensionError
+OAuthFlow = arcagent.OAuthFlow
 HostPrerequisiteDirector = arcagent.HostPrerequisiteDirector
 HostVerdict = arcagent.HostVerdict
 Tier = arcagent.Tier
@@ -1085,6 +1087,11 @@ async def get_oauth_app(request: Request) -> JSONResponse:
         status = await connections.oauth_app_status(provider)
     except ExtensionError as exc:
         return _refused(exc)
+    flow = _provider_flow(connections, provider)
+    clouds = []
+    if flow is not None and flow.clouds:
+        ordered = sorted(flow.clouds.items(), key=lambda item: item[0] != flow.default_cloud)
+        clouds = [OAuthCloudChoice(id=key, label=cloud.label) for key, cloud in ordered]
     return JSONResponse(
         OAuthAppResponse(
             provider=provider,
@@ -1092,6 +1099,10 @@ async def get_oauth_app(request: Request) -> JSONResponse:
             client_id_hint=status.client_id_hint,
             redirect_uri=connections.oauth_redirect_uri,
             console_url=_console_url(connections, provider),
+            tenant_required=flow is not None and flow.app_tenant,
+            tenant_id=status.tenant_id,
+            cloud=status.cloud,
+            clouds=clouds,
         ).model_dump(mode="json")
     )
 
@@ -1113,11 +1124,18 @@ async def put_oauth_app(request: Request) -> JSONResponse:
     client_id, client_secret = body.get("client_id"), body.get("client_secret")
     if not isinstance(client_id, str) or not isinstance(client_secret, str):
         return _error("client_id and client_secret are required", 400)
+    tenant_id, cloud = body.get("tenant_id", ""), body.get("cloud", "")
+    if not isinstance(tenant_id, str) or not isinstance(cloud, str):
+        return _error("tenant_id and cloud must be text", 400)
 
     provider = request.path_params["provider"]
     try:
         await _connections(request).set_oauth_app(
-            provider, client_id=client_id, client_secret=client_secret
+            provider,
+            client_id=client_id,
+            client_secret=client_secret,
+            tenant_id=tenant_id,
+            cloud=cloud,
         )
     except ExtensionError as exc:
         emit_mutation_audit(
@@ -1132,6 +1150,14 @@ async def put_oauth_app(request: Request) -> JSONResponse:
         request, target=f"oauth_app:{provider}", operation="oauth_app.set", outcome="applied"
     )
     return JSONResponse({"configured": True})
+
+
+def _provider_flow(connections: Connections, provider: str) -> OAuthFlow | None:
+    """The ``[oauth]`` flow a bundle declares for ``provider`` (``None`` when none does)."""
+    try:
+        return connections.oauth_provider_flow(provider)
+    except ExtensionError:
+        return None
 
 
 def _console_url(connections: Connections, provider: str) -> str:
