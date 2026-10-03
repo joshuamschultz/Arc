@@ -262,20 +262,31 @@ class WorkflowDefinition(BaseModel):
 
     def to_document(self) -> dict[str, Any]:
         """The faithful TOML document shape — round-trips through the parser."""
+        return self._document(exclude_defaults=False)
+
+    def _document(self, *, exclude_defaults: bool) -> dict[str, Any]:
         workflow = _drop_empty(
             self.model_dump(
                 by_alias=True,
                 exclude={"nodes", "trigger", "input_spec"},
                 exclude_none=True,
+                exclude_defaults=exclude_defaults,
             )
         )
         document: dict[str, Any] = {"workflow": workflow}
         if self.trigger is not None:
-            document["trigger"] = _drop_empty(self.trigger.model_dump(exclude_none=True))
+            document["trigger"] = _drop_empty(
+                self.trigger.model_dump(exclude_none=True, exclude_defaults=exclude_defaults)
+            )
         if self.input_spec is not None:
             document["input"] = self.input_spec.model_dump(by_alias=True)
         document["node"] = [
-            _drop_empty(node.model_dump(by_alias=True, exclude_none=True)) for node in self.nodes
+            _drop_empty(
+                node.model_dump(
+                    by_alias=True, exclude_none=True, exclude_defaults=exclude_defaults
+                )
+            )
+            for node in self.nodes
         ]
         return document
 
@@ -285,8 +296,17 @@ class WorkflowDefinition(BaseModel):
         Presentational choices are erased: node order and ``needs`` order are
         sorted, empty collections and absent fields are dropped. Two documents
         that differ only in formatting produce identical bytes here.
+
+        Fields still at their default are **excluded**. A signature binds what
+        the operator authored, not the schema's defaults, so adding or removing
+        a defaulted field in a later release does not void every signature in
+        the fleet (the alpha-2 regression). ``schema_version`` is always kept
+        so a bump of its default can never alias an older document. Changing
+        the *value* of an existing default is a behavior change and needs a
+        schema_version bump plus ``arc workflow migrate --resign``.
         """
-        document = self.to_document()
+        document = self._document(exclude_defaults=True)
+        document["workflow"]["schema_version"] = self.schema_version
         nodes = []
         for node in document["node"]:
             normalized = dict(node)
