@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react'
-import { Fingerprint, Link2, ScrollText, ShieldAlert } from 'lucide-react'
+import type { MouseEvent, ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { Fingerprint, Link2, ScrollText, ShieldAlert, Unlink } from 'lucide-react'
 import { SignedSeal } from '@/components/hitl'
 import { SeverityBadge } from '@/components/status-badge'
 import { StatusChip } from '@/components/ai'
 import { cn } from '@/lib/utils'
 import { shortId } from '@/lib/format'
-import { isSigned, isVerified } from './ledger-utils'
+import { auditLinks, isSigned, isVerified } from './ledger-utils'
 import type { AuditEvent } from '@/lib/types'
 
 /* ---------------------------------------------------------------------------
@@ -54,6 +55,61 @@ export function LedgerHash({
   )
 }
 
+const CHIP_CLASS =
+  'inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-foreground hover:border-primary/40 hover:text-primary'
+
+/**
+ * Where an audit row came from: one chip per causal id. A run, tool call,
+ * workflow run or connection navigates to its screen; an LLM call opens its
+ * trace in place through `onOpenLlmCall`.
+ */
+export function AuditLinkChips({
+  event,
+  onOpenLlmCall,
+}: {
+  event: AuditEvent
+  onOpenLlmCall?: (traceId: string) => void
+}) {
+  const links = auditLinks(event)
+  if (links.length === 0) return <span className="text-xs text-muted-foreground">—</span>
+  // A chip sits inside a clickable row; it must not also open the row's drawer.
+  const stop = (e: MouseEvent<HTMLElement>) => e.stopPropagation()
+  return (
+    <div className="flex flex-wrap gap-1">
+      {links.map((link) => {
+        const name = `${link.label} ${link.id}`
+        if (link.to) {
+          return (
+            <Link
+              key={link.kind}
+              to={link.to}
+              onClick={stop}
+              aria-label={`Open ${name}`}
+              className={CHIP_CLASS}
+            >
+              {link.label} {shortId(link.id, 10)}
+            </Link>
+          )
+        }
+        return (
+          <button
+            key={link.kind}
+            type="button"
+            aria-label={`Open ${name}`}
+            onClick={(e) => {
+              stop(e)
+              if (link.traceId) onOpenLlmCall?.(link.traceId)
+            }}
+            className={CHIP_CLASS}
+          >
+            {link.label} {shortId(link.id, 10)}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /**
  * The verdict/severity cell. A real severity level (critical…low) is graded by
  * `SeverityBadge`; anything else is an outcome verdict (allow / denied /
@@ -72,10 +128,12 @@ export function AuditVerdict({ value }: { value: string | undefined }) {
 export function LedgerSummary({
   total,
   verified,
+  broken,
   denials,
 }: {
   total: number
   verified: number
+  broken: number
   denials: number
 }) {
   return (
@@ -90,12 +148,25 @@ export function LedgerSummary({
         </div>
       </div>
       <div className="ml-auto flex items-center gap-5">
-        <LedgerMetric icon={<ScrollText className="size-3.5" />} label="Events" value={total} />
+        <LedgerMetric
+          icon={<ScrollText className="size-3.5" />}
+          label="Events"
+          value={total}
+          testId="ledger-total"
+        />
         <LedgerMetric
           icon={<Link2 className="size-3.5 text-signed" />}
           label="Verified"
           value={verified}
           tone="signed"
+          testId="ledger-verified"
+        />
+        <LedgerMetric
+          icon={<Unlink className="size-3.5 text-status-error" />}
+          label="Broken"
+          value={broken}
+          tone={broken > 0 ? 'error' : undefined}
+          testId="ledger-broken"
         />
         <LedgerMetric
           icon={<ShieldAlert className="size-3.5 text-status-error" />}
@@ -113,11 +184,13 @@ function LedgerMetric({
   label,
   value,
   tone,
+  testId,
 }: {
   icon: ReactNode
   label: string
   value: number
   tone?: 'signed' | 'error'
+  testId?: string
 }) {
   const valueTone =
     tone === 'signed' ? 'text-signed' : tone === 'error' ? 'text-status-error' : 'text-foreground'
@@ -125,7 +198,10 @@ function LedgerMetric({
     <div className="flex items-center gap-2">
       <span className="text-muted-foreground/70">{icon}</span>
       <div className="leading-none">
-        <div className={cn('font-display text-base font-extrabold tabular-nums', valueTone)}>
+        <div
+          data-testid={testId}
+          className={cn('font-display text-base font-extrabold tabular-nums', valueTone)}
+        >
           {value}
         </div>
         <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">

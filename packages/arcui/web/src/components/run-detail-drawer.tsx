@@ -12,7 +12,8 @@ import { LoadingRows, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { TraceDrawer } from '@/components/trace-drawer'
 import { mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
-import { useRunRecalls, useRunTimeline } from '@/lib/queries'
+import { SignedMark } from '@/components/audit/ledger'
+import { useRunAudit, useRunRecalls, useRunTimeline } from '@/lib/queries'
 import { fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
 import type { AuditEvent, RunSummary, Trace } from '@/lib/types'
 
@@ -202,6 +203,37 @@ function RunRecalls({ runId }: { runId: string | null }) {
   )
 }
 
+/** The signed audit rows written under this run (causal.run_id): what policy
+ *  allowed or denied, what executed, and whether each row's chain link verified. */
+function RunAudit({ runId }: { runId: string | null }) {
+  const { data } = useRunAudit(runId)
+  const events: AuditEvent[] = data?.events ?? []
+  if (events.length === 0) return null
+  return (
+    <section
+      aria-label="Audit events"
+      className="mb-1 space-y-2 rounded-lg border border-border bg-muted/20 p-3"
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Audit events
+      </div>
+      <ul className="space-y-1">
+        {events.map((e, i) => (
+          <li key={`${e.seq ?? i}-${e.event_hash ?? i}`} className="flex items-center gap-2 text-xs">
+            <SignedMark event={e} />
+            <span className="text-foreground">{e.action_label ?? e.action ?? 'event'}</span>
+            {e.outcome && <span className="text-muted-foreground">{e.outcome}</span>}
+            {e.tool_call_id && (
+              <span className="font-mono text-[10px] text-muted-foreground">{shortId(e.tool_call_id, 10)}</span>
+            )}
+            <span className="ml-auto tabular-nums text-muted-foreground">{fmtTime(String(e.ts ?? ''))}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 /** Per-run timeline in a side drawer: tools (with in/out), code, llm, lifecycle. */
 export function RunDetailDrawer({
   run,
@@ -234,6 +266,7 @@ export function RunDetailDrawer({
           </SheetHeader>
           <div className="flex-1 space-y-1.5 overflow-auto p-4">
             <RunRecalls runId={open ? run?.run_id ?? null : null} />
+            <RunAudit runId={open ? run?.run_id ?? null : null} />
             {isLoading && <LoadingRows rows={6} />}
             {!isLoading && !items.length && <EmptyState title="No steps recorded for this run" />}
             {items.map((item, i) => (

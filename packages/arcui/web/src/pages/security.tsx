@@ -10,14 +10,28 @@ import { AgentIdentity } from '@/components/AgentIdentity'
 import { SeverityBadge } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
 import {
+  AuditLinkChips,
   AuditVerdict,
   LedgerHash,
   LedgerSummary,
   SignedMark,
 } from '@/components/audit/ledger'
-import { auditField, isSigned, isVerified } from '@/components/audit/ledger-utils'
-import { useTeamAudit } from '@/lib/queries'
-import { relativeTime, fmtTime } from '@/lib/format'
+import {
+  auditField,
+  causalChain,
+  initiatorOf,
+  isSigned,
+  isVerified,
+  signedByLabel,
+  verificationOf,
+  type AuditFilters,
+} from '@/components/audit/ledger-utils'
+import { CausalFilterBar } from '@/components/audit/causal-filters'
+import { Button } from '@/components/ui/button'
+import { TraceDrawer } from '@/components/trace-drawer'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
+import { useReverifyAudit, useTeamAudit } from '@/lib/queries'
+import { relativeTime, fmtTime, shortId } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { AgentIdentityShape, AuditEvent } from '@/lib/types'
 
@@ -47,15 +61,29 @@ function eventIdentity(e: AuditEvent): AgentIdentityShape {
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-/** Compact actor cell — the shared H-007 renderer, so an Audit row reads the
- *  identical name/DID every other screen shows instead of a raw truncated DID. */
+/** Compact actor cell. A row with a causal chain reads as the initiator kind and
+ *  id ("Agent · olivia"), with who signed it underneath ("signed by operator");
+ *  an older row falls back to the shared H-007 identity renderer. */
 function ActorCell({ event }: { event: AuditEvent }) {
+  const initiator = initiatorOf(event)
+  if (initiator) {
+    const name = event.actor ?? event.identity?.name ?? shortId(initiator.id, 24)
+    const signedBy = signedByLabel(event)
+    return (
+      <div className="leading-tight" title={initiator.id}>
+        <div className="text-xs font-medium text-foreground">
+          {initiator.kind} · {name}
+        </div>
+        {signedBy && <div className="text-[10px] text-muted-foreground">{signedBy}</div>}
+      </div>
+    )
+  }
   const identity = eventIdentity(event)
   const fallback = identity.type && identity.type !== 'unknown' ? capitalize(identity.type) : undefined
   return <AgentIdentity identity={identity} fallbackName={fallback} size="sm" showAvatar={false} />
 }
 
-const columns: ColumnDef<AuditEvent, unknown>[] = [
+const buildColumns = (onOpenLlmCall: (traceId: string) => void): ColumnDef<AuditEvent, unknown>[] => [
   {
     accessorFn: (r) => auditField(r, 'ts', 'timestamp') ?? '',
     id: 'timestamp',
@@ -115,6 +143,12 @@ const columns: ColumnDef<AuditEvent, unknown>[] = [
     },
   },
   {
+    accessorFn: (r) => auditField(r, 'run_id', 'tool_call_id', 'llm_call_id', 'workflow_run_id', 'connection_id') ?? '',
+    id: 'origin',
+    header: 'Origin',
+    cell: (c) => <AuditLinkChips event={c.row.original} onOpenLlmCall={onOpenLlmCall} />,
+  },
+  {
     accessorFn: (r) => verdictOf(r) ?? '',
     id: 'severity',
     header: 'Outcome',
@@ -137,11 +171,20 @@ const columns: ColumnDef<AuditEvent, unknown>[] = [
 
 export function SecurityPage() {
   const [filter, setFilter] = useState('all')
-  const query = useTeamAudit(filter === 'all' ? undefined : filter, 100)
+  const [causal, setCausal] = useState<AuditFilters>({})
+  const filters = useMemo<AuditFilters>(
+    () => ({ ...causal, filter: filter === 'all' ? undefined : filter }),
+    [causal, filter],
+  )
+  const query = useTeamAudit(filters, 100)
   const [active, setActive] = useState<AuditEvent | null>(null)
+  const [traceId, setTraceId] = useState<string | null>(null)
+  const columns = useMemo(() => buildColumns(setTraceId), [])
 
   const events = useMemo(() => query.data?.events ?? [], [query.data])
 
+  // Header counts come from the server's whole-ledger totals; the page is only
+  // the fallback for a server that predates them.
   const summary = useMemo(() => {
     let verified = 0
     let denials = 0
@@ -150,8 +193,14 @@ export function SecurityPage() {
       const v = (verdictOf(e) ?? '').toLowerCase()
       if (v === 'deny' || v === 'denied' || v === 'blocked') denials += 1
     }
-    return { total: events.length, verified, denials }
-  }, [events])
+    const totals = query.data?.totals
+    return {
+      total: totals?.total ?? events.length,
+      verified: totals?.verified ?? verified,
+      broken: totals?.broken ?? 0,
+      denials,
+    }
+  }, [events, query.data])
 
   return (
     <div className="flex h-full flex-col">
@@ -160,9 +209,15 @@ export function SecurityPage() {
         description="The tamper-evident signed ledger — every control action, signature, and policy denial, in order."
       />
       <div className="flex-1 space-y-5 overflow-auto p-6">
-        <LedgerSummary total={summary.total} verified={summary.verified} denials={summary.denials} />
+        <LedgerSummary
+          total={summary.total}
+          verified={summary.verified}
+          broken={summary.broken}
+          denials={summary.denials}
+        />
 
         <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
+        <CausalFilterBar value={causal} onApply={setCausal} />
         <FieldHelp helpKey="audit.event" route="security" />
 
         <QueryState query={query} isEmpty={() => events.length === 0} empty={
@@ -193,8 +248,61 @@ export function SecurityPage() {
         description={active ? relativeTime(auditField(active, 'ts', 'timestamp')) : undefined}
         payload={active ?? undefined}
       >
-        {active && <AuditDetail event={active} />}
+        {active && <AuditDetail event={active} onOpenLlmCall={setTraceId} />}
       </EventDrawer>
+      <TraceDrawer
+        trace={traceId ? { trace_id: traceId } : null}
+        open={traceId !== null}
+        onOpenChange={(o) => !o && setTraceId(null)}
+      />
+    </div>
+  )
+}
+
+/** The verified state in plain words, with the seq where a chain broke, and — for
+ *  an operator — the action that re-walks the ledger and refreshes the verdicts. */
+function VerificationNote({
+  event,
+  signed,
+  verified,
+}: {
+  event: AuditEvent
+  signed: boolean
+  verified: boolean
+}) {
+  const [operatorMode] = useOperatorMode()
+  const reverify = useReverifyAudit()
+  const state = verificationOf(event)
+  const result = reverify.data
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {state.state === 'broken'
+          ? `Chain broken at seq ${state.seq ?? 'unknown'}: a record after this point does not match its signature or hash.`
+          : signStateSentence(signed, verified)}
+      </p>
+      {operatorMode && state.state !== 'verified' && (
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={reverify.isPending}
+            onClick={() => reverify.mutate()}
+          >
+            Re-verify ledger
+          </Button>
+          {result && (
+            <span className="text-[11px] text-muted-foreground">
+              {result.verified} of {result.events} verified
+              {result.broken > 0 ? `, ${result.broken} broken` : ''}
+            </span>
+          )}
+          {reverify.isError && (
+            <span className="text-[11px] text-status-error">Re-verify failed.</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -248,9 +356,16 @@ function VerdictMark({ value }: { value: string | undefined }) {
  * The drawer's detail — a plain-language summary (what happened, who did it, the
  * target, the decision) above the technical fields, hash chain, and raw JSON.
  */
-function AuditDetail({ event }: { event: AuditEvent }) {
+function AuditDetail({
+  event,
+  onOpenLlmCall,
+}: {
+  event: AuditEvent
+  onOpenLlmCall: (traceId: string) => void
+}) {
   const signed = isSigned(event)
   const verified = isVerified(event)
+  const chain = causalChain(event)
   const verdict = verdictOf(event)
   const agent = agentOf(event)
   const target = auditField(event, 'target')
@@ -278,10 +393,27 @@ function AuditDetail({ event }: { event: AuditEvent }) {
             {reason}
           </p>
         )}
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {signStateSentence(signed, verified)}
-        </p>
+        <VerificationNote event={event} signed={signed} verified={verified} />
       </div>
+
+      {chain.length > 0 && (
+        <section
+          aria-label="Causal chain"
+          className="space-y-2 rounded-lg border border-border bg-muted/20 p-3"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Causal chain
+          </div>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+            {chain.map(({ label, value }) => (
+              <Field key={label} label={label}>
+                <span className="break-all font-mono">{value}</span>
+              </Field>
+            ))}
+          </dl>
+          <AuditLinkChips event={event} onOpenLlmCall={onOpenLlmCall} />
+        </section>
+      )}
 
       <RecalledCards event={event} />
 

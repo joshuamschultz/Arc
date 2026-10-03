@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
+import { auditQuery, type AuditFilters } from './audit-query'
 import type {
   AgentConnectorsResponse,
   ConnectionsResponse,
@@ -31,6 +32,7 @@ import type {
   AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
+  AuditReverifyResponse,
   AuthMeResponse,
   BlobFoldersResponse,
   ChannelsResponse,
@@ -342,11 +344,27 @@ export const useSharedKnowledgeSearch = (q: string) =>
     enabled: q.trim().length > 0,
   })
 
-export const useTeamAudit = (filter?: string, limit = 100) =>
-  useApiQuery<AuditEventsResponse>(
-    ['team', 'audit', filter ?? 'all', limit],
-    `/api/team/audit?limit=${limit}${filter ? `&filter=${filter}` : ''}`,
-  )
+export const useTeamAudit = (filters: AuditFilters = {}, limit = 100) => {
+  const query = auditQuery(filters, limit)
+  return useApiQuery<AuditEventsResponse>(['team', 'audit', query], `/api/team/audit?${query}`)
+}
+
+/** Operator action: re-walk every chain and refresh the stored verdicts. */
+export const useReverifyAudit = () => {
+  const client = useQueryClient()
+  return useMutation<AuditReverifyResponse, Error, void>({
+    mutationFn: () => apiPost('/api/team/audit/reverify'),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['team', 'audit'] }),
+  })
+}
+
+/** The signed audit rows whose causal chain names this run (run drawer). */
+export const useRunAudit = (runId: string | null) =>
+  useQuery<AuditEventsResponse>({
+    queryKey: ['run', runId, 'audit'],
+    queryFn: ({ signal }) => apiGet(`/api/runs/${encodeURIComponent(runId!)}/audit`, signal),
+    enabled: !!runId,
+  })
 
 // A task's activity timeline (FR-12) — the audit chain filtered to
 // `target == "task:<id>"`, newest first.
