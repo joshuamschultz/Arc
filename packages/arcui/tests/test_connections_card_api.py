@@ -45,6 +45,40 @@ def test_row_carries_status_and_knowledge_sync(fleet: _Fleet) -> None:
     assert all(item["running"] for item in syncs.values())
 
 
+def test_a_shared_sync_shows_on_every_subscribers_row_and_hides_their_old_rows(
+    fleet: _Fleet,
+) -> None:
+    """P18-4: the connection syncs once; the card still shows one row per agent."""
+    from arcagent.extension.knowledge_subscriptions import knowledge_principal
+
+    other = "did:arc:other:agent"
+    fleet.install()
+    fleet.sync(knowledge_principal(_INSTANCE), _INSTANCE, ttl=60)
+    fleet.sync(fleet.did, _INSTANCE, ttl=0.01)  # the agent's own row from before it subscribed
+    registry = arcagent.KnowledgeSubscriptions(fleet.backend, actor_did=fleet.did)
+    for agent in (fleet.did, other):
+        asyncio.run(
+            registry.put(
+                arcagent.KnowledgeSubscription(
+                    agent_did=agent,
+                    connection_id=_INSTANCE,
+                    source_id="pool",
+                    approval_id="approval",
+                    profile="lexical",
+                )
+            )
+        )
+
+    (row,) = fleet.listing()
+
+    agents = sorted(item["agent"] for item in row["knowledge_sync"])
+    assert agents == sorted(["acme", other]), row["knowledge_sync"]
+    assert all(item["running"] for item in row["knowledge_sync"]), "rows come from the shared run"
+    assert not any(
+        item["agent"].startswith("did:arc:knowledge:") for item in row["knowledge_sync"]
+    )
+
+
 def test_display_status_is_syncing_only_with_a_live_lease(fleet: _Fleet) -> None:
     fleet.install()
     fleet.sync(fleet.did, _INSTANCE, ttl=0.01)

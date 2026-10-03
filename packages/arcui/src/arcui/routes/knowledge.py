@@ -31,6 +31,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit
+from arcui.routes.connected_data import connected_data_service
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -627,6 +628,29 @@ async def list_datastore_tables(request: Request) -> JSONResponse:
     return JSONResponse({"items": [t.model_dump(mode="json") for t in tables]})
 
 
+async def _shared_documents(
+    request: Request, agent_id: str, agent_did: str, source_id: str, query: str | None
+) -> list[Any] | None:
+    """A shared connection store's documents as this agent reads them (P18-4).
+
+    ``None`` when ``source_id`` is not a shared store the agent reads (or the agent
+    is not running here): the caller falls back to the agent's own store. The
+    running agent's service applies the same subscription check its turns do.
+    """
+    if not source_id:
+        return None
+    service = await connected_data_service(request, agent_id)
+    read = getattr(service, "shared_documents", None)
+    if read is None:
+        return None
+    try:
+        documents: list[Any] | None = await read(source_id, caller_did=agent_did, query=query)
+    except Exception:  # reason: a sick shared store degrades to the agent's own view
+        logger.warning("shared knowledge store unreadable for %s", agent_id, exc_info=True)
+        return None
+    return documents
+
+
 async def document_search(request: Request) -> JSONResponse:
     """GET .../knowledge/documents?source=&q= — per-source document search."""
     agent_id = request.path_params["agent_id"]
@@ -636,6 +660,9 @@ async def document_search(request: Request) -> JSONResponse:
 
     query = request.query_params.get("q")
     source_id = request.query_params.get("source", "")
+    shared = await _shared_documents(request, agent_id, agent.did, source_id, query)
+    if shared is not None:
+        return JSONResponse({"items": [h.model_dump(mode="json") for h in shared]})
     op = _operator_for(Path(agent.workspace_path), agent.did)
     try:
         # No query lists what the source holds. Search alone left an operator

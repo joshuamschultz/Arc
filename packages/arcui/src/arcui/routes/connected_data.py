@@ -58,7 +58,7 @@ def _agent(request: Request, agent_id: str) -> Any | None:
     return cache.get(did) if cache is not None and did is not None else None
 
 
-async def _service(request: Request, agent_id: str) -> Any | None:
+async def connected_data_service(request: Request, agent_id: str) -> Any | None:
     """Resolve only the optional public capability service, never its internals."""
     agent = _agent(request, agent_id)
     registry = getattr(agent, "_capability_registry", None)
@@ -151,7 +151,7 @@ def _proposal_wire(proposal: Any) -> dict[str, Any] | None:
 
 async def connected_sources(request: Request) -> JSONResponse:
     """List every account immediately after it is connected, even pre-ingest."""
-    service = await _service(request, request.path_params["agent_id"])
+    service = await connected_data_service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"items": [], "status": "degraded"})
     return JSONResponse({"items": [_status_wire(item) for item in await service.list_sources()]})
@@ -206,7 +206,7 @@ async def activate_connected_data(request: Request) -> JSONResponse:
 
 async def sync_status(request: Request) -> JSONResponse:
     """Compatibility projection for existing operational status consumers."""
-    service = await _service(request, request.path_params["agent_id"])
+    service = await connected_data_service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"items": [], "status": "degraded"})
     return JSONResponse({"items": [_status_wire(item) for item in await service.list_sources()]})
@@ -214,7 +214,7 @@ async def sync_status(request: Request) -> JSONResponse:
 
 async def get_mapping_proposal(request: Request) -> JSONResponse:
     """Read the current mapping proposal and its approval state."""
-    service = await _service(request, request.path_params["agent_id"])
+    service = await connected_data_service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"item": None, "status": "degraded"})
     source_id = request.path_params["source_id"]
@@ -254,7 +254,7 @@ async def stage_mapping(request: Request) -> JSONResponse:
         )
     agent_id = request.path_params["agent_id"]
     source_id = request.path_params["source_id"]
-    service = await _service(request, agent_id)
+    service = await connected_data_service(request, agent_id)
     if service is None:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
@@ -317,7 +317,7 @@ async def list_profile_reviews(request: Request) -> JSONResponse:
     denied = _operator(request)
     if denied is not None:
         return denied
-    service = await _service(request, request.path_params["agent_id"])
+    service = await connected_data_service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"items": []})
     status = request.query_params.get("status")
@@ -338,7 +338,7 @@ async def resolve_profile_review(request: Request) -> JSONResponse:
         return JSONResponse(
             ErrorResponse(error="unsupported review decision").model_dump(), status_code=400
         )
-    service = await _service(request, agent_id)
+    service = await connected_data_service(request, agent_id)
     if service is None:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
@@ -366,7 +366,7 @@ async def resolve_profile_review(request: Request) -> JSONResponse:
 
 async def list_resources(request: Request) -> JSONResponse:
     """List selectable source containers without reading their content."""
-    service = await _service(request, request.path_params["agent_id"])
+    service = await connected_data_service(request, request.path_params["agent_id"])
     if service is None:
         return JSONResponse({"items": []})
     source_id = request.path_params["source_id"]
@@ -407,7 +407,7 @@ async def select_resources(request: Request) -> JSONResponse:
         )
     agent_id = request.path_params["agent_id"]
     source_id = request.path_params["source_id"]
-    service = await _service(request, agent_id)
+    service = await connected_data_service(request, agent_id)
     if service is None:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
@@ -453,7 +453,7 @@ async def sync_action(request: Request) -> JSONResponse:
     agent_id = request.path_params["agent_id"]
     source_id = request.path_params["source_id"]
     action = request.path_params["action"]
-    service = await _service(request, agent_id)
+    service = await connected_data_service(request, agent_id)
     if service is None:
         return JSONResponse(
             ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
@@ -506,6 +506,55 @@ async def sync_action(request: Request) -> JSONResponse:
     )
 
 
+_MIGRATION_FIELDS = (
+    "connection_id",
+    "status",
+    "detail",
+    "documents",
+    "adopted",
+    "deduplicated",
+    "skipped",
+)
+
+
+async def migrate_shared(request: Request) -> JSONResponse:
+    """Move the agent's own stores of shared connections into their shared stores (P18-4).
+
+    ``{"dry_run": true}`` (the default) reports what would move and changes
+    nothing. Nothing is fetched from a provider either way; the service audits
+    each connection's outcome and this route audits the request.
+    """
+    denied = _operator(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    dry_run = body.get("dry_run", True) if isinstance(body, dict) else True
+    if not isinstance(dry_run, bool):
+        return JSONResponse(
+            ErrorResponse(error="dry_run must be true or false").model_dump(), status_code=400
+        )
+    agent_id = request.path_params["agent_id"]
+    service = await connected_data_service(request, agent_id)
+    migrate = getattr(service, "migrate_to_shared", None)
+    if migrate is None:
+        return JSONResponse(
+            ErrorResponse(error="connected-data module unavailable").model_dump(), status_code=503
+        )
+    results = await migrate(dry_run=dry_run)
+    items = [{name: _value(result, name) for name in _MIGRATION_FIELDS} for result in results]
+    emit_mutation_audit(
+        request,
+        target=f"agent:{agent_id}/knowledge",
+        operation="connected_data.migrate_shared",
+        outcome="dry_run" if dry_run else "applied",
+        detail=",".join(f"{item['connection_id']}={item['status']}" for item in items),
+    )
+    return JSONResponse({"dry_run": dry_run, "items": items})
+
+
 routes = [
     Route(
         "/api/agents/{agent_id}/knowledge/connected-data/activate",
@@ -553,14 +602,21 @@ routes = [
         sync_action,
         methods=["POST"],
     ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/shared-migration",
+        migrate_shared,
+        methods=["POST"],
+    ),
 ]
 
 __all__ = [
     "activate_connected_data",
+    "connected_data_service",
     "connected_sources",
     "get_mapping_proposal",
     "list_profile_reviews",
     "list_resources",
+    "migrate_shared",
     "resolve_profile_review",
     "routes",
     "select_resources",

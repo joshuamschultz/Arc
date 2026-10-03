@@ -13,21 +13,20 @@ import pytest
 from arcstore.backends.memory import FakeBackend
 
 from arcagent.connected_data import MappingDeniedError
-from arcagent.extension.source import SourceDescription
-from arcagent.modules.connected_data.shared import (
-    SharedKnowledge,
-    SubscriberAuthority,
-    Subscription,
-    SubscriptionRegistry,
+from arcagent.extension.knowledge_subscriptions import (
+    KnowledgeSubscription,
+    KnowledgeSubscriptions,
     knowledge_principal,
 )
+from arcagent.extension.source import SourceDescription
+from arcagent.modules.connected_data.shared import SharedKnowledge, SubscriberAuthority
 
 _A = "did:arc:test:agent-a"
 _B = "did:arc:test:agent-b"
 
 
-def _subscription(agent_did: str, *, approval_id: str = "approval-a") -> Subscription:
-    return Subscription(
+def _subscription(agent_did: str, *, approval_id: str = "approval-a") -> KnowledgeSubscription:
+    return KnowledgeSubscription(
         agent_did=agent_did,
         connection_id="wiki",
         source_id="pool",
@@ -55,7 +54,7 @@ def _source() -> SourceDescription:
 
 @pytest.mark.asyncio
 async def test_a_writer_whose_subscription_is_gone_is_refused_mid_run() -> None:
-    registry = SubscriptionRegistry(FakeBackend(), actor_did=_A)
+    registry = KnowledgeSubscriptions(FakeBackend(), actor_did=_A)
     await registry.put(_subscription(_A))
     authority = SubscriberAuthority(registry, _A, "wiki", "approval-a")
     assert await authority.authorized_homes() is not None
@@ -67,7 +66,7 @@ async def test_a_writer_whose_subscription_is_gone_is_refused_mid_run() -> None:
 
 @pytest.mark.asyncio
 async def test_a_writer_cannot_ride_a_subscription_verified_against_another_approval() -> None:
-    registry = SubscriptionRegistry(FakeBackend(), actor_did=_A)
+    registry = KnowledgeSubscriptions(FakeBackend(), actor_did=_A)
     await registry.put(_subscription(_A, approval_id="approval-new"))
 
     stale = SubscriberAuthority(registry, _A, "wiki", "approval-old")
@@ -78,7 +77,7 @@ async def test_a_writer_cannot_ride_a_subscription_verified_against_another_appr
 @pytest.mark.asyncio
 async def test_an_agent_lists_only_its_own_subscriptions() -> None:
     backend = FakeBackend()
-    registry = SubscriptionRegistry(backend, actor_did=_A)
+    registry = KnowledgeSubscriptions(backend, actor_did=_A)
     await registry.put(_subscription(_A))
     await registry.put(_subscription(_B))
 
@@ -91,9 +90,9 @@ async def test_an_agent_lists_only_its_own_subscriptions() -> None:
 @pytest.mark.asyncio
 async def test_a_malformed_subscription_row_authorizes_nothing() -> None:
     backend = FakeBackend()
-    registry = SubscriptionRegistry(backend, actor_did=_A)
+    registry = KnowledgeSubscriptions(backend, actor_did=_A)
     await backend.mutable_write(
-        SubscriptionRegistry.COLLECTION,
+        KnowledgeSubscriptions.COLLECTION,
         "forged",
         {"agent_did": _A, "connection_id": "wiki", "source_id": "pool"},
         actor_did=_A,

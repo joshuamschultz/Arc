@@ -120,6 +120,31 @@ def knowledge_rows(
     ]
 
 
+async def per_agent_rows(
+    rows: Sequence[SourceSyncRow], subscriptions: arcagent.KnowledgeSubscriptions
+) -> list[SourceSyncRow]:
+    """One row per agent, even where agents share one sync (P18-4).
+
+    A connection several agents read is synced once, under a principal that is no
+    agent; its single row is shown on each subscriber's line, and the agent's own
+    leftover row for that connection (from before it subscribed) is not shown.
+    """
+    readers: dict[str, list[str]] = {}
+    for row in rows:
+        if arcagent.is_knowledge_principal(row.agent_did):
+            found = await subscriptions.for_connection(row.source_id)
+            readers[row.source_id] = [subscription.agent_did for subscription in found]
+    shown: list[SourceSyncRow] = []
+    for row in rows:
+        if arcagent.is_knowledge_principal(row.agent_did):
+            shown.extend(
+                row.model_copy(update={"agent_did": agent}) for agent in readers[row.source_id]
+            )
+        elif row.agent_did not in readers.get(row.source_id, ()):
+            shown.append(row)
+    return shown
+
+
 def agent_names(request: Request) -> dict[str, str]:
     """Agent DID to the name a person reads, from the roster the app already holds."""
     provider = getattr(request.app.state, "roster_provider", None)
@@ -167,8 +192,10 @@ async def load_card_context(request: Request, instances: Sequence[str]) -> CardC
                 r.connection: r for r in await arcagent.ConnectionStateStore(backend).list()
             }
             sync_store = ArcStoreSourceSyncStore(backend)
+            subscriptions = arcagent.KnowledgeSubscriptions(backend, actor_did="did:arc:operator")
             for instance in instances:
-                sync_rows[instance] = await sync_store.list_for_connection(instance)
+                rows = await sync_store.list_for_connection(instance)
+                sync_rows[instance] = await per_agent_rows(rows, subscriptions)
         except Exception:  # reason: the page must render with unknown statuses, not 500
             logger.exception("connection view: could not read health state")
     return CardContext(records, sync_rows, agent_names(request), datetime.now(UTC))
@@ -182,5 +209,6 @@ __all__ = [
     "health_view",
     "knowledge_rows",
     "load_card_context",
+    "per_agent_rows",
     "probe_view",
 ]

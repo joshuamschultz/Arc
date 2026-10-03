@@ -576,7 +576,7 @@ def _sync_owner(agent: Any) -> str:
     Every agent granted the wiki reads one store synced once (P18-4), so the durable
     row is the connection's, and the card shows it on each agent's row.
     """
-    from arcagent.modules.connected_data.shared import knowledge_principal
+    from arcagent.extension.knowledge_subscriptions import knowledge_principal
 
     del agent
     return knowledge_principal("wiki")

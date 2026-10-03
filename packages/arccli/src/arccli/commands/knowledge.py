@@ -11,6 +11,7 @@
     arc knowledge sync|reindex SOURCE
     arc knowledge revoke    SOURCE [--yes]
     arc knowledge activate
+    arc knowledge migrate   [--dry-run] [--yes]
 
 Every verb is the same call the Knowledge tab makes. The CLI holds no business
 logic and builds no offline service: the RUNNING agent owns the connected-data
@@ -249,6 +250,49 @@ def _action(action: str) -> Callable[[argparse.Namespace], None]:
     return handler
 
 
+def _print_migration(body: dict[str, Any]) -> None:
+    items = _items(body)
+    if not items:
+        write("No connected sources.")
+        return
+    write("Dry run: nothing was changed." if body.get("dry_run") else "Migrated.")
+    print_table(
+        ["SOURCE", "RESULT", "DOCUMENTS", "MOVED", "ALREADY SHARED", "SKIPPED", "DETAIL"],
+        [
+            [
+                str(i.get("connection_id", "")),
+                str(i.get("status", "")),
+                str(i.get("documents", 0)),
+                str(i.get("adopted", 0)),
+                str(i.get("deduplicated", 0)),
+                str(i.get("skipped", 0)),
+                str(i.get("detail") or "-"),
+            ]
+            for i in items
+        ],
+    )
+
+
+def _migrate(args: argparse.Namespace) -> None:
+    """Move the agent's own copies of shared connections into the shared stores (P18-4)."""
+    if not args.dry_run and not args.yes:
+        if not confirm(
+            "Move this agent's own copies of its connections into the shared stores? [y/N] "
+        ):
+            fail(_prog("migrate"), "not migrated (preview with --dry-run)")
+
+    def run(call: OperatorCall, base: str) -> None:
+        body = call(
+            "POST",
+            f"{base}/shared-migration",
+            json={"dry_run": bool(args.dry_run)},
+            timeout=_CALL_TIMEOUT_SECONDS,
+        )
+        _show(args, body, lambda: _print_migration(body))
+
+    _with_call(args, run)
+
+
 def _activate(args: argparse.Namespace) -> None:
     def run(call: OperatorCall, base: str) -> None:
         body = call(
@@ -282,7 +326,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog=_PROG,
         description=(
             "Connected-source knowledge lifecycle on a running agent — sources, status, "
-            "resources, select, map, approve, sync, reindex, relayout, revoke, activate."
+            "resources, select, map, approve, sync, reindex, relayout, revoke, activate, "
+            "migrate."
         ),
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
@@ -304,6 +349,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _verb(subs, "revoke", "Stop serving a source's knowledge.", yes=True)
     _verb(subs, "activate", "Enable the connected-data module on the agent.", source=False)
+    migrate = _verb(
+        subs,
+        "migrate",
+        "Move the agent's own copies of shared connections into the shared stores "
+        "(no provider fetch).",
+        source=False,
+        yes=True,
+    )
+    migrate.add_argument(
+        "--dry-run", action="store_true", help="Show what would move; change nothing."
+    )
     return parser
 
 
@@ -319,6 +375,7 @@ _SUBCOMMAND_MAP: dict[str, Callable[[argparse.Namespace], None]] = {
     "relayout": _action("relayout"),
     "revoke": _action("revoke"),
     "activate": _activate,
+    "migrate": _migrate,
 }
 
 

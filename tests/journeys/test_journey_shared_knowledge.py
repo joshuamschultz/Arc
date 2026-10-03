@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from arcagent.extension.knowledge_subscriptions import knowledge_principal, store_key
 from arcagent.extension.source import (
     FetchSourceObject,
     SourceContent,
@@ -32,7 +33,6 @@ from arcagent.extension.source import (
     SyncSource,
     SyncSourcePage,
 )
-from arcagent.modules.connected_data.shared import knowledge_principal, store_key
 from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import ArcStoreSourceSyncStore
 from arctrust.paths import connected_knowledge_dir

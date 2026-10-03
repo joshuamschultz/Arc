@@ -150,6 +150,20 @@ class _Service:
         self.action = ("revoke", connection_id)
         return True
 
+    async def migrate_to_shared(self, *, dry_run: bool) -> tuple[Any, ...]:
+        self.action = ("migrate", "dry_run" if dry_run else "apply")
+        return (
+            SimpleNamespace(
+                connection_id="dropbox-olivia",
+                status="would_migrate" if dry_run else "migrated",
+                detail="",
+                documents=738,
+                adopted=738,
+                deduplicated=0,
+                skipped=0,
+            ),
+        )
+
 
 class _Registry:
     def __init__(self, service: _Service) -> None:
@@ -282,6 +296,44 @@ def test_relayout_is_an_audited_operator_lifecycle_action() -> None:
     assert response.status_code == 200
     assert response.json()["action"] == "relayout"
     assert service.action == ("relayout", "dropbox-olivia")
+
+
+def test_shared_migration_is_operator_gated_and_dry_runs_by_default() -> None:
+    """P18-4: moving an agent's own stores into the shared ones is previewed first."""
+    client, service = _client()
+    path = "/api/agents/olivia/knowledge/shared-migration"
+
+    denied = client.post(path, headers={"Authorization": "Bearer viewer"}, json={})
+    assert denied.status_code == 403
+    assert service.action is None
+
+    preview = client.post(path, headers={"Authorization": "Bearer operator"}, json={})
+    assert preview.status_code == 200
+    assert service.action == ("migrate", "dry_run")
+    assert preview.json() == {
+        "dry_run": True,
+        "items": [
+            {
+                "connection_id": "dropbox-olivia",
+                "status": "would_migrate",
+                "detail": "",
+                "documents": 738,
+                "adopted": 738,
+                "deduplicated": 0,
+                "skipped": 0,
+            }
+        ],
+    }
+
+    bad = client.post(path, headers={"Authorization": "Bearer operator"}, json={"dry_run": "no"})
+    assert bad.status_code == 400
+
+    applied = client.post(
+        path, headers={"Authorization": "Bearer operator"}, json={"dry_run": False}
+    )
+    assert applied.status_code == 200
+    assert service.action == ("migrate", "apply")
+    assert applied.json()["items"][0]["status"] == "migrated"
 
 
 def test_sync_action_accepts_the_wire_source_id_not_only_the_connection_id() -> None:

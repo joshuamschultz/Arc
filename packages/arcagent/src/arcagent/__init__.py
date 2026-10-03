@@ -100,6 +100,11 @@ from arcagent.extension.connection_health import (
     next_check_time,
 )
 from arcagent.extension.inspect import inspect_extensions
+from arcagent.extension.knowledge_subscriptions import (
+    KnowledgeSubscription,
+    KnowledgeSubscriptions,
+    is_knowledge_principal,
+)
 from arcagent.extension.state import ConnectionRecord, ConnectionStateStore, ConnectionStatus
 from arcagent.keys import KeyStatus, KeyStore, classifier_models, default_env_file
 from arcagent.knowledge import (
@@ -353,6 +358,8 @@ __all__ = [
     "KnowledgeDraft",
     "KnowledgeHit",
     "KnowledgeRef",
+    "KnowledgeSubscription",
+    "KnowledgeSubscriptions",
     "LedgerRunOwner",
     "LiveSkillRevisionResolver",
     "McpServerAdded",
@@ -422,6 +429,7 @@ __all__ = [
     "global_capabilities_root",
     "inspect_extensions",
     "intake_capability_archive",
+    "is_knowledge_principal",
     "iter_model_modules",
     "list_gated",
     "load_config",

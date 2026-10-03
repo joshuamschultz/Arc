@@ -32,6 +32,10 @@ from arcagent.extension.connection_health import (
     classify,
 )
 from arcagent.extension.credentials import CredentialRenewalError
+from arcagent.extension.knowledge_subscriptions import (
+    KnowledgeSubscription,
+    knowledge_principal,
+)
 from arcagent.extension.source import (
     InspectSource,
     SelectSourceResources,
@@ -47,12 +51,7 @@ from arcagent.modules.connected_data.health import (
     is_terminal_sync_failure,
 )
 from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
-from arcagent.modules.connected_data.shared import (
-    SHARED_HOMES,
-    SharedKnowledge,
-    Subscription,
-    knowledge_principal,
-)
+from arcagent.modules.connected_data.shared import SHARED_HOMES, SharedKnowledge
 from arcagent.modules.connected_data.supervision import SyncSchedule
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
@@ -274,7 +273,7 @@ class ConnectedDataService:
         # connections this agent reads from a shared store, by connection id; a
         # connection absent from it is synced into the agent's own store as before.
         self._shared = shared
-        self._lanes: dict[str, Subscription] = {}
+        self._lanes: dict[str, KnowledgeSubscription] = {}
         # Runs an operator asked for: they skip the "another subscriber synced it
         # recently" shortcut, which otherwise makes a shared connection's sync free.
         self._forced: set[str] = set()
@@ -953,7 +952,7 @@ class ConnectedDataService:
         self,
         registration: SourceRegistration,
         raw_description: SourceDescription,
-        lane: Subscription,
+        lane: KnowledgeSubscription,
     ) -> bool:
         """Sync a shared connection once for every agent that reads it (P18-4).
 
@@ -977,7 +976,7 @@ class ConnectedDataService:
         finally:
             await _release(writer)
 
-    async def _shared_is_fresh(self, connection_id: str, lane: Subscription) -> bool:
+    async def _shared_is_fresh(self, connection_id: str, lane: KnowledgeSubscription) -> bool:
         """True when another subscriber completed a full pass within this interval."""
         if self._store is None:
             return False
@@ -994,7 +993,7 @@ class ConnectedDataService:
         connection_id: str,
         raw_description: SourceDescription,
         port: IngestPort,
-        lane: Subscription,
+        lane: KnowledgeSubscription,
     ) -> None:
         """Show this agent the shared run's outcome as its own card row."""
         description = await self._with_generation(raw_description, port)
@@ -1066,7 +1065,7 @@ class ConnectedDataService:
             description = raw_description
             source_id = ""
             documents_indexed = 0
-            lane: Subscription | None = None
+            lane: KnowledgeSubscription | None = None
             if self._ingest_factory is not None:
                 candidate = self._ingest_factory(description)
                 ingest = await candidate if inspect.isawaitable(candidate) else candidate
@@ -1198,7 +1197,7 @@ class ConnectedDataService:
 
     async def _lane_for(
         self, connection_id: str, raw_description: SourceDescription, private: IngestPort
-    ) -> Subscription | None:
+    ) -> KnowledgeSubscription | None:
         """Decide whether this agent reads ``connection_id`` from its shared store.
 
         It does when its own approved mapping is exactly the shareable homes, its own
@@ -1233,7 +1232,7 @@ class ConnectedDataService:
 
     async def _subscribe(
         self, connection_id: str, raw_description: SourceDescription, approval_id: str
-    ) -> Subscription:
+    ) -> KnowledgeSubscription:
         """Record that this agent reads the connection's shared store (durably)."""
         shared = self._shared
         if shared is None:
@@ -1245,7 +1244,7 @@ class ConnectedDataService:
             )
         finally:
             await _release(reader)
-        subscription = Subscription(
+        subscription = KnowledgeSubscription(
             agent_did=self._agent_did,
             connection_id=connection_id,
             source_id=source_id,
@@ -1337,7 +1336,7 @@ class ConnectedDataService:
             return None, None
 
     async def _shared_documents_indexed(
-        self, lane: Subscription, description: SourceDescription
+        self, lane: KnowledgeSubscription, description: SourceDescription
     ) -> int:
         if self._shared is None:
             return 0
@@ -1420,7 +1419,7 @@ class ConnectedDataService:
 
     async def _readable(
         self, caller_did: str, source_ids: Sequence[str] | None
-    ) -> list[Subscription]:
+    ) -> list[KnowledgeSubscription]:
         """The subscriptions a read may use; fails closed on any doubt (ASI03)."""
         shared = self._shared
         if shared is None:
@@ -1448,7 +1447,7 @@ class ConnectedDataService:
 
     async def _read_pool(
         self,
-        subscription: Subscription,
+        subscription: KnowledgeSubscription,
         read: Callable[[Any], Awaitable[list[Any]]],
     ) -> list[Any]:
         """Run one read against a shared store; a sick store degrades to no hits."""

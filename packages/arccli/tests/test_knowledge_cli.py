@@ -258,3 +258,44 @@ def test_headless_add_map_sync_status_completes(
         assert _arc(*argv, *_AUTH) == 0, argv
     assert "Gmail work" in capsys.readouterr().out
     assert len(server.calls()) == 8
+
+
+MIGRATION = {
+    "connection_id": "gmail-1",
+    "status": "would_migrate",
+    "detail": "",
+    "documents": 42,
+    "adopted": 40,
+    "deduplicated": 2,
+    "skipped": 0,
+}
+
+
+def test_migrate_dry_run_previews_and_changes_nothing(
+    server: _Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P18-4: an operator sees what would move into the shared stores first."""
+    server.replies[f"POST {K}/shared-migration"] = (200, {"dry_run": True, "items": [MIGRATION]})
+    assert _arc("migrate", "--dry-run", *_AUTH) == 0
+    assert server.calls() == [f"POST {K}/shared-migration"]
+    assert server.body_of(f"POST {K}/shared-migration") == {"dry_run": True}
+    out = capsys.readouterr().out
+    assert "Dry run" in out and "would_migrate" in out and "40" in out
+
+
+def test_migrate_requires_confirmation(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    def eof(_prompt: str = "") -> str:
+        raise EOFError
+
+    monkeypatch.setattr(builtins, "input", eof)
+    assert _arc("migrate", *_AUTH) == 1
+    assert server.calls() == []
+
+
+def test_migrate_with_yes_applies(server: _Server) -> None:
+    server.replies[f"POST {K}/shared-migration"] = (
+        200,
+        {"dry_run": False, "items": [{**MIGRATION, "status": "migrated"}]},
+    )
+    assert _arc("migrate", "--yes", *_AUTH) == 0
+    assert server.body_of(f"POST {K}/shared-migration") == {"dry_run": False}
