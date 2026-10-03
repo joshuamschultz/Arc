@@ -528,7 +528,7 @@ async def test_g6_a_stalled_sync_is_durable_and_visible(
     try:
         provider = _HangingProvider("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
         await connect(agent, provider)
-        did = agent._identity.did
+        did = _sync_owner(agent)
         good = (
             await ArcStoreSourceSyncStore(arcstore).get_state(did, _source_id(agent))
         ).last_synced_at
@@ -568,6 +568,18 @@ def _source_id(agent: Any) -> str:
     """The key the sync store files the wiki under: the coordinator keys by connection id."""
     del agent
     return "wiki"
+
+
+def _sync_owner(agent: Any) -> str:
+    """Whose row the wiki's sync advances: the connection's shared store, not one agent.
+
+    Every agent granted the wiki reads one store synced once (P18-4), so the durable
+    row is the connection's, and the card shows it on each agent's row.
+    """
+    from arcagent.modules.connected_data.shared import knowledge_principal
+
+    del agent
+    return knowledge_principal("wiki")
 
 
 # ---------------------------------------------------------------------------

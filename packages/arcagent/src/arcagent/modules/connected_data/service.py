@@ -6,9 +6,12 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import shutil
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Protocol
 
 from arcagent.connected_data import (
@@ -42,6 +45,12 @@ from arcagent.modules.connected_data.health import (
     REPEATED_FAILURES,
     ConnectionHealthTracker,
     is_terminal_sync_failure,
+)
+from arcagent.modules.connected_data.shared import (
+    SHARED_HOMES,
+    SharedKnowledge,
+    Subscription,
+    knowledge_principal,
 )
 from arcagent.modules.connected_data.supervision import SyncSchedule
 
@@ -204,6 +213,7 @@ class ConnectedDataService:
         stall_grace_seconds: float = 120.0,
         terminal_recheck_seconds: float = 3600.0,
         failure_ceiling: int = 5,
+        shared: SharedKnowledge | None = None,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -245,6 +255,14 @@ class ConnectedDataService:
         )
         self._stall_grace = stall_grace_seconds
         self._failure_ceiling = failure_ceiling
+        # One sync and one store per connection (P18-4). ``_lanes`` holds the
+        # connections this agent reads from a shared store, by connection id; a
+        # connection absent from it is synced into the agent's own store as before.
+        self._shared = shared
+        self._lanes: dict[str, Subscription] = {}
+        # Runs an operator asked for: they skip the "another subscriber synced it
+        # recently" shortcut, which otherwise makes a shared connection's sync free.
+        self._forced: set[str] = set()
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -302,6 +320,9 @@ class ConnectedDataService:
                 # once more in the background; the in-flight guard keeps it to
                 # one attempt at a time.
                 self._start_inspection(registration)
+            elif registration.connection_id in self._lanes:
+                # A shared connection may have been synced by another subscriber.
+                await self._refresh_shared_status(registration.connection_id)
         return tuple(self._statuses[registration.connection_id] for registration in registrations)
 
     async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
@@ -366,6 +387,7 @@ class ConnectedDataService:
         # An explicit operator sync clears any needs-attention backoff.
         self._health.clear(connection_id)
         self._timing.run_now(connection_id)
+        self._forced.add(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -383,16 +405,23 @@ class ConnectedDataService:
         self._paused.discard(connection_id)
         self._health.clear(connection_id)
         self._timing.run_now(connection_id)
+        self._forced.add(connection_id)
         self._wake.set()
         return SourceOperationResult(connection_id, "scheduled")
 
     async def revoke(self, connection_id: str) -> SourceOperationResult:
-        """Purge a source before removing its registration and durable state."""
+        """Purge a source before removing its registration and durable state.
+
+        On a shared connection (P18-4) the agent's subscription goes first, so its
+        reads stop before anything else happens; the shared store itself is purged
+        only when no other agent still reads it.
+        """
         registration = await self._find(connection_id)
         if registration is None:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
         await self._cancel(connection_id)
+        shared = await self._unsubscribe(connection_id, reason="revoked")
         ingest, description = await self._ingest_for(registration, use_cached=True)
         if ingest is None or description is None:
             return SourceOperationResult(connection_id, "refused", "ingest_port_unavailable")
@@ -409,6 +438,8 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "refused", "source_purge_failed")
         finally:
             await _release(ingest)
+        if shared:
+            await self._purge_unread_store(connection_id, description)
         self._statuses.pop(connection_id, None)
         self._mapping_statuses.pop(connection_id, None)
         self._selected_resources.pop(connection_id, None)
@@ -422,13 +453,17 @@ class ConnectedDataService:
         return SourceOperationResult(connection_id, "revoked")
 
     async def reindex(self, connection_id: str) -> SourceOperationResult:
-        """Reset a durable checkpoint, then backfill the current source snapshot."""
+        """Reset a durable checkpoint, then backfill the current source snapshot.
+
+        On a shared connection this resets the one shared store: every agent that
+        reads it sees the backfill.
+        """
         registration = await self._find(connection_id)
         if registration is None:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
         await self._cancel(connection_id)
-        ingest, description = await self._ingest_for(registration)
+        ingest, description = await self._port_for(registration)
         if ingest is None or description is None:
             return SourceOperationResult(connection_id, "refused", "ingest_port_unavailable")
         try:
@@ -438,11 +473,13 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "refused", "source_reset_failed")
         finally:
             await _release(ingest)
-        if self._store is None or not await self._store.reset(self._agent_did, connection_id):
+        key = self._sync_key(connection_id)
+        if self._store is None or not await self._store.reset(key, connection_id):
             return SourceOperationResult(connection_id, "refused", "sync_lease_active")
         self._paused.discard(connection_id)
         self._health.clear(connection_id)
         self._timing.run_now(connection_id)
+        self._forced.add(connection_id)
         self._schedule(registration)
         return SourceOperationResult(connection_id, "scheduled")
 
@@ -457,7 +494,7 @@ class ConnectedDataService:
         was_paused = connection_id in self._paused
         self._paused.add(connection_id)
         await self._cancel(connection_id)
-        ingest, description = await self._ingest_for(registration)
+        ingest, description = await self._port_for(registration)
         relayout = getattr(ingest, "relayout_source", None)
         if ingest is None or description is None or not callable(relayout):
             if not was_paused:
@@ -803,15 +840,16 @@ class ConnectedDataService:
         ):
             return state
         owner = f"{self._agent_did}:terminal:{uuid.uuid4().hex}"
+        key = self._sync_key(connection_id)
         try:
             lease = await self._store.acquire_lease(
-                self._agent_did, connection_id, owner, ttl_seconds=_TERMINAL_LEASE_SECONDS
+                key, connection_id, owner, ttl_seconds=_TERMINAL_LEASE_SECONDS
             )
             if lease is None:
                 return state
             try:
                 await self._store.set_status(
-                    self._agent_did,
+                    key,
                     connection_id,
                     SyncStatus.FAILED,
                     owner_id=owner,
@@ -820,7 +858,7 @@ class ConnectedDataService:
                 )
             finally:
                 await self._store.release_lease(
-                    self._agent_did,
+                    key,
                     connection_id,
                     owner_id=owner,
                     fencing_token=lease.fencing_token,
@@ -885,21 +923,90 @@ class ConnectedDataService:
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         try:
-            return await self._run_with_port(registration, raw_description, ingest)
+            lane = await self._lane_for(connection_id, raw_description, ingest)
+            if lane is None:
+                return await self._run_with_port(
+                    registration, raw_description, ingest, key=self._agent_did
+                )
         finally:
             # The port holds this run's memory-database connection; a run that
             # ends, fails or is cancelled (stall, revoke, shutdown) gives it back.
             await _release(ingest)
+        return await self._run_shared(registration, raw_description, lane)
+
+    async def _run_shared(
+        self,
+        registration: SourceRegistration,
+        raw_description: SourceDescription,
+        lane: Subscription,
+    ) -> bool:
+        """Sync a shared connection once for every agent that reads it (P18-4).
+
+        Whichever subscriber holds the connection's lease runs; the others find
+        the lease taken and adopt its state. A run another subscriber completed
+        within this agent's interval is adopted without asking the provider at all.
+        """
+        connection_id = registration.connection_id
+        if self._shared is None:
+            return False
+        writer = await self._shared.writer(connection_id, lane.approval_id)
+        try:
+            forced = connection_id in self._forced
+            self._forced.discard(connection_id)
+            if not forced and await self._shared_is_fresh(connection_id, lane):
+                await self._adopt_shared_status(connection_id, raw_description, writer, lane)
+                return False
+            return await self._run_with_port(
+                registration, raw_description, writer, key=lane.principal
+            )
+        finally:
+            await _release(writer)
+
+    async def _shared_is_fresh(self, connection_id: str, lane: Subscription) -> bool:
+        """True when another subscriber completed a full pass within this interval."""
+        if self._store is None:
+            return False
+        state: SyncState = await self._store.get_state(lane.principal, connection_id)
+        if state.status is not SyncStatus.COMPLETE or state.budget_reached:
+            return False
+        synced = state.last_synced_at
+        if synced is None:
+            return False
+        return (datetime.now(UTC) - synced).total_seconds() < self._interval
+
+    async def _adopt_shared_status(
+        self,
+        connection_id: str,
+        raw_description: SourceDescription,
+        port: IngestPort,
+        lane: Subscription,
+    ) -> None:
+        """Show this agent the shared run's outcome as its own card row."""
+        description = await self._with_generation(raw_description, port)
+        state = await self._persisted_state(connection_id)
+        self._statuses[connection_id] = SourceRuntimeStatus(
+            connection_id=connection_id,
+            source_id=lane.source_id,
+            status=state.status.value if state is not None else "idle",
+            detail=(state.error_code or "") if state is not None else "",
+            description=self._descriptions.get(connection_id) or description,
+            state=state,
+            documents_indexed=await self._documents_indexed(port, description),
+        )
 
     async def _run_with_port(
         self,
         registration: SourceRegistration,
         raw_description: SourceDescription,
         ingest: IngestPort,
+        *,
+        key: str,
     ) -> bool:
+        """Run one source through ``ingest``; ``key`` is whose sync row it advances."""
         connection_id = registration.connection_id
         description = await self._with_generation(raw_description, ingest)
-        self._descriptions[connection_id] = description
+        if key == self._agent_did:
+            self._descriptions[connection_id] = description
         self._statuses[connection_id] = SourceRuntimeStatus(
             connection_id=connection_id,
             source_id=_canonical_source_id(ingest, description),
@@ -914,7 +1021,7 @@ class ConnectedDataService:
         )
         result = await coordinator.run(
             description,
-            agent_did=self._agent_did,
+            agent_did=key,
             owner_id=f"{self._agent_did}:{uuid.uuid4().hex}",
             limits=self._limits,
         )
@@ -938,20 +1045,27 @@ class ConnectedDataService:
         """Populate the safe descriptor before the operator sees a blank source row."""
         connection_id = registration.connection_id
         try:
-            description = await registration.adapter.inspect_source(
+            raw_description = await registration.adapter.inspect_source(
                 InspectSource(connection_id=connection_id)
             )
+            description = raw_description
             source_id = ""
             documents_indexed = 0
+            lane: Subscription | None = None
             if self._ingest_factory is not None:
                 candidate = self._ingest_factory(description)
                 ingest = await candidate if inspect.isawaitable(candidate) else candidate
                 try:
                     description = await self._with_generation(description, ingest)
-                    source_id = _canonical_source_id(ingest, description)
-                    documents_indexed = await self._documents_indexed(ingest, description)
+                    lane = await self._lane_for(connection_id, raw_description, ingest)
+                    if lane is None:
+                        source_id = _canonical_source_id(ingest, description)
+                        documents_indexed = await self._documents_indexed(ingest, description)
                 finally:
                     await _release(ingest)
+            if lane is not None:
+                source_id = lane.source_id
+                documents_indexed = await self._shared_documents_indexed(lane, raw_description)
             self._descriptions[connection_id] = description
             # Read back what this source actually did, rather than declaring it
             # unmapped. The sync state is durable and the runtime status was
@@ -996,7 +1110,7 @@ class ConnectedDataService:
         if self._store is None or not source_id:
             return None
         try:
-            state: SyncState = await self._store.get_state(self._agent_did, source_id)
+            state: SyncState = await self._store.get_state(self._sync_key(source_id), source_id)
         except Exception:
             _logger.warning("connected-data sync state unreadable: %s", source_id)
             return None
@@ -1059,6 +1173,284 @@ class ConnectedDataService:
                 "connected-data source inspection failed: %s", registration.connection_id
             )
             return None, None
+
+    # -- one sync and one store per connection (P18-4) -----------------------
+
+    def _sync_key(self, connection_id: str) -> str:
+        """Whose sync row a connection advances: its shared principal, or this agent."""
+        lane = self._lanes.get(connection_id)
+        return lane.principal if lane is not None else self._agent_did
+
+    async def _lane_for(
+        self, connection_id: str, raw_description: SourceDescription, private: IngestPort
+    ) -> Subscription | None:
+        """Decide whether this agent reads ``connection_id`` from its shared store.
+
+        It does when its own approved mapping is exactly the shareable homes, its own
+        store holds nothing left to migrate, and it embeds the way the shared store
+        was embedded. Joining writes the durable subscription its reads are checked
+        against. A failure to decide leaves the current answer unchanged.
+        """
+        shared = self._shared
+        approved = getattr(private, "approved_mapping", None)
+        if shared is None or not callable(approved):
+            return None
+        try:
+            description = await self._with_generation(raw_description, private)
+            plan = await approved(description)
+            if plan is None or set(plan.homes) != SHARED_HOMES:
+                await self._unsubscribe(connection_id, reason="mapping_not_shared")
+                return None
+            if await self._documents_indexed(private, description) > 0:
+                # The agent's own store still holds this connection: migrate it
+                # first, or every document would be read twice.
+                await self._unsubscribe(connection_id, reason="migration_pending")
+                return None
+            if not shared.claim_profile(connection_id):
+                await self._unsubscribe(connection_id, reason="embedding_profile_differs")
+                return None
+            return await self._subscribe(connection_id, raw_description, plan.mapping_id)
+        except Exception:
+            _logger.warning(
+                "connected-data shared store undecided: %s", connection_id, exc_info=True
+            )
+            return self._lanes.get(connection_id)
+
+    async def _subscribe(
+        self, connection_id: str, raw_description: SourceDescription, approval_id: str
+    ) -> Subscription:
+        """Record that this agent reads the connection's shared store (durably)."""
+        shared = self._shared
+        if shared is None:
+            raise RuntimeError("shared knowledge is not configured")
+        reader = await shared.reader(connection_id)
+        try:
+            source_id = _canonical_source_id(
+                reader, await self._with_generation(raw_description, reader)
+            )
+        finally:
+            await _release(reader)
+        subscription = Subscription(
+            agent_did=self._agent_did,
+            connection_id=connection_id,
+            source_id=source_id,
+            approval_id=approval_id,
+            profile=shared.profile(),
+        )
+        registry = await shared.registry()
+        if await registry.get(self._agent_did, connection_id) != subscription:
+            await registry.put(subscription)
+            await self._emit(
+                "connected_data.knowledge.subscribed",
+                {"source": _safe_id(connection_id), "store": subscription.principal},
+            )
+        self._lanes[connection_id] = subscription
+        return subscription
+
+    async def _unsubscribe(self, connection_id: str, *, reason: str) -> bool:
+        """Stop reading a shared store; True when a subscription was removed.
+
+        The durable row goes first: reads are authorized against it, so a revoke
+        is in force at the retrieval boundary before anything else is cleaned up.
+        A failure to remove it propagates: a revoke must never report success
+        while the agent can still read.
+        """
+        shared = self._shared
+        if shared is None:
+            self._lanes.pop(connection_id, None)
+            return False
+        registry = await shared.registry()
+        current = await registry.get(self._agent_did, connection_id)
+        if current is not None:
+            await registry.delete(self._agent_did, connection_id)
+        self._lanes.pop(connection_id, None)
+        if current is None:
+            return False
+        await self._emit(
+            "connected_data.knowledge.unsubscribed",
+            {"source": _safe_id(connection_id), "store": current.principal, "reason": reason},
+        )
+        return True
+
+    async def _purge_unread_store(
+        self, connection_id: str, description: SourceDescription
+    ) -> None:
+        """Purge a shared store once the last agent reading it has gone."""
+        shared = self._shared
+        if shared is None or self._store is None:
+            return
+        principal = knowledge_principal(connection_id)
+        audit = {"source": _safe_id(connection_id), "store": principal}
+        try:
+            if await (await shared.registry()).for_connection(connection_id):
+                return
+            reader = await shared.reader(connection_id)
+            try:
+                described = await self._with_generation(description, reader)
+                if not await self._store.purge(principal, connection_id):
+                    await self._emit(
+                        "connected_data.knowledge.purge_deferred",
+                        {**audit, "reason": "sync_lease_active"},
+                    )
+                    return
+                await reader.purge_source(described)
+            finally:
+                await _release(reader)
+            await asyncio.to_thread(shutil.rmtree, shared.root(connection_id), True)
+        except Exception as exc:  # reason: the agent's own revoke already took effect
+            _logger.exception("connected-data shared store purge failed: %s", connection_id)
+            await self._emit(
+                "connected_data.knowledge.purge_failed", {**audit, "error": _name(exc)}
+            )
+            return
+        await self._emit("connected_data.knowledge.purged", audit)
+
+    async def _port_for(
+        self, registration: SourceRegistration
+    ) -> tuple[IngestPort | None, SourceDescription | None]:
+        """The port an operator action acts on: the shared store's, or the agent's own."""
+        connection_id = registration.connection_id
+        lane = self._lanes.get(connection_id)
+        if lane is None or self._shared is None:
+            return await self._ingest_for(registration)
+        try:
+            raw = self._descriptions.get(connection_id) or await self._inspect(registration)
+            writer = await self._shared.writer(connection_id, lane.approval_id)
+            return writer, await self._with_generation(raw, writer)
+        except Exception:
+            _logger.exception("connected-data shared store unavailable: %s", connection_id)
+            return None, None
+
+    async def _shared_documents_indexed(
+        self, lane: Subscription, description: SourceDescription
+    ) -> int:
+        if self._shared is None:
+            return 0
+        reader = await self._shared.reader(lane.connection_id)
+        try:
+            return await self._documents_indexed(
+                reader, await self._with_generation(description, reader)
+            )
+        finally:
+            await _release(reader)
+
+    async def _refresh_shared_status(self, connection_id: str) -> None:
+        """Bring a shared connection's card row up to the shared run's durable state.
+
+        The run may have been another subscriber's, possibly in another process.
+        """
+        lane = self._lanes.get(connection_id)
+        known = self._statuses.get(connection_id)
+        if lane is None or known is None or known.description is None:
+            return
+        state = await self._persisted_state(connection_id)
+        if state is None or state == known.state:
+            return
+        try:
+            indexed = await self._shared_documents_indexed(lane, known.description)
+        except Exception:  # reason: a status read must never fail the listing
+            _logger.warning("connected-data shared store count unavailable: %s", connection_id)
+            indexed = known.documents_indexed
+        self._statuses[connection_id] = replace(
+            known,
+            status=state.status.value,
+            detail=state.error_code or "",
+            source_id=lane.source_id,
+            state=state,
+            documents_indexed=indexed,
+        )
+
+    async def shared_document_search(
+        self,
+        query: str,
+        *,
+        caller_did: str,
+        source_ids: Sequence[str] | None = None,
+        clearance: str = "unclassified",
+        top_k: int | None = None,
+    ) -> list[Any]:
+        """Search the shared stores this agent is subscribed to, best hit first.
+
+        Only for this agent: a caller naming any other DID is refused and audited.
+        Only connections the agent still reads: the subscription is checked in the
+        durable store on every call, so a revoke hides the data at once. Never
+        above ``clearance``.
+        """
+        hits: list[Any] = []
+        for subscription in await self._readable(caller_did, source_ids):
+            search = partial(
+                _search_pool, query, subscription.source_id, clearance=clearance, top_k=top_k
+            )
+            hits.extend(await self._read_pool(subscription, search))
+        return sorted(hits, key=lambda hit: float(getattr(hit, "score", 0.0)), reverse=True)
+
+    async def shared_documents(
+        self, source_id: str, *, caller_did: str, query: str | None = None, limit: int = 50
+    ) -> list[Any] | None:
+        """One shared pool's documents (or search hits); ``None`` if not a pool it reads."""
+        readable = await self._readable(caller_did, (source_id,))
+        if not readable:
+            return None
+        subscription = readable[0]
+        if query:
+            return await self._read_pool(
+                subscription,
+                lambda reader: reader.search_pool(
+                    query, subscription.source_id, clearance="unclassified", top_k=limit
+                ),
+            )
+        return await self._read_pool(
+            subscription, lambda reader: reader.list_pool(subscription.source_id, limit=limit)
+        )
+
+    async def _readable(
+        self, caller_did: str, source_ids: Sequence[str] | None
+    ) -> list[Subscription]:
+        """The subscriptions a read may use; fails closed on any doubt (ASI03)."""
+        shared = self._shared
+        if shared is None:
+            return []
+        if caller_did != self._agent_did:
+            await self._emit(
+                "connected_data.knowledge.read_refused",
+                {"reason": "caller_is_not_this_agent", "caller": _safe_id(caller_did)},
+            )
+            return []
+        try:
+            rows = await (await shared.registry()).for_agent(self._agent_did)
+        except Exception:
+            _logger.warning("connected-data subscriptions unreadable", exc_info=True)
+            return []
+        profile = shared.profile()
+        wanted = None if source_ids is None else set(source_ids)
+        return [
+            row
+            for row in rows
+            if row.agent_did == self._agent_did
+            and row.profile == profile
+            and (wanted is None or row.source_id in wanted)
+        ]
+
+    async def _read_pool(
+        self,
+        subscription: Subscription,
+        read: Callable[[Any], Awaitable[list[Any]]],
+    ) -> list[Any]:
+        """Run one read against a shared store; a sick store degrades to no hits."""
+        if self._shared is None:
+            return []
+        reader = await self._shared.reader(subscription.connection_id)
+        try:
+            return list(await read(reader))
+        except Exception:
+            _logger.warning(
+                "connected-data shared store unreadable: %s",
+                subscription.connection_id,
+                exc_info=True,
+            )
+            return []
+        finally:
+            await _release(reader)
 
     async def _cancel(self, connection_id: str) -> None:
         task = self._tasks.pop(connection_id, None)
@@ -1235,6 +1627,12 @@ class ConnectedDataService:
             return description
         value = await generation(description)
         return description.model_copy(update={"generation": int(value)})
+
+
+async def _search_pool(
+    query: str, source_id: str, reader: Any, *, clearance: str, top_k: int | None
+) -> list[Any]:
+    return list(await reader.search_pool(query, source_id, clearance=clearance, top_k=top_k))
 
 
 def _instance_of(connection_id: str) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from arcagent.connected_data import (
     IngestPort,
@@ -187,6 +187,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         config: Any | None = None,
         embedder: Any | None = None,
         audit_sink: Any | None = None,
+        authority: DelegatedAuthority | None = None,
     ) -> None:
         self._workspace = Path(workspace)
         self._agent_did = agent_did
@@ -195,6 +196,10 @@ class ArcMemoryIngestAdapter(IngestPort):
         self._config = config
         self._embedder = embedder
         self._audit_sink = audit_sink
+        #: Set for a connection-scoped store (P18-4). Such a port belongs to no
+        #: agent: it has no Brain of its own to read settings from or attach to,
+        #: and its writes are authorized by the writing subscriber's approval.
+        self._authority = authority
         self._service: Any | None = None
 
     def _connected_service(self) -> Any:
@@ -206,40 +211,22 @@ class ArcMemoryIngestAdapter(IngestPort):
             raise ConnectedDataUnavailableError(
                 "connected ingestion requires the arcagent[memory] extra"
             ) from exc
+        authority = self._authority
+        shared = authority is not None
         self._service = module.ConnectedDataService(
             self._workspace,
             self._agent_did,
             approval_store=self._approval_store,
             object_state=self._object_state,
             config=self._config,
-            embedder=self._embedder or self._memory_embedder(),
+            embedder=self._embedder if shared else self._embedder or self._memory_embedder(),
             audit_sink=self._audit_sink,
+            authority=_MemoryAuthority(authority) if authority is not None else None,
         )
         return self._service
 
     def _memory_embedder(self) -> Any | None:
-        """The embedder the agent's memory module recalls with, or ``None`` without one.
-
-        Documents must be embedded into the same vector space the question is asked
-        in, so this reads the memory module's own ``embed_*`` settings (the brain's
-        defaults included) rather than carrying a second copy of them here. Without
-        the memory module the index is lexical only, and says so once per process.
-        """
-        try:
-            settings = (
-                import_module("arcagent.modules.memory._runtime")
-                .state_for(self._agent_did)
-                .config.backend
-            )
-            build = import_module("arcmemory.provider").build_embedder
-        except (ImportError, RuntimeError):
-            return None
-        return build(
-            self._agent_did,
-            str(settings.get("embed_backend", "local")),
-            str(settings.get("embed_model", "")),
-            base_url=str(settings.get("embed_base_url", "")),
-        )
+        return memory_embedder(self._agent_did)
 
     async def aclose(self) -> None:
         """Release the memory database connection this port opened, if any."""
@@ -381,6 +368,53 @@ class ArcMemoryIngestAdapter(IngestPort):
             )
         )
 
+    async def approved_mapping(self, source: SourceDescription) -> MappingPlan | None:
+        """This agent's approved mapping of ``source``, or ``None``; proposes nothing."""
+        module = import_module("arcmemory.connected_data")
+        mapping = await self._connected_service().find_approved_mapping(
+            self._source_model(module, source)
+        )
+        if mapping is None:
+            return None
+        return MappingPlan(
+            mapping_id=mapping.mapping_id,
+            homes=tuple(KnowledgeHome(home) for home in mapping.homes),
+            revision=mapping.revision,
+            content_hash=mapping.content_hash,
+        )
+
+    async def search_pool(
+        self, query: str, source_id: str, *, clearance: str, top_k: int | None
+    ) -> list[Any]:
+        """Search one document pool by id, never above ``clearance``."""
+        return list(
+            await self._connected_service().search_pool(
+                query, source_id, clearance=clearance, top_k=top_k
+            )
+        )
+
+    async def list_pool(self, source_id: str, *, limit: int) -> list[Any]:
+        """The documents one pool holds, newest first."""
+        return list(await self._connected_service().list_pool(source_id, limit=limit))
+
+    async def adopt_documents(
+        self,
+        source: SourceDescription,
+        donor: ArcMemoryIngestAdapter,
+        donor_source: SourceDescription,
+        *,
+        dry_run: bool,
+    ) -> dict[str, int]:
+        """Re-key ``donor``'s extracted documents into this store without a fetch."""
+        module = import_module("arcmemory.connected_data")
+        report = await self._connected_service().adopt_documents(
+            self._source_model(module, source),
+            donor._connected_service(),
+            donor._source_model(module, donor_source),
+            dry_run=dry_run,
+        )
+        return {str(key): int(value) for key, value in report.model_dump().items()}
+
     async def register_datastore(
         self, source: SourceDescription, adapter: Any, mapping: MappingPlan
     ) -> None:
@@ -509,11 +543,76 @@ class ArcMemoryIngestAdapter(IngestPort):
         """Remove source artifacts and its mapping on connection revocation."""
         module = import_module("arcmemory.connected_data")
         await self._connected_service().purge_source(self._source_model(module, source))
+        if self._authority is not None:
+            return  # a shared store is attached to no Brain
         runtime = import_module("arcagent.modules.memory._runtime")
         brain = runtime.state_for(self._agent_did).brain
         unregister = getattr(brain, "unregister_datastore", None)
         if callable(unregister):
             await unregister(self.canonical_source_id(source), caller_did=self._agent_did)
+
+
+def _embed_settings(agent_did: str) -> tuple[str, str, str] | None:
+    """The memory module's ``embed_*`` settings for one agent, or ``None`` without one."""
+    try:
+        settings = (
+            import_module("arcagent.modules.memory._runtime").state_for(agent_did).config.backend
+        )
+    except (ImportError, RuntimeError):
+        return None
+    return (
+        str(settings.get("embed_backend", "local")),
+        str(settings.get("embed_model", "")),
+        str(settings.get("embed_base_url", "")),
+    )
+
+
+def memory_embedder(agent_did: str) -> Any | None:
+    """The embedder the agent's memory module recalls with, or ``None`` without one.
+
+    Documents must be embedded into the same vector space the question is asked
+    in, so this reads the memory module's own ``embed_*`` settings (the brain's
+    defaults included) rather than carrying a second copy of them here. Without
+    the memory module the index is lexical only.
+    """
+    settings = _embed_settings(agent_did)
+    if settings is None:
+        return None
+    try:
+        build = import_module("arcmemory.provider").build_embedder
+    except ImportError:
+        return None
+    backend, model, base_url = settings
+    return build(agent_did, backend, model, base_url=base_url)
+
+
+def embedding_profile(agent_did: str) -> str:
+    """A stable name for how this agent embeds: a shared store is read as it was written."""
+    settings = _embed_settings(agent_did)
+    if settings is None:
+        return "lexical"
+    return hashlib.sha256("\0".join(settings).encode("utf-8")).hexdigest()[:16]
+
+
+class DelegatedAuthority(Protocol):
+    """The writing subscriber's verified approval, re-asked before every write."""
+
+    async def authorized_homes(self) -> tuple[str, tuple[KnowledgeHome, ...]] | None: ...
+
+
+class _MemoryAuthority:
+    """Present a :class:`DelegatedAuthority` in ArcMemory's own home vocabulary."""
+
+    def __init__(self, authority: DelegatedAuthority) -> None:
+        self._authority = authority
+
+    async def authorized_homes(self) -> tuple[str, tuple[Any, ...]] | None:
+        grant = await self._authority.authorized_homes()
+        if grant is None:
+            return None
+        approval_id, homes = grant
+        convert = import_module("arcmemory.types").MemoryHome
+        return approval_id, tuple(convert(home.value) for home in homes)
 
 
 def _revision(value: object) -> int | None:
@@ -530,4 +629,7 @@ __all__ = [
     "ArcStoreObjectState",
     "ArcStoreResourceSelection",
     "ConnectedDataUnavailableError",
+    "DelegatedAuthority",
+    "embedding_profile",
+    "memory_embedder",
 ]

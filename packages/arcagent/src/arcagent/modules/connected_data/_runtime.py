@@ -14,8 +14,11 @@ from arcagent.modules.connected_data.ingest import (
     ArcStoreMappingProposals,
     ArcStoreObjectState,
     ArcStoreResourceSelection,
+    embedding_profile,
+    memory_embedder,
 )
 from arcagent.modules.connected_data.service import ConnectedDataService, IngestPortFactory
+from arcagent.modules.connected_data.shared import SharedKnowledge
 
 
 class _State:
@@ -45,6 +48,13 @@ class _State:
                 self.arcstore_opener,
                 self.telemetry,
             )
+        )
+        #: One sync and one store per connection (P18-4); only with the default
+        #: ArcMemory ingest and an ArcStore to hold the subscriptions.
+        self.shared_knowledge: SharedKnowledge | None = (
+            _shared_knowledge(self.agent_did, self.arcstore_opener, self.telemetry)
+            if supplied_factory is None
+            else None
         )
         self.service: ConnectedDataService | None = None
         #: The agent's prompt lookup — the catalog preamble an operator may override.
@@ -127,6 +137,21 @@ def _arc_memory_ingest_factory(
         )
 
     return build
+
+
+def _shared_knowledge(
+    agent_did: str, arcstore_opener: Any, telemetry: Any
+) -> SharedKnowledge | None:
+    """The fleet's connection-scoped stores, read and written as this agent."""
+    if arcstore_opener is None or not agent_did:
+        return None
+    return SharedKnowledge(
+        agent_did=agent_did,
+        arcstore_opener=arcstore_opener,
+        embedder=lambda: memory_embedder(agent_did),
+        profile=lambda: embedding_profile(agent_did),
+        audit_sink=_audit_sink(telemetry),
+    )
 
 
 def _audit_sink(telemetry: Any) -> Any:

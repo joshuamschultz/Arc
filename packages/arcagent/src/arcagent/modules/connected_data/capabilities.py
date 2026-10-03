@@ -45,6 +45,7 @@ class ConnectedData:
             failure_ceiling=state.config.consecutive_failure_ceiling,
             health=_health_reporter(state),
             renewals=state.credential_renewals,
+            shared=state.shared_knowledge,
         )
         await state.service.start()
         self._service = state.service

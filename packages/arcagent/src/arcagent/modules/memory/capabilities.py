@@ -154,6 +154,7 @@ async def _connected_doc_recall(st: _runtime._State, query: str, memory_text: st
     seen = {m.group(1) for m in _CARD_RE.finditer(memory_text)}
     try:
         hits = await search(query, top_k=_DOC_RECALL_TOP_K, caller_did=st.agent_did)
+        hits = await _with_shared_hits(st, query, hits, top_k=_DOC_RECALL_TOP_K)
     except Exception:  # recall is best-effort; never block prompt assembly
         _logger.warning("connected-document recall failed", exc_info=True)
         return []
@@ -792,11 +793,46 @@ async def document_search(query: str, source: str | None = None, top_k: int | No
             return f"No connected source is named {source!r}. Connected sources: {available}."
         scope = {"source_ids": resolved} if resolved is not None else {"source_id": source}
     hits = await search(query, top_k=top_k, caller_did=st.agent_did, **scope)
+    wanted = scope.get("source_ids") or ([scope["source_id"]] if "source_id" in scope else None)
+    hits = await _with_shared_hits(st, query, hits, top_k=top_k, source_ids=wanted)
     await _audit(
         "memory.document_search",
         {"query_len": len(query), "source": source or "", "hit": bool(hits), "tool": True},
     )
     return _render_doc_hits(query, hits)
+
+
+async def _with_shared_hits(
+    st: _runtime._State,
+    query: str,
+    hits: list[Any],
+    *,
+    top_k: int | None,
+    source_ids: list[str] | None = None,
+) -> list[Any]:
+    """Merge this agent's hits with the shared connection stores it reads (P18-4).
+
+    A connection several agents are granted is synced once into one store; each
+    agent reads it through its own subscription, checked by the connected-data
+    service on every call. Best hit first; ``top_k`` bounds the merged list (or,
+    when unset, the longer of the two the stores returned on their own).
+    """
+    try:
+        runtime = __import__("arcagent.modules.connected_data._runtime", fromlist=["state"])
+        service = runtime.state().service
+    except RuntimeError:
+        return hits
+    search = getattr(service, "shared_document_search", None)
+    if search is None:
+        return hits
+    shared = await search(query, caller_did=st.agent_did, source_ids=source_ids, top_k=top_k)
+    if not shared:
+        return hits
+    limit = top_k if top_k is not None else max(len(hits), len(shared))
+    merged = sorted(
+        [*hits, *shared], key=lambda hit: float(getattr(hit, "score", 0.0)), reverse=True
+    )
+    return merged[:limit]
 
 
 _SOURCE_ID = re.compile(r"^[0-9a-f]{64}$")
