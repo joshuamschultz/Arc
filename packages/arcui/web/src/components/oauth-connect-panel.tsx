@@ -10,9 +10,25 @@ import {
   useOAuthConnectedListener,
   useSetOAuthApp,
 } from '@/lib/queries'
-import type { OAuthAppResponse, OAuthBeginResponse } from '@/lib/types'
+import type { OAuthAppBody, OAuthAppResponse, OAuthBeginResponse } from '@/lib/types'
 
-const RUNBOOK = 'docs/runbooks/operate/google-accounts.md'
+/** Where each provider's step-by-step setup lives in the operator runbooks. */
+function runbookFor(provider: string): string {
+  if (provider === 'microsoft') return 'docs/runbooks/operate/connections.md (Microsoft 365)'
+  return 'docs/runbooks/operate/google-accounts.md'
+}
+
+/** The Microsoft Graph delegated permissions the app registration must list. */
+const MICROSOFT_PERMISSIONS = [
+  'openid',
+  'profile',
+  'offline_access',
+  'User.Read',
+  'Mail.Read',
+  'Mail.Send',
+  'Calendars.ReadWrite',
+  'Files.Read',
+]
 const ERROR_BOX =
   'rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-destructive'
 
@@ -43,7 +59,19 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
   const save = useSetOAuthApp(provider)
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
+  const [tenantId, setTenantId] = useState(app.tenant_id ?? '')
+  const clouds = app.clouds ?? []
+  const [cloud, setCloud] = useState(app.cloud || clouds[0]?.id || '')
   const label = providerLabel(provider)
+  const needsTenant = app.tenant_required === true
+  const ready = clientId.trim() !== '' && clientSecret !== '' && (!needsTenant || tenantId.trim() !== '')
+
+  const body = (): OAuthAppBody => {
+    const base: OAuthAppBody = { client_id: clientId.trim(), client_secret: clientSecret }
+    if (needsTenant) base.tenant_id = tenantId.trim()
+    if (clouds.length > 0) base.cloud = cloud
+    return base
+  }
 
   return (
     <div data-oauth-app-setup className="space-y-3 rounded-md border border-border bg-muted/20 p-3 text-xs">
@@ -55,8 +83,9 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
           <CopyButton text={app.redirect_uri} />
         </div>
       </div>
+      {provider === 'microsoft' && <EntraSteps />}
       <p className="text-muted-foreground">
-        Step by step: <span className="font-mono text-foreground">{RUNBOOK}</span>
+        Step by step: <span className="font-mono text-foreground">{runbookFor(provider)}</span>
         {isHttps(app.console_url) && (
           <>
             {' · '}
@@ -80,6 +109,16 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
           onChange={(e) => setClientId(e.target.value)}
           placeholder="Client ID"
         />
+        {needsTenant && (
+          <Input
+            aria-label="Tenant ID"
+            autoComplete="off"
+            spellCheck={false}
+            value={tenantId}
+            onChange={(e) => setTenantId(e.target.value)}
+            placeholder="Directory (tenant) ID, like 11111111-2222-3333-4444-555555555555"
+          />
+        )}
         <Input
           aria-label="Client secret"
           type="password"
@@ -89,21 +128,66 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
           onChange={(e) => setClientSecret(e.target.value)}
           placeholder="••••••••"
         />
+        {clouds.length > 0 && (
+          <label className="flex items-center gap-2 text-muted-foreground">
+            Cloud
+            <select
+              aria-label="Cloud"
+              className="h-8 rounded-md border border-border bg-background px-2 text-foreground"
+              value={cloud}
+              onChange={(e) => setCloud(e.target.value)}
+            >
+              {clouds.map((choice) => (
+                <option key={choice.id} value={choice.id}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       <Button
         size="sm"
-        disabled={save.isPending || !clientId.trim() || !clientSecret}
-        onClick={() =>
-          save.mutate(
-            { client_id: clientId.trim(), client_secret: clientSecret },
-            { onSuccess: () => setClientSecret('') },
-          )
-        }
+        disabled={save.isPending || !ready}
+        onClick={() => save.mutate(body(), { onSuccess: () => setClientSecret('') })}
       >
         {save.isPending ? 'Saving…' : 'Save app'}
       </Button>
       {save.isError && <p className={ERROR_BOX}>{save.error.message}</p>}
     </div>
+  )
+}
+
+/**
+ * What to create in Microsoft Entra, in plain words. Shown above the form so an
+ * operator who has never registered an app can do it without leaving the page.
+ */
+function EntraSteps() {
+  return (
+    <ol data-entra-steps className="list-decimal space-y-1 pl-4 text-muted-foreground">
+      <li>
+        In the Microsoft Entra admin center, open App registrations and click New registration.
+        Choose &quot;Accounts in this organizational directory only&quot;.
+      </li>
+      <li>
+        Under Redirect URI pick the <span className="text-foreground">Web</span> platform and paste the
+        redirect address above. The portal does not accept an http://127.0.0.1 address in that box: add
+        it in the app&apos;s Manifest (replyUrlsWithType, type Web) instead.
+      </li>
+      <li>Under Certificates &amp; secrets, create a client secret and copy its Value.</li>
+      <li>
+        Under API permissions, add Microsoft Graph delegated permissions:{' '}
+        <span className="font-mono text-foreground">{MICROSOFT_PERMISSIONS.join(', ')}</span>.
+      </li>
+      <li>
+        Click <span className="text-foreground">Grant admin consent</span>. Government (GCC) tenants
+        usually block users from consenting themselves, so an admin must do this once.
+      </li>
+      <li>
+        Copy the Application (client) ID and the Directory (tenant) ID from the Overview page into the
+        boxes below. Pick Commercial / GCC unless your tenant is GCC High or DoD.
+      </li>
+    </ol>
   )
 }
 

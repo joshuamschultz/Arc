@@ -1396,12 +1396,30 @@ export type OAuthCompleteBody = { redirect_url: string } | { state: string; code
 
 /** Whether Arc has an OAuth app (client id and secret) for a provider. The secret
  *  is never returned; `client_id_hint` is a masked id for recognition only. */
+export interface OAuthCloudChoice {
+  id: string
+  label: string
+}
+
 export interface OAuthAppResponse {
   provider: string
   configured: boolean
   client_id_hint: string
   redirect_uri: string
   console_url: string
+  /** The app needs its directory (tenant) ID (Microsoft Entra ID). */
+  tenant_required?: boolean
+  tenant_id?: string
+  cloud?: string
+  /** Clouds the bundle declares, default first; empty for a provider without clouds. */
+  clouds?: OAuthCloudChoice[]
+}
+
+export interface OAuthAppBody {
+  client_id: string
+  client_secret: string
+  tenant_id?: string
+  cloud?: string
 }
 
 export interface ConnectorAuthResponse {
