@@ -245,14 +245,44 @@ class TestCreateWorkflow:
 
         with caplog.at_level("INFO", logger="arcui.audit"):
             resp = client.post(
-                "/api/workflows", headers=_operator(auth), json={"name": "onboarding"}
+                "/api/workflows",
+                headers=_operator(auth),
+                json={"name": "onboarding", "owner": "@sales"},
             )
 
         assert resp.status_code == 201
         assert resp.json() == {"id": "wf-1", "version": 1}
-        assert plane.calls[0] == ("create_workflow", ({"name": "onboarding"},), plane.calls[0][2])
+        assert plane.calls[0] == (
+            "create_workflow",
+            ({"name": "onboarding", "owner": "@sales"},),
+            plane.calls[0][2],
+        )
         assert _mutations(caplog)[0]["operation"] == "workflow.create"
         assert _mutations(caplog)[0]["target"] == "workflow:wf-1"
+
+    @pytest.mark.parametrize("owner", [None, "", "  "])
+    def test_create_refuses_a_missing_or_blank_owner(self, owner: str | None) -> None:
+        app, auth, plane, _ = _make_app()
+        body: dict[str, Any] = {"name": "onboarding"}
+        if owner is not None:
+            body["owner"] = owner
+
+        resp = TestClient(app).post("/api/workflows", headers=_operator(auth), json=body)
+
+        assert resp.status_code == 400
+        assert resp.json()["errors"][0]["field"] == "owner"
+        assert plane.calls == []
+
+    def test_create_with_a_full_document_is_not_asked_for_a_top_level_owner(self) -> None:
+        app, auth, _plane, _ = _make_app()
+
+        resp = TestClient(app).post(
+            "/api/workflows",
+            headers=_operator(auth),
+            json={"workflow": {"id": "x", "owner": "@sales"}, "node": []},
+        )
+
+        assert resp.status_code == 201
 
     def test_create_validation_errors_relayed_verbatim(self) -> None:
         app, auth, plane, _ = _make_app()
@@ -268,7 +298,9 @@ class TestCreateWorkflow:
             ]
         )
         client = TestClient(app)
-        resp = client.post("/api/workflows", headers=_operator(auth), json={"name": "bad"})
+        resp = client.post(
+            "/api/workflows", headers=_operator(auth), json={"name": "bad", "owner": "@sales"}
+        )
         assert resp.status_code == 400
         body = resp.json()
         assert body["errors"] == [
@@ -296,7 +328,9 @@ class TestCreateWorkflow:
         app, auth, _, _ = _make_app()
         app.state.workflow_control_plane = None
         client = TestClient(app)
-        resp = client.post("/api/workflows", headers=_operator(auth), json={"name": "x"})
+        resp = client.post(
+            "/api/workflows", headers=_operator(auth), json={"name": "x", "owner": "@sales"}
+        )
         assert resp.status_code == 503
 
 

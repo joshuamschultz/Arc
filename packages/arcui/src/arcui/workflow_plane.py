@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from arcstore.runs import NodeState
+from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
@@ -144,7 +145,6 @@ class DashboardWorkflowPlane:
         runs: Any,
         tasks: Any,
         approvals: Any = None,
-        default_owner: str = "@operator",
         schedule_reader: ScheduleReader | None = None,
         tool_idempotent: ToolIdempotency | None = None,
     ) -> None:
@@ -155,7 +155,6 @@ class DashboardWorkflowPlane:
         self._runs = runs
         self._tasks = tasks
         self._approvals = approvals
-        self._default_owner = default_owner
 
     @property
     def definitions(self) -> Any:
@@ -317,7 +316,9 @@ class DashboardWorkflowPlane:
     async def create_workflow(
         self, definition: dict[str, Any], *, actor: OperatorActor
     ) -> ControlPlaneResult:
-        document = _document_from(definition, default_owner=self._default_owner)
+        document = _document_from(definition)
+        if (refusal := _placeholder_refusal(document["workflow"]["owner"])) is not None:
+            return refusal
         result = await self._plane.create(document, actor_did=actor.did)
         return await self._relay(result, workflow_id=str(document["workflow"]["id"]))
 
@@ -332,6 +333,8 @@ class DashboardWorkflowPlane:
         bundle = self._load(workflow_id)
         if bundle is None:
             return ControlPlaneResult(not_found=True)
+        if "owner" in patch and (refusal := _placeholder_refusal(patch["owner"])) is not None:
+            return refusal
         document = bundle.definition.to_document()
         _apply_patch(document, patch)
         result = await self._plane.edit(
@@ -456,11 +459,13 @@ class DashboardWorkflowPlane:
         ]
 
     async def create_from_template(
-        self, template: str, workflow_id: str, *, actor: OperatorActor
+        self, template: str, workflow_id: str, *, owner: str, actor: OperatorActor
     ) -> ControlPlaneResult:
-        """Copy a template in as an unsigned draft, owned by the dashboard's default owner."""
+        """Copy a template in as an unsigned draft owned by ``owner`` (an agent handle)."""
+        if (refusal := _placeholder_refusal(owner)) is not None:
+            return refusal
         result = await self._plane.create_from_template(
-            template, workflow_id, actor_did=actor.did, owner=self._default_owner
+            template, workflow_id, actor_did=actor.did, owner=owner
         )
         if not result.ok:
             return _errors(result)
@@ -540,6 +545,7 @@ class DashboardWorkflowPlane:
         return {
             "id": definition.id,
             "name": definition.description or definition.id,
+            "owner": definition.owner,
             "version": definition.version,
             "status": bundle.status,
             "signer_did": bundle.signer_did,
@@ -589,6 +595,22 @@ class DashboardWorkflowPlane:
         return ControlPlaneResult(value=value or {"id": workflow_id})
 
 
+def _placeholder_refusal(owner: str) -> ControlPlaneResult | None:
+    """The refusal for the template placeholder, which no agent answers to."""
+    if owner != PLACEHOLDER_OWNER:
+        return None
+    return ControlPlaneResult(
+        errors=[
+            WorkflowFieldError(
+                node_id="",
+                field="owner",
+                error="choose the agent that owns this workflow",
+                observed=owner,
+            )
+        ]
+    )
+
+
 def _errors(result: Any) -> ControlPlaneResult:
     """arcteam's typed issues, verbatim — the route layer reinterprets nothing."""
     issues = [
@@ -625,7 +647,7 @@ def _edges(definition: Any) -> list[dict[str, str]]:
     return [{"from": need, "to": node.id} for node in definition.nodes for need in node.needs]
 
 
-def _document_from(body: dict[str, Any], *, default_owner: str) -> dict[str, Any]:
+def _document_from(body: dict[str, Any]) -> dict[str, Any]:
     """A create payload as a definition document.
 
     The dashboard's create sheet posts a name; a full document may also be
@@ -641,7 +663,7 @@ def _document_from(body: dict[str, Any], *, default_owner: str) -> dict[str, Any
         "workflow": {
             "id": workflow_id,
             "description": name or workflow_id,
-            "owner": str(body.get("owner") or default_owner),
+            "owner": str(body["owner"]),
         },
         "node": [{"id": _STARTER_NODE, "kind": "agent"}],
     }
@@ -665,6 +687,8 @@ def _apply_patch(document: dict[str, Any], patch: dict[str, Any]) -> None:
         document["workflow"]["channel"] = patch["channel"]
     if "name" in patch:
         document["workflow"]["description"] = patch["name"]
+    if "owner" in patch:
+        document["workflow"]["owner"] = patch["owner"]
 
 
 _SCHEDULE_META_FIELDS = (
@@ -741,7 +765,6 @@ def build_dashboard_plane(
     runner: Any,
     workflows_root: Path | None = None,
     approvals: Any = None,
-    default_owner: str = "@operator",
     schedule_reader: ScheduleReader | None = None,
     tool_idempotent: ToolIdempotency | None = None,
 ) -> DashboardWorkflowPlane:
@@ -782,7 +805,6 @@ def build_dashboard_plane(
         runs=runner.runs,
         tasks=runner.tasks,
         approvals=approvals,
-        default_owner=default_owner,
         schedule_reader=schedule_reader,
         tool_idempotent=tool_idempotent,
     )

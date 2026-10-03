@@ -12,11 +12,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useAgentCapabilities, useAgentTools, useRoster } from '@/lib/queries'
+import { AgentHandleSelect } from '@/components/agent-handle-select'
 import { RepeatUnsafeChip } from '@/components/workflows-view/repeat-warning'
 import {
   KIND_HELP,
   NODE_KINDS,
   STRATEGIES,
+  hasRealOwner,
   splitList,
   type NodeDraft,
   type OnFailure,
@@ -122,10 +124,13 @@ function Field({
 export function WorkflowNodeForm({
   draft,
   siblings,
+  workflowOwner,
   onChange,
 }: {
   draft: NodeDraft
   siblings: WorkflowNode[]
+  /** The workflow's owner handle; a placeholder or missing owner cannot be inherited. */
+  workflowOwner: string | null
   onChange: (next: NodeDraft) => void
 }) {
   const set = <K extends keyof NodeDraft>(key: K, value: NodeDraft[K]) =>
@@ -136,14 +141,6 @@ export function WorkflowNodeForm({
   // actually has loaded. A node naming something absent is a real error the
   // control plane reports — this only stops the operator from guessing.
   const roster = useRoster()
-  const handles = useMemo(
-    () =>
-      (roster.data?.agents ?? [])
-        .filter((a) => !a.hidden)
-        .map((a) => `@${a.agent_id ?? a.name ?? ''}`)
-        .filter((h) => h !== '@'),
-    [roster.data],
-  )
   const agentId = draft.agent.replace(/^@/, '')
   const toolAgentId = agentId || (roster.data?.agents ?? [])[0]?.agent_id || ''
   const capabilities = useAgentCapabilities(toolAgentId)
@@ -211,12 +208,11 @@ export function WorkflowNodeForm({
       </Field>
 
       {draft.kind !== 'gate' && (
-        <Field label="Agent" hint="@handle that runs this node. Defaults to the workflow owner." helpKey="workflow.node.agent">
-          <Suggested
-            listId={`agents-${draft.id}`}
+        <Field label="Agent" hint="The agent that runs this node." helpKey="workflow.node.agent">
+          <AgentHandleSelect
+            label="Agent"
             value={draft.agent}
-            options={handles}
-            placeholder={handles[0] ?? '@sales'}
+            inheritLabel={hasRealOwner(workflowOwner) ? `Workflow owner (${workflowOwner})` : undefined}
             onChange={(v) => set('agent', v)}
           />
         </Field>

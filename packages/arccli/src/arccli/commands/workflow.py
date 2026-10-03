@@ -620,15 +620,50 @@ def _create(args: argparse.Namespace) -> None:
     _with_plane(args, _run)
 
 
+def _owner_edit(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    """The stored definition with one owner changed, and the version it was read at.
+
+    ``--owner`` alone sets the workflow owner; with ``--node`` it sets that node's
+    agent. Reading the current version here is what lets the command take no
+    document and no ``--expected-version``.
+    """
+    try:
+        bundle = _store(args).load(args.id)
+    except WorkflowError as exc:
+        err(f"Error: {exc}")
+        sys.exit(1)
+    document = bundle.definition.to_document()
+    if args.node is None:
+        document["workflow"]["owner"] = args.owner
+        return document, bundle.definition.version
+    for node in document["node"]:
+        if node["id"] == args.node:
+            node["agent"] = args.owner
+            return document, bundle.definition.version
+    err(f"Error: workflow {args.id!r} has no node {args.node!r}")
+    sys.exit(1)
+
+
 def _edit(args: argparse.Namespace) -> None:
-    document, files = _read_bundle(args.document)
+    if args.document is None and args.owner is None:
+        err("Error: give --document <path> to revise the whole bundle, or --owner @<agent>")
+        sys.exit(2)
+    if args.document is not None:
+        document, files = _read_bundle(args.document)
+        expected_version = args.expected_version
+        if expected_version is None:
+            err("Error: --expected-version is required with --document")
+            sys.exit(2)
+    else:
+        document, expected_version = _owner_edit(args)
+        files = {}
 
     async def _run(plane: WorkflowControlPlane, actor_did: str) -> None:
         result = _ok_or_exit(
             await plane.edit(
                 args.id,
                 document,
-                expected_version=args.expected_version,
+                expected_version=expected_version,
                 actor_did=actor_did,
                 reason=args.reason or "",
                 files=files,
@@ -937,10 +972,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument(
         "--document",
-        required=True,
+        default=None,
         help="Path to the revised bundle directory or workflow.toml.",
     )
-    p.add_argument("--expected-version", dest="expected_version", type=int, required=True)
+    p.add_argument("--expected-version", dest="expected_version", type=int, default=None)
+    p.add_argument(
+        "--owner",
+        default=None,
+        help="Set the workflow owner to this agent handle (no --document needed).",
+    )
+    p.add_argument(
+        "--node", default=None, help="With --owner: set this node's agent instead of the owner."
+    )
     p.add_argument("--reason", default=None)
     _add_dir_arg(p)
 

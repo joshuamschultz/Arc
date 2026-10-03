@@ -36,8 +36,9 @@ import { StatusText } from '@/components/status-badge'
 import { GateCard } from '@/components/gate-card'
 import { RunDetailDrawer } from '@/components/run-detail-drawer'
 import { WorkflowGraph, type NodeStatusUpdate } from '@/components/workflow-graph'
+import { AgentHandleSelect } from '@/components/agent-handle-select'
 import { WorkflowNodeForm } from '@/components/workflow-node-form'
-import { fromDraft, toDraft, type NodeDraft } from '@/lib/workflow-node-draft'
+import { fromDraft, hasRealOwner, toDraft, type NodeDraft } from '@/lib/workflow-node-draft'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useWorkflowRunLiveStatus } from '@/hooks/use-workflow-run-live-status'
 import {
@@ -167,6 +168,7 @@ function FileBodyEditor({
 function NodeInspector({
   node,
   allNodes,
+  workflowOwner,
   workflowId,
   version,
   fieldErrors,
@@ -176,6 +178,7 @@ function NodeInspector({
 }: {
   node: WorkflowNode
   allNodes: WorkflowNode[]
+  workflowOwner: string | null
   workflowId: string
   version: number
   fieldErrors: WorkflowFieldError[]
@@ -190,6 +193,9 @@ function NodeInspector({
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const nodeErrors = fieldErrors.filter((e) => e.node_id === node.id)
+  // A gate is decided by a person; every other node runs as some agent, and with
+  // no real workflow owner to fall back on the node must name one.
+  const needsAgent = raw === null && draft.kind !== 'gate' && !draft.agent && !hasRealOwner(workflowOwner)
 
   const save = async () => {
     setParseError(null)
@@ -249,7 +255,12 @@ function NodeInspector({
           )}
           {raw === null ? (
             <>
-              <WorkflowNodeForm draft={draft} siblings={allNodes} onChange={setDraft} />
+              <WorkflowNodeForm
+                draft={draft}
+                siblings={allNodes}
+                workflowOwner={workflowOwner}
+                onChange={setDraft}
+              />
               {draft.kind === 'agent' && draft.prompt.trim() && (
                 <div className="space-y-1">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -303,7 +314,12 @@ function NodeInspector({
             {raw === null ? 'Edit as JSON' : 'Back to the form'}
           </button>
           <div className="flex items-center gap-2">
-            <Button className="flex-1" disabled={patchWorkflow.isPending} onClick={save}>
+            <Button
+              className="flex-1"
+              disabled={patchWorkflow.isPending || needsAgent}
+              title={needsAgent ? 'Choose the agent that runs this node' : undefined}
+              onClick={save}
+            >
               {patchWorkflow.isPending ? 'Saving…' : 'Save node'}
             </Button>
             <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete}>
@@ -319,6 +335,43 @@ function NodeInspector({
 /** Definition editing surface: the graph plus node-property editing over it
  * (DESIGN.md §8's open question resolves toward this, not drag-and-drop
  * authoring — positions are always dagre-computed, never hand-placed). */
+/** Who owns the workflow. Editable on a draft, where changing it is a plain
+ * versioned edit; any other status shows it read-only. */
+function OwnerEditor({ workflow }: { workflow: WorkflowDetail }) {
+  const patchWorkflow = usePatchWorkflow(workflow.id)
+  const [error, setError] = useState<string | null>(null)
+  const current = hasRealOwner(workflow.owner) ? workflow.owner : ''
+
+  const change = async (owner: string) => {
+    if (!owner || owner === workflow.owner) return
+    setError(null)
+    try {
+      await patchWorkflow.mutateAsync({ patch: { owner }, expectedVersion: workflow.version })
+    } catch (e) {
+      setError(describeError(e).message)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-medium uppercase tracking-wide text-muted-foreground">Owner</span>
+      {workflow.status === 'draft' ? (
+        <div className="w-56">
+          <AgentHandleSelect
+            label="Owner agent"
+            value={current}
+            onChange={(v) => void change(v)}
+            disabled={patchWorkflow.isPending}
+          />
+        </div>
+      ) : (
+        <span className="font-mono">{workflow.owner ?? 'none'}</span>
+      )}
+      {error && <span className="text-destructive">{error}</span>}
+    </div>
+  )
+}
+
 function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
   const patchWorkflow = usePatchWorkflow(workflow.id)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -329,6 +382,8 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
   const selectedNode = selectedNodeId
     ? (workflow.nodes.find((n) => n.id === selectedNodeId) ?? null)
     : null
+
+  const ownerReady = hasRealOwner(workflow.owner)
 
   const addNode = async () => {
     setActionError(null)
@@ -404,10 +459,22 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
             Select an edge and press delete to unlink.
           </span>
         )}
-        <Button size="sm" variant="ghost" className="ml-auto" onClick={addNode} disabled={patchWorkflow.isPending}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto"
+          onClick={addNode}
+          disabled={patchWorkflow.isPending || !ownerReady}
+        >
           <Plus className="size-3.5" /> Add node
         </Button>
       </div>
+      {!ownerReady && (
+        <p className="text-[11px] text-destructive">
+          Choose an owner agent first: a workflow with no real owner cannot be signed or run.
+        </p>
+      )}
+      <OwnerEditor workflow={workflow} />
       <div className="min-h-[420px] flex-1 overflow-hidden rounded-lg border border-border">
         {workflow.nodes.length === 0 ? (
           <EmptyState title="No nodes yet" description="Add a node to start building the graph." />
@@ -428,6 +495,7 @@ function GraphTab({ workflow }: { workflow: WorkflowDetail }) {
         <NodeInspector
           node={selectedNode}
           allNodes={workflow.nodes}
+          workflowOwner={workflow.owner ?? null}
           workflowId={workflow.id}
           version={workflow.version}
           fieldErrors={fieldErrors}

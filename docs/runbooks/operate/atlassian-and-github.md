@@ -4,7 +4,7 @@
 
 Jira and Confluence share one Atlassian sign-in app. You set it up once, then
 each connection is one click. GitHub uses a token you paste. In both cases Arc
-holds the credential in its own sealed storage. No helper program (`acli`) and
+holds the credential in its own sealed storage. No helper program and
 no `gh auth login` is involved.
 
 ## Atlassian (Jira and Confluence)

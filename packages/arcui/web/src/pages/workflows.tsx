@@ -4,6 +4,7 @@ import { Archive, GitBranch, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import { AgentHandleSelect } from '@/components/agent-handle-select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -39,11 +40,13 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   const templates = useWorkflowTemplates(open)
   const [name, setName] = useState('')
   const [template, setTemplate] = useState('')
+  const [owner, setOwner] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const reset = () => {
     setName('')
     setTemplate('')
+    setOwner('')
     setError(null)
   }
 
@@ -51,8 +54,8 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     setError(null)
     try {
       const id = template
-        ? (await fromTemplate.mutateAsync({ template, workflow_id: name.trim() })).workflow_id
-        : (await createWorkflow.mutateAsync({ name: name.trim() })).id
+        ? (await fromTemplate.mutateAsync({ template, workflow_id: name.trim(), owner })).workflow_id
+        : (await createWorkflow.mutateAsync({ name: name.trim(), owner })).id
       reset()
       onOpenChange(false)
       navigate(`/workflows/${encodeURIComponent(id)}`)
@@ -116,9 +119,19 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
               )}
             </div>
           )}
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Owner
+            </span>
+            <AgentHandleSelect label="Owner agent" value={owner} onChange={setOwner} />
+            <p className="text-xs text-muted-foreground">
+              The agent that runs every step you do not name another for. A workflow with no owner
+              cannot be signed.
+            </p>
+          </div>
           <Button
             className="w-full"
-            disabled={createWorkflow.isPending || fromTemplate.isPending || !name.trim()}
+            disabled={createWorkflow.isPending || fromTemplate.isPending || !name.trim() || !owner}
             onClick={submit}
           >
             {createWorkflow.isPending || fromTemplate.isPending ? 'Creating…' : 'Create draft'}

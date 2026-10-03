@@ -164,7 +164,10 @@ arc workflow run weekly-brief --input in.json --detach   # run it now
 
 `--owner` names the agent whose handle runs each node that does not name its own. The
 templates ship with a placeholder owner (`@operator`) that no agent answers to, so
-always pass the handle of a real agent.
+always pass the handle of a real agent. `sign`, `test` and `run` refuse a workflow still owned by
+the placeholder. Fix an existing draft with one command: `arc workflow edit weekly-brief --owner
+@analyst-1` (add `--node <id>` to set one node's agent instead). The dashboard asks for an owner
+when you create a workflow, and lets you change it on the draft.
 
 `sign` and `verify` take a workflow **id**, not a path. They act on the bundle the
 runner reads (under your Arc home's `workflows/` directory), and refuse any path that

@@ -42,9 +42,9 @@ class _FakePlane:
         return [{"id": "maker_checker", "title": "Maker and checker", "description": "d"}]
 
     async def create_from_template(
-        self, template: str, workflow_id: str, *, actor: OperatorActor
+        self, template: str, workflow_id: str, *, owner: str, actor: OperatorActor
     ) -> Any:
-        self.calls.append(("create_from_template", (template, workflow_id, actor)))
+        self.calls.append(("create_from_template", (template, workflow_id, owner, actor)))
         return self.template_result
 
 
@@ -83,14 +83,28 @@ def test_from_template_returns_the_new_id() -> None:
 
     resp = client.post(
         "/api/workflows/from-template",
-        json={"template": "maker_checker", "workflow_id": "mine"},
+        json={"template": "maker_checker", "workflow_id": "mine", "owner": "@writer"},
         headers=_op(auth),
     )
 
     assert resp.status_code == 201
     assert resp.json() == {"workflow_id": "mine"}
     assert plane.calls[-1][0] == "create_from_template"
-    assert plane.calls[-1][1][:2] == ("maker_checker", "mine")
+    assert plane.calls[-1][1][:3] == ("maker_checker", "mine", "@writer")
+
+
+@pytest.mark.parametrize("owner", [None, "", 7])
+def test_from_template_refuses_a_missing_or_blank_owner(owner: Any) -> None:
+    client, auth, plane = _app()
+    body: dict[str, Any] = {"template": "maker_checker", "workflow_id": "mine"}
+    if owner is not None:
+        body["owner"] = owner
+
+    resp = client.post("/api/workflows/from-template", json=body, headers=_op(auth))
+
+    assert resp.status_code == 400
+    assert resp.json()["errors"][0]["field"] == "owner"
+    assert plane.calls == []
 
 
 @pytest.mark.parametrize("body", [{}, {"template": "x"}, {"workflow_id": "y"}, {"template": 1}])
@@ -111,7 +125,7 @@ def test_a_template_refusal_is_a_typed_error() -> None:
 
     resp = client.post(
         "/api/workflows/from-template",
-        json={"template": "x", "workflow_id": "mine"},
+        json={"template": "x", "workflow_id": "mine", "owner": "@writer"},
         headers=_op(auth),
     )
 
@@ -133,7 +147,11 @@ def test_test_run_returns_the_flagged_run() -> None:
     ("method", "path", "body"),
     [
         ("get", "/api/workflow-templates", None),
-        ("post", "/api/workflows/from-template", {"template": "a", "workflow_id": "b"}),
+        (
+            "post",
+            "/api/workflows/from-template",
+            {"template": "a", "workflow_id": "b", "owner": "@w"},
+        ),
         ("post", "/api/workflows/brief/test-run", None),
     ],
 )
@@ -160,7 +178,7 @@ async def enterprise_plane(tmp_path: Path) -> Any:
         runner_key_path=tmp_path / "operator" / "operator.key",
         workspace_root=tmp_path,
     )
-    yield build_dashboard_plane(runner=runner, default_owner="@writer")
+    yield build_dashboard_plane(runner=runner)
     await backend.stop()
 
 
@@ -180,7 +198,7 @@ async def test_a_template_lands_as_an_unsigned_draft_with_its_files(
     enterprise_plane: Any, tmp_path: Path
 ) -> None:
     result = await enterprise_plane.create_from_template(
-        "maker_checker", "release-notes", actor=_ACTOR
+        "maker_checker", "release-notes", owner="@writer", actor=_ACTOR
     )
 
     assert result.errors is None, result.errors
@@ -192,21 +210,29 @@ async def test_a_template_lands_as_an_unsigned_draft_with_its_files(
 
 
 async def test_creating_over_an_existing_workflow_conflicts(enterprise_plane: Any) -> None:
-    await enterprise_plane.create_from_template("maker_checker", "dup", actor=_ACTOR)
+    await enterprise_plane.create_from_template(
+        "maker_checker", "dup", owner="@writer", actor=_ACTOR
+    )
 
-    again = await enterprise_plane.create_from_template("maker_checker", "dup", actor=_ACTOR)
+    again = await enterprise_plane.create_from_template(
+        "maker_checker", "dup", owner="@writer", actor=_ACTOR
+    )
 
     assert again.errors is not None
 
 
 async def test_an_unknown_template_is_refused(enterprise_plane: Any) -> None:
-    result = await enterprise_plane.create_from_template("nope", "mine", actor=_ACTOR)
+    result = await enterprise_plane.create_from_template(
+        "nope", "mine", owner="@writer", actor=_ACTOR
+    )
 
     assert result.errors is not None and result.errors[0].field == "template"
 
 
 async def test_a_draft_test_run_starts_above_personal_tier(enterprise_plane: Any) -> None:
-    await enterprise_plane.create_from_template("scheduled_watcher", "watch", actor=_ACTOR)
+    await enterprise_plane.create_from_template(
+        "scheduled_watcher", "watch", owner="@writer", actor=_ACTOR
+    )
 
     # The same draft is refused as a live run at enterprise tier ...
     live = await enterprise_plane.run_workflow("watch", {}, actor=_ACTOR)
@@ -219,3 +245,24 @@ async def test_a_draft_test_run_starts_above_personal_tier(enterprise_plane: Any
     assert tested.value is not None
     assert tested.value["mode"] == "test"
     assert is_test_run(tested.value["run_id"])
+
+
+async def test_the_plane_refuses_the_template_placeholder_everywhere(
+    enterprise_plane: Any,
+) -> None:
+    """The dashboard can never author a workflow that cannot sign."""
+    from arcteam.workflow.ownership import PLACEHOLDER_OWNER
+
+    tpl = await enterprise_plane.create_from_template(
+        "maker_checker", "ph", owner=PLACEHOLDER_OWNER, actor=_ACTOR
+    )
+    made = await enterprise_plane.create_workflow(
+        {"name": "ph2", "owner": PLACEHOLDER_OWNER}, actor=_ACTOR
+    )
+    await enterprise_plane.create_workflow({"name": "ok", "owner": "@writer"}, actor=_ACTOR)
+    patched = await enterprise_plane.patch_workflow(
+        "ok", {"owner": PLACEHOLDER_OWNER}, expected_version=1, actor=_ACTOR
+    )
+
+    for result in (tpl, made, patched):
+        assert result.errors is not None and result.errors[0].field == "owner"

@@ -72,8 +72,14 @@ def test_new_copies_a_template_as_an_unsigned_draft_and_names_the_sign_step(
 ) -> None:
     workflow_handler(
         [
-            "new", "weekly-brief", "--from", "fanout_synthesize", "--owner", "@sales",
-            "--dir", str(arc_dir),
+            "new",
+            "weekly-brief",
+            "--from",
+            "fanout_synthesize",
+            "--owner",
+            "@sales",
+            "--dir",
+            str(arc_dir),
         ]
     )
 
@@ -152,3 +158,52 @@ def test_run_and_test_refuse_a_placeholder_owner_up_front(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "placeholder" in err and "maker" in err and "--owner" in err
+
+
+def test_edit_owner_alone_fixes_a_placeholder_draft_so_it_signs(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+    capsys.readouterr()
+
+    workflow_handler(["edit", "ph", "--owner", "@sales", "--dir", str(arc_dir)])
+    assert "Edited ph -> v2" in capsys.readouterr().out
+
+    workflow_handler(["sign", "ph", "--dir", str(arc_dir)])
+    assert "Signed" in capsys.readouterr().out
+
+
+def test_edit_owner_for_one_node_leaves_the_others_blocked(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+    workflow_handler(["edit", "ph", "--node", "maker", "--owner", "@sales", "--dir", str(arc_dir)])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit):
+        workflow_handler(["sign", "ph", "--dir", str(arc_dir)])
+
+    err = capsys.readouterr().err
+    assert "checker" in err and "publish" in err
+    assert "node(s) maker" not in err
+
+
+def test_the_placeholder_error_points_at_the_single_edit_command(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit):
+        workflow_handler(["sign", "ph", "--dir", str(arc_dir)])
+
+    assert "arc workflow edit ph --owner @<agent>" in capsys.readouterr().err
+
+
+def test_edit_needs_a_document_or_an_owner(arc_dir: Path) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+
+    with pytest.raises(SystemExit) as exc:
+        workflow_handler(["edit", "ph", "--dir", str(arc_dir)])
+
+    assert exc.value.code != 0

@@ -110,13 +110,28 @@ async def test_list_and_detail_read_the_real_bundle(plane: Any) -> None:
 async def test_create_lands_a_draft_from_a_name(plane: Any) -> None:
     actor = OperatorActor(did="did:arc:ui:operator", session_id="s1")
 
-    result = await plane.create_workflow({"name": "Weekly Report"}, actor=actor)
+    result = await plane.create_workflow({"name": "Weekly Report", "owner": "@sales"}, actor=actor)
 
     assert result.errors is None, result.errors
     assert result.value is not None
     assert result.value["id"] == "weekly-report"
+    detail = await plane.get_workflow("weekly-report", actor=actor)
+    assert detail is not None and detail["owner"] == "@sales"
     # Authoring never confers trust, on any surface (REQ-223).
     assert result.value["status"] == "draft"
+
+
+async def test_the_owner_of_a_draft_can_be_changed_by_patch(plane: Any) -> None:
+    actor = OperatorActor(did="did:arc:ui:operator", session_id="s1")
+    await plane.create_workflow({"name": "Brief", "owner": "@sales"}, actor=actor)
+
+    result = await plane.patch_workflow(
+        "brief", {"owner": "@support"}, expected_version=1, actor=actor
+    )
+
+    assert result.errors is None, result.errors
+    detail = await plane.get_workflow("brief", actor=actor)
+    assert detail is not None and detail["owner"] == "@support"
 
 
 async def test_unknown_workflow_reads_as_not_found(plane: Any) -> None:
