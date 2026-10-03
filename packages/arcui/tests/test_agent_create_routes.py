@@ -56,6 +56,7 @@ class AuditRecorder:
 @pytest.fixture
 def operator_key(tmp_path, monkeypatch) -> OperatorKey:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     path = arctrust.default_operator_key_path()
     path.parent.mkdir(parents=True)
     key = OperatorKey.generate()
@@ -192,6 +193,7 @@ def test_without_an_operator_signer_nothing_is_written(
     team_root, audit, registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     client = _app(team_root, None, audit, registry)
 
     resp = client.post("/api/agents", json={"name": "helper"}, headers=_op())

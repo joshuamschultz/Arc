@@ -22,6 +22,7 @@ from arccli.commands.prompt import prompt_handler
 def _pin_operator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An isolated deployment whose one operator key both signs and verifies."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     key_path = arctrust.default_operator_key_path()
     key_path.parent.mkdir(parents=True)
     OperatorKey.generate().save(key_path)

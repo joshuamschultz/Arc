@@ -36,6 +36,7 @@ def _create(parent: Path, name: str = "helper", **kwargs: object) -> scaffold.Cr
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
 
 
 def test_creates_the_three_files_a_did_and_signed_documents(tmp_path: Path) -> None:
