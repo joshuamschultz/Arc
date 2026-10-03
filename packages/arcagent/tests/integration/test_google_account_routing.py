@@ -470,7 +470,8 @@ async def test_two_connections_sync_their_own_mailboxes(world: _World) -> None:
     await capability.reconcile()
 
     registrations = {item.connection_id: item for item in await catalog.snapshot()}
-    assert set(registrations) == {"blackarc", "systems"}
+    # Each Google connection is two streams: its mailbox, and its Drive.
+    assert set(registrations) == {"blackarc", "systems", "blackarc:drive", "systems:drive"}
     for instance, account in (("blackarc", _A), ("systems", _B)):
         source = registrations[instance].adapter
         await source.inspect_source(InspectSource(connection_id=instance))

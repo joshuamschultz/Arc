@@ -135,13 +135,17 @@ async def test_the_start_token_is_taken_before_the_snapshot_so_nothing_is_missed
 
 async def test_trashed_and_unshared_files_become_tombstones(drive: FakeDrive) -> None:
     adapter = _adapter(drive)
-    _, cursor = await _sync(adapter, None)
+    snapshot, cursor = await _sync(adapter, None)
 
     drive.trash("doc-1")
     drive.unshare("pdf-1")
     changed, _ = await _sync(adapter, cursor)
 
     assert _deleted(changed) == {"doc-1", "pdf-1"}
+    stored = {item.version for item in snapshot}
+    assert not stored & {item.version for item in changed}, (
+        "a tombstone must not repeat a stored version"
+    )
     assert all(item.deleted and item.metadata["revision"] > 10**9 for item in changed)
 
 

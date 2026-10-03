@@ -45,6 +45,7 @@ _CURSOR_VERSION: Final = 1
 #: Ingest refuses a change whose revision does not exceed the stored one, and a
 #: removal carries no file to take a revision from, so it outranks every real one.
 _DELETED_REVISION: Final = 2**62
+_DELETED_VERSION: Final = "deleted"
 _ALL: Final = "all"
 _PAGE_CEILING: Final = 1000
 #: Folders listed per call when picking what to sync. Deeper folders are reached by
@@ -257,11 +258,11 @@ class DriveSourceAdapter:
             return None
         if change.get("removed") or not isinstance(file, dict) or file.get("trashed"):
             # Removed also means "no longer visible to this account": a revoked share.
-            return _tombstone(file_id, _version(file) if isinstance(file, dict) else "0")
+            return _tombstone(file_id)
         if not _is_document(file):
             return None
         if not await placement.contains(file):
-            return _tombstone(file_id, _version(file))
+            return _tombstone(file_id)
         return _file_object(file)
 
     async def _call(self, tool: str, arguments: dict[str, str]) -> dict[str, Any]:
@@ -380,12 +381,14 @@ def _file_object(file: dict[str, Any]) -> SourceObject:
     )
 
 
-def _tombstone(object_id: str, version: str) -> SourceObject:
+def _tombstone(object_id: str) -> SourceObject:
+    # Not the file's last version: ingest ignores a change that repeats the stored
+    # version, and a deletion must never look like "nothing new".
     return SourceObject(
         object_id=object_id,
         locator=object_id,
         kind=SourceObjectKind.DELETED,
-        version=version,
+        version=_DELETED_VERSION,
         deleted=True,
         metadata={"classification": "unclassified", "revision": _DELETED_REVISION},
     )
