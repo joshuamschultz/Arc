@@ -412,9 +412,12 @@ def test_j3_docs_cli_create_sign_run_enterprise(
         return capsys.readouterr().out
 
     assert "fanout_synthesize" in arc("templates")
-    assert "arc workflow sign weekly-brief" in arc(
-        "new", "weekly-brief", "--from", "fanout_synthesize"
-    )
+    # Bare `new` warns that the template's placeholder owner cannot run anything.
+    assert "placeholder" in arc("new", "scratch", "--from", "fanout_synthesize")
+    # The documented line, verbatim.
+    created = arc("new", "weekly-brief", "--from", "fanout_synthesize", "--owner", "@analyst-1")
+    assert "arc workflow sign weekly-brief" in created
+    assert "placeholder" not in created
     assert "weekly-brief" in arc("list")
     arc("sign", "weekly-brief")
     assert "VALID" in arc("verify", "weekly-brief")
