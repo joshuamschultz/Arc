@@ -100,6 +100,7 @@ from arcagent.extension.connection_health import (
     action_label,
     next_check_time,
 )
+from arcagent.extension.custody_select import deployment_cipher
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.extension.knowledge_subscriptions import (
     KnowledgeSubscription,
@@ -441,6 +442,7 @@ __all__ = [
     "config_render",
     "deep_merge",
     "default_env_file",
+    "deployment_cipher",
     "deployment_tier",
     "discover_modules",
     "dumps_toml",

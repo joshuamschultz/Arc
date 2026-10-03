@@ -21,9 +21,10 @@ no `gh auth login` is involved.
 3. **Authorization:** set the **Callback URL** to exactly the address ArcUI
    shows in **Set up Atlassian sign-in** (it is
    `http://127.0.0.1:<port>/oauth/callback`, or
-   `https://<public_base_url host>/oauth/callback` when `[ui] public_base_url`
-   is set). Atlassian matches it exactly. If Atlassian refuses an `http://`
-   loopback address, set `[ui] public_base_url` to an `https://` address.
+   `https://<public address>/oauth/callback` once a public address is saved in
+   **Settings → Access**). Atlassian matches it exactly. If Atlassian refuses an
+   `http://` loopback address, save an `https://` public address first (see
+   [Sign in from any browser](connections.md#sign-in-from-any-browser)).
 4. **Settings:** copy the **Client ID** and **Secret**.
 5. In ArcUI open **Connections**, find the Jira card, click **Set up Atlassian
    sign-in**, paste both, and Save. Jira and Confluence use the same slot.

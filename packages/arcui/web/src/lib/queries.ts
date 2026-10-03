@@ -10,6 +10,9 @@ import type {
   ConnectorAuthStatusResponse,
   ConnectorInstance,
   OAuthAppBody,
+  PublicAddressResponse,
+  TlsBody,
+  TlsStatus,
   OAuthAppResponse,
   OAuthBeginResponse,
   OAuthCompleteBody,
@@ -2053,5 +2056,53 @@ export const useSendAgentMail = (agentId: string) => {
         { 'Idempotency-Key': idempotencyKey },
       ),
     onSuccess: () => client.invalidateQueries({ queryKey: ['agent', agentId, 'inbox'] }),
+  })
+}
+
+const PUBLIC_ADDRESS_PATH = '/api/settings/public-address'
+const PUBLIC_ADDRESS_KEY = ['settings', 'public-address']
+const TLS_PATH = '/api/settings/tls'
+const TLS_KEY = ['settings', 'tls']
+
+export const usePublicAddress = () =>
+  useQuery<PublicAddressResponse>({
+    queryKey: PUBLIC_ADDRESS_KEY,
+    queryFn: ({ signal }) => apiGet(PUBLIC_ADDRESS_PATH, signal),
+    retry: false,
+  })
+
+// null clears the saved address. The sign-in return addresses derive from it,
+// so every OAuth app answer is refreshed too.
+export const useSetPublicAddress = () => {
+  const queryClient = useQueryClient()
+  return useMutation<PublicAddressResponse, Error, string | null>({
+    mutationFn: (publicBaseUrl) => apiPut(PUBLIC_ADDRESS_PATH, { public_base_url: publicBaseUrl }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(PUBLIC_ADDRESS_KEY, saved)
+      return queryClient.invalidateQueries({ queryKey: ['oauth-apps'] })
+    },
+  })
+}
+
+export const useTlsStatus = () =>
+  useQuery<TlsStatus>({
+    queryKey: TLS_KEY,
+    queryFn: ({ signal }) => apiGet(TLS_PATH, signal),
+    retry: false,
+  })
+
+export const useSetTls = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TlsStatus, Error, TlsBody>({
+    mutationFn: (body) => apiPut(TLS_PATH, body),
+    onSuccess: (saved) => queryClient.setQueryData(TLS_KEY, saved),
+  })
+}
+
+export const useRemoveTls = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TlsStatus, Error, void>({
+    mutationFn: () => apiDelete(TLS_PATH),
+    onSuccess: (saved) => queryClient.setQueryData(TLS_KEY, saved),
   })
 }

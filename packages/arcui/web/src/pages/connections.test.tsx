@@ -211,7 +211,8 @@ describe('ConnectionCard health row', () => {
     )
     expect(calls.find((c) => c.url.endsWith('/gmail-olivia/oauth/begin'))?.method).toBe('POST')
     expect(await within(card).findByText('Waiting for Google…')).toBeTruthy()
-    await userEvent.click(within(card).getByText(/Didn't come back\?/))
+    // The redirect is not this browser's origin, so the paste box is already open.
+    expect(within(card).getByText('Paste the address from the page you landed on')).toBeTruthy()
     const pasted = 'http://arc.local:8420/oauth/callback?code=c1&state=s1'
     await userEvent.type(within(card).getByLabelText('Address you landed on'), pasted)
     await userEvent.click(within(card).getByRole('button', { name: /Finish connecting/ }))
@@ -225,7 +226,7 @@ describe('ConnectionCard health row', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'Reconnect Google' }))
     const redirect = (await within(card).findByLabelText('Redirect address')) as HTMLInputElement
     expect(redirect.value).toBe('http://arc.local:8420/oauth/callback')
-    expect(within(card).getByText(/google-accounts\.md/)).toBeTruthy()
+    expect(within(card).getAllByText(/Authorized redirect URIs/).length).toBeGreaterThan(0)
     expect((within(card).getByLabelText('Client secret') as HTMLInputElement).type).toBe('password')
     expect(within(card).queryByRole('button', { name: 'Reconnect' })).toBeNull()
     await userEvent.type(within(card).getByLabelText('Client ID'), 'cid')

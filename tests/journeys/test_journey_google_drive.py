@@ -34,6 +34,7 @@ from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connectors.attachments import build_attachment
 from arcstore.approvals import ApprovalStore
 from arcstore.source_sync import InMemorySourceSyncStore
+from arcui.public_address import PublicAddress
 
 from packages.arcagent.tests.drive_fake import DOC, FOLDER, PDF, FakeDrive
 from packages.arcagent.tests.oauth_fakes import FakeGmail, FakeOAuthProvider
@@ -49,7 +50,6 @@ from .test_journey_google_connect import (
     AGENT_DID,
     EMAIL,
     INSTANCE,
-    REDIRECT,
     Clock,
     _wait,
     google_bundle,
@@ -138,7 +138,7 @@ async def test_connect_google_sync_drive_find_a_doc_by_meaning(
     # --- the operator: one click -------------------------------------------------
     client, _agent_id, _dir = _agent(world)
     client.app.state.oauth_token_post = provider.post
-    client.app.state.oauth_redirect_uri = REDIRECT
+    client.app.state.public_address = PublicAddress(ui_port=8420)
     row = await asyncio.to_thread(_connect_google, client, provider)
     assert row["status"] == "healthy", row
 
