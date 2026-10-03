@@ -1,4 +1,5 @@
 import { getToken } from './auth'
+import { checkForNewBuild } from './stale-build'
 
 /** Thrown on any non-2xx API response; carries the server's `{error}` text.
  *
@@ -69,6 +70,14 @@ async function parseError(
   return { message: `HTTP ${res.status}` }
 }
 
+/** Build the `ApiError` for a non-2xx response. A 5xx right after a deploy is
+ * often an old tab talking to a new server, so it also re-checks the build. */
+async function failedResponse(res: Response): Promise<ApiError> {
+  if (res.status >= 500) void checkForNewBuild()
+  const parsed = await parseError(res)
+  return new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
+}
+
 /** GET `path`, returning parsed JSON. Throws `ApiError` on failure. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   let res: Response
@@ -84,8 +93,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
     throw error
   }
   if (!res.ok) {
-    const parsed = await parseError(res)
-    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
+    throw await failedResponse(res)
   }
   return (await res.json()) as T
 }
@@ -105,8 +113,7 @@ export async function apiGetText(path: string, signal?: AbortSignal): Promise<st
     throw error
   }
   if (!res.ok) {
-    const parsed = await parseError(res)
-    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
+    throw await failedResponse(res)
   }
   return res.text()
 }
@@ -133,8 +140,7 @@ async function apiSend<T>(
     throw error
   }
   if (!res.ok) {
-    const parsed = await parseError(res)
-    throw new ApiError(res.status, parsed.message, parsed.errors, parsed.body)
+    throw await failedResponse(res)
   }
   // 204 No Content (e.g. DELETE) carries no body — parsing it as JSON would throw.
   if (res.status === 204) return undefined as T

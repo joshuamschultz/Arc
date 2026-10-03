@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { Sidebar } from './sidebar'
 import { ApprovalNotificationListener } from '@/components/approval-notification-listener'
 import { CommandPalette } from '@/components/command-palette'
+import { NewBuildBanner } from '@/components/new-build-banner'
 import { CustodyBanner } from '@/components/custody-repair-panel'
 
 /**
@@ -56,6 +57,7 @@ export function AppShell() {
       </Sheet>
       <Sidebar />
       <main id="main-content" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto outline-none">
+        <NewBuildBanner />
         <CustodyBanner />
         <Outlet />
       </main>

@@ -1,17 +1,22 @@
 /**
- * Detect that this tab is running code the server no longer has, and reload once.
+ * Detect that this tab is running code the server no longer has, and say so.
  *
  * Asset filenames are content-hashed and a deploy deletes the previous ones, so a
- * tab left open across one breaks in two ways that look unrelated: a lazily-imported
- * route asks for a chunk that is gone ("Importing a module script failed"), and old
- * components render new API shapes ("objects are not valid as a React child"). Both
- * happened on a single deploy.
+ * tab left open across one breaks in ways that look unrelated: a lazily-imported
+ * route asks for a chunk that is gone, old components render new API shapes, and an
+ * old panel silently never sends what the new server expects. No cache header fixes
+ * this. The page is already in memory and never asks for HTML again, so it cannot
+ * learn it is stale; it has to check.
  *
- * No cache header fixes this. The page is already in memory and never asks for HTML
- * again, so it cannot learn it is stale — it has to check.
+ * The result is a banner (never an automatic reload), because a reload would throw
+ * away whatever the operator is in the middle of. Once stale, a tab stays stale.
  */
+import { useSyncExternalStore } from 'react'
 
-const CHECK_KEY = 'arcui:stale-reloaded'
+const CHECK_INTERVAL_MS = 60_000
+
+let stale = false
+const listeners = new Set<() => void>()
 
 /** This tab's own entry bundle, e.g. `index-BNaLpT5A.js`. */
 function ownBundle(): string {
@@ -31,38 +36,56 @@ async function deployedBundle(): Promise<string> {
   return body.bundle ?? ''
 }
 
-/**
- * Reload when the deployed bundle differs from this tab's.
- *
- * Reloads at most once per tab: if the page comes back still mismatched, the fault
- * is not staleness and a reload loop would hide it behind a flickering screen. An
- * unreachable or unversioned server is treated as "no information", never as stale —
- * a network blip must not throw away unsaved state.
- */
-export async function reloadIfStale(): Promise<void> {
-  if (sessionStorage.getItem(CHECK_KEY)) return
-  const mine = ownBundle()
-  if (!mine) return
-  let deployed: string
-  try {
-    deployed = await deployedBundle()
-  } catch {
-    return
-  }
-  if (!deployed || deployed === mine) return
-  sessionStorage.setItem(CHECK_KEY, '1')
-  window.location.reload()
+function markStale(): void {
+  if (stale) return
+  stale = true
+  listeners.forEach((notify) => notify())
 }
 
 /**
- * Check on load and whenever the tab is refocused.
+ * Compare the deployed bundle with this tab's and flag a mismatch.
  *
- * Focus is the moment that matters: the tab someone left open over a deploy is
- * exactly the tab they come back to and click something in.
+ * An unreachable or unversioned server is "no information", never "stale": a
+ * network blip must not raise a false alarm.
  */
-export function watchForStaleBuild(): () => void {
-  void reloadIfStale()
-  const onFocus = () => void reloadIfStale()
+export async function checkForNewBuild(): Promise<void> {
+  if (stale) return
+  const mine = ownBundle()
+  if (!mine) return
+  try {
+    const deployed = await deployedBundle()
+    if (deployed && deployed !== mine) markStale()
+  } catch {
+    /* unreachable server: no information */
+  }
+}
+
+/**
+ * Check on load, every 60 s, and whenever the tab is refocused. API 5xx and
+ * websocket reconnects call `checkForNewBuild` directly.
+ */
+export function watchForNewBuild(): () => void {
+  void checkForNewBuild()
+  const onFocus = () => void checkForNewBuild()
   window.addEventListener('focus', onFocus)
-  return () => window.removeEventListener('focus', onFocus)
+  const timer = setInterval(() => void checkForNewBuild(), CHECK_INTERVAL_MS)
+  return () => {
+    window.removeEventListener('focus', onFocus)
+    clearInterval(timer)
+  }
+}
+
+function subscribe(notify: () => void): () => void {
+  listeners.add(notify)
+  return () => listeners.delete(notify)
+}
+
+export function useBuildIsStale(): boolean {
+  return useSyncExternalStore(subscribe, () => stale)
+}
+
+/** Test seam: forget a previous test's verdict. */
+export function resetBuildWatchForTests(): void {
+  stale = false
+  listeners.clear()
 }
