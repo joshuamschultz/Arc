@@ -134,7 +134,8 @@ def add_handler(args: argparse.Namespace) -> None:
     with operator_session(_ADD_PROG, url, email) as call:
         call("POST", base, json=body)
     write(
-        f"Added '{args.name}' (every {minutes} min). It is pending approval: run arc pulse approve."
+        f"Added '{args.name}' (every {minutes} min). "
+        "It is pending approval: run arc pulse approve."
     )
 
 
