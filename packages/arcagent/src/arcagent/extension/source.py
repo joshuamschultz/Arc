@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from arcagent.extension.credentials import CredentialRenewalError
 
 
 class _Contract(BaseModel):
@@ -56,8 +59,12 @@ class SourceError(RuntimeError):
         self.retry_after = retry_after
 
 
-#: What a vendor CLI says when nobody is signed in. Each vendor says it in prose,
-#: not in a code the wrapper passes through, so the words are the only signal.
+#: What a vendor CLI or a provider says, in prose, when nobody is signed in. This
+#: is the only signal for text Arc did not produce: a vendor CLI's stderr or a
+#: provider's error body carries no code the wrapper passes through. Arc's OWN
+#: credential failures never come through here. They are typed
+#: (``CredentialRenewalError``) and mapped by :func:`source_error_from_renewal`,
+#: so a reworded message cannot turn a missing credential into a retry storm.
 #: "keyring" and "tty" are here because a headless box that cannot unlock the
 #: vendor's credential store is signed out for every practical purpose: only a
 #: person at a terminal can fix it, and retrying changes nothing.
@@ -86,6 +93,19 @@ _AUTH_MARKERS = (
 _AUTH_STATUS = re.compile(r"(?<![\w-])401(?![\w-])")
 _RATE_STATUS = re.compile(r"(?<![\w-])429(?![\w-])")
 _RATE_MARKERS = ("rate limit", "ratelimitexceeded", "secondary rate")
+
+
+def source_error_from_renewal(exc: CredentialRenewalError) -> SourceError:
+    """Map Arc's typed credential failure to a source failure, by type and not by prose.
+
+    A credential only a person can fix (missing, revoked, consent withdrawn) is
+    ``AUTH_REQUIRED``, which the orchestrator never retries and the connection
+    health authority turns into ``needs_you``. Any other renewal failure (the
+    provider's token endpoint was down) is ``TRANSIENT`` and keeps its retry delay.
+    """
+    if exc.terminal:
+        return SourceError(SourceFailureCode.AUTH_REQUIRED, exc.message[:256])
+    return SourceError(SourceFailureCode.TRANSIENT, exc.message[:256], retry_after=exc.retry_after)
 
 
 def classify_cli_failure(detail: str) -> SourceFailureCode:

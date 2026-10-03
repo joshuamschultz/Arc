@@ -15,6 +15,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from arcagent.extension.credentials import CredentialRenewalError
 from arcagent.extension.source import (
     FetchSourceObject,
     InspectSource,
@@ -30,6 +31,7 @@ from arcagent.extension.source import (
     SourceResource,
     SyncSource,
     SyncSourcePage,
+    source_error_from_renewal,
 )
 
 from .native.graph import EgressRefusedError, GraphClient, GraphError, ToolError, segment
@@ -306,6 +308,10 @@ async def _call(
         raise _source_error(exc.status_code, exc.headers) from None
     except ToolError as exc:
         raise SourceError(SourceFailureCode.TRANSIENT, str(exc)) from None
+    except CredentialRenewalError as exc:
+        # Typed all the way: a credential only a person can fix is auth_required, not
+        # a transient outage to retry every cycle.
+        raise source_error_from_renewal(exc) from None
     except Exception as exc:
         raise _source_error(
             int(getattr(exc, "status_code", 0) or 0), getattr(exc, "headers", {})

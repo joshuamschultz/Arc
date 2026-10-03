@@ -715,6 +715,11 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_approve_standing.py",
         "tests/journeys/test_journey_always_allow.py",
     ),
+    "dead credential hammered by a retry storm (typed failure flattened to prose)": (
+        # A missing or revoked credential stays typed to the sync outcome:
+        # auth_required, zero retries. A real 503 still retries.
+        "extensions/tests/test_typed_credential_failure.py",
+    ),
 }
 
 

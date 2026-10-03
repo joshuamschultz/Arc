@@ -27,7 +27,10 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.credentials import CredentialRenewalError
+from arcagent.extension.source import source_error_from_renewal
 
+from .. import _tool_json
 from . import calendar, drive, drive_index, gmail
 from .http import GoogleHttp, ToolError
 
@@ -534,6 +537,8 @@ class GoogleAttachment:
             return _error(tool, "This connection is read-only, so it cannot change mail.")
         try:
             data = await self._handlers[tool](args)
+        except CredentialRenewalError as exc:
+            return _credential_failure(tool, exc)
         except (ToolError, ArcAgentError) as exc:
             return _error(tool, _failure_text(exc))
         content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -547,6 +552,18 @@ def _failure_text(exc: Exception) -> str:
     if isinstance(exc, ArcAgentError):
         return f"Google credential unavailable ({exc.code}): {exc.message[:200]}"
     return str(exc)
+
+
+def _credential_failure(tool: str, exc: CredentialRenewalError) -> ToolResult:
+    """The typed credential failure, kept typed for a source adapter to read."""
+    typed = source_error_from_renewal(exc)
+    return _tool_json.CredentialFailureResult(
+        tool=tool,
+        outcome=ToolOutcome.ERROR,
+        content=_failure_text(exc),
+        failure=typed.code,
+        retry_after=typed.retry_after,
+    )
 
 
 def _error(tool: str, content: str) -> ToolResult:
