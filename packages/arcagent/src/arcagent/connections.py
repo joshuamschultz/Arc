@@ -129,6 +129,7 @@ from arcagent.extension.oauth import (
     new_pkce,
     new_state,
     require_account,
+    resolve_site,
     revoke,
     scopes_for,
     send_token_post,
@@ -1400,6 +1401,8 @@ class Connections:
                 require_account(email, intended=intended or pending.intended_account)
                 if not intended:
                     resolved["account"] = email
+            elif flow.account == "atlassian_site":
+                resolved.update(await self._resolved_site(plan, flow, tokens, sink))
             lacking = missing_scopes(pending.scopes, tokens.scope)
             if lacking:
                 await self._report_scope_missing(plan.instance, lacking, sink)
@@ -1413,6 +1416,20 @@ class Connections:
             await revoke(flow, token=tokens.refresh_token, post=self._token_post)
             raise
         return resolved
+
+    async def _resolved_site(
+        self, plan: ConnectorPlan, flow: OAuthFlow, tokens: OAuthTokens, sink: AuditSink
+    ) -> dict[str, str]:
+        """The site fields to store: the host the connection is for and its provider id."""
+        values = await self._visible_values(plan, sink)
+        binding = await resolve_site(
+            tokens.access_token,
+            resources_url=flow.resources_url or "",
+            site=values.get("site", ""),
+            cloud_id=values.get("cloud_id", ""),
+            post=self._token_post,
+        )
+        return {"site": binding.site, "cloud_id": binding.cloud_id}
 
     async def _report_scope_missing(
         self, instance: str, lacking: Sequence[str], sink: AuditSink

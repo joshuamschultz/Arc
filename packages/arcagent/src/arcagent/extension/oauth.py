@@ -37,7 +37,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -102,6 +102,8 @@ class TokenPost:
     json_body: dict[str, str] | None = field(default=None, repr=False)
     basic_auth: tuple[str, str] | None = field(default=None, repr=False)
     bearer: str | None = field(default=None, repr=False)
+    #: ``GET`` is for the one authenticated lookup a connect makes (the sites a token reaches).
+    method: Literal["POST", "GET"] = "POST"
 
 
 #: Sends a :class:`TokenPost`, returns ``(status_code, json_body)``. Injected so the
@@ -124,19 +126,24 @@ async def send_token_post(call: TokenPost) -> tuple[int, dict[str, Any]]:
         headers["Authorization"] = f"Bearer {call.bearer}"
     try:
         async with httpx.AsyncClient(timeout=_POST_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                call.url,
-                data=call.form,
-                json=call.json_body,
-                **extra,
-                headers=headers,
-            )
+            if call.method == "GET":
+                response = await client.get(call.url, headers=headers)
+            else:
+                response = await client.post(
+                    call.url,
+                    data=call.form,
+                    json=call.json_body,
+                    **extra,
+                    headers=headers,
+                )
     except httpx.TransportError as exc:
         raise ConnectionError(type(exc).__name__) from None
     try:
         payload = response.json()
     except ValueError:
         payload = {}
+    if isinstance(payload, list):
+        payload = {"items": payload}
     body: dict[str, Any] = payload if isinstance(payload, dict) else {}
     retry_after = response.headers.get("retry-after", "")
     if retry_after.isdigit():
@@ -532,6 +539,12 @@ def _positive_int(value: Any) -> int:
     return max(number, 0)
 
 
+#: Scopes that ask for a behaviour (a refresh token), not a permission: a provider
+#: need not list them in the grant. The exchange already refuses a grant with no
+#: refresh token, so the behaviour is proven by its result.
+_REQUEST_ONLY_SCOPES = frozenset({"offline_access"})
+
+
 def missing_scopes(requested: Sequence[str], granted: str | None) -> tuple[str, ...]:
     """The requested scopes the grant lacks (granular consent can drop some).
 
@@ -540,7 +553,9 @@ def missing_scopes(requested: Sequence[str], granted: str | None) -> tuple[str, 
     if granted is None:
         return ()
     have = set(granted.split())
-    return tuple(scope for scope in requested if scope not in have)
+    return tuple(
+        scope for scope in requested if scope not in have and scope not in _REQUEST_ONLY_SCOPES
+    )
 
 
 # --- the signed-in account -------------------------------------------------------
@@ -614,6 +629,67 @@ def require_account(resolved: str, *, intended: str) -> None:
             "you signed in as a different account than this connection is for. "
             "Sign in again and choose the right account"
         )
+
+
+@dataclass(frozen=True)
+class SiteBinding:
+    """The one site a connect bound: its provider id and its host."""
+
+    cloud_id: str
+    site: str
+
+
+async def resolve_site(
+    access_token: Secret,
+    *,
+    resources_url: str,
+    site: str,
+    cloud_id: str,
+    post: PostToken = send_token_post,
+) -> SiteBinding:
+    """The site this token may reach and this connection is for, or ``ACCOUNT_MISMATCH``.
+
+    ``resources_url`` lists what the new token can see. The connection's ``site``
+    (a host such as ``acme.atlassian.net``) picks one; a blank ``site`` is accepted
+    only when exactly one is visible. A connection that already holds a
+    ``cloud_id`` may only be reconnected to that same site: consent given as a
+    different organisation's account must never rebind it. The refusal names site
+    HOSTS, never ids.
+    """
+    try:
+        status, payload = await post(
+            TokenPost(url=resources_url, bearer=access_token.reveal(), method="GET")
+        )
+    except OSError:
+        raise _mismatch("the provider's site list could not be reached") from None
+    items = payload.get("items")
+    if status != 200 or not isinstance(items, list):
+        raise _mismatch("the provider did not list the sites this sign-in can reach")
+    sites = [_site_of(item) for item in items]
+    sites = [found for found in sites if found is not None]
+    wanted = site.strip().casefold().removeprefix("https://").rstrip("/")
+    matches = [found for found in sites if not wanted or found.site == wanted]
+    if len(matches) != 1:
+        visible = ", ".join(sorted({found.site for found in sites})) or "none"
+        raise _mismatch(
+            f"this sign-in reaches these sites: {visible}. "
+            "Set this connection's site to one of them, then connect again"
+        )
+    if cloud_id and matches[0].cloud_id != cloud_id:
+        raise _mismatch("you signed in to a different site than this connection is bound to")
+    return matches[0]
+
+
+def _site_of(item: object) -> SiteBinding | None:
+    if not isinstance(item, dict):
+        return None
+    identifier, url = item.get("id"), item.get("url")
+    if not isinstance(identifier, str) or not isinstance(url, str):
+        return None
+    host = urlsplit(url).hostname
+    if not identifier or "/" in identifier or not host:
+        return None
+    return SiteBinding(cloud_id=identifier, site=host.casefold())
 
 
 # --- refresh and revoke ------------------------------------------------------------

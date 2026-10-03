@@ -4,11 +4,11 @@ Seeded from the ~/.claude/skills/atlassian-confluence know-how (D-562), which
 documents the ``/wiki/rest/api/content`` surface: storage-format bodies, the
 version number that must be incremented on every update, and CQL for search.
 
-Credential handling and the two transport rules are the same as the jira
-bundle's, for the same reasons: the declared secrets arrive in the factory's
-context, resolved from Arc's secret store for this connected instance and from
-nowhere else, every request carries an explicit timeout, and an id or a CQL
-string is data that httpx encodes rather than text spliced into a path.
+Credential handling: Arc owns the OAuth side. Every request asks the credential
+handle for a fresh bearer at the header site and goes to
+``api.atlassian.com/ex/confluence/{cloud_id}``; a 401 invalidates the handle and
+retries once. Every request carries an explicit timeout, and an id or a CQL string
+is data that httpx encodes rather than text spliced into a path.
 
 The update verb reads the current version before it writes. Confluence rejects a
 write whose version is not exactly one higher, so guessing would fail on every
@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any, Final
+from urllib.parse import quote
 
 import httpx
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.attachment import (
     ProbeResult,
     Requirement,
-    RequirementKind,
     ToolOutcome,
     ToolResult,
     ToolSpec,
@@ -56,6 +56,9 @@ if TYPE_CHECKING:
 #: bounds the run as a whole.
 _TIMEOUT: Final = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0)
 
+#: Atlassian's gateway: one site's Confluence is ``{_GATEWAY}/{cloud_id}``.
+_GATEWAY: Final = "https://api.atlassian.com/ex/confluence"
+
 #: The REST root every path below hangs off.
 _API: Final = "/wiki/rest/api"
 
@@ -65,24 +68,26 @@ _STRING: Final[dict[str, str]] = {"type": "string"}
 class ConfluenceAttachment:
     """Reaches Confluence Cloud over its REST API, through the four hook methods."""
 
-    def __init__(self, *, base_url: str, email: str, credential: AccessTokenHandle) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._email = email
+    def __init__(
+        self,
+        *,
+        site: str,
+        cloud_id: str,
+        credential: AccessTokenHandle,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._site = site.strip()
+        self._cloud_id = cloud_id.strip()
+        self._base_url = f"{_GATEWAY}/{quote(self._cloud_id, safe='')}" if self._cloud_id else ""
         self._credential = credential
+        self._transport = transport
         self._selected_spaces: tuple[str, ...] = ()
 
     # --- the hook contract ---------------------------------------------------
 
     def requirements(self) -> list[Requirement]:
-        """Three credentials and no host prerequisite: the transport is httpx."""
-        return [
-            Requirement(kind=RequirementKind.CREDENTIAL, name=name, instruction=instruction)
-            for name, instruction in (
-                ("base_url", "Confluence base URL, e.g. https://yourcompany.atlassian.net"),
-                ("email", "The Atlassian account email the API token belongs to"),
-                ("api_token", "An Atlassian API token from id.atlassian.com"),
-            )
-        ]
+        """No sensitive field and no host prerequisite: Arc holds the credential."""
+        return []
 
     async def probe(self) -> ProbeResult:
         """List one space. It is the cheapest call that proves auth and reach."""
@@ -90,10 +95,7 @@ class ConfluenceAttachment:
         if missing:
             return ProbeResult(
                 reachable=False,
-                detail=(
-                    f"confluence has no credential for {', '.join(missing)} — "
-                    f"run 'arc connector auth <instance>' to supply them."
-                ),
+                detail="confluence has no site yet: click Connect on its card to sign in.",
             )
         try:
             body = await self._get(f"{_API}/space", {"limit": "1"})
@@ -101,22 +103,22 @@ class ConfluenceAttachment:
             return ProbeResult(
                 reachable=False,
                 detail=(
-                    f"confluence has no usable api_token ({exc.code}) — "
-                    f"run 'arc connector auth <instance>' to supply it."
+                    f"confluence has no usable credential ({exc.code}): "
+                    "click Connect on its card to sign in."
                 ),
             )
         except httpx.HTTPStatusError as exc:
             return ProbeResult(
-                reachable=False, detail=_refused(exc.response.status_code, self._base_url)
+                reachable=False, detail=_refused(exc.response.status_code, self._site)
             )
         except (httpx.HTTPError, ValueError) as exc:
-            return ProbeResult(reachable=False, detail=f"{self._base_url} did not answer: {exc}")
+            return ProbeResult(reachable=False, detail=f"{self._site} did not answer: {exc}")
         results = body.get("results")
         seen = len(results) if isinstance(results, list) else 0
         return ProbeResult(
             reachable=True,
             tools=await self.describe_tools(),
-            detail=f"reached {self._base_url}/wiki ({seen} space visible on the first page)",
+            detail=f"reached Confluence on {self._site} ({seen} space visible on the first page)",
         )
 
     async def describe_tools(self) -> list[ToolSpec]:
@@ -186,9 +188,9 @@ class ConfluenceAttachment:
         await self._get(f"{_API}/space", {"limit": "1"})
         return SourceDescription(
             connection_id=request.connection_id,
-            display_name=f"Confluence ({self._base_url})",
+            display_name=f"Confluence ({self._site})",
             source_kind="confluence",
-            account_id=self._base_url,
+            account_id=self._site,
             data_shape=SourceDataShape.DOCUMENT,
             supports_incremental=False,
             supports_deletes=False,
@@ -340,37 +342,36 @@ class ConfluenceAttachment:
     # --- transport -------------------------------------------------------------
 
     async def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
-        async with await self._client() as client:
-            response = await client.get(path, params=params)
-        return _body(response)
+        return _body(await self._send("GET", path, params=params))
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        async with await self._client() as client:
-            response = await client.post(path, json=payload)
-        return _body(response)
+        return _body(await self._send("POST", path, json=payload))
 
     async def _put(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        async with await self._client() as client:
-            response = await client.put(path, json=payload)
-        return _body(response)
+        return _body(await self._send("PUT", path, json=payload))
 
-    async def _client(self) -> httpx.AsyncClient:
-        """One client per call, with the token fetched now so a rotation reaches it.
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """One request with a fresh bearer; a 401 invalidates the handle and retries once."""
+        response = await self._attempt(method, path, **kwargs)
+        if response.status_code == 401:
+            await self._credential.invalidate()
+            response = await self._attempt(method, path, **kwargs)
+        return response
 
-        There is no close() on the hook to release a shared one.
-        """
-        api_token = (await self._credential.field("api_token")).reveal()
-        return httpx.AsyncClient(
+    async def _attempt(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """The bearer is fetched now, so a rotation reaches this request."""
+        token = (await self._credential.bearer()).reveal()
+        async with httpx.AsyncClient(
             base_url=self._base_url,
-            auth=(self._email, api_token),
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
             timeout=_TIMEOUT,
-        )
+            transport=self._transport,
+        ) as client:
+            return await client.request(method, path, **kwargs)
 
     def _missing(self) -> list[str]:
-        """Which of the visible settings this attachment does not have."""
-        held = {"base_url": self._base_url, "email": self._email}
-        return sorted(name for name, value in held.items() if not value)
+        """Which setting Connect writes this attachment does not have yet."""
+        return [] if self._cloud_id else ["cloud_id"]
 
 
 def _source_page(page: dict[str, Any]) -> SourceObject:
@@ -392,50 +393,28 @@ def _source_page(page: dict[str, Any]) -> SourceObject:
     )
 
 
-def _refused(status: int, base_url: str) -> str:
+def _refused(status: int, site: str) -> str:
     """What the operator should do about the status Atlassian answered the probe with.
 
-    The same three verdicts as the jira bundle's, and deliberately its own copy:
-    this folder imports nothing from Arc but the hook's value types, which is the
-    property that makes the bundle deletable. Sharing a helper between two bundles
-    would put a third thing in the middle that neither of them owns.
+    Deliberately this bundle's own copy: this folder imports nothing from Arc but
+    the hook's value types, which is the property that makes the bundle deletable.
 
-    401 means the email and token are not one account (or the token is revoked) —
-    a perfectly valid token can still be the wrong one, so both fields are named.
-    403 means the sign-in worked and the account may not use this API. 404 means
-    the address is not a Confluence site, which is a third field entirely.
-
-    The 401 also names the THIRD thing it can now mean, because that one cost an
-    operator an afternoon on the sibling connector: Atlassian has begun issuing
-    SCOPED API tokens, and a scoped token is refused at ``{site}.atlassian.net``
-    however correct it is. It only works against
-    ``api.atlassian.com/ex/confluence/{cloudId}``, which this adapter does not yet
-    speak. Sending someone to reissue a perfectly good token is the worst possible
-    instruction, so the message says which kind of token this address accepts.
+    401 means the sign-in is no longer accepted (revoked, or the app was removed),
+    so the card's Connect is the fix. 403 means the sign-in worked and the account
+    or the app's granted scopes do not cover this API. 404 means the stored site
+    is not a Confluence site.
     """
     if status == 401:
-        return (
-            "Atlassian refused the email and the API token together. Three things do "
-            "this. The email may not be the one you sign in to Atlassian with — they "
-            "have to be the same account. The token may have been revoked, in which "
-            "case create a new one at id.atlassian.com/manage-profile/security/"
-            "api-tokens. Or it may be one of Atlassian's newer SCOPED tokens: this "
-            "connection can only use an UNSCOPED one, because a scoped token is "
-            "accepted only at api.atlassian.com and not at your site address. When "
-            "you create the token, do not add scopes to it."
-        )
+        return "Atlassian no longer accepts this sign-in. Click Connect on the card to sign in again."
     if status == 403:
         return (
-            f"Atlassian accepted the sign-in, but this account is not permitted to use "
-            f"the Confluence API on {base_url}. Ask a site administrator to give it access."
+            f"Atlassian accepted the sign-in, but this account or the app's granted scopes "
+            f"do not allow the Confluence API on {site}. Ask a site administrator, or "
+            "connect again and leave every permission ticked."
         )
     if status == 404:
-        return (
-            f"{base_url} answered, but there is no Confluence there. Check the address is "
-            f"the one your browser bar shows when you are looking at a page; it usually "
-            f"ends in .atlassian.net."
-        )
-    return f"Atlassian answered {status} for {base_url}, so the connection could not be checked."
+        return f"{site} answered, but there is no Confluence there. Check the connection's site."
+    return f"Atlassian answered {status} for {site}, so the connection could not be checked."
 
 
 def _body(response: httpx.Response) -> dict[str, Any]:
@@ -496,15 +475,11 @@ def _error(tool: str, content: str) -> ToolResult:
     return ToolResult(tool=tool, outcome=ToolOutcome.ERROR, content=content)
 
 
-def _credential(context: dict[str, Any], key: str) -> str:
-    """One non-sensitive declared setting out of the context Arc resolved."""
-    return str(context.get(key) or "")
-
-
 def build_native_attachment(context: dict[str, Any]) -> ConfluenceAttachment:
     """The fixed factory Arc calls to build this extension's attachment."""
     return ConfluenceAttachment(
-        base_url=_credential(context, "base_url"),
-        email=_credential(context, "email"),
+        site=str(context.get("site") or ""),
+        cloud_id=str(context.get("cloud_id") or ""),
         credential=context["credential"],
+        transport=context.get("transport"),
     )

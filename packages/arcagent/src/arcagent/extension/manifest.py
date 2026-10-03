@@ -366,7 +366,9 @@ class OAuthFlow(_ManifestModel):
     ``/oauth/callback`` page (the redirect URI is computed from deployment config,
     never from a request). ``"none"`` is the mode where the provider shows a code to paste.
     ``account`` names how the signed-in account is checked BEFORE anything is
-    stored: ``openid_email`` reads the ``id_token`` the token endpoint returned.
+    stored: ``openid_email`` reads the ``id_token`` the token endpoint returned;
+    ``atlassian_site`` lists the sites the new token can reach and binds the one
+    this connection's ``site`` field names (its ``cloud_id`` is stored with it).
     """
 
     provider: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
@@ -380,17 +382,21 @@ class OAuthFlow(_ManifestModel):
     pkce: bool = True
     client_auth: Literal["basic", "post_form", "post_json"] = "basic"
     redirect: Literal["callback", "none"] = "callback"
-    account: Literal["openid_email", "none"] = "none"
+    account: Literal["openid_email", "atlassian_site", "none"] = "none"
     #: The ``iss`` values an ``id_token`` may carry (``account = "openid_email"``).
     id_token_issuers: list[str] = Field(default_factory=list)
     revoke_url: str | None = None
     revoke_style: Literal["form_token", "bearer"] = "form_token"
     #: Where an operator creates this provider's OAuth app (shown by the setup panel).
     console_url: str | None = None
+    #: The endpoint that lists the sites a token reaches (``account = "atlassian_site"``).
+    resources_url: str | None = None
 
     @model_validator(mode="after")
     def _account_check_is_complete(self) -> OAuthFlow:
         """An ``openid_email`` check needs ``openid`` + ``email`` scopes and an issuer list."""
+        if self.account == "atlassian_site" and not self.resources_url:
+            raise ValueError('[oauth].account = "atlassian_site" needs resources_url')
         if self.account != "openid_email":
             return self
         if not self.id_token_issuers:
@@ -402,7 +408,7 @@ class OAuthFlow(_ManifestModel):
                 )
         return self
 
-    @field_validator("authorize_url", "token_url", "revoke_url", "console_url")
+    @field_validator("authorize_url", "token_url", "revoke_url", "console_url", "resources_url")
     @classmethod
     def _https_endpoint(cls, value: str | None) -> str | None:
         """Every provider endpoint is ``https://`` with a host and no userinfo or fragment."""

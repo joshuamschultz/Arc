@@ -27,19 +27,24 @@ class _Attachment:
         self.calls.append((tool, args))
         payload: Any
         if tool == "jira_list_projects":
-            payload = [{"key": "ARC", "name": "Arc"}, {"key": "OPS", "name": "Operations"}]
+            payload = {"values": [{"key": "ARC", "name": "Arc"}, {"key": "OPS", "name": "Operations"}]}
         elif tool == "jira_search_issues":
             project = args["jql"].split('"')[1]
-            payload = [
-                {
-                    "key": f"{project}-1",
-                    "summary": "First issue",
-                    "updated": "2026-08-23T12:00:00Z",
-                    "self": f"https://jira.example/{project}-1",
-                }
-            ]
+            payload = {
+                "issues": [
+                    {
+                        "key": f"{project}-1",
+                        "fields": {
+                            "summary": "First issue",
+                            "updated": "2026-08-23T12:00:00Z",
+                            "project": project,
+                        },
+                    }
+                ],
+                "nextPageToken": "",
+            }
         elif tool == "jira_get_issue":
-            payload = {"key": args["issue_key"], "summary": "Fetched issue"}
+            payload = {"key": args["issue_key"], "fields": {"summary": "Fetched issue"}}
         else:
             raise AssertionError(tool)
         return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps(payload))
@@ -119,40 +124,35 @@ async def test_jira_source_rejects_unavailable_project() -> None:
 
 
 class _PagedJiraAttachment(_Attachment):
+    """REST-shaped pages of 100 issues chained by ``nextPageToken`` (450 issues in all)."""
+
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        self.calls.append((tool, args))
         if tool == "jira_list_projects":
-            # Mirrors acli: this verb takes NO arguments. Its argv pins
-            # --paginate, which is mutually exclusive with --limit, so a call
-            # carrying one is refused outright.
-            if args:
-                return ToolResult(
-                    tool=tool,
-                    outcome=ToolOutcome.ERROR,
-                    content=f"undeclared argument(s) {','.join(sorted(args))}",
-                )
-            payload: Any = [{"key": f"P{i}", "name": f"Project {i}"} for i in range(450)]
+            payload: Any = {
+                "values": [{"key": f"P{i}", "name": f"Project {i}"} for i in range(450)]
+            }
         elif tool == "jira_search_issues":
             project = args["jql"].split('"')[1]
-            count = min(int(args["limit"]), 450)
-            payload = [
-                {
-                    "key": f"{project}-{i}",
-                    "summary": f"Issue {i}",
-                    "updated": "2026-08-23T12:00:00Z",
-                }
-                for i in range(count)
-            ]
+            start = int(args.get("page_token") or 0)
+            stop = min(start + int(args["limit"]), 450)
+            payload = {
+                "issues": [
+                    {
+                        "key": f"{project}-{i}",
+                        "fields": {"summary": f"Issue {i}", "updated": "2026-08-23T12:00:00Z"},
+                    }
+                    for i in range(start, stop)
+                ],
+                "nextPageToken": str(stop) if stop < 450 else "",
+            }
         else:
             payload = {"key": args.get("issue_key", "P-1")}
         return ToolResult(tool=tool, outcome=ToolOutcome.OK, content=json.dumps(payload))
 
 
-async def test_jira_source_walks_collections_larger_than_one_page() -> None:
-    """Issues are walked by growing a page size; projects are not.
-
-    The project list takes no arguments at all — sending it a `limit` was
-    refused by the real CLI, so every Jira sync died before it began.
-    """
+async def test_jira_source_walks_every_page_by_next_page_token() -> None:
+    """A project's issues are walked by ``nextPageToken``, never by guessing a page size."""
     adapter = JiraSourceAdapter(_PagedJiraAttachment())
     resources = await adapter.list_source_resources(ListSourceResources(connection_id="jira"))
     assert len(resources) == 450
@@ -162,6 +162,8 @@ async def test_jira_source_walks_collections_larger_than_one_page() -> None:
     page = await adapter.sync_source(SyncSource(connection_id="jira", page_size=200))
     assert len(page.objects) == 200
     assert page.has_more
+    searches = [a for tool, a in adapter._attachment.calls if tool == "jira_search_issues"]  # type: ignore[attr-defined]
+    assert [call["limit"] for call in searches] == ["100"] * 5
 
 
 def test_jira_manifest_declares_source_entrypoint() -> None:
