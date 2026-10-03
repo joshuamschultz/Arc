@@ -23,6 +23,8 @@ _AGENT = "did:arc:local:executor/c0bef560"
 @pytest.fixture(autouse=True)
 def _backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeBackend:
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    # The battery exports a fleet root whose operator custody this test must not inherit.
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path))
     backend = FakeBackend()
     monkeypatch.setattr("arccli.commands.approve._backend_factory", lambda: backend)
     return backend
