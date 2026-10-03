@@ -108,6 +108,7 @@ class FakeVaultState:
     renew_fails: bool = False
     delay_s: float = 0.0
     sign_version: int = 1
+    redirect_to: str = ""
     fail_statuses: list[int] = field(default_factory=list)
     tokens: dict[str, float] = field(default_factory=dict)
     token_born: dict[str, float] = field(default_factory=dict)
@@ -158,6 +159,12 @@ class _Handler(BaseHTTPRequestHandler):
             time.sleep(state.delay_s)
         if injected is not None:
             return self._error(injected, "injected")
+        if state.redirect_to:
+            self.send_response(307)
+            self.send_header("Location", state.redirect_to + self.path)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
         if state.namespace and self.headers.get("X-Vault-Namespace") != state.namespace:
             return self._error(403, "namespace not authorized")
         try:

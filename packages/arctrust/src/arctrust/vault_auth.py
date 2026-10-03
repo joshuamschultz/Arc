@@ -154,17 +154,37 @@ class TokenSession:
         self._deadline = 0.0
         self._renew_at = 0.0
         self._renewable = False
+        self._pending: list[tuple[str, str]] = []
 
     def token(self) -> str:
-        """A live token, renewing or re-minting it first when it is near expiry."""
-        with self._lock:
-            now = self._clock()
-            if self._token is not None and now < self._renew_at:
+        """A live token, renewing or re-minting it first when it is near expiry.
+
+        Auth events are reported after the lock is released, so an audit sink
+        that itself signs through this transit cannot deadlock on it.
+        """
+        try:
+            with self._lock:
+                return self._live_token()
+        finally:
+            self._flush_events()
+
+    def _live_token(self) -> str:
+        now = self._clock()
+        if self._token is not None and now < self._renew_at:
+            return self._token
+        if self._token is not None and self._renewable and now < self._deadline:
+            if self._renew():
                 return self._token
-            if self._token is not None and self._renewable and now < self._deadline:
-                if self._renew():
-                    return self._token
-            return self._login()
+        return self._login()
+
+    def _note(self, action: str, outcome: str) -> None:
+        self._pending.append((action, outcome))
+
+    def _flush_events(self) -> None:
+        with self._lock:
+            events, self._pending = self._pending, []
+        for action, outcome in events:
+            self._on_event(action, outcome)
 
     def invalidate(self) -> None:
         """Forget the token (Vault refused it); the next call mints a fresh one."""
@@ -188,13 +208,13 @@ class TokenSession:
             token, ttl, renewable = _lease(self._post(self._login_path, self._login_body(), None))
         except TransitUnavailableError:
             self._token = None
-            self._on_event("custody.transit.login", "error")
+            self._note("custody.transit.login", "error")
             raise
         if token is None:
-            self._on_event("custody.transit.login", "error")
+            self._note("custody.transit.login", "error")
             raise TransitUnavailableError("Vault login returned no token")
         self._set(token, ttl, renewable)
-        self._on_event("custody.transit.login", "allow")
+        self._note("custody.transit.login", "allow")
         return token
 
     def _renew(self) -> bool:
@@ -204,15 +224,15 @@ class TokenSession:
         try:
             _token, ttl, renewable = _lease(self._post("/v1/auth/token/renew-self", {}, token))
         except TransitUnavailableError:
-            self._on_event("custody.transit.renew", "error")
+            self._note("custody.transit.renew", "error")
             return False
         # A renewal clipped by the role's max TTL that gains no time is the
         # token's end of life: mint a fresh one from the bootstrap secret.
         if ttl <= self._deadline - self._clock():
-            self._on_event("custody.transit.renew", "exhausted")
+            self._note("custody.transit.renew", "exhausted")
             return False
         self._set(token, ttl, renewable)
-        self._on_event("custody.transit.renew", "allow")
+        self._note("custody.transit.renew", "allow")
         return True
 
 
