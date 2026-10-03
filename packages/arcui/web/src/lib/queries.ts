@@ -826,13 +826,6 @@ export const useBlobFolders = (agentId: string | null, source?: string) =>
     enabled: !!agentId,
   })
 
-export const useDatastoreTables = (agentId: string | null) =>
-  useQuery<DatastoreTablesResponse>({
-    queryKey: ['agent', agentId, 'knowledge', 'datastore-tables'],
-    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/datastore-tables`, signal),
-    enabled: !!agentId,
-  })
-
 /** H-024 explorer: ONE connection's introspected datastore schema (operator-only). */
 export const useConnectionTables = (agentId: string | null, sourceId: string | null) =>
   useQuery<DatastoreTablesResponse>({
