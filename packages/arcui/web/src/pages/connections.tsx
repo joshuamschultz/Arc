@@ -23,6 +23,7 @@ import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { AddMcpServerDialog } from '@/components/add-mcp-server-dialog'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { HostNeedsNote } from '@/components/host-needs-note'
+import { CustodyRepairPanel } from '@/components/custody-repair-panel'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -38,6 +39,7 @@ import {
   useConnections,
   useConnectorCatalog,
   useConnectorDoctor,
+  useCustody,
   useProbeConnector,
   useRemoveConnector,
   useRoster,
@@ -197,7 +199,7 @@ function ConnectionStatusChip({ status }: { status: ConnectionDisplayStatus }) {
   )
 }
 
-type OpenPanel = 'auth' | 'doctor' | null
+type OpenPanel = 'auth' | 'doctor' | 'custody' | null
 
 function ConnectionCard({
   inst,
@@ -224,6 +226,14 @@ function ConnectionCard({
   const [panel, setPanel] = useState<OpenPanel>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
+  // The review state is one shared read; a viewer's 403 leaves `data` empty and hides this.
+  const custody = useCustody()
+  const reviewCustody =
+    custody.data !== undefined &&
+    custody.data.state !== 'ok' &&
+    custody.data.affected_connections.includes(inst.instance)
+    ? custody.data
+    : null
 
   useEffect(() => {
     if (focused) cardRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
@@ -283,6 +293,21 @@ function ConnectionCard({
               {statusLine(inst)}
             </span>
           </div>
+          {reviewCustody && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                data-custody-review
+                className="rounded-sm border border-status-warning/30 bg-status-warning/12 px-1.5 py-0.5 text-[11px] font-medium text-status-warning"
+              >
+                Credentials need review
+              </span>
+              {operatorMode && (
+                <Button size="xs" variant="outline" onClick={() => togglePanel('custody')}>
+                  {panel === 'custody' ? 'Hide review' : 'Review credentials'}
+                </Button>
+              )}
+            </div>
+          )}
           {inst.last_notice && (
             <p className="text-[11px] text-muted-foreground">{noticeLine(inst.last_notice)}</p>
           )}
@@ -430,6 +455,11 @@ function ConnectionCard({
               operatorMode={operatorMode}
             />
           )}
+        </div>
+      )}
+      {operatorMode && panel === 'custody' && reviewCustody && (
+        <div className="border-t border-border p-4">
+          <CustodyRepairPanel status={reviewCustody} />
         </div>
       )}
       {panel === 'doctor' && (

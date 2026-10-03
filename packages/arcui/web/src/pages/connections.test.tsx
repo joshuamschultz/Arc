@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { BundleCard, ConnectionsPage } from '@/pages/connections'
-import type { CatalogBundle, ConnectorInstance } from '@/lib/types'
+import type { CatalogBundle, ConnectorInstance, CustodyStatus } from '@/lib/types'
 
 afterEach(() => {
   cleanup()
@@ -56,7 +56,12 @@ const row = (over: Partial<ConnectorInstance> = {}): ConnectorInstance => ({
 interface StubCall { url: string; method: string; body: unknown }
 
 // Serves the page's reads and records every request made.
-interface StubOptions { appConfigured?: boolean; bundles?: CatalogBundle[]; signIn?: string }
+interface StubOptions {
+  appConfigured?: boolean
+  bundles?: CatalogBundle[]
+  signIn?: string
+  custody?: CustodyStatus
+}
 
 function stubApi(connections: ConnectorInstance[], opts: StubOptions = {}) {
   const urls: string[] = []
@@ -85,6 +90,9 @@ function stubApi(connections: ConnectorInstance[], opts: StubOptions = {}) {
       })
     }
     if (path.endsWith('/api/oauth/complete')) return json(connections[0])
+    if (path.endsWith('/api/custody')) {
+      return json(opts.custody ?? { state: 'ok', keys: [], targets: [], affected_connections: [] })
+    }
     if (path.endsWith('/probe')) return json({ reachable: true, detail: 'Reached GitHub as josh.' })
     if (path.endsWith('/authorize')) {
       return json({ sign_in: 'signed_in', reachable: true, detail: 'ok', command: '' })
@@ -385,5 +393,33 @@ describe('the Install button is only offered when it can succeed (D18)', () => {
     expect(screen.getByText(/cannot install/i)).toBeTruthy()
     expect(screen.queryByText(/can install it when you connect/)).toBeNull()
     expect(screen.queryByText(/npm i -g/)).toBeNull()
+  })
+})
+
+describe('credential custody review on the card (J-C1)', () => {
+  const review: CustodyStatus = {
+    state: 'needs_review',
+    keys: [{ key: 'OLD_SLACK_TOKEN', reason: 'undeclared', kept: false }],
+    targets: [{ connection: 'gmail-olivia', field: 'account' }],
+    affected_connections: ['gmail-olivia'],
+  }
+
+  it('an affected card says Credentials need review and a button opens the repair panel', async () => {
+    const { card } = await renderCard([row(), row({ instance: 'gmail-two' })], { custody: review })
+
+    expect(await within(card).findByText('Credentials need review')).toBeTruthy()
+    const other = screen.getByText('gmail-two', { selector: '[data-connection-card] span' })
+    expect(other.closest('[data-connection-card]')!.querySelector('[data-custody-review]')).toBeNull()
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Review credentials' }))
+
+    expect(await within(card).findByText('OLD_SLACK_TOKEN')).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Apply answers' })).toBeTruthy()
+  })
+
+  it('a deployment with nothing to review shows no notice on any card', async () => {
+    const { card } = await renderCard([row()])
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(card.querySelector('[data-custody-review]')).toBeNull()
   })
 })
