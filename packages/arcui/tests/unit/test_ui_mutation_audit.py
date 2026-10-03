@@ -147,6 +147,8 @@ class TestBuildMutationWormWriter:
         # verifiable record in the SAME worm dir the Observe ingest tails — the fix
         # for mutations never reaching the Security screen.
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+        # ARC_TEAM_ROOT outranks ARC_CONFIG_DIR, and the adversarial battery exports it.
+        monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
         public_key = _init_operator_key(tmp_path / "arc")
         data_dir = tmp_path / "data"
 
@@ -180,6 +182,7 @@ class TestBuildMutationWormWriter:
     ) -> None:
         # No operator key on the box → degrade to log+OTel only, never mint one.
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty"))
+        monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "empty"))
         assert build_mutation_worm_writer(tmp_path / "data") is None
 
 
