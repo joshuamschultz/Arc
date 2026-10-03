@@ -460,8 +460,12 @@ def _memory_capabilities(agent: Any) -> Any:
 
     agent_dir = agent._config_path.parent.resolve()
     for module in list(sys.modules.values()):
-        path = getattr(module, "__file__", None) or ""
-        if hasattr(module, "consolidate_poll_once") and Path(path).resolve().is_relative_to(
+        # Read the module's own namespace, never hasattr/getattr: a lazy module
+        # (transformers) imports optional deps such as torchvision on attribute
+        # access, which fails whenever an earlier test loaded it.
+        namespace = vars(module)
+        path = namespace.get("__file__") or ""
+        if "consolidate_poll_once" in namespace and Path(path).resolve().is_relative_to(
             agent_dir
         ):
             return module
