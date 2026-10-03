@@ -4,15 +4,34 @@ import { CalendarClock, HeartPulse, PackageCheck, Plug, ShieldCheck } from 'luci
 import { Button } from '@/components/ui/button'
 import { DiffBlock } from '@/components/pulse-panel'
 import { ApiError } from '@/lib/api'
+import { agentLabel, grantName } from '@/lib/agent-names'
 import { humanizeInterval } from '@/lib/schedule-format'
 import { useApprovePulseCheck } from '@/lib/pulse'
 import {
   useApproveAgentSchedule,
   useConnections,
   useHomeNeeds,
+  useRoster,
   type HomeNeedsPulse,
   type HomeNeedsSchedule,
 } from '@/lib/queries'
+
+const MAX_NAMED_AGENTS = 3
+
+/** Display names for grant names ("josh_agent" -> "Olivia"), "+N more" past three. */
+function agentNames(grants: string[], names: Map<string, string>): string {
+  if (grants.length === 0) return 'No agent granted'
+  const shown = grants.slice(0, MAX_NAMED_AGENTS).map((g) => names.get(g) ?? g)
+  const extra = grants.length - shown.length
+  return extra > 0 ? `${shown.join(', ')} +${extra} more` : shown.join(', ')
+}
+
+/** What a person calls a connection: "Confluence", or "Google (work)" when the
+ *  instance is not just the extension itself. */
+function connectionName(c: { instance: string; extension: string; extension_display_name: string }) {
+  const base = c.extension_display_name || c.extension
+  return c.instance === c.extension || c.instance === base ? base : `${base} (${c.instance})`
+}
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : 'The request failed')
 
@@ -21,6 +40,7 @@ function InboxRow({
   agent,
   title,
   why,
+  detail,
   children,
   testId,
 }: {
@@ -28,13 +48,14 @@ function InboxRow({
   agent: string
   title: ReactNode
   why: ReactNode
+  detail?: ReactNode
   children: ReactNode
   testId: string
 }) {
   return (
     <li
       data-testid={testId}
-      className="flex flex-wrap items-start gap-3 rounded-lg border border-border bg-card p-3.5"
+      className="flex min-w-0 max-w-full flex-col gap-3 rounded-lg border border-border bg-card p-3.5 sm:flex-row sm:items-start"
     >
       <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted/60 text-status-warning">
         {icon}
@@ -43,15 +64,16 @@ function InboxRow({
         <div className="text-sm font-semibold text-foreground">{agent}</div>
         <div className="text-sm text-foreground">{title}</div>
         <div className="text-xs text-muted-foreground">{why}</div>
+        {detail}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>
     </li>
   )
 }
 
 function ActionError({ message }: { message: string | null }) {
   return message ? (
-    <p role="alert" className="basis-full text-sm text-destructive">
+    <p role="alert" className="w-full text-sm text-destructive">
       {message}
     </p>
   ) : null
@@ -67,17 +89,16 @@ function PulseRow({ item, operatorMode }: { item: HomeNeedsPulse; operatorMode: 
       agent={item.agent_label}
       title={
         <>
-          Pulse check <span className="font-mono">{item.check}</span> every{' '}
-          {humanizeInterval(item.interval_minutes * 60)}
+          Pulse check {item.check} · {humanizeInterval(item.interval_minutes * 60).toLowerCase()}
         </>
       }
+      detail={<DiffBlock diff={`+action: ${item.action}`} />}
       why={
         item.changed
           ? 'Changed since you last approved it. It will not run until you approve.'
           : 'Never approved. It will not run until you approve.'
       }
     >
-      <DiffBlock diff={`+action: ${item.action}`} />
       {operatorMode && (
         <Button
           size="sm"
@@ -109,7 +130,7 @@ function ScheduleRow({ item, operatorMode }: { item: HomeNeedsSchedule; operator
       agent={item.agent_label}
       title={
         <>
-          Schedule <span className="font-mono">{item.name}</span>
+          Schedule {item.name}
         </>
       }
       why="No signed approval yet. It cannot fire until you approve."
@@ -140,6 +161,9 @@ function ScheduleRow({ item, operatorMode }: { item: HomeNeedsSchedule; operator
  */
 export function NeedsYouInbox({ operatorMode }: { operatorMode: boolean }) {
   const needs = useHomeNeeds().data
+  const names = new Map(
+    (useRoster().data?.agents ?? []).map((a) => [grantName(a), agentLabel(a)] as const),
+  )
   const connections = (useConnections().data?.connections ?? []).filter(
     (c) => c.display_status === 'needs_you',
   )
@@ -161,10 +185,10 @@ export function NeedsYouInbox({ operatorMode }: { operatorMode: boolean }) {
             key={c.instance}
             testId={`needs-connection-${c.instance}`}
             icon={<Plug className="size-4" />}
-            agent={c.agents.join(', ') || 'No agent granted'}
+            agent={agentNames(c.agents, names)}
             title={
               <>
-                Connection <span className="font-mono">{c.instance}</span> needs you
+                Connection {connectionName(c)} needs you
               </>
             }
             why={c.reason_text ?? 'Reconnect it so agents can use it.'}
