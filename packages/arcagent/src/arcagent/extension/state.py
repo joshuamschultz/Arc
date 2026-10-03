@@ -195,6 +195,10 @@ class MutableConnectionBackend(Protocol):
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
 
+    async def mutable_query(
+        self, collection: str, *, where: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]: ...
+
     async def mutable_query_keyed(
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[tuple[str, dict[str, Any]]]: ...
