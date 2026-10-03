@@ -612,6 +612,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_custody_migrate_no_loss.py",
         "packages/arcui/tests/test_startup_migrates_connections_env.py",
     ),
+    # Vault Transit adapter: a look-alike Vault (other CA) or a redirect never
+    # receives the secret_id; a key swapped behind a pinned name cannot sign for the
+    # operator; a weakened (exportable/derived/backup) key is never used; a
+    # transplanted credential does not open; an outage never falls back; no token
+    # or secret lands in the deployment tree; env cannot repoint the transit; an
+    # audit sink that signs through the transit cannot deadlock it.
+    "HashiCorp Vault Transit custody — rogue Vault, redirect, key swap, weakened "
+    "key, transplant, outage fallback, env repoint (alpha-2 P18-2F Vault)": (
+        "packages/arctrust/tests/test_vault_transit_abuse.py",
+        "packages/arctrust/tests/test_transit_contract.py",
+        "packages/arcagent/tests/unit/core/test_security_vault_config.py",
+    ),
     # P18-2F: under vault_transit the custody key never enters the process. The old
     # in-process seed opens nothing; a transplanted or downgraded (seed-planted xc1)
     # value is refused; an outage fails closed with no in-process fallback; a

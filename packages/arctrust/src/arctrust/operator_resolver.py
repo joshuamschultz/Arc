@@ -9,17 +9,18 @@ workflows, skills and schedules: one site reads a file that does not exist
 while another asks the vault.
 
 ``security`` is duck-typed (``custody``, ``signing_algorithm``,
-``operator_key_dir``, ``notary_keystore``) so arctrust stays a leaf: arcagent's
-validated ``SecurityConfig`` satisfies it. ``None`` means "this deployment" and
+``operator_key_dir``, ``notary_keystore``, ``vault``) so arctrust stays a leaf:
+arcagent's validated ``SecurityConfig`` satisfies it. ``None`` means "this deployment" and
 reads the machine ``[security]`` block, applying the tier custody floor.
 """
 
 from __future__ import annotations
 
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from arctrust.operator import OperatorKey
 from arctrust.paths import (
@@ -33,6 +34,7 @@ from arctrust.signer import (
     ED25519,
     IN_PROCESS,
     VAULT_TRANSIT,
+    CustodyTransit,
     FileNotaryTransit,
     Signer,
     SignerConfig,
@@ -40,8 +42,16 @@ from arctrust.signer import (
     build_signer,
 )
 
+if TYPE_CHECKING:
+    from arctrust.vault_transit import VaultTransit, VaultTransitConfig
+
 OPERATOR_KEY_REF = "operator"
 _FEDERAL_ALGORITHM = "ecdsa-p256"
+
+# One Vault client per (config, algorithm) per process: a connection pool and one
+# in-memory token, so every resolver call does not log in to Vault again.
+_VAULT_TRANSITS: dict[tuple[str, str], VaultTransit] = {}
+_VAULT_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -52,6 +62,7 @@ class MachineSecurity:
     signing_algorithm: str = ED25519
     operator_key_dir: str = ""
     notary_keystore: str = ""
+    vault: VaultTransitConfig | None = None
 
 
 def machine_security(base: Base = None) -> MachineSecurity:
@@ -59,7 +70,9 @@ def machine_security(base: Base = None) -> MachineSecurity:
 
     Mirrors the tier floor ``arcagent.SecurityConfig`` applies: federal forces
     ``vault_transit`` + ``ecdsa-p256``; enterprise defaults to ``vault_transit``
-    unless custody is set explicitly. Absent or unreadable config is personal.
+    unless custody is set explicitly; a ``[security.vault]`` block implies
+    ``vault_transit`` and refuses an explicit ``in_process``. Absent or unreadable
+    config is personal; a malformed ``[security.vault]`` raises (fail closed).
     """
     path = config_file("arcagent.toml", base)
     block: dict[str, Any] = {}
@@ -71,16 +84,29 @@ def machine_security(base: Base = None) -> MachineSecurity:
     tier = str(block.get("tier", "personal")).lower()
     custody = str(block.get("custody", IN_PROCESS))
     algorithm = str(block.get("signing_algorithm", ED25519))
+    vault = _vault_config(block.get("vault"))
     if tier == "federal":
         custody, algorithm = VAULT_TRANSIT, _FEDERAL_ALGORITHM
-    elif tier == "enterprise" and "custody" not in block:
+    elif "custody" not in block and (tier == "enterprise" or vault is not None):
         custody = VAULT_TRANSIT
+    if vault is not None and custody != VAULT_TRANSIT:
+        raise ValueError('[security.vault] needs custody = "vault_transit"')
     return MachineSecurity(
         custody=custody,
         signing_algorithm=algorithm,
         operator_key_dir=str(block.get("operator_key_dir", "")),
         notary_keystore=str(block.get("notary_keystore", "")),
+        vault=vault,
     )
+
+
+def _vault_config(raw: Any) -> VaultTransitConfig | None:
+    """``[security.vault]`` validated, or ``None`` when absent. Malformed raises."""
+    if raw is None:
+        return None
+    from arctrust.vault_transit import VaultTransitConfig
+
+    return VaultTransitConfig.model_validate(raw)
 
 
 def operator_key_file(security: Any = None, base: Base = None) -> Path:
@@ -91,24 +117,56 @@ def operator_key_file(security: Any = None, base: Base = None) -> Path:
     return Path(configured).expanduser() / OPERATOR_KEY_FILENAME
 
 
-def operator_transit_for(security: Any, base: Base = None) -> FileNotaryTransit:
-    """The out-of-process transit, proven able to serve the operator key."""
-    keystore_raw = getattr(security, "notary_keystore", "")
-    if keystore_raw:
-        keystore = Path(keystore_raw).expanduser()
+def operator_transit_for(security: Any, base: Base = None) -> CustodyTransit:
+    """The deployment's custody transit, proven able to serve the operator key.
+
+    ``[security.vault]`` configured: HashiCorp Vault Transit. Otherwise the local
+    out-of-process notary (personal / enterprise without Vault). Either way a
+    transit that cannot serve raises ``SignerError``; nothing falls back to an
+    in-process key.
+    """
+    vault = getattr(security, "vault", None)
+    transit: CustodyTransit
+    if vault is not None:
+        transit, where = _vault_transit(vault, security.signing_algorithm), vault.addr
     else:
-        key_dir = getattr(security, "operator_key_dir", "")
-        keystore = (Path(key_dir).expanduser() if key_dir else operator_dir(base)) / "notary"
-    transit = FileNotaryTransit(keystore, algorithm=security.signing_algorithm)
+        keystore = _notary_keystore(security, base)
+        transit = FileNotaryTransit(keystore, algorithm=security.signing_algorithm)
+        where = str(keystore)
     try:
         transit.public_key(OPERATOR_KEY_REF)
-    except OSError as exc:
+    except (OSError, SignerError) as exc:
         raise SignerError(
-            f"custody=vault_transit but the transit at {keystore} cannot serve the "
+            f"custody=vault_transit but the transit at {where} cannot serve the "
             f"operator key {OPERATOR_KEY_REF!r}; refusing to fall back to in-process "
-            "signing (fail-closed). Provision the notary keystore or a Vault/HSM adapter."
+            "signing (fail-closed). Provision the notary keystore or [security.vault]."
         ) from exc
     return transit
+
+
+def _notary_keystore(security: Any, base: Base) -> Path:
+    keystore_raw = getattr(security, "notary_keystore", "")
+    if keystore_raw:
+        return Path(keystore_raw).expanduser()
+    key_dir = getattr(security, "operator_key_dir", "")
+    return (Path(key_dir).expanduser() if key_dir else operator_dir(base)) / "notary"
+
+
+def _vault_transit(config: VaultTransitConfig, algorithm: str) -> VaultTransit:
+    from arctrust.vault_auth import VaultSecretSourceError
+    from arctrust.vault_transit import VaultTransit
+
+    cache_key = (config.model_dump_json(), algorithm)
+    with _VAULT_LOCK:
+        cached = _VAULT_TRANSITS.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            transit = VaultTransit(config, algorithm=algorithm)
+        except VaultSecretSourceError as exc:
+            raise SignerError(f"[security.vault] secret_source unusable: {exc}") from None
+        _VAULT_TRANSITS[cache_key] = transit
+        return transit
 
 
 def operator_signer_for(security: Any = None, *, base: Base = None) -> Signer:

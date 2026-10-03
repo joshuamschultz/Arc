@@ -22,6 +22,9 @@ _ENV_DENYLIST_PREFIXES = frozenset(
         "tools__preamble",
         "tools__policy__allowed_paths",
         "identity__key_dir",
+        # An env var must never repoint the custody transit (addr, CA, auth):
+        # that would hand signing and credential sealing to another Vault.
+        "security__vault",
     }
 )
 _ARCLLM_SECTIONS = ("llm", "eval", "budget")

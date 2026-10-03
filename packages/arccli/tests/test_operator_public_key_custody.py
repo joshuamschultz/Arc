@@ -57,3 +57,35 @@ def test_machine_view_matches_security_config_custody(block: str) -> None:
         **{k: v.strip('"') for k, v in (line.split(" = ") for line in block.splitlines())}
     )
     assert (view.custody, view.signing_algorithm) == (config.custody, config.signing_algorithm)
+
+
+@pytest.mark.parametrize("custody", ["", 'custody = "vault_transit"\n', 'tier = "federal"\n'])
+def test_vault_block_agrees_with_security_config(custody: str, tmp_path: Path) -> None:
+    import tomllib
+
+    block = (
+        f"{custody}[security.vault]\n"
+        'addr = "https://vault.internal:8200"\n'
+        f'ca_bundle = "{tmp_path / "ca.pem"}"\n'
+        'role_id = "r"\n'
+        'secret_source = "credential:vault-secret-id"\n'
+    )
+    _write_security(block)
+    view = machine_security()
+    config = arcagent.SecurityConfig(**tomllib.loads(f"[security]\n{block}")["security"])
+    assert view.custody == config.custody == "vault_transit"
+    assert view.vault == config.vault
+
+
+def test_vault_block_beside_in_process_is_refused_by_both(tmp_path: Path) -> None:
+    import tomllib
+
+    block = (
+        'custody = "in_process"\n[security.vault]\naddr = "https://v:8200"\n'
+        f'ca_bundle = "{tmp_path / "ca.pem"}"\nrole_id = "r"\nsecret_source = "env:X"\n'
+    )
+    _write_security(block)
+    with pytest.raises(ValueError, match="vault_transit"):
+        machine_security()
+    with pytest.raises(ValueError, match="vault_transit"):
+        arcagent.SecurityConfig(**tomllib.loads(f"[security]\n{block}")["security"])

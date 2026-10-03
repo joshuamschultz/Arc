@@ -76,8 +76,14 @@ Each value is sent to the deployment's transit for encryption and decryption. Th
 transit holds the key `connector-credentials`. Arc never reads it. The associated
 data binds each value to its connection and field, the same as in-process.
 
-The reference transit is the notary keystore that already signs for the operator
-(`[security] notary_keystore`, default `<operator_key_dir>/notary`). It mints
+With `[security.vault]` configured, the transit is HashiCorp Vault Transit: the
+value is sealed under the Vault key `arc-connector-credentials` (`aes256-gcm96`,
+not exportable). See [Vault Transit custody](vault-transit.md) for the policy,
+AppRole and systemd steps.
+
+Without `[security.vault]`, the transit is the local notary keystore that already
+signs for the operator (`[security] notary_keystore`, default
+`<operator_key_dir>/notary`). It mints
 `connector-credentials.aes256` (`0600`) the first time a credential is sealed.
 Back up that file with the keystore. If it is lost, every connection must be
 connected again.
