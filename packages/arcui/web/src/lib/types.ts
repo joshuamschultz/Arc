@@ -1833,3 +1833,50 @@ export interface TlsBody {
   cert_pem: string
   key_pem: string
 }
+
+// --- Connection navigation guides ----------------------------------------------
+// `/api/connections/{instance}/guide`: the signed markdown an agent reads to find
+// its way around one connected source. `tampered` means the stored bytes no longer
+// match their signature, so the server is not handing the guide to agents.
+
+export interface ConnectionGuide {
+  content: string
+  signed: boolean
+  signer: string | null
+  updated_at: string | null
+  version: number
+  tampered: boolean
+}
+
+export interface ConnectionGuideVersion {
+  version: number
+  signer: string | null
+  updated_at: string | null
+  digest: string
+}
+
+export interface ConnectionGuideHistory {
+  versions: ConnectionGuideVersion[]
+}
+
+export interface ConnectionGuideStarter {
+  content: string
+}
+
+// --- Table meanings (the datastore semantic layer) ------------------------------
+// `/api/connections/{instance}/semantic-layer`: the raw TOML round-trips as text.
+
+export interface SemanticLayerDocument {
+  connection_id: string
+  exists: boolean
+  content: string
+  classification: string
+  signed: boolean
+}
+
+export interface SemanticLayerSaved {
+  connection_id: string
+  signer_did: string
+  sha256: string
+  message: string
+}
