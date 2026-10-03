@@ -322,12 +322,38 @@ def emit_mutation_audit(
         outcome=outcome,
         detail=detail,
     )
+    # Marks the request as having recorded its own outcome, so the auth layer
+    # does not add a generic refusal row on top (see record_unaudited_refusal).
+    request.state.mutation_audited = True
     audit = getattr(request.app.state, "audit", None)
     if audit is not None:
         audit.audit_event(UIAuditEvent.UI_MUTATION, fields.model_dump())
     worm = getattr(request.app.state, "audit_worm", None)
     if worm is not None:
         worm.write(fields)
+
+
+def record_unaudited_refusal(request: Any, status_code: int) -> None:
+    """Record a refused change that the refusing route did not record itself.
+
+    Called by the auth layer for every response. Most operator-only routes refuse
+    a viewer with a bare 403, so without this a refused attempt left no trace on
+    the chain (AU-2, AC-3): the Security screen's denied view missed exactly the
+    attempts it exists to show. Reads stay off the chain, and a route that already
+    recorded a specific denial is not doubled.
+    """
+    if status_code != 403 or request.method in _READ_METHODS:
+        return
+    if getattr(request.state, "mutation_audited", False):
+        return
+    path = request.url.path
+    emit_mutation_audit(
+        request,
+        target=path,
+        operation=f"{request.method} {path}",
+        outcome="denied",
+        detail="refused",
+    )
 
 
 def emit_read_audit(
@@ -417,4 +443,5 @@ __all__ = [
     "emit_read_audit",
     "operator_actor_did",
     "operator_audit_sink",
+    "record_unaudited_refusal",
 ]

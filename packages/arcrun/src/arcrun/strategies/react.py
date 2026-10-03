@@ -306,7 +306,7 @@ async def react_loop(
         if state.turn_count == 0 and state.tool_choice is not None:
             invoke_kwargs["tool_choice"] = state.tool_choice
         call_start = time.time()
-        with llm_call_scope(state.turn_count):
+        with llm_call_scope(state):
             response = (
                 await _stream_model_call(model, call_messages, tools, state, invoke_kwargs)
                 if state.stream_event is not None

@@ -537,6 +537,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/unit/test_audit_trail_api.py",
         "packages/arcui/tests/unit/test_audit_causality.py",
     ),
+    # P20-7: the causal-audit contract on the real path. A channel tool call's signed
+    # row names its run, tool call, model call, agent and requesting user; two users
+    # at once (Barrier-forced) and a background job spawned mid-run never borrow each
+    # other's ids; a timed probe never borrows the page view in flight; a viewer's
+    # refused change is a denial row on any route while a page view writes nothing;
+    # one flipped byte breaks that row and every later one with one marker (also
+    # across a restart); a rotated chain verifies without duplicates; and every audit
+    # API filter returns exactly the rows the raw chain says it should.
+    "audit causality contract: attribution, isolation, refusals, chain verify (alpha-2 P20-7)": (
+        "tests/journeys/test_journey_audit.py",
+        "packages/arcui/tests/unit/test_ui_mutation_audit.py",
+    ),
     # P12: an operator-added MCP server is third-party code on a wire or a child process.
     # The generated bundle is the trust boundary: stdio commands launch only an allowed,
     # absolute, shell-free executable; http is https-only with an SSRF guard (link-local,

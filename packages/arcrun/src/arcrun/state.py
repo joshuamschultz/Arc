@@ -84,6 +84,10 @@ class RunState:
     cost_usd: float = 0.0
     tool_calls_made: int = 0
     run_id: str = ""
+    # The model call whose tool calls are dispatching now. A model call's causal
+    # scope closes before its tool calls run, so the id is carried here to name
+    # the call that asked for each tool (item 20).
+    llm_call_id: str | None = None
     # Durable home for anything a run needs to outlive the process — today the
     # dynamic strategy's replay journal and script scratch files. arcrun never
     # invents this path: only the caller knows where an agent is allowed to

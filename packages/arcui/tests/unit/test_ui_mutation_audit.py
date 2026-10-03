@@ -147,6 +147,8 @@ class TestBuildMutationWormWriter:
         # verifiable record in the SAME worm dir the Observe ingest tails — the fix
         # for mutations never reaching the Security screen.
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc"))
+        # ARC_TEAM_ROOT outranks ARC_CONFIG_DIR, and the adversarial battery exports it.
+        monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
         public_key = _init_operator_key(tmp_path / "arc")
         data_dir = tmp_path / "data"
 
@@ -180,6 +182,7 @@ class TestBuildMutationWormWriter:
     ) -> None:
         # No operator key on the box → degrade to log+OTel only, never mint one.
         monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty"))
+        monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "empty"))
         assert build_mutation_worm_writer(tmp_path / "data") is None
 
 
@@ -219,3 +222,92 @@ class TestSessionIdWiring:
         # 16-hex-char session id minted by the auth layer (secrets.token_hex(8)).
         assert len(details["session_id"]) == 16
         assert details["session_id"] != "unknown"
+
+
+def _silent_refusal(request: Request) -> JSONResponse:
+    """An operator-only route that refuses a viewer and records nothing itself."""
+    return JSONResponse({"error": "Operator role required"}, status_code=403)
+
+
+def _audited_refusal(request: Request) -> JSONResponse:
+    """An operator-only route that records its own, more specific denial."""
+    emit_mutation_audit(
+        request, target="approval:a1", operation="approval.approve", outcome="denied"
+    )
+    return JSONResponse({"error": "operator_role_required"}, status_code=403)
+
+
+class TestEveryRefusalReachesTheChain:
+    """P20-7: a viewer's refused change is a denial row, whichever route refused it.
+
+    Most operator-only routes refuse with a bare 403 and never call the audit
+    helper, so a refused attempt left no trace on the chain. The auth layer is the
+    one place every request passes, so it records a refusal the route did not.
+    """
+
+    @staticmethod
+    def _client(worm: _SpyWorm) -> TestClient:
+        auth = AuthConfig({"operator_token": "op-tok", "viewer_token": "view-tok"})
+        app = Starlette(
+            routes=[
+                Route("/api/x/silent", _silent_refusal, methods=["GET", "POST", "DELETE"]),
+                Route("/api/x/audited", _audited_refusal, methods=["POST"]),
+                Route("/api/x/mutate", _mutating_route, methods=["POST"]),
+            ]
+        )
+        app.add_middleware(AuthMiddleware, auth_config=auth)
+        app.state.session_tracker = SessionTracker()
+        app.state.audit_worm = worm
+        return TestClient(app)
+
+    @pytest.mark.parametrize("method", ["POST", "DELETE"])
+    def test_a_silent_refusal_is_recorded_once_as_denied(self, method: str) -> None:
+        worm = _SpyWorm()
+        resp = self._client(worm).request(
+            method, "/api/x/silent", headers={"Authorization": "Bearer view-tok"}
+        )
+        assert resp.status_code == 403
+        (fields,) = worm.written
+        assert fields.outcome == "denied"
+        assert fields.actor_role == "viewer"
+        assert fields.target == "/api/x/silent"
+        assert fields.operation == f"{method} /api/x/silent"
+
+    def test_a_route_that_recorded_its_own_denial_is_not_doubled(self) -> None:
+        worm = _SpyWorm()
+        resp = self._client(worm).post(
+            "/api/x/audited", headers={"Authorization": "Bearer view-tok"}
+        )
+        assert resp.status_code == 403
+        (fields,) = worm.written
+        assert fields.operation == "approval.approve"
+
+    def test_a_refused_read_writes_nothing(self) -> None:
+        worm = _SpyWorm()
+        resp = self._client(worm).get(
+            "/api/x/silent", headers={"Authorization": "Bearer view-tok"}
+        )
+        assert resp.status_code == 403
+        assert worm.written == []
+
+    def test_an_allowed_change_is_recorded_once(self) -> None:
+        worm = _SpyWorm()
+        resp = self._client(worm).post("/api/x/mutate", headers={"Authorization": "Bearer op-tok"})
+        assert resp.status_code == 200
+        (fields,) = worm.written
+        assert fields.outcome == "applied"
+
+    def test_the_denial_is_attributed_to_the_browser_session(self) -> None:
+        seen: list[causal.CausalContext | None] = []
+
+        class _CausalSpy(_SpyWorm):
+            def write(self, fields: Any) -> None:
+                seen.append(causal.current())
+                super().write(fields)
+
+        resp = self._client(_CausalSpy()).post(
+            "/api/x/silent", headers={"Authorization": "Bearer view-tok"}
+        )
+        assert resp.status_code == 403
+        (ctx,) = seen
+        assert ctx is not None and ctx.initiator == "ui_session"
