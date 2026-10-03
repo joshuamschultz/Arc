@@ -26,6 +26,7 @@ This module is the only one that touches the collection.
 from __future__ import annotations
 
 import asyncio
+import hmac
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -371,6 +372,78 @@ class CredentialRowStore:
                 return removed
         raise _busy(connection)
 
+    # --- re-sealing under this store's cipher (P18-2F) ------------------------
+
+    async def reseal(self, connection: str, *, source: CredentialCipher, actor_did: str) -> bool:
+        """Move one row from ``source``'s cipher to this store's, in ONE CAS.
+
+        Every value is opened with ``source``, sealed with this store's cipher,
+        opened again and compared in constant time, and only then written, with
+        ``cipher`` flipped in the same ``update_if``. A crash at any point leaves
+        the row wholly under one cipher; a concurrent change makes the CAS lose and
+        the row is re-read. Values, ``generation`` and the lease are unchanged.
+
+        Returns:
+            True when the row was re-sealed; False when it is already under this
+            store's cipher (idempotent) or does not exist.
+
+        Raises:
+            ExtensionError: ``CREDENTIAL_UNREADABLE`` for a row under neither
+                cipher or a value that does not open; ``CREDENTIAL_CUSTODY_UNAVAILABLE``
+                when the transit cannot answer; ``CREDENTIAL_STORE_BUSY`` after
+                bounded CAS losses.
+        """
+        for _ in range(_CAS_ATTEMPTS):
+            row = await self.read(connection)
+            if row is None or row.cipher == self._cipher.kind:
+                return False
+            if row.cipher != source.kind:
+                raise unreadable(connection, "it is sealed under neither the old nor the new key")
+            patch = await self._resealed_patch(row, source)
+            if await self._cas(row, patch, actor_did=actor_did):
+                self._audit_resealed(connection, sealed_by=row.cipher, actor_did=actor_did)
+                return True
+        raise _busy(connection)
+
+    async def _resealed_patch(
+        self, row: CredentialRow, source: CredentialCipher
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        for name, value in row.fields.items():
+            moved = await self._move(row.connection, value.sealed, name, source)
+            fields[name] = {"sealed": moved, "updated_at": value.updated_at}
+        access = None
+        if row.access is not None:
+            moved = await self._move(row.connection, row.access.sealed, ACCESS_SLOT, source)
+            access = {**row.access.model_dump(), "sealed": moved}
+        return {"fields": fields, "access": access, "cipher": self._cipher.kind}
+
+    async def _move(
+        self, connection: str, sealed: str, slot: str, source: CredentialCipher
+    ) -> str:
+        """Open under ``source``, seal under this cipher, verify the read-back."""
+        where = {"scope": connection, "slot": slot}
+        plain = await _call_cipher(connection, source.open, sealed, **where)
+        moved = (await _call_cipher(connection, self._cipher.seal, plain, **where)).decode()
+        check = await _call_cipher(connection, self._cipher.open, moved, **where)
+        if not hmac.compare_digest(check, plain):
+            raise unreadable(connection, "it did not read back as written after re-sealing")
+        return moved
+
+    def _audit_resealed(self, connection: str, *, sealed_by: str, actor_did: str) -> None:
+        if self._sink is None:
+            return
+        emit(
+            AuditEvent(
+                actor_did=actor_did,
+                action="connection.credential.resealed",
+                target=f"connection:{connection}",
+                outcome="allow",
+                extra={"from": sealed_by, "to": self._cipher.kind},
+            ),
+            self._sink,
+        )
+
     async def forget(self, connection: str, *, actor_did: str) -> bool:
         """Delete the whole row, so no undeclared leftover survives a removal."""
         return await self._backend.mutable_delete(
@@ -545,6 +618,19 @@ class CredentialRowStore:
             ),
             self._sink,
         )
+
+
+async def _call_cipher(
+    connection: str, operation: Callable[..., Any], value: Any, *, scope: str, slot: str
+) -> bytes:
+    """Run one cipher operation off the loop, mapping failures to custody refusals."""
+    try:
+        result: bytes | str = await asyncio.to_thread(operation, value, scope=scope, slot=slot)
+    except CredentialCustodyUnavailableError:
+        raise custody_unavailable(connection) from None
+    except CredentialSealError:
+        raise unreadable(connection, "it does not open under the key it claims") from None
+    return result.encode("ascii") if isinstance(result, str) else result
 
 
 def _cipher_mismatch(sealed_by: str, current: str) -> str:
