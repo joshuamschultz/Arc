@@ -259,6 +259,7 @@ from arctrust.secrets import SECRET_PATTERNS
 from arctrust.signer import (
     ECDSA_P256,
     ED25519,
+    CustodyTransit,
     FileNotaryTransit,
     InProcessSigner,
     Signer,
@@ -344,6 +345,7 @@ if TYPE_CHECKING:
         VaultLease,
     )
     from arctrust.vault_record_cipher import VaultRecordCipher
+    from arctrust.vault_transit import VaultTransitConfig
 
 
 def __getattr__(name: str) -> Any:
@@ -396,6 +398,10 @@ def __getattr__(name: str) -> Any:
         from arctrust.vault_anchor import VaultKVAnchor
 
         return VaultKVAnchor
+    if name == "VaultTransitConfig":
+        from arctrust.vault_transit import VaultTransitConfig
+
+        return VaultTransitConfig
     if name == "VaultTransitHTTP":
         from arctrust.transit_http import VaultTransitHTTP
 
@@ -465,6 +471,7 @@ __all__ = [
     "ControlPurpose",
     "CredentialCustodyUnavailableError",
     "CredentialSealError",
+    "CustodyTransit",
     "Decision",
     "DeploymentAuthorityConfig",
     "DeploymentChallenge",
@@ -529,6 +536,7 @@ __all__ = [
     "VaultRecordCipher",
     "VaultSigner",
     "VaultTransit",
+    "VaultTransitConfig",
     "VaultTransitHTTP",
     "WitnessAnchor",
     "WitnessDivergenceError",

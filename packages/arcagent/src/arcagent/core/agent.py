@@ -39,7 +39,7 @@ import arcrun
 from arcprompt import PromptSource, StockPromptSource
 from arctrust import (
     AgentIdentity,
-    FileNotaryTransit,
+    CustodyTransit,
     OperatorKey,
     RecordCipher,
     Signer,
@@ -523,11 +523,11 @@ class ArcAgent:
         """
         return agent_security.resolve_record_cipher(self)
 
-    def _resolve_transit(self, sec: Any) -> FileNotaryTransit:
+    def _resolve_transit(self, sec: Any) -> CustodyTransit:
         """Resolve the out-of-process signing transit for vault_transit custody.
 
-        Defaults to the reference ``FileNotaryTransit`` (dev/CI without an HSM);
-        a real deployment swaps this seam for a Vault Transit / PKCS#11 adapter.
+        HashiCorp Vault Transit when ``[security.vault]`` is configured, else the
+        local out-of-process ``FileNotaryTransit`` notary.
         Fails closed if the transit cannot serve the operator key — the composite
         must never degrade to in-process signing.
         """

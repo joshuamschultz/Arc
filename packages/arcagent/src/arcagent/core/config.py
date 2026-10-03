@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import tomlkit
-from arctrust import ValidatorsConfig
+from arctrust import ValidatorsConfig, VaultTransitConfig
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.config_loading import (
@@ -516,10 +516,19 @@ class SecurityConfig(BaseModel):
     notary_keystore: str = Field(
         default="",
         description=(
-            "vault_transit only: keystore for the reference out-of-process "
-            "FileNotaryTransit signer (dev/CI without an HSM). Empty → "
-            "<operator_key_dir>/notary. A real deployment swaps this seam for a "
-            "Vault Transit / PKCS#11 HSM adapter. SPEC-037 REQ-006."
+            "vault_transit without [security.vault]: keystore for the local "
+            "out-of-process FileNotaryTransit (signing + connector sealing). "
+            "Empty → <operator_key_dir>/notary. Ignored when [security.vault] "
+            "configures HashiCorp Vault Transit. SPEC-037 REQ-006."
+        ),
+    )
+    vault: VaultTransitConfig | None = Field(
+        default=None,
+        description=(
+            "[security.vault]: HashiCorp Vault Transit as the custody transit "
+            "(operator signing + connector credential sealing by reference). "
+            "Absent → the local notary. Implies custody='vault_transit'. See "
+            "docs/runbooks/operate/vault-transit.md."
         ),
     )
     require_fips: bool = Field(
@@ -599,7 +608,17 @@ class SecurityConfig(BaseModel):
                 setattr(self, knob.name, resolved)
         elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
             self.custody = "vault_transit"
+        self._require_vault_transit_custody()
         return self
+
+    def _require_vault_transit_custody(self) -> None:
+        """A ``[security.vault]`` block means Vault custody; never beside ``in_process``."""
+        if self.vault is None:
+            return
+        if "custody" not in self.model_fields_set:
+            self.custody = "vault_transit"
+        if self.custody != "vault_transit":
+            raise ValueError('[security.vault] needs custody = "vault_transit"')
 
     def _floor_skill_revision_anchor(self) -> None:
         """Federal never trusts a local journal for the active skill revision."""
