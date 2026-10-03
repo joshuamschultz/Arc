@@ -46,11 +46,14 @@ def _refuse(message: str, **details: Any) -> ExtensionError:
     )
 
 
-def _deployment_tier() -> Tier:
-    """The tier this deployment runs at, read when no caller named one."""
-    from arcagent.connections import deployment_tier
+def _egress_policy(tier: Tier | None) -> EgressPolicy:
+    """The HTTP-MCP address policy: the deployment's allowlist and proxy opt-in, at ``tier``.
 
-    return deployment_tier()
+    ``tier`` omitted means the deployment's own tier.
+    """
+    from arcagent.connections import deployment_egress_policy, deployment_tier
+
+    return deployment_egress_policy(tier if tier is not None else deployment_tier())
 
 
 def _same_origin(url: str, origin: str) -> bool:
@@ -377,7 +380,7 @@ def build_attachment(
                 resilience=http_config.resilience,
                 client_name=http_config.client_name,
                 requirements=requirements,
-                egress=EgressPolicy(tier=tier if tier is not None else _deployment_tier()),
+                egress=_egress_policy(tier),
                 on_egress_refused=egress_audit,
             )
             return _with_source_adapter(
