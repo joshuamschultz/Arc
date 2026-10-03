@@ -650,7 +650,7 @@ async def resolve_site(
     """The site this token may reach and this connection is for, or ``ACCOUNT_MISMATCH``.
 
     ``resources_url`` lists what the new token can see. The connection's ``site``
-    (a host such as ``acme.atlassian.net``) picks one; a blank ``site`` is accepted
+    (a host such as ``acme.example.net``) picks one; a blank ``site`` is accepted
     only when exactly one is visible. A connection that already holds a
     ``cloud_id`` may only be reconnected to that same site: consent given as a
     different organisation's account must never rebind it. The refusal names site

@@ -477,6 +477,24 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_cli_attachment_bounds.py",
         "packages/arcagent/tests/integration/test_google_account_routing.py",
     ),
+    # Atlassian 3LO (alpha-2 P18-3, 3.T): Atlassian ROTATES refresh tokens, so a
+    # race between two processes, a replayed old token, a consent for another
+    # organisation's site (or a site id that changed under a reconnect), a
+    # two-site account that never chose, and an issue key that climbs the REST
+    # path must each fail closed with nothing stored and no token spent twice.
+    # Issue text an attacker authored is framed untrusted. Covers ASI02/ASI03/LLM01.
+    "Atlassian 3LO abuse — rotation race, reused refresh token, site rebinding (alpha-2 P18-3)": (
+        "packages/arcagent/tests/integration/test_atlassian_connect.py",
+        "extensions/tests/test_atlassian_native_tools.py",
+    ),
+    # GitHub token (alpha-2 P18-3, 3.H): the vaulted token is placed as GH_TOKEN
+    # per spawn and nowhere else. It must never reach disk, a log, a card or a
+    # tool result (the child may echo it); gh must never read the operator's own
+    # config; a manifest's fixed environment may never name a credential, PATH or
+    # a loader variable; a token inside seven days of expiry is needs_you.
+    "GitHub token injection — env placement, isolated config, expiry (alpha-2 P18-3)": (
+        "packages/arcagent/tests/integration/test_github_token.py",
+    ),
     # Item 52: the production local schedule authority. A forged or hand-edited
     # approval, a stale or replayed registration, a proof from a key that is not
     # the actor's, an edited journal, a revoked head, a replayed occurrence and an
