@@ -237,3 +237,91 @@ def test_memory_registered_in_command_registry() -> None:
     cmd = resolve_command("memory")
     assert cmd is not None
     assert cmd.handler is not None
+
+
+# ---------------------------------------------------------------------------
+# arc memory dedup --agent — identity de-dup over one agent's memory
+# ---------------------------------------------------------------------------
+
+_DID = "did:arc:local:executor/olivia01"
+
+
+def _entity(ents: Path, slug: str, name: str, entity_type: str, facts: int, tags: str) -> None:
+    lines = "\n".join(f"- p{i}: {name} {i} .5 2026-07-01" for i in range(facts))
+    _write(
+        ents / f"{slug}.md",
+        "---\n"
+        "type: ArcMemoryEntity\n"
+        f"entity_type: {entity_type}\n"
+        f"entity_id: {slug}\n"
+        f"name: '{name}'\n"
+        "classification: unclassified\n"
+        "cross_session_visibility: false\n"
+        "confidence: 0.5\n"
+        "links_to: []\n"
+        f"tags: {tags}\n"
+        "aliases: []\n"
+        "---\n\n"
+        f"# {name}\n\n## Facts\n{lines}\n",
+    )
+
+
+def _seed_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A team dir with one agent whose memory holds a Thesis 5 duplicate pair."""
+    agent = tmp_path / "team" / "olivia"
+    _write(
+        agent / "arcagent.toml",
+        f'[agent]\nname = "olivia"\n\n[identity]\ndid = "{_DID}"\n\n'
+        '[modules.memory.config]\ntier = "personal"\n\n'
+        '[modules.memory.config.backend]\nembed_backend = "none"\ndistill_provider = ""\n',
+    )
+    ents = agent / "workspace" / "memory" / "entities"
+    _entity(ents, "thesis-5", "Thesis 5", "thing", 1, "[thesis]")
+    _entity(ents, "thesis-5-tuning", "Thesis 5: Multi-Layer Tuning", "thesis", 2, "[]")
+    monkeypatch.chdir(tmp_path)
+    return ents
+
+
+def test_agent_dry_run_prints_the_plan_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ents = _seed_agent(tmp_path, monkeypatch)
+    before = {p.name: p.read_text() for p in ents.glob("*.md")}
+
+    memory_handler(["dedup", "--agent", "olivia", "--dry-run"])
+
+    out = capsys.readouterr().out
+    assert "thesis-5-tuning <- thesis-5" in out
+    assert "1 certain" in out
+    assert {p.name: p.read_text() for p in ents.glob("*.md")} == before
+
+
+def test_agent_apply_folds_the_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ents = _seed_agent(tmp_path, monkeypatch)
+
+    memory_handler(["dedup", "--agent", "olivia", "--apply"])
+
+    assert sorted(p.name for p in ents.glob("*.md")) == ["thesis-5-tuning.md"]
+    text = (ents / "thesis-5-tuning.md").read_text()
+    assert "entity_type: thesis" in text
+    assert "Thesis 5" in text  # the folded name survives as an alias
+    assert "1 merged" in capsys.readouterr().out
+
+
+def test_agent_dry_run_conflicts_with_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_agent(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit):
+        memory_handler(["dedup", "--agent", "olivia", "--apply", "--dry-run"])
+
+
+def test_unknown_agent_exits_with_the_known_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_agent(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit):
+        memory_handler(["dedup", "--agent", "nobody"])
+    assert "olivia" in capsys.readouterr().err

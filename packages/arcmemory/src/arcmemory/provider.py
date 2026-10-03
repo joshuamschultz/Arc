@@ -64,11 +64,7 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
     prompts = _prompt_source(context.get("prompt_source"))
     backend = context.get("backend_config") or {}
     tier: Tier = _safe_tier(context.get("tier", "personal"))
-    config = MemoryConfig.for_tier(tier)
-    dynamics = backend.get("dynamics") or {}
-    if dynamics:
-        # Toml-supplied overrides applied OVER the tier defaults, re-validated by arcmemory.
-        config = MemoryConfig(**{**config.model_dump(), **dynamics})
+    config = memory_config_for(backend, tier)
 
     agent_did = context["agent_did"]
     workspace = context["workspace"]
@@ -126,6 +122,21 @@ def build_brain(context: dict[str, Any]) -> ArcMemoryBrain:
         promotion_signer=identity if promotion else None,
         prompt_source=prompts,
     )
+
+
+def memory_config_for(backend: Mapping[str, Any], tier: object) -> MemoryConfig:
+    """The tier's MemoryConfig with the backend's ``dynamics`` overrides re-validated.
+
+    One parse for every entry point (the agent's brain and ``arc memory dedup``) so
+    the operator command judges duplicates with exactly the thresholds the nightly
+    pass uses.
+    """
+    config = MemoryConfig.for_tier(_safe_tier(tier))
+    dynamics = backend.get("dynamics") or {}
+    if dynamics:
+        # Toml-supplied overrides applied OVER the tier defaults, re-validated by arcmemory.
+        config = MemoryConfig(**{**config.model_dump(), **dynamics})
+    return config
 
 
 def _prompt_source(raw: object) -> PromptSource:
@@ -259,4 +270,4 @@ def build_distiller(
     return ArcLLMDistiller(factory, model=model or None, prompts=prompts)
 
 
-__all__ = ["build_brain", "build_distiller", "build_embedder"]
+__all__ = ["build_brain", "build_distiller", "build_embedder", "memory_config_for"]
