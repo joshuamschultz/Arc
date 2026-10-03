@@ -5,9 +5,13 @@ request in the shared arcstore ``approvals`` directory and waits. This command i
 the on-box, key-holding operator surface that resolves it — approval never travels
 over agent chat (which a prompt-injected or foreign message could forge).
 
-``approve list``            — show pending requests.
-``approve <id>``            — mint an operator-signed grant for that request.
-``approve <id> --deny``     — deny it.
+``approve list``             — show pending requests and standing approvals.
+``approve <id>``             — mint an operator-signed grant for that request.
+``approve <id> --always``    — approve it AND make its scope stand ("Always
+                               allow": agent + verb + leg composition + egress
+                               destination; never for a federal request).
+``approve <id> --deny``      — deny it.
+``approve revoke <grant>``   — revoke a standing approval; the next call prompts.
 
 The grant is signed with the DEPLOYMENT operator key (``~/.arc/operator``, the same
 key the agent's gate pins to), so only someone with on-box operator-key access can
@@ -22,6 +26,12 @@ import sys
 from typing import TYPE_CHECKING
 
 from arcstore.approvals import ApprovalStore, PendingApproval
+from arcstore.standing_grants import (
+    StandingGrant,
+    StandingGrantRefusedError,
+    StandingGrantStore,
+    approve_always,
+)
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 
 from arccli.commands._shared import write as _write
@@ -78,29 +88,98 @@ def _print_context(a: PendingApproval) -> None:
             _write(f"    [{legs}] {tool}: {entry.get('args', '')} @ {entry.get('at', '')}")
 
 
+def _standing_row(g: StandingGrant) -> list[str]:
+    who = g.agent_label or g.agent_did.rsplit("/", 1)[-1]
+    return [
+        g.id,
+        who,
+        g.tool,
+        "+".join(g.composition),
+        g.destination or "(no egress)",
+        g.granted_by.rsplit("/", 1)[-1],
+        (g.granted_at or "")[:19],
+        str(g.use_count),
+    ]
+
+
 def _list(_args: argparse.Namespace) -> None:
     async def _run() -> None:
         store, backend = await _open_store()
         try:
             pending = await store.list(status="pending")
+            standing = await StandingGrantStore(backend).list(status="active")
         finally:
             await backend.stop()
         if not pending:
             _write("No pending approvals.")
+        else:
+            _print_table(
+                ["ID", "STATUS", "AGENT", "TOOL", "COMPOSITION", "SESSION", "CREATED"],
+                [_row(a) for a in pending],
+            )
+            for a in pending:
+                _write(f"\n{a.id} ({a.tool}):")
+                _print_context(a)
+        _write("\nStanding approvals (Always allow):")
+        if not standing:
+            _write("  none")
             return
         _print_table(
-            ["ID", "STATUS", "AGENT", "TOOL", "COMPOSITION", "SESSION", "CREATED"],
-            [_row(a) for a in pending],
+            ["GRANT", "AGENT", "TOOL", "COMPOSITION", "DESTINATION", "GRANTED BY", "WHEN", "USES"],
+            [_standing_row(g) for g in standing],
         )
-        for a in pending:
-            _write(f"\n{a.id} ({a.tool}):")
-            _print_context(a)
 
     asyncio.run(_run())
 
 
+def _revoke(grant_id: str) -> None:
+    async def _run() -> None:
+        _, backend = await _open_store()
+        try:
+            from arccli.commands.operator import resolve_operator_signer
+
+            operator = OperatorApprovalAuthority(resolve_operator_signer())
+            revoked = await StandingGrantStore(backend).revoke(grant_id, actor_did=operator.did)
+        finally:
+            await backend.stop()
+        if revoked is None:
+            _err(f"arc approve: no active standing approval {grant_id!r}")
+            sys.exit(1)
+        _write(
+            f"Revoked {grant_id} — {revoked.agent_label or revoked.agent_did} will be asked "
+            f"again before {revoked.tool}."
+        )
+
+    asyncio.run(_run())
+
+
+async def _always(
+    store: ApprovalStore,
+    backend: ArcStoreBackend,
+    row: PendingApproval,
+    operator: OperatorApprovalAuthority,
+) -> None:
+    """Approve ``row`` and store its scope as a standing grant (SPEC-035 OQ-3)."""
+    try:
+        _, stored = await approve_always(store, StandingGrantStore(backend), row, operator)
+    except StandingGrantRefusedError as exc:
+        _err(f"arc approve: cannot always-allow {row.id!r}: {exc}")
+        sys.exit(1)
+    who = row.agent_label or "agent"
+    _write(
+        f"Always allowed {row.id} — {who} may {stored.tool} -> "
+        f"{stored.destination or '(no egress)'} with {'+'.join(stored.composition)} "
+        f"from now on. Standing approval {stored.id}; revoke with "
+        f"`arc approve revoke {stored.id}`."
+    )
+
+
 def _resolve(args: argparse.Namespace) -> None:
     deny = bool(getattr(args, "deny", False))
+    always = bool(getattr(args, "always", False))
+    if deny and always:
+        _err("arc approve: --deny and --always are exclusive")
+        sys.exit(2)
 
     async def _run() -> None:
         store, backend = await _open_store()
@@ -135,6 +214,10 @@ def _resolve(args: argparse.Namespace) -> None:
 
             if is_enrollment(row):
                 await _approve_enrollment(store, row, operator)
+                return
+
+            if always:
+                await _always(store, backend, row, operator)
                 return
 
             # Mint an operator-signed grant over the stored call_hash. The operator
@@ -206,9 +289,19 @@ def _build_parser() -> argparse.ArgumentParser:
     # without a subparser swallowing the id as an unknown subcommand.
     parser = argparse.ArgumentParser(prog="arc approve", add_help=True)
     parser.add_argument(
-        "target", nargs="?", help="'list' to show pending, or an approval request id to resolve"
+        "target",
+        nargs="?",
+        help="'list', 'revoke', or an approval request id to resolve",
+    )
+    parser.add_argument(
+        "grant_id", nargs="?", help="with 'revoke': the standing approval to revoke"
     )
     parser.add_argument("--deny", action="store_true", help="Deny instead of approve")
+    parser.add_argument(
+        "--always",
+        action="store_true",
+        help="Approve and make this scope stand (Always allow; never at federal)",
+    )
     return parser
 
 
@@ -220,6 +313,12 @@ def approve_handler(args: list[str]) -> None:
         return
     if ns.target == "list":
         _list(ns)
+        return
+    if ns.target == "revoke":
+        if not ns.grant_id:
+            _err("arc approve revoke: name the standing approval (see `arc approve list`)")
+            sys.exit(2)
+        _revoke(ns.grant_id)
         return
     ns.id = ns.target
     _resolve(ns)

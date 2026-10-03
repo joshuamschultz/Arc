@@ -34,11 +34,12 @@ Three properties make that inheritance worth anything:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
+from arcagent.extension.approval import ConnectionBoundAttachment
 from arcagent.extension.attachment import (
     ExtensionAttachment,
     ToolOutcome,
@@ -165,7 +166,21 @@ class CapabilityBridge:
         )
         if spec.timeout_seconds is not None:
             tool.timeout_seconds = spec.timeout_seconds
+        tool.destination = self._destination(spec.name)
         return tool
+
+    def _destination(self, tool: str) -> Callable[[Mapping[str, Any]], str] | None:
+        """The attachment's own answer to "which connection would this call reach".
+
+        Set by code from the attachment that was bound to a connection, never
+        from the model's arguments alone — an operator's standing grant for one
+        connection must not cover another. ``None`` when the attachment does
+        not know (the registry then judges by the destinations the call names).
+        """
+        attachment = self._attachment
+        if not isinstance(attachment, ConnectionBoundAttachment):
+            return None
+        return lambda arguments: attachment.destination_for(tool, arguments)
 
     def _dispatcher(self, tool: str) -> Callable[..., Coroutine[Any, Any, str]]:
         """Build the executor for one verb.

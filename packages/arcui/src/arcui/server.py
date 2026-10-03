@@ -36,6 +36,7 @@ from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.inbox_projection import DurableInboxService
 from arcstore.inbox_spool import InboxProjectionSpool
 from arcstore.mail_outbox import MailOutbox, PostgresMailOutbox
+from arcstore.standing_grants import StandingGrantStore
 from arcstore.tasks import TaskStore
 from pydantic import SecretStr
 from starlette.applications import Starlette
@@ -84,6 +85,7 @@ from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import stack as stack_routes
+from arcui.routes import standing_grants as standing_grants_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
 from arcui.routes import tasks as tasks_routes
@@ -430,6 +432,7 @@ def create_app(
         *team_ws_routes.routes,
         *tasks_routes.routes,
         *approvals_routes.routes,
+        *standing_grants_routes.routes,
         *home_routes.routes,
         *cancellations_routes.routes,
         *capability_imports_routes.routes,
@@ -844,6 +847,8 @@ def create_app(
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.
     app.state.approval_store = ApprovalStore(task_store_backend)
+    # Operator "Always allow" standing grants (SPEC-035 OQ-3) — same backend.
+    app.state.standing_grant_store = StandingGrantStore(task_store_backend)
     # Browser notification delivery is a durable sink of the at-least-once
     # approval outbox.  It must survive a UI restart and is acknowledged only
     # after an authenticated browser has shown the event.

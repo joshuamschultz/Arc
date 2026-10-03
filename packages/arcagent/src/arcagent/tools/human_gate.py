@@ -12,8 +12,12 @@ Key invariants:
 - **Fail closed.** Denial or timeout → deny the completing call (return None).
 - **Agent cannot self-approve.** The token is signed by the *operator* key
   (SPEC-053 authority), never the agent DID. The agent has no path to mint it.
-- **Per-action.** One approval admits exactly one call (the grant binds to the
-  call hash). A distinct later call re-triggers the gate.
+- **Per-action, unless the operator said "Always allow".** A one-shot approval
+  admits exactly one call (the grant binds to the call hash). An operator may
+  instead store a standing interactive grant (SPEC-035 OQ-3, ruled 2026-10-03):
+  it covers later calls by the same agent whose legs sit inside the approved
+  composition and whose egress goes to the approved destination. Every use is
+  audited; a revoke takes effect on the next call; federal never honours one.
 - **Tier stringency (ADR-019).** Federal never auto-approves. Personal/
   enterprise may auto-approve *named* low-risk compositions via explicit config.
 """
@@ -22,16 +26,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from arctrust.policy import (
     ApprovalGrant,
     OperatorApprovalAuthority,
+    ScenarioGrant,
     ToolCall,
     sign_approval,
     verify_approval,
+    verify_interactive_grant,
 )
 from arctrust.signer import Signer
 
@@ -47,6 +53,25 @@ _logger = logging.getLogger("arcagent.human_gate")
 # exception/timeout is enforced by the gate, not the channel.
 ApprovalChannel = Callable[["ApprovalRequest"], Awaitable["ApprovalGrant | None"]]
 AuditSink = Callable[[str, dict[str, Any]], None]
+
+
+@runtime_checkable
+class StandingGrantSource(Protocol):
+    """Where an agent's stored "Always allow" grants are read and counted.
+
+    Read fresh on every gate hit (a revoke must bite on the next call). The
+    source holds data only: the gate verifies every signature and pins the
+    signer to the deployment operator itself.
+    """
+
+    async def active_standing_grants(self, agent_did: str) -> Sequence[tuple[str, ScenarioGrant]]:
+        """``(grant id, grant)`` for every active row of this agent."""
+        ...
+
+    async def record_standing_grant_use(self, grant_id: str, agent_did: str) -> bool:
+        """Count one use; False when the grant is no longer active."""
+        ...
+
 
 # Bounds on the argument preview surfaced to the operator. Each value is capped
 # hard (LLM02 — a huge tool argument must not inflate the approval row, the audit
@@ -97,6 +122,12 @@ class ApprovalRequest:
     leg_provenance: list[dict[str, object]] = field(default_factory=list)
     session_id: str = ""
     origin: str = "agent"  # never impersonate a human
+    #: Destination class of the egress this call adds; ``None`` when it adds none.
+    destination: str | None = None
+    #: The verb a standing grant would be scoped to (unqualified tool name).
+    grant_tool: str = ""
+    #: Whether the operator may answer "Always allow" (never at federal).
+    standing_eligible: bool = False
 
 
 @dataclass
@@ -148,12 +179,14 @@ class HumanGate:
         config: HumanGateConfig | None = None,
         audit_sink: AuditSink | None = None,
         channel: ApprovalChannel | None = None,
+        standing_grants: StandingGrantSource | None = None,
     ) -> None:
         self._agent_did = agent_did
         self._tier = tier
         self._config = config or HumanGateConfig()
         self._audit_sink = audit_sink
         self._channel = channel
+        self._standing = standing_grants
         self._operator = OperatorApprovalAuthority(operator_signer)
 
     async def request(
@@ -162,13 +195,23 @@ class HumanGate:
         *,
         legs: frozenset[str],
         provenance: list[dict[str, object]] | None = None,
+        destination: str | None = None,
+        grant_tool: str | None = None,
+        may_stand: bool = False,
     ) -> ApprovalGrant | None:
         """Obtain a one-shot approval for ``call`` or return None (fail closed).
 
         ``legs`` is the accumulated forbidden union that tripped the gate — used
         for auto-approve matching and for labeling the request. ``provenance`` is
         the ordered list of prior calls that lit each leg, threaded through so the
-        operator can triage the composition.
+        operator can triage the composition. ``destination`` is the destination
+        class of the egress this call adds (``None``: it adds none) and
+        ``grant_tool`` the verb a standing grant is scoped to (default: the
+        call's tool) — together they decide whether an operator's standing
+        "Always allow" already covers this call. ``may_stand`` is opt-in: only
+        the dispatch-time composition gates (the registry's trifecta gate and a
+        connection's outbound gate) pass it, so a standing grant never answers a
+        tier-policy approval, a workflow activation, or any other kind of ask.
         """
         from arctrust.policy import _hash_call
 
@@ -180,10 +223,20 @@ class HumanGate:
             arguments=preview_arguments(call.arguments),
             leg_provenance=provenance or [],
             session_id=call.session_id,
+            destination=destination,
+            grant_tool=grant_tool or call.tool_name,
+            standing_eligible=may_stand and bool(legs) and self._tier != "federal",
         )
 
         if self._auto_approvable(legs, call.tool_name):
             self._emit("human_gate.auto_approved", request, outcome="auto_approve")
+            return sign_approval(call, self._operator)
+
+        grant_id = await self._standing_grant_covering(request)
+        if grant_id is not None:
+            self._emit(
+                "human_gate.standing_grant_used", request, outcome="granted", grant_id=grant_id
+            )
             return sign_approval(call, self._operator)
 
         if self._channel is None:
@@ -228,6 +281,43 @@ class HumanGate:
             return True
         return any(named == legs for named in self._config.auto_approve)
 
+    async def _standing_grant_covering(self, request: ApprovalRequest) -> str | None:
+        """The id of an operator standing grant that covers ``request``, or None.
+
+        Fail closed throughout: never at federal, any read error means "not
+        covered" (the human is asked), every candidate is verified here and
+        pinned to the deployment operator, and the use only counts if the row
+        is still active at the moment it is recorded — a revoke racing this
+        call wins.
+        """
+        source = self._standing
+        if source is None or not request.standing_eligible:
+            return None
+        try:
+            candidates = await source.active_standing_grants(request.agent_did)
+        except Exception:  # reason: fail-closed — an unreadable store asks the human
+            _logger.exception("Standing grants unreadable; asking the operator")
+            return None
+        for grant_id, grant in candidates:
+            if grant.approver_did != self._operator.did:
+                continue
+            if not verify_interactive_grant(
+                grant,
+                agent_did=request.agent_did,
+                tool_name=request.grant_tool,
+                legs=request.legs,
+                destination=request.destination,
+                tier=self._tier,
+            ):
+                continue
+            try:
+                if await source.record_standing_grant_use(grant_id, request.agent_did):
+                    return grant_id
+            except Exception:  # reason: fail-closed — an unrecorded use is no use
+                _logger.exception("Standing grant use could not be recorded; asking")
+                return None
+        return None
+
     async def _ask_human(self, request: ApprovalRequest) -> ApprovalGrant | None:
         """Surface the request to the operator channel; fail closed on timeout/error.
 
@@ -246,13 +336,17 @@ class HumanGate:
             _logger.exception("Approval channel raised; failing closed")
             return None
 
-    def _emit(self, event: str, request: ApprovalRequest, *, outcome: str) -> None:
+    def _emit(
+        self, event: str, request: ApprovalRequest, *, outcome: str, grant_id: str = ""
+    ) -> None:
         if self._audit_sink is None:
             return
         try:
             self._audit_sink(
                 event,
                 {
+                    "grant_id": grant_id,
+                    "destination": request.destination,
                     "tool": request.tool_name,
                     "agent_did": request.agent_did,
                     "operator_did": self._operator.did,
@@ -275,6 +369,7 @@ __all__ = [
     "ApprovalRequest",
     "HumanGate",
     "HumanGateConfig",
+    "StandingGrantSource",
     "preview_arguments",
     "summarize_arguments",
 ]

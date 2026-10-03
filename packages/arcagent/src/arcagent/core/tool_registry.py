@@ -42,6 +42,12 @@ from arcagent.core.session_internal.capability_ledger import (
     legs_for_call,
     legs_for_tags,
 )
+from arcagent.core.session_internal.dispatch_approval import (
+    ApprovedDispatch,
+    bind_approved_dispatch,
+    reset_approved_dispatch,
+)
+from arcagent.core.session_internal.egress_destination import egress_destination
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tier import Tier
 from arcagent.core.tool_policy import (
@@ -109,6 +115,10 @@ class ToolDispatchContext:
     policy_context: PolicyContext | None = None
     decision: Any = None
     accumulated: frozenset[str] = field(default_factory=frozenset)
+    #: Destination class of the egress this call adds; None when it adds none.
+    destination: str | None = None
+    #: True once an operator's word (one-shot or standing) admitted this call.
+    operator_approved: bool = False
     admission_lock: Any = None
     result: Any = None
     elapsed: float = 0.0
@@ -397,6 +407,7 @@ class ToolRegistry:
         human_gate: HumanGate | None,
         tool_legs: frozenset[str],
         accumulated: frozenset[str],
+        destination: str | None,
     ) -> ToolCall:
         """Pause a trifecta-completing deny for human approval, or fail closed.
 
@@ -418,7 +429,9 @@ class ToolRegistry:
             if ledger is not None
             else []
         )
-        approval = await human_gate.request(call, legs=union, provenance=provenance)
+        approval = await human_gate.request(
+            call, legs=union, provenance=provenance, destination=destination, may_stand=True
+        )
         if approval is None:
             raise PolicyDenied(decision)
         approved_call = call.model_copy(update={"approval": approval})
@@ -456,6 +469,11 @@ class ToolRegistry:
         tool = dispatch.tool
         dispatch.session_id = current_session_id()
         dispatch.call_legs = legs_for_call(tool.name, tool.capability_tags, dispatch.args)
+        dispatch.destination = (
+            egress_destination(tool.name, dispatch.args, tool.destination)
+            if EXTERNAL_COMMS in dispatch.call_legs
+            else None
+        )
         dispatch.arg_summary = summarize_arguments(dispatch.args) if dispatch.call_legs else ""
         declared_legs = legs_for_tags(tool.capability_tags)
         if EXTERNAL_COMMS in declared_legs and EXTERNAL_COMMS not in dispatch.call_legs:
@@ -527,7 +545,9 @@ class ToolRegistry:
                 self._human_gate,
                 dispatch.call_legs,
                 dispatch.accumulated,
+                dispatch.destination,
             )
+            dispatch.operator_approved = True
             async with dispatch.admission_lock:
                 self._record_admission(
                     self._capability_ledger,
@@ -549,6 +569,15 @@ class ToolRegistry:
     async def _execute_dispatch(self, dispatch: ToolDispatchContext) -> None:
         """Execute once under the configured timeout and telemetry span."""
         start = time.monotonic()
+        # One operator answer per call: a connection's own outbound gate inside
+        # this execution honours the approval the trifecta gate already holds.
+        approved = (
+            bind_approved_dispatch(
+                ApprovedDispatch(dispatch.tool.name, dict(dispatch.args), "trifecta_gate")
+            )
+            if dispatch.operator_approved
+            else None
+        )
         try:
             async with self._telemetry.tool_span(dispatch.tool.name, dispatch.args):
                 dispatch.result = await asyncio.wait_for(
@@ -566,6 +595,9 @@ class ToolRegistry:
                     "timeout": dispatch.tool.timeout_seconds,
                 },
             ) from exc
+        finally:
+            if approved is not None:
+                reset_approved_dispatch(approved)
         dispatch.elapsed = time.monotonic() - start
 
     async def _record_dispatch(self, dispatch: ToolDispatchContext) -> None:

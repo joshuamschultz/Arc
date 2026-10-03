@@ -14,7 +14,7 @@ imports
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
@@ -80,6 +80,11 @@ class RegisteredTool:
     # False when a repeat execution duplicates an external effect the tool
     # cannot dedupe from the call's idempotency key (carried to arcrun.Tool).
     idempotent: bool = True
+    # Where this tool's egress goes, resolved from its real arguments — set by
+    # code for a connector tool (its connection id), so an operator's standing
+    # "Always allow" is scoped to that connection. ``None``: judged by the
+    # destinations its arguments name (core.session_internal.egress_destination).
+    destination: Callable[[Mapping[str, Any]], str] | None = None
 
 
 # -- Type map for native_tool decorator schema generation --

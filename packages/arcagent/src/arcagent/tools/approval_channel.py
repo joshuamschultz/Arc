@@ -16,18 +16,26 @@ holds no path to mint it.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.backends import ArcStoreBackend
-from arctrust.policy import ApprovalGrant, grant_from_wire
+from arcstore.standing_grants import StandingGrantStore
+from arctrust.policy import ApprovalGrant, ScenarioGrant, grant_from_wire, scenario_grant_from_wire
 
 from arcagent.tools.human_gate import ApprovalRequest
+
+_logger = logging.getLogger("arcagent.approval_channel")
 
 
 class ArcStoreApprovalChannel:
     """An :data:`~arcagent.tools.human_gate.ApprovalChannel` over ``ApprovalStore``.
+
+    Also the gate's :class:`~arcagent.tools.human_gate.StandingGrantSource`: the
+    operator's "Always allow" rows live in the same store (``standing_grants``),
+    so the agent reads them through the same lazily opened backend.
 
     Parameters
     ----------
@@ -55,6 +63,7 @@ class ArcStoreApprovalChannel:
         self,
         store: ApprovalStore | None = None,
         *,
+        standing_store: StandingGrantStore | None = None,
         store_opener: Callable[[], Awaitable[tuple[ApprovalStore, ArcStoreBackend]]] | None = None,
         id_factory: Callable[[], str],
         agent_label: str = "",
@@ -64,6 +73,7 @@ class ArcStoreApprovalChannel:
         if (store is None) == (store_opener is None):
             raise ValueError("provide exactly one of store or store_opener")
         self._store = store
+        self._standing_store = standing_store
         self._backend: ArcStoreBackend | None = None
         self._store_opener = store_opener
         self._open_lock = asyncio.Lock()
@@ -82,12 +92,43 @@ class ArcStoreApprovalChannel:
         async with self._open_lock:
             if self._store is None:
                 self._store, self._backend = await opener()
+                self._standing_store = StandingGrantStore(self._backend)
         return self._store
+
+    async def _ensure_standing_store(self) -> StandingGrantStore | None:
+        """The standing-grant store on the same backend, or None if not wired."""
+        await self._ensure_store()
+        return self._standing_store
+
+    async def active_standing_grants(self, agent_did: str) -> list[tuple[str, ScenarioGrant]]:
+        """Every active "Always allow" row of this agent, decoded (unverified).
+
+        A row that does not decode is skipped — the gate verifies what remains,
+        so an unreadable or forged row can only ever cost a prompt.
+        """
+        standing = await self._ensure_standing_store()
+        if standing is None:
+            return []
+        grants: list[tuple[str, ScenarioGrant]] = []
+        for row in await standing.active_for(agent_did):
+            try:
+                grants.append((row.id, scenario_grant_from_wire(row.grant)))
+            except Exception:  # reason: a malformed row is ignored, never trusted
+                _logger.warning("standing grant %s is malformed; ignored", row.id)
+        return grants
+
+    async def record_standing_grant_use(self, grant_id: str, agent_did: str) -> bool:
+        """Count one use, only while the row is still active."""
+        standing = await self._ensure_standing_store()
+        if standing is None:
+            return False
+        return await standing.record_use(grant_id, actor_did=agent_did)
 
     async def close(self) -> None:
         """Release the lazily opened backend after active approvals finish."""
         backend, self._backend = self._backend, None
         self._store = None
+        self._standing_store = None
         if backend is not None:
             await backend.stop()
 
@@ -104,6 +145,9 @@ class ArcStoreApprovalChannel:
             session_id=request.session_id,
             arguments=request.arguments,
             provenance=request.leg_provenance,
+            destination=request.destination,
+            grant_tool=request.grant_tool,
+            standing_eligible=request.standing_eligible,
             expires_at=expires_at,
         )
         await store.create(pending)
