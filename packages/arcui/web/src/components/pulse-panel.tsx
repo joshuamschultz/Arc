@@ -48,23 +48,51 @@ const errorText = (e: Error) => (e instanceof ApiError ? e.message : 'The reques
 const EXAMPLE_ACTION = 'look for customer emails nobody has answered in a day and tell me who is waiting.'
 
 /** Diff lines coloured by their +/- marker; context lines stay muted. */
+const DIFF_COLLAPSE_CHARS = 120
+const DIFF_COLLAPSE_LINES = 4
+
+/** A diff that wraps long lines instead of scrolling the page sideways, and
+ *  folds long ones behind a "Show all" toggle. */
 export function DiffBlock({ diff }: { diff: string }) {
+  const lines = diff.split('\n')
+  const long = diff.length > DIFF_COLLAPSE_CHARS || lines.length > DIFF_COLLAPSE_LINES
+  const [expanded, setExpanded] = useState(false)
+  const folded = long && !expanded
   return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-muted/30 p-2 font-mono text-xs">
-      {diff.split('\n').map((line, i) => (
-        <div
-          key={i}
-          className={cn(
-            line.startsWith('+') && !line.startsWith('+++') && 'text-emerald-700 dark:text-emerald-400',
-            line.startsWith('-') && !line.startsWith('---') && 'text-destructive',
-            (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) &&
-              'text-muted-foreground',
-          )}
+    <div className="min-w-0 max-w-full space-y-1">
+      <pre
+        data-testid="diff-block"
+        className={cn(
+          'max-w-full whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 font-mono text-xs',
+          folded ? 'max-h-24 overflow-hidden' : 'overflow-x-hidden',
+        )}
+      >
+        {lines.map((line, i) => (
+          <div
+            key={i}
+            className={cn(
+              'break-words',
+              line.startsWith('+') && !line.startsWith('+++') && 'text-emerald-700 dark:text-emerald-400',
+              line.startsWith('-') && !line.startsWith('---') && 'text-destructive',
+              (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) &&
+                'text-muted-foreground',
+            )}
+          >
+            {line}
+          </div>
+        ))}
+      </pre>
+      {long && (
+        <button
+          type="button"
+          className="text-xs font-medium text-muted-foreground underline"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
         >
-          {line}
-        </div>
-      ))}
-    </pre>
+          {expanded ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </div>
   )
 }
 
