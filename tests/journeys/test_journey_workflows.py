@@ -367,3 +367,84 @@ async def test_j3_retry_failed_node_skips_completed_upstream(world: _World) -> N
     collect_after = await world.tasks.get(node_task_id(run_id, "collect", 0))
     assert collect_after is not None and collect_after.attempts == 1, "collect ran exactly once"
     assert await world.tasks.get(node_task_id(run_id, "collect", 1)) is None
+
+
+_ENTERPRISE_TOML = '[security]\ntier = "enterprise"\n'
+
+
+def test_j3_docs_cli_create_sign_run_enterprise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """G4: docs/get-started/workflows.md, verbatim, at enterprise tier.
+
+    ``arc workflow new --from`` -> ``sign`` by id -> ``run --input --detach`` -> the
+    run's result is readable. Only the LLM is replaced: a scripted agent answers each
+    node's task, the way the agent module does in production.
+    """
+    from arccli.commands import workflow as wf_cmd
+    from arccli.commands.operator import load_operator_key
+    from arccli.commands.workflow import workflow_handler
+    from arcteam.workflow.stores import WorkflowRunStore
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "data"))
+    backend = FakeBackend()
+    monkeypatch.setattr(wf_cmd, "_backend_factory", lambda: backend)
+
+    class _Fleet:
+        """The team registry: the doc's example agent exists; nothing else does."""
+
+        async def get(self, handle: str) -> Any:
+            return _Entity() if handle == "analyst-1" else None
+
+    async def _bindings(arc_dir: Path) -> tuple[Any, Any]:
+        return _Fleet(), None
+
+    monkeypatch.setattr(wf_cmd, "_team_bindings", _bindings)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "arcagent.toml").write_text(_ENTERPRISE_TOML, encoding="utf-8")
+    load_operator_key(tmp_path)
+    (tmp_path / "in.json").write_text('{"question": "Is the plan sound?"}', encoding="utf-8")
+
+    def arc(*argv: str) -> str:
+        capsys.readouterr()
+        workflow_handler(list(argv))
+        return capsys.readouterr().out
+
+    assert "fanout_synthesize" in arc("templates")
+    assert "arc workflow sign weekly-brief" in arc(
+        "new", "weekly-brief", "--from", "fanout_synthesize"
+    )
+    assert "weekly-brief" in arc("list")
+    arc("sign", "weekly-brief")
+    assert "VALID" in arc("verify", "weekly-brief")
+    started = arc("run", "weekly-brief", "--input", "in.json", "--detach")
+    assert "Started run" in started
+    run_id = started.split("Started run ")[1].split()[0]
+
+    # The gateway's runner host drives the run; a scripted agent answers each node.
+    async def drive_to_the_end() -> Any:
+        plane, aclose = await wf_cmd._resolve_control_plane(tmp_path, tier="enterprise")
+        try:
+            tasks = TaskStore(backend)
+            outputs = {
+                "angle_evidence": {"findings": ["e"], "confidence": "high"},
+                "angle_risks": {"findings": ["r"], "confidence": "high"},
+                "angle_options": {"findings": ["o"], "confidence": "high"},
+                "synthesize": {"answer": "The plan is sound."},
+            }
+            for node in ("angle_evidence", "angle_risks", "angle_options", "synthesize"):
+                await plane.runner.advance(run_id)
+                row = node_task_id(run_id, node, 0)
+                await tasks.start_task(row, SALES)
+                await tasks.finish(
+                    row, status="done", resolution="ok", actor_did=SALES, output=outputs[node]
+                )
+            await plane.runner.advance(run_id)
+            return await WorkflowRunStore(backend).get(run_id)
+        finally:
+            await aclose()
+
+    record = asyncio.run(drive_to_the_end())
+    assert record is not None
+    assert record.status == "done", getattr(record, "last_error", record)
