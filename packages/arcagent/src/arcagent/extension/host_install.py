@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import tarfile
 import zipfile
 from collections.abc import Awaitable, Callable
@@ -64,6 +65,8 @@ _ACTION = "extension.host.install"
 
 _REFUSED = "HOST_INSTALL_REFUSED"
 
+_BINARY_REFUSED = "HOST_BINARY_REFUSED"
+
 
 def host_install_dir() -> Path:
     """Where a verified host binary lands: the operator's own ``~/.local/bin``.
@@ -72,6 +75,67 @@ def host_install_dir() -> Path:
     gets the directory that deployment actually writes to.
     """
     return Path.home() / ".local" / "bin"
+
+
+#: Beside the binaries it describes. A record Arc wrote is only a tripwire against a
+#: swap of the binary alone; the directory itself is the operator's to protect.
+_RECORD_NAME = ".arc-installed.json"
+
+
+def _read_record() -> dict[str, str]:
+    try:
+        loaded = json.loads((host_install_dir() / _RECORD_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(name): str(digest) for name, digest in loaded.items()}
+
+
+def record_installed_binary(path: Path, body: bytes) -> None:
+    """Remember the digest of what host setup placed, so a later swap is detectable."""
+    record = {**_read_record(), path.name: hashlib.sha256(body).hexdigest()}
+    target = path.parent / _RECORD_NAME
+    target.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+    target.chmod(0o600)
+
+
+def verified_installed_binary(name: str) -> Path | None:
+    """The host-installed binary, only if it is still the bytes that were installed.
+
+    Returns ``None`` when host setup never recorded one (the caller keeps its PATH
+    lookup). A recorded binary that is gone or whose bytes changed raises: running
+    something else, or whatever PATH offers instead, would let a file edit choose
+    what the agent executes.
+
+    Raises:
+        ExtensionError: ``reason`` is ``needs_host_setup`` (recorded, now missing) or
+            ``tampered`` (present, digest differs).
+    """
+    expected = _read_record().get(name)
+    if expected is None:
+        return None
+    path = host_install_dir() / name
+    try:
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        raise ExtensionError(
+            code=_BINARY_REFUSED,
+            message=(
+                f"{name} was installed by host setup but is no longer there; run host setup again"
+            ),
+            details={"binary": name, "reason": "needs_host_setup"},
+        ) from None
+    if actual != expected:
+        raise ExtensionError(
+            code=_BINARY_REFUSED,
+            message=(
+                f"{name} in {path.parent} no longer matches what host setup installed "
+                f"(tampered); refusing to run it. Run host setup again"
+            ),
+            details={"binary": name, "reason": "tampered", "expected": expected, "actual": actual},
+        )
+    return path
 
 
 async def install_pinned_binary(
@@ -274,6 +338,7 @@ def _place(body: bytes, install_dir: Path, name: str) -> Path:
     path = install_dir / name
     path.write_bytes(body)
     path.chmod(_BINARY_MODE)
+    record_installed_binary(path, body)
     return path
 
 
@@ -337,4 +402,11 @@ async def https_get(url: str) -> bytes:
             return bytes(chunks)
 
 
-__all__ = ["Fetcher", "host_install_dir", "https_get", "install_pinned_binary"]
+__all__ = [
+    "Fetcher",
+    "host_install_dir",
+    "https_get",
+    "install_pinned_binary",
+    "record_installed_binary",
+    "verified_installed_binary",
+]

@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import tempfile
 import time
@@ -36,6 +35,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+from arctrust.audit import AuditEvent, AuditSink, emit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
@@ -49,7 +49,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.environment import scrubbed_environment
-from arcagent.extension.host_install import host_install_dir
+from arcagent.extension.host_install import verified_installed_binary
 from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
 from arcagent.extension.source import classify_cli_failure
@@ -363,8 +363,10 @@ class CliAttachment:
         static_env: Mapping[str, str] | None = None,
         isolated_config_env: str = "",
         config_dir: Path | None = None,
+        audit_sink: AuditSink | None = None,
     ) -> None:
         self._binary = binary
+        self._audit_sink = audit_sink
         # Fixed manifest settings (never credentials), and the variable that
         # points the binary at an EMPTY per-connection config directory, so it
         # can never fall back to the operator's own signed-in configuration.
@@ -428,6 +430,8 @@ class CliAttachment:
         """Run the declared probe command; probing *is* the reachability test."""
         try:
             returncode, stdout, stderr = await self._spawn([self._executable(), *self._probe_argv])
+        except ExtensionError as exc:
+            return ProbeResult(reachable=False, detail=self._refuse_host_binary(exc))
         except OSError as exc:
             return ProbeResult(
                 reachable=False, detail=f"{self._binary} could not be started: {exc}"
@@ -472,7 +476,11 @@ class CliAttachment:
             args = {
                 name: value for name, value in args.items() if name != command.download.argument
             }
-        argv = [self._executable(), *command.argv_for(args)]
+        try:
+            executable = self._executable()
+        except ExtensionError as exc:
+            return self._error(tool, self._refuse_host_binary(exc))
+        argv = [executable, *command.argv_for(args)]
         if target is not None and command.download is not None:
             argv = _with_flag(argv, f"{command.download.flag}={target}")
 
@@ -628,17 +636,35 @@ class CliAttachment:
         )
 
     def _executable(self) -> str:
-        """The binary to exec: where host setup installed it, else a PATH lookup.
+        """The binary to exec: the verified host-installed one, else a PATH lookup.
 
-        Host setup lands a verified build in :func:`host_install_dir`, which is not on
-        PATH for every launcher. Preferring that absolute path finds a binary Arc
-        installed without the operator editing PATH. Resolved per spawn, so an install
-        made while the service runs is picked up by the next call.
+        Host setup records the digest of what it installs. A recorded binary runs only
+        while its bytes still match; a swapped or vanished one raises, and there is no
+        fallback to PATH, so editing a file can never change what the agent executes.
+        Nothing recorded keeps the PATH lookup. Resolved per spawn.
+
+        Raises:
+            ExtensionError: The recorded binary is missing or tampered with.
         """
-        installed = host_install_dir() / self._binary
-        if installed.is_file() and os.access(installed, os.X_OK):
-            return str(installed)
-        return self._binary
+        installed = verified_installed_binary(self._binary)
+        return str(installed) if installed is not None else self._binary
+
+    def _refuse_host_binary(self, exc: ExtensionError) -> str:
+        """Log and audit a refused host binary; return the reason the agent reads."""
+        reason = str(exc.details.get("reason", "refused"))
+        _logger.warning("%s refused to run: %s (%s)", self._binary, exc.message, reason)
+        if self._audit_sink is not None:
+            emit(
+                AuditEvent(
+                    actor_did="arcagent:cli-attachment",
+                    action="extension.host.exec",
+                    target=f"binary:{self._binary}",
+                    outcome="deny",
+                    extra={"binary": self._binary, "reason": reason},
+                ),
+                self._audit_sink,
+            )
+        return exc.message
 
     def _log_stderr(self, command: CliCommand, returncode: int, stderr: str) -> None:
         """Surface stderr to the operator without letting it decide the outcome.

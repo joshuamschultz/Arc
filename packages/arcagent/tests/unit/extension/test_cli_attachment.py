@@ -785,6 +785,9 @@ async def test_a_host_installed_binary_is_spawned_by_its_recorded_path(
     installed.parent.mkdir(parents=True)
     installed.write_text("#!/bin/sh\n")
     installed.chmod(0o755)
+    from arcagent.extension.host_install import record_installed_binary
+
+    record_installed_binary(installed, b"#!/bin/sh\n")
 
     await cli.invoke("create_issue", {"title": "hello"})
 

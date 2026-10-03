@@ -35,6 +35,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/capabilities/test_capability_import_strict_sections.py",
         "tests/architecture/test_agent_key_never_signs_capabilities.py",
     ),
+    "host-installed CLI binary swapped after install": (
+        "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
+    ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never
         # trusted by the once-per-run incremental refresh; a non-canonical one
