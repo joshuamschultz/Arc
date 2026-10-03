@@ -5,7 +5,9 @@ write ``index.md`` can recompute its sidecar, so on their own they prove only
 that two files agree. The seal makes them authentic. One ``.okf.seal`` sits at
 each collection root (``memory/`` and every ``memory/connected/<source>/``) and
 is signed with the AGENT's identity key (the agent owns its memory state,
-ADR-029; the operator key never signs here). It commits to:
+ADR-029; the operator key never signs here). A connection's shared store, which
+no agent owns, is signed by the connection's knowledge principal instead; each
+agent that opens it holds that key with :func:`hold_memory_identity`. It commits to:
 
 * the agent DID, algorithm and public key it was signed with;
 * the collection path relative to the bound workspace (a seal copied to another
@@ -34,6 +36,7 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -80,6 +83,8 @@ class _Binding:
     #: folder. Only verified seals are ever cached, and the replay check still
     #: runs on every load.
     verified: dict[str, tuple[_FileStamp, Seal]] = field(default_factory=dict)
+    #: Owners holding this binding through :func:`hold_memory_identity`.
+    holders: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +144,38 @@ def release_memory_identity(workspace: Path) -> None:
     """Drop the pinned key for ``workspace`` (teardown); readers then fail closed."""
     with _LOCK:
         _BINDINGS.pop(_key(workspace), None)
+
+
+def hold_memory_identity(root: Path, signer: SealSigner) -> Callable[[], None]:
+    """Pin ``signer`` for ``root`` on behalf of one of several owners; return its release.
+
+    A root shared by several owners in one process (a connection's shared
+    knowledge store, opened by each subscribed agent) is unbound only when the
+    last holder releases. Each returned release drops its own hold once; a hold
+    under a different key replaces the binding, and the stale holder's release
+    then leaves the new binding alone.
+    """
+    key = _key(root)
+    with _LOCK:
+        binding = _BINDINGS.get(key)
+        if binding is not None and binding.signer.public_key == signer.public_key:
+            binding.signer = signer
+        else:
+            binding = _BINDINGS[key] = _Binding(signer)
+        binding.holders += 1
+    released = False
+
+    def release() -> None:
+        nonlocal released
+        with _LOCK:
+            if released:
+                return
+            released = True
+            binding.holders -= 1
+            if binding.holders <= 0 and _BINDINGS.get(key) is binding:
+                del _BINDINGS[key]
+
+    return release
 
 
 def _key(path: Path) -> str:
@@ -340,6 +377,7 @@ __all__ = [
     "SealPending",
     "SealSigner",
     "bind_memory_identity",
+    "hold_memory_identity",
     "release_memory_identity",
     "sha256_hex",
 ]
