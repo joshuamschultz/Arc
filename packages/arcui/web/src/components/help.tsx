@@ -15,7 +15,7 @@ export function ScreenHelp() {
         <button
           type="button"
           aria-label={`Help for ${help.title}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 max-md:min-h-11 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
         >
           <CircleHelp className="size-4" /> Help
         </button>

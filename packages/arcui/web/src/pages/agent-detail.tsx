@@ -1779,7 +1779,7 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
   }
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
-      <TabsList className="mb-4 flex-wrap">
+      <TabsList className="mb-1">
         {KNOWLEDGE_TABS.map((t) => (
           <TabsTrigger key={t.value} value={t.value}>
             {t.label}
@@ -2502,7 +2502,7 @@ export function AgentDetailPage() {
         onValueChange={(v) => navigate(`/agents/${id}/${v}`)}
         className="border-b border-border px-6"
       >
-        <TabsList className="my-2 h-auto flex-wrap">
+        <TabsList className="my-2 h-auto">
           {TABS.map((t) => (
             <TabsTrigger key={t} value={t} title={fieldHelp(`agent.tab.${t}`, 'agents/:id')?.description}>
               {TAB_LABEL[t]}
