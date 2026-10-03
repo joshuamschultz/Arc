@@ -19,7 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function stubFetch() {
+function stubFetch(agents: unknown[] = [{ agent_id: 'olivia', name: 'olivia', display_name: 'Olivia' }]) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (request: RequestInfo | URL) => {
@@ -30,7 +30,7 @@ function stubFetch() {
           headers: { 'Content-Type': 'application/json' },
         })
       if (path.includes('/api/team/roster')) {
-        return json({ agents: [{ agent_id: 'olivia', name: 'olivia', display_name: 'Olivia' }] })
+        return json({ agents })
       }
       if (path.includes('/memory/promotion')) {
         return json({
@@ -113,5 +113,15 @@ describe('SettingsPage — Memory sharing tab', () => {
 
     expect(screen.queryByRole('tab', { name: /memory sharing/i })).toBeNull()
     expect(screen.getByRole('tab', { name: /keys/i })).toBeTruthy()
+  })
+})
+
+describe('SettingsPage — People on a fresh install', () => {
+  it('opens on System with the People tab when there are no agents yet', async () => {
+    stubFetch([])
+    renderSettings()
+
+    expect(await screen.findByRole('tab', { name: /people/i })).toBeTruthy()
+    expect(screen.queryByText(/no scope selected/i)).toBeNull()
   })
 })

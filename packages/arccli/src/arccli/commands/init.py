@@ -16,11 +16,6 @@ import arcagent
 import arcllm
 from arctrust.paths import arc_team, config_file, operator_root
 
-from arccli.commands._arcllm_surface import (
-    BUDGET_BLOCK,
-    EVAL_BLOCK,
-    commented_module_surface,
-)
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import write as _write
 
@@ -152,15 +147,15 @@ def _generate_arcllm_toml(tier: str, provider: str = "anthropic") -> str:
         'model = "anthropic/claude-sonnet-4-5-20250929"',
         "temperature = 0.7",
         "",
-        *EVAL_BLOCK,
+        *arcllm.EVAL_BLOCK,
         "",
-        *BUDGET_BLOCK,
+        *arcllm.BUDGET_BLOCK,
         "",
         "# --- arcllm provider modules (read by arcllm at THIS ~/.arc layer). ---",
         "# Tier-preset modules are active below; the rest are listed commented at",
         "# their packaged default so every knob is discoverable and editable here.",
         *_emit_module_blocks(preset),
-        commented_module_surface(exclude=preset.keys(), prefix=""),
+        arcllm.commented_module_surface(exclude=preset.keys(), prefix=""),
     ]
     return "\n".join(lines) + "\n"
 

@@ -11,7 +11,7 @@ from arcteam.harness.enrollment import (
     default_operator_key_resolver,
 )
 from arcteam.storage import StorageBackend
-from arcteam.types import Entity, parse_uri
+from arcteam.types import Entity, EntityType, parse_uri
 
 REGISTRY_COLLECTION = "messages/registry"
 
@@ -170,3 +170,36 @@ class EntityRegistry:
             detail=f"Updated {entity.type.value} @{entity.handle}",
             target_id=entity.did,
         )
+
+
+async def register_native_agent(
+    registry: EntityRegistry,
+    *,
+    name: str,
+    did: str,
+    public_key_hex: str,
+    workspace_path: str,
+) -> bool:
+    """Register a native Arc agent as a fleet member. Returns False if already there.
+
+    The one shape every surface registers a new agent with (``arc agent create``,
+    ``arc team register`` and the dashboard), so an agent made anywhere is
+    addressable as ``@<name>`` / ``agent://<name>`` and its signed messages verify
+    against ``public_key_hex``. A different agent holding the same handle is
+    still an error.
+    """
+    if await registry.get(did) is not None:
+        return False
+    await registry.register(
+        Entity(
+            did=did,
+            handle=name,
+            id=f"agent://{name}",
+            name=name,
+            type=EntityType.AGENT,
+            public_key=public_key_hex,
+            roles=["executor"],
+            workspace_path=workspace_path,
+        )
+    )
+    return True

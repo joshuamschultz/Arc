@@ -385,17 +385,11 @@ def _registration_identity(entity_type: str, workspace_path: str | None, root: P
     from arctrust import AgentIdentity
 
     if entity_type == "agent" and workspace_path:
-        config_path = Path(workspace_path).parent / "arcagent.toml"
-        if config_path.exists():
+        agent_dir = Path(workspace_path).parent
+        if (agent_dir / "arcagent.toml").exists():
             import arcagent
 
-            config = arcagent.load_config(config_path)
-            return AgentIdentity.from_config(
-                config.identity,
-                org=config.agent.org,
-                agent_type=config.agent.type,
-                config_path=config_path,
-            )
+            return arcagent.scaffold.mint_agent_identity(agent_dir)
 
     identity = AgentIdentity.generate(org="local", agent_type=entity_type)
     identity.save_keys(root / "keys")

@@ -2,9 +2,8 @@
 
 The per-agent scaffold and the fleet ``arc init`` file must both list every
 arcllm module so an operator can discover and edit any knob without knowing it
-exists in advance. The surface is derived from arcllm's packaged ``config.toml``
-(single source of truth); the rot-guard test below fails the moment arcllm adds
-a module that the generators would otherwise silently omit.
+exists in advance. The surface itself is arcllm's (``arcllm.commented_module_surface``,
+rot-guarded in arcllm's own tests); these tests check the two generators use it.
 """
 
 from __future__ import annotations
@@ -13,11 +12,8 @@ import re
 import tomllib
 
 import pytest
+from arcllm.config_surface import _packaged_config_text
 
-from arccli.commands._arcllm_surface import (
-    _packaged_config_text,
-    commented_module_surface,
-)
 from arccli.commands.agent._common import _DEFAULT_ARCLLM_CONFIG
 from arccli.commands.init import _generate_arcllm_toml
 
@@ -30,31 +26,6 @@ def _packaged_module_names() -> set[str]:
 def _rendered_module_names(text: str, prefix: str = "") -> set[str]:
     pat = rf"#?\s*\[{re.escape(prefix)}modules\.([a-z_]+)"
     return set(re.findall(pat, text))
-
-
-class TestRotGuard:
-    def test_surface_covers_every_packaged_module(self) -> None:
-        # If arcllm adds a module, this fails until the surface picks it up —
-        # which, being derived, it does automatically. This asserts the wiring.
-        assert _rendered_module_names(commented_module_surface()) == _packaged_module_names()
-
-    def test_packaged_set_is_the_known_thirteen(self) -> None:
-        # A human tripwire: names change -> read the diff, don't rubber-stamp.
-        assert _packaged_module_names() == {
-            "routing",
-            "telemetry",
-            "audit",
-            "retry",
-            "fallback",
-            "rate_limit",
-            "circuit_breaker",
-            "load_balance",
-            "queue",
-            "otel",
-            "security",
-            "injection",
-            "guardrails",
-        }
 
 
 class TestPerAgentScaffold:

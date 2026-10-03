@@ -17,13 +17,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from arcagent.scaffold import DEFAULT_ARCRUN_CONFIG as _DEFAULT_ARCRUN_CONFIG
+from arcagent.scaffold import render_agent_config
 
 from arccli.commands import mcp
-from arccli.commands.agent._common import (
-    _DEFAULT_ARCLLM_CONFIG,
-    _DEFAULT_ARCRUN_CONFIG,
-    render_agent_config,
-)
+from arccli.commands.agent._common import _DEFAULT_ARCLLM_CONFIG
 
 
 def test_load_arcagent_returns_a_started_able_agent(tmp_path: Path) -> None:

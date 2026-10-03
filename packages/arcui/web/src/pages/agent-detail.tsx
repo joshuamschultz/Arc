@@ -15,6 +15,7 @@ import { fieldHelp } from '@/lib/help'
 import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { Button } from '@/components/ui/button'
 import { ApiError, apiGet, apiPost } from '@/lib/api'
+import { useRegisterAgent } from '@/lib/new-agent'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { VoiceLive, type VoiceLiveStatus } from '@/components/voice-live'
 import { StatusDot } from '@/components/status-badge'
@@ -1377,7 +1378,7 @@ function PromptsTab({ agentId }: { agentId: string }) {
  * the account is connected and this agent still cannot use it. Granting happens
  * on the Connections page, where every agent is visible at once.
  */
-function AgentReachCard({ agentId }: { agentId: string }) {
+export function AgentReachCard({ agentId }: { agentId: string }) {
   const reach = useAgentConnectors(agentId)
   const held = reach.data?.instances ?? []
   // Fail-safe: a missing/false flag reads as the door being shut (default OFF).
@@ -1404,13 +1405,14 @@ function AgentReachCard({ agentId }: { agentId: string }) {
               <span className="text-xs text-muted-foreground">approval: {c.approval}</span>
               {/* Fail-safe: only true raises the warning; missing reads as healthy. */}
               {c.needs_attention === true && (
-                <span
-                  className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+                <Link
+                  to={`/connections?connection=${encodeURIComponent(c.instance)}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
                   title="Sync backed off after a terminal credential failure — reconnect this account."
                 >
                   <TriangleAlert className="size-3 shrink-0" />
-                  Needs attention
-                </span>
+                  Needs attention: reconnect
+                </Link>
               )}
             </li>
           ))}
@@ -2462,6 +2464,27 @@ const TAB_LABEL: Record<TabId, string> = {
   connect: 'Connect',
 }
 
+/** Shown only when the server says this agent is missing from team chat. */
+export function TeamChatNotice({ agentId }: { agentId: string }) {
+  const [operatorMode] = useOperatorMode()
+  const register = useRegisterAgent(agentId)
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-amber-500/10 px-4 py-2 text-sm md:px-6">
+      <span className="text-foreground">Not in team chat yet</span>
+      {operatorMode && (
+        <Button size="sm" variant="outline" disabled={register.isPending} onClick={() => register.mutate()}>
+          {register.isPending ? 'Adding…' : 'Add to team'}
+        </Button>
+      )}
+      {register.isError && (
+        <span role="alert" className="text-destructive">
+          {register.error.message}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function AgentDetailPage() {
   const { id = '', tab } = useParams()
   const navigate = useNavigate()
@@ -2499,6 +2522,7 @@ export function AgentDetailPage() {
         <StatusDot online={Boolean(a.online)} />
         <OperatorAvatarMenu />
       </div>
+      {a.team_registered === false && <TeamChatNotice agentId={id} />}
 
       <Tabs
         value={current}

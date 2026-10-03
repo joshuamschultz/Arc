@@ -166,16 +166,21 @@ def _sign_persona(
             "will refuse to run until you run 'arc prompt sign-workspace --agent <dir>'."
         )
         return
-    from arccli.workspace_signing import sign_workspace_documents
+    import arcagent
+    from arctrust import ED25519, InProcessSigner
 
-    sign_workspace_documents(agent_dir, operator_signer)
+    did, seed = operator_signer
+    arcagent.scaffold.sign_workspace_documents(
+        agent_dir,
+        arcagent.scaffold.OperatorSigning(did=did, signer=InProcessSigner(seed, ED25519)),
+    )
 
 
 def _is_scaffold_default_identity(path: Path) -> bool:
     """True when ``identity.md`` is still the untouched ``arc agent create`` placeholder."""
-    from arccli.commands.agent._common import _DEFAULT_IDENTITY
+    import arcagent
 
-    return path.read_text(encoding="utf-8").strip() == _DEFAULT_IDENTITY.strip()
+    return path.read_text(encoding="utf-8").strip() == arcagent.scaffold.DEFAULT_IDENTITY.strip()
 
 
 # ---------------------------------------------------------------------------

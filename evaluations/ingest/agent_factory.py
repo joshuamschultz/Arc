@@ -21,12 +21,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from arcagent.scaffold import DEFAULT_ARCRUN_CONFIG as _DEFAULT_ARCRUN_CONFIG
+from arcagent.scaffold import render_agent_config
 from arccli.commands.agent import _scaffold_workspace
-from arccli.commands.agent._common import (
-    _DEFAULT_ARCLLM_CONFIG,
-    _DEFAULT_ARCRUN_CONFIG,
-    render_agent_config,
-)
+from arccli.commands.agent._common import _DEFAULT_ARCLLM_CONFIG
 from arcstore.config import ENV_DATA_DIR
 
 from evaluations.ingest.limits import MAX_EVENT_CHARS, RECALL_BUDGET, RECALL_TOP_K

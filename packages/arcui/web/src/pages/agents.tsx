@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Boxes, Wifi, Moon, Cpu } from 'lucide-react'
+import { Boxes, Wifi, Moon, Cpu, Plus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { NewAgentSheet } from '@/components/new-agent-sheet'
 import { PageHeader } from '@/components/page-header'
 import { RestartGatewayButton } from '@/components/restart-gateway-button'
 import { InsightStat } from '@/components/ai'
@@ -9,6 +12,7 @@ import { useRoster } from '@/lib/queries'
 
 export function AgentsPage() {
   const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
   const query = useRoster()
   const agents = (query.data?.agents ?? []).filter((a) => !a.hidden)
 
@@ -21,8 +25,16 @@ export function AgentsPage() {
       <PageHeader
         title="Fleet"
         description="The agents working for you, and what each is doing right now."
-        actions={<RestartGatewayButton />}
+        actions={
+          <>
+            <Button onClick={() => setCreating(true)}>
+              <Plus /> New agent
+            </Button>
+            <RestartGatewayButton />
+          </>
+        }
       />
+      <NewAgentSheet open={creating} onOpenChange={setCreating} />
       <div className="flex-1 space-y-5 overflow-auto p-4 md:p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InsightStat label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
@@ -37,8 +49,9 @@ export function AgentsPage() {
           empty={
             <EmptyState
               icon={<Boxes className="size-7" />}
-              title="No agents registered"
-              description="Register an agent with `arc team register` and restart the UI to see it here."
+              title="No agents yet"
+              description="Create your first agent to see it here."
+              action={<Button onClick={() => setCreating(true)}>New agent</Button>}
             />
           }
         >

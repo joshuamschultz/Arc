@@ -3,8 +3,11 @@
 The complete ``[modules.*]`` surface is DERIVED from arcllm's own packaged
 ``config.toml`` at generation time — the single source of truth — so a new
 module (or a changed default/note) shows up in every generated file without a
-second edit here. Both the ``arc init`` (fleet ``~/.arc/arcllm.toml``) and the
-agent scaffold (``team/<agent>/arcllm.toml``) generators render from this.
+second edit here. Both the fleet file (``~/.arc/arcllm.toml``) and the per-agent
+scaffold (``team/<agent>/arcllm.toml``) generators render from this. It lives in
+arcllm because it describes arcllm's own configuration: every surface that
+writes an ``arcllm.toml`` (the CLI, the dashboard) reads it through
+``arcllm.commented_module_surface``.
 
 Rendering rule (the "commented at default" operator choice): each module block
 is emitted VERBATIM from ``config.toml`` — notes and all — with every setting

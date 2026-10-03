@@ -19,14 +19,13 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.routes import users as users_routes
+
 logger = logging.getLogger(__name__)
 
 
 def _store(request: Request) -> Any:
-    factory = getattr(request.app.state, "user_store_factory", None)
-    if factory is None:
-        raise RuntimeError("account authority is unavailable")
-    return factory()
+    return users_routes.user_store(request)
 
 
 def _auth(request: Request) -> Any:
@@ -76,19 +75,9 @@ async def login(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Email or password is wrong"}, status_code=401)
 
     sessions.clear_failures(email)
-    role = "operator" if user.is_operator else "viewer"
-    session = sessions.issue(email=user.email, did=user.did, role=role)
-    logger.info("auth.login email=%s role=%s", user.email, role)
-
-    return JSONResponse(
-        {
-            "token": session.token,
-            "email": user.email,
-            "did": user.did,
-            "role": role,
-            "expires_at": session.expires_at,
-        }
-    )
+    body = users_routes.issue_session(request, user)
+    logger.info("auth.login email=%s role=%s", user.email, body["role"])
+    return JSONResponse(body)
 
 
 async def logout(request: Request) -> JSONResponse:
@@ -142,7 +131,7 @@ async def update_me(request: Request) -> JSONResponse:
     Scoped to the caller on purpose: a viewer editing their own display name is
     routine, and letting them reach anyone else's record through the same route
     would make a read-only role into a user-admin one. Managing *other* people
-    is `arc user` on the box.
+    is the operator-only ``/api/users`` surface (Settings -> People).
     """
     session = _auth(request).identify(
         request.headers.get("authorization", "").removeprefix("Bearer ").strip()
@@ -199,17 +188,19 @@ def _update_profile(request: Request, email: str, body: dict[str, Any]) -> tuple
 
 
 async def mode(request: Request) -> JSONResponse:
-    """GET /api/auth/mode — does this deployment have accounts yet?
+    """GET /api/auth/mode — does this deployment have accounts, and is setup open?
 
-    Unauthenticated on purpose. A fresh install should render "no accounts yet,
-    run arc user add" instead of a login form nobody can satisfy. It leaks only
-    whether any account exists, never which.
+    Unauthenticated on purpose. A fresh install must offer "create the first
+    operator account" instead of a sign-in form nobody can satisfy. It leaks only
+    whether any account / any operator exists, never which. While no operator
+    exists, asking mints the one-time setup code into the server log.
     """
     try:
         has_users = not await asyncio.to_thread(lambda: _store(request).is_empty())
+        setup_available = await users_routes.first_run_available(request)
     except Exception:  # reason: absent authority is distinct from an empty store
         return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
-    return JSONResponse({"login_available": has_users})
+    return JSONResponse({"login_available": has_users, "setup_available": setup_available})
 
 
 ROUTES = [
@@ -218,6 +209,9 @@ ROUTES = [
     ("/api/auth/me", me, ["GET"]),
     ("/api/auth/me", update_me, ["PATCH"]),
     ("/api/auth/mode", mode, ["GET"]),
+    # People management rides the auth route table: one mount point for every
+    # account route, first-run setup and one-time links included.
+    *users_routes.ROUTES,
 ]
 
 __all__ = ["ROUTES", "login", "logout", "me", "mode", "update_me"]

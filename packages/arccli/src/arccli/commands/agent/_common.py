@@ -14,7 +14,6 @@ working unchanged.
 from __future__ import annotations
 
 import asyncio
-import datetime
 import importlib
 import importlib.util
 import json
@@ -27,10 +26,8 @@ from typing import Any
 
 import arcagent
 import arctrust
-from arcokf import OKFValidationError, render_folder_index, validate
 from arctrust.paths import dotenv_file, env_file
 
-from arccli.commands._arcllm_surface import commented_module_surface
 from arccli.commands._serve import (
     AgentAuditForwarder,
     build_control_artifact_authority,
@@ -43,294 +40,9 @@ from arccli.commands._shared import print_table as _print_table
 # Constants
 # ---------------------------------------------------------------------------
 
-
-_DEFAULT_IDENTITY = """\
-# Agent Identity
-
-You are a helpful assistant with access to tools and a structured workspace.
-
-## About Me
-
-**My Name:** (Update when you learn your name)
-
-**My Role:** (Update when you learn your purpose or how you should behave)
-
-## About the User
-
-**User's Name:** (Update when you learn the user's name)
-
-## Behavior
-
-**CRITICAL: You MUST use tools - never just say you did something.**
-
-1. **ALWAYS use tools** when saving, reading, or searching
-2. **Be direct and concise** - No filler, no hedging
-3. **Show your work** - Report what tools you used and what they returned
-"""
-
-_SEED_POLICY_BULLETS = (
-    "Be helpful and direct",
-    "Use tools when appropriate",
-    "Report errors clearly",
-)
-
-
-def _default_policy() -> str:
-    """Seed ``policy.md`` with structured ACE bullets.
-
-    Each line carries the ``{score, uses, reviewed, created, source}`` trailer
-    the policy engine expects, so the curator can score/update them and the UI
-    can parse them. A bullet without that metadata is invisible to both.
-    """
-    today = datetime.date.today().isoformat()
-    lines = ["# Policy", ""]
-    for i, text in enumerate(_SEED_POLICY_BULLETS, start=1):
-        lines.append(
-            f"- [P{i:02d}] {text} "
-            f"{{score:5, uses:0, reviewed:{today}, created:{today}, source:init}}"
-        )
-    return "\n".join(lines) + "\n"
-
-
-_DEFAULT_CONTEXT = """\
-# Context
-
-Working memory for the agent. Updated during conversations.
-"""
-
-_DEFAULT_INDEX = render_folder_index((), root=False)
-
-AGENT_TIERS = ("personal", "enterprise", "federal")
-"""Canonical deployment tiers, least to most stringent."""
-
-_ARCAGENT_HEADER = """\
-# ArcAgent config — everything EXCEPT LLM-wire (arcllm.toml) and the agentic
-# loop controls (arcrun.toml). Every operator-settable knob is present at its
-# default with a doc comment, GENERATED from the Pydantic models themselves
-# (arcagent.utils.config_render) rather than hand-copied, so a field added to
-# a model appears here the next time an agent is scaffolded. Sibling files
-# load from the SAME directory and compose into one effective config.
-"""
-
-# Deliberate scaffold choices that differ from a module's bare Pydantic
-# default (e.g. "ship the tasks/messaging/workflows bus modules ON", "extract
-# through the keyless browser backend, not the model's own http default").
-# Each is a considered product decision, not a fact any model carries — so it
-# lives here, once, instead of being encoded a second time per field.
-_MODULE_CONFIG_OVERRIDES: dict[str, dict[str, Any]] = {
-    "memory": {
-        "brain": "arcmemory",
-        "embed_backend": "local",
-        "distill_provider": "anthropic",
-        "distill_model": "claude-haiku-4-5-20251001",
-    },
-    "progress": {
-        "heartbeat_after_seconds": 120,
-        "heartbeat_every_seconds": 600,
-    },
-    "skills": {"adapter": "arcskill"},
-    "proactive": {
-        # These fields default to None (TOML-uncomment-able); the scaffold
-        # ships them as live, empty, editable keys instead.
-        "identity": "",
-        "redis_url": "",
-        "k8s_namespace": "",
-        "k8s_lease_name": "",
-    },
-    "scheduler": {"enabled": True},
-    "messaging": {"enabled": True, "nats_url": "nats://127.0.0.1:4222"},
-    "tasks": {"enabled": True, "dispatch": True, "nats_url": "nats://127.0.0.1:4222"},
-    "workflows": {"enabled": True, "nats_url": "nats://127.0.0.1:4222"},
-    "runcontrol": {"enabled": True},
-    "web": {"extract_provider": "browser"},
-    "browser": {"security": {"allow_js_execution": True, "allow_downloads": True}},
-}
-
-# Modules whose config carries a `tier` field that must track [security].tier
-# — a config federal in [security] but personal in [modules.web] is a hole,
-# not a preference (see render_agent_config's docstring).
-_MODULE_TIER_FIELDS = frozenset({"memory", "policy", "skills", "web", "voice", "browser"})
-
-
-def _module_overrides_for_tier(tier: str) -> dict[str, dict[str, Any]]:
-    overrides = {name: dict(fields) for name, fields in _MODULE_CONFIG_OVERRIDES.items()}
-    for name in _MODULE_TIER_FIELDS:
-        overrides.setdefault(name, {})["tier"] = tier
-    return overrides
-
-
-def render_agent_config(*, name: str, tier: str = "personal", did: str = "") -> str:
-    """Render the full arcagent.toml surface for one agent at one tier.
-
-    ``tier`` sets every subsystem's tier at once — [security], memory, policy,
-    skills, web, voice, browser. They are one decision: a config that is federal
-    in [security] but personal in [modules.web] is a hole, not a preference.
-
-    ``did`` is substituted rather than blanked so a regeneration keeps the
-    identity the agent signs its capabilities with and is registered to
-    arcteam under.
-
-    Field presence and defaults come from ``arcagent.utils.config_render``,
-    which walks ``ArcAgentConfig`` (and, per module, its own ``<Name>Config``)
-    directly — this function supplies only the per-agent identity plus the
-    handful of deliberate overrides above; it never hand-copies a field list.
-    """
-    if tier not in AGENT_TIERS:
-        raise ValueError(f"unknown tier {tier!r} — choose one of {', '.join(AGENT_TIERS)}")
-    top_overrides: dict[str, dict[str, Any]] = {
-        "agent": {"name": name, "org": "local"},
-        "identity": {"did": did},
-        "security": {
-            "tier": tier,
-            "policy_audit_log": "",
-            **_crypto_posture(tier),
-            # Federal refuses the local journal fail-closed, and this template
-            # states every knob outright — so federal must state its floor.
-            "skill_revision_anchor": "vault" if tier == "federal" else "file",
-        },
-        "telemetry": {"service_name": name},
-    }
-    body = arcagent.config_render.render_arcagent_toml(
-        overrides=top_overrides,
-        module_overrides=_module_overrides_for_tier(tier),
-    )
-    return _ARCAGENT_HEADER + "\n" + body
-
-
-def _crypto_posture(tier: str) -> dict[str, str | bool]:
-    """Tier-correct values for the crypto knobs the template states explicitly.
-
-    ``SecurityConfig`` auto-resolves federal floors only for knobs the operator
-    left unset; an explicitly *weaker* value is refused fail-closed. Because
-    this template states every knob outright — that is the point of it — a
-    federal render must state the federal floor, or the config it produces will
-    not load at all.
-
-    Federal values come from ``SECURITY_CONFIG_KNOBS`` rather than being
-    duplicated here, so moving a floor moves the template with it.
-    """
-    if tier == "federal":
-        floors = {k.name: k.federal_floor for k in arcagent.SECURITY_CONFIG_KNOBS}
-        return {
-            "signing_algorithm": str(floors["signing_algorithm"]),
-            "custody": str(floors["custody"]),
-            "require_fips": floors["require_fips"],
-        }
-    return {
-        "signing_algorithm": "ed25519",
-        # REQ-007: enterprise custody defaults to vault_transit; it may relax to
-        # in_process, which is why this is a starting point and not a floor.
-        "custody": "vault_transit" if tier == "enterprise" else "in_process",
-        "require_fips": False,
-    }
-
-
-_ARCLLM_HEADER = """\
-# ArcLLM config — everything LLM-wire for this agent. arcagent composes the
-# [llm]/[eval]/[budget] tables below into the effective config. The full arcllm
-# module surface is listed at the bottom under [llm.modules.*], commented at its
-# packaged default — uncomment a line to override that module for THIS agent
-# only. arcllm's OWN global module + provider defaults live in the user-wide
-# ~/.arc/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
-"""
-
-# The default agent model. The output cap is NOT set here: arcllm owns that
-# number (arcllm.config.DefaultsConfig.max_tokens), and a per-agent arcllm.toml
-# is the one place to override it. Carrying a second default here is how a
-# generous value in one file sat behind a stingy one in another.
-_DEFAULT_ARCLLM_OVERRIDES = {"model": "anthropic/claude-sonnet-4-5-20250929"}
-
-
-def _build_default_arcllm_config() -> str:
-    """Compose the per-agent arcllm.toml: [llm]/[eval]/[budget] (model-driven,
-    via ``config_render``) + the full, commented [llm.modules.*] override
-    surface (derived from arcllm's own packaged config.toml — a second,
-    already-correct generator this one does not duplicate)."""
-    parts = [
-        _ARCLLM_HEADER,
-        arcagent.config_render.render_arcllm_sections(
-            llm_overrides=_DEFAULT_ARCLLM_OVERRIDES
-        ).rstrip(),
-        "",
-        "# --- Per-agent arcllm module overrides. Every module below is shown",
-        "# commented at its packaged default; uncomment a line to override that",
-        "# module for THIS agent only (unknown module names are rejected). ---",
-        commented_module_surface(prefix="llm."),
-    ]
-    return "\n".join(parts).rstrip() + "\n"
-
-
-_DEFAULT_ARCLLM_CONFIG = _build_default_arcllm_config()
-
-_ARCRUN_HEADER = """\
-# ArcRun config — the agentic-loop controls arcagent hands to the run loop.
-# (Per-run token/cost/request ceilings live in arcllm.toml [budget]; the
-# tier-floored circuit breakers live in arcagent.toml [security].)
-"""
-
-_DEFAULT_ARCRUN_CONFIG = _ARCRUN_HEADER + "\n" + arcagent.config_render.render_arcrun_toml()
-
-# Back-compat symbol: some callers import `_DEFAULT_CONFIG` for its mere
-# presence (see `arccli.commands.agent.__init__`'s re-export). It is no longer
-# a `.format()` template — `render_agent_config` is the real entry point —
-# but one rendered example keeps the name meaningful for any lingering import.
-_DEFAULT_CONFIG = render_agent_config(name="agent")
-
-_CALCULATOR_TOOL = '''\
-"""Capability: calculate — safe arithmetic via AST parsing."""
-
-from __future__ import annotations
-
-import ast
-import operator
-
-import arcagent
-
-_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
-
-
-def _safe_eval(node: ast.AST) -> float:
-    if isinstance(node, ast.Expression):
-        return _safe_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    if isinstance(node, ast.BinOp):
-        op_fn = _OPS.get(type(node.op))
-        if op_fn is None:
-            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-        return op_fn(_safe_eval(node.left), _safe_eval(node.right))
-    if isinstance(node, ast.UnaryOp):
-        op_fn = _OPS.get(type(node.op))
-        if op_fn is None:
-            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-        return op_fn(_safe_eval(node.operand))
-    raise ValueError(f"Unsupported expression: {ast.dump(node)}")
-
-
-@arcagent.tool(
-    description="Evaluate a math expression. Supports +, -, *, /, %, **.",
-    classification="read_only",
-    capability_tags=["computation"],
-    when_to_use="When you need to evaluate an arithmetic expression deterministically.",
-    version="1.0.0",
-)
-async def calculate(expression: str) -> str:
-    """Evaluate ``expression`` safely via AST parsing."""
-    try:
-        tree = ast.parse(expression, mode="eval")
-        return str(_safe_eval(tree))
-    except Exception as exc:  # reason: fail-open — continue
-        return f"Error: {exc}"
-'''
+# The per-agent arcllm.toml `arc agent build` provides when one is missing —
+# the same file `arc agent create` and the dashboard write.
+_DEFAULT_ARCLLM_CONFIG = arcagent.scaffold.render_arcllm_config()
 
 
 def _env_paths() -> list[Path]:
@@ -501,83 +213,33 @@ def _discover_runtime_tools(agent_dir: Path) -> list[_DiscoveredTool]:
 # ---------------------------------------------------------------------------
 
 
-_DEFAULT_PULSE = """# Pulse — scheduled self-checks
+def cli_operator_signing(*, bootstrap: bool = False) -> arcagent.scaffold.OperatorSigning | None:
+    """The CLI's operator signer handle, or None when it cannot be resolved.
 
-The agent reads this file each time its pulse fires. The wake interval and the
-on/off switch live in `arcagent.toml` under `[modules.pulse]`. Each `##` section
-below is one scheduled check the agent runs when it is due; with none, the pulse
-wakes and does nothing.
-
-To add a check, follow this shape (the pulse tick is the floor — a check's own
-interval decides how often it actually runs):
-
-    ## morning_summary
-    - **Interval:** 1440 minutes
-    - **Action:** What the agent should do when this check runs.
-
-No checks are defined yet.
-"""
-
-
-def _sign_new_identity(agent_dir: Path) -> None:
-    """Operator-sign the identity.md the scaffold just wrote, when an operator key exists.
-
-    An unsigned ``identity.md`` is refused at every run start (J2 F2). With no operator
-    key yet (``arc init`` creates it) the file stays unsigned and the agent's run error
-    says so; ``arc prompt sign-workspace`` signs it afterwards.
+    ``bootstrap=True`` is the zero-config path ``arc agent create`` takes on a
+    fresh box: the deployment's operator key is created where every verifier
+    looks for it. Otherwise a missing key is None — re-signing an existing agent
+    with a key minted on the spot would hide that the deployment lost its key.
     """
-    from arccli.blueprints_materialize import operator_signer_pair
-    from arccli.workspace_signing import sign_workspace_documents
+    from arctrust.operator_resolver import machine_security, operator_key_file
+    from arctrust.signer import VAULT_TRANSIT
 
-    signer = operator_signer_pair()
-    if signer is not None:
-        sign_workspace_documents(agent_dir, signer)
+    from arccli.commands.operator import operator_signer_and_did
+
+    try:
+        security = machine_security()
+        key_missing = not operator_key_file(security).is_file()
+        if not bootstrap and security.custody != VAULT_TRANSIT and key_missing:
+            return None
+        did, signer = operator_signer_and_did()
+    except (OSError, ValueError, RuntimeError, arctrust.SignerError):
+        return None
+    return arcagent.scaffold.OperatorSigning(did=did, signer=signer)
 
 
 def _scaffold_workspace(agent_dir: Path, name: str) -> None:
-    """Create the agent + workspace directory structure (SPEC-021 layout)."""
-    workspace = agent_dir / "workspace"
-    workspace.mkdir(exist_ok=True)
-
-    identity_path = workspace / "identity.md"
-    if not identity_path.exists():
-        identity_path.write_text(_DEFAULT_IDENTITY)
-        _sign_new_identity(agent_dir)
-
-    policy_path = workspace / "policy.md"
-    if not policy_path.exists():
-        policy_path.write_text(_default_policy())
-
-    context_path = workspace / "context.md"
-    if not context_path.exists():
-        result = validate(_DEFAULT_CONTEXT, path=context_path.name)
-        if not result.valid:
-            raise OKFValidationError(result.diagnostics)
-        context_path.write_text(_DEFAULT_CONTEXT)
-
-    # This root index belongs to the workspace scaffold.  ArcMemory owns a
-    # separate workspace/memory/index.md for curated-memory retrieval; the root
-    # artifact is never treated as that memory index.
-    index_path = workspace / "index.md"
-    if not index_path.exists():
-        index_path.write_text(_DEFAULT_INDEX, encoding="utf-8")
-
-    # Every agent gets a pulse.md so the scheduled-check file exists and is ready
-    # to edit; empty means the pulse is a no-op until checks are added.
-    pulse_path = workspace / "pulse.md"
-    if not pulse_path.exists():
-        pulse_path.write_text(_DEFAULT_PULSE, encoding="utf-8")
-
-    # Per-agent capabilities live at the AGENT root (trusted scan root).
-    # Agent-authored capabilities go under workspace/capabilities (untrusted).
-    (agent_dir / "capabilities").mkdir(exist_ok=True)
-    (workspace / "capabilities").mkdir(exist_ok=True)
-
-    # Only scaffold directories the runtime actually reads. Session transcripts
-    # land in workspace/sessions/. Memory (workspace/memory/index.db + entities)
-    # is created lazily by arcmemory when a Brain is selected, so it is not
-    # pre-made here.
-    (workspace / "sessions").mkdir(exist_ok=True)
+    """Create any missing workspace files, operator-signing a new identity.md."""
+    arcagent.scaffold.scaffold_workspace(agent_dir, name, operator=cli_operator_signing())
 
 
 def _print_scaffold_summary(display_name: str, agent_dir: Path, tier: str = "personal") -> None:
@@ -726,15 +388,8 @@ def _print_result_json(result: Any) -> None:
 
 # Re-export asyncio for convenience in subcommand modules that call asyncio.run.
 __all__ = [
-    "AGENT_TIERS",
-    "_CALCULATOR_TOOL",
     "_DEFAULT_ARCLLM_CONFIG",
-    "_DEFAULT_ARCRUN_CONFIG",
-    "_DEFAULT_CONFIG",
-    "_DEFAULT_CONTEXT",
-    "_DEFAULT_IDENTITY",
     "_capability_scan_roots",
-    "_default_policy",
     "_discover_runtime_tools",
     "_discover_tools",
     "_env_paths",
@@ -751,6 +406,6 @@ __all__ = [
     "_resolve_agent_dir",
     "_scaffold_workspace",
     "asyncio",
+    "cli_operator_signing",
     "load_cli_agent",
-    "render_agent_config",
 ]
