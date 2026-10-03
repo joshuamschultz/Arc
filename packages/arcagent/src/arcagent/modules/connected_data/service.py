@@ -46,6 +46,7 @@ from arcagent.extension.source import (
 from arcagent.extension.source_catalog import SourceCatalog, SourceRegistration
 from arcagent.extension.state import ConnectionStatus
 from arcagent.modules.connected_data.coordinator import ConnectedDataCoordinator
+from arcagent.modules.connected_data.guides import GuideDesk, SourceOverview
 from arcagent.modules.connected_data.health import (
     REPEATED_FAILURES,
     ConnectionHealthTracker,
@@ -182,6 +183,8 @@ class CatalogEntry:
     status: str
     #: Where the operator mapped this source's knowledge; empty until staged.
     homes: tuple[KnowledgeHome, ...]
+    #: The first characters of the operator's verified guide; empty without one.
+    guide: str = ""
 
     @property
     def homes_text(self) -> str:
@@ -250,6 +253,7 @@ class ConnectedDataService:
         terminal_recheck_seconds: float = 3600.0,
         failure_ceiling: int = 5,
         shared: SharedKnowledge | None = None,
+        guide_refresh_debounce_seconds: float = 2.0,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -304,6 +308,13 @@ class ConnectedDataService:
         # recently" shortcut, which otherwise makes a shared connection's sync free.
         self._forced: set[str] = set()
         self._migration_retries: dict[str, asyncio.TimerHandle] = {}
+        self._guides = GuideDesk(
+            granted=self._granted_names,
+            sources=self._source_connections,
+            emit=self._emit,
+            refresh=self._refresh_guide_index,
+            debounce_seconds=guide_refresh_debounce_seconds,
+        )
 
     async def start(self) -> None:
         """Start the monitor; an unavailable optional backend becomes degraded."""
@@ -319,6 +330,7 @@ class ConnectedDataService:
     async def close(self) -> None:
         """Cancel workers and release only resources owned by this service."""
         self._closed = True
+        await self._guides.close()
         if self._stop_listening is not None:
             self._stop_listening()
             self._stop_listening = None
@@ -412,6 +424,7 @@ class ConnectedDataService:
             )
             known = (self._statuses.get(entry.connection_id) for entry in registrations)
             statuses = tuple(status for status in known if status is not None)
+        previews = await self._guides.previews()
         entries: list[CatalogEntry] = []
         for status in statuses:
             source = status.description
@@ -424,9 +437,144 @@ class ConnectedDataService:
                     kind=source.source_kind,
                     status=status.status,
                     homes=staged.homes if staged is not None else (),
+                    guide=previews.get(status.connection_id, ""),
                 )
             )
         return tuple(entries)
+
+    # -- operator guides --------------------------------------------------------
+
+    async def guide_context(self, *, source_ids: Sequence[str] | None = None, run_key: str) -> str:
+        """The verified operator guides for the pools a tool touched, framed.
+
+        Only connections this agent holds; each at most once per ``run_key``;
+        all of them together within the per-turn guide budget. ``source_ids`` of
+        ``None`` means every granted connection.
+        """
+        return await self._guides.context(source_ids=source_ids, run_key=run_key)
+
+    async def guide_facts(self, connection_id: str) -> SourceOverview | None:
+        """What this agent knows about a granted connection, for a starter guide.
+
+        Store reads only (the cached description and the verified root index),
+        never a provider call. ``None`` for a connection this agent does not hold
+        or has not described yet.
+        """
+        status = self._statuses.get(connection_id)
+        if await self._find(connection_id) is None or status is None:
+            return None
+        described = status.description
+        if described is None:
+            return None
+        folders: list[tuple[str, int]] = []
+        titles: list[str] = []
+        port = await self._overview_port(connection_id)
+        if port is not None:
+            try:
+                overview = getattr(port, "root_overview", None)
+                if callable(overview):
+                    folders, titles = await overview(described)
+            finally:
+                await _release(port)
+        return SourceOverview(
+            name=described.display_name or described.source_kind,
+            kind=described.source_kind,
+            documents=status.documents_indexed,
+            folders=tuple((str(name), int(count)) for name, count in folders),
+            titles=tuple(str(title) for title in titles),
+        )
+
+    async def _overview_port(self, connection_id: str) -> IngestPort | None:
+        """The store a connection is read from: the shared one, or the agent's own."""
+        if connection_id in self._lanes and self._shared is not None:
+            try:
+                return await self._shared.reader(connection_id)
+            except Exception:
+                _logger.warning("connected-data shared store unavailable: %s", connection_id)
+                return None
+        registration = await self._find(connection_id)
+        if registration is None or connection_id not in self._descriptions:
+            return None
+        port, _ = await self._ingest_for(registration, use_cached=True)
+        return port
+
+    async def _granted_names(self) -> dict[str, str]:
+        """Every connection granted to this agent, by the name its catalog shows."""
+        names: dict[str, str] = {}
+        for registration in await self._catalog.snapshot():
+            status = self._statuses.get(registration.connection_id)
+            described = status.description if status is not None else None
+            names[registration.connection_id] = (
+                (described.display_name or described.source_kind)
+                if described is not None
+                else registration.connection_id
+            )
+        return names
+
+    def _source_connections(self) -> dict[str, str]:
+        """Which connection each document pool this agent reads belongs to."""
+        owners = {
+            status.source_id: connection_id
+            for connection_id, status in self._statuses.items()
+            if status.source_id
+        }
+        owners.update({lane.source_id: cid for cid, lane in self._lanes.items()})
+        return owners
+
+    async def _refresh_guide_index(self, connection_id: str) -> None:
+        """Rebuild one source's routing index after its guide changed.
+
+        Runs under a short lease on the connection's sync row, so it never races
+        a sync (here or, for a shared store, in another subscriber) or another
+        agent's refresh of the same shared store: if the lease is taken, the run
+        holding it ends with the same rebuild. No provider is called.
+        """
+        running = self._tasks.get(connection_id)
+        if self._store is None or (running is not None and not running.done()):
+            return
+        owner = f"{self._agent_did}:guide:{uuid.uuid4().hex}"
+        key = self._sync_key(connection_id)
+        lease = await self._store.acquire_lease(
+            key, connection_id, owner, ttl_seconds=_TERMINAL_LEASE_SECONDS
+        )
+        if lease is None:
+            return
+        try:
+            await self._refresh_guide_with_port(connection_id)
+        finally:
+            await self._store.release_lease(
+                key, connection_id, owner_id=owner, fencing_token=lease.fencing_token
+            )
+
+    async def _refresh_guide_with_port(self, connection_id: str) -> None:
+        port, description = await self._guide_port(connection_id)
+        if port is None or description is None:
+            return
+        try:
+            refresh = getattr(port, "refresh_operator_guide", None)
+            if callable(refresh) and await refresh(description):
+                await self._emit(
+                    "connected_data.guide.index_refreshed", {"source": _safe_id(connection_id)}
+                )
+        finally:
+            await _release(port)
+
+    async def _guide_port(
+        self, connection_id: str
+    ) -> tuple[IngestPort | None, SourceDescription | None]:
+        """The store a guide refresh writes: the shared store's, or the agent's own.
+
+        From the cached description only; a source never described has no index.
+        """
+        cached = self._descriptions.get(connection_id)
+        registration = await self._find(connection_id)
+        if cached is None or registration is None:
+            return None, None
+        lane = self._lanes.get(connection_id)
+        if lane is None or self._shared is None:
+            return await self._ingest_for(registration, use_cached=True)
+        writer = await self._shared.writer(connection_id, lane.approval_id)
+        return writer, await self._with_generation(cached, writer)
 
     def _start_inspection(self, registration: SourceRegistration) -> None:
         """Describe a source out of band, at most one attempt in flight."""

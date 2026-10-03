@@ -513,6 +513,24 @@ class ArcMemoryIngestAdapter(IngestPort):
         module = import_module("arcmemory.connected_data")
         await self._connected_service().finish_sync(self._source_model(module, source))
 
+    async def refresh_operator_guide(self, source: SourceDescription) -> bool:
+        """Bring the operator's edited guide into the source's routing index."""
+        module = import_module("arcmemory.connected_data")
+        changed: bool = await self._connected_service().refresh_operator_guide(
+            self._source_model(module, source)
+        )
+        return changed
+
+    async def root_overview(
+        self, source: SourceDescription
+    ) -> tuple[list[tuple[str, int]], list[str]]:
+        """Top-level folders and document titles from the verified root index."""
+        module = import_module("arcmemory.connected_data")
+        overview: tuple[
+            list[tuple[str, int]], list[str]
+        ] = await self._connected_service().root_overview(self._source_model(module, source))
+        return overview
+
     async def relayout_source(self, source: SourceDescription) -> dict[str, int]:
         """Move a source's documents to their mirrored paths (no re-embedding)."""
         module = import_module("arcmemory.connected_data")

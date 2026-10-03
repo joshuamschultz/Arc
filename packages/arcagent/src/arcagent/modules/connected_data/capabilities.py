@@ -7,7 +7,7 @@ from typing import Any
 
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.modules.connected_data import _runtime
-from arcagent.modules.connected_data.service import ConnectedDataService
+from arcagent.modules.connected_data.service import CatalogEntry, ConnectedDataService
 from arcagent.tools._decorator import capability, hook
 
 _logger = logging.getLogger("arcagent.modules.connected_data.capabilities")
@@ -87,15 +87,24 @@ async def inject_connections_catalog(ctx: Any) -> None:
     sections = ctx.data.get("sections")
     if not isinstance(sections, dict):
         return
-    lines = [
-        f"- {entry.name} ({entry.kind}): status={entry.status}; homes={entry.homes_text}"
-        for entry in await service.catalog_entries()
-    ]
+    lines = [_catalog_line(entry) for entry in await service.catalog_entries()]
     if not lines:
         return
     prompts = ctx.data.get("prompt_source") or st.prompt_source
     preamble = prompts.resolve("arcagent", "connected_data_catalog")
     sections["connections"] = preamble + "\n" + "\n".join(lines)
+
+
+def _catalog_line(entry: CatalogEntry) -> str:
+    """One source's catalog line, plus a short preview when the operator wrote a guide.
+
+    Only a preview: the full guide reaches the agent when a tool touches the
+    source, once per run, so standing context stays lean.
+    """
+    line = f"- {entry.name} ({entry.kind}): status={entry.status}; homes={entry.homes_text}"
+    if entry.guide:
+        line += f"\n  operator guide: {entry.guide}"
+    return line
 
 
 def _health_reporter(state: Any) -> StoreHealthReporter | None:

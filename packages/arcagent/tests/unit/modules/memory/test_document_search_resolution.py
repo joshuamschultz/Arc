@@ -65,6 +65,10 @@ class _Service:
             _status("c-mail", "gmail", "Josh mail", _MAIL_ID),
         ]
 
+    async def guide_context(self, *, source_ids: Any = None, run_key: str) -> str:
+        """No operator guides written for these sources."""
+        return ""
+
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch: pytest.MonkeyPatch) -> Any:
