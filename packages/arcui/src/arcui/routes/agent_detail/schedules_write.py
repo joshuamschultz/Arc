@@ -24,6 +24,7 @@ import re
 import stat
 import tempfile
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -161,6 +162,39 @@ def _atomic_write_json(path: Path, data: list[Any]) -> None:
         raise
 
 
+@dataclass(frozen=True)
+class _SigningContext:
+    """Everything needed to register a schedule revision as the operator."""
+
+    authority: Any
+    tenant_id: str
+    agent_did: str
+    proof_issuer: Callable[[Request, str, str, bytes], Awaitable[bytes]]
+
+    def proof_source(self, request: Request) -> Callable[[str, str, bytes], Awaitable[bytes]]:
+        async def actor_proof_source(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+            proof = await self.proof_issuer(request, purpose, artifact_id, definition)
+            if not isinstance(proof, bytes) or not proof:
+                raise arcagent.ControlArtifactRefusedError("operator proof is invalid")
+            return proof
+
+        return actor_proof_source
+
+
+def _signing_context(request: Request, agent_id: str) -> _SigningContext | None:
+    """The signed-authority wiring, or ``None`` when any part is unavailable."""
+    authority = getattr(request.app.state, "schedule_control_authority", None)
+    tenant_id = getattr(request.app.state, "schedule_tenant_id", None)
+    proof_issuer = cast(
+        Callable[[Request, str, str, bytes], Awaitable[bytes]] | None,
+        getattr(request.app.state, "schedule_operator_proof_issuer", None),
+    )
+    agent_did = _agent_did(request, agent_id)
+    if authority is None or tenant_id is None or proof_issuer is None or agent_did is None:
+        return None
+    return _SigningContext(authority, tenant_id, agent_did, proof_issuer)
+
+
 async def patch_schedule(request: Request) -> JSONResponse:
     """PATCH /api/agents/{id}/schedules/{sid} — edit a schedule (operator only)."""
     agent_id = request.path_params["id"]
@@ -212,14 +246,8 @@ async def patch_schedule(request: Request) -> JSONResponse:
         )
         return _error(invalid, 400)
 
-    authority = getattr(request.app.state, "schedule_control_authority", None)
-    tenant_id = getattr(request.app.state, "schedule_tenant_id", None)
-    proof_issuer = cast(
-        Callable[[Request, str, str, bytes], Awaitable[bytes]] | None,
-        getattr(request.app.state, "schedule_operator_proof_issuer", None),
-    )
-    agent_did = _agent_did(request, agent_id)
-    if authority is None or tenant_id is None or proof_issuer is None or agent_did is None:
+    signing = _signing_context(request, agent_id)
+    if signing is None:
         emit_mutation_audit(
             request,
             target=target,
@@ -231,20 +259,13 @@ async def patch_schedule(request: Request) -> JSONResponse:
     try:
         previous = arcagent.ScheduleEntry.model_validate(entries[index])
         candidate = arcagent.ScheduleEntry.model_validate({**entries[index], **edits})
-
-        async def actor_proof_source(purpose: str, artifact_id: str, definition: bytes) -> bytes:
-            proof = await proof_issuer(request, purpose, artifact_id, definition)
-            if not isinstance(proof, bytes) or not proof:
-                raise arcagent.ControlArtifactRefusedError("operator proof is invalid")
-            return proof
-
         approved = await arcagent.register_schedule_revision(
             candidate,
             previous=previous if previous.approval is not None else None,
-            tenant_id=tenant_id,
-            agent_did=agent_did,
-            authority=authority,
-            actor_proof_source=actor_proof_source,
+            tenant_id=signing.tenant_id,
+            agent_did=signing.agent_did,
+            authority=signing.authority,
+            actor_proof_source=signing.proof_source(request),
         )
     except arcagent.ControlArtifactRefusedError as exc:
         emit_mutation_audit(
@@ -274,4 +295,97 @@ async def patch_schedule(request: Request) -> JSONResponse:
     return JSONResponse(entries[index])
 
 
-__all__ = ["patch_schedule"]
+async def approve_schedule(request: Request) -> JSONResponse:
+    """POST /api/agents/{id}/schedules/{sid}/approve — re-approve a legacy schedule.
+
+    A schedule created before the control authority has no signed revision, so it
+    cannot fire. This registers its CURRENT definition through the authority as
+    revision 1 (operator-signed, audited) and, if the row was switched off only
+    because it was unapproved, switches it back on. Never auto-approves: it needs
+    an operator session and the authority's own proof.
+    """
+    agent_id = request.path_params["id"]
+    sid = request.path_params["sid"]
+    target = f"schedule:{sid}"
+    operation = "schedule.approve"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return _error("Agent not found", 404)
+
+    path = agent_root / "workspace" / "schedules.json"
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return _error("not found", 404)
+    index = next(
+        (
+            i
+            for i, e in enumerate(entries if isinstance(entries, list) else [])
+            if isinstance(e, dict) and e.get("id") == sid
+        ),
+        None,
+    )
+    if index is None:
+        return _error("not found", 404)
+    if entries[index].get("approval") is not None:
+        return _error("schedule is already approved", 409)
+
+    signing = _signing_context(request, agent_id)
+    if signing is None:
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation=operation,
+            outcome="error",
+            detail="signed schedule authority unavailable",
+        )
+        return _error("signed schedule authority unavailable", 503)
+    try:
+        current = arcagent.ScheduleEntry.model_validate(entries[index])
+        was_parked = current.metadata.disabled_reason == "unapproved"
+        candidate = current
+        if was_parked:
+            cleared = current.metadata.model_copy(
+                update={"disabled_reason": None, "disabled_at": None, "consecutive_failures": 0}
+            )
+            candidate = current.model_copy(update={"enabled": True, "metadata": cleared})
+        approved = await arcagent.register_schedule_revision(
+            candidate,
+            previous=None,
+            tenant_id=signing.tenant_id,
+            agent_did=signing.agent_did,
+            authority=signing.authority,
+            actor_proof_source=signing.proof_source(request),
+        )
+    except arcagent.ControlArtifactRefusedError as exc:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail=str(exc)
+        )
+        return _error(str(exc), 403)
+    except arcagent.ControlArtifactUnavailableError as exc:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="error", detail=str(exc)
+        )
+        return _error(str(exc), 503)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+
+    entries[index] = approved.model_dump(mode="json")
+    try:
+        _atomic_write_json(path, entries)
+    except OSError as exc:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="error", detail=str(exc)
+        )
+        return _error(f"could not write schedules: {exc}", 400)
+    emit_mutation_audit(request, target=target, operation=operation, outcome="applied")
+    return JSONResponse(entries[index])
+
+
+__all__ = ["approve_schedule", "patch_schedule"]

@@ -1544,6 +1544,30 @@ export const useEnableWorkflowSchedule = (
   })
 }
 
+/**
+ * Approve a legacy schedule that has no signed revision. The server registers
+ * the row's CURRENT definition through the control authority (operator-signed,
+ * audited); it never edits the definition.
+ */
+export const useApproveWorkflowSchedule = (
+  workflowId: string,
+  schedule: { agent_id: string; schedule_id: string },
+) => {
+  const queryClient = useQueryClient()
+  return useMutation<unknown, Error, void>({
+    mutationFn: () =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(schedule.agent_id)}/schedules/${encodeURIComponent(schedule.schedule_id)}/approve`,
+      ),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
+        queryClient.invalidateQueries({ queryKey: ['agent', schedule.agent_id, 'schedules'] }),
+      ]),
+  })
+}
+
 /** Start a throwaway test run of a workflow; resolves with the new run. */
 export const useTestRunWorkflow = (id: string) => {
   const queryClient = useQueryClient()
