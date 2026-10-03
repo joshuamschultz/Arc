@@ -56,6 +56,23 @@ class WorkflowValidationError(WorkflowError):
         super().__init__(f"workflow definition is not valid — {summary}")
 
 
+class PlaceholderOwnerError(WorkflowError):
+    """Nodes would fall back to the template placeholder owner, which no agent answers to."""
+
+    def __init__(self, workflow_id: str, owner: str, node_ids: tuple[str, ...]) -> None:
+        self.workflow_id = workflow_id
+        self.owner = owner
+        self.node_ids = node_ids
+        super().__init__(
+            f"workflow {workflow_id!r} is still owned by the template placeholder {owner!r}, "
+            f"which no agent answers to; node(s) {', '.join(node_ids)} would wait on nobody. "
+            f"Set a real owner: change `owner` in workflow.toml and run "
+            f"`arc workflow edit {workflow_id} --document <path> --expected-version <n>`, "
+            f"or re-create it with `arc workflow new {workflow_id} --from <template> "
+            f"--owner @<agent>`."
+        )
+
+
 class PredicateError(WorkflowError):
     """Base class for predicate grammar failures."""
 

@@ -71,6 +71,7 @@ from arcteam.workflow.models import (
     WorkflowDefinition,
     parse_definition,
 )
+from arcteam.workflow.ownership import assert_owner_is_real
 from arcteam.workflow.serialize import (
     canonical_bytes,
     content_hash,
@@ -642,6 +643,7 @@ def sign_definition(
     or a script invalidates it just as editing the graph does.
     """
     bundle = store.load(workflow_id)
+    assert_owner_is_real(workflow_id, bundle.definition.owner, bundle.definition.nodes)
     signature = sign_artifact(
         canonical_bytes(bundle.definition, bundle.manifest),
         signer_did=signer_did,
@@ -661,6 +663,7 @@ def sign_definition_with_signer(
     sidecar, same audit event.
     """
     bundle = store.load(workflow_id)
+    assert_owner_is_real(workflow_id, bundle.definition.owner, bundle.definition.nodes)
     signature = sign_artifact_with_signer(
         canonical_bytes(bundle.definition, bundle.manifest),
         signer_did=signer_did,

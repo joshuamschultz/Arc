@@ -49,6 +49,7 @@ from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from .errors import UnsignedWorkflowError
 from .narrator import RunNarrator, assert_channel_binding, gate_card_text
+from .ownership import assert_owner_is_real
 from .runner_budget import RunBudget
 from .runner_contracts import (
     RETRYABLE_RUN_STATUSES,
@@ -499,6 +500,7 @@ class WorkflowRunner:
         if not bundle.is_verified and not test_mode:
             self._admit_unsigned(workflow_id, initiator, initiator_did)
         definition = bundle.definition
+        assert_owner_is_real(workflow_id, definition.owner, definition.nodes)
         assert_channel_binding(definition.channel)
         await self._refuse_undeclared_gate_roles(definition, initiator_did)
         budget = definition.budget

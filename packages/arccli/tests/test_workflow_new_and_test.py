@@ -70,7 +70,12 @@ def test_templates_lists_the_four_starters(
 def test_new_copies_a_template_as_an_unsigned_draft_and_names_the_sign_step(
     arc_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    workflow_handler(["new", "weekly-brief", "--from", "fanout_synthesize", "--dir", str(arc_dir)])
+    workflow_handler(
+        [
+            "new", "weekly-brief", "--from", "fanout_synthesize", "--owner", "@sales",
+            "--dir", str(arc_dir),
+        ]
+    )
 
     out = capsys.readouterr().out
     assert "arc workflow sign weekly-brief" in out
@@ -117,3 +122,33 @@ def test_test_run_starts_flagged_and_is_cancelled_when_it_waits_too_long(
     captured = capsys.readouterr()
     assert "TEST run test-" in captured.out
     assert "Cancelled" in captured.err
+
+
+def test_sign_refuses_a_workflow_still_owned_by_the_template_placeholder(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        workflow_handler(["sign", "ph", "--dir", str(arc_dir)])
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "placeholder" in err and "maker" in err and "--owner" in err
+    assert not (workflows_dir(arc_dir) / "ph" / "workflow.toml.arcsig").exists()
+
+
+@pytest.mark.parametrize("command", [["test", "ph"], ["run", "ph"]])
+def test_run_and_test_refuse_a_placeholder_owner_up_front(
+    arc_dir: Path, capsys: pytest.CaptureFixture[str], command: list[str]
+) -> None:
+    workflow_handler(["new", "ph", "--from", "maker_checker", "--dir", str(arc_dir)])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        workflow_handler([*command, "--dir", str(arc_dir)])
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "placeholder" in err and "maker" in err and "--owner" in err

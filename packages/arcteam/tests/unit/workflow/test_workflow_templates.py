@@ -34,7 +34,7 @@ def test_the_four_starter_templates_are_listed_with_titles() -> None:
 
 @pytest.mark.parametrize("template", sorted(EXPECTED))
 def test_every_template_validates_and_signs(template: str, tmp_path: Path) -> None:
-    document, files = load_template(template, workflow_id="my-flow")
+    document, files = load_template(template, workflow_id="my-flow", owner="@writer")
     keys = generate_keypair()
     store = DefinitionStore(tmp_path / "wf", operator_public_key=keys.public_key)
 
