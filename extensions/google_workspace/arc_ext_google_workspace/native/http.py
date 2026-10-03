@@ -100,6 +100,10 @@ class GoogleHttp:
         except ValueError as exc:
             raise ToolError("Google returned a body that is not JSON") from exc
 
+    async def request_bytes(self, method: str, url: str, *, params: Params | None = None) -> bytes:
+        """Send one request and return the raw body (a file's content, not JSON)."""
+        return (await self._send(method, url, params, None)).content
+
     async def _send(
         self, method: str, url: str, params: Params | None, body: Any
     ) -> httpx.Response:
