@@ -824,7 +824,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         name="pulse",
-        description="Pulse checks — status, approve (operator review of pulse.md)",
+        description="Pulse checks — status, add, edit, remove, approve (operator only)",
         category="Tools & Skills",
         args_hint="<subcommand>",
         cli_only=True,
