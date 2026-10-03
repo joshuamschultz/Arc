@@ -255,6 +255,10 @@ def deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Depl
     store = tmp_path / "store"
     store.mkdir()
     monkeypatch.setenv("ARC_CONFIG_DIR", str(home))
+    # The fleet follows the redirected home. An inherited ARC_TEAM_ROOT (the
+    # adversarial battery sets one for its whole run) would otherwise put every
+    # test's fleet-shared state, connection stores included, in one directory.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(store))
     # A port nothing is bound to: messaging must degrade, never hang on a broker.
     monkeypatch.setenv("ARCTEAM_NATS_URL", f"nats://127.0.0.1:{free_port()}")

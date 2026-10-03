@@ -65,3 +65,6 @@ def _isolate_arcstore_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     # stray audit chains ended up in a live deployment. A suite whose result
     # depends on what else is running on the machine is diagnosing the machine.
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "arc-home"))
+    # ...and the fleet with it: an inherited ARC_TEAM_ROOT would put fleet-shared
+    # state (connection stores, shared runs) in a directory every test shares.
+    monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
