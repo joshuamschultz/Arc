@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 from arcagent.extension.source import SourceAdapter
@@ -42,12 +42,39 @@ class SourceCatalog:
     cooperatively (a sync marks itself cancelled and keeps its cursor), and the
     adapter is closed in the background once its last lease is released. A
     six-hour sync therefore cannot block an operator's grant change or removal.
+
+    Consumers hear about every change through :meth:`on_change`. A synchronizer
+    that started before the connectors attached their sources otherwise slept a
+    whole interval on an empty catalog (connections sweep D1).
     """
 
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
         self._condition = asyncio.Condition()
         self._retiring: set[asyncio.Task[None]] = set()
+        self._listeners: list[Callable[[], None]] = []
+
+    def on_change(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call ``listener`` after every register, replace or unregister.
+
+        The listener runs synchronously and must only signal (set an event); it
+        is never told which source changed, so it re-reads :meth:`snapshot`.
+        Returns the function that removes the listener again.
+        """
+        self._listeners.append(listener)
+
+        def remove() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return remove
+
+    def _changed(self) -> None:
+        for listener in tuple(self._listeners):
+            try:
+                listener()
+            except Exception:  # reason: one consumer's bug must not fail a registration
+                _logger.warning("source catalog listener failed", exc_info=True)
 
     async def register(self, connection_id: str, adapter: SourceAdapter) -> None:
         """Register or replace a connection and retire the previous adapter.
@@ -64,6 +91,7 @@ class SourceCatalog:
             if previous is not None and previous.registration.adapter is adapter:
                 return
             self._entries[connection_id] = _Entry(registration)
+        self._changed()
         if previous is not None:
             await self._retire(previous)
 
@@ -72,6 +100,7 @@ class SourceCatalog:
         async with self._condition:
             previous = self._entries.pop(connection_id, None)
         if previous is not None:
+            self._changed()
             await self._retire(previous)
 
     async def snapshot(self) -> tuple[SourceRegistration, ...]:

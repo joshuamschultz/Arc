@@ -45,6 +45,9 @@ class _Catalog:
     async def snapshot(self) -> tuple[Any, ...]:
         return self._registrations
 
+    def on_change(self, listener: Any) -> Any:
+        return lambda: None
+
 
 def _service(error: Exception) -> ConnectedDataService:
     registration = _Registration("personal_dropbox", _DeadAdapter(error))
