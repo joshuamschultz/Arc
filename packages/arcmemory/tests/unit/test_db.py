@@ -248,14 +248,24 @@ async def test_post_migration_embed_pass_does_not_re_embed_an_already_embedded_r
     assert embedder.calls == 0, "the migration must not trigger a corpus-wide re-embed"
 
 
-def test_commits_do_not_fsync_on_the_event_loop(tmp_path: Path) -> None:
-    """WAL + ``synchronous=NORMAL``: a commit appends to the WAL, no fsync.
-
-    Every index write runs on the agent's event-loop thread. Under the default
-    ``FULL`` each commit waited on the disk (``submit_bio_wait``/``jbd2`` on the
-    DGX loop thread). ``NORMAL`` in WAL mode cannot corrupt the database; an OS
-    crash can lose only the last commits, and this index is re-derivable.
-    """
-    conn = MemoryDB(tmp_path).connect()
+def _synchronous(db: MemoryDB) -> int:
+    conn = db.connect()
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+    return int(conn.execute("PRAGMA synchronous").fetchone()[0])
+
+
+def test_default_durability_is_full(tmp_path: Path) -> None:
+    """An agent's own memory (the episodic raw stream) fsyncs every commit."""
+    assert _synchronous(MemoryDB(tmp_path)) == 2  # FULL
+
+
+def test_rebuildable_store_can_skip_the_fsync_per_commit(tmp_path: Path) -> None:
+    """``normal``: WAL commits without an fsync; never corrupts, may lose the
+    last commits on an OS crash. Only for stores rebuildable from a provider.
+    """
+    assert _synchronous(MemoryDB(tmp_path, durability="normal")) == 1  # NORMAL
+
+
+async def test_agent_own_memory_store_keeps_full_durability(tmp_path: Path) -> None:
+    operator = MemoryOperator(tmp_path, agent_did="did:arc:own")
+    assert _synchronous(operator._db) == 2

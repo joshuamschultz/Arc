@@ -23,7 +23,7 @@ from arcmemory.chunk import RecursiveChunker
 from arcmemory.collection_index import source_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.connected_layout import flat_name, prune_empty_dirs, target_path
-from arcmemory.db import MemoryDB
+from arcmemory.db import Durability, MemoryDB
 from arcmemory.doc_index import DocHit, DocIndex, object_key
 from arcmemory.extract import ExtractionUnavailable, get_extractor
 from arcmemory.index.graph import WeightedGraph
@@ -332,6 +332,7 @@ class ConnectedDataService:
         audit_sink: AuditSink | None = None,
         review_port: ReviewPort | None = None,
         authority: MappingAuthority | None = None,
+        durability: Durability = "full",
     ) -> None:
         self._workspace = Path(workspace)
         self._agent_did = agent_did
@@ -342,7 +343,7 @@ class ConnectedDataService:
         self._authority = authority
         self._config = config or MemoryConfig()
         self._audit = audit_sink
-        self._db = MemoryDB(self._workspace)
+        self._db = MemoryDB(self._workspace, durability=durability)
         self._embedder = embedder
         self._object_state = object_state or InMemoryObjectState()
         self._reviews = review_port or ProfileReviewStore(
