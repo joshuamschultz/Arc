@@ -156,11 +156,15 @@ safely, sign it, then run it:
 
 ```bash
 arc workflow templates                                # the starters and what each is for
-arc workflow new weekly-brief --from fanout_synthesize   # copy one in as a draft
+arc workflow new weekly-brief --from fanout_synthesize --owner @analyst-1   # copy one in as a draft
 arc workflow test weekly-brief                        # try the draft: state-modifying work is stubbed
 arc workflow sign weekly-brief                        # sign the registered bundle, by id
 arc workflow run weekly-brief --input in.json --detach   # run it now
 ```
+
+`--owner` names the agent whose handle runs each node that does not name its own. The
+templates ship with a placeholder owner (`@operator`) that no agent answers to, so
+always pass the handle of a real agent.
 
 `sign` and `verify` take a workflow **id**, not a path. They act on the bundle the
 runner reads (under your Arc home's `workflows/` directory), and refuse any path that
