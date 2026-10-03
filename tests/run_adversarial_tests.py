@@ -679,6 +679,16 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_connector_transit_cipher.py",
         "packages/arcagent/tests/unit/extension/test_custody_reseal.py",
     ),
+    # J1-3: the Install button puts a helper on the operator's machine. A download
+    # whose digest is not the pinned one installs nothing; an npm tarball with a
+    # traversal entry is refused before npm sees it; a postinstall script never runs
+    # (--ignore-scripts, proven against real npm); federal never fetches an
+    # un-allowlisted digest; the install record is found by path, not PATH.
+    "host helper install — swapped download, tarball traversal, postinstall, "
+    "federal fetch (alpha-2 J1-3)": (
+        "packages/arcagent/tests/security/test_host_install_abuse.py",
+        "packages/arcagent/tests/unit/extension/test_host_install.py",
+    ),
     # P18-2: nothing executes from the operator tree. A code-bearing bundle planted
     # in ~/arc/extensions is refused by name (audited) and one in
     # ~/arc/state/extensions is not on the search path, at every tier; a config-only

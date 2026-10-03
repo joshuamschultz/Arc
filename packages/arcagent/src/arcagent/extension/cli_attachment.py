@@ -49,7 +49,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.extension.environment import scrubbed_environment
-from arcagent.extension.host_install import verified_installed_binary
+from arcagent.extension.host_install import verified_install_path
 from arcagent.extension.manifest import fill_placeholders
 from arcagent.extension.secrets import Secret, redact
 from arcagent.extension.source import classify_cli_failure
@@ -646,7 +646,7 @@ class CliAttachment:
         Raises:
             ExtensionError: The recorded binary is missing or tampered with.
         """
-        installed = verified_installed_binary(self._binary)
+        installed = verified_install_path(self._binary)
         return str(installed) if installed is not None else self._binary
 
     def _refuse_host_binary(self, exc: ExtensionError) -> str:

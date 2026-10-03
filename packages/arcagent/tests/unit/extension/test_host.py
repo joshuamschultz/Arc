@@ -132,3 +132,47 @@ def test_director_never_spawns_a_subprocess(monkeypatch: pytest.MonkeyPatch) -> 
     verdicts = director.check(requirements)
 
     assert len(verdicts) == 2
+
+
+# --- J1-3: a program Arc installed is found at its recorded path -------------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_operator_root(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path_factory.mktemp("operator")))
+
+
+def test_a_program_arc_installed_is_present_even_when_it_is_not_on_path(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher decides PATH; the install record does not depend on it."""
+    from arcagent.extension.host_install import _record_install
+
+    program = tmp_path / "readwise"
+    program.write_text("#!/bin/sh\n")
+    program.chmod(0o755)
+    _record_install("readwise", program)
+
+    verdicts = HostPrerequisiteDirector(path_lookup=_always_missing).check(
+        [HostRequirement(name="readwise")]
+    )
+
+    assert verdicts == [HostVerdict(name="readwise", satisfied=True)]
+
+
+def test_a_recorded_program_that_was_deleted_is_missing_again(tmp_path) -> None:
+    from arcagent.extension.host_install import _record_install
+
+    program = tmp_path / "readwise"
+    program.write_text("#!/bin/sh\n")
+    program.chmod(0o755)
+    _record_install("readwise", program)
+    program.unlink()
+
+    verdicts = HostPrerequisiteDirector(path_lookup=_always_missing).check(
+        [HostRequirement(name="readwise")]
+    )
+
+    assert verdicts[0].satisfied is False

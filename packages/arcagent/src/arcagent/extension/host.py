@@ -21,7 +21,9 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
+from arcagent.extension.host_install import recorded_install_path
 from arcagent.extension.manifest import HostRequirement
 
 
@@ -49,10 +51,20 @@ class HostPrerequisiteDirector:
         path_lookup: How presence is checked. Defaults to :func:`shutil.which`,
             which only reads ``PATH``; injectable so tests never depend on what
             happens to be installed on the machine running the suite.
+        recorded_lookup: Where Arc itself installed a program. A program Arc put
+            on the host through the install button is present at its recorded
+            path whether or not that directory is on ``PATH`` — which depends on
+            how the process was launched, not on anything the operator did.
     """
 
-    def __init__(self, *, path_lookup: Callable[[str], str | None] = shutil.which) -> None:
+    def __init__(
+        self,
+        *,
+        path_lookup: Callable[[str], str | None] = shutil.which,
+        recorded_lookup: Callable[[str], Path | None] = recorded_install_path,
+    ) -> None:
         self._path_lookup = path_lookup
+        self._recorded_lookup = recorded_lookup
 
     def check(self, requirements: Sequence[HostRequirement]) -> list[HostVerdict]:
         """Check every declared host prerequisite, in the order supplied.
@@ -72,7 +84,8 @@ class HostPrerequisiteDirector:
         return [verdict for verdict in self.check(requirements) if not verdict.satisfied]
 
     def _check_one(self, requirement: HostRequirement) -> HostVerdict:
-        if self._path_lookup(requirement.name) is not None:
+        found = self._path_lookup(requirement.name) or self._recorded_lookup(requirement.name)
+        if found is not None:
             return HostVerdict(name=requirement.name, satisfied=True)
         return HostVerdict(
             name=requirement.name,

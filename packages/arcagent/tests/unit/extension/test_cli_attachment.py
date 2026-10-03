@@ -778,16 +778,17 @@ async def test_a_real_failure_on_stderr_still_warns_with_its_error_class(
 
 
 async def test_a_host_installed_binary_is_spawned_by_its_recorded_path(
-    cli: CliAttachment, spawn: _SpawnRecorder, _isolated_home: Path
+    cli: CliAttachment, spawn: _SpawnRecorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A binary Arc installed is found without the operator touching PATH."""
-    installed = _isolated_home / ".local" / "bin" / _BINARY
+    from arcagent.extension.host_install import _record_install, host_tools_dir
+
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "operator"))
+    installed = host_tools_dir() / "bin" / _BINARY
     installed.parent.mkdir(parents=True)
     installed.write_text("#!/bin/sh\n")
     installed.chmod(0o755)
-    from arcagent.extension.host_install import record_installed_binary
-
-    record_installed_binary(installed, b"#!/bin/sh\n")
+    _record_install(_BINARY, installed)
 
     await cli.invoke("create_issue", {"title": "hello"})
 
