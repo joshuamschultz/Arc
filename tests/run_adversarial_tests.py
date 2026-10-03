@@ -532,6 +532,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/extension/test_renewal_planner.py",
         "tests/architecture/test_no_connector_secret_on_disk.py",
     ),
+    # P18-2F: under vault_transit the custody key never enters the process. The old
+    # in-process seed opens nothing; a transplanted or downgraded (seed-planted xc1)
+    # value is refused; an outage fails closed with no in-process fallback; a
+    # poisoned PYTHONPATH never reaches the notary child; AAD swap and tamper fail;
+    # a reseal is one verified CAS per row, idempotent and crash-safe.
+    "connector credentials in Vault Transit — stolen seed, transplant, downgrade, "
+    "outage fallback, child env poisoning (alpha-2 P18-2F)": (
+        "packages/arcagent/tests/security/test_transit_custody_abuse.py",
+        "packages/arctrust/tests/test_connector_transit_cipher.py",
+        "packages/arcagent/tests/unit/extension/test_custody_reseal.py",
+    ),
     # P18-2: nothing executes from the operator tree. A code-bearing bundle planted
     # in ~/arc/extensions is refused by name (audited) and one in
     # ~/arc/state/extensions is not on the search path, at every tier; a config-only
