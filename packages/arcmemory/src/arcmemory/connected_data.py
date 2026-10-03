@@ -435,9 +435,56 @@ class ConnectedDataService:
         )
         if self._approval is None:
             raise SourceMappingPendingError()
-        await self._approval.start()
-        now = datetime.now(UTC)
-        for row in await self._approval.list():
+        approved = await self._approved_row(self._approval, source)
+        if approved is not None:
+            approval_id, proposal = approved
+            commit_mapping(proposal, store=register)
+            committed = load_committed_mapping(proposal.source_id, store=register)
+            if committed is None or committed.revision != proposal.revision:
+                raise SourceMappingDeniedError()
+            return ApprovedMapping(
+                mapping_id=approval_id,
+                source_id=committed.source_id,
+                homes=committed.homes,
+                revision=committed.revision,
+                content_hash=committed.content_hash,
+            )
+        proposal = self._proposal(source)
+        await stage_mapping_proposal(
+            proposal,
+            approval_store=self._approval,
+            agent_did=self._agent_did,
+        )
+        raise SourceMappingPendingError()
+
+    async def find_approved_mapping(self, source: ConnectedSource) -> ApprovedMapping | None:
+        """The operator-approved mapping of this source, or ``None``; stages nothing.
+
+        The read-only half of :meth:`require_approved_mapping`, for a caller that
+        must know whether a mapping is approved without proposing one when it is
+        not (deciding which store a granted agent reads, P18-4).
+        """
+        await self._require_current_generation(source)
+        if self._authority is not None or self._approval is None:
+            return None
+        approved = await self._approved_row(self._approval, source)
+        if approved is None:
+            return None
+        approval_id, proposal = approved
+        return ApprovedMapping(
+            mapping_id=approval_id,
+            source_id=proposal.source_id,
+            homes=list(proposal.homes),
+            revision=proposal.revision,
+            content_hash=proposal.content_hash,
+        )
+
+    async def _approved_row(
+        self, approval: ApprovalStore, source: ConnectedSource
+    ) -> tuple[str, SourceMapping] | None:
+        """The approved row whose exact proposal matches this source, if any."""
+        await approval.start()
+        for row in await approval.list(status="approved"):
             try:
                 home_values = row.arguments.get("homes", "").split(",")
                 homes = tuple(MemoryHome(home) for home in home_values if home)
@@ -450,36 +497,13 @@ class ConnectedDataService:
                 revision=proposal.revision,
                 content_hash_value=proposal.content_hash,
             )
-            if row.call_hash != target:
-                continue
-            if row.status == "denied" or row.status == "expired":
-                continue
             # ``expires_at`` bounds only the *pending* window (an unacted request
             # auto-cancels). An operator-approved mapping is durable: it lapses
             # only when the mapping structure changes, which re-derives a new
             # ``call_hash`` above and re-triggers approval — never on a timer.
-            if row.status != "approved":
-                if row.expires_at is not None and datetime.fromisoformat(row.expires_at) <= now:
-                    continue
-            if row.status == "approved":
-                commit_mapping(proposal, store=register)
-                committed = load_committed_mapping(proposal.source_id, store=register)
-                if committed is None or committed.revision != proposal.revision:
-                    raise SourceMappingDeniedError()
-                return ApprovedMapping(
-                    mapping_id=row.id,
-                    source_id=committed.source_id,
-                    homes=committed.homes,
-                    revision=committed.revision,
-                    content_hash=committed.content_hash,
-                )
-        proposal = self._proposal(source)
-        await stage_mapping_proposal(
-            proposal,
-            approval_store=self._approval,
-            agent_did=self._agent_did,
-        )
-        raise SourceMappingPendingError()
+            if row.call_hash == target:
+                return row.id, proposal
+        return None
 
     async def _delegated_mapping(
         self, source: ConnectedSource, authority: MappingAuthority

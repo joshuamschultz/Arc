@@ -214,3 +214,25 @@ async def test_adoption_needs_an_authorizing_subscriber(tmp_path: Path) -> None:
 
     with pytest.raises(SourceMappingDeniedError):
         await shared.adopt_documents(_source(), agent, _source(), dry_run=False)
+
+
+@pytest.mark.asyncio
+async def test_finding_an_approved_mapping_never_stages_one(tmp_path: Path) -> None:
+    """Deciding which store an agent reads must not propose a mapping on its behalf."""
+    approvals = ApprovalStore(FakeBackend())
+    agent = ConnectedDataService(
+        tmp_path / "agent", "did:arc:agent-a", approval_store=approvals, config=_CONFIG
+    )
+
+    assert await agent.find_approved_mapping(_source()) is None
+    assert await approvals.list() == []
+
+    agent_store, mapping = await _agent_store(tmp_path / "other")
+    found = await agent_store.find_approved_mapping(_source())
+
+    assert found is not None
+    assert (found.mapping_id, found.source_id, found.homes) == (
+        mapping.mapping_id,
+        mapping.source_id,
+        mapping.homes,
+    )
