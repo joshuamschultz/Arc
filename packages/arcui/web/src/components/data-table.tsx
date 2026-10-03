@@ -8,9 +8,8 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronsUpDown, Search } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { FieldHelp } from '@/components/help'
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
+import { SearchInput } from '@/components/ui/search-input'
 import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/states'
 
@@ -68,18 +67,13 @@ export function DataTable<T>({
   return (
     <div className="flex flex-col gap-3">
       {searchable && (
-        <div className="flex w-full max-w-xs items-center gap-1">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={globalFilter}
-              onChange={(e) => setGlobalFilter(e.target.value)}
-              placeholder={searchPlaceholder}
-              className="pl-8"
-            />
-          </div>
-          {searchHelpKey && <FieldHelp helpKey={searchHelpKey} />}
-        </div>
+        <SearchInput
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          placeholder={searchPlaceholder}
+          helpKey={searchHelpKey}
+          wrapperClassName="max-w-xs"
+        />
       )}
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
@@ -17,11 +17,12 @@ import { CommandPalette } from '@/components/command-palette'
  * destination and primary action. Both mount here so they exist on every page.
  */
 export function AppShell() {
-  const [drawerOpen, setDrawerOpen] = useState(false)
   const { pathname } = useLocation()
-
-  // Any navigation (link, palette, back button) dismisses the drawer.
-  useEffect(() => setDrawerOpen(false), [pathname])
+  // The drawer is open only for the route it was opened on, so any navigation
+  // (link, palette, back button) dismisses it with no effect-driven state sync.
+  const [openOn, setOpenOn] = useState<string | null>(null)
+  const drawerOpen = openOn === pathname
+  const setDrawerOpen = (open: boolean) => setOpenOn(open ? pathname : null)
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden md:flex-row">

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { AlertTriangle, Search } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { AlertTriangle } from 'lucide-react'
+import { SearchInput } from '@/components/ui/search-input'
 import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
@@ -146,16 +146,13 @@ export function ChunkBrowser({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-sm">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search chunks (literal or vector)…"
-            className="pl-8"
-          />
-          <FieldHelp helpKey="knowledge.chunk_search" route="knowledge" />
-        </div>
+        <SearchInput
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search chunks (literal or vector)…"
+          helpKey="knowledge.chunk_search"
+          helpRoute="knowledge"
+        />
         <ModeToggle mode={mode} onChange={setMode} />
         <FieldHelp helpKey="knowledge.chunk_mode" route="knowledge" />
       </div>

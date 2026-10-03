@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Search, Share2 } from 'lucide-react'
+import { Share2 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { FieldHelp } from '@/components/help'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
 import { AgentIdentity } from '@/components/AgentIdentity'
-import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   ClassificationBadge,
   SharedDocumentSheet,
@@ -197,17 +196,14 @@ export function SharedKnowledgePage() {
       />
       <div className="flex-1 overflow-auto p-6">
         <div className="mb-4 flex flex-wrap items-center gap-4">
-          <div className="relative w-full max-w-sm">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="Search shared knowledge"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search shared knowledge…"
-              className="pl-8"
-            />
-            <FieldHelp helpKey="shared_knowledge.search" route="shared-knowledge" />
-          </div>
+          <SearchInput
+            aria-label="Search shared knowledge"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search shared knowledge…"
+            helpKey="shared_knowledge.search"
+            helpRoute="shared-knowledge"
+          />
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input
               type="checkbox"
