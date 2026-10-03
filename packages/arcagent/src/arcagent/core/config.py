@@ -352,6 +352,10 @@ class SessionConfig(BaseModel):
     # is skipped (messages left intact) rather than awaited forever. "Timeouts on
     # everything external" (CLAUDE.md).
     compaction_timeout_seconds: float = Field(default=30.0, gt=0)
+    # Bound on an interactive turn reaching its run: session open, the turn
+    # lock and prompt assembly. Past it the channel gets a terminal "failed"
+    # with a plain reason instead of a silent, frozen chat.
+    turn_start_timeout_seconds: float = Field(default=120.0, gt=0)
 
 
 class TeamSection(BaseModel):

@@ -71,6 +71,10 @@ def _configure_logging(*, verbose: bool) -> None:
     )
     logging.getLogger("arcui.audit").setLevel(logging.INFO)
     logging.getLogger("arcgateway.adapters").setLevel(logging.INFO)
+    # Chat turn start/finish (gateway router + agent delivery): a chat that
+    # never answers must show in the journal how far its turn got.
+    logging.getLogger("arcgateway.session").setLevel(logging.INFO)
+    logging.getLogger("arcagent.agent").setLevel(logging.INFO)
     if verbose:
         logging.getLogger().setLevel(logging.INFO)
 

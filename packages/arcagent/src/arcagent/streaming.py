@@ -35,6 +35,8 @@ class DeliveryTerminalEvent(DeliveryStreamEvent):
     """The one terminal outcome for a transport stream."""
 
     status: Literal["completed", "cancelled", "failed", "outcome_unknown"]
+    #: Plain, user-safe reason for a non-completed outcome (never exception text).
+    reason: str = ""
 
 
 @runtime_checkable
