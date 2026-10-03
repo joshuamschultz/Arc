@@ -192,6 +192,15 @@ def model_config_path() -> Path:
     return arcllm.model_config_path()
 
 
+def model_module_surface(*, prefix: str = "") -> str:
+    """Every model-runtime module block, commented at its packaged default.
+
+    The documentation half of a generated ``arcllm.toml``: layers above arcrun
+    (the agent scaffold) write it without importing the model layer themselves.
+    """
+    return arcllm.commented_module_surface(prefix=prefix)
+
+
 def iter_model_modules(instance: Any) -> Iterator[tuple[ModelModuleKind, Any]]:
     """Yield ArcRun-observable model modules without exposing ArcLLM to callers."""
     current = instance
@@ -264,6 +273,7 @@ __all__ = [
     "model_api_error",
     "model_config_path",
     "model_identity",
+    "model_module_surface",
     "model_provider_keys",
     "queue_run_context",
     "validate_model_modules",

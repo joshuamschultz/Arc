@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import arcagent
-import arcllm
 
 from arccli.commands.agent._common import _print_scaffold_summary, cli_operator_signing
 
@@ -36,7 +35,6 @@ def _create(args: argparse.Namespace) -> None:
             name,
             tier=tier,
             model=getattr(args, "model", arcagent.scaffold.DEFAULT_MODEL),
-            llm_module_surface=arcllm.commented_module_surface(prefix="llm."),
             operator=operator,
         )
     except (arcagent.scaffold.AgentNameError, arcagent.scaffold.AgentExistsError) as exc:

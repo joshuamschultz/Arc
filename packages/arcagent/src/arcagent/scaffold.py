@@ -11,9 +11,9 @@ one. The agent's own key never signs anything here — an agent cannot approve
 its own identity or capabilities.
 
 What stays with the caller: resolving the operator signer (CLI custody vs the
-dashboard's injected factory), fleet registration (arcteam sits above arcagent),
-and the arcllm module surface text (arcagent never imports arcllm, so the
-caller passes ``arcllm.commented_module_surface(prefix="llm.")`` in).
+dashboard's injected factory) and fleet registration (arcteam sits above
+arcagent). The commented ``[llm.modules.*]`` surface comes through the arcrun
+facade (``arcrun.model_module_surface``) — arcagent never imports arcllm.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import arcrun
 from arcokf import OKFValidationError, render_folder_index, validate
 from arcprompt import PromptHistory, record_if_unseen
 from arctrust import AgentIdentity, Signer
@@ -303,13 +304,13 @@ _ARCLLM_HEADER = """\
 """
 
 
-def render_arcllm_config(*, module_surface: str, model: str = DEFAULT_MODEL) -> str:
+def render_arcllm_config(*, model: str = DEFAULT_MODEL) -> str:
     """Compose the per-agent arcllm.toml.
 
     ``[llm]``/``[eval]``/``[budget]`` come from arcagent's own models; the output
-    cap is NOT set here (arcllm owns that number). ``module_surface`` is the
-    commented ``[llm.modules.*]`` override surface, which arcllm renders from its
-    own packaged config and the caller passes in.
+    cap is NOT set here (arcllm owns that number). The commented
+    ``[llm.modules.*]`` override surface is rendered by the model layer from its
+    own packaged config, reached through arcrun.
     """
     parts = [
         _ARCLLM_HEADER,
@@ -318,7 +319,7 @@ def render_arcllm_config(*, module_surface: str, model: str = DEFAULT_MODEL) -> 
         "# --- Per-agent arcllm module overrides. Every module below is shown",
         "# commented at its packaged default; uncomment a line to override that",
         "# module for THIS agent only (unknown module names are rejected). ---",
-        module_surface,
+        arcrun.model_module_surface(prefix="llm."),
     ]
     return "\n".join(parts).rstrip() + "\n"
 
@@ -573,7 +574,6 @@ def create_agent(
     *,
     tier: str = "personal",
     model: str = DEFAULT_MODEL,
-    llm_module_surface: str,
     operator: OperatorSigning | None,
     documents: Mapping[str, str] | None = None,
 ) -> CreatedAgent:
@@ -602,7 +602,6 @@ def create_agent(
             name,
             tier=tier,
             model=model,
-            llm_module_surface=llm_module_surface,
             operator=operator,
             documents=checked,
         )
@@ -619,7 +618,6 @@ def _populate(
     *,
     tier: str,
     model: str,
-    llm_module_surface: str,
     operator: OperatorSigning | None,
     documents: Mapping[str, str],
 ) -> CreatedAgent:
@@ -628,9 +626,7 @@ def _populate(
         render_agent_config(name=name, tier=tier), encoding="utf-8"
     )
     write_config_snapshot(agent_dir)
-    (agent_dir / "arcllm.toml").write_text(
-        render_arcllm_config(module_surface=llm_module_surface, model=model), encoding="utf-8"
-    )
+    (agent_dir / "arcllm.toml").write_text(render_arcllm_config(model=model), encoding="utf-8")
     (agent_dir / "arcrun.toml").write_text(DEFAULT_ARCRUN_CONFIG, encoding="utf-8")
 
     # The DID is minted before anything is signed so the capability pin lands in

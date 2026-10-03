@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-import arcllm
 import arctrust
 from arctrust.paths import dotenv_file, env_file
 
@@ -41,11 +40,9 @@ from arccli.commands._shared import print_table as _print_table
 # Constants
 # ---------------------------------------------------------------------------
 
-# The per-agent arcllm.toml `arc agent create` / `build` write: arcagent renders
-# the [llm]/[eval]/[budget] sections, arcllm its own commented module surface.
-_DEFAULT_ARCLLM_CONFIG = arcagent.scaffold.render_arcllm_config(
-    module_surface=arcllm.commented_module_surface(prefix="llm.")
-)
+# The per-agent arcllm.toml `arc agent build` provides when one is missing —
+# the same file `arc agent create` and the dashboard write.
+_DEFAULT_ARCLLM_CONFIG = arcagent.scaffold.render_arcllm_config()
 
 
 def _env_paths() -> list[Path]:

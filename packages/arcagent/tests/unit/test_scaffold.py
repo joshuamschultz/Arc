@@ -28,7 +28,7 @@ def _operator() -> scaffold.OperatorSigning:
 
 
 def _create(parent: Path, name: str = "helper", **kwargs: object) -> scaffold.CreatedAgent:
-    options: dict[str, object] = {"llm_module_surface": "", "operator": _operator()}
+    options: dict[str, object] = {"operator": _operator()}
     options.update(kwargs)
     return scaffold.create_agent(parent, name, **options)  # type: ignore[arg-type]  # reason: test helper forwards typed kwargs
 

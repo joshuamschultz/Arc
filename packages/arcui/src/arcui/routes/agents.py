@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import arcagent
-import arcllm
 from arcteam.registry import register_native_agent
 from arctrust.policy import OperatorApprovalAuthority
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -266,7 +265,6 @@ async def _create(request: Request, model: type[CreateAgentBody], operation: str
             name,
             tier=body.tier,
             model=body.model,
-            llm_module_surface=arcllm.commented_module_surface(prefix="llm."),
             operator=operator,
             documents=documents,
         )
