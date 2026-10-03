@@ -26,7 +26,6 @@ import { FieldHelp } from '@/components/help'
 function connectorHelpKey(name: string, sensitive: boolean): string | null {
   const normalized = name.toLowerCase()
   if (normalized === 'read_only') return 'connection.google_access'
-  if (normalized === 'client') return 'connection.google_client'
   if (normalized.includes('url') || normalized.includes('endpoint')) return 'connection.endpoint'
   if (normalized.includes('account') || normalized.includes('name')) return 'connection.account_name'
   return sensitive ? 'connection.secret' : null
@@ -65,8 +64,6 @@ export function ConnectorSecretsSheet({
   const [operatorMode] = useOperatorMode()
 
   const [okMsg, setOkMsg] = useState<string | null>(null)
-  // Fields whose blank-warning the operator accepted ("leave it blank for now").
-  const [accepted, setAccepted] = useState<Record<string, boolean>>({})
   const [verifying, setVerifying] = useState(false)
   const rotating = instance !== undefined
   const busy = install.isPending || reauth.isPending || verifying
@@ -105,12 +102,7 @@ export function ConnectorSecretsSheet({
 
   // Only a field the server explicitly marks optional may stay blank; one that
   // says nothing is required, so an older server never gets a half-filled form.
-  // On a browser-sign-in bundle a field that warns about being blank (Google's
-  // OAuth client) is required too, unless the operator ticks that they accept
-  // the warning — the default works, but it quietly expires every week.
-  const remoteLogin = bundle.host_requires.some((r) => r.remote_login)
-  const mustFill = (s: ConnectorSecret) =>
-    s.required !== false || (remoteLogin && !!s.warning && !accepted[s.name])
+  const mustFill = (s: ConnectorSecret) => s.required !== false
   const complete = fields.every((s) => !mustFill(s) || valueFor(s.name).length > 0)
   const canSubmit = complete && (rotating || name.trim().length > 0) && !busy
 
@@ -119,7 +111,6 @@ export function ConnectorSecretsSheet({
     setError(null)
     setUnsatisfied([])
     setOkMsg(null)
-    setAccepted({})
   }
 
   // Writing a credential and reporting nothing is what made a good save look
@@ -340,17 +331,6 @@ export function ConnectorSecretsSheet({
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
                   {s.warning}
                 </p>
-              )}
-              {s.warning && remoteLogin && !valueFor(s.name) && (
-                <label className="flex items-start gap-2 text-[11px] text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={!!accepted[s.name]}
-                    onChange={(e) => setAccepted({ ...accepted, [s.name]: e.target.checked })}
-                  />
-                  <span>Leave {s.name} blank for now and accept the warning above.</span>
-                </label>
               )}
             </div>
           ))}

@@ -1127,9 +1127,6 @@ export interface HostRequirement {
   name: string
   instruction: string
   satisfied?: boolean
-  /** True when this program's sign-in can be finished from the browser (a
-   *  consent link plus a pasted address), not only at a terminal. */
-  remote_login?: boolean
 }
 
 export interface ConnectorTool {
@@ -1193,13 +1190,15 @@ export interface ConnectorInstance {
   last_success_at: string | null
   last_notice: ConnectionNotice | null
   connect_kind: ConnectionConnectKind
+  /** The OAuth provider behind a `connect_kind` of `oauth`; empty otherwise. */
+  oauth_provider: string
   knowledge_sync: ConnectionKnowledgeSync[]
 }
 
 export type ConnectionStatus = 'unknown' | 'healthy' | 'needs_you' | 'error'
 export type ConnectionDisplayStatus = ConnectionStatus | 'syncing'
 export type ConnectionAction = 'none' | 'reconnect' | 'approve' | 'install_host' | 'wait'
-export type ConnectionConnectKind = 'oauth' | 'token' | 'host_login' | 'remote_login' | 'none'
+export type ConnectionConnectKind = 'oauth' | 'token' | 'host_login' | 'none'
 
 export interface ConnectionNotice {
   kind: 'needs_you' | 'error' | 'recovered'
@@ -1331,20 +1330,32 @@ export interface ConnectorAuthorizationResponse {
   hosts?: ConnectorHostAuthorization[]
 }
 
-/** One host program behind a connection. `remote_login` means its sign-in can be
- *  finished from the browser via `sign-in/begin` + `sign-in/complete`. */
+/** One host program behind a connection. */
 export interface ConnectorHostAuthorization {
   name: string
-  remote_login: boolean
 }
 
-/** The consent link a browser sign-in opens. `expires_in` is in seconds; the
- *  pasted address must arrive before then or the sign-in has to start again. */
-export interface ConnectorSignInStartResponse {
-  instance: string
-  account: string
-  consent_url: string
+/** Start of a one-click OAuth connect. `redirect_mode` `none` means the provider
+ *  shows a code on its own page instead of redirecting back to Arc. */
+export interface OAuthBeginResponse {
+  authorize_url: string
+  state: string
+  redirect_mode: 'callback' | 'none'
   expires_in: number
+}
+
+/** Finish an OAuth connect: the address the browser landed on, or the state and
+ *  the code a provider with no redirect displays. */
+export type OAuthCompleteBody = { redirect_url: string } | { state: string; code: string }
+
+/** Whether Arc has an OAuth app (client id and secret) for a provider. The secret
+ *  is never returned; `client_id_hint` is a masked id for recognition only. */
+export interface OAuthAppResponse {
+  provider: string
+  configured: boolean
+  client_id_hint: string
+  redirect_uri: string
+  console_url: string
 }
 
 export interface ConnectorAuthResponse {

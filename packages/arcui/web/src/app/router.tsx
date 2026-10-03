@@ -20,11 +20,15 @@ import { GatedCapabilitiesPage } from '@/pages/gated-capabilities'
 import { SettingsPage } from '@/pages/settings'
 import { WorkflowsPage } from '@/pages/workflows'
 import { ConnectionsPage } from '@/pages/connections'
+import { OAuthCallbackPage } from '@/pages/oauth-callback'
 import { LazyWorkflowDetailPage } from './lazy-workflow-detail'
 import { DEFAULT_PATH } from './nav'
 
 export const router = createBrowserRouter([
   { path: '/setup', element: <SetupPage /> },
+  // Outside the auth gate: a provider redirects here, and a browser with no sign-in
+  // must still see the paste-back fallback rather than a login form.
+  { path: '/oauth/callback', element: <OAuthCallbackPage /> },
   {
     path: '/',
     element: <AuthGate><AppShell /></AuthGate>,

@@ -36,16 +36,14 @@ logger = logging.getLogger("arcui.connection_view")
 def connect_kind(entry: arcagent.CatalogEntry | None) -> ConnectKind:
     """How an operator reconnects this connection, from its manifest alone.
 
-    No secret is read to decide: ``oauth`` is a declared flow, ``remote_login`` and
-    ``host_login`` are declared host commands, ``token`` is a declared sensitive
+    No secret is read to decide: ``oauth`` is a declared flow, ``host_login`` is a
+    declared host command, ``token`` is a declared sensitive
     secret. A bundle that is no longer on the search path is ``none``.
     """
     if entry is None or entry.error:
         return "none"
     if entry.oauth:
         return "oauth"
-    if any(required.remote_login is not None for required in entry.host_requires):
-        return "remote_login"
     if any(
         required.token_command or required.authorize_command for required in entry.host_requires
     ):

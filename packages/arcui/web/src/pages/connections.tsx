@@ -18,7 +18,7 @@ import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { ContextNote } from '@/components/hitl'
 import { AgentGrantChips } from '@/components/connection-grants'
 import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
-import { RemoteSignInPanel } from '@/components/remote-sign-in-panel'
+import { OAuthConnectPanel } from '@/components/oauth-connect-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { AddMcpServerDialog } from '@/components/add-mcp-server-dialog'
 import { HostRequirementLine } from '@/components/host-setup-panel'
@@ -233,8 +233,7 @@ function ConnectionCard({
   // nothing to type, so there is no key form to open.
   const holdsOwnLogin = bundle !== undefined && bundle.secrets.length === 0
   const kind = inst.connect_kind
-  const remoteLogin = kind === 'remote_login'
-  const reauthLabel = kind === 'oauth' ? 'App key/secret' : remoteLogin ? 'Edit details' : 'Re-auth'
+  const reauthLabel = kind === 'oauth' ? 'Edit details' : 'Re-auth'
   const togglePanel = (next: Exclude<OpenPanel, null>) =>
     setPanel((current) => (current === next ? null : next))
 
@@ -405,11 +404,12 @@ function ConnectionCard({
 
       {operatorMode && panel === 'auth' && (
         <div className="border-t border-border p-4">
-          {remoteLogin ? (
-            <RemoteSignInPanel
+          {kind === 'oauth' ? (
+            <OAuthConnectPanel
               instance={inst.instance}
-              operatorMode={operatorMode}
-              onEditDetails={bundle ? () => onReauth(bundle, inst.instance) : undefined}
+              provider={inst.oauth_provider}
+              reconnect={inst.action === 'reconnect'}
+              onDone={() => setPanel(null)}
             />
           ) : (
             <ConnectorAuthorizePanel
@@ -482,9 +482,9 @@ export function BundleCard({
   operatorMode: boolean
   onConnect: (bundle: CatalogBundle) => void
 }) {
-  // One bundle, many accounts: a browser-sign-in bundle (Google) is added once
+  // One bundle, many accounts: a bundle that asks for an account (Google) is added once
   // per address, so the button says what it does each time.
-  const perAccount = bundle.host_requires.some((r) => r.remote_login)
+  const perAccount = bundle.secrets.some((s) => s.name === 'account')
   return (
     // The bundle's directory is on the card as a hover title rather than a line
     // of its own. It matters exactly twice — telling two same-named bundles

@@ -12,12 +12,12 @@ afterEach(() => {
   localStorage.clear()
 })
 
-const bundle = (remote: boolean): CatalogBundle => ({
+const bundle = (perAccount: boolean): CatalogBundle => ({
   name: 'google_workspace', display_name: 'Google Workspace', version: '1.0.0',
   description: 'Gmail, Calendar and Drive', attachment: 'cli', tier_floor: 'personal',
   approval_default: 'ask', knowledge_mode: 'source', knowledge_reason: '',
-  secrets: [{ name: 'account', prompt: 'Google account', sensitive: false, value: '' }],
-  host_requires: [{ name: 'gog', instruction: 'install gog', satisfied: true, remote_login: remote }],
+  secrets: perAccount ? [{ name: 'account', prompt: 'Google account', sensitive: false, value: '' }] : [],
+  host_requires: [{ name: 'gog', instruction: 'install gog', satisfied: true }],
   tools: [], root: '/ext',
 })
 
@@ -29,7 +29,7 @@ function wrap(ui: React.ReactNode) {
 }
 
 describe('BundleCard', () => {
-  it('offers "Add an account" for a remote-login bundle', () => {
+  it('offers "Add an account" for a bundle that asks for an account', () => {
     wrap(<BundleCard bundle={bundle(true)} connectedCount={1} operatorMode onConnect={() => {}} />)
     expect(screen.getByRole('button', { name: /Add an account/ })).toBeTruthy()
     expect(
@@ -49,38 +49,59 @@ const row = (over: Partial<ConnectorInstance> = {}): ConnectorInstance => ({
   knowledge_mode: 'source', knowledge_reason: '', approval: 'ask', agents: [],
   status: 'healthy', display_status: 'healthy', reason_code: null, reason_text: null,
   action: 'none', action_label: '', last_checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
-  last_success_at: null, last_notice: null, connect_kind: 'remote_login', knowledge_sync: [],
+  last_success_at: null, last_notice: null, connect_kind: 'oauth', oauth_provider: 'google', knowledge_sync: [],
   ...over,
 })
 
-// Serves the page's reads and records every URL requested.
-function stubApi(connections: ConnectorInstance[]) {
+interface StubCall { url: string; method: string; body: unknown }
+
+// Serves the page's reads and records every request made.
+function stubApi(connections: ConnectorInstance[], opts: { appConfigured?: boolean } = {}) {
   const urls: string[] = []
-  vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL) => {
+  const calls: StubCall[] = []
+  vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
     const path = String(request)
     urls.push(path)
+    calls.push({
+      url: path,
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    })
     const json = (body: unknown) => new Response(JSON.stringify(body))
     if (path.includes('/api/team/roster')) return json({ agents: [] })
     if (path.includes('/api/connectors/catalog')) return json({ available: [bundle(true)], unreadable: [] })
+    if (path.endsWith('/api/oauth-apps/google')) {
+      return json({
+        provider: 'google', configured: opts.appConfigured ?? true, client_id_hint: '1234…',
+        redirect_uri: 'http://arc.local:8420/oauth/callback', console_url: 'https://console.cloud.google.com/',
+      })
+    }
+    if (path.endsWith('/oauth/begin')) {
+      return json({
+        authorize_url: 'https://accounts.google.com/o/oauth2/auth?state=s1', state: 's1',
+        redirect_mode: 'callback', expires_in: 600,
+      })
+    }
+    if (path.endsWith('/api/oauth/complete')) return json(connections[0])
     if (path.endsWith('/auth')) {
       return json({
         instance: 'gmail-olivia', extension: 'google_workspace', extension_display_name: 'Google Workspace',
         credentials: [], reachable: true, detail: '', sign_in: 'expired',
-        hosts: [{ name: 'gog', remote_login: true }],
+        hosts: [{ name: 'gog' }],
       })
     }
     if (path.endsWith('/api/connections')) return json({ connections, extensions_roots: [] })
     return new Response(JSON.stringify({ error: 'nope' }), { status: 404 })
   }))
-  return urls
+  return { urls, calls }
 }
 
-async function renderCard(connections: ConnectorInstance[]) {
+async function renderCard(connections: ConnectorInstance[], opts: { appConfigured?: boolean } = {}) {
   localStorage.setItem('arcui_operator_mode', '1')
-  const urls = stubApi(connections)
+  const { urls, calls } = stubApi(connections, opts)
   wrap(<ConnectionsPage />)
   const name = await screen.findByText(connections[0].instance, { selector: '[data-connection-card] span' })
-  return { card: name.closest('[data-connection-card]') as HTMLElement, urls }
+  return { card: name.closest('[data-connection-card]') as HTMLElement, urls, calls }
 }
 
 const needsYou = (over: Partial<ConnectorInstance> = {}) =>
@@ -157,11 +178,39 @@ describe('ConnectionCard health row', () => {
     expect(urls.some((u) => u.includes('/api/connected-data'))).toBe(false)
   })
 
-  it('primary Reconnect opens the sign-in panel for a remote-login connection', async () => {
-    const { card, urls } = await renderCard([needsYou()])
+  it('oauth connect opens provider and completes from pasted address', async () => {
+    const open = vi.fn()
+    vi.stubGlobal('open', open)
+    const { card, calls } = await renderCard([needsYou()])
     await userEvent.click(within(card).getByRole('button', { name: 'Reconnect Google' }))
-    await waitFor(() => expect(urls.some((u) => u.endsWith('/auth'))).toBe(true))
-    expect(await within(card).findByText(/Google stopped accepting the saved sign-in/)).toBeTruthy()
+    await userEvent.click(await within(card).findByRole('button', { name: 'Reconnect' }))
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth?state=s1', '_blank', 'noopener'),
+    )
+    expect(calls.find((c) => c.url.endsWith('/gmail-olivia/oauth/begin'))?.method).toBe('POST')
+    expect(await within(card).findByText('Waiting for Google…')).toBeTruthy()
+    await userEvent.click(within(card).getByText(/Didn't come back\?/))
+    const pasted = 'http://arc.local:8420/oauth/callback?code=c1&state=s1'
+    await userEvent.type(within(card).getByLabelText('Address you landed on'), pasted)
+    await userEvent.click(within(card).getByRole('button', { name: /Finish connecting/ }))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/oauth/complete'))).toBe(true))
+    expect(calls.find((c) => c.url.endsWith('/api/oauth/complete'))?.body).toEqual({ redirect_url: pasted })
+    await waitFor(() => expect(within(card).queryByText('Waiting for Google…')).toBeNull())
+  })
+
+  it('app setup panel shows redirect uri when app missing', async () => {
+    const { card, calls } = await renderCard([needsYou()], { appConfigured: false })
+    await userEvent.click(within(card).getByRole('button', { name: 'Reconnect Google' }))
+    const redirect = (await within(card).findByLabelText('Redirect address')) as HTMLInputElement
+    expect(redirect.value).toBe('http://arc.local:8420/oauth/callback')
+    expect(within(card).getByText(/google-accounts\.md/)).toBeTruthy()
+    expect((within(card).getByLabelText('Client secret') as HTMLInputElement).type).toBe('password')
+    expect(within(card).queryByRole('button', { name: 'Reconnect' })).toBeNull()
+    await userEvent.type(within(card).getByLabelText('Client ID'), 'cid')
+    await userEvent.type(within(card).getByLabelText('Client secret'), 'sek')
+    await userEvent.click(within(card).getByRole('button', { name: 'Save app' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ client_id: 'cid', client_secret: 'sek' })
   })
 })
 

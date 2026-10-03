@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
 import type {
@@ -6,7 +7,10 @@ import type {
   ConnectorApproveResponse,
   ConnectorAuthResponse,
   ConnectorAuthStatusResponse,
-  ConnectorSignInStartResponse,
+  ConnectorInstance,
+  OAuthAppResponse,
+  OAuthBeginResponse,
+  OAuthCompleteBody,
   ConnectorAuthorizationResponse,
   ConnectorCatalogResponse,
   McpPreviewResponse,
@@ -1861,42 +1865,63 @@ export const useAuthorizeConnector = (instance: string) => {
   })
 }
 
-// Native OAuth connect: exchange the one-time authorization code for a durable
-// refresh token, server-side. The operator opens the authorize URL, pastes the
-// code here, and this finishes the sign-in — no token is ever typed or stored
-// short-lived. Operator-only server side.
-export const useCompleteOauth = (instance: string) => {
+// One-click OAuth connect, step 1: the server mints the provider consent URL and a
+// single-use state. Operator-only server side.
+export const useBeginOAuth = (instance: string) =>
+  useMutation<OAuthBeginResponse, Error, void>({
+    mutationFn: () => apiPost(connectionPath(instance, '/oauth/begin'), {}),
+  })
+
+// Step 2: hand the server the address the browser landed on (or the state and code
+// a provider with no redirect shows). It answers with the connection row, so a
+// success refreshes the whole connections list.
+export const useCompleteOAuth = () => {
   const queryClient = useQueryClient()
-  return useMutation<ConnectorAuthStatusResponse, Error, { code: string }>({
-    mutationFn: (body) => apiPost(connectionPath(instance, '/oauth'), body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
-      queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
-    },
+  return useMutation<ConnectorInstance, Error, OAuthCompleteBody>({
+    mutationFn: (body) => apiPost('/api/oauth/complete', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY }),
   })
 }
 
-// Browser sign-in, step 1: the server starts the host program's remote login and
-// hands back the consent link to open. Operator-only server side. The server
-// refuses while a field with a blank-warning is blank (Google: no own OAuth
-// client) unless `accept_warnings` says the operator read the warning.
-export const useBeginSignIn = (instance: string) =>
-  useMutation<ConnectorSignInStartResponse, Error, { accept_warnings?: boolean }>({
-    mutationFn: (body) => apiPost(connectionPath(instance, '/sign-in/begin'), body),
+const oauthAppKey = (provider: string) => ['oauth-apps', provider]
+const oauthAppPath = (provider: string) => `/api/oauth-apps/${encodeURIComponent(provider)}`
+
+// Whether Arc holds an OAuth app for this provider, and the redirect address to
+// register with it. Never carries the secret.
+export const useOAuthApp = (provider: string, enabled: boolean) =>
+  useQuery<OAuthAppResponse>({
+    queryKey: oauthAppKey(provider),
+    queryFn: ({ signal }) => apiGet(oauthAppPath(provider), signal),
+    enabled: enabled && provider !== '',
+    retry: false,
   })
 
-// Browser sign-in, step 2: send the address the browser landed on after consent.
-// The server finishes the login and answers with the verified sign-in state.
-export const useCompleteSignIn = (instance: string) => {
+export const useSetOAuthApp = (provider: string) => {
   const queryClient = useQueryClient()
-  return useMutation<ConnectorAuthStatusResponse, Error, { redirect_url: string }>({
-    mutationFn: (body) => apiPost(connectionPath(instance, '/sign-in/complete'), body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: authStatusKey(instance) })
-      queryClient.invalidateQueries({ queryKey: ['connections', instance, 'auth'] })
-      queryClient.invalidateQueries({ queryKey: doctorKey(instance) })
-    },
+  return useMutation<{ configured: boolean }, Error, { client_id: string; client_secret: string }>({
+    mutationFn: (body) => apiPut(oauthAppPath(provider), body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: oauthAppKey(provider) }),
   })
+}
+
+// The OAuth callback tab announces a finished connect on this channel. The tab that
+// started it refreshes its connections and lets the caller close its waiting panel.
+export const OAUTH_CHANNEL = 'arc-connections'
+export const useOAuthConnectedListener = (onConnected: () => void) => {
+  const queryClient = useQueryClient()
+  const latest = useRef(onConnected)
+  useEffect(() => {
+    latest.current = onConnected
+  })
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return
+    const channel = new BroadcastChannel(OAUTH_CHANNEL)
+    channel.onmessage = () => {
+      queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })
+      latest.current()
+    }
+    return () => channel.close()
+  }, [queryClient])
 }
 
 // Disconnects the account for everyone: its credential, its definition, and

@@ -922,9 +922,6 @@ class ConnectorHostRequirement(BaseModel):
     name: str
     instruction: str
     satisfied: bool = False
-    #: True when this binary's sign-in can be finished from the browser, so a
-    #: bundle card can offer "Add an account" rather than a terminal step.
-    remote_login: bool = False
 
 
 class ConnectorTool(BaseModel):
@@ -985,7 +982,7 @@ class ConnectorCatalogResponse(BaseModel):
 ConnectionStatusName = Literal["unknown", "healthy", "needs_you", "error"]
 ConnectionDisplayStatus = Literal["unknown", "healthy", "needs_you", "error", "syncing"]
 ConnectionActionName = Literal["none", "reconnect", "approve", "install_host", "wait"]
-ConnectKind = Literal["oauth", "token", "host_login", "remote_login", "none"]
+ConnectKind = Literal["oauth", "token", "host_login", "none"]
 
 
 class LastNoticeView(BaseModel):
@@ -1061,6 +1058,8 @@ class ConnectorInstance(ConnectionHealthView):
     agents: list[str]
     #: How the operator reconnects it, read from the manifest alone.
     connect_kind: ConnectKind = "none"
+    #: The deployment app slot a one-click connect uses ("" when not OAuth).
+    oauth_provider: str = ""
     knowledge_sync: list[KnowledgeSyncRow] = Field(default_factory=list)
 
 
@@ -1178,8 +1177,6 @@ class ConnectorHostAuthorization(BaseModel):
     command: str
     instruction: str
     token_command: str
-    #: True when Arc can drive this binary's sign-in from the browser in two steps.
-    remote_login: bool = False
 
 
 class ConnectorAuthStatusResponse(BaseModel):
@@ -1215,21 +1212,31 @@ class ConnectorAuthStatusResponse(BaseModel):
     command: str
 
 
-class ConnectorSignInStartResponse(BaseModel):
-    """Body of ``POST /api/connections/{instance}/sign-in/begin``.
+class OAuthBeginResponse(BaseModel):
+    """Body of ``POST /api/connections/{instance}/oauth/begin``.
 
-    ``consent_url`` is the provider's own consent page, checked server-side to be
-    on the host the bundle declares; it carries only public values (client id, a
-    CSRF state, a PKCE challenge). ``expires_in`` is how many seconds the operator
-    has to paste the address back before starting again.
+    ``authorize_url`` carries only public values (client id, ``state``, a PKCE
+    challenge, the configured redirect URI); the verifier stays on the server.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    instance: str
-    account: str
-    consent_url: str
+    authorize_url: str
+    state: str
+    redirect_mode: Literal["callback", "none"]
     expires_in: int
+
+
+class OAuthAppResponse(BaseModel):
+    """Body of ``GET /api/oauth-apps/{provider}``. Never the client secret."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    configured: bool
+    client_id_hint: str
+    redirect_uri: str
+    console_url: str
 
 
 class ConnectorHostSetupResponse(BaseModel):
@@ -1267,13 +1274,9 @@ class ConnectorAuthorizationResponse(BaseModel):
     hosts: list[ConnectorHostAuthorization]
     reachable: bool
     detail: str
-    #: True when this connector is finished by an OAuth code exchange — the panel
-    #: shows the authorize URL and a code field, not a token form or a host command.
+    #: True when this connector connects with one click (native OAuth): the card
+    #: runs the begin/complete flow, never a token form or a host command.
     oauth: bool = False
-    #: The provider consent URL to open (empty until the app key/secret are supplied,
-    #: or for a non-OAuth connector). Safe to render: it names only the public client
-    #: id, never a secret.
-    authorize_url: str = ""
     #: The account-connected answer, taken with the same check ``auth-status``
     #: runs, so a card reading this one call can show it without a second.
     sign_in: Literal["signed_in", "signed_out", "expired", "not_installed", "unknown"] = "unknown"

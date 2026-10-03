@@ -39,7 +39,10 @@ and is why nothing here has a sink to close.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
+from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -79,9 +82,10 @@ from arcui.schemas import (
     ConnectorProbeResponse,
     ConnectorRemoveResponse,
     ConnectorSecretField,
-    ConnectorSignInStartResponse,
     ConnectorTool,
     ConnectorUnreadableBundle,
+    OAuthAppResponse,
+    OAuthBeginResponse,
 )
 
 NOT_INSTALLED = arcagent.NOT_INSTALLED
@@ -135,23 +139,25 @@ def _connections(request: Request) -> Connections:
         audit=AuditChain.held(operator_audit_sink(request)),
         state_opener=state_opener if backend is not None else None,
         connector_control=_connector_control(request),
-        remote_logins=_remote_logins(request),
         host_step_timeout=getattr(request.app.state, "connector_step_timeout", None),
+        **_oauth_settings(request),
     )
 
 
-def _remote_logins(request: Request) -> arcagent.RemoteLoginLedger:
-    """The one ledger of begun browser sign-ins, held for this server's lifetime.
+def _oauth_settings(request: Request) -> dict[str, Any]:
+    """The one-click connect's server-held pieces: ledger, configured redirect, endpoint.
 
-    A begun sign-in is completed by a LATER request, so it cannot live in the
-    per-request seam. Created on first use and kept on the app; there is no await
-    between the read and the write, so two requests cannot each create one.
+    The redirect URI comes from ``app.state.oauth_redirect_uri``, set at startup from
+    ``[ui] public_base_url`` / the UI port — never from this request (design O3).
     """
-    ledger = getattr(request.app.state, "remote_login_ledger", None)
-    if not isinstance(ledger, arcagent.RemoteLoginLedger):
-        ledger = arcagent.RemoteLoginLedger()
-        request.app.state.remote_login_ledger = ledger
-    return ledger
+    settings: dict[str, Any] = {"oauth_pending": _oauth_pending(request)}
+    redirect_uri = getattr(request.app.state, "oauth_redirect_uri", None)
+    if isinstance(redirect_uri, str) and redirect_uri:
+        settings["oauth_redirect_uri"] = redirect_uri
+    token_post = getattr(request.app.state, "oauth_token_post", None)
+    if token_post is not None:
+        settings["token_post"] = token_post
+    return settings
 
 
 class _InProcessConnectorControl:
@@ -226,6 +232,7 @@ def _row(
         approval=connection.approval,
         agents=list(connection.agents),
         connect_kind=connect_kind(usable),
+        oauth_provider=usable.oauth_provider if usable is not None else "",
         **health,
     )
 
@@ -448,11 +455,8 @@ def _catalog_entry(
                 # as broken.
                 instruction=verdict.instruction,
                 satisfied=verdict.satisfied,
-                remote_login=declared.remote_login is not None,
             )
-            for declared, verdict in zip(
-                entry.host_requires, director.check(entry.host_requires), strict=True
-            )
+            for verdict in director.check(entry.host_requires)
         ],
         tools=[
             ConnectorTool(
@@ -777,14 +781,12 @@ async def get_connector_auth(request: Request) -> JSONResponse:
                     command=host.command,
                     instruction=host.instruction,
                     token_command=host.token_command,
-                    remote_login=host.remote_login,
                 )
                 for host in auth.hosts
             ],
             reachable=auth.reachable,
             detail=auth.detail,
             oauth=auth.oauth,
-            authorize_url=auth.authorize_url,
             sign_in=auth.sign_in,
         ).model_dump(mode="json")
     )
@@ -959,56 +961,13 @@ async def post_connector_authorize(request: Request) -> JSONResponse:
     return _auth_status(auth)
 
 
-async def post_connector_oauth(request: Request) -> JSONResponse:
-    """POST /api/connections/{instance}/oauth — finish a native OAuth connection.
+async def post_oauth_begin(request: Request) -> JSONResponse:
+    """POST /api/connections/{instance}/oauth/begin — start a one-click connect.
 
-    Operator only. ``code`` is the one-time authorization code the provider showed;
-    Arc exchanges it for a DURABLE refresh token, stores it, and probes. The code is
-    a short-lived credential: it goes to the provider's token endpoint and to
-    nothing else, and appears in no response, log line, or audit event this route
-    produces (LLM02, LLM07). A dead code refuses with the provider's reason so the
-    operator authorizes again rather than staring at a silent failure.
-    """
-    if not _is_operator(request):
-        return _error("Operator role required", 403)
-
-    try:
-        body = await read_json_object(request)
-    except BodyTooLargeError:
-        return _error("Request body too large", 413)
-    if body is None:
-        return _error("Body must be a JSON object", 400)
-
-    instance = request.path_params["instance"]
-    code = body.get("code")
-    if not isinstance(code, str) or not code.strip():
-        return _error("A one-time authorization code is required", 400)
-
-    try:
-        auth = await _connections(request).complete_oauth(instance, code=code)
-    except ExtensionError as exc:
-        return _refused(exc)
-
-    emit_mutation_audit(
-        request,
-        target=f"connector:{instance}",
-        operation="connector.oauth",
-        outcome="applied" if auth.working else "denied",
-        detail=auth.extension,
-    )
-    return _auth_status(auth)
-
-
-async def post_connector_sign_in_begin(request: Request) -> JSONResponse:
-    """POST /api/connections/{instance}/sign-in/begin — start a browser sign-in.
-
-    Operator only: it runs the bundle's declared first sign-in step on the host.
-    Answers with the provider's consent link for THIS connection's account; the
-    operator opens it, signs in, and pastes back the address the browser lands on.
-    A field the bundle warns about leaving blank (Google: no OAuth client of the
-    operator's own) refuses with that warning unless ``accept_warnings`` is true.
-    One sign-in per host binary may be waiting at a time, and a second account's
-    begin is refused by name rather than silently replacing the first.
+    Operator only. Answers with the provider consent URL, bound to THIS operator
+    session: a callback carrying it completes only from the session that began it.
+    The redirect URI inside it is the deployment's configured one, never derived
+    from this request's ``Host`` (design O3).
     """
     if not _is_operator(request):
         return _error("Operator role required", 403)
@@ -1020,45 +979,125 @@ async def post_connector_sign_in_begin(request: Request) -> JSONResponse:
         return _error("Body must be a JSON object", 400)
 
     instance = request.path_params["instance"]
-    # Only a literal ``true`` accepts the bundle's blank-field warnings: the
-    # fallback they describe is a deliberate choice, never a default.
-    accept = body.get("accept_warnings") is True
     try:
-        started = await _connections(request).begin_remote_login(instance, accept_warnings=accept)
+        begun = await _connections(request).begin_oauth(
+            instance, session_id=_oauth_session(request)
+        )
     except ExtensionError as exc:
         emit_mutation_audit(
             request,
             target=f"connector:{instance}",
-            operation="connector.sign_in.begin",
+            operation="connector.oauth.begin",
             outcome="denied",
             detail=exc.code,
         )
         return _refused(exc)
-
     emit_mutation_audit(
         request,
         target=f"connector:{instance}",
-        operation="connector.sign_in.begin",
+        operation="connector.oauth.begin",
         outcome="applied",
     )
     return JSONResponse(
-        ConnectorSignInStartResponse(
-            instance=started.instance,
-            account=started.account,
-            consent_url=started.consent_url,
-            expires_in=started.expires_in,
+        OAuthBeginResponse(
+            authorize_url=begun.authorize_url,
+            state=begun.state,
+            redirect_mode=begun.redirect_mode,
+            expires_in=begun.expires_in,
         ).model_dump(mode="json")
     )
 
 
-async def post_connector_sign_in_complete(request: Request) -> JSONResponse:
-    """POST /api/connections/{instance}/sign-in/complete — finish it with the pasted address.
+async def post_oauth_complete(request: Request) -> JSONResponse:
+    """POST /api/oauth/complete — finish a connect from the callback page or a paste.
 
-    Operator only. ``redirect_url`` is the address the browser landed on; it holds
-    a single-use authorization code, so it is checked and passed to the bundle's
-    declared second step and appears in no response, log line, or audit event
-    this route produces. The answer is the connection's sign-in taken AFTERWARDS
-    with the bundle's own check — "working" only when the account really works.
+    Operator only, 10 per minute per session. Body ``{redirect_url}`` (the address
+    the browser landed on) or ``{state, code}`` (a provider that shows a code). The
+    code is a credential: it reaches the provider's token endpoint and nothing else
+    — no response, log line or audit event here carries it. Answers with the
+    connection's row after the post-connect probe.
+    """
+    if not _is_operator(request):
+        return _error("Operator role required", 403)
+    session = _oauth_session(request)
+    if not _oauth_rate_ok(request, session):
+        return _error("Too many sign-in attempts; wait a minute and try again", 429)
+    try:
+        body = await read_json_object(request)
+    except BodyTooLargeError:
+        return _error("Request body too large", 413)
+    if body is None:
+        return _error("Body must be a JSON object", 400)
+    fields = {name: body.get(name) for name in ("state", "code", "redirect_url")}
+    if any(value is not None and not isinstance(value, str) for value in fields.values()):
+        return _error("state, code and redirect_url must be strings", 400)
+
+    connections = _connections(request)
+    try:
+        record = await connections.complete_oauth(
+            session_id=session,
+            state=fields["state"] or "",
+            code=fields["code"] or "",
+            redirect_url=fields["redirect_url"] or "",
+        )
+    except ExtensionError as exc:
+        emit_mutation_audit(
+            request,
+            target="connector:oauth",
+            operation="connector.oauth.complete",
+            outcome="denied",
+            detail=exc.code,
+        )
+        return _refused(exc)
+    emit_mutation_audit(
+        request,
+        target=f"connector:{record.connection}",
+        operation="connector.oauth.complete",
+        outcome="applied",
+        detail=record.status,
+    )
+    return await _connection_row(request, connections, record.connection)
+
+
+async def _connection_row(
+    request: Request, connections: Connections, instance: str
+) -> JSONResponse:
+    """One connection's listing row, exactly as ``GET /api/connections`` shows it."""
+    connection = connections.registry.get(instance)
+    entries = _catalog_entries(connections)
+    card = await load_card_context(request, [instance])
+    row = _row(instance, connection, entries.get(connection.extension), card=card)
+    return JSONResponse(row.model_dump(mode="json"))
+
+
+async def get_oauth_app(request: Request) -> JSONResponse:
+    """GET /api/oauth-apps/{provider} — is this provider's sign-in app set up?
+
+    Readable by ``viewer``. Never the secret: a 12-character client-id hint, and
+    the redirect URI the operator registers with the provider.
+    """
+    provider = request.path_params["provider"]
+    connections = _connections(request)
+    try:
+        status = await connections.oauth_app_status(provider)
+    except ExtensionError as exc:
+        return _refused(exc)
+    return JSONResponse(
+        OAuthAppResponse(
+            provider=provider,
+            configured=status.configured,
+            client_id_hint=status.client_id_hint,
+            redirect_uri=connections.oauth_redirect_uri,
+            console_url=_CONSOLE_URLS.get(provider, ""),
+        ).model_dump(mode="json")
+    )
+
+
+async def put_oauth_app(request: Request) -> JSONResponse:
+    """PUT /api/oauth-apps/{provider} — set the provider's sign-in app up, once.
+
+    Operator only. The client secret is sealed into custody and never returned;
+    the audit records that the slot was set, not its values.
     """
     if not _is_operator(request):
         return _error("Operator role required", 403)
@@ -1068,31 +1107,86 @@ async def post_connector_sign_in_complete(request: Request) -> JSONResponse:
         return _error("Request body too large", 413)
     if body is None:
         return _error("Body must be a JSON object", 400)
-    pasted = body.get("redirect_url")
-    if not isinstance(pasted, str) or not pasted.strip():
-        return _error("Paste the address the browser landed on after signing in", 400)
+    client_id, client_secret = body.get("client_id"), body.get("client_secret")
+    if not isinstance(client_id, str) or not isinstance(client_secret, str):
+        return _error("client_id and client_secret are required", 400)
 
-    instance = request.path_params["instance"]
+    provider = request.path_params["provider"]
     try:
-        auth = await _connections(request).complete_remote_login(instance, redirect_url=pasted)
+        await _connections(request).set_oauth_app(
+            provider, client_id=client_id, client_secret=client_secret
+        )
     except ExtensionError as exc:
         emit_mutation_audit(
             request,
-            target=f"connector:{instance}",
-            operation="connector.sign_in.complete",
+            target=f"oauth_app:{provider}",
+            operation="oauth_app.set",
             outcome="denied",
             detail=exc.code,
         )
         return _refused(exc)
-
     emit_mutation_audit(
-        request,
-        target=f"connector:{instance}",
-        operation="connector.sign_in.complete",
-        outcome="applied" if auth.working else "denied",
-        detail=auth.sign_in,
+        request, target=f"oauth_app:{provider}", operation="oauth_app.set", outcome="applied"
     )
-    return _auth_status(auth)
+    return JSONResponse({"configured": True})
+
+
+#: Where an operator creates each provider's OAuth app (shown by the setup panel).
+_CONSOLE_URLS = {
+    "google": "https://console.cloud.google.com/auth/clients",
+    "dropbox": "https://www.dropbox.com/developers/apps",
+}
+
+#: ``POST /api/oauth/complete`` attempts allowed per session per minute.
+_OAUTH_COMPLETE_PER_MINUTE = 10
+
+
+def _oauth_session(request: Request) -> str:
+    """The operator session a sign-in is bound to (CSRF / login-swap defense).
+
+    The auth layer's session id when it tracks one; otherwise the same derivation
+    it uses — a hash of the bearer token and the client address — so the binding
+    never collapses to "anyone".
+    """
+    tracked = getattr(request.state, "session_id", None)
+    if isinstance(tracked, str) and tracked:
+        return tracked
+    bearer = request.headers.get("authorization", "")
+    client = request.client.host if request.client is not None else "unknown"
+    return hashlib.sha256(f"{bearer}\0{client}".encode()).hexdigest()[:32]
+
+
+def _oauth_pending(request: Request) -> arcagent.OAuthPendingLedger:
+    """The one ledger of begun sign-ins, held for this server's lifetime.
+
+    A begun sign-in is completed by a LATER request, so it cannot live in the
+    per-request seam. Created on first use; no await between the read and the write.
+    """
+    ledger = getattr(request.app.state, "oauth_pending_ledger", None)
+    if not isinstance(ledger, arcagent.OAuthPendingLedger):
+        ledger = arcagent.OAuthPendingLedger()
+        request.app.state.oauth_pending_ledger = ledger
+    return ledger
+
+
+def _oauth_rate_ok(request: Request, session: str) -> bool:
+    """A sliding one-minute window per session (LLM10)."""
+    windows: dict[str, deque[float]] | None = getattr(
+        request.app.state, "oauth_complete_windows", None
+    )
+    if windows is None:
+        windows = {}
+        request.app.state.oauth_complete_windows = windows
+    now = time.monotonic()
+    for key in [key for key, hits in windows.items() if not hits or now - hits[-1] > 60]:
+        del windows[key]
+    hits = windows.setdefault(session, deque())
+    while hits and now - hits[0] > 60:
+        hits.popleft()
+    if len(hits) >= _OAUTH_COMPLETE_PER_MINUTE:
+        return False
+    hits.append(now)
+    return True
 
 
 async def post_connector_host_setup(request: Request) -> JSONResponse:
@@ -1234,17 +1328,10 @@ routes = [
     Route("/api/connections/{instance}/auth", put_connector_auth, methods=["PUT"]),
     Route("/api/connections/{instance}/auth-status", get_connector_auth_status, methods=["GET"]),
     Route("/api/connections/{instance}/authorize", post_connector_authorize, methods=["POST"]),
-    Route("/api/connections/{instance}/oauth", post_connector_oauth, methods=["POST"]),
-    Route(
-        "/api/connections/{instance}/sign-in/begin",
-        post_connector_sign_in_begin,
-        methods=["POST"],
-    ),
-    Route(
-        "/api/connections/{instance}/sign-in/complete",
-        post_connector_sign_in_complete,
-        methods=["POST"],
-    ),
+    Route("/api/connections/{instance}/oauth/begin", post_oauth_begin, methods=["POST"]),
+    Route("/api/oauth/complete", post_oauth_complete, methods=["POST"]),
+    Route("/api/oauth-apps/{provider}", get_oauth_app, methods=["GET"]),
+    Route("/api/oauth-apps/{provider}", put_oauth_app, methods=["PUT"]),
     Route("/api/connections/{instance}/host-setup", post_connector_host_setup, methods=["POST"]),
     Route("/api/connections/{instance}/probe", post_connector_probe, methods=["POST"]),
     Route("/api/connections/{instance}/doctor", get_connector_doctor, methods=["GET"]),
@@ -1261,15 +1348,16 @@ __all__ = [
     "get_connector_auth",
     "get_connector_auth_status",
     "get_connector_doctor",
+    "get_oauth_app",
     "post_connection",
     "post_connection_grant",
     "post_connector_approve",
     "post_connector_authorize",
     "post_connector_host_setup",
-    "post_connector_oauth",
     "post_connector_probe",
-    "post_connector_sign_in_begin",
-    "post_connector_sign_in_complete",
+    "post_oauth_begin",
+    "post_oauth_complete",
     "put_connector_auth",
+    "put_oauth_app",
     "routes",
 ]

@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import secrets
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -110,7 +111,26 @@ def _connections(args: argparse.Namespace) -> arcagent.Connections:
         attachment_factory=_attachment_factory(),
         state_opener=_arcstore_opener(),
         connector_control=_connector_control(),
+        oauth_redirect_uri=_oauth_redirect_uri(),
     )
+
+
+def _oauth_redirect_uri() -> str:
+    """The deployment's OAuth redirect URI, from ``[ui] public_base_url`` — config only.
+
+    The same rule ArcUI applies at startup, so a sign-in begun here registers the
+    same address. Without arcgateway or a configured origin, the loopback default.
+    """
+    try:
+        from arcgateway.config import GatewayConfig
+
+        base = GatewayConfig.load().ui.public_base_url
+    except Exception:  # reason: no gateway config is the ordinary personal default
+        base = None
+    try:
+        return arcagent.oauth_redirect_uri(base)
+    except ValueError as exc:
+        _fail(str(exc))
 
 
 def _fail(message: str) -> NoReturn:
@@ -277,31 +297,65 @@ def _authorize(args: argparse.Namespace) -> None:
 
 
 def _authorize_oauth(connections: Any, instance: str, auth: arcagent.Authorization) -> None:
-    """Finish a native OAuth connection: open the URL, paste the code, Arc exchanges it.
+    """One-click connect from a terminal: open the link, paste where the browser landed.
 
-    The whole persistent sign-in in one place — the operator never obtains, types,
-    or sees a refresh token. If the app key/secret are not supplied yet there is no
-    URL to open, so the honest next step is to supply them first.
+    Headless parity with the card. Begin and complete run in ONE event loop and one
+    process, so the pending sign-in (state, PKCE verifier) never leaves memory. The
+    operator pastes the address the browser landed on (or, for a provider that
+    shows a code, the code). Nothing typed here is echoed back or logged.
     """
-    if not auth.authorize_url:
-        _fail(
-            f"supply {instance}'s app key and app secret first "
-            f"(arc connector auth {instance}), then run authorize again."
-        )
-    _out("Open this URL, click Allow, and copy the code it shows:")
-    _out(f"  {auth.authorize_url}")
-    code = input("Paste the code here: ").strip()
-    if not code:
-        _fail("no code entered — authorization not attempted.")
+    session = secrets.token_urlsafe(16)
+
+    async def connect() -> Any:
+        begun = await connections.begin_oauth(instance, session_id=session)
+        if begun.redirect_mode == "none":
+            _out("Open this link, click Allow, and copy the code it shows:")
+        else:
+            _out("Open this link, sign in, and allow access. Then copy the address")
+            _out("your browser lands on (it may say the page cannot be reached):")
+        _out(f"  {begun.authorize_url}")
+        pasted = (await asyncio.to_thread(getpass.getpass, "Paste it here (hidden): ")).strip()
+        if not pasted:
+            _fail("nothing pasted; the sign-in was not completed.")
+        if begun.redirect_mode == "none":
+            return await connections.complete_oauth(
+                session_id=session, state=begun.state, code=pasted
+            )
+        return await connections.complete_oauth(session_id=session, redirect_url=pasted)
+
     try:
-        auth = asyncio.run(connections.complete_oauth(instance, code=code))
+        record = asyncio.run(connect())
     except arcagent.ExtensionError as exc:
         _fail(exc.message)
-    if auth.working:
-        _out(f"  Connected: {auth.extension} answered — a durable refresh token is stored.")
-    else:
-        _out(f"  NOT connected: {auth.detail}")
-        sys.exit(1)
+    if record.status == "healthy":
+        _out(f"  Connected: {auth.extension} answered; the sign-in is stored sealed.")
+        return
+    _out(f"  Connected, but the check says: {record.status} {record.reason_text or ''}".rstrip())
+    sys.exit(1)
+
+
+def _oauth_app(args: argparse.Namespace) -> None:
+    """Set a provider's sign-in app up once for this deployment (client id + secret).
+
+    The secret is read from a hidden prompt, never argv, and sealed into custody.
+    Prints the redirect URI to register with the provider.
+    """
+    connections = _connections(args)
+    _out(f"Redirect URI to register with {args.provider}: {connections.oauth_redirect_uri}")
+    client_id = input("Client ID: ").strip()
+    client_secret = getpass.getpass("Client secret (hidden): ").strip()
+    try:
+        asyncio.run(
+            connections.set_oauth_app(
+                args.provider, client_id=client_id, client_secret=client_secret
+            )
+        )
+    except arcagent.ExtensionError as exc:
+        _fail(exc.message)
+    _out(
+        f"  {args.provider} sign-in is set up. "
+        "Connect each account with: arc connector authorize <name>"
+    )
 
 
 def _host_setup(args: argparse.Namespace) -> None:
@@ -764,6 +818,12 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common(p)
 
     p = subs.add_parser(
+        "oauth-app", help="Set a provider's sign-in app up once (client ID and secret)."
+    )
+    p.add_argument("provider", help="Provider app slot, e.g. google or dropbox.")
+    _add_common(p)
+
+    p = subs.add_parser(
         "host-setup", help="Install the host binaries a bundle pins, digest-verified."
     )
     p.add_argument("extension", help="Extension bundle name.")
@@ -835,6 +895,7 @@ _SUBCOMMAND_MAP = {
     "revoke": _revoke,
     "auth": _auth,
     "authorize": _authorize,
+    "oauth-app": _oauth_app,
     "host-setup": _host_setup,
     "list": _list,
     "tools": _tools,

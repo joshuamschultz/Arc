@@ -8,8 +8,8 @@ Slots live in their own arcstore collection, ``mutable_records/oauth_apps/<provi
 NOT in ``connector_credentials``: a slot is not a connection, so the proactive
 renewer's scan never meets one and no connection name can collide with one. The
 client secret is sealed by the same :class:`~arcagent.extension.custody.CredentialCipher`
-as connector credentials, with associated data binding it to ``app:<provider>``, so
-a sealed secret copied to another provider's slot does not open. The client id is
+as connector credentials, with associated data binding it to ``(app_<provider>,
+oauth_app_secret)``, so a sealed secret copied to another provider's slot does not open. The client id is
 not a secret (it rides every authorize URL) and is stored in the clear so a surface
 can show a hint of it.
 """
@@ -37,7 +37,7 @@ OAUTH_APP_COLLECTION = "oauth_apps"
 #: Refusal code when a connect needs an app slot nobody has set up.
 OAUTH_APP_MISSING = "OAUTH_APP_MISSING"
 
-_SEALED_SLOT = "client_secret"
+_SEALED_SLOT = "oauth_app_secret"
 _PROVIDER = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: Client ids are printable tokens; Google's are ~72 characters.
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9._~\-]{1,256}$")
@@ -218,7 +218,7 @@ class OAuthAppStore:
 
 
 def _scope(provider: str) -> str:
-    return f"app:{provider}"
+    return f"app_{provider}"
 
 
 def _unreadable(provider: str) -> ExtensionError:

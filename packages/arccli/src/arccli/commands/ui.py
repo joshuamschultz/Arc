@@ -301,6 +301,7 @@ def _start(args: argparse.Namespace) -> None:
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
         public_base_url=_public_base_url(args, gateway_config),
+        ui_port=int(getattr(args, "port", 8420)),
         skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
         # The schedule/pulse authority shared by the dashboard and every agent it
         # serves (item 52). None at federal: schedule writes stay closed (503).

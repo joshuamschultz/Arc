@@ -17,7 +17,7 @@
 //   button /save settings/i; key badge text "Key set" / "Key not set"; link to Settings.
 //
 // The server is stubbed at the network boundary (global fetch), as in
-// remote-sign-in-panel.test.tsx, so the panel is free to use any lib/queries hook.
+// the other panel tests, so the panel is free to use any lib/queries hook.
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

@@ -1086,34 +1086,9 @@
         "description": "Grant or remove this account’s access for an agent. An agent granted several Google accounts gets one set of Google tools and picks the account per call; it can never reach an account it was not granted."
       },
       {
-        "key": "connection.authorization_code",
-        "label": "Authorization code",
-        "description": "Enter the code returned by the provider authorization step."
-      },
-      {
         "key": "connection.access_token",
         "label": "Access token",
         "description": "Enter the provider token required by this connector; it is masked in the UI."
-      },
-      {
-        "key": "connection.google_sign_in",
-        "label": "Google sign-in",
-        "description": "Opens Google in a new tab so you can let Arc read this account. Sign in as the account shown and click Allow. The link works for a few minutes; if it runs out, click the button again."
-      },
-      {
-        "key": "connection.sign_in_address",
-        "label": "Address from the browser bar",
-        "description": "After you click Allow, Google sends you to a page that does not load. That is expected. Copy the full address from the top of the browser and paste it here. It holds a one-time code that finishes the sign-in."
-      },
-      {
-        "key": "connection.google_account",
-        "label": "Google account",
-        "description": "The email address this connection reads. Each Google account is its own connection, so add one connection per address."
-      },
-      {
-        "key": "connection.google_client",
-        "label": "OAuth client",
-        "description": "The name of your own published Google OAuth client, as stored on this computer. With a published client, Google stops making you sign in again every week. Leaving it blank uses the built-in client, whose sign-ins expire in about 7 days."
       },
       {
         "key": "connection.google_access",

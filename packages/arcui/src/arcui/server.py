@@ -281,6 +281,7 @@ def create_app(
     hosted_claim: HostedClaimService | None = None,
     hosted_origin: str | None = None,
     public_base_url: str | None = None,
+    ui_port: int = 8420,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -341,6 +342,8 @@ def create_app(
         public_base_url: The operator-configured public origin of this dashboard
             (``[ui] public_base_url``, already validated). Notices carry deep
             links built from it; it is never derived from a request's Host header.
+        ui_port: The port this dashboard serves on. With ``public_base_url`` it
+            fixes the OAuth redirect URI (``/oauth/callback``) at startup.
         allow_external_task_refs: Ingest policy for operator-authored task text
             (ADR-019 tier = stringency). Federal → False (default): URLs/emails
             in a task title/description are rejected as an external-comms
@@ -813,6 +816,8 @@ def create_app(
     app.state.hosted_claim = hosted_claim
     app.state.hosted_origin = hosted_origin
     app.state.public_base_url = public_base_url
+    # The one redirect URI every one-click connect uses: config, never a request.
+    app.state.oauth_redirect_uri = arcagent.oauth_redirect_uri(public_base_url, port=ui_port)
     app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
     app.state.hosted_claim_pending = set()
     app.state.hosted_claim_executor = (

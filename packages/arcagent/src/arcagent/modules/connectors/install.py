@@ -274,7 +274,13 @@ async def install_connector(
             caller_did=caller_did,
             include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
-        probe = await _probe(plan, attachment_factory, secrets, credential)
+        if plan.manifest.oauth is not None:
+            # A one-click connector has no grant until the operator connects it, so
+            # there is nothing to probe yet: its tools are read from the bundle and
+            # the post-connect check (Connections.complete_oauth) is the first probe.
+            probe = await _described(plan, attachment_factory, secrets, credential)
+        else:
+            probe = await _probe(plan, attachment_factory, secrets, credential)
         _refuse_probed_egress(plan, probe)
     except BaseException:
         await _forget_secrets(written, store=store, did=caller_did)
@@ -544,6 +550,26 @@ async def _forget_secrets(refs: Sequence[SecretRef], *, store: SecretStore, did:
             await store.delete(ref, caller_did=did)
         except Exception:  # reason: rollback must attempt every ref, then report
             _logger.exception("could not roll back connector secret %s", ref)
+
+
+async def _described(
+    plan: ConnectorPlan,
+    factory: AttachmentFactory | None,
+    secrets: Mapping[str, Secret],
+    credential: AccessTokenHandle | None,
+) -> ProbeResult:
+    """The tools a not-yet-connected OAuth bundle serves, read without a network call."""
+    build = factory or build_attachment
+    try:
+        attachment = build(plan.manifest, plan.bundle, secrets, credential=credential)
+        tools = await attachment.describe_tools()
+    except ExtensionError as exc:
+        raise _refuse("probe", exc.message, extension=plan.extension) from exc
+    except Exception as exc:  # reason: any attachment failure is a refused install
+        raise _refuse("probe", f"{type(exc).__name__}: {exc}", extension=plan.extension) from exc
+    return ProbeResult(
+        reachable=False, tools=list(tools), detail="not connected yet: click Connect to sign in"
+    )
 
 
 async def _probe(

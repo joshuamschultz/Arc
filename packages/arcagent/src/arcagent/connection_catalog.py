@@ -87,6 +87,8 @@ class CatalogEntry:
     tools: tuple[DeclaredTool, ...] = ()
     #: True when the manifest declares an ``[oauth]`` flow — read, not inferred.
     oauth: bool = False
+    #: The deployment app slot an ``[oauth]`` flow uses ("" when there is none).
+    oauth_provider: str = ""
 
 
 def catalog(
@@ -147,6 +149,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         host_requires=tuple(manifest.host_requires),
         tools=tuple(manifest.tools.declared),
         oauth=manifest.oauth is not None,
+        oauth_provider=manifest.oauth.provider if manifest.oauth is not None else "",
     )
 
 

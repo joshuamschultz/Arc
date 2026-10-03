@@ -14,12 +14,12 @@ const field = (over: Partial<ConnectorSecret> & { name: string }): ConnectorSecr
   prompt: over.name, sensitive: false, value: '', ...over,
 })
 
-const bundle = (secrets: ConnectorSecret[], remote = false): CatalogBundle => ({
+const bundle = (secrets: ConnectorSecret[]): CatalogBundle => ({
   name: 'google_workspace', display_name: 'Google Workspace', version: '1.0.0',
   description: 'Gmail, Calendar and Drive', attachment: 'cli', tier_floor: 'personal',
   approval_default: 'ask', knowledge_mode: 'source', knowledge_reason: '',
   secrets,
-  host_requires: [{ name: 'gog', instruction: 'install gog', satisfied: true, remote_login: remote }],
+  host_requires: [{ name: 'gog', instruction: 'install gog', satisfied: true }],
   tools: [], root: '/ext',
 })
 
@@ -27,7 +27,7 @@ const google = () => bundle([
   field({ name: 'account', required: false }),
   field({ name: 'client', required: false, warning: WARNING }),
   field({ name: 'read_only', required: false, choices: ['yes', 'no'], default: 'yes' }),
-], true)
+])
 
 function renderSheet(b: CatalogBundle) {
   render(
@@ -72,15 +72,7 @@ it('warns under a blank field and hides the warning once filled', async () => {
   expect(screen.queryByText(WARNING)).toBeNull()
 })
 
-it('needs the warned field on a remote-login bundle unless the operator accepts the warning', async () => {
-  renderSheet(google())
-  await fillNameAndAccount()
-  expect(connect().disabled).toBe(true)
-  await userEvent.click(screen.getByRole('checkbox', { name: /Leave client blank for now/ }))
-  expect(connect().disabled).toBe(false)
-})
-
-it('accepts a filled warned field without the acknowledgement', async () => {
+it('accepts a filled warned field', async () => {
   renderSheet(google())
   await fillNameAndAccount()
   await userEvent.type(screen.getByLabelText('client'), 'my-client')
