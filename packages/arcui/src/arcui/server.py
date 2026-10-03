@@ -55,6 +55,7 @@ from arcui.credential_renewer import (
     migrate_or_degrade,
 )
 from arcui.observe import Observe
+from arcui.public_address import PublicAddress
 from arcui.registry import AgentRegistry
 from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
 from arcui.routes import agent_detail as agent_detail_routes
@@ -95,6 +96,7 @@ from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
+from arcui.routes import ui_settings as ui_settings_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
 from arcui.routes.hosted_setup import ROUTES as _HOSTED_SETUP_ROUTES
@@ -285,6 +287,7 @@ def create_app(
     hosted_origin: str | None = None,
     public_base_url: str | None = None,
     ui_port: int = 8420,
+    ui_tls_active: bool = False,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
@@ -343,10 +346,14 @@ def create_app(
             candidate-store + skills-WORM scan (SPEC-054 REQ-120). ``None``
             keeps the mirror on spool + audit WORM only.
         public_base_url: The operator-configured public origin of this dashboard
-            (``[ui] public_base_url``, already validated). Notices carry deep
-            links built from it; it is never derived from a request's Host header.
-        ui_port: The port this dashboard serves on. With ``public_base_url`` it
-            fixes the OAuth redirect URI (``/oauth/callback``) at startup.
+            (``[ui] public_base_url``, already validated) as read at start.
+            Notices carry deep links built from it; it is never derived from a
+            request's Host header. OAuth does not use this snapshot: it reads
+            the saved address on every sign-in (``app.state.public_address``).
+        ui_port: The port this dashboard serves on: the loopback OAuth redirect
+            (``http://127.0.0.1:<port>/oauth/callback``) when no address is saved.
+        ui_tls_active: This process serves https from the operator's certificate
+            (Settings → Access). Reported to the Settings card.
         allow_external_task_refs: Ingest policy for operator-authored task text
             (ADR-019 tier = stringency). Federal → False (default): URLs/emails
             in a task title/description are rejected as an external-comms
@@ -422,6 +429,8 @@ def create_app(
         *agent_detail_routes.routes,
         # SPEC-064: provider keys (fleet-wide) and connectors (per agent).
         *keys_routes.routes,
+        # J1-2: the dashboard's public address and its own https certificate.
+        *ui_settings_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
         *custody_routes.routes,
@@ -822,8 +831,10 @@ def create_app(
     app.state.hosted_claim = hosted_claim
     app.state.hosted_origin = hosted_origin
     app.state.public_base_url = public_base_url
-    # The one redirect URI every one-click connect uses: config, never a request.
-    app.state.oauth_redirect_uri = arcagent.oauth_redirect_uri(public_base_url, port=ui_port)
+    # The one source of every one-click connect's redirect URI: the operator's saved
+    # public address, re-read on each use (Settings → Access), never a request.
+    app.state.public_address = PublicAddress(ui_port=ui_port)
+    app.state.ui_tls_active = ui_tls_active
     app.state.hosted_claim_semaphore = asyncio.Semaphore(2)
     app.state.hosted_claim_pending = set()
     app.state.hosted_claim_executor = (

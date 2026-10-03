@@ -42,6 +42,18 @@ function stubFetch() {
           key_set: false,
         })
       }
+      if (path.includes('/api/settings/public-address')) {
+        return json({
+          public_base_url: null,
+          redirect_uri: 'http://127.0.0.1:8420/oauth/callback',
+          tier: 'personal',
+          https_required: false,
+          suggestions: [],
+        })
+      }
+      if (path.includes('/api/settings/tls')) {
+        return json({ configured: false, active: false, required: false, subject: null, not_after: null, dns_names: [] })
+      }
       if (path.includes('/api/classifiers/')) {
         return json({ classifier: 'jev', models: ['jev-1.13.0'] })
       }
@@ -60,6 +72,26 @@ function renderSettings() {
     </QueryClientProvider>,
   )
 }
+
+describe('SettingsPage — Access tab', () => {
+  it('shows the Access tab in agent scope and System scope', async () => {
+    stubFetch()
+    renderSettings()
+    expect(await screen.findByRole('tab', { name: 'Access' })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('combobox'))
+    await userEvent.click(await screen.findByRole('option', { name: /system/i }))
+    expect(screen.getByRole('tab', { name: 'Access' })).toBeTruthy()
+  })
+
+  it('renders the public address panel when opened', async () => {
+    stubFetch()
+    renderSettings()
+    await userEvent.click(await screen.findByRole('tab', { name: 'Access' }))
+    expect(await screen.findByRole('heading', { name: 'Public address' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'HTTPS certificate' })).toBeTruthy()
+  })
+})
 
 describe('SettingsPage — Memory sharing tab', () => {
   it('shows the tab in agent scope and renders the panel', async () => {

@@ -234,13 +234,15 @@ different setup.
    registrations → New registration. Supported account types: *Accounts in this
    organizational directory only* (single tenant).
 2. **Add the redirect address.** Platform **Web**. The value is the address the
-   "Set up Microsoft sign-in" panel shows, which is `<[ui] public_base_url>/oauth/callback`,
-   or `http://127.0.0.1:8420/oauth/callback` when no public URL is set. The
-   portal's Redirect URI box refuses `http://127.0.0.1…`: add it in the app's
-   **Manifest** (`replyUrlsWithType`, `"type": "Web"`) instead, or give ArcUI an
-   https `public_base_url`. If the browser you sign in with is not on the ArcUI
-   host, the callback page cannot load: paste the address you landed on into
-   the card's "Didn't come back?" box.
+   "Set up Microsoft sign-in" panel shows, which is `<public address>/oauth/callback`,
+   or `http://127.0.0.1:8420/oauth/callback` when no public address is saved in
+   **Settings → Access**. Entra accepts `http` only for `localhost` /
+   `127.0.0.1`, and the portal's Web Redirect URI box refuses
+   `http://127.0.0.1…`: add it in the app's **Manifest** (`replyUrlsWithType`,
+   `"type": "Web"`) instead, or (better) save an https public address and
+   register that. If the browser you sign in with cannot reach the redirect
+   address, paste the address you landed on into the card's paste box (see
+   [Sign in from any browser](#sign-in-from-any-browser)).
 3. **Create a client secret.** Certificates & secrets → New client secret → copy
    the **Value** (not the Secret ID). Entra shows it once.
 4. **Add API permissions.** Microsoft Graph → *Delegated*: `openid`, `profile`,
@@ -277,6 +279,33 @@ one notice. Changing the app's tenant or cloud in Arc makes existing
 connections ask for a reconnect: a token from one directory is never sent to
 another. In OneDrive for Business, selecting a subfolder (rather than the whole
 drive) may be refused by Graph's delta query; select the drive root if so.
+
+### Sign in from any browser
+
+Every step is in ArcUI. Nothing here needs a terminal.
+
+1. **Save the public address.** **Settings → Access → Public address**: the
+   address people type to open this dashboard from other computers, for
+   example `https://arc.tail1234.ts.net`. It must be `https`; plain `http` is
+   accepted only for `127.0.0.1` / `localhost` at the personal tier. If ArcUI
+   sees `tailscale serve` in front of its port, it offers that address; it also
+   offers the https address your browser is on. You still click **Save**: Arc
+   never takes the address from a request. The change applies to the next
+   sign-in, with no restart. The panel shows the return address
+   (`<public address>/oauth/callback`) to register with Google, Microsoft and
+   Atlassian.
+2. **Give the dashboard https, if nothing else does.** A reverse proxy or
+   `tailscale serve` in front of ArcUI already provides https: then skip this.
+   Otherwise paste a certificate chain and its private key under **Settings →
+   Access → HTTPS certificate** and click **Restart stack**. The key is stored
+   encrypted; its passphrase is sealed by the deployment's custody (the
+   operator key, or the Vault transit). At the federal tier the dashboard
+   serves https only: off loopback it will not start without a certificate.
+3. **Connect.** Before you click **Connect**, the card says where the provider
+   will send the browser. When this browser is not on that address, the
+   paste box is already open: after you approve, copy the "can't connect"
+   page's address and paste it. Arc checks it against the saved address and
+   the sign-in's state; anything else is refused.
 
 ### Sync cadence
 

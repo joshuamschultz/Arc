@@ -41,6 +41,7 @@ from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connectors.attachments import build_attachment
 from arcstore.approvals import ApprovalStore
 from arcstore.source_sync import InMemorySourceSyncStore
+from arcui.public_address import PublicAddress
 
 from packages.arcagent.tests.oauth_fakes import FakeGmail, FakeOAuthProvider
 from packages.arcui.tests.test_connectors_routes import (
@@ -118,7 +119,7 @@ async def test_google_connect_sync_search_week_simulated(
     # --- 1. the operator: set up Google sign-in once, add the account, one click --
     client, _agent_id, _dir = _agent(world)
     client.app.state.oauth_token_post = provider.post
-    client.app.state.oauth_redirect_uri = REDIRECT
+    client.app.state.public_address = PublicAddress(ui_port=8420)
     operator = _headers("operator")
 
     def setup_and_connect() -> dict[str, Any]:

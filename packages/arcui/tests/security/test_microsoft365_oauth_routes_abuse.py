@@ -15,6 +15,8 @@ import pytest
 from packages.arcagent.tests.microsoft_fakes import TENANT, FakeEntra
 from packages.arcui.tests.test_connectors_routes import _agent, _bundles, _headers, world
 
+from arcui.public_address import PublicAddress
+
 __all__ = ["world"]
 
 REPO = Path(__file__).resolve().parents[4]
@@ -30,7 +32,7 @@ def client(world: Path) -> Any:
     )
     test_client, _name, _dir = _agent(world)
     test_client.app.state.oauth_token_post = FakeEntra().post
-    test_client.app.state.oauth_redirect_uri = REDIRECT
+    test_client.app.state.public_address = PublicAddress(ui_port=8420)
     return test_client
 
 

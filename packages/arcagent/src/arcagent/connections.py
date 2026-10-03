@@ -918,7 +918,7 @@ class Connections:
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
         oauth_pending: OAuthPendingLedger | None = None,
-        oauth_redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
+        oauth_redirect_uri: str | Callable[[], str] = DEFAULT_OAUTH_REDIRECT_URI,
         token_post: PostToken = send_token_post,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -941,7 +941,9 @@ class Connections:
         self._oauth_pending = oauth_pending if oauth_pending is not None else OAuthPendingLedger()
         self._oauth_pending_clock: Callable[[], float] = time.monotonic
         # Computed by the surface from ITS config ([ui] public_base_url, the UI port)
-        # and never from a request's Host header (design O3).
+        # and never from a request's Host header (design O3). A callable is asked on
+        # every use, so a public address saved in Settings applies to the next
+        # sign-in, and a broken one refuses only the OAuth calls that need it.
         self._oauth_redirect_uri = oauth_redirect_uri
         # The one HTTP call to a provider's token endpoint (injectable for tests).
         self._token_post = token_post
@@ -967,7 +969,7 @@ class Connections:
         state_opener: Callable[[], Awaitable[Any]] | None = None,
         connector_control: ConnectorControl | None = None,
         oauth_pending: OAuthPendingLedger | None = None,
-        oauth_redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
+        oauth_redirect_uri: str | Callable[[], str] = DEFAULT_OAUTH_REDIRECT_URI,
         token_post: PostToken = send_token_post,
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -1406,7 +1408,8 @@ class Connections:
     @property
     def oauth_redirect_uri(self) -> str:
         """The redirect URI every callback-mode connect uses: from config, never a request."""
-        return self._oauth_redirect_uri
+        source = self._oauth_redirect_uri
+        return source if isinstance(source, str) else source()
 
     async def oauth_app_status(self, provider: str) -> OAuthAppStatus:
         """Whether ``provider``'s sign-in app is set up, and a hint of its client id."""
@@ -1483,7 +1486,7 @@ class Connections:
             account = values.get("account", "")
             scopes = scopes_for(flow, read_only=values.get("read_only", "") != "no")
             pkce = new_pkce() if flow.pkce else None
-            redirect_uri = self._oauth_redirect_uri if flow.redirect == "callback" else ""
+            redirect_uri = self.oauth_redirect_uri if flow.redirect == "callback" else ""
             state = new_state()
             self._oauth_pending.admit(
                 PendingAuthorization(
@@ -1565,7 +1568,7 @@ class Connections:
         plan = self._plan_for(pending.instance, sink)
         unbound = _oauth_flow(plan)
         if params.code is None or pending.redirect_uri != (
-            self._oauth_redirect_uri if unbound.redirect == "callback" else ""
+            self.oauth_redirect_uri if unbound.redirect == "callback" else ""
         ):
             raise _refuse(OAUTH_STATE_INVALID, "this sign-in no longer matches; start again")
         custody = await self._custody(sink)
@@ -1602,7 +1605,7 @@ class Connections:
     def _callback_params(self, *, state: str, code: str, redirect_url: str) -> CallbackParams:
         """The callback's state and code, from the pasted/landed address or a shown code."""
         if redirect_url:
-            params = checked_callback(redirect_url, expected_redirect_uri=self._oauth_redirect_uri)
+            params = checked_callback(redirect_url, expected_redirect_uri=self.oauth_redirect_uri)
             if state and state != params.state:
                 raise _refuse(OAUTH_STATE_INVALID, "that address is from a different sign-in")
             return params
@@ -1689,9 +1692,9 @@ class Connections:
             raise _refuse(
                 OAUTH_APP_MISSING,
                 f"set up the {flow.provider} sign-in app first; register this redirect URI "
-                f"with it: {self._oauth_redirect_uri}",
+                f"with it: {self.oauth_redirect_uri}",
                 provider=flow.provider,
-                redirect_uri=self._oauth_redirect_uri,
+                redirect_uri=self.oauth_redirect_uri,
             )
         return app
 

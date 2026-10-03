@@ -1,10 +1,11 @@
 """Architecture test — the OAuth redirect URI never comes from a request.
 
 P18-3 O3: a ``Host`` header (or anything else on the request) is attacker
-controlled. The redirect URI is fixed at startup from ``[ui] public_base_url`` and
-the UI port (``arcagent.oauth_redirect_uri``) and read from ``app.state``. This
-scans the modules that build, check or hand out a redirect URI for any read of the
-request's URL or host.
+controlled. The redirect URI is derived on every use from the operator's saved
+public address (Settings → Access, ``[ui] public_base_url``) and the UI port
+(``arcui.public_address.PublicAddress`` → ``arcagent.oauth_redirect_uri``). This
+scans the modules that store, build, check or hand out a redirect URI for any
+read of the request's URL or host.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ _REPO = Path(__file__).resolve().parents[2]
 
 _SCANNED = (
     "packages/arcui/src/arcui/routes/connectors.py",
+    "packages/arcui/src/arcui/routes/ui_settings.py",
+    "packages/arcui/src/arcui/public_address.py",
     "packages/arcagent/src/arcagent/connections.py",
     "packages/arcagent/src/arcagent/extension/oauth.py",
 )

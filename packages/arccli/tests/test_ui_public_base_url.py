@@ -1,4 +1,8 @@
-"""``arc ui start`` resolves ``[ui] public_base_url`` on the default path (alpha-2 item 75b)."""
+"""``arc ui start`` resolves ``[ui] public_base_url`` on the default path (alpha-2 item 75b).
+
+The address is set in Settings → Access only (J1-2); there is no start flag to
+override it, so notices and OAuth can never disagree about it.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from arccli.commands.ui import _maybe_build_gateway_config, _public_base_url
 
 
 def _args(**overrides: object) -> argparse.Namespace:
-    base: dict[str, object] = {"gateway_config": None, "no_chat": False, "public_base_url": None}
+    base: dict[str, object] = {"gateway_config": None, "no_chat": False}
     return argparse.Namespace(**{**base, **overrides})
 
 
@@ -25,7 +29,7 @@ def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _resolve(args: argparse.Namespace) -> str | None:
-    return _public_base_url(args, _maybe_build_gateway_config(args, Path.cwd()))
+    return _public_base_url(_maybe_build_gateway_config(args, Path.cwd()))
 
 
 def test_default_start_reads_gateway_toml_ui_section(config_dir: Path) -> None:
@@ -48,11 +52,8 @@ def test_missing_gateway_toml_leaves_it_unset(config_dir: Path) -> None:
     assert _resolve(_args()) is None
 
 
-def test_flag_overrides_gateway_toml(config_dir: Path) -> None:
-    (config_dir / "gateway.toml").write_text('[ui]\npublic_base_url = "https://old.example.com"\n')
-    assert _resolve(_args(public_base_url="https://new.example.com/")) == "https://new.example.com"
+def test_there_is_no_start_flag_for_the_address() -> None:
+    from arccli.commands.ui import _build_parser
 
-
-def test_flag_is_validated_like_the_config(config_dir: Path) -> None:
-    with pytest.raises(ValueError):
-        _resolve(_args(public_base_url="http://arc.example.com"))
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["start", "--public-base-url", "https://x.example"])

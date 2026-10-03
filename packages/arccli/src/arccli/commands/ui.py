@@ -199,7 +199,7 @@ def _maybe_open_browser(host: str, port: int, viewer_token: str) -> bool:
     return DefaultBrowserLauncher().open_dashboard(host, port, viewer_token)
 
 
-def _magic_link(host: str, port: int, viewer_token: str) -> str:
+def _magic_link(host: str, port: int, viewer_token: str, scheme: str = "http") -> str:
     """Build the one-click, pre-authenticated dashboard URL.
 
     The viewer token rides in the URL *hash* (`#auth=<token>`), which the
@@ -207,7 +207,7 @@ def _magic_link(host: str, port: int, viewer_token: str) -> str:
     logs or a Referer header. The SPA's `bootstrapAuth()` consumes it on
     load, persists it to localStorage, and strips the fragment.
     """
-    return f"http://{host}:{port}/#{BOOTSTRAP_HASH_KEY}={viewer_token}"
+    return f"{scheme}://{host}:{port}/#{BOOTSTRAP_HASH_KEY}={viewer_token}"
 
 
 def _print_browser_open_fallback(host: str, port: int) -> None:
@@ -295,6 +295,9 @@ def _start(args: argparse.Namespace) -> None:
         build_skill_revision_anchor_factory,
     )
 
+    tls = _serving_tls(host)
+    scheme = "https" if tls is not None else "http"
+
     anchor_audit = _AppAuditSink()
     app = create_app(
         auth_config=auth,
@@ -304,8 +307,9 @@ def _start(args: argparse.Namespace) -> None:
         # Personal/enterprise operators may put URLs/emails in task text (e.g.
         # "research this repo <url>"); federal keeps that gate closed (ADR-019).
         allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
-        public_base_url=_public_base_url(args, gateway_config),
+        public_base_url=_public_base_url(gateway_config),
         ui_port=int(getattr(args, "port", 8420)),
+        ui_tls_active=tls is not None,
         skill_revision_anchor_factory=build_skill_revision_anchor_factory(anchor_audit),
         # The schedule/pulse authority shared by the dashboard and every agent it
         # serves (item 52). None at federal: schedule writes stay closed (503).
@@ -326,10 +330,10 @@ def _start(args: argparse.Namespace) -> None:
         # Persist the viewer token so a same-user `arc tui` attaches with no flags.
         _persist_local_viewer_token(viewer_token_value)
         _write("ArcUI dashboard is running. Open this link (already signed in):")
-        _write(f"    {_magic_link(host, port, viewer_token_value)}")
+        _write(f"    {_magic_link(host, port, viewer_token_value, scheme)}")
         _write("")
         _write("  Or open the dashboard and paste this token into the sign-in field:")
-        _write(f"    Dashboard:      http://{host}:{port}")
+        _write(f"    Dashboard:      {scheme}://{host}:{port}")
         _write(f"    Viewer token:   {viewer_token_value}")
         op_display = operator_token_value if show_tokens else _mask_token(operator_token_value)
         _write(f"    Operator token: {op_display}")
@@ -339,7 +343,7 @@ def _start(args: argparse.Namespace) -> None:
         # keep the strict masked-unless-`--show-tokens` posture and never
         # emit the token inside a URL (review C-2).
         fmt = str if show_tokens else _mask_token
-        _write(f"ArcUI dashboard: http://{host}:{port}")
+        _write(f"ArcUI dashboard: {scheme}://{host}:{port}")
         _write(f"  Viewer token:   {fmt(viewer_token_value)}")
         _write(f"  Operator token: {fmt(operator_token_value)}")
         _write(f"  Max agents:     {max_agents}")
@@ -351,7 +355,8 @@ def _start(args: argparse.Namespace) -> None:
 
     import uvicorn
 
-    if is_loopback and not no_browser:
+    # The auto-open launcher speaks http only; with TLS the printed https link is it.
+    if is_loopback and not no_browser and tls is None:
         # SPEC-019 T5.3: mark the bootstrapped token so AuthMiddleware emits
         # `ui.session_start` with auth_method="browser_bootstrap" on first
         # request from this token.
@@ -424,7 +429,7 @@ def _start(args: argparse.Namespace) -> None:
 
     app.state._extra_startup_hooks.append(_announce_ready)
 
-    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    config = uvicorn.Config(app, host=host, port=port, log_level="info", **_uvicorn_tls(tls))
     try:
         uvicorn.Server(config).run()
     finally:
@@ -463,22 +468,56 @@ def _deployment_tier(gateway_config: Any | None) -> str:
     return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal"))
 
 
-def _public_base_url(args: argparse.Namespace, gateway_config: Any | None) -> str | None:
-    """The validated public dashboard origin: ``--public-base-url``, else ``[ui]`` in gateway.toml.
+def _public_base_url(gateway_config: Any | None) -> str | None:
+    """The validated public dashboard origin, as saved in Settings → Access (``[ui]``).
 
-    The default start builds an in-memory gateway config that never read the file,
-    so the deployment's ``gateway.toml`` is loaded here through the one Arc-home
-    resolver (``GatewayConfig.load``); a missing file leaves the setting unset.
+    Read here only for the deep links in operator notices; OAuth re-reads the
+    saved value on every sign-in. The default start builds an in-memory gateway
+    config that never read the file, so ``gateway.toml`` is loaded through the one
+    Arc-home resolver (``GatewayConfig.load``); a missing file leaves it unset.
     """
-    from arcgateway.config import GatewayConfig, validate_public_base_url
+    from arcgateway.config import GatewayConfig
 
-    flag: str | None = getattr(args, "public_base_url", None)
-    if flag:
-        return validate_public_base_url(flag, _deployment_tier(gateway_config))
     configured = gateway_config.ui.public_base_url if gateway_config is not None else None
     if configured is None:
         configured = GatewayConfig.load().ui.public_base_url
     return cast("str | None", configured)
+
+
+def _serving_tls(host: str) -> Any | None:
+    """The dashboard certificate saved in Settings → Access, opened through custody.
+
+    ``None`` serves plain http. Federal never serves plain http off loopback (a
+    loopback bind is fronted by a TLS proxy or ``tailscale serve``). A saved key
+    custody can not open stops the start: it never falls back to http.
+    """
+    import arcagent
+    from arcui.public_address import effective_tier
+    from arcui.ui_tls import serving_tls
+
+    try:
+        tls = serving_tls()
+    except arcagent.ExtensionError as exc:
+        _err(f"arc ui start: the dashboard https certificate can not be used — {exc.message}")
+        raise SystemExit(1) from exc
+    if tls is None and effective_tier() == "federal" and host not in LOOPBACK_HOSTS:
+        _err(
+            "arc ui start: the federal tier serves the dashboard over https only — add a "
+            "certificate in Settings → Access, or bind to loopback behind a TLS proxy"
+        )
+        raise SystemExit(1)
+    return tls
+
+
+def _uvicorn_tls(tls: Any | None) -> dict[str, Any]:
+    """uvicorn's ssl arguments for ``tls`` (empty for plain http)."""
+    if tls is None:
+        return {}
+    return {
+        "ssl_certfile": str(tls.certfile),
+        "ssl_keyfile": str(tls.keyfile),
+        "ssl_keyfile_password": tls.password,
+    }
 
 
 def _fleet_enabled(gateway_config: Any | None) -> bool:
@@ -724,14 +763,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "auto-built with [platforms.web].enabled=true so /ws/chat/{agent_id} "
         "works out of the box. Pass an explicit file to enable Slack/Telegram "
         "or set tier=federal.",
-    )
-    p_start.add_argument(
-        "--public-base-url",
-        dest="public_base_url",
-        default=None,
-        help="Public https origin of this dashboard, used for deep links in operator "
-        "notices. Overrides [ui] public_base_url in gateway.toml. http is allowed "
-        "only for a loopback host at personal tier.",
     )
     p_start.add_argument(
         "--no-chat",

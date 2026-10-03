@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/states";
 import { KeysPanel } from "@/components/keys-panel";
 import { MemoryPromotionPanel } from "@/components/memory-promotion-panel";
 import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
+import { PublicAccessPanel } from "@/components/settings-view/public-access-panel";
 import { useOperatorMode } from "@/hooks/use-operator-mode";
 import { useRoster } from "@/lib/queries";
 
@@ -126,6 +127,9 @@ export function SettingsPage() {
                   file — the tab shows in every scope so a fresh install finds
                   it without first knowing to switch to System. */}
               <TabsTrigger value="keys">Keys</TabsTrigger>
+              {/* Where the dashboard is reached from; sign-in return addresses
+                  and the https certificate hang off it, so it is fleet-wide too. */}
+              <TabsTrigger value="access">Access</TabsTrigger>
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
@@ -157,6 +161,9 @@ export function SettingsPage() {
               </div>
             </TabsContent>
           )}
+          <TabsContent value="access" className="flex-1 overflow-auto p-4 md:p-6">
+            <PublicAccessPanel editable={operatorMode} />
+          </TabsContent>
           <TabsContent value="keys" className="flex-1 overflow-auto p-4 md:p-6">
             <div className="mx-auto max-w-5xl space-y-4">
               <div className="flex items-start gap-3">

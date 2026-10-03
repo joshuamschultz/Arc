@@ -47,6 +47,7 @@ from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connectors.attachments import build_attachment
 from arcstore.approvals import ApprovalStore
 from arcstore.source_sync import InMemorySourceSyncStore
+from arcui.public_address import PublicAddress
 
 from packages.arcagent.tests.microsoft_fakes import TENANT, FakeEntra, FakeGraph
 from packages.arcui.tests.test_connectors_routes import (
@@ -127,7 +128,7 @@ async def test_microsoft365_connect_tools_knowledge_refresh_and_revoke(
     # --- 1. the operator: app slot once, add the mailbox, one click -----------------
     client, _agent_id, _dir = _agent(world)
     client.app.state.oauth_token_post = entra.post
-    client.app.state.oauth_redirect_uri = REDIRECT
+    client.app.state.public_address = PublicAddress(ui_port=8420)
     operator = _headers("operator")
 
     def setup_and_connect() -> dict[str, Any]:

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { CheckCircle2, ChevronRight, ExternalLink, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,12 +12,6 @@ import {
   useSetOAuthApp,
 } from '@/lib/queries'
 import type { OAuthAppBody, OAuthAppResponse, OAuthBeginResponse } from '@/lib/types'
-
-/** Where each provider's step-by-step setup lives in the operator runbooks. */
-function runbookFor(provider: string): string {
-  if (provider === 'microsoft') return 'docs/runbooks/operate/connections.md (Microsoft 365)'
-  return 'docs/runbooks/operate/google-accounts.md'
-}
 
 /** The Microsoft Graph delegated permissions the app registration must list. */
 const MICROSOFT_PERMISSIONS = [
@@ -47,6 +42,127 @@ function providerLabel(provider: string): string {
 /** Only an https address becomes a link; provider-supplied text is never markup. */
 function isHttps(url: string): boolean {
   return url.startsWith('https://')
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/** The origin of the sign-in return address, or null when it is not a URL. */
+function redirectOrigin(redirectUri: string): URL | null {
+  try {
+    return new URL(redirectUri)
+  } catch {
+    return null
+  }
+}
+
+function isLoopback(redirectUri: string): boolean {
+  const url = redirectOrigin(redirectUri)
+  return url !== null && LOOPBACK_HOSTS.has(url.hostname)
+}
+
+/** True when this browser is not on the redirect address's origin, so it cannot follow the redirect. */
+function isRemoteRedirect(redirectUri: string): boolean {
+  const url = redirectOrigin(redirectUri)
+  return url !== null && url.origin !== window.location.origin
+}
+
+function Address({ value }: { value: string }) {
+  return <span className="font-mono text-foreground">{value}</span>
+}
+
+function GoogleSteps({ redirect }: { redirect: string }) {
+  return (
+    <ol data-provider-steps className="list-decimal space-y-1 pl-4 text-muted-foreground">
+      <li>
+        In the Google Cloud console, open APIs &amp; Services, then Credentials. Click Create
+        credentials and choose OAuth client ID.
+      </li>
+      <li>
+        Set the application type to <span className="text-foreground">Web application</span>.
+      </li>
+      <li>
+        Under Authorized redirect URIs, add this address exactly: <Address value={redirect} />
+      </li>
+      <li>Copy the Client ID and the Client secret into the boxes below.</li>
+      <li>
+        Under APIs &amp; Services, enable the APIs this connection uses: Gmail, Calendar and Drive.
+      </li>
+      <li>
+        Open the OAuth consent screen and set its publishing status to Production, so sign-in does
+        not expire after a week.
+      </li>
+      <li>
+        Google accepts an http://127.0.0.1 address only when your browser runs on the Arc computer.
+        For other computers, set an https public address in Settings first.
+      </li>
+    </ol>
+  )
+}
+
+function AtlassianSteps({ redirect }: { redirect: string }) {
+  return (
+    <ol data-provider-steps className="list-decimal space-y-1 pl-4 text-muted-foreground">
+      <li>
+        Open developer.atlassian.com, go to the Developer console and click Create, then OAuth 2.0
+        integration.
+      </li>
+      <li>
+        Under Authorization, choose OAuth 2.0 (3LO) and set the Callback URL to this address
+        exactly: <Address value={redirect} />
+      </li>
+      <li>Under Permissions, add the Jira API and the Confluence API scopes this connection uses.</li>
+      <li>Under Settings, copy the Client ID and the Secret into the boxes below.</li>
+    </ol>
+  )
+}
+
+function GenericSteps() {
+  return (
+    <p className="text-muted-foreground">
+      Register the redirect address above in the provider&apos;s developer console, then paste its
+      client ID and secret.
+    </p>
+  )
+}
+
+/** The setup steps for one provider, each naming the exact redirect address to register. */
+function ProviderSteps({ provider, redirect }: { provider: string; redirect: string }): ReactNode {
+  if (provider === 'google') return <GoogleSteps redirect={redirect} />
+  if (provider === 'microsoft') return <EntraSteps redirect={redirect} />
+  if (provider === 'atlassian') return <AtlassianSteps redirect={redirect} />
+  return <GenericSteps />
+}
+
+/** A loopback return address only works from a browser on the Arc computer. */
+function LoopbackNote() {
+  return (
+    <p data-loopback-note className="rounded-md border border-status-warning/30 bg-status-warning/10 px-2.5 py-2 text-foreground">
+      This return address only works when your browser runs on the Arc computer. To sign in from other
+      computers, set the public address in{' '}
+      <Link to="/settings" className="font-medium underline">
+        Settings → Access
+      </Link>{' '}
+      first.
+    </p>
+  )
+}
+
+/** Before Connect: say where the browser will be sent, and what to do when it cannot get there. */
+function WhatWillHappen({ label, redirect }: { label: string; redirect: string }) {
+  return (
+    <div data-what-will-happen className="space-y-1 text-muted-foreground">
+      <p>
+        {label} opens in a new tab. After you approve, it sends your browser to <Address value={redirect} />
+      </p>
+      {isRemoteRedirect(redirect) && (
+        <p>
+          This browser can&apos;t reach that address, so you will see a &quot;can&apos;t connect&quot; or
+          &quot;site can&apos;t be reached&quot; page. That is expected: copy that page&apos;s full address
+          from the address bar and paste it below.
+        </p>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -83,23 +199,20 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
           <CopyButton text={app.redirect_uri} />
         </div>
       </div>
-      {provider === 'microsoft' && <EntraSteps />}
-      <p className="text-muted-foreground">
-        Step by step: <span className="font-mono text-foreground">{runbookFor(provider)}</span>
-        {isHttps(app.console_url) && (
-          <>
-            {' · '}
-            <a
-              href={app.console_url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 font-medium text-foreground underline"
-            >
-              {label} developer console <ExternalLink className="size-3" />
-            </a>
-          </>
-        )}
-      </p>
+      {isLoopback(app.redirect_uri) && <LoopbackNote />}
+      <ProviderSteps provider={provider} redirect={app.redirect_uri} />
+      {isHttps(app.console_url) && (
+        <p className="text-muted-foreground">
+          <a
+            href={app.console_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1 font-medium text-foreground underline"
+          >
+            {label} developer console <ExternalLink className="size-3" />
+          </a>
+        </p>
+      )}
       <div className="space-y-1.5">
         <Input
           aria-label="Client ID"
@@ -162,7 +275,7 @@ function AppSetupPanel({ provider, app }: { provider: string; app: OAuthAppRespo
  * What to create in Microsoft Entra, in plain words. Shown above the form so an
  * operator who has never registered an app can do it without leaving the page.
  */
-function EntraSteps() {
+function EntraSteps({ redirect }: { redirect: string }) {
   return (
     <ol data-entra-steps className="list-decimal space-y-1 pl-4 text-muted-foreground">
       <li>
@@ -170,9 +283,14 @@ function EntraSteps() {
         Choose &quot;Accounts in this organizational directory only&quot;.
       </li>
       <li>
-        Under Redirect URI pick the <span className="text-foreground">Web</span> platform and paste the
-        redirect address above. The portal does not accept an http://127.0.0.1 address in that box: add
-        it in the app&apos;s Manifest (replyUrlsWithType, type Web) instead.
+        Under Redirect URI pick the <span className="text-foreground">Web</span> platform (not
+        Single-page application, mobile or desktop) and register this address exactly:{' '}
+        <Address value={redirect} />
+      </li>
+      <li>
+        Entra only accepts http for localhost or 127.0.0.1. The portal&apos;s Web platform box refuses
+        http://127.0.0.1, so add that address in the app&apos;s Manifest (replyUrlsWithType, type Web).
+        The better way: set an https public address in Settings first, then register that address here.
       </li>
       <li>Under Certificates &amp; secrets, create a client secret and copy its Value.</li>
       <li>
@@ -191,14 +309,23 @@ function EntraSteps() {
   )
 }
 
+function pasteTitle(byCode: boolean, remote: boolean, label: string): string {
+  if (byCode) return `Paste the code ${label} shows`
+  if (remote) return 'Paste the address from the page you landed on'
+  return "Didn't come back? Paste the address you landed on"
+}
+
 /** Shown after the provider page is opened: wait, or paste back by hand. */
 function WaitingPanel({
   label,
   begin,
+  remote,
   onFinished,
 }: {
   label: string
   begin: OAuthBeginResponse
+  /** This browser cannot reach the redirect address, so pasting back is the main path. */
+  remote: boolean
   onFinished: () => void
 }) {
   const complete = useCompleteOAuth()
@@ -214,10 +341,10 @@ function WaitingPanel({
   return (
     <div className="space-y-2">
       <p className="text-muted-foreground">Waiting for {label}…</p>
-      <details className="rounded-md border border-border bg-background px-2.5 py-2" open={byCode}>
+      <details className="rounded-md border border-border bg-background px-2.5 py-2" open={byCode || remote}>
         <summary className="flex cursor-pointer items-center gap-1 font-medium text-foreground">
           <ChevronRight className="size-3.5" />
-          {byCode ? `Paste the code ${label} shows` : "Didn't come back? Paste the address you landed on"}
+          {pasteTitle(byCode, remote, label)}
         </summary>
         <div className="mt-2 space-y-2">
           <Input
@@ -269,6 +396,7 @@ export function OAuthConnectPanel({
       {app.data && !app.data.configured && <AppSetupPanel provider={provider} app={app.data} />}
       {app.data?.configured && (
         <>
+          <WhatWillHappen label={label} redirect={app.data.redirect_uri} />
           <Button
             size="sm"
             disabled={begin.isPending}
@@ -281,7 +409,14 @@ export function OAuthConnectPanel({
             <LogIn /> {begin.isPending ? 'Starting…' : reconnect ? 'Reconnect' : 'Connect'}
           </Button>
           {begin.isError && <p className={ERROR_BOX}>{begin.error.message}</p>}
-          {begin.data && <WaitingPanel label={label} begin={begin.data} onFinished={onDone} />}
+          {begin.data && (
+            <WaitingPanel
+              label={label}
+              begin={begin.data}
+              remote={isRemoteRedirect(app.data.redirect_uri)}
+              onFinished={onDone}
+            />
+          )}
         </>
       )}
     </div>

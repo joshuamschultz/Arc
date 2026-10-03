@@ -23,6 +23,8 @@ from packages.arcui.tests.test_connectors_routes import (
 )
 from starlette.requests import Request
 
+from arcui.public_address import PublicAddress
+
 __all__ = ["world"]
 
 EMAIL = "josh@blackarcindustrial.com"
@@ -113,12 +115,16 @@ class OAuthWorld:
         self.world = world
         self.provider = FakeOAuthProvider()
         self.client.app.state.oauth_token_post = self.provider.post
-        self.client.app.state.oauth_redirect_uri = REDIRECT
+        self.client.app.state.public_address = PublicAddress(ui_port=8420)
         self.client.app.add_middleware(_SessionFromHeader)
         bundle = _bundles(world) / "acme_google"
         bundle.mkdir(parents=True, exist_ok=True)
         (bundle / "extension.toml").write_text(_MANIFEST, encoding="utf-8")
         (bundle / "acme_google_attachment.py").write_text(_ADAPTER, encoding="utf-8")
+
+    def set_public_address(self, url: str | None) -> None:
+        """Save the dashboard's public address the way Settings does."""
+        self.client.app.state.public_address.save(url)
 
     def headers(self, session: str = "victim", token: str = "operator") -> dict[str, str]:
         return {**_headers(token), "x-test-session": session}

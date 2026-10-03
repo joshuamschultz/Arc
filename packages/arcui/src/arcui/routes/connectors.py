@@ -149,13 +149,14 @@ def _connections(request: Request) -> Connections:
 def _oauth_settings(request: Request) -> dict[str, Any]:
     """The one-click connect's server-held pieces: ledger, configured redirect, endpoint.
 
-    The redirect URI comes from ``app.state.oauth_redirect_uri``, set at startup from
-    ``[ui] public_base_url`` / the UI port — never from this request (design O3).
+    The redirect URI is derived on every use from the operator's saved public
+    address (``app.state.public_address``, Settings → Access) and the UI port —
+    never from this request (design O3), and never frozen at startup.
     """
     settings: dict[str, Any] = {"oauth_pending": _oauth_pending(request)}
-    redirect_uri = getattr(request.app.state, "oauth_redirect_uri", None)
-    if isinstance(redirect_uri, str) and redirect_uri:
-        settings["oauth_redirect_uri"] = redirect_uri
+    address = getattr(request.app.state, "public_address", None)
+    if address is not None:
+        settings["oauth_redirect_uri"] = address.redirect_uri
     token_post = getattr(request.app.state, "oauth_token_post", None)
     if token_post is not None:
         settings["token_post"] = token_post
@@ -1124,6 +1125,7 @@ async def get_oauth_app(request: Request) -> JSONResponse:
     connections = _connections(request)
     try:
         status = await connections.oauth_app_status(provider)
+        redirect_uri = connections.oauth_redirect_uri
     except ExtensionError as exc:
         return _refused(exc)
     flow = _provider_flow(connections, provider)
@@ -1136,7 +1138,7 @@ async def get_oauth_app(request: Request) -> JSONResponse:
             provider=provider,
             configured=status.configured,
             client_id_hint=status.client_id_hint,
-            redirect_uri=connections.oauth_redirect_uri,
+            redirect_uri=redirect_uri,
             console_url=_console_url(connections, provider),
             tenant_required=flow is not None and flow.app_tenant,
             tenant_id=status.tenant_id,

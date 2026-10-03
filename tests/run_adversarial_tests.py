@@ -524,6 +524,20 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "tests/architecture/test_oauth_redirect_is_config_derived.py",
         "tests/architecture/test_no_vendor_cli_for_oauth_providers.py",
     ),
+    # OAuth from any browser (J1-2): the redirect follows the operator's saved public
+    # address only — a spoofed Host never moves it, http is refused above personal,
+    # a forged callback state is refused, and the dashboard TLS key rests encrypted
+    # under custody (a tampered seal stops the start; federal never serves http
+    # off loopback). LLM02/ASI03.
+    (
+        "OAuth from any browser — Host-header spoof, non-https public address, "
+        "mismatched callback state, dashboard TLS key custody (alpha-2 J1-2)"
+    ): (
+        "packages/arcui/tests/security/test_public_address_abuse.py",
+        "packages/arcui/tests/test_ui_settings_routes.py",
+        "packages/arccli/tests/test_ui_tls_start.py",
+        "tests/architecture/test_oauth_redirect_is_config_derived.py",
+    ),
     # Microsoft 365 over Entra ID (GCC): a state/PKCE mismatch, an id_token from
     # another tenant/app/user, a slot swapped between begin and complete, a tenant-A
     # refresh token presented for slot B, an app slot whose cloud or tenant could

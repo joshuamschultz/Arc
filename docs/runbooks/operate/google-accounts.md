@@ -48,10 +48,13 @@ Do this once per Arc install. All accounts share the one client.
     - Choose **Desktop app** when you reach ArcUI on the same machine at
       `http://127.0.0.1:<port>`. Desktop clients accept any loopback port and
       path, so there is nothing to register.
-    - Choose **Web application** when `[ui] public_base_url` is set. Under
-      **Authorized redirect URIs** add exactly
-      `https://<public_base_url host>/oauth/callback`. A Web client may also
-      register `http://127.0.0.1:8420/oauth/callback` for local use.
+    - Choose **Web application** when a public address is saved in
+      **Settings → Access** (any browser that is not on the Arc host needs
+      one). Under **Authorized redirect URIs** add exactly
+      `https://<public address>/oauth/callback`, the value the setup panel
+      shows. A Web client may also register
+      `http://127.0.0.1:8420/oauth/callback` for local use. See
+      [Sign in from any browser](connections.md#sign-in-from-any-browser).
 5. Copy the **client ID** and **client secret**.
 
 ## Give Arc the client

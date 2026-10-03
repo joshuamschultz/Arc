@@ -1802,3 +1802,34 @@ export type CustodyDecision =
   | { key: string; action: 'map'; connection: string; field: string }
   | { key: string; action: 'keep' }
   | { key: string; action: 'drop'; confirm: string }
+
+export interface PublicAddressSuggestion {
+  source: string
+  url: string
+}
+
+export interface PublicAddressResponse {
+  public_base_url: string | null
+  /** The sign-in return address derived from the public address. */
+  redirect_uri: string
+  tier: 'personal' | 'enterprise' | 'federal'
+  https_required: boolean
+  suggestions: PublicAddressSuggestion[]
+}
+
+export interface TlsStatus {
+  configured: boolean
+  /** This dashboard is serving https right now. */
+  active: boolean
+  required: boolean
+  subject: string | null
+  not_after: string | null
+  dns_names: string[]
+  /** Present after a change: the new certificate applies after a restart. */
+  restart_required?: boolean
+}
+
+export interface TlsBody {
+  cert_pem: string
+  key_pem: string
+}
