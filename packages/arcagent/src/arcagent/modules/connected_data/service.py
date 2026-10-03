@@ -1231,7 +1231,7 @@ class ConnectedDataService:
     ) -> SyncState | None:
         """Mark a ``running`` row whose run died as ``failed/interrupted`` (sweep D6).
 
-        A restart killed three Jira runs and their rows read ``running`` for good.
+        A restart killed three runs and their rows read ``running`` for good.
         The stamp goes through ``_record_failure``, which takes the row's lease
         first: a run that is really alive (here or in another process) still
         holds it, and its row is left alone. The cursor and the last good sync are
@@ -1345,16 +1345,18 @@ class ConnectedDataService:
         try:
             description = await self._with_generation(raw_description, private)
             plan = await approved(description)
+            reason = ""
             if plan is None or set(plan.homes) != SHARED_HOMES:
-                return await self._stay_own(connection_id, raw_description, "mapping_not_shared")
-            if await self._documents_indexed(private, description) > 0:
+                reason = "mapping_not_shared"
+            elif await self._documents_indexed(private, description) > 0:
                 # The agent's own store still holds this connection: migrate it
                 # first, or every document would be read twice.
-                return await self._stay_own(connection_id, raw_description, _MIGRATION_PENDING)
-            if not shared.claim_profile(connection_id):
-                return await self._stay_own(
-                    connection_id, raw_description, "embedding_profile_differs"
-                )
+                reason = _MIGRATION_PENDING
+            elif not shared.claim_profile(connection_id):
+                reason = "embedding_profile_differs"
+            if plan is None or reason:
+                await self._stay_own(connection_id, raw_description, reason)
+                return None
             self._lane_waits.pop(connection_id, None)
             return await self._subscribe(connection_id, raw_description, plan.mapping_id)
         except Exception:
