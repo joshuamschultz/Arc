@@ -397,8 +397,15 @@ class SemanticStore:
         refresh_memory_document(removed)
         return True
 
-    def set_identity(self, slug: str, *, name: str, entity_type: str) -> bool:
-        """Rename/re-kind a card; a replaced name is kept as an alias (still resolves)."""
+    def set_identity(
+        self,
+        slug: str,
+        *,
+        entity_type: str,
+        name: str = "",
+        tags: list[str] | None = None,
+    ) -> bool:
+        """Re-kind (and optionally rename/re-tag) a card; a replaced name stays an alias."""
         entity = self.read(slug)
         if entity is None:
             return False
@@ -406,6 +413,8 @@ class SemanticStore:
             entity.aliases = sorted(set(entity.aliases) | {entity.name} - {name})
             entity.name = name
         entity.entity_type = normalize_kind(entity_type)
+        if tags is not None:
+            entity.tags = clean_tags(tags)
         self._persist(entity)
         return True
 

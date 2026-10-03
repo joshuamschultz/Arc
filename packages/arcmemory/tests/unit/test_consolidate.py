@@ -1296,3 +1296,39 @@ async def test_nightly_drain_does_not_stop_on_an_all_machinery_batch(workspace, 
     ).run_hygiene(now=_NOW)
     assert result.window_events == 2  # the conversation, reached past 2 machinery batches
     assert Consolidator(db, workspace, scope, distiller=_distiller(), config=cfg).watermark() == 5
+
+
+async def test_a_quiet_night_still_dedups_and_cleans_kinds(workspace, db, scope) -> None:
+    """Nothing new to distill must not skip identity hygiene.
+
+    The full de-dup used to run only inside a batch that had conversation to
+    distill, so a store whose duplicates were already on disk stayed duplicated on
+    every quiet night. The nightly pass now runs kind cleanup and de-dup itself.
+    """
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    store.write_fact("thesis-5", "claim", "a", name="Thesis 5", entity_type="thing")
+    store.write_fact(
+        "thesis-5-tuning", "claim", "b", name="Thesis 5: Multi-Layer Tuning", entity_type="thesis"
+    )
+    _raw_card(workspace, "acme", "Acme", "company", ["company", "doe"])
+
+    await Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig()
+    ).run_hygiene(now=_NOW)
+
+    [thesis] = [s for s in store.slugs() if s.startswith("thesis-5")]
+    card = store.read(thesis)
+    assert card is not None and card.name == "Thesis 5: Multi-Layer Tuning"
+    acme = store.read("acme")
+    assert acme is not None and acme.tags == ["doe"]
+
+
+def _raw_card(workspace: Path, slug: str, name: str, entity_type: str, tags: list[str]) -> None:
+    """Write a legacy card straight to disk (as the old importer did), bypassing the writer."""
+    from arcmemory.mdfile import render_document
+
+    path = workspace / "memory" / "entities" / f"{slug}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter = {"name": name, "entity_type": entity_type, "tags": tags, "entity_id": slug}
+    body = f"# {name}\n\n## Facts\n- hq: x .5 2026-07-01"
+    path.write_text(render_document(frontmatter, body), encoding="utf-8")

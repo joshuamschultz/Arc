@@ -50,7 +50,7 @@ from arcmemory.config import MemoryConfig
 from arcmemory.curate import curate_for_distillation
 from arcmemory.db import MemoryDB
 from arcmemory.entity_dedup import EntityDeduper
-from arcmemory.hygiene import dedup_workspace, repair_backlinks
+from arcmemory.hygiene import dedup_workspace, normalize_entity_kinds, repair_backlinks
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
@@ -332,7 +332,6 @@ class Consolidator:
         days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
-        await self.merge_entities()
         await self.merge_duplicate_procedures()
         await self._surface.index_if_needed()
         self._commit_manifest()
@@ -483,9 +482,14 @@ class Consolidator:
             # stranded the rest of the gap.
             if self.watermark() == before:
                 break
-        self._merge_entities_deterministic()
-        self._repair_backlinks()
         self._dedup_workspace()
+        self._normalize_entity_kinds()
+        self._merge_entities_deterministic()
+        # Identity de-dup runs ONCE per night over the whole store, not per distilled
+        # batch: a quiet night (nothing new to distill) used to skip it entirely, so
+        # duplicates already on disk were never revisited.
+        await self.merge_entities()
+        self._repair_backlinks()
         result = await self._run_promotion(total, now)
         self._stamp_hygiene(now)
         return result
@@ -521,6 +525,12 @@ class Consolidator:
             if self._semantic.merge_into(owner, slug, strict=self._cfg.tier == "federal"):
                 self._graph.rename_node(self._scope.key, slug, owner)
                 self._emit("memory.entity_merged", f"{slug}->{owner}")
+
+    def _normalize_entity_kinds(self) -> None:
+        """One canonical kind per card; drop tags that only restate a kind (idempotent)."""
+        report = normalize_entity_kinds(self._semantic, apply=True)
+        if report.changed:
+            self._emit("memory.entity_kinds_normalized", "memory", extra={"cards": report.changed})
 
     def _repair_backlinks(self) -> None:
         """Write reciprocal backlinks into every wiki-link target (bidirectional links)."""
