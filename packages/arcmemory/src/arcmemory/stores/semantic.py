@@ -16,11 +16,23 @@ lesson).
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+from arctrust.classification import parse_classification
 
 from arcmemory.collection_index import refresh_memory_document
+from arcmemory.entity_kind import (
+    OTHER,
+    clean_tags,
+    kind_rank,
+    kinds_compatible,
+    more_specific_kind,
+    normalize_kind,
+)
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.slug import canonical_slug
@@ -174,6 +186,26 @@ def merge_facts(
     )
 
 
+def classification_level(label: str, *, strict: bool) -> int | None:
+    """A label's rung on the arctrust ladder; ``None`` when it fails closed.
+
+    ``strict`` (federal): an unknown or empty label is ``None`` — it never merges.
+    Otherwise it reads as UNCLASSIFIED, the same answer ``parse_classification``
+    gives off-federal, without one warning per card on a store that holds
+    free-text labels.
+    """
+    try:
+        return int(parse_classification(label, strict=True))
+    except ValueError:
+        return None if strict else 0
+
+
+def _same_level(a: str, b: str, *, strict: bool) -> bool:
+    """True when two labels sit on one classification level (unknown fails closed)."""
+    level = classification_level(a, strict=strict)
+    return level is not None and level == classification_level(b, strict=strict)
+
+
 def parse_fact(line: str) -> Fact | None:
     """Parse one triplet line into a ``Fact`` (None if it is not a triplet)."""
     match = _FACT_RE.match(line.strip())
@@ -258,26 +290,35 @@ class SemanticStore:
         name: str | None = None,
         entity_type: str = "unknown",
         classification: str = "unclassified",
+        tags: list[str] | None = None,
     ) -> Entity:
-        """Add/update a fact for an entity, folding a contradiction into a ``was:`` trail."""
+        """Add/update a fact for an entity, folding a contradiction into a ``was:`` trail.
+
+        ``entity_type`` is folded onto one canonical kind (:mod:`arcmemory.entity_kind`)
+        and never downgrades a more specific kind already on the card. ``tags`` union
+        into the card's topical labels; a tag that only restates a kind is dropped.
+        """
         slug = canonical_slug(slug)
         predicate = predicate[:_MAX_FACT_TEXT]
         value = value[:_MAX_FACT_TEXT]
+        kind = normalize_kind(entity_type)
         entity = self.read(slug)
         if entity is None:
             entity = Entity(
                 slug=slug,
                 name=name or slug.replace("-", " ").title(),
-                entity_type=entity_type,
+                entity_type=kind,
                 classification=classification,
             )
         else:
             # Enrich the existing card in place — a later run may name or classify
-            # it more precisely, but a bare "unknown" never overwrites a known type.
+            # it more precisely, but a vaguer kind never overwrites a specific one.
             if name:
                 entity.name = name
-            if entity_type != "unknown":
-                entity.entity_type = entity_type
+            entity.entity_type = normalize_kind(entity.entity_type)
+            if kind != OTHER and kind_rank(kind) >= kind_rank(entity.entity_type):
+                entity.entity_type = kind
+        entity.tags = clean_tags([*entity.tags, *(tags or [])])
         # A write is an assertion about NOW, so a different value always leads and the
         # one it replaces becomes the ``was:`` trail — that is how a fact changes. What
         # was missing is the other half: restating the SAME value is corroboration, and
@@ -314,16 +355,19 @@ class SemanticStore:
         self._persist(entity)
         return entity
 
-    def merge_into(self, canonical_slug_: str, other_slug: str) -> bool:
+    def merge_into(self, canonical_slug_: str, other_slug: str, *, strict: bool) -> bool:
         """Fold the ``other`` entity card into ``canonical`` and delete ``other``'s file.
 
-        The de-dup primitive behind the slow-path entity merge (mirrors cue-merge for
-        entities). Non-destructive: every fact survives — a predicate the canonical
-        lacks is copied over, a contradiction folds the lower-confidence value into a
-        ``| was:`` trail, and the losing card's name/slug is recorded in ``aliases`` so
-        the fold is inspectable and reversible from the audit chain. Links union;
-        a known ``entity_type`` fills an ``unknown`` one. Returns False when either
-        card is missing or the two resolve to the same slug (nothing to merge).
+        The de-dup primitive behind every entity merge. Non-destructive: every fact
+        survives — a predicate the canonical lacks is copied over, a contradiction folds
+        the lower-currency value into a ``| was:`` trail, and the losing card's name/slug
+        is recorded in ``aliases`` so recall still finds it and the fold is inspectable.
+        Links and tags union; the more specific kind wins.
+
+        Refused (returns False) when either card is missing, the two are one slug, their
+        kinds rule out one identity (a person is never a place), or their classification
+        levels differ — a fold never moves a fact across a level. ``strict`` (federal)
+        makes an unknown label fail closed instead of reading as unclassified.
         """
         canonical = canonical_slug(canonical_slug_)
         other = canonical_slug(other_slug)
@@ -332,6 +376,10 @@ class SemanticStore:
         dst = self.read(canonical)
         src = self.read(other)
         if dst is None or src is None:
+            return False
+        if not kinds_compatible(dst.entity_type, src.entity_type):
+            return False
+        if not _same_level(dst.classification, src.classification, strict=strict):
             return False
 
         by_predicate = {f.predicate: f for f in dst.facts}
@@ -346,19 +394,80 @@ class SemanticStore:
         dst.facts = [by_predicate[p] for p in sorted(by_predicate)]
 
         for link in src.links_to:
-            if link not in dst.links_to:
+            if link not in dst.links_to and link not in (f"[[{dst.slug}]]", dst.slug):
                 dst.links_to.append(link)
         dst.aliases = sorted(
             set(dst.aliases) | set(src.aliases) | {src.name, src.slug} - {dst.name, dst.slug}
         )
-        if dst.entity_type == "unknown" and src.entity_type != "unknown":
-            dst.entity_type = src.entity_type
+        dst.entity_type = more_specific_kind([dst.entity_type, src.entity_type])
+        dst.tags = clean_tags([*dst.tags, *src.tags])
+        dst.confidence = _entity_confidence(dst.facts)
 
         self._persist(dst)
         removed = self.path_for(other)
         removed.unlink(missing_ok=True)
         refresh_memory_document(removed)
         return True
+
+    def set_identity(
+        self,
+        slug: str,
+        *,
+        entity_type: str,
+        name: str = "",
+        tags: list[str] | None = None,
+    ) -> bool:
+        """Re-kind (and optionally rename/re-tag) a card; a replaced name stays an alias."""
+        entity = self.read(slug)
+        if entity is None:
+            return False
+        if name and name != entity.name:
+            entity.aliases = sorted(set(entity.aliases) | {entity.name} - {name})
+            entity.name = name
+        entity.entity_type = normalize_kind(entity_type)
+        if tags is not None:
+            entity.tags = clean_tags(tags)
+        self._persist(entity)
+        return True
+
+    def repoint_links(self, old: str, new: str) -> int:
+        """Rewrite every ``[[old]]`` reference in other cards to ``[[new]]``.
+
+        Covers ``links_to`` frontmatter and wiki-links inside fact values, so a folded
+        card leaves no dangling inbound link. Returns how many cards changed.
+        """
+        old_ref, new_ref = f"[[{canonical_slug(old)}]]", f"[[{canonical_slug(new)}]]"
+        changed = 0
+        for slug in self.slugs():
+            entity = self.read(slug)
+            if entity is None:
+                continue
+            links = [new_ref if link in (old_ref, old) else link for link in entity.links_to]
+            links = [link for link in dict.fromkeys(links) if link != f"[[{slug}]]"]
+            facts = [
+                fact.model_copy(
+                    update={
+                        "value": fact.value.replace(old_ref, new_ref),
+                        "was_value": fact.was_value.replace(old_ref, new_ref)
+                        if fact.was_value
+                        else fact.was_value,
+                    }
+                )
+                for fact in entity.facts
+            ]
+            if links == entity.links_to and facts == entity.facts:
+                continue
+            entity.links_to, entity.facts = links, facts
+            self._persist(entity)
+            changed += 1
+        return changed
+
+    def append_merge_record(self, record: dict[str, Any]) -> None:
+        """Append one merge to ``memory/merge-log.jsonl`` (agent state, direct I/O)."""
+        path = self._dir.parent / "merge-log.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
 
     def remove(self, slug: str) -> bool:
         """Remove one entity card and its collection-index entry."""
@@ -445,6 +554,7 @@ class SemanticStore:
 
 __all__ = [
     "SemanticStore",
+    "classification_level",
     "extract_wiki_links",
     "format_fact",
     "parse_fact",

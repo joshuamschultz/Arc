@@ -3,6 +3,7 @@
 Three subcommands:
 
     arc memory dedup [--apply] <workspace> [<workspace> ...]
+    arc memory dedup --agent <id> [--dry-run | --apply]
     arc memory status [<workspace> ...]
     arc memory backend [--index-backend sqlite|postgres] [--dsn DSN] [<workspace> ...]
 
@@ -13,6 +14,12 @@ arcmemory so a deployment can swap the whole package out. This module is a THIN 
 it discovers workspaces, calls :func:`arcmemory.hygiene.dedup_workspace`, and renders
 the report. Dry-run by default; ``--apply`` writes. After applying, restart each
 agent (recovery rebuilds its index) so stale surface rows drop.
+
+``dedup --agent <id>`` additionally runs the IDENTITY de-dup the nightly pass runs
+(:func:`arcmemory.entity_dedup.dedup_agent_memory`): kind/tag cleanup, then series
+("Thesis 5") folds, cross-type name-token and embedding candidates, and LLM
+confirmation of the ambiguous ones — wired from the agent's own
+``[modules.memory.config]`` (tier, embedder, distiller) and bound to its DID.
 
 ``status`` answers "is semantic recall actually on?" — hybrid recall fuses a vector
 (semantic) list with BM25 and the cue graph, and it degrades to the latter two when
@@ -27,10 +34,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import tomllib
 from pathlib import Path
+from typing import Any
 
+from arcgateway import team_roster
+from arcmemory.entity_dedup import AgentDedupReport, dedup_agent_memory
 from arcmemory.hygiene import DedupReport, dedup_workspace, discover_workspaces
-from arcmemory.provider import build_embedder
+from arcmemory.provider import build_distiller, build_embedder, memory_config_for
 from arcmemory.status import (
     IndexBackendHealth,
     SemanticStatus,
@@ -40,6 +51,7 @@ from arcmemory.status import (
 
 from arccli.commands._shared import dispatch, err, print_kv
 from arccli.commands._shared import write as _out
+from arccli.commands.trust import _team_root
 
 _INSTALL_HINT = (
     "Fix (on-device, the default): run `uv sync --all-packages` — arcmemory[local] "
@@ -99,6 +111,12 @@ def _dedup(args: argparse.Namespace) -> None:
     performs the merge and deletes the variant files. Idempotent: a second run
     finds nothing to merge.
     """
+    if args.agent:
+        _dedup_agent(args.agent, apply=args.apply)
+        return
+    if not args.workspaces:
+        err("arc memory dedup: pass --agent <id> or one or more <workspace> paths.")
+        raise SystemExit(2)
     apply: bool = args.apply
     mode = "APPLY" if apply else "dry-run"
     total_groups = 0
@@ -126,6 +144,82 @@ def _dedup(args: argparse.Namespace) -> None:
     )
     if apply and total_groups:
         _out("Restart each affected agent so its index rebuilds and stale surface rows drop.")
+
+
+def _resolve_agent(agent_id: str) -> tuple[Path, str]:
+    """``(agent_root, did)`` for ``agent_id`` under the team dir, or exit naming the known ones."""
+    entries = team_roster.list_team(team_root=_team_root(), online_ids=set())
+    match = next((entry for entry in entries if entry.agent_id == agent_id), None)
+    if match is None or not match.did:
+        known = ", ".join(entry.agent_id for entry in entries) or "(none)"
+        err(f"arc memory: unknown agent {agent_id!r}. Known agents: {known}")
+        raise SystemExit(1)
+    return Path(match.workspace_path), match.did
+
+
+def _memory_section(agent_root: Path) -> dict[str, Any]:
+    """The agent's ``[modules.memory.config]`` table (empty when absent)."""
+    data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
+    section = data.get("modules", {}).get("memory", {}).get("config", {})
+    return section if isinstance(section, dict) else {}
+
+
+def _dedup_agent(agent_id: str, *, apply: bool) -> None:
+    """Slug-variant merge, kind cleanup and identity de-dup over one agent's memory."""
+    agent_root, did = _resolve_agent(agent_id)
+    workspace = agent_root / "workspace"
+    mode = "APPLY" if apply else "dry-run"
+    section = _memory_section(agent_root)
+    backend: dict[str, Any] = section.get("backend") or {}
+    config = memory_config_for(backend, section.get("tier", "personal"))
+    embedder = build_embedder(
+        did,
+        str(backend.get("embed_backend", "local")),
+        str(backend.get("embed_model", "")),
+        base_url=str(backend.get("embed_base_url", "")),
+    )
+    # A dry run never calls the model, so it needs no distiller (or provider key).
+    confirmer = (
+        build_distiller(
+            str(backend.get("distill_provider", "")),
+            str(backend.get("distill_model", "")),
+            did,
+            agent_id,
+        )
+        if apply
+        else None
+    )
+    _render_workspace(dedup_workspace(workspace, apply=apply), mode)
+    report = asyncio.run(
+        dedup_agent_memory(
+            workspace, did, apply=apply, config=config, embedder=embedder, confirmer=confirmer
+        )
+    )
+    _render_identity(report, apply=apply)
+    if apply and report.result.merged:
+        _out("Restart the agent so its index rebuilds over the merged cards.")
+
+
+def _render_identity(report: AgentDedupReport, *, apply: bool) -> None:
+    """Print the kind cleanup and the identity de-dup plan/outcome."""
+    plan = report.result.plan
+    _out(f"  kinds/tags: {report.kinds.changed} card(s) {'cleaned' if apply else 'to clean'}")
+    _out(
+        f"  identity: {plan.entities} entities, {len(plan.certain)} certain, "
+        f"{len(plan.exact)} same-name, {len(plan.ambiguous)} to confirm (LLM), "
+        f"{len(plan.blocked)} blocked by classification"
+    )
+    for group in plan.certain:
+        folded = ", ".join(group.folded)
+        _out(f"    certain  {group.survivor} <- {folded}  ({group.entity_type}: {group.name})")
+    for cluster in plan.exact:
+        _out(f"    same-name  {', '.join(cluster)}")
+    for cluster in plan.ambiguous:
+        _out(f"    confirm  {', '.join(cluster)}")
+    for pair in plan.blocked:
+        _out(f"    blocked  {', '.join(pair)}")
+    if apply:
+        _out(f"  {len(report.result.merged)} merged")
 
 
 def _render_workspace(report: DedupReport, mode: str) -> None:
@@ -259,14 +353,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     dedup_p.add_argument(
         "workspaces",
-        nargs="+",
+        nargs="*",
         metavar="<workspace>",
         help="Dir containing memory/ (or a root to search for nested workspaces).",
     )
     dedup_p.add_argument(
+        "--agent",
+        default=None,
+        help="Agent id under team/: also run identity de-dup (kinds, series, cross-type).",
+    )
+    dedup_mode = dedup_p.add_mutually_exclusive_group()
+    dedup_mode.add_argument(
         "--apply",
         action="store_true",
-        help="Perform the merge and delete variants (default: dry-run).",
+        help="Perform the merges (default: dry-run).",
+    )
+    dedup_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report the plan and write nothing (the default).",
     )
     okf_p = subs.add_parser(
         "okf-migrate",

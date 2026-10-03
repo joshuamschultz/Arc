@@ -36,7 +36,7 @@ def test_merge_into_folds_facts_and_deletes_duplicate(workspace: Path, db: Memor
     store.write_fact("custom-erp", "vendor", "Acme", confidence=0.9)
     store.write_fact("custom-erp-system", "budget", "500k", confidence=0.8)
 
-    assert store.merge_into("custom-erp", "custom-erp-system") is True
+    assert store.merge_into("custom-erp", "custom-erp-system", strict=False) is True
 
     survivor = store.read("custom-erp")
     assert survivor is not None
@@ -52,7 +52,7 @@ def test_merge_into_folds_contradiction_into_was_trail(workspace: Path, db: Memo
     store.write_fact("acme", "hq", "Austin", confidence=0.9)
     store.write_fact("acme-inc", "hq", "Dallas", confidence=0.6)
 
-    store.merge_into("acme", "acme-inc")
+    store.merge_into("acme", "acme-inc", strict=False)
 
     fact = next(f for f in store.read("acme").facts if f.predicate == "hq")
     assert fact.value == "Austin"  # higher-confidence value stays current
@@ -62,7 +62,7 @@ def test_merge_into_folds_contradiction_into_was_trail(workspace: Path, db: Memo
 def test_merge_into_same_slug_is_noop(workspace: Path, db: MemoryDB) -> None:
     store = _store(workspace, db)
     store.write_fact("acme", "hq", "Austin")
-    assert store.merge_into("acme", "acme") is False
+    assert store.merge_into("acme", "acme", strict=False) is False
 
 
 def test_contradiction_writes_was_trail_additively(workspace: Path, db: MemoryDB) -> None:
@@ -102,7 +102,8 @@ def test_entity_type_enriched_in_place(workspace: Path, db: MemoryDB) -> None:
     """A better type on a later run updates the card — it does not fork identity.
 
     "browserbase-browse" seen as a bare thing then classified as a skill must be
-    ONE entity whose type is corrected, not two rows under two types.
+    ONE entity whose type is corrected (to the canonical kind ``product``), not two
+    rows under two types.
     """
     store = _store(workspace, db)
     store.write_fact("browserbase-browse", "seen", "yes", entity_type="thing")
@@ -110,7 +111,35 @@ def test_entity_type_enriched_in_place(workspace: Path, db: MemoryDB) -> None:
 
     assert store.slugs() == ["browserbase-browse"]
     entity = store.read("browserbase-browse")
-    assert entity is not None and entity.entity_type == "skill"
+    assert entity is not None and entity.entity_type == "product"
+
+
+def test_written_type_is_one_canonical_kind(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    store.write_fact("idea", "pitch", "x", entity_type="business-idea")
+    store.write_fact("blob", "note", "y", entity_type="thing")
+    store.write_fact("source-1", "kind", "jira", entity_type="source")
+
+    assert store.read("idea").entity_type == "concept"  # type: ignore[union-attr]
+    assert store.read("blob").entity_type == "other"  # type: ignore[union-attr]
+    assert store.read("source-1").entity_type == "source"  # type: ignore[union-attr]
+
+
+def test_a_vaguer_type_never_downgrades_a_specific_one(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    store.write_fact("t5", "claim", "x", entity_type="thesis")
+    store.write_fact("t5", "claim", "x", entity_type="thing")
+    store.write_fact("t5", "claim", "x", entity_type="insight")
+
+    assert store.read("t5").entity_type == "thesis"  # type: ignore[union-attr]
+
+
+def test_tags_are_topical_and_never_restate_the_type(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    store.write_fact("acme", "hq", "x", entity_type="company", tags=["company", "doe"])
+    store.write_fact("acme", "hq", "x", entity_type="company", tags=["Companies", "nnl", "DOE"])
+
+    assert store.read("acme").tags == ["doe", "nnl"]  # type: ignore[union-attr]
 
 
 def test_unknown_type_does_not_clobber_a_known_one(workspace: Path, db: MemoryDB) -> None:

@@ -92,6 +92,24 @@ function ImportanceBadge({ n }: { n: number }) {
   )
 }
 
+/** Topical labels as chips. Tags never restate the type (the backend drops
+ *  those), so a chip is always information the Type column does not carry. */
+function TagChips({ tags }: { tags: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {tags.map((t) => (
+        <span
+          key={t}
+          data-testid="entity-tag"
+          className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+        >
+          {t}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /** Entity detail: facts, tags, and navigable links (entities are read-only —
  *  the backend exposes no entity mutation surface, only memory edits). */
 function EntityDetail({
@@ -147,13 +165,20 @@ function EntityDetail({
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Tags
               </h3>
-              <div className="flex flex-wrap gap-1.5">
-                {entity.tags.map((t) => (
-                  <span key={t} className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
-                    {t}
-                  </span>
+              <TagChips tags={entity.tags} />
+            </section>
+          )}
+
+          {entity.aliases.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Also known as
+              </h3>
+              <ul className="space-y-0.5 text-xs text-muted-foreground">
+                {entity.aliases.map((a) => (
+                  <li key={a}>{a}</li>
                 ))}
-              </div>
+              </ul>
             </section>
           )}
 
@@ -248,7 +273,9 @@ export function EntityBrowser({
                   <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Name</th>
                   <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Type</th>
                   <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Importance</th>
-                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Tags</th>
+                  {data.items.some((e) => e.tags.length > 0) && (
+                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Tags</th>
+                  )}
                   <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Source</th>
                 </tr>
               </thead>
@@ -264,9 +291,11 @@ export function EntityBrowser({
                     <td className="px-3 py-2 align-top">
                       <ImportanceBadge n={e.importance} />
                     </td>
-                    <td className="max-w-xs truncate px-3 py-2 align-top text-xs text-muted-foreground">
-                      {e.tags.join(', ') || '—'}
-                    </td>
+                    {data.items.some((x) => x.tags.length > 0) && (
+                      <td className="max-w-xs px-3 py-2 align-top">
+                        <TagChips tags={e.tags} />
+                      </td>
+                    )}
                     <td className="max-w-[16ch] truncate px-3 py-2 align-top">
                       <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                         {e.source}

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from arcmemory.collection_index import refresh_memory_document
+from arcmemory.entity_kind import clean_tags, infer_kind
 from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
@@ -329,13 +330,66 @@ def repair_backlinks(store: SemanticStore) -> int:
     return written
 
 
+# ---------------------------------------------------------------------------
+# entity kind / tag cleanup
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class KindChange:
+    """One card whose kind or tags the cleanup rewrites."""
+
+    slug: str
+    old_type: str
+    new_type: str
+    old_tags: tuple[str, ...]
+    new_tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class KindMigrationReport:
+    """What :func:`normalize_entity_kinds` changed (or, dry-run, would change)."""
+
+    changes: tuple[KindChange, ...]
+
+    @property
+    def changed(self) -> int:
+        return len(self.changes)
+
+
+def normalize_entity_kinds(store: SemanticStore, *, apply: bool) -> KindMigrationReport:
+    """Give every card one canonical kind and drop tags that restate a kind.
+
+    A vague legacy type (``thing``/``unknown``) is upgraded from the category the old
+    importer stored in ``tags`` ("thesis", "people") or a "Thesis N" name, then the
+    category tags go — ``entity_type`` says what a card is, ``tags`` say what it is
+    about. Idempotent: a clean card is left byte-for-byte alone.
+    """
+    changes: list[KindChange] = []
+    for slug in store.slugs():
+        entity = store.read(slug)
+        if entity is None:
+            continue
+        kind = infer_kind(entity.entity_type, entity.tags, entity.name)
+        tags = clean_tags(entity.tags)
+        if kind == entity.entity_type and tags == entity.tags:
+            continue
+        changes.append(KindChange(slug, entity.entity_type, kind, tuple(entity.tags), tuple(tags)))
+        if apply:
+            store.set_identity(slug, entity_type=kind, tags=tags)
+    return KindMigrationReport(tuple(changes))
+
+
 __all__ = [
     "DedupReport",
     "GroupMerge",
+    "KindChange",
+    "KindMigrationReport",
     "OkfMigrationReport",
     "StoreReport",
     "dedup_workspace",
     "discover_workspaces",
+    "normalize_entity_kinds",
     "okf_migrate_workspace",
     "repair_backlinks",
 ]

@@ -116,6 +116,18 @@ async def test_list_entities_returns_typed_records(workspace: Path) -> None:
     assert any("lead engineer .9" in fact for fact in alice.facts)
 
 
+async def test_list_entities_carries_merged_aliases(workspace: Path) -> None:
+    """A merged card still shows the names it was folded from (the UI's 'also known as')."""
+    _seed_entities(workspace)
+    operator = _operator(workspace)
+    store = operator._semantic(None)
+    store.write_fact("alice-smith", "team", "infra", name="Alice Smith", entity_type="person")
+    assert store.merge_into("alice", "alice-smith", strict=False)
+
+    alice = {e.slug: e for e in operator.list_entities()}["alice"]
+    assert "Alice Smith" in alice.aliases
+
+
 # -- REQ-084 / get single entry ----------------------------------------------
 
 
