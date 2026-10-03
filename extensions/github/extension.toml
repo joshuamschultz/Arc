@@ -9,13 +9,21 @@
 # gets `github_pr_list` without ever getting `pr merge`, because authority comes
 # from this manifest and not from a shell.
 #
-# No `[[secrets]]`: `gh auth login` keeps the token in the host keyring and Arc
-# never handles it.
+# AUTH (alpha-2 P18-3, 3.H). Arc holds ONE vaulted secret, a fine-grained personal
+# access token, and places it as GH_TOKEN in the environment of each `gh` spawn
+# only: never in an env file, never in argv, never in the child's inherited
+# environment. There is no `gh auth login` and no keyring: GH_CONFIG_DIR points
+# `gh` at an EMPTY per-connection directory, so it can never fall back to the
+# operator's own signed-in configuration and act as a different account.
+#
+# GitHub cannot renew a pasted token. Its expiry arrives in a response header on
+# every `gh api user` call, and the health probe records it: seven days before it
+# lapses the card turns "needs you" and asks for a new token.
 
 [extension]
 name = "github"
 display_name = "GitHub"
-version = "1.1.0"
+version = "2.0.0"
 description = "Read pull requests, issues, repositories, releases, and CI runs on GitHub."
 attachment = "cli"
 tier_floor = "personal"
@@ -52,50 +60,43 @@ url = "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_macOS_amd6
 sha256 = "63298c998cc2a924c9e254c6af6a1caad6ece281122687a91f079bc0a462700e"
 member = "gh_2.97.0_macOS_amd64/bin/gh"
 
-# `gh` is the rare CLI whose login has BOTH shapes. `gh auth login` opens a
-# browser and waits for a person; `gh auth login --with-token` reads the token on
-# stdin and exits, so Arc can finish it and `token_command` says so. Every other
-# CLI connector shipped here leaves that field empty, which is the honest "only a
-# person at this host can do this".
-#
-# `gh auth status` is the sign-in check. `probe_argv = ["--version"]` below tells
-# you a binary exists; this tells you an account is connected. Measured on the
-# deployment, a signed-in host answers exit 0 with
-# "✓ Logged in to github.com account <name>"; logged out it exits non-zero and
-# says "You are not logged into any GitHub hosts". Both are required to match, so
-# neither a future exit-code change nor a wording change alone can turn a logged-
-# out host green.
 [[host_requires]]
 name = "gh"
 minimum_version = "2.97.0"
-authorize_command = "gh auth login --scopes repo,read:org"
-token_command = "gh auth login --with-token"
-verify_command = "gh auth status"
-verify_pattern = "Logged in"
 instruction = """
-Install the GitHub CLI on this host, then authorise it:
+Install the GitHub CLI on this host:
 
   1. curl -fsSLO https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_arm64.tar.gz
   2. echo '73ea440ecad9c9e284429997ee6f93577bc6f7bc6fba357ef62c53ad8fb641a5  gh_2.97.0_linux_arm64.tar.gz' | sha256sum -c -
   3. tar xzf gh_2.97.0_linux_arm64.tar.gz && install -m 0755 gh_2.97.0_linux_arm64/bin/gh ~/.local/bin/gh
-  4. gh auth login --scopes repo,read:org      # or: gh auth login --with-token < token-file
-  5. gh auth status                            # confirm the account and scopes
 
-Step 1 and 2 are for linux/arm64. For another platform take that asset and its
+Steps 1 and 2 are for linux/arm64. For another platform take that asset and its
 line from gh_2.97.0_checksums.txt in the same release; [artifact] pins the four
-Arc can install for you.
-
-Grant the narrowest scopes the agent needs. These tools only read, so a
-read-only fine-grained token is enough.
+Arc can install for you. Do NOT run `gh auth login`: Arc supplies the token.
 """
 
-# The cheapest real authenticated call: what the health probe loop runs.
-# gh auth status proves the signed-in account.
+# The token Arc places as GH_TOKEN at each spawn. Create it at
+# github.com/settings/personal-access-tokens (fine-grained), repository access as
+# needed, read-only permissions, expiry of one year or less.
+[[secrets]]
+name = "token"
+prompt = "A fine-grained personal access token. Create one at github.com/settings/personal-access-tokens: choose the repositories to reach, give it read-only Contents, Issues, Pull requests, Actions and Metadata, and set an expiry of one year or less."
+sensitive = true
+[secrets.placement]
+variable = "GH_TOKEN"
+
+[credential]
+bearer = "token"
+
+# The cheapest real authenticated call: `gh api --include user` proves the token
+# works and prints GitHub's token-expiration header, which the probe records.
 [health]
-probe = "host_verify"
+probe = "tool:github_whoami"
+expires_pattern = '(?im)^github-authentication-token-expiration:\s*(.+)$'
 
 [tools]
 allow = [
+  "github_whoami",
   "github_file_content",
   "github_pr_list",
   "github_repo_tree",
@@ -104,6 +105,11 @@ allow = [
   "github_release_list",
   "github_run_list",
 ]
+
+[[tools.declared]]
+name = "github_whoami"
+description = "Show which GitHub account this connection uses and when its token expires."
+classification = "read_only"
 
 [[tools.declared]]
 name = "github_pr_list"
@@ -147,9 +153,21 @@ default = "outbound"
 binary = "gh"
 probe_argv = ["--version"]
 install_instruction = "See [[host_requires]] in this bundle's extension.toml."
+# An empty per-connection directory: `gh` never reads the operator's own config.
+isolated_config_env = "GH_CONFIG_DIR"
+static_env = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1" }
 
 [config.source]
 entrypoint = "arc_ext_github"
+
+# `--include` prints the response headers before the body, so this verb's output is
+# text, not the declared JSON. The headers carry the token-expiration time.
+[[config.cli.commands]]
+tool = "github_whoami"
+argv = ["api", "--include", "user"]
+output = "text"
+description = "Show which GitHub account this connection uses and when its token expires."
+classification = "read_only"
 
 # The --json field list is manifest data, fixed in argv: the model chooses which
 # repository to read, never which fields come back.

@@ -327,6 +327,45 @@ class HealthReporter(Protocol):
 # --- the state machine ------------------------------------------------------
 
 
+#: How long before a pasted credential lapses the connection asks for a new one.
+TOKEN_EXPIRY_WARNING: Final = timedelta(days=7)
+
+_EXPIRY_FORMATS: Final = ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S %z")
+
+
+def token_expiry(pattern: str, output: str) -> datetime | None:
+    """The expiry time a probe's output names, as aware UTC, or ``None``.
+
+    ``pattern`` has one group. An absent match or a time in no known shape is
+    ``None``: the provider simply did not say (a token with no expiry).
+    """
+    found = re.search(pattern, output)
+    if found is None:
+        return None
+    raw = found.group(1).strip()
+    for form in _EXPIRY_FORMATS:
+        try:
+            parsed = datetime.strptime(raw, form)  # tz comes from the format
+        except ValueError:
+            continue
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    try:
+        return parse_time(raw)
+    except ValueError:
+        return None
+
+
+def expiry_phrase(remaining: timedelta) -> str:
+    """``in 3 days`` / ``in 5 hours`` / ``now``: the detail a card and a notice show."""
+    if remaining <= timedelta(0):
+        return "now"
+    days = remaining.days
+    if days >= 1:
+        return f"in {days} day{'s' if days != 1 else ''}"
+    hours = max(int(remaining.total_seconds() // 3600), 1)
+    return f"in {hours} hour{'s' if hours != 1 else ''}"
+
+
 def parse_time(raw: str) -> datetime:
     """An ISO timestamp as an aware UTC datetime."""
     parsed = datetime.fromisoformat(raw)

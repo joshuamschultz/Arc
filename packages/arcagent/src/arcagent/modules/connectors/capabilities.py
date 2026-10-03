@@ -435,6 +435,7 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
             connection_id=instance,
             download_dir=state.workspace / "downloads" / loaded.name / instance,
             credential=handle,
+            config_dir=state.workspace / ".connector" / loaded.name / instance / "config",
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
     except ExtensionError as exc:

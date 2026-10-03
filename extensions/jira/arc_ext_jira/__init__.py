@@ -1,4 +1,4 @@
-"""Jira connected-source adapter over the policy-bound ``acli`` attachment."""
+"""Jira connected-source adapter over the policy-bound native REST attachment."""
 
 from __future__ import annotations
 
@@ -31,8 +31,7 @@ class JiraSourceAdapter:
     """Index explicitly selected Jira projects as searchable issue documents.
 
     The adapter only reaches Jira through the attachment already authorized by
-    Arc. It never reads the ``acli`` credential store or constructs a network
-    client of its own.
+    Arc. It never holds a credential or constructs a network client of its own.
     """
 
     def __init__(self, attachment: Any) -> None:
@@ -40,9 +39,9 @@ class JiraSourceAdapter:
         self._projects: tuple[str, ...] = ()
         self._content: dict[str, tuple[str, bytes]] = {}
         # The whole issue set, listed ONCE at the start of a crawl and paged from
-        # memory. Re-listing every project on every page — and fetching each issue
-        # in its own `acli` call — put a 657-issue account past the 900s deadline
-        # every hour (one issue view is ~7s; one search returns all 657 in ~0.5s).
+        # memory. Re-listing every project on every page put a 657-issue account
+        # past the 900s deadline every hour. Each REST page is at most 100 issues
+        # and one bounded call, so no single call can outlive its lease.
         self._records: list[dict[str, Any]] | None = None
 
     async def inspect_source(self, request: InspectSource) -> SourceDescription:
@@ -63,10 +62,6 @@ class JiraSourceAdapter:
     ) -> tuple[SourceResource, ...]:
         del request
         resources: list[SourceResource] = []
-        # Not _call_all: this verb takes no arguments by design. Its argv pins
-        # --paginate, which already returns every project the account can see,
-        # and acli refuses --limit alongside it. Growing a page size here made
-        # every call fail with "undeclared argument(s) limit".
         for project in await self._call("jira_list_projects", {}):
             key = str(project.get("key") or project.get("id") or "")
             if not key:
@@ -158,40 +153,31 @@ class JiraSourceAdapter:
         self._content.clear()
         self._records = None
 
-    async def _call(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _call_page(self, tool: str, args: dict[str, Any]) -> Any:
         result = await self._attachment.invoke(tool, args)
         if result.outcome is not ToolOutcome.OK:
             raise SourceError(classify_cli_failure(result.content), result.content[:256])
         try:
-            payload = json.loads(result.content)
+            return json.loads(result.content)
         except json.JSONDecodeError as exc:
             raise SourceError(SourceFailureCode.TRANSIENT, "Jira returned invalid JSON") from exc
-        if isinstance(payload, dict):
-            for key in ("issues", "values", "projects", "results"):
-                value = payload.get(key)
-                if isinstance(value, list):
-                    return [item for item in value if isinstance(item, dict)]
+
+    async def _call(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        payload = await self._call_page(tool, args)
+        if isinstance(payload, dict) and not _records_of(payload):
             return [payload]
-        if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
-        raise SourceError(SourceFailureCode.TRANSIENT, "Jira returned an unsupported JSON shape")
+        return _records_of(payload)
 
     async def _call_all(self, tool: str, args: dict[str, Any]) -> list[dict[str, Any]]:
-        """Walk a CLI collection by growing its page size, never accepting a cap."""
-        requested = 200
-        previous = -1
-        while requested <= 100_000:
-            payload = await self._call(tool, {**args, "limit": str(requested)})
-            count = len(payload)
-            if count < requested:
-                return payload
-            if count <= previous:
-                raise SourceError(
-                    SourceFailureCode.TRANSIENT,
-                    f"Jira returned a bounded page for {tool}; refusing a partial index",
-                )
-            previous = count
-            requested *= 2
+        """Walk a collection with the tool's ``nextPageToken`` until it is exhausted."""
+        records: list[dict[str, Any]] = []
+        token = ""
+        for _ in range(_MAX_PAGES):
+            page = await self._call_page(tool, {**args, "limit": "100", "page_token": token})
+            records.extend(_records_of(page))
+            token = str(page.get("nextPageToken") or "") if isinstance(page, dict) else ""
+            if not token:
+                return records
         raise SourceError(
             SourceFailureCode.TOO_LARGE,
             f"Jira {tool} collection exceeds the safe synchronization bound",
@@ -201,24 +187,42 @@ class JiraSourceAdapter:
         object_id = str(issue.get("key") or issue.get("id") or "")
         if not object_id:
             raise SourceError(SourceFailureCode.TRANSIENT, "Jira returned an issue without a key")
+        raw_fields = issue.get("fields")
+        fields: dict[str, Any] = raw_fields if isinstance(raw_fields, dict) else {}
         content = json.dumps(issue, ensure_ascii=False, sort_keys=True).encode()
         version = _version(content)
         self._content[object_id] = (version, content)
         return SourceObject(
             object_id=object_id,
-            locator=str(issue.get("self") or issue.get("url") or object_id),
+            locator=object_id,
             kind=SourceObjectKind.FILE,
             version=version,
             content_hash=hashlib.sha256(content).hexdigest(),
             size=len(content),
-            modified_at=str(issue.get("updated") or "") or None,
+            modified_at=str(fields.get("updated") or "") or None,
             media_type="application/json",
             metadata={
-                "project": str(issue.get("project", "")),
+                "project": str(fields.get("project", "")),
                 "classification": "unclassified",
                 "revision": _revision_for(issue),
             },
         )
+
+
+_MAX_PAGES = 1000
+
+
+def _records_of(payload: Any) -> list[dict[str, Any]]:
+    """The dict items of a tool answer: a bare list, or the first list under a known key."""
+    if isinstance(payload, dict):
+        for key in ("issues", "values", "projects", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+        return []
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
 
 
 def _version(content: bytes) -> str:
@@ -236,19 +240,19 @@ def _revision_for(issue: dict[str, Any]) -> int:
 
     ArcMemory skips an unchanged object by its content ``version`` and only
     consults the revision when the content changed, where it must be strictly
-    greater than what it stored. Jira's ``updated`` cannot be returned as a
-    search field (``acli`` refuses it), so when it is absent the current time is
-    used: a later crawl always carries a higher revision, so a changed issue is
+    greater than what it stored. When ``fields.updated`` is absent the current
+    time is used: a later crawl always carries a higher revision, so a changed issue is
     accepted while an unchanged one is skipped on its version before this matters.
     """
-    updated = issue.get("updated")
+    fields = issue.get("fields")
+    updated = fields.get("updated") if isinstance(fields, dict) else None
     if isinstance(updated, str) and updated:
         return _timestamp_revision(updated)
     return int(datetime.now(tz=UTC).timestamp() * 1_000_000)
 
 
 def build_source_adapter(context: dict[str, Any]) -> JiraSourceAdapter:
-    """Build from the already policy-bound CLI attachment."""
+    """Build from the already policy-bound native attachment."""
     return JiraSourceAdapter(context["attachment"])
 
 

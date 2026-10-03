@@ -69,6 +69,7 @@ from arcagent.extension.attachment import (
 from arcagent.extension.catalog import BUNDLES_DIRNAME, MANIFEST_NAME, resolve_extension_roots
 from arcagent.extension.connection_health import (
     AUTH_REASONS,
+    TOKEN_EXPIRY_WARNING,
     ConnectionHealthAuthority,
     HealthSignal,
     SignalSource,
@@ -76,6 +77,8 @@ from arcagent.extension.connection_health import (
     classify,
     custody_of,
     effective_probe,
+    expiry_phrase,
+    token_expiry,
 )
 from arcagent.extension.coordinates import is_coordinate
 from arcagent.extension.coordinates import refusal as coordinate_refusal
@@ -129,6 +132,7 @@ from arcagent.extension.oauth import (
     new_pkce,
     new_state,
     require_account,
+    resolve_site,
     revoke,
     scopes_for,
     send_token_post,
@@ -1171,9 +1175,37 @@ class Connections:
         tool = health.tool
         if tool is not None:
             result = await attachment.invoke(tool, dict(health.args))
-            return None if result.outcome is ToolOutcome.OK else (None, result.content)
+            if result.outcome is not ToolOutcome.OK:
+                return (None, result.content)
+            if health.expires_pattern is None:
+                return None
+            return await self._expiry_verdict(
+                plan.instance, health.expires_pattern, result.content
+            )
         probe = await attachment.probe()
         return None if probe.reachable else (None, probe.detail)
+
+    async def _expiry_verdict(
+        self, instance: str, pattern: str, output: str
+    ) -> tuple[str | None, str] | None:
+        """Mirror the credential's expiry and escalate it within a week of lapsing.
+
+        The provider tells us when this token dies (a response header on the
+        probe call). Nothing in Arc can renew a pasted token, so a person has to
+        be told BEFORE it stops working: ``token_expiring`` is terminal and
+        ``needs_you``. An unreadable or absent time records nothing and passes.
+        """
+        expires = token_expiry(pattern, output)
+        if expires is None:
+            return None
+        state = await self._connection_state()
+        await state.record_credential_metadata(
+            instance, expires_at=expires.isoformat(), actor_did=causal.actor_did()
+        )
+        remaining = expires - self._clock()
+        if remaining > TOKEN_EXPIRY_WARNING:
+            return None
+        return ("token_expiring", expiry_phrase(remaining))
 
     async def _host_verify_verdict(
         self, plan: ConnectorPlan, sink: AuditSink
@@ -1400,6 +1432,8 @@ class Connections:
                 require_account(email, intended=intended or pending.intended_account)
                 if not intended:
                     resolved["account"] = email
+            elif flow.account == "atlassian_site":
+                resolved.update(await self._resolved_site(plan, flow, tokens, sink))
             lacking = missing_scopes(pending.scopes, tokens.scope)
             if lacking:
                 await self._report_scope_missing(plan.instance, lacking, sink)
@@ -1413,6 +1447,20 @@ class Connections:
             await revoke(flow, token=tokens.refresh_token, post=self._token_post)
             raise
         return resolved
+
+    async def _resolved_site(
+        self, plan: ConnectorPlan, flow: OAuthFlow, tokens: OAuthTokens, sink: AuditSink
+    ) -> dict[str, str]:
+        """The site fields to store: the host the connection is for and its provider id."""
+        values = await self._visible_values(plan, sink)
+        binding = await resolve_site(
+            tokens.access_token,
+            resources_url=flow.resources_url or "",
+            site=values.get("site", ""),
+            cloud_id=values.get("cloud_id", ""),
+            post=self._token_post,
+        )
+        return {"site": binding.site, "cloud_id": binding.cloud_id}
 
     async def _report_scope_missing(
         self, instance: str, lacking: Sequence[str], sink: AuditSink

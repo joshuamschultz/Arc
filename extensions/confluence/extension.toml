@@ -1,44 +1,19 @@
-# Confluence Cloud through this bundle's own REST adapter.
+# Confluence Cloud through this bundle's own REST adapter (alpha-2 P18-3, 3.T).
 #
 # D-588 ranks a connector's options: the vendor's own CLI first, a maintained MCP
-# server second, an adapter we write only as a last resort — and a bundle taking
-# the last option has to say what it checked. This one did, and this is it.
+# server second, an adapter we write only as a last resort. `acli` 1.3.22 has no
+# Confluence search, create or update verb, so the CLI cannot serve this connector;
+# sooperset/mcp-atlassian carries critical advisories and Atlassian's hosted MCP
+# endpoint states it does not meet FedRAMP. So the transport is a small httpx
+# client living inside this folder.
 #
-# OPTION 1, the vendor's CLI: checked against `acli` 1.3.22, the same binary the
-# sibling `jira` bundle now runs on, on the deployment. It does not cover this
-# connector. Its entire Confluence surface is:
-#
-#     acli confluence page   -> view                                (only)
-#     acli confluence space  -> archive, create, list, restore, update, view
-#     acli confluence blog   -> create, list, view
-#
-# Of the five tools declared below, `confluence_get_page` maps to `page view --id`
-# and `confluence_list_spaces` maps to `space list`. The other three —
-# `confluence_search_pages` (CQL), `confluence_create_page` and
-# `confluence_update_page` — have no acli verb at all, and that includes BOTH
-# verbs tagged `network_egress`, which are the reason this bundle has an approval
-# mode. Rebuilding on acli would delete three of five tools, so it was not done.
-# Re-check when acli grows `confluence page search|create|update`; nothing else
-# about this bundle needs to change first.
-#
-# OPTION 2, an MCP server: sooperset/mcp-atlassian carries 35 advisories including
-# a critical arbitrary-file-write to RCE, and Atlassian's own hosted MCP endpoint
-# states it does not meet FedRAMP. Neither is adoptable here.
-#
-# So option 3, and the transport is ~300 lines of httpx living inside this folder.
-#
-# KNOWN LIMIT, recorded rather than discovered later: this adapter speaks basic
-# auth with an UNSCOPED API token against `{site}.atlassian.net`. Atlassian is
-# moving to SCOPED tokens, which are accepted only at
-# `api.atlassian.com/ex/confluence/{cloudId}`. That is the deprecation that cost an
-# afternoon on `jira`, and acli absorbed it there. Here it has not been built: the
-# site's cloud id is fetchable unauthenticated (verified —
-# `https://<site>/_edge/tenant_info` answers `{"cloudId":"…"}`), and Atlassian's
-# own KB confirms basic auth still applies at the gateway, but nothing on this
-# deployment holds a scoped token to test the path against, and shipping an
-# unverified auth path is exactly the mistake being corrected. Until it is built,
-# the 401 an operator sees names the scoped-token case explicitly instead of
-# sending them to reissue a token that would fail the same way.
+# Auth is Atlassian 3LO OAuth, the same Atlassian app slot the `jira` bundle uses.
+# Connect opens Atlassian's consent page and Arc resolves the site's cloud id from
+# accessible-resources BEFORE storing anything. Atlassian rotates refresh tokens;
+# Arc persists each new one before use (credentials.py). Requests go to
+# api.atlassian.com/ex/confluence/{cloud_id}/wiki/rest/api with a bearer from the
+# credential handle. The scopes are Atlassian's classic Confluence scopes, which
+# its scope table lists for the v1 content, search and space endpoints used here.
 #
 # The implementation is in arc_ext_confluence/, a subdirectory, because bundle-root
 # .py files are scanned as agent capabilities and are import-policy-gated by tier.
@@ -46,7 +21,7 @@
 [extension]
 name = "confluence"
 display_name = "Confluence"
-version = "1.1.0"
+version = "2.0.0"
 description = "Search, read, and write Confluence pages in your team's spaces."
 attachment = "native"
 tier_floor = "personal"
@@ -57,22 +32,41 @@ mode = "source"
 [config.native]
 entrypoint = "arc_ext_confluence"
 
-[[secrets]]
-name = "api_token"
-prompt = "Atlassian API token. Go to id.atlassian.com/manage-profile/security/api-tokens, click Create API token, give it any name, then copy the string it shows you — Atlassian will not show it again."
-format = "api_token"
+[oauth]
+provider = "atlassian"
+authorize_url = "https://auth.atlassian.com/authorize"
+token_url = "https://auth.atlassian.com/oauth/token"
+resources_url = "https://api.atlassian.com/oauth/token/accessible-resources"
+console_url = "https://developer.atlassian.com/console/myapps/"
+refresh_token_secret = "refresh_token"
+client_auth = "post_json"
+pkce = false
+account = "atlassian_site"
+scopes = [
+  "read:confluence-content.all",
+  "read:confluence-space.summary",
+  "search:confluence",
+  "write:confluence-content",
+  "offline_access",
+]
+authorize_params = { audience = "api.atlassian.com", prompt = "consent" }
 
 [[secrets]]
-name = "email"
-prompt = "The email address you signed in to Atlassian with. It must be the same account that created the API token above, or Confluence will reject both."
+name = "site"
+prompt = "Your Atlassian site, WITHOUT https://, for example yourcompany.atlassian.net. Leave blank and Arc fills it in when your account reaches only one site."
 sensitive = false
-format = "email"
+required = false
 
 [[secrets]]
-name = "base_url"
-prompt = "Your Confluence web address, exactly as it appears in the browser bar when you are looking at a page. It ends in .atlassian.net — for example https://yourcompany.atlassian.net"
+name = "cloud_id"
+prompt = "Set for you when you click Connect: your Atlassian site id, read from the account you sign in with. You never type this."
 sensitive = false
-format = "https_url"
+required = false
+
+[[secrets]]
+name = "refresh_token"
+prompt = "Set for you when you click Connect. You never paste this."
+required = false
 
 # The cheapest real authenticated call: what the health probe loop runs.
 # Reads one space with the saved bearer token.

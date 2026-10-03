@@ -366,7 +366,9 @@ class OAuthFlow(_ManifestModel):
     ``/oauth/callback`` page (the redirect URI is computed from deployment config,
     never from a request). ``"none"`` is the mode where the provider shows a code to paste.
     ``account`` names how the signed-in account is checked BEFORE anything is
-    stored: ``openid_email`` reads the ``id_token`` the token endpoint returned.
+    stored: ``openid_email`` reads the ``id_token`` the token endpoint returned;
+    ``atlassian_site`` lists the sites the new token can reach and binds the one
+    this connection's ``site`` field names (its ``cloud_id`` is stored with it).
     """
 
     provider: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
@@ -380,17 +382,21 @@ class OAuthFlow(_ManifestModel):
     pkce: bool = True
     client_auth: Literal["basic", "post_form", "post_json"] = "basic"
     redirect: Literal["callback", "none"] = "callback"
-    account: Literal["openid_email", "none"] = "none"
+    account: Literal["openid_email", "atlassian_site", "none"] = "none"
     #: The ``iss`` values an ``id_token`` may carry (``account = "openid_email"``).
     id_token_issuers: list[str] = Field(default_factory=list)
     revoke_url: str | None = None
     revoke_style: Literal["form_token", "bearer"] = "form_token"
     #: Where an operator creates this provider's OAuth app (shown by the setup panel).
     console_url: str | None = None
+    #: The endpoint that lists the sites a token reaches (``account = "atlassian_site"``).
+    resources_url: str | None = None
 
     @model_validator(mode="after")
     def _account_check_is_complete(self) -> OAuthFlow:
         """An ``openid_email`` check needs ``openid`` + ``email`` scopes and an issuer list."""
+        if self.account == "atlassian_site" and not self.resources_url:
+            raise ValueError('[oauth].account = "atlassian_site" needs resources_url')
         if self.account != "openid_email":
             return self
         if not self.id_token_issuers:
@@ -402,7 +408,7 @@ class OAuthFlow(_ManifestModel):
                 )
         return self
 
-    @field_validator("authorize_url", "token_url", "revoke_url", "console_url")
+    @field_validator("authorize_url", "token_url", "revoke_url", "console_url", "resources_url")
     @classmethod
     def _https_endpoint(cls, value: str | None) -> str | None:
         """Every provider endpoint is ``https://`` with a host and no userinfo or fragment."""
@@ -473,6 +479,10 @@ class HealthProbe(_ManifestModel):
     args: dict[str, str] = Field(default_factory=dict)
     mode: Literal["probe", "none"] = "probe"
     reason: str = ""
+    #: A regex with ONE group that finds the credential's expiry time in a
+    #: ``tool:<name>`` probe's output (a token-expiry response header). The time
+    #: is mirrored for display and escalates the connection before it lapses.
+    expires_pattern: str | None = None
 
     @property
     def tool(self) -> str | None:
@@ -492,10 +502,25 @@ class HealthProbe(_ManifestModel):
             )
         if self.args and self.tool is None:
             raise ValueError("[health].args only apply to a tool:<name> probe")
+        if self.expires_pattern is not None:
+            if self.tool is None:
+                raise ValueError("[health].expires_pattern only applies to a tool:<name> probe")
+            try:
+                compiled = re.compile(self.expires_pattern)
+            except re.error as exc:
+                raise ValueError(f"[health].expires_pattern is not a regex: {exc}") from exc
+            if compiled.groups != 1:
+                raise ValueError("[health].expires_pattern needs exactly one group")
         return self
 
 
 _TOOL_PROBE = "tool:"
+
+#: An environment variable name a manifest may set: upper case, digits, underscore.
+_FIXED_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+#: A fixed setting never carries a credential, whatever it is called.
+_CREDENTIAL_SUFFIXES = ("TOKEN", "KEY", "SECRET", "PASSWORD")
 
 
 class DeclaredTool(_ManifestModel):
@@ -705,6 +730,37 @@ class ExtensionManifest(_ManifestModel):
                 if isinstance(argument, dict) and isinstance(argument.get("name"), str):
                     found.append((str(command.get("tool", "a command")), argument["name"]))
         return found
+
+    @model_validator(mode="after")
+    def _cli_environment_is_safe(self) -> ExtensionManifest:
+        """``[config.cli]`` fixed environment names carry no credential or steering name.
+
+        A fixed setting must never shadow a declared secret, the variable a secret
+        is placed in, ``GH_TOKEN``-style credential variables a bundle declares, or a
+        variable that decides which program runs.
+        """
+        cli: Any = self.config.get("cli", {})
+        static: Any = cli.get("static_env", {}) if isinstance(cli, dict) else {}
+        isolated: Any = cli.get("isolated_config_env", "") if isinstance(cli, dict) else ""
+        names = list(static) if isinstance(static, dict) else []
+        if isolated:
+            names.append(isolated)
+        owned = {s.name for s in self.secrets} | {
+            s.placement.variable for s in self.secrets if s.placement is not None
+        }
+        for name in names:
+            if not isinstance(name, str) or not _FIXED_ENV_NAME.fullmatch(name):
+                raise ValueError(f"[config.cli] environment name {name!r} is not valid")
+            if name in owned or refuses_placement(name) or name.endswith(_CREDENTIAL_SUFFIXES):
+                raise ValueError(
+                    f"[config.cli] may not set {name}: it is a credential, a declared "
+                    "secret, or a variable that steers the process"
+                )
+        if isinstance(static, dict):
+            for name, value in static.items():
+                if not isinstance(value, str) or len(value) > 256 or not value.isprintable():
+                    raise ValueError(f"[config.cli].static_env {name} must be printable text")
+        return self
 
     @model_validator(mode="after")
     def _bearer_names_a_sensitive_secret(self) -> ExtensionManifest:
