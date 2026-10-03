@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.entity_dedup import EntityDeduper, name_tokens
+from arcmemory.entity_dedup import EntityDeduper, dedup_agent_memory, name_tokens
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Scope
@@ -494,3 +494,45 @@ async def test_no_embedder_still_runs_the_deterministic_channel_loudly(
     assert len(result.merged) == 1
     skipped = [e for a, _, e in recorder.events if a == "memory.dedup_skipped"]
     assert {"reason": "no-embedder"} in skipped
+
+
+# -- the operator entry point (arc memory dedup --agent) -----------------------
+
+
+async def test_agent_dedup_dry_run_plans_kinds_and_merges_without_writing(
+    workspace, db, scope
+) -> None:
+    store, _ = _store(workspace, db, scope)
+    _card(store, "thesis-5", "Thesis 5", "thing", facts=1)
+    _card(store, "thesis-5-tuning", "Thesis 5: Multi-Layer Tuning", "thesis", facts=2)
+    before = sorted(p.read_text() for p in (workspace / "memory" / "entities").glob("*.md"))
+
+    report = await dedup_agent_memory(workspace, scope.agent_did, apply=False)
+
+    assert len(report.result.plan.certain) == 1
+    assert report.result.merged == []
+    after = sorted(p.read_text() for p in (workspace / "memory" / "entities").glob("*.md"))
+    assert after == before
+
+
+async def test_agent_dedup_apply_merges_and_audits(workspace, db, scope) -> None:
+    store, _ = _store(workspace, db, scope)
+    _card(store, "thesis-5", "Thesis 5", "thing", facts=1)
+    _card(store, "thesis-5-tuning", "Thesis 5: Multi-Layer Tuning", "thesis", facts=2)
+    sink = _Sink()
+
+    report = await dedup_agent_memory(workspace, scope.agent_did, apply=True, audit_sink=sink)
+
+    assert report.result.merged == [("thesis-5", "thesis-5-tuning")]
+    assert store.slugs() == ["thesis-5-tuning"]
+    actions = [e.action for e in sink.events]
+    assert "memory.entity_merged" in actions and "memory.dedup_pass" in actions
+    assert all(e.actor_did == scope.agent_did for e in sink.events)
+
+
+class _Sink:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def write(self, event: Any) -> None:
+        self.events.append(event)

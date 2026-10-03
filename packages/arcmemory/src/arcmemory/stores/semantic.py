@@ -186,12 +186,24 @@ def merge_facts(
     )
 
 
+def classification_level(label: str, *, strict: bool) -> int | None:
+    """A label's rung on the arctrust ladder; ``None`` when it fails closed.
+
+    ``strict`` (federal): an unknown or empty label is ``None`` — it never merges.
+    Otherwise it reads as UNCLASSIFIED, the same answer ``parse_classification``
+    gives off-federal, without one warning per card on a store that holds
+    free-text labels.
+    """
+    try:
+        return int(parse_classification(label, strict=True))
+    except ValueError:
+        return None if strict else 0
+
+
 def _same_level(a: str, b: str, *, strict: bool) -> bool:
     """True when two labels sit on one classification level (unknown fails closed)."""
-    try:
-        return parse_classification(a, strict=strict) == parse_classification(b, strict=strict)
-    except ValueError:
-        return False
+    level = classification_level(a, strict=strict)
+    return level is not None and level == classification_level(b, strict=strict)
 
 
 def parse_fact(line: str) -> Fact | None:
@@ -542,6 +554,7 @@ class SemanticStore:
 
 __all__ = [
     "SemanticStore",
+    "classification_level",
     "extract_wiki_links",
     "format_fact",
     "parse_fact",

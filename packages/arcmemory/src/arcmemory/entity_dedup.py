@@ -34,26 +34,31 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import combinations
+from pathlib import Path
 from typing import Any
 
-from arctrust.classification import parse_classification
+from arctrust.audit import AuditEvent, AuditSink, NullSink
+from arctrust.audit import emit as emit_audit
 
 from arcmemory import distill
 from arcmemory.config import MemoryConfig
+from arcmemory.db import MemoryDB
 from arcmemory.entity_kind import (
     SYSTEM_KINDS,
+    infer_kind,
     kind_rank,
     kinds_compatible,
     more_specific_kind,
     normalize_kind,
     numbered_label,
 )
+from arcmemory.hygiene import KindMigrationReport, normalize_entity_kinds
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
 from arcmemory.slug import canonical_slug
-from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Entity
+from arcmemory.stores.semantic import SemanticStore, classification_level
+from arcmemory.types import Entity, Scope
 
 _log = logging.getLogger(__name__)
 
@@ -222,7 +227,7 @@ class EntityDeduper:
                 _Card(
                     slug=slug,
                     entity=entity,
-                    kind=normalize_kind(entity.entity_type),
+                    kind=infer_kind(entity.entity_type, entity.tags, entity.name),
                     tokens=name_tokens(entity.name),
                     series=series,
                     level=self._level(entity.classification),
@@ -231,10 +236,7 @@ class EntityDeduper:
         return cards
 
     def _level(self, label: str) -> int | None:
-        try:
-            return int(parse_classification(label, strict=self._strict))
-        except ValueError:
-            return None
+        return classification_level(label, strict=self._strict)
 
     async def _vectors(self, cards: list[_Card]) -> dict[str, list[float]] | None:
         if len(cards) < 2:
@@ -371,6 +373,7 @@ class EntityDeduper:
                 "certain": len(plan.certain),
                 "blocked": len(plan.blocked),
                 "merged": len(result.merged),
+                "dry_run": not apply,
             },
         )
         return result
@@ -484,10 +487,66 @@ class EntityDeduper:
             self._emit_fn(action, target, extra)
 
 
+@dataclass
+class AgentDedupReport:
+    """One agent's operator-run de-dup: the kind cleanup, then the identity pass."""
+
+    kinds: KindMigrationReport
+    result: EntityDedupResult
+
+
+async def dedup_agent_memory(
+    workspace: Path,
+    agent_did: str,
+    *,
+    apply: bool,
+    config: MemoryConfig | None = None,
+    embedder: Embedder | None = None,
+    confirmer: distill.EntityMergeConfirmer | None = None,
+    audit_sink: AuditSink | None = None,
+) -> AgentDedupReport:
+    """Run kind cleanup + identity de-dup over one agent's memory (``arc memory dedup``).
+
+    The same engine the nightly pass runs, bound to the agent's own scope so graph
+    edges follow each fold. Dry-run (``apply=False``) reads and plans only: no file,
+    edge, merge record or LLM call. Every fold is audited under the agent's DID.
+    """
+    if not agent_did:
+        raise ValueError("de-dup requires the agent's DID (no memory without identity)")
+    cfg = config or MemoryConfig()
+    sink = audit_sink if audit_sink is not None else NullSink()
+    scope = Scope(agent_did=agent_did)
+    db = MemoryDB(workspace)
+    graph = WeightedGraph(db, cfg)
+    store = SemanticStore(workspace, graph, scope.key)
+
+    def _emit(action: str, target: str, extra: dict[str, Any]) -> None:
+        event = AuditEvent(
+            actor_did=agent_did,
+            action=action,
+            target=target,
+            outcome="allow",
+            classification="unclassified",
+            tier=cfg.tier,
+            extra={**extra, "initiator": "operator"},
+        )
+        emit_audit(event, sink)
+
+    kinds = normalize_entity_kinds(store, apply=apply)
+    if apply and kinds.changed:
+        _emit("memory.entity_kinds_normalized", "memory", {"cards": kinds.changed})
+    deduper = EntityDeduper(
+        store, graph, scope.key, config=cfg, embedder=embedder, confirmer=confirmer, emit=_emit
+    )
+    return AgentDedupReport(kinds=kinds, result=await deduper.run(apply=apply))
+
+
 __all__ = [
+    "AgentDedupReport",
     "EntityDedupPlan",
     "EntityDedupResult",
     "EntityDeduper",
     "MergeGroup",
+    "dedup_agent_memory",
     "name_tokens",
 ]
