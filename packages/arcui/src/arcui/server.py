@@ -86,6 +86,7 @@ from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
+from arcui.routes import source_guide as source_guide_routes
 from arcui.routes import stack as stack_routes
 from arcui.routes import standing_grants as standing_grants_routes
 from arcui.routes import stats as stats_routes
@@ -436,6 +437,7 @@ def create_app(
         *custody_routes.routes,
         *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,
+        *source_guide_routes.routes,
         *gateway_routes.routes,
         *stack_routes.routes,
         *team_pages_routes.routes,

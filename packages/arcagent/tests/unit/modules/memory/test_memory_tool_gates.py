@@ -180,6 +180,10 @@ class _ConnectedService:
     async def get_mapping_proposal(self, connection_id: str) -> Any:
         return self._proposals.get(connection_id)
 
+    async def guide_context(self, *, source_ids: Any = None, run_key: str) -> str:
+        """No operator guides written for these sources."""
+        return ""
+
     async def catalog_entries(self, *, refresh: bool = False) -> tuple[CatalogEntry, ...]:
         """The service's own view: described sources with the homes they are mapped to."""
         entries = []

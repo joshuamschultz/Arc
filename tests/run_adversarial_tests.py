@@ -42,6 +42,23 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # The refusal reaches the module's audit sink in production, not only a log.
         "packages/arcagent/tests/unit/extension/test_credential_placement.py",
     ),
+    "operator source-guide poisoning (instruction-adjacent text, LLM01/ASI06)": (
+        # A guide is operator-signed on every save and verified on every read: a
+        # direct file edit after signing, a guide signed by another key, an
+        # unpinned operator key, a symlink swapped in and a planted history file
+        # are all refused (never re-signed by a restore); an oversize guide is
+        # refused at the store and the route; a viewer cannot write or restore.
+        "packages/arcmemory/tests/unit/test_source_guide.py",
+        "packages/arcui/tests/test_source_guide_route.py",
+        # Only verified, signed text reaches an agent: an unsigned draft never; a
+        # tampered guide is withheld, audited and logged; connection A's guide
+        # never answers for connection B; an agent not granted a connection never
+        # sees its guide (tool output, catalog preview or index); the per-turn
+        # budget is enforced and audited; the guide cannot close its frame.
+        "packages/arcagent/tests/unit/modules/connected_data/test_operator_guides.py",
+        "packages/arcmemory/tests/unit/test_connected_source_guide.py",
+        "tests/journeys/test_journey_source_guide.py",
+    ),
     "connected-source routing index tampering (memory poisoning)": (
         # A forged-but-canonical index.md is rebuilt from the documents, never
         # trusted by the once-per-run incremental refresh; a non-canonical one

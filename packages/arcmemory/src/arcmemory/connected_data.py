@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from arcokf import listable_dir, listable_file
+from arcokf import listable_dir, listable_file, validate_folder_index
 from arcstore.approvals import ApprovalStore
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.classification import parse_classification
@@ -39,10 +40,17 @@ from arcmemory.mapping import (
 from arcmemory.mdfile import atomic_write_text, parse_document, read_frontmatter, render_document
 from arcmemory.profile import ProfileFactKind, ProfileReviewStore, ReviewPort
 from arcmemory.security import content_hash, document_sanitize
+from arcmemory.source_guide import (
+    GUIDE_DOCUMENT,
+    SourceGuideTamperedError,
+    sync_guide_document,
+)
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.provenance import ProvenanceStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import MemoryHome, Provenance, Scope, SourceMapping, SourceRecord
+
+_logger = logging.getLogger("arcmemory.connected_data")
 
 
 class ConnectedSourceShape(StrEnum):
@@ -864,9 +872,80 @@ class ConnectedDataService:
         source_id = self._source_id(source)
         root = self._document_root(source_id)
         if root.is_dir():
+            await self._sync_operator_guide(source, root)
             await self._doc_index().refresh_collection_index(source_id, self._agent_did, root)
         if self._blob_inventory_root(source_id).is_dir():
             await asyncio.to_thread(self._reconcile_blob_inventory, source_id)
+
+    async def refresh_operator_guide(self, source: ConnectedSource) -> bool:
+        """Bring the source's operator guide into its routing index; ``True`` if it changed.
+
+        The guide is edited in ArcUI, not synced from the provider, so it changes
+        between sync runs. This rebuilds the root ``index.md`` through the same
+        refresh a sync run ends with, and only when the guide document changed.
+        """
+        await self._require_current_generation(source)
+        source_id = self._source_id(source)
+        root = self._document_root(source_id)
+        if not root.is_dir() or not await self._sync_operator_guide(source, root):
+            return False
+        await self._doc_index().refresh_collection_index(source_id, self._agent_did, root)
+        return True
+
+    async def root_overview(
+        self, source: ConnectedSource
+    ) -> tuple[list[tuple[str, int]], list[str]]:
+        """Top-level folders (with document counts) and document titles of one source.
+
+        Read from the source's verified root ``index.md`` only; an unverified or
+        absent index is an empty overview, never a guess. The operator guide
+        document is left out: it describes the source, it is not in it.
+        """
+        root = self._document_root(self._source_id(source))
+        validation = await asyncio.to_thread(validate_folder_index, root)
+        if not validation.valid:
+            return [], []
+        folders = [
+            (entry.path.split("/", 1)[0], entry.count)
+            for entry in validation.entries
+            if entry.is_folder
+        ]
+        titles = [
+            entry.title
+            for entry in validation.entries
+            if not entry.is_folder and entry.path != GUIDE_DOCUMENT
+        ]
+        return folders, titles
+
+    async def _sync_operator_guide(self, source: ConnectedSource, root: Path) -> bool:
+        """Write the verified guide document into ``root``; a tamper drops it, loudly.
+
+        A tampered guide must never stop the sync that found it (the data is still
+        the operator's), but it must never be served either: the document is
+        removed, the refusal is audited and logged at WARNING.
+        """
+        try:
+            return await asyncio.to_thread(sync_guide_document, root, source.connection_id)
+        except SourceGuideTamperedError as exc:
+            _logger.warning(
+                "operator guide for connection %r refused: %s", source.connection_id, exc
+            )
+            self._audit_guide_tampered(source)
+            return True
+
+    def _audit_guide_tampered(self, source: ConnectedSource) -> None:
+        if self._audit is None:
+            return
+        emit(
+            AuditEvent(
+                actor_did=self._agent_did,
+                action="connected_data.guide.tampered",
+                target=source.connection_id,
+                outcome="deny",
+                extra={"reason": "signature_mismatch"},
+            ),
+            self._audit,
+        )
 
     async def purge_source(self, source: ConnectedSource) -> None:
         """Irreversibly remove every retrievable artifact of a disconnected source."""

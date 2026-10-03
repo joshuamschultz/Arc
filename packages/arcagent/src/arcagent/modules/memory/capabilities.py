@@ -35,6 +35,7 @@ import arcrun
 
 from arcagent.core import midloop_recall, turn_context
 from arcagent.core.errors import CapabilityUnavailableError
+from arcagent.core.session_internal.capability_ledger import current_session_id
 from arcagent.extension.untrusted import frame_untrusted
 from arcagent.knowledge import (
     SHARED_KNOWLEDGE_ATTACHED,
@@ -799,7 +800,40 @@ async def document_search(query: str, source: str | None = None, top_k: int | No
         "memory.document_search",
         {"query_len": len(query), "source": source or "", "hit": bool(hits), "tool": True},
     )
-    return _render_doc_hits(query, hits)
+    touched = {str(getattr(hit, "source_id", "")) for hit in hits} | set(wanted or ())
+    guides = await _operator_guides(sorted(touched - {""}))
+    return guides + _render_doc_hits(query, hits)
+
+
+async def _operator_guides(source_ids: list[str] | None) -> str:
+    """The operator's verified guides for the sources a tool touched (all when ``None``).
+
+    The connected-data service owns which guides this agent may see and hands
+    each one over once per run, framed as operator navigation guidance. No
+    connected-data module means no guides.
+    """
+    try:
+        runtime = __import__("arcagent.modules.connected_data._runtime", fromlist=["state"])
+        service = runtime.state().service
+    except RuntimeError:
+        return ""
+    if service is None:
+        return ""
+    text: str = await service.guide_context(source_ids=source_ids, run_key=_guide_run_key())
+    return text
+
+
+def _guide_run_key() -> str:
+    """What "once per run" means for a guide: the arcrun run, else the session.
+
+    Outside both (a direct call from a test or a script) every call is its own
+    run, so a guide is never withheld for having been shown to someone else.
+    """
+    run_id = arcrun.current_run_id()
+    if run_id:
+        return f"run:{run_id}"
+    session = current_session_id()
+    return f"session:{session}" if session else f"call:{os.urandom(8).hex()}"
 
 
 async def _with_shared_hits(
@@ -933,7 +967,8 @@ async def datastore_query(
         {"source": source or "auto", "op": op, "table": table, "hit": bool(result), "tool": True},
     )
     context = await _table_meaning_context(st, sources, table)
-    return context + _render_datastore_result(result)
+    guides = await _operator_guides(list(sources))
+    return guides + context + _render_datastore_result(result)
 
 
 async def _table_meaning_context(st: Any, sources: tuple[str, ...], table: str) -> str:
@@ -1028,7 +1063,8 @@ async def datastore_describe(source: str | None = None, table: str | None = None
         "memory.datastore_describe",
         {"source": source or "auto", "table": table or "", "hit": bool(blocks), "tool": True},
     )
-    return "\n\n".join(blocks) if blocks else "No datastore description found."
+    guides = await _operator_guides(list(sources))
+    return guides + ("\n\n".join(blocks) if blocks else "No datastore description found.")
 
 
 @tool(
@@ -1057,7 +1093,9 @@ async def connected_sources() -> str:
         f"- {entry.name}: {entry.kind}; status={entry.status}; homes={entry.homes_text}"
         for entry in await service.catalog_entries(refresh=True)
     ]
-    return "\n".join(descriptions) if descriptions else "No connected sources are available."
+    if not descriptions:
+        return "No connected sources are available."
+    return await _operator_guides(None) + "\n".join(descriptions)
 
 
 @tool(
