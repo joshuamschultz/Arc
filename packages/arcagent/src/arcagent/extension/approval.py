@@ -36,9 +36,11 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.policy import ApprovalGrant, ToolCall
 
@@ -56,6 +58,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 from arcagent.tools.human_gate import HumanGate
+from arcagent.utils.causality import correlate
 
 _logger = logging.getLogger("arcagent.extension.approval")
 
@@ -158,6 +161,16 @@ class ApprovalBinding:
     def instance(self) -> str:
         """The connected account this binding governs."""
         return self._instance
+
+    def scope(self) -> AbstractContextManager[causal.CausalContext]:
+        """The causal scope of one act on this connection (item 20).
+
+        ``connection_id`` is refined from the binding — set by code when the
+        connection was attached, never read from the call's arguments — so the
+        verdict, the call and whatever the connector audits name this account.
+        Unbound, the agent itself is the actor.
+        """
+        return correlate(fallback=("agent", self._agent_did), connection_id=self._instance)
 
     @property
     def mode(self) -> str:
@@ -295,7 +308,8 @@ class _GatedAttachment:
         return self._attachment.requirements()
 
     async def probe(self) -> ProbeResult:
-        return await self._attachment.probe()
+        with self._binding.scope():
+            return await self._attachment.probe()
 
     async def describe_tools(self) -> list[ToolSpec]:
         return await self._attachment.describe_tools()
@@ -308,18 +322,19 @@ class _GatedAttachment:
         outcome is ``ERROR`` so it can never be mistaken for a completed send.
         """
         spec = self._specs.get(tool) or _UNDECLARED.model_copy(update={"name": tool})
-        decision = await self._binding.authorize(spec, args)
-        if not decision.allowed:
-            _logger.info("connector call %r refused: %s", tool, decision.reason)
-            return ToolResult(
-                tool=tool,
-                outcome=ToolOutcome.ERROR,
-                content=(
-                    f"instance {self._binding.instance!r} requires operator approval "
-                    f"for this call and did not receive it: {decision.reason}"
-                ),
-            )
-        return await self._attachment.invoke(tool, args)
+        with self._binding.scope():
+            decision = await self._binding.authorize(spec, args)
+            if not decision.allowed:
+                _logger.info("connector call %r refused: %s", tool, decision.reason)
+                return ToolResult(
+                    tool=tool,
+                    outcome=ToolOutcome.ERROR,
+                    content=(
+                        f"instance {self._binding.instance!r} requires operator approval "
+                        f"for this call and did not receive it: {decision.reason}"
+                    ),
+                )
+            return await self._attachment.invoke(tool, args)
 
 
 __all__ = [
