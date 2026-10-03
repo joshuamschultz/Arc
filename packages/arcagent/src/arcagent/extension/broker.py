@@ -76,6 +76,7 @@ from typing import Self
 from urllib.parse import unquote, urlsplit
 
 import httpx
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.errors import ExtensionError
@@ -150,6 +151,13 @@ class _Grant:
     ref: SecretRef
     upstream: str
     caller_did: str
+    cause: causal.CausalContext | None = None
+    """The causal context the grant was issued in (item 20).
+
+    Each forwarded request is served on the listener's own task, which carries
+    whatever context started the broker. The grant's cause is re-bound there so
+    the credential read and its record name the call that asked for it.
+    """
 
 
 @dataclass(frozen=True)
@@ -255,7 +263,7 @@ class CredentialBroker:
         """
         endpoint = self.endpoint
         origin = _pin(upstream)
-        if await self._secrets.get(ref, caller_did=caller_did) is None:
+        if await self._secrets.get(ref) is None:
             self._audit("credential.broker_issue", ref, caller_did, "not_found", origin)
             raise ExtensionError(
                 code="BROKER_CREDENTIAL_MISSING",
@@ -263,7 +271,9 @@ class CredentialBroker:
                 details={"secret": str(ref), "upstream": origin},
             )
         handle = token_urlsafe(HANDLE_BYTES)
-        self._grants[handle] = _Grant(ref=ref, upstream=origin, caller_did=caller_did)
+        self._grants[handle] = _Grant(
+            ref=ref, upstream=origin, caller_did=caller_did, cause=causal.current()
+        )
         self._audit("credential.broker_issue", ref, caller_did, "allow", origin)
         return BrokerGrant(handle=handle, endpoint=endpoint, upstream=origin)
 
@@ -309,7 +319,9 @@ class CredentialBroker:
             # able to drive unbounded writes into the audit store.
             _logger.warning("refusing a broker request: no live grant for the presented handle")
             return _Response(401, b"unknown or revoked handle")
-        return await self._forward(grant, request)
+        cause = grant.cause or causal.root("agent", grant.caller_did)
+        with causal.bind(cause):
+            return await self._forward(grant, request)
 
     async def _forward(self, grant: _Grant, request: _Request) -> _Response:
         """Attach the real credential and send it to the pinned origin, only."""
@@ -318,7 +330,7 @@ class CredentialBroker:
             self._attach_audit(grant, "deny")
             return _Response(400, b"request target must be an origin-form path inside the pin")
 
-        secret = await self._secrets.get(grant.ref, caller_did=grant.caller_did)
+        secret = await self._secrets.get(grant.ref)
         if secret is None:
             _logger.warning("refusing a broker request: the credential is no longer stored")
             self._attach_audit(grant, "not_found")

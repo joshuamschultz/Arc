@@ -100,6 +100,7 @@ from arcagent.streaming import (
 )
 from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
+from arcagent.utils.causality import agent_scope
 
 if TYPE_CHECKING:
     from arcagent.capabilities.capability_loader import SkillArtifactResolver
@@ -1146,6 +1147,7 @@ class ArcAgent:
                     allowed_strategies=accepted.allowed_strategies,
                     reply_target=accepted.reply_target,
                     reply_label=accepted.reply_label,
+                    on_behalf_of=accepted.caller_did,
                 )
             )
 
@@ -1284,6 +1286,7 @@ class ArcAgent:
                     reply_label=accepted.reply_label,
                     interactive=True,
                     content=accepted_content,
+                    on_behalf_of=accepted.caller_did,
                 ):
                     yield event
 
@@ -1321,6 +1324,7 @@ class ArcAgent:
                     reply_label=reply_label,
                     interactive=True,
                     on_handle=lambda _handle: started.set(),
+                    on_behalf_of=caller_did,
                 ):
                     projection = _delivery_projection(event)
                     if projection is None:
@@ -1390,6 +1394,7 @@ class ArcAgent:
         overheard: bool = False,
         hop: int = 0,
         content: list[dict[str, Any]] | None = None,
+        on_behalf_of: str | None = None,
     ) -> arcrun.RunHandle:
         """Start an async, steerable run and track its handle under ``session_key``.
 
@@ -1417,6 +1422,7 @@ class ArcAgent:
             overheard=overheard,
             hop=hop,
             content=content,
+            on_behalf_of=on_behalf_of,
         )
 
     async def run_oneshot(
@@ -1448,7 +1454,10 @@ class ArcAgent:
             parent_session_id = current.session_id if current is not None else None
         run_id = str(uuid.uuid4())
         with (
-            causal.run_scope(run_id),
+            agent_scope(
+                self._identity.did if self._identity is not None else causal.UNATTRIBUTED,
+                run_id,
+            ),
             self._queue_run_context(
                 parent_session_id, run_id, origin="evaluation", parent_run_id=parent_run_id
             ),
@@ -1545,6 +1554,7 @@ class ArcAgent:
                     overheard=overheard,
                     hop=hop,
                     content=content,
+                    on_behalf_of=caller_did,
                 )
                 if on_handle is not None:
                     on_handle(started)

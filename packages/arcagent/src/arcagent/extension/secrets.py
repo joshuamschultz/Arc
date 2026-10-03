@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.errors import ExtensionError
@@ -290,26 +291,26 @@ class SecretStore:
         self._backend = backend
         self._sink = sink
 
-    async def get(self, ref: SecretRef, *, caller_did: str) -> Secret | None:
+    async def get(self, ref: SecretRef) -> Secret | None:
         """Resolve a credential, or None if it was never stored."""
         value = await self._backend.get(ref)
-        self._audit("secret.read", ref, caller_did, "allow" if value else "not_found")
+        self._audit("secret.read", ref, "allow" if value else "not_found")
         return Secret(value) if value is not None else None
 
-    async def put(self, ref: SecretRef, value: str, *, caller_did: str) -> None:
+    async def put(self, ref: SecretRef, value: str) -> None:
         """Store a credential. The value never leaves the backend it is written to."""
         self._validate(ref, value)
         await self._backend.put(ref, value)
-        self._audit("secret.write", ref, caller_did, "allow")
+        self._audit("secret.write", ref, "allow")
 
     async def present(self, connection: str) -> frozenset[str]:
         """Which fields are stored for ``connection``. Names only; nothing is opened."""
         return await self._backend.present(connection)
 
-    async def delete(self, ref: SecretRef, *, caller_did: str) -> bool:
+    async def delete(self, ref: SecretRef) -> bool:
         """Forget a credential. True when one was removed."""
         removed = await self._backend.delete(ref)
-        self._audit("secret.delete", ref, caller_did, "allow" if removed else "not_found")
+        self._audit("secret.delete", ref, "allow" if removed else "not_found")
         return removed
 
     @staticmethod
@@ -336,13 +337,13 @@ class SecretStore:
     def _store_name(self) -> str:
         return str(getattr(self._backend, "store_name", type(self._backend).__name__))
 
-    def _audit(self, action: str, ref: SecretRef, caller_did: str, outcome: str) -> None:
-        """Record the credential carve-out: coordinates, caller, outcome — no value."""
+    def _audit(self, action: str, ref: SecretRef, outcome: str) -> None:
+        """Record the credential carve-out: coordinates, initiator, outcome — no value."""
         if self._sink is None:
             return
         emit(
             AuditEvent(
-                actor_did=caller_did,
+                actor_did=causal.actor_did(),
                 action=action,
                 target=f"secret:{ref}",
                 outcome=outcome,

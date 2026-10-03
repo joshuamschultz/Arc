@@ -37,6 +37,7 @@ credential by writing a config block.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -47,7 +48,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar, cast
 
 from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
@@ -159,6 +160,7 @@ from arcagent.modules.connectors.mcp_bundle import (
     validate_spec,
     write_bundle,
 )
+from arcagent.utils.causality import correlate
 
 _logger = logging.getLogger("arcagent.connections")
 
@@ -193,6 +195,26 @@ _STRINGENCY = (Tier.PERSONAL, Tier.ENTERPRISE, Tier.FEDERAL)
 #: Refusal code for a credential no manifest declares — the allowlist that stops
 #: a rotation from writing an arbitrary entry into the agent's credential file.
 UNDECLARED_CREDENTIAL = "CONNECTOR_SECRET_UNDECLARED"
+
+
+_Method = TypeVar("_Method", bound=Callable[..., Awaitable[Any]])
+
+
+def _on_connection(method: _Method) -> _Method:
+    """Run a per-connection operation with ``connection_id`` on its causal context.
+
+    Item 20: whoever caused the act (a UI session, the CLI operator, the
+    scheduler) stays the initiator; the connection it touched is refined in, so
+    every secret read and host check inside names the account. Unbound, the act
+    is recorded as unattributed rather than borrowing anyone's identity.
+    """
+
+    @functools.wraps(method)
+    async def scoped(self: Any, instance: str, *args: Any, **kwargs: Any) -> Any:
+        with correlate(fallback=("system", causal.UNATTRIBUTED), connection_id=instance):
+            return await method(self, instance, *args, **kwargs)
+
+    return cast(_Method, scoped)
 
 
 def _refuse(code: str, message: str, **details: Any) -> ExtensionError:
@@ -877,18 +899,21 @@ class Connections:
         with self._audit.open() as sink:
             return self._plan_for(instance, sink)
 
+    @_on_connection
     async def tools(self, instance: str) -> tuple[ToolSpec, ...]:
         """The verbs one connection offers the agent right now."""
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return tuple(await attachment.describe_tools())
 
+    @_on_connection
     async def probe(self, instance: str) -> ProbeResult:
         """Open the connection right now — the only honest answer to "does this work"."""
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return await attachment.probe()
 
+    @_on_connection
     async def check_health(
         self,
         instance: str,
@@ -1123,6 +1148,7 @@ class Connections:
             return ("host_missing", detail)
         return ("provider_unavailable", detail)
 
+    @_on_connection
     async def authorization(self, instance: str) -> Authorization:
         """How this connection is authorised — the answer both surfaces render.
 
@@ -1146,6 +1172,7 @@ class Connections:
             instance, plan, probe, sign_in, supplied, authorize_url=authorize_url
         )
 
+    @_on_connection
     async def complete_oauth(self, instance: str, *, code: str) -> Authorization:
         """Finish a native OAuth connection by swapping its code for a refresh token.
 
@@ -1218,7 +1245,7 @@ class Connections:
         """
         ref = SecretRef(connection=instance, field=refresh_field)
         if not tokens.access_token or tokens.expires_in <= 0:
-            await store.put(ref, tokens.refresh_token, caller_did=causal.actor_did())
+            await store.put(ref, tokens.refresh_token)
             return
         custody = await self._custody(sink)
         issued = self._clock()
@@ -1259,11 +1286,10 @@ class Connections:
 
     async def _read_secret(self, store: SecretStore, instance: str, field: str) -> str:
         """One connector secret's value, or empty when nothing is stored yet."""
-        found = await store.get(
-            SecretRef(connection=instance, field=field), caller_did=causal.actor_did()
-        )
+        found = await store.get(SecretRef(connection=instance, field=field))
         return found.reveal() if found is not None else ""
 
+    @_on_connection
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
 
@@ -1394,7 +1420,6 @@ class Connections:
         for required in checks:
             result = await run_authorization_check(
                 required,
-                caller_did=causal.actor_did(),
                 audit_sink=sink,
                 tier=self._world.tier,
                 env=placed,
@@ -1491,6 +1516,7 @@ class Connections:
             warnings=warnings,
         )
 
+    @_on_connection
     async def complete_remote_login(self, instance: str, *, redirect_url: str) -> Authorization:
         """Finish the browser sign-in with the address the operator pasted, then check it.
 
@@ -1627,6 +1653,7 @@ class Connections:
         )
         return result.detail
 
+    @_on_connection
     async def doctor(self, instance: str) -> tuple[DoctorCheck, ...]:
         """Everything that could be wrong with one connection, without fixing any of it.
 
@@ -2097,7 +2124,7 @@ class Connections:
                 if not value:
                     continue
                 ref = SecretRef(connection=plan.instance, field=required.name)
-                await store.put(ref, value, caller_did=causal.actor_did())
+                await store.put(ref, value)
                 written.append(required.name)
         if written:
             await self._push_credential_change(plan.instance)
@@ -2224,6 +2251,7 @@ class Connections:
             await self._push_credential_change(instance)
         return report
 
+    @_on_connection
     async def approve(self, instance: str) -> tuple[str, ...]:
         """Record the tool contract this connection serves RIGHT NOW as approved.
 
@@ -2259,6 +2287,7 @@ class Connections:
             )
         return tuple(spec.name for spec in specs)
 
+    @_on_connection
     async def remove(self, instance: str) -> RemovalReport:
         """Disconnect one account: its credential, its definition, every grant on it.
 
@@ -2495,7 +2524,6 @@ class Connections:
             plan.manifest,
             connection=plan.instance,
             store=custody.store,
-            caller_did=causal.actor_did(),
             include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
         return self._factory(
@@ -2534,7 +2562,7 @@ class Connections:
             value = ""
             if not declared.sensitive:
                 ref = SecretRef(connection=plan.instance, field=declared.name)
-                found = await store.get(ref, caller_did=causal.actor_did())
+                found = await store.get(ref)
                 value = found.reveal() if found is not None else ""
             rows.append(
                 SuppliedCredential(
@@ -2568,7 +2596,6 @@ class Connections:
                 plan.manifest,
                 connection=plan.instance,
                 store=await self._store(sink),
-                caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}

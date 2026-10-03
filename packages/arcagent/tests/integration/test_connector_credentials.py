@@ -158,9 +158,7 @@ async def _state(backend: FakeBackend) -> ConnectionStateStore:
 async def _stored(backend: FakeBackend, value: str = _TOKEN) -> Custody:
     """A custody already holding the credential an operator supplied."""
     custody = _custody(backend)
-    await custody.store.put(
-        SecretRef(connection=_INSTANCE, field=_FIELD), value, caller_did=_CALLER
-    )
+    await custody.store.put(SecretRef(connection=_INSTANCE, field=_FIELD), value)
     return custody
 
 
@@ -203,7 +201,6 @@ async def test_a_native_attachment_receives_its_declared_secrets_from_the_store(
         plan.manifest,
         connection=_INSTANCE,
         store=custody.store,
-        caller_did=_CALLER,
         include_sensitive=False,
     )
     attachment = build_attachment(
@@ -361,9 +358,7 @@ async def test_a_refusal_names_the_missing_credential_and_never_its_value(
     store = _custody(backend).store
 
     with pytest.raises(ExtensionError) as caught:
-        await resolve_secrets(
-            _plan(root).manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
-        )
+        await resolve_secrets(_plan(root).manifest, connection=_INSTANCE, store=store)
 
     error = caught.value
     assert error.details["missing"] == [_FIELD]
@@ -381,9 +376,7 @@ async def test_a_bundle_declaring_no_credential_needs_no_store(tmp_path: Path) -
     """
     manifest = _cli_manifest(secrets=False)
 
-    resolved = await resolve_secrets(
-        manifest, connection=_INSTANCE, store=None, caller_did=_CALLER
-    )
+    resolved = await resolve_secrets(manifest, connection=_INSTANCE, store=None)
 
     assert resolved == {}
     assert build_attachment(manifest, tmp_path, resolved) is not None
@@ -447,9 +440,7 @@ async def test_an_optional_field_left_blank_still_connects(
     store = (await _stored(backend)).store
     manifest = _with_optional(_plan(root).manifest)
 
-    secrets = await resolve_secrets(
-        manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
-    )
+    secrets = await resolve_secrets(manifest, connection=_INSTANCE, store=store)
 
     assert _FIELD in secrets
     assert "host" not in secrets, "an absent optional field must not become an empty one"
@@ -463,8 +454,6 @@ async def test_a_required_field_left_blank_is_still_refused_by_name(
     store = _custody(backend).store
 
     with pytest.raises(ExtensionError) as caught:
-        await resolve_secrets(
-            _plan(root).manifest, connection=_INSTANCE, store=store, caller_did=_CALLER
-        )
+        await resolve_secrets(_plan(root).manifest, connection=_INSTANCE, store=store)
 
     assert _FIELD in caught.value.message

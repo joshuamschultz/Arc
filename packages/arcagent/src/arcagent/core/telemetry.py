@@ -61,24 +61,48 @@ class TelemetryAuditSink:
         self.write(event)
 
 
+_DURABLE_ACTIONS = frozenset({"secret.write", "secret.delete"})
+"""Credential custody changes: always on the signed chain."""
+
+
+def is_security_event(event: AuditEvent) -> bool:
+    """Whether ``event`` belongs on the signed chain, not only in the log.
+
+    A credential that was handed out (``secret.read`` with a value), any change
+    to stored credentials, and every refusal. Routine lifecycle and not-found
+    reads stay telemetry-only so the ledger is not flooded by polling.
+    """
+    if event.action in _DURABLE_ACTIONS or event.outcome == "deny":
+        return True
+    return event.action == "secret.read" and event.outcome == "allow"
+
+
 class DurableTelemetryAuditSink(TelemetryAuditSink):
     """Telemetry audit plus a durable path into the agent's signed WORM chain.
 
-    Ordinary ``write`` events stay on the telemetry boundary. ``write_durable`` is
-    for records an operation must not proceed without (an automated promotion
-    decision, the promotion egress record): it appends to the operator-signed
-    chain FIRST and lets a failed append raise, so the caller fails closed; only
-    then is the event mirrored to telemetry for live observability.
+    ``write`` mirrors every event to telemetry and also appends security events
+    (:func:`is_security_event`) to the operator-signed chain, so a credential
+    read or a refusal an agent component emits through the single emission
+    point is on the ledger. ``write_durable`` is for records an operation must
+    not proceed without (an automated promotion decision, the promotion egress
+    record): it appends to the chain FIRST and lets a failed append raise, so
+    the caller fails closed; only then is the event mirrored to telemetry.
     """
 
     def __init__(self, telemetry: _AuditTelemetry, chain: DurableAuditSink) -> None:
         super().__init__(telemetry)
         self._chain = chain
 
+    def write(self, event: AuditEvent) -> None:
+        """Mirror to telemetry; append security events to the chain (raising on failure)."""
+        if is_security_event(event):
+            self._chain.write_durable(event)
+        super().write(event)
+
     def write_durable(self, event: AuditEvent) -> None:
         """Append ``event`` to the signed chain (raising on failure), then mirror it."""
         self._chain.write_durable(event)
-        self.write(event)
+        super().write(event)
 
 
 class AgentTelemetry:

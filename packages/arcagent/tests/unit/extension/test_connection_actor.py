@@ -134,6 +134,7 @@ async def test_a_scheduled_probe_is_attributed_to_the_scheduler(
         assert event.actor_did == scheduler
         assert event.actor_did != connections.world.did
         assert event.causal is not None and event.causal.initiator == "scheduler"
+        assert event.causal.connection_id == _INSTANCE
 
 
 async def test_an_unbound_caller_is_loudly_unattributed_not_the_operator(

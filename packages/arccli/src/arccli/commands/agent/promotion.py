@@ -129,8 +129,8 @@ def _show(args: argparse.Namespace) -> None:
     except ValidationError as exc:
         _fail(f"invalid promotion settings: {_refusal(exc)}")
     tier = _agent_tier(config)
-    with _audited(args) as (store, did):
-        statuses = _run_store(store.list(caller_did=did))
+    with _audited(args) as store:
+        statuses = _run_store(store.list())
     key_set = any(s.present for s in statuses if s.env_var == settings.api_key_env)
     view: dict[str, Any] = {
         "enabled": settings.enabled,
@@ -244,15 +244,15 @@ def _read_key(env_var: str) -> str:
 def _key_set(args: argparse.Namespace) -> None:
     env_var = _key_env()
     value = _read_key(env_var)
-    with _audited(args) as (store, did):
-        _run_store(store.set(env_var, value, caller_did=did))
+    with _audited(args) as store:
+        _run_store(store.set(env_var, value))
     _out(f"Stored {env_var} in {arcagent.default_env_file(_arc_dir(args))}.")
 
 
 def _key_remove(args: argparse.Namespace) -> None:
     env_var = _key_env()
-    with _audited(args) as (store, did):
-        removed = _run_store(store.delete(env_var, caller_did=did))
+    with _audited(args) as store:
+        removed = _run_store(store.delete(env_var))
     _out(f"Removed {env_var}." if removed else f"No {env_var} was stored; nothing to remove.")
 
 

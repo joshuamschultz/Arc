@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import arcrun
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import env_file
 
@@ -78,7 +79,7 @@ class KeyStore:
         self._file = EnvFile(env_file)
         self._sink = sink
 
-    async def list(self, *, caller_did: str) -> tuple[KeyStatus, ...]:
+    async def list(self) -> tuple[KeyStatus, ...]:
         """Every provider arcllm packages, and whether this store holds its key."""
         entries = await self._file.read()
         statuses = tuple(
@@ -90,21 +91,21 @@ class KeyStore:
             )
             for key in arcrun.model_provider_keys()
         )
-        self._audit("provider_key.list", str(self._file.path), caller_did, "allow")
+        self._audit("provider_key.list", str(self._file.path), "allow")
         return statuses
 
-    async def set(self, env_var: str, value: str, *, caller_did: str) -> None:
+    async def set(self, env_var: str, value: str) -> None:
         """Store a key. The value goes to the file and nowhere else — no log, no event."""
         self._validate(env_var, value)
         await self._file.put(env_var, value)
-        self._audit("provider_key.write", env_var, caller_did, "allow")
+        self._audit("provider_key.write", env_var, "allow")
 
-    async def delete(self, env_var: str, *, caller_did: str) -> bool:
+    async def delete(self, env_var: str) -> bool:
         """Forget a key. True when one was removed."""
         self._declared(env_var)
         removed = await self._file.delete(env_var)
         outcome = "allow" if removed else "not_found"
-        self._audit("provider_key.delete", env_var, caller_did, outcome)
+        self._audit("provider_key.delete", env_var, outcome)
         return removed
 
     def _validate(self, env_var: str, value: str) -> None:
@@ -137,13 +138,13 @@ class KeyStore:
                 details={"env_var": env_var},
             )
 
-    def _audit(self, action: str, target: str, caller_did: str, outcome: str) -> None:
+    def _audit(self, action: str, target: str, outcome: str) -> None:
         """Record who touched which coordinate, with what result — never the value."""
         if self._sink is None:
             return
         emit(
             AuditEvent(
-                actor_did=caller_did,
+                actor_did=causal.actor_did(),
                 action=action,
                 target=f"provider_key:{target}",
                 outcome=outcome,

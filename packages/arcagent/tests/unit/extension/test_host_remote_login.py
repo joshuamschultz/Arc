@@ -240,7 +240,7 @@ async def test_the_check_reports_expired(tmp_path: Path) -> None:
     body = f"sys.stderr.write({_EXPIRED!r}); sys.exit(1)\n"
     requirement = _requirement(_script(tmp_path, body), expired="invalid_grant")
     check = await run_authorization_check(
-        requirement, caller_did=_CALLER, audit_sink=_RecordingSink(), tier=Tier.PERSONAL
+        requirement, audit_sink=_RecordingSink(), tier=Tier.PERSONAL
     )
     assert check.known and not check.authorized and check.expired
 

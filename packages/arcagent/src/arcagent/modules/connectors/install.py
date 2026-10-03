@@ -262,7 +262,7 @@ async def install_connector(
         plan, audit_sink=audit_sink, trusted_public_key=trusted_public_key, registry=registry
     )
 
-    written = await _write_secrets(plan, values=secret_values, store=store, did=caller_did)
+    written = await _write_secrets(plan, values=secret_values, store=store)
     try:
         # Read back out of the store rather than reusing ``secret_values``: what the
         # probe proves must be the credential the running agent will later resolve,
@@ -271,13 +271,12 @@ async def install_connector(
             plan.manifest,
             connection=plan.instance,
             store=store,
-            caller_did=caller_did,
             include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
         probe = await _probe(plan, attachment_factory, secrets, credential)
         _refuse_probed_egress(plan, probe)
     except BaseException:
-        await _forget_secrets(written, store=store, did=caller_did)
+        await _forget_secrets(written, store=store)
         raise
 
     connections.define(
@@ -350,7 +349,6 @@ async def resolve_secrets(
     *,
     connection: str,
     store: SecretStore | None,
-    caller_did: str,
     include_sensitive: bool = True,
 ) -> dict[str, Secret]:
     """Every credential this bundle declares, still wrapped, or refuse naming the gaps.
@@ -368,7 +366,6 @@ async def resolve_secrets(
         store: Where credentials live. ``None`` is not a failure for a bundle that
             declares none — a ``cli`` connector whose binary owns its own auth needs
             no store at all — and is a refusal for one that does.
-        caller_did: Recorded as the actor on every read.
         include_sensitive: False for a native/cli attachment, which reads its
             sensitive fields through its credential handle at call time; such a
             field is then only checked for PRESENCE (named if missing), never read.
@@ -407,7 +404,7 @@ async def resolve_secrets(
                 missing.append(declared.name)
             continue
         ref = SecretRef(connection=connection, field=declared.name)
-        secret = await store.get(ref, caller_did=caller_did)
+        secret = await store.get(ref)
         if secret is None:
             # A field the bundle declared optional was never stored, and its
             # absence is the answer: sqlite's empty `host` means the database is
@@ -499,7 +496,7 @@ async def _verify_bundle(
 
 
 async def _write_secrets(
-    plan: ConnectorPlan, *, values: Mapping[str, str], store: SecretStore, did: str
+    plan: ConnectorPlan, *, values: Mapping[str, str], store: SecretStore
 ) -> list[SecretRef]:
     """Store every declared value, unwinding this call's own writes on failure.
 
@@ -529,19 +526,19 @@ async def _write_secrets(
         try:
             if not value:
                 raise ValueError(f"no value supplied for required secret {declared.name!r}")
-            await store.put(ref, value, caller_did=did)
+            await store.put(ref, value)
         except (ValueError, ExtensionError) as exc:
-            await _forget_secrets(written, store=store, did=did)
+            await _forget_secrets(written, store=store)
             raise _refuse("secrets", str(exc), secret=declared.name) from exc
         written.append(ref)
     return written
 
 
-async def _forget_secrets(refs: Sequence[SecretRef], *, store: SecretStore, did: str) -> None:
+async def _forget_secrets(refs: Sequence[SecretRef], *, store: SecretStore) -> None:
     """Undo this install's credential writes. Best effort, and loud when it cannot."""
     for ref in refs:
         try:
-            await store.delete(ref, caller_did=did)
+            await store.delete(ref)
         except Exception:  # reason: rollback must attempt every ref, then report
             _logger.exception("could not roll back connector secret %s", ref)
 
