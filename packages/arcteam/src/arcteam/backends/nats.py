@@ -27,6 +27,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from nats.errors import ConnectionClosedError, ConnectionDrainingError
 from nats.errors import TimeoutError as NatsTimeout
 from nats.js.api import KeyValueConfig
 from nats.js.errors import (
@@ -36,7 +37,7 @@ from nats.js.errors import (
     NotFoundError,
 )
 
-from arcteam.storage import Delivery
+from arcteam.storage import ConsumerClosedError, Delivery
 
 if TYPE_CHECKING:
     from nats.aio.client import Client
@@ -121,6 +122,8 @@ class NatsConsumer:
             msgs = await self._sub.fetch(batch, timeout=_FETCH_TIMEOUT)
         except (NatsTimeout, TimeoutError):  # asyncio.TimeoutError IS builtin TimeoutError (3.11+)
             return []
+        except (ConnectionClosedError, ConnectionDrainingError) as exc:
+            raise ConsumerClosedError("nats connection closed") from exc
         deliveries: list[Delivery] = [ConsumedMessage(_decode(m.data), m) for m in msgs]
         return deliveries
 

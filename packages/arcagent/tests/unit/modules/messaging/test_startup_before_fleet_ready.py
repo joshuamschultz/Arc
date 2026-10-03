@@ -129,3 +129,46 @@ async def test_digest_publish_degrades_quietly_when_the_fleet_never_joins(
     assert _tracebacks(caplog) == []
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert len(warnings) == 1 and "digest" in warnings[0].getMessage()
+
+
+async def test_failed_fleet_join_leaves_no_consumer_on_the_closed_connection(
+    state: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DGX 2026-10-03: a startup timeout orphaned the first stream's consume loop.
+
+    The backend was then closed under it and the loop retried the dead
+    connection ~1000x/min forever. A failed join must stop every consumer before
+    the connection it ran on is closed.
+    """
+    import arcteam
+    from arcteam import composition
+    from arcteam.messenger import MessagingService
+
+    closed = asyncio.Event()
+
+    class _ClosingBackend(MemoryBackend):
+        async def close(self) -> None:
+            closed.set()
+
+    async def connect(_url: str) -> arcteam.StorageBackend:
+        return _ClosingBackend()
+
+    real_refresh = MessagingService.refresh_subscription
+
+    async def open_one_then_time_out(self: Any, entity_id: str, subscription: Any) -> None:
+        await real_refresh(self, entity_id, subscription)  # first stream's loop is running
+        raise TimeoutError("nats timeout")
+
+    monkeypatch.setattr(composition, "make_backend", connect)
+    monkeypatch.setattr(MessagingService, "refresh_subscription", open_one_then_time_out)
+    before = set(asyncio.all_tasks())
+
+    async def receive(_message: Any) -> None:
+        return None
+
+    with pytest.raises(TimeoutError):
+        await _runtime.ensure_live_backend(receive)
+
+    assert closed.is_set()
+    assert [t for t in asyncio.all_tasks() - before if not t.done()] == []
+    assert not state.live_backend_ready

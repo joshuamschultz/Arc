@@ -20,7 +20,7 @@ from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner, new_nonce, sign_message, verify_message
 from arcteam.mentions import apply_mentions
 from arcteam.registry import EntityRegistry, UnknownHandle, resolve_ref
-from arcteam.storage import Consumer, Delivery, StorageBackend
+from arcteam.storage import Consumer, ConsumerClosedError, Delivery, StorageBackend
 from arcteam.types import (
     MAX_BODY_BYTES,
     Channel,
@@ -46,6 +46,9 @@ DLQ_KEY = "dlq"
 # (the NATS consumer also blocks up to its own fetch timeout).
 _FETCH_BATCH = 20
 _IDLE_SLEEP = 0.05
+_FETCH_BACKOFF_CAP = 30.0
+# Indirection so tests can observe retry delays without waiting them out.
+_sleep = asyncio.sleep
 # How often a live subscription re-resolves its channel membership. Short enough
 # that adding an agent to a channel from the dashboard feels immediate; long
 # enough that it is one registry read per entity per interval, not per message.
@@ -112,6 +115,7 @@ class Subscription:
         self.seen_ids: set[str] = set()
         self.streams: set[str] = set()
         self._tasks: list[asyncio.Task[None]] = []
+        self._ended = asyncio.Event()
 
     @property
     def tasks(self) -> list[asyncio.Task[None]]:
@@ -121,10 +125,20 @@ class Subscription:
     def track(self, task: asyncio.Task[None]) -> None:
         """Adopt a loop opened after the subscription started."""
         self._tasks.append(task)
+        task.add_done_callback(lambda _done: self._ended.set())
 
     async def wait(self) -> None:
-        """Block until every consume loop ends (they run until cancelled)."""
-        await asyncio.gather(*self._tasks)
+        """Block until any loop ends, then re-raise its failure if it had one.
+
+        Loops run until cancelled, so one ending on its own means its
+        connection is permanently closed. The owner must re-open the
+        subscription on a fresh connection; waiting for the *other* loops
+        would leave it parked on a dead bus.
+        """
+        await self._ended.wait()
+        for task in self._tasks:
+            if task.done() and not task.cancelled() and task.exception() is not None:
+                raise task.exception()  # type: ignore[misc]  # reason: guarded non-None above
 
     async def stop(self) -> None:
         """Cancel every consume loop and wait for them to unwind."""
@@ -820,7 +834,14 @@ class MessagingService:
         cancels the loops.
         """
         subscription = Subscription(durable_name or entity_id, handler)
-        await self.refresh_subscription(entity_id, subscription)
+        try:
+            await self.refresh_subscription(entity_id, subscription)
+        except BaseException:
+            # A partial subscribe (e.g. a timeout on the second stream) would
+            # otherwise leave the first stream's loop running with no owner to
+            # stop it; it then spins on the connection its caller closes next.
+            await subscription.stop()
+            raise
         subscription.track(
             asyncio.create_task(
                 self._resubscribe_loop(entity_id, subscription),
@@ -900,18 +921,34 @@ class MessagingService:
     async def _consume_stream(
         self, consumer: Consumer, handler: MessageHandler, seen_ids: set[str]
     ) -> None:
-        """Fetch-dispatch loop for one durable consumer until cancelled."""
+        """Fetch-dispatch loop for one durable consumer until cancelled.
+
+        A permanently closed connection ends the loop (one WARNING): retrying it
+        can never succeed, and the subscription's owner re-opens on a new
+        connection. Other fetch errors back off exponentially and log one
+        WARNING per outage, plus an INFO when the consumer recovers.
+        """
+        failures = 0
         while True:
             try:
                 deliveries = await consumer.fetch(_FETCH_BATCH)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # reason: fail-open — log + retry after a beat
-                logger.exception("consume fetch failed; retrying")
-                await asyncio.sleep(_IDLE_SLEEP)
+            except ConsumerClosedError:
+                logger.warning("consume stopped: connection closed; subscription must re-open")
+                return
+            except Exception as exc:  # reason: fail-open — back off, then retry
+                if failures == 0:
+                    logger.warning("consume fetch failed; retrying: %s", type(exc).__name__)
+                logger.debug("consume fetch failure detail", exc_info=True)
+                await _sleep(min(_IDLE_SLEEP * 2**failures, _FETCH_BACKOFF_CAP))
+                failures += 1
                 continue
+            if failures:
+                logger.info("consume fetch recovered after %d failed attempts", failures)
+                failures = 0
             if not deliveries:
-                await asyncio.sleep(_IDLE_SLEEP)
+                await _sleep(_IDLE_SLEEP)
                 continue
             for delivery in deliveries:
                 await self._dispatch(delivery, handler, seen_ids)

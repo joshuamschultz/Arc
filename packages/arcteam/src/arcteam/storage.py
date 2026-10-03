@@ -25,9 +25,22 @@ class Delivery(Protocol):
         ...
 
 
+class ConsumerClosedError(RuntimeError):
+    """The connection under a consumer is permanently closed; fetching again is futile.
+
+    Raised by ``Consumer.fetch`` so the messenger can end its loop and let the
+    subscription's owner re-open on a fresh connection, without the messenger
+    importing any broker client.
+    """
+
+
 @runtime_checkable
 class Consumer(Protocol):
-    """A durable consumer bound to one stream: fetch a batch, ack each."""
+    """A durable consumer bound to one stream: fetch a batch, ack each.
+
+    ``fetch`` raises :class:`ConsumerClosedError` once the underlying connection
+    is permanently closed.
+    """
 
     async def fetch(self, batch: int) -> list[Delivery]:
         """Pull up to ``batch`` un-acked messages; empty list when idle."""
