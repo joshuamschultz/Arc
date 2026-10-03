@@ -22,6 +22,9 @@ it('lists templates and creates a workflow from the chosen one', async () => {
         posts.push({ path: p, body: JSON.parse(String(init.body)) })
         return new Response(JSON.stringify({ workflow_id: 'nightly' }))
       }
+      if (p === '/api/team/roster') {
+        return new Response(JSON.stringify({ agents: [{ agent_id: 'sales' }] }))
+      }
       if (p === '/api/workflow-templates') {
         return new Response(
           JSON.stringify({
@@ -46,11 +49,15 @@ it('lists templates and creates a workflow from the chosen one', async () => {
   await userEvent.selectOptions(select, 'digest')
   expect(screen.getByText('Summarise the day')).toBeTruthy()
   await userEvent.type(screen.getByPlaceholderText('onboarding'), 'nightly')
+  // No owner chosen yet: the draft could never sign, so it cannot be created.
+  expect(screen.getByRole('button', { name: 'Create draft' }).hasAttribute('disabled')).toBe(true)
+  await screen.findByRole('option', { name: '@sales' })
+  await userEvent.selectOptions(screen.getByLabelText('Owner agent'), '@sales')
   await userEvent.click(screen.getByRole('button', { name: 'Create draft' }))
   await waitFor(() => expect(posts).toHaveLength(1))
   expect(posts[0]).toEqual({
     path: '/api/workflows/from-template',
-    body: { template: 'digest', workflow_id: 'nightly' },
+    body: { template: 'digest', workflow_id: 'nightly', owner: '@sales' },
   })
 })
 

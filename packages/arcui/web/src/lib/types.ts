@@ -1021,6 +1021,8 @@ export interface WorkflowSummary {
 export interface WorkflowDetail extends WorkflowSummary {
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
+  /** The agent handle that owns the workflow; nodes without an `agent` run as it. */
+  owner?: string | null
   channel?: string | null
   versions?: WorkflowVersion[]
 }

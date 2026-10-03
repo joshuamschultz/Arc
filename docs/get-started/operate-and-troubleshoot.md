@@ -47,7 +47,7 @@ clean teardown ("disconnect = delete the pool").
 
 ## Headless nodes hang on the keyring
 
-A connector whose auth lives in the OS keyring (a vendor CLI such as `acli`) will
+A connector whose auth lives in the OS keyring (a vendor CLI) will
 **hang a CLI** on a headless box because the keyring tries to reach a D-Bus
 session that isn't there. Your deploy automation should neutralize this by
 exporting `DBUS_SESSION_BUS_ADDRESS=/dev/null` for the service and for deploy

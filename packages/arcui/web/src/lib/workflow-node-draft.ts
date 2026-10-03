@@ -5,6 +5,13 @@ import type { WorkflowNode, WorkflowNodeKind } from './types'
 // validator (REQ-253): every value is relayed verbatim and empty fields simply
 // drop out.
 
+/** What a starter template ships as its owner. No agent answers to it, so a
+ * workflow still owned by it can never sign or run. */
+export const PLACEHOLDER_OWNER = '@operator'
+
+export const hasRealOwner = (owner: string | null | undefined): owner is string =>
+  Boolean(owner) && owner !== PLACEHOLDER_OWNER
+
 export const NODE_KINDS: WorkflowNodeKind[] = ['agent', 'tool', 'script', 'router', 'gate']
 
 /** arcrun's registered strategies (arcrun.strategies.STRATEGIES). A node may

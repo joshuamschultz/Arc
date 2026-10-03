@@ -1568,7 +1568,11 @@ export const useWorkflowTemplates = (enabled = true) =>
 
 export const useCreateWorkflowFromTemplate = () => {
   const queryClient = useQueryClient()
-  return useMutation<{ workflow_id: string }, Error, { template: string; workflow_id: string }>({
+  return useMutation<
+    { workflow_id: string },
+    Error,
+    { template: string; workflow_id: string; owner: string }
+  >({
     mutationFn: (body) => apiPost('/api/workflows/from-template', body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflows'] }),
   })
