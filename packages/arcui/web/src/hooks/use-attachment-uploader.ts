@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getToken } from '@/lib/auth'
+import { newRequestId } from '@/lib/request-id'
 
 export type AttachmentStatus = 'pending' | 'uploading' | 'clean' | 'rejected' | 'failed' | 'canceled'
 
@@ -29,10 +30,6 @@ interface UploadResponse {
   size_bytes?: number
   detected_mime?: string
   scan_status?: string
-}
-
-function localId(): string {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }
 
 function parseResponse(xhr: XMLHttpRequest): UploadResponse {
@@ -122,7 +119,7 @@ export function useAttachmentUploader(agentId: string | null, sessionKey: string
     (fileList: FileList | File[]) => {
       const selected = Array.from(fileList)
       const next = selected.map((file) => ({
-        localId: localId(),
+        localId: newRequestId(),
         name: file.name,
         size: file.size,
         mime: file.type || 'application/octet-stream',

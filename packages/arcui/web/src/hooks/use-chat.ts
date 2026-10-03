@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet } from '@/lib/api'
 import { getToken } from '@/lib/auth'
+import { newRequestId } from '@/lib/request-id'
 import type { Dict, SessionReplayResponse } from '@/lib/types'
 
 export type ChatRole = 'user' | 'agent' | 'tool_call' | 'system'
@@ -155,6 +156,13 @@ export function useChatSession(agentId: string | null) {
           append({ id: `err${Date.now()}`, role: 'system', text: `Error: ${frame.error}`, time: now() })
           return
         }
+        if (frame.type === 'error') {
+          // A typed refusal ({type:'error', code, message}) — a rejected frame
+          // must never look like a message that is still being worked on.
+          const reason = String(frame.message ?? frame.code ?? 'the server refused the message')
+          append({ id: `err${Date.now()}`, role: 'system', text: `Error: ${reason}`, time: now() })
+          return
+        }
         if (frame.type === 'tool_call') {
           append({
             id: `tool${frame.turn_id ?? Date.now()}`,
@@ -196,6 +204,10 @@ export function useChatSession(agentId: string | null) {
           }
           if (frame.event === 'end') {
             if (typeof frame.request_id === 'string') pending.current.delete(frame.request_id)
+            if (typeof frame.status === 'string' && frame.status !== 'completed') {
+              const reason = typeof frame.reason === 'string' && frame.reason ? ` ${frame.reason}` : ''
+              append({ id: `end-${runId}`, role: 'system', text: `The run ${frame.status.replace('_', ' ')}.${reason}`, time: now() })
+            }
             setMessages((previous) =>
               previous.map((message) =>
                 message.id === `stream-${runId}` ? { ...message, streaming: false } : message,
@@ -282,7 +294,7 @@ export function useChatSession(agentId: string | null) {
         })
         return false
       }
-      const requestId = crypto.randomUUID()
+      const requestId = newRequestId()
       pending.current.set(requestId, { text, attachmentIds: opaqueIds })
       clientSeq.current += 1
       append({
