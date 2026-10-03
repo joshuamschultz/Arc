@@ -82,14 +82,17 @@ from arcagent.extension.credential_broker import AccessTokenHandle, credential_p
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
     MigrationReport,
+    ResealReport,
     legacy_env_path,
     migrate_connector_secrets,
+    reseal_connector_secrets,
 )
 from arcagent.extension.custody_select import (
     VAULT_REQUIRED,
     Custody,
     deployment_cipher,
     open_custody,
+    reseal_source_cipher,
 )
 from arcagent.extension.grants import (
     BAD_NAME,
@@ -2185,6 +2188,39 @@ class Connections:
                 dry_run=dry_run,
             )
         for instance in report.connections if report.deleted else ():
+            await self._push_credential_change(instance)
+        return report
+
+    async def reseal_secrets(self, *, dry_run: bool = False) -> ResealReport:
+        """Move in-process-sealed custody rows under the vault's Transit cipher (P18-2F).
+
+        For a deployment that switched from ``in_process`` to ``vault_transit``
+        custody. Explicit and operator-run by design: it reads the OLD on-disk
+        operator key once, which a long-running server under ``vault_transit``
+        must never hold. Each row moves in one verified CAS (crash-safe); a
+        re-run skips rows already moved (idempotent). Running agents are pushed
+        the change.
+
+        Raises:
+            ExtensionError: not on ``vault_transit``, the old key is gone, the
+                transit cannot serve, or a row is sealed under neither key.
+        """
+        source = reseal_source_cipher(self._world.arc_dir)
+        with self._audit.open() as sink:
+            custody = await self._custody(sink)
+            if custody.rows.cipher_kind != "transit1":
+                raise _refuse(
+                    VAULT_REQUIRED,
+                    "this deployment does not seal connector credentials in a vault",
+                )
+            report = await reseal_connector_secrets(
+                custody.rows,
+                source=source,
+                actor_did=causal.actor_did(),
+                sink=sink,
+                dry_run=dry_run,
+            )
+        for instance in report.resealed:
             await self._push_credential_change(instance)
         return report
 

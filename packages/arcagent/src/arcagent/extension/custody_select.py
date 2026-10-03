@@ -35,7 +35,7 @@ from arctrust import (
     operator_key_for,
 )
 from arctrust.audit import AuditSink
-from arctrust.operator_resolver import operator_transit_for
+from arctrust.operator_resolver import operator_key_file, operator_transit_for
 from arctrust.signer import IN_PROCESS, VAULT_TRANSIT, SignerError
 from arctrust.transit_cipher import TransitCipher
 
@@ -116,6 +116,43 @@ def deployment_cipher(arc_dir: Path, *, tier: Tier) -> CredentialCipher:
     return connector_cipher(custody=security.custody, operator_key=key)
 
 
+def reseal_source_cipher(arc_dir: Path) -> CredentialCipher:
+    """The in-process cipher that sealed rows BEFORE this deployment moved to transit.
+
+    Only the explicit, operator-run ``arc connector migrate-secrets --reseal``
+    asks for this: it reads the old on-disk operator key once, read-only, never
+    minting one. A long-running process never holds it.
+
+    Raises:
+        ExtensionError: ``RESEAL_NOT_APPLICABLE`` when the deployment is not on
+            ``vault_transit``; ``RESEAL_SOURCE_KEY_MISSING`` when the old key file
+            is gone (those rows can only be reconnected).
+    """
+    security = machine_security(arc_dir)
+    if security.custody != VAULT_TRANSIT:
+        raise ExtensionError(
+            code="RESEAL_NOT_APPLICABLE",
+            message=(
+                "re-sealing moves credentials into the vault; set [security] "
+                'custody = "vault_transit" first'
+            ),
+            details={"custody": security.custody},
+        )
+    path = operator_key_file(security, base=arc_dir)
+    try:
+        key = OperatorKey.load(path, generate_if_absent=False)
+    except (OSError, OperatorKeyIntegrityError) as exc:
+        raise ExtensionError(
+            code="RESEAL_SOURCE_KEY_MISSING",
+            message=(
+                f"the old operator key at {path} is not readable ({type(exc).__name__}); rows "
+                "sealed under it cannot be moved and must be connected again"
+            ),
+            details={"path": str(path)},
+        ) from exc
+    return ConnectorSecretCipher.for_operator_key(key)
+
+
 def _transit(security: Any, arc_dir: Path) -> TransitCipher | None:
     """The deployment's transit, or ``None`` (a refusal) when it cannot serve."""
     try:
@@ -187,4 +224,5 @@ __all__ = [
     "deployment_cipher",
     "open_custody",
     "owner_id",
+    "reseal_source_cipher",
 ]
