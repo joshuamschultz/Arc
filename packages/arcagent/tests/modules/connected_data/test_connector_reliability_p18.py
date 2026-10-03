@@ -505,3 +505,34 @@ async def test_a_stalled_run_leaves_a_durable_failure_and_keeps_the_last_good_sy
     assert durable.last_synced_at == good_sync, "a failure erased the last good sync"
     assert listed.status == "failed" and listed.detail == "sync_stalled"
     assert listed.state is not None and listed.state.last_synced_at == good_sync
+
+
+@pytest.mark.parametrize(
+    ("behaviour", "expected"), [("weird", "failed"), ("auth", "needs_attention")]
+)
+async def test_a_failed_source_keeps_its_name_so_the_agent_still_lists_it(
+    behaviour: str, expected: str
+) -> None:
+    """J1 gate G6: a source that failed is still connected, and its old knowledge still answers.
+
+    The failure paths rebuilt the status row without the source's description, so a
+    failed Gmail dropped out of the prompt's connections section and out of
+    ``connected_sources``, and ``document_search(source="Gmail")`` said no such
+    source existed, while its indexed pages were still searchable.
+    """
+    service = await _service(
+        _Provider(behaviour), InMemorySourceSyncStore(), _Health(), failure_ceiling=100
+    )
+    try:
+
+        async def failed() -> bool:
+            return await _status(service) == expected
+
+        assert await _until(failed)
+        row = (await service.list_sources())[0]
+        entries = await service.catalog_entries()
+    finally:
+        await service.close()
+
+    assert row.description is not None, f"a {expected} source lost its description"
+    assert [(entry.name, entry.status) for entry in entries] == [("Test source", expected)]
