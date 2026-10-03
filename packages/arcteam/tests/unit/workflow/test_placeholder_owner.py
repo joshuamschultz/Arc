@@ -54,9 +54,7 @@ async def test_test_run_refuses_a_placeholder_owner_too(stores: Any, registry: A
         )
 
 
-async def test_a_node_that_names_its_own_agent_is_not_blocked(
-    stores: Any, registry: Any
-) -> None:
+async def test_a_node_that_names_its_own_agent_is_not_blocked(stores: Any, registry: Any) -> None:
     flow = Definition(
         id="named-flow",
         owner=PLACEHOLDER_OWNER,
