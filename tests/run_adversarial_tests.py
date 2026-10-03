@@ -122,6 +122,10 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/core/test_tool_dispatch_causality.py",
         "packages/arcagent/tests/unit/extension/test_connection_actor.py",
         "packages/arcagent/tests/unit/utils/test_spawn_background_detached.py",
+        "packages/arcagent/tests/security/test_causal_turn_binding.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_task_causality.py",
+        "packages/arcagent/tests/unit/extension/test_connector_call_causality.py",
+        "packages/arcagent/tests/unit/core/test_durable_security_audit.py",
     ),
     "forged, unauthorized and replayed control actions": (
         "packages/arcui/tests/test_workflow_routes.py",

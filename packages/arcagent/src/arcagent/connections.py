@@ -37,6 +37,7 @@ credential by writing a config block.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -46,7 +47,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from arctrust import causal
@@ -161,6 +162,7 @@ from arcagent.modules.connectors.mcp_bundle import (
     validate_spec,
     write_bundle,
 )
+from arcagent.utils.causality import correlate
 
 _logger = logging.getLogger("arcagent.connections")
 
@@ -242,6 +244,26 @@ def _oauth_flow(plan: ConnectorPlan) -> OAuthFlow:
             instance=plan.instance,
         )
     return flow
+
+
+_Method = TypeVar("_Method", bound=Callable[..., Awaitable[Any]])
+
+
+def _on_connection(method: _Method) -> _Method:
+    """Run a per-connection operation with ``connection_id`` on its causal context.
+
+    Item 20: whoever caused the act (a UI session, the CLI operator, the
+    scheduler) stays the initiator; the connection it touched is refined in, so
+    every secret read and host check inside names the account. Unbound, the act
+    is recorded as unattributed rather than borrowing anyone's identity.
+    """
+
+    @functools.wraps(method)
+    async def scoped(self: Any, instance: str, *args: Any, **kwargs: Any) -> Any:
+        with correlate(fallback=("system", causal.UNATTRIBUTED), connection_id=instance):
+            return await method(self, instance, *args, **kwargs)
+
+    return cast(_Method, scoped)
 
 
 def _refuse(code: str, message: str, **details: Any) -> ExtensionError:
@@ -913,18 +935,21 @@ class Connections:
         with self._audit.open() as sink:
             return self._plan_for(instance, sink)
 
+    @_on_connection
     async def tools(self, instance: str) -> tuple[ToolSpec, ...]:
         """The verbs one connection offers the agent right now."""
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return tuple(await attachment.describe_tools())
 
+    @_on_connection
     async def probe(self, instance: str) -> ProbeResult:
         """Open the connection right now — the only honest answer to "does this work"."""
         with self._audit.open() as sink:
             attachment = await self._attachment(self._plan_for(instance, sink), sink)
             return await attachment.probe()
 
+    @_on_connection
     async def check_health(
         self,
         instance: str,
@@ -1159,6 +1184,7 @@ class Connections:
             return ("host_missing", detail)
         return ("provider_unavailable", detail)
 
+    @_on_connection
     async def authorization(self, instance: str) -> Authorization:
         """How this connection is authorised — the answer both surfaces render.
 
@@ -1202,6 +1228,7 @@ class Connections:
                 actor_did=causal.actor_did(),
             )
 
+    @_on_connection
     async def begin_oauth(self, instance: str, *, session_id: str) -> OAuthBegin:
         """Start a one-click connect: the provider consent URL, bound to this session.
 
@@ -1291,6 +1318,15 @@ class Connections:
         pending = self._oauth_pending.take(params.state, session_id=session_id)
         if params.error is not None:
             raise declined(params.error)
+        # Only now is the connection known: refine it onto the causal context so the
+        # exchange, the account check and the custody write all name the account.
+        with correlate(fallback=("system", causal.UNATTRIBUTED), connection_id=pending.instance):
+            return await self._finish_oauth(sink, params, pending)
+
+    async def _finish_oauth(
+        self, sink: AuditSink, params: CallbackParams, pending: PendingAuthorization
+    ) -> tuple[str, bool]:
+        """Exchange, verify, seal: the part of a connect that runs for one known connection."""
         plan = self._plan_for(pending.instance, sink)
         flow = _oauth_flow(plan)
         if params.code is None or pending.redirect_uri != (
@@ -1466,6 +1502,7 @@ class Connections:
             sink,
         )
 
+    @_on_connection
     async def authorize(self, instance: str, *, token: str = "") -> Authorization:
         """Sign this connection's host binary in — when that can be done without a human.
 
@@ -1596,7 +1633,6 @@ class Connections:
         for required in checks:
             result = await run_authorization_check(
                 required,
-                caller_did=causal.actor_did(),
                 audit_sink=sink,
                 tier=self._world.tier,
                 env=placed,
@@ -1647,6 +1683,7 @@ class Connections:
         )
         return result.detail
 
+    @_on_connection
     async def doctor(self, instance: str) -> tuple[DoctorCheck, ...]:
         """Everything that could be wrong with one connection, without fixing any of it.
 
@@ -2121,7 +2158,7 @@ class Connections:
                 if not value:
                     continue
                 ref = SecretRef(connection=plan.instance, field=required.name)
-                await store.put(ref, value, caller_did=causal.actor_did())
+                await store.put(ref, value)
                 written.append(required.name)
         if written:
             await self._push_credential_change(plan.instance)
@@ -2154,9 +2191,12 @@ class Connections:
             async def renew_one(instance: str) -> None:
                 async with slots:
                     try:
-                        renewed = await custody.planner.ensure_fresh(
-                            instance, flow=flows[instance]
-                        )
+                        with correlate(
+                            fallback=("system", causal.UNATTRIBUTED), connection_id=instance
+                        ):
+                            renewed = await custody.planner.ensure_fresh(
+                                instance, flow=flows[instance]
+                            )
                         outcome[instance] = "renewed" if renewed else "fresh"
                     except ExtensionError as exc:
                         outcome[instance] = str(exc.details.get("error_code") or exc.code)
@@ -2215,6 +2255,7 @@ class Connections:
             await self._push_credential_change(instance)
         return report
 
+    @_on_connection
     async def approve(self, instance: str) -> tuple[str, ...]:
         """Record the tool contract this connection serves RIGHT NOW as approved.
 
@@ -2250,6 +2291,7 @@ class Connections:
             )
         return tuple(spec.name for spec in specs)
 
+    @_on_connection
     async def remove(self, instance: str) -> RemovalReport:
         """Disconnect one account: its credential, its definition, every grant on it.
 
@@ -2473,7 +2515,6 @@ class Connections:
             plan.manifest,
             connection=plan.instance,
             store=custody.store,
-            caller_did=causal.actor_did(),
             include_sensitive=plan.manifest.extension.attachment == "mcp",
         )
         return self._factory(
@@ -2512,7 +2553,7 @@ class Connections:
             value = ""
             if not declared.sensitive:
                 ref = SecretRef(connection=plan.instance, field=declared.name)
-                found = await store.get(ref, caller_did=causal.actor_did())
+                found = await store.get(ref)
                 value = found.reveal() if found is not None else ""
             rows.append(
                 SuppliedCredential(
@@ -2546,7 +2587,6 @@ class Connections:
                 plan.manifest,
                 connection=plan.instance,
                 store=await self._store(sink),
-                caller_did=causal.actor_did(),
             )
         except ExtensionError:
             return {}

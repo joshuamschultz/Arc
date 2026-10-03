@@ -167,9 +167,11 @@ class TestDeliverStartsRunWhenIdle:
             overheard: bool = False,
             hop: int = 0,
             content: list[dict[str, Any]] | None = None,
+            on_behalf_of: str | None = None,
         ) -> _FakeHandle:
             started["input"] = inp
             started["session_key"] = session_key
+            started["on_behalf_of"] = on_behalf_of
             h = _FakeHandle()
             agent._run_coordinator.register(session_key, h, interactive=True)  # type: ignore[arg-type]
             return h
@@ -183,7 +185,11 @@ class TestDeliverStartsRunWhenIdle:
                     interrupt=False,
                 )
             assert outcome == "started"
-            assert started == {"input": "new task", "session_key": "messaging:inbox"}
+            assert started == {
+                "input": "new task",
+                "session_key": "messaging:inbox",
+                "on_behalf_of": "did:arc:local:peer/aaaa",
+            }
         finally:
             await agent.shutdown()
 

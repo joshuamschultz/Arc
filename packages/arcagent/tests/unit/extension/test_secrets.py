@@ -14,10 +14,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from arcstore.backends.memory import FakeBackend
+from arctrust import causal
 from arctrust.audit import AuditEvent
 from packages.arcagent.tests.custody_fakes import make_cipher
 
@@ -31,6 +33,13 @@ from arcagent.extension.secrets import Secret, SecretBackend, SecretRef, SecretS
 
 SECRET_VALUE = "atlassian-refresh-tok-9f2c4e7a1b8d6"
 CALLER = "did:arc:agent:coder"
+
+
+@pytest.fixture(autouse=True)
+def _bound_caller() -> Iterator[None]:
+    """The caller is the bound causal initiator; the store reads it from there (item 20)."""
+    with causal.bind(causal.root("agent", CALLER)):
+        yield
 
 
 class RecordingSink:
@@ -97,10 +106,10 @@ async def test_value_is_written_only_to_the_secret_store(
     sealed_store: SecretStore, agent_home: Path, ref: SecretRef
 ) -> None:
     """No file in the agent home holds the value; the store opens it back."""
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
 
     assert _files_containing(agent_home, SECRET_VALUE) == []
-    resolved = await sealed_store.get(ref, caller_did=CALLER)
+    resolved = await sealed_store.get(ref)
     assert resolved is not None
     assert resolved.reveal() == SECRET_VALUE
 
@@ -109,7 +118,7 @@ async def test_stored_row_is_sealed_never_plaintext(
     sealed_store: SecretStore, backend: FakeBackend, rows: CredentialRowStore, ref: SecretRef
 ) -> None:
     """The raw row exists in custody, opens through the row store, and holds no plaintext."""
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
 
     row = await rows.read(ref.connection)
     assert row is not None
@@ -125,9 +134,9 @@ async def test_nothing_logs_the_value(
     """A full write/read/delete cycle at DEBUG never emits the value to a log."""
     caplog.set_level(logging.DEBUG)
 
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    await sealed_store.get(ref, caller_did=CALLER)
-    await sealed_store.delete(ref, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
+    await sealed_store.get(ref)
+    await sealed_store.delete(ref)
 
     for record in caplog.records:
         assert SECRET_VALUE not in record.getMessage()
@@ -141,8 +150,8 @@ async def test_audit_events_record_coordinates_never_the_value(
     sink = RecordingSink()
     store = SecretStore(SealedCredentialBackend(rows), sink=sink)
 
-    await store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    await store.get(ref, caller_did=CALLER)
+    await store.put(ref, SECRET_VALUE)
+    await store.get(ref)
 
     assert sink.events, "a credential write and read must be auditable"
     for event in sink.events:
@@ -169,7 +178,7 @@ async def test_rejected_value_is_absent_from_the_error(
     poisoned = f"{SECRET_VALUE}\nARC_SECRET_CODER_OTHER_TOKEN=injected"
 
     with pytest.raises(ExtensionError) as excinfo:
-        await sealed_store.put(ref, poisoned, caller_did=CALLER)
+        await sealed_store.put(ref, poisoned)
 
     rendered = f"{excinfo.value}{excinfo.value.details}"
     assert SECRET_VALUE not in rendered
@@ -181,7 +190,7 @@ async def test_a_refused_value_is_never_stored(
 ) -> None:
     """A control character is refused before anything reaches custody."""
     with pytest.raises(ExtensionError):
-        await sealed_store.put(ref, "tok\nARC_SECRET_CODER_OTHER_TOKEN=stolen", caller_did=CALLER)
+        await sealed_store.put(ref, "tok\nARC_SECRET_CODER_OTHER_TOKEN=stolen")
 
     assert await backend.mutable_read(CREDENTIAL_COLLECTION, ref.connection) is None
 
@@ -203,27 +212,27 @@ async def test_secrets_are_keyed_by_connection_and_field(
         SecretRef(connection="atlassian_personal", field="refresh_token"),
         SecretRef(connection="atlassian_work", field="client_secret"),
     ]
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
     for index, other in enumerate(others):
-        await sealed_store.put(other, f"other-{index}", caller_did=CALLER)
+        await sealed_store.put(other, f"other-{index}")
 
-    resolved = await sealed_store.get(ref, caller_did=CALLER)
+    resolved = await sealed_store.get(ref)
     assert resolved is not None
     assert resolved.reveal() == SECRET_VALUE
     for index, other in enumerate(others):
-        stored = await sealed_store.get(other, caller_did=CALLER)
+        stored = await sealed_store.get(other)
         assert stored is not None
         assert stored.reveal() == f"other-{index}"
 
 
 async def test_missing_secret_resolves_to_none(sealed_store: SecretStore, ref: SecretRef) -> None:
-    assert await sealed_store.get(ref, caller_did=CALLER) is None
+    assert await sealed_store.get(ref) is None
 
 
 async def test_present_names_stored_fields_without_opening_them(
     sealed_store: SecretStore, ref: SecretRef
 ) -> None:
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
 
     assert await sealed_store.present(ref.connection) == frozenset({ref.field})
     assert await sealed_store.present("nothing_here") == frozenset()
@@ -232,12 +241,12 @@ async def test_present_names_stored_fields_without_opening_them(
 async def test_delete_removes_the_value_from_the_store(
     sealed_store: SecretStore, backend: FakeBackend, ref: SecretRef
 ) -> None:
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
 
-    assert await sealed_store.delete(ref, caller_did=CALLER) is True
-    assert await sealed_store.get(ref, caller_did=CALLER) is None
+    assert await sealed_store.delete(ref) is True
+    assert await sealed_store.get(ref) is None
     assert SECRET_VALUE not in await _raw_row_json(backend, ref.connection)
-    assert await sealed_store.delete(ref, caller_did=CALLER) is False
+    assert await sealed_store.delete(ref) is False
 
 
 @pytest.mark.parametrize(
@@ -273,10 +282,10 @@ async def test_a_second_write_preserves_the_first(
     sealed_store: SecretStore, ref: SecretRef
 ) -> None:
     other = SecretRef(connection="atlassian_work", field="client_secret")
-    await sealed_store.put(ref, SECRET_VALUE, caller_did=CALLER)
-    await sealed_store.put(other, "client-secret-value", caller_did=CALLER)
+    await sealed_store.put(ref, SECRET_VALUE)
+    await sealed_store.put(other, "client-secret-value")
 
-    first = await sealed_store.get(ref, caller_did=CALLER)
+    first = await sealed_store.get(ref)
     assert first is not None
     assert first.reveal() == SECRET_VALUE
 
@@ -295,12 +304,12 @@ async def test_concurrent_writes_do_not_lose_each_other(
 
     async def write(target: SecretRef, value: str) -> None:
         await barrier.wait()
-        await sealed_store.put(target, value, caller_did=CALLER)
+        await sealed_store.put(target, value)
 
     await asyncio.gather(write(ref, SECRET_VALUE), write(other, "client-secret-value"))
 
-    first = await sealed_store.get(ref, caller_did=CALLER)
-    second = await sealed_store.get(other, caller_did=CALLER)
+    first = await sealed_store.get(ref)
+    second = await sealed_store.get(other)
     assert first is not None and first.reveal() == SECRET_VALUE
     assert second is not None and second.reveal() == "client-secret-value"
 
@@ -311,8 +320,8 @@ async def test_a_ciphertext_moved_to_another_field_does_not_open(
     """The coordinate is bound into the seal: a swapped value is unreadable, not leaked."""
     first = SecretRef(connection="atlassian_work", field="refresh_token")
     second = SecretRef(connection="atlassian_work", field="client_secret")
-    await sealed_store.put(first, SECRET_VALUE, caller_did=CALLER)
-    await sealed_store.put(second, "client-secret-value", caller_did=CALLER)
+    await sealed_store.put(first, SECRET_VALUE)
+    await sealed_store.put(second, "client-secret-value")
     raw = await backend.mutable_read(CREDENTIAL_COLLECTION, "atlassian_work")
     assert raw is not None
     swapped = {**raw["fields"], "client_secret": raw["fields"]["refresh_token"]}
@@ -321,7 +330,7 @@ async def test_a_ciphertext_moved_to_another_field_does_not_open(
     )
 
     with pytest.raises(ExtensionError):
-        await sealed_store.get(second, caller_did=CALLER)
+        await sealed_store.get(second)
 
 
 def test_the_sealed_backend_satisfies_the_one_interface(rows: CredentialRowStore) -> None:

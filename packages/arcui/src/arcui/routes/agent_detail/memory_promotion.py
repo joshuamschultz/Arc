@@ -34,7 +34,6 @@ from typing import Any
 
 import arcagent
 import tomlkit
-from arctrust import causal
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -118,7 +117,7 @@ def _configured_key_env(doc: dict[str, Any]) -> str:
 async def _key_set(request: Request, doc: dict[str, Any]) -> bool:
     env_var = _configured_key_env(doc)
     store = arcagent.KeyStore(arcagent.default_env_file(), sink=operator_audit_sink(request))
-    statuses = await store.list(caller_did=causal.actor_did())
+    statuses = await store.list()
     return any(s.env_var == env_var and s.present for s in statuses)
 
 

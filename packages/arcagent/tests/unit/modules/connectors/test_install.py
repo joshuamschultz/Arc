@@ -389,9 +389,7 @@ class TestInstall:
 
         assert report.instance == _INSTANCE
         assert "create_issue" in report.tools
-        stored = await store.get(
-            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
-        )
+        stored = await store.get(SecretRef(connection=_INSTANCE, field="api_token"))
         assert stored is not None
         assert stored.reveal() == "s3cr3t"
         assert _defined(connections)[_INSTANCE].extension == _EXTENSION
@@ -555,9 +553,7 @@ class TestInstall:
 
         assert caught.value.details["step"] == "probe"
         assert "acme: command not found" in str(caught.value)
-        left = await store.get(
-            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
-        )
+        left = await store.get(SecretRef(connection=_INSTANCE, field="api_token"))
         assert left is None
         assert _defined(connections) == {}
         assert await state.get(_INSTANCE) is None
@@ -588,9 +584,7 @@ class TestInstall:
             )
 
         assert caught.value.details["step"] == "probe"
-        left = await store.get(
-            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
-        )
+        left = await store.get(SecretRef(connection=_INSTANCE, field="api_token"))
         assert left is None
         assert _defined(connections) == {}
         assert await state.get(_INSTANCE) is None
@@ -625,9 +619,7 @@ class TestInstall:
             )
 
         assert set(_defined(connections)) == {"sales", "support"}
-        first = await store.get(
-            SecretRef(connection="sales", field="api_token"), caller_did=_CALLER
-        )
+        first = await store.get(SecretRef(connection="sales", field="api_token"))
         assert first is not None
         assert first.reveal() == "one"
 
@@ -667,9 +659,7 @@ class TestRemove:
         # the approvals an operator minted for the connection they disconnected.
         assert await state.get(_INSTANCE) is None
         assert _defined(connections) == {}
-        left = await store.get(
-            SecretRef(connection=_INSTANCE, field="api_token"), caller_did=_CALLER
-        )
+        left = await store.get(SecretRef(connection=_INSTANCE, field="api_token"))
         assert left is None
 
     async def test_removing_an_unknown_instance_is_not_an_error(self, tmp_path: Path) -> None:

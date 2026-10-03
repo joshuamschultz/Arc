@@ -143,7 +143,7 @@ def ref() -> SecretRef:
 
 @pytest.fixture
 async def secrets(sealed_secret_store: SecretStore, ref: SecretRef) -> SecretStore:
-    await sealed_secret_store.put(ref, CREDENTIAL, caller_did=CALLER)
+    await sealed_secret_store.put(ref, CREDENTIAL)
     return sealed_secret_store
 
 
@@ -338,7 +338,7 @@ async def test_a_deleted_credential_fails_the_call(secrets: SecretStore, ref: Se
     """The credential is resolved per call, so its removal stops the next one."""
     async with RecordingUpstream() as upstream, CredentialBroker(secrets) as broker:
         grant = await broker.issue(ref, upstream=upstream.origin, caller_did=CALLER)
-        await secrets.delete(ref, caller_did=CALLER)
+        await secrets.delete(ref)
 
         async with httpx.AsyncClient() as connector:
             answer = await connector.get(

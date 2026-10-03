@@ -46,6 +46,7 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from arctrust import causal
 from arctrust.audit import AuditEvent, AuditSink, emit
 
 from arcagent.core.errors import ExtensionError
@@ -254,7 +255,6 @@ def expired_verdict(requirement: HostRequirement, returncode: int, output: str) 
 async def run_authorization_check(
     requirement: HostRequirement,
     *,
-    caller_did: str,
     audit_sink: AuditSink,
     tier: Tier,
     env: Mapping[str, Secret] | None = None,
@@ -266,7 +266,6 @@ async def run_authorization_check(
     Args:
         requirement: The declared prerequisite. Its ``verify_command`` is the only
             command that runs, and only when ``argv[0]`` is ``name``.
-        caller_did: The operator recorded as the actor on the verdict (Pillar 1).
         audit_sink: Where the verdict is recorded, either way.
         tier: Deployment stringency, stamped on the record.
         env: The connection's ``[secrets.placement]`` entries. A binary that reads
@@ -287,7 +286,6 @@ async def run_authorization_check(
     if argv is None:
         return _record_check(
             requirement,
-            caller_did=caller_did,
             sink=audit_sink,
             tier=tier,
             result=AuthorizationCheck(
@@ -312,15 +310,12 @@ async def run_authorization_check(
             # with something that reads like output.
             detail=_readable(run.text, ""),
         )
-    return _record_check(
-        requirement, caller_did=caller_did, sink=audit_sink, tier=tier, result=result
-    )
+    return _record_check(requirement, sink=audit_sink, tier=tier, result=result)
 
 
 def _record_check(
     requirement: HostRequirement,
     *,
-    caller_did: str,
     sink: AuditSink,
     tier: Tier,
     result: AuthorizationCheck,
@@ -328,7 +323,7 @@ def _record_check(
     """Hand one sign-in verdict to the single emission point. Coordinates only."""
     emit(
         AuditEvent(
-            actor_did=caller_did,
+            actor_did=causal.actor_did(),
             action=_CHECK_ACTION,
             target=f"host:{requirement.name}",
             outcome="allow" if result.authorized else "deny",

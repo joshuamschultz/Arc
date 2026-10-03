@@ -118,12 +118,12 @@ async def test_delete_fields_bumps_generation_and_reports_removed(
 async def test_sealed_backend_serves_secret_store(backend: InterleavingBackend) -> None:
     store = SecretStore(SealedCredentialBackend(CredentialRowStore(backend, make_cipher())))
     ref = SecretRef(connection="blackarc", field="user_token")
-    assert await store.get(ref, caller_did=ACTOR) is None
-    await store.put(ref, "xoxp-1", caller_did=ACTOR)
-    found = await store.get(ref, caller_did=ACTOR)
+    assert await store.get(ref) is None
+    await store.put(ref, "xoxp-1")
+    found = await store.get(ref)
     assert found is not None and found.reveal() == "xoxp-1"
-    assert await store.delete(ref, caller_did=ACTOR) is True
-    assert await store.get(ref, caller_did=ACTOR) is None
+    assert await store.delete(ref) is True
+    assert await store.get(ref) is None
     raw = await backend.mutable_read(CREDENTIAL_COLLECTION, "blackarc")
     assert raw is not None and "xoxp-1" not in str(raw)
 

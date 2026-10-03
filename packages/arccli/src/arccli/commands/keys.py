@@ -88,12 +88,19 @@ def _audit_sink(arc_dir: Path, data_dir: Path) -> Any:
 
 
 @contextlib.contextmanager
-def _audited(args: argparse.Namespace) -> Iterator[tuple[arcagent.KeyStore, str]]:
-    """Open the store and the audit chain for one command, and always close the chain."""
+def _audited(args: argparse.Namespace) -> Iterator[arcagent.KeyStore]:
+    """Open the store and the audit chain for one command, and always close the chain.
+
+    The command runs as an ``operator`` causal root, so every record it writes
+    names the operator as the initiator (item 20).
+    """
+    from arctrust import causal
+
     arc_dir = _arc_dir(args)
     sink = _audit_sink(arc_dir, _data_dir(args))
     try:
-        yield arcagent.KeyStore(arcagent.default_env_file(arc_dir), sink=sink), _actor_did(arc_dir)
+        with causal.bind(causal.root("operator", _actor_did(arc_dir))):
+            yield arcagent.KeyStore(arcagent.default_env_file(arc_dir), sink=sink)
     finally:
         sink.close()
 
@@ -150,8 +157,8 @@ def _run(call: Coroutine[Any, Any, T]) -> T:
 
 def _list(args: argparse.Namespace) -> None:
     """Show every provider arcllm packages and whether its key is stored."""
-    with _audited(args) as (store, did):
-        statuses = _run(store.list(caller_did=did))
+    with _audited(args) as store:
+        statuses = _run(store.list())
     if args.json:
         _print_json([_row(status) for status in statuses])
         return
@@ -183,16 +190,16 @@ def _set(args: argparse.Namespace) -> None:
     """Store one provider's key, collected with a prompt that does not echo."""
     env_var = _env_var_for(args.provider)
     value = getpass.getpass(f"{env_var} (hidden): ")
-    with _audited(args) as (store, did):
-        _run(store.set(env_var, value, caller_did=did))
+    with _audited(args) as store:
+        _run(store.set(env_var, value))
     _out(f"Stored {env_var} for {args.provider} in {arcagent.default_env_file(_arc_dir(args))}.")
 
 
 def _remove(args: argparse.Namespace) -> None:
     """Forget one provider's key. Never an error when there was nothing to remove."""
     env_var = _env_var_for(args.provider)
-    with _audited(args) as (store, did):
-        removed = _run(store.delete(env_var, caller_did=did))
+    with _audited(args) as store:
+        removed = _run(store.delete(env_var))
     _out(
         f"Removed {env_var} for {args.provider}."
         if removed

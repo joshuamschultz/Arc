@@ -227,7 +227,7 @@ async def test_a_missing_credential_is_terminal(tmp_path: Path, provider: _Provi
     await world.install()
     with world.connections._audit.open() as sink:
         await (await world.connections._store(sink)).delete(
-            SecretRef(connection=_INSTANCE, field="api_token"), caller_did="did:arc:test"
+            SecretRef(connection=_INSTANCE, field="api_token")
         )
 
     record = await world.connections.check_health(_INSTANCE, checked_by=PROBE_DID)

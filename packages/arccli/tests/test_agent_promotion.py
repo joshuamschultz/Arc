@@ -179,11 +179,7 @@ def _config_events(arc_dir: Path, data_dir: Path) -> list[dict[str, Any]]:
 
 
 def _store_key(arc_dir: Path) -> None:
-    asyncio.run(
-        KeyStore(default_env_file(arc_dir)).set(
-            JEV_KEY, KEY_VALUE, caller_did="did:arc:local:operator"
-        )
-    )
+    asyncio.run(KeyStore(default_env_file(arc_dir)).set(JEV_KEY, KEY_VALUE))
 
 
 class _TTYStdin(io.StringIO):

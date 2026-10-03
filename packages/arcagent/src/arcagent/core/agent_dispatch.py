@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import arcrun
 from arcprompt import PromptSource
-from arctrust import causal
+from arctrust.causal import UNATTRIBUTED
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -39,6 +39,7 @@ from arcagent.core.session_internal.capability_ledger import (
 from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 from arcagent.tools._policy_fill import resolve_run_budget
 from arcagent.tools.approval_policy import narrowed_loop_controls
+from arcagent.utils.causality import agent_scope, turn_root
 from arcagent.utils.moment import moment_cues
 
 if TYPE_CHECKING:
@@ -340,6 +341,7 @@ async def dispatch_stream(
     interactive: bool = False,
     on_handle: Callable[[arcrun.RunHandle], None] | None = None,
     content: list[dict[str, Any]] | None = None,
+    on_behalf_of: str | None = None,
 ) -> AsyncGenerator[arcrun.StreamEvent, None]:
     """The single execution path: stream one agent turn into a session.
 
@@ -361,6 +363,11 @@ async def dispatch_stream(
     per-turn context here — the same entry point that replays module runtime
     bindings — so tool dispatches inside the loop inherit it (e.g. the scheduler
     defaults a new schedule's delivery to this channel).
+
+    ``on_behalf_of`` is the principal a signed request names (the channel user,
+    the schedule's approver, the teammate who sent mail). The turn is its own
+    causal root performed by the agent; absent a signed principal it acts for
+    whoever its caller bound (see :func:`arcagent.utils.causality.turn_root`).
     """
     events: asyncio.Queue[arcrun.StreamEvent] = asyncio.Queue(maxsize=1)
 
@@ -381,6 +388,7 @@ async def dispatch_stream(
                     interactive=interactive,
                     on_handle=on_handle,
                     content=content,
+                    on_behalf_of=on_behalf_of,
                 )
             ) as stream:
                 async for event in stream:
@@ -427,6 +435,7 @@ async def _dispatch_stream_locked(
     on_handle: Callable[[arcrun.RunHandle], None] | None,
     content: list[dict[str, Any]] | None,
     overheard: bool = False,
+    on_behalf_of: str | None = None,
 ) -> AsyncGenerator[arcrun.StreamEvent, None]:
     """Execute a turn after its session serialization lock is held."""
     agent._ensure_started()
@@ -439,7 +448,7 @@ async def _dispatch_stream_locked(
     # run's trace as the reads that follow it. arcrun reuses this id when handed in,
     # so the two halves share one timeline instead of assembly falling outside it.
     run_id = run_id or str(uuid.uuid4())
-    with causal.run_scope(run_id):
+    with turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of):
         with agent._queue_run_context(session.session_id, run_id):
             run_ctx = await build_run_context(agent, input_text)
         telemetry, bus, model, provider, prompt, bridge, prompt_source = run_ctx
@@ -542,6 +551,7 @@ async def start_tracked_run(
     overheard: bool = False,
     hop: int = 0,
     content: list[dict[str, Any]] | None = None,
+    on_behalf_of: str | None = None,
 ) -> arcrun.RunHandle:
     """Start an async, steerable run for ``session_key`` and track its handle.
 
@@ -575,7 +585,7 @@ async def start_tracked_run(
             agent, reply_target, reply_label, overheard=overheard, hop=hop, interactive=True
         )
         with (
-            causal.run_scope(run_id),
+            turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of),
             agent._queue_run_context(session.session_id, run_id),
         ):
             (
@@ -686,7 +696,7 @@ async def maybe_compact(
         eval_model = agent._ensure_model()
         evaluation_id = str(uuid.uuid4())
         with (
-            causal.run_scope(evaluation_id),
+            agent_scope(_agent_did(agent), evaluation_id),
             agent._queue_run_context(
                 session.session_id,
                 evaluation_id,
@@ -697,3 +707,9 @@ async def maybe_compact(
             await session.compact(eval_model)
     elif ratio >= cfg.prune_threshold:
         await session.prune()
+
+
+def _agent_did(agent: ArcAgent) -> str:
+    """The DID the agent acts as; unattributed (loudly) before identity exists."""
+    identity = agent._identity
+    return identity.did if identity is not None and identity.did else UNATTRIBUTED
