@@ -133,10 +133,22 @@ PROJECT_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.to
 # and a directory added tomorrow is covered without anyone remembering.
 # NUL-separated: a shipped file name with a space broke `xargs shasum` (exit
 # 123 under pipefail) and aborted the deploy silently (2026-09-27, *.md added).
+#
+# Top-level excludes are pruned by FULL PATH, never by name: `-name modules`
+# also pruned packages/arcagent/src/arcagent/modules, so a change only there
+# reused the running runtime's name (2026-10-02). Only names the rsync excludes
+# at every depth (.git, .venv, __pycache__, .entire, .claude) prune by name.
+#
+# The fleet directory name is the layout's, not this script's. Everything below
+# that has to name it derives it here, so renaming the fleet can never leave a
+# guard watching a directory that no longer exists.
+FLEET_DIR="$(basename "${ARC_TEAM_ROOT:-$HOME/arc}/team")"
 BUILD_STAMP="$(
   find "$REPO_ROOT" \
     \( -name .git -o -name .venv -o -name node_modules -o -name __pycache__ \
-       -o -name 'team' -o -name 'modules' \) -prune -o \
+       -o -name .entire -o -name .claude \
+       -o -path "$REPO_ROOT/$FLEET_DIR" -o -path "$REPO_ROOT/modules" \
+       -o -path "$REPO_ROOT/config" -o -path "$REPO_ROOT/state" \) -prune -o \
     -type f \( -name '*.py' -o -name '*.toml' -o -name '*.sh' -o -name '*.service' \
        -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.md' \) \
     -print0 2>/dev/null |
@@ -145,11 +157,6 @@ BUILD_STAMP="$(
 [ -n "$BUILD_STAMP" ] || fail "could not fingerprint the source tree at $REPO_ROOT"
 RUNTIME_VERSION="${ARC_RUNTIME_VERSION:-$PROJECT_VERSION-$BUILD_STAMP}"
 RUNTIME_DIR="$ARC_CONFIG_DIR/runtime/$RUNTIME_VERSION"
-
-# The fleet directory name is the layout's, not this script's. Everything below
-# that has to name it derives it here, so renaming the fleet can never leave a
-# guard watching a directory that no longer exists.
-FLEET_DIR="$(basename "${ARC_TEAM_ROOT:-$HOME/arc}/team")"
 
 # GUARD 1 (before rsync, the only one that PREVENTS rather than reports).
 # `rsync --delete` is about to run inside $RUNTIME_DIR, so nothing durable may
@@ -170,12 +177,20 @@ mkdir -p "$RUNTIME_DIR"
 # ~/.arc/config/arc.env instead. /modules is anchored so package-internal
 # modules/ directories still ship.
 #
-# $FLEET_DIR is the load-bearing one: ~/arc is BOTH the rsync source and the
-# fleet's parent, so without it every deploy rakes each agent's memory, identity
-# keys, tools, skills and workspace into a runtime the next deploy deletes.
+# ~/arc is BOTH the rsync source and the operator's own tree, so everything the
+# operator owns beside the source is excluded by name — nothing operator-owned
+# or secret may ship into a runtime (a DGX runtime held plaintext arc.env,
+# connections.env and Claude session transcripts, 2026-10-02):
+#   /team/    the fleet: each agent's memory, identity keys, tools and workspace
+#   /config/  arc.env, gateway.toml, connections.toml (and any legacy secret file)
+#   /state/   operator and agent keys, stores, audit
+#   .entire/ .claude/  session transcripts and tool settings
+#   *.env     any env file anywhere (secrets live in ~/arc/config/arc.env)
+# Top-level ones are anchored so a package directory of the same name ships.
 rsync -a --delete \
   --exclude '.git/' --exclude '.venv/' --exclude '/modules/' \
-  --exclude 'team/' --exclude '.env' \
+  --exclude '/team/' --exclude '/config/' --exclude '/state/' \
+  --exclude '.entire/' --exclude '.claude/' --exclude '*.env' \
   --exclude '__pycache__/' --exclude '.pytest_cache/' --exclude '.ruff_cache/' \
   --exclude '.mypy_cache/' --exclude '.arc-logs/' --exclude 'dist/' \
   "$REPO_ROOT/" "$RUNTIME_DIR/"
@@ -186,6 +201,18 @@ rsync -a --delete \
 # deploy stops with `current` still pointing at the runtime that was working.
 [ ! -e "$RUNTIME_DIR/$FLEET_DIR" ] || fail \
   "the runtime install captured $RUNTIME_DIR/$FLEET_DIR — the rsync no longer excludes the fleet. Nothing was activated; delete that copy and restore the exclude."
+
+# GUARD 3: the same outcome check for every other operator-owned path and for
+# any env file. rsync never deletes an EXCLUDED destination path, so a runtime
+# directory that already held a copy (an older deploy into the same name) also
+# stops here rather than being activated with secrets inside it.
+for _owned in config state .entire .claude; do
+  [ ! -e "$RUNTIME_DIR/$_owned" ] || fail \
+    "the runtime $RUNTIME_DIR holds $_owned/ — operator-owned data must never ship into a runtime. Nothing was activated; move that copy out (it may be the only copy of a credential) and redeploy."
+done
+_leaked_env="$(find "$RUNTIME_DIR" -path "$RUNTIME_DIR/.venv" -prune -o -type f -name '*.env' -print -quit)"
+[ -z "$_leaked_env" ] || fail \
+  "the runtime holds an env file ($_leaked_env) — secrets must never ship into a runtime. Nothing was activated; move it out and redeploy."
 
 log "uv sync (building $RUNTIME_DIR/.venv)..."
 "$UV" sync --project "$RUNTIME_DIR"

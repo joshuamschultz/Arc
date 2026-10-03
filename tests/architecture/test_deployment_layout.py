@@ -266,7 +266,11 @@ def test_the_runtime_stamp_does_not_come_from_the_target_s_git() -> None:
         "BUILD_STAMP must walk the whole source tree; naming directories one by "
         "one is how three of them came to be missing"
     )
-    over_pruned = [root for root in _shipped_source_roots() if f"-name '{root}'" in block]
+    over_pruned = [
+        root
+        for root in _shipped_source_roots()
+        if f"-name '{root}'" in block or f'-path "$REPO_ROOT/{root}"' in block
+    ]
     assert not over_pruned, (
         f"{over_pruned} ship into the runtime but are pruned from the stamp, so a "
         "change confined to one reuses the running runtime's directory name and "
@@ -331,7 +335,7 @@ def test_the_runtime_rsync_excludes_the_fleet(service_env: None) -> None:
     """
     fleet_dir = paths.arc_team().name
     excludes = re.findall(r"--exclude\s+'([^']+)'", _rsync_invocation())
-    assert f"{fleet_dir}/" in excludes, (
+    assert f"/{fleet_dir}/" in excludes or f"{fleet_dir}/" in excludes, (
         f"the rsync that installs the runtime must exclude '{fleet_dir}/' — "
         f"the fleet lives inside its source tree. Found: {excludes}"
     )
