@@ -8,11 +8,19 @@ and the approval is refused if the text changed since, or if it is already
 approved (a replay). The signed revision comes from the control authority
 (``register_revision(purpose="pulse")``); this route never signs anything itself.
 Every mutation outcome is audited.
+
+The same module is the ONE operator-only writer of ``pulse.md``: ``POST .../pulse``
+adds a check, ``PUT``/``DELETE .../pulse/{name}`` edit or remove one (naming the
+digest the operator saw), and ``DELETE .../pulse/proposals/{name}`` dismisses an
+agent proposal. A write never approves: the check reads "pending approval" and goes
+through the approve flow above. Writes are validated against the pulse.md schema,
+atomic, and audited; viewers and agents are refused before anything is read.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any, cast
 
 import arcagent
@@ -45,14 +53,23 @@ async def get_pulse(request: Request) -> JSONResponse:
     agent_root = _agent_root(request, request.path_params["id"])
     if agent_root is None:
         return _error("Agent not found", 404)
-    checks = [status.to_wire() for status in arcagent.pulse_status(agent_root / "workspace")]
+    workspace = agent_root / "workspace"
+    checks = [status.to_wire() for status in arcagent.pulse_status(workspace)]
     available = getattr(request.app.state, "schedule_control_authority", None) is not None
-    return JSONResponse({"checks": checks, "authority_available": available})
+    return JSONResponse(
+        {
+            "checks": checks,
+            "proposals": arcagent.list_pulse_proposals(workspace),
+            "authority_available": available,
+        }
+    )
 
 
-def _audit(request: Request, target: str, outcome: str, detail: str) -> None:
+def _audit(
+    request: Request, target: str, outcome: str, detail: str, operation: str = _OPERATION
+) -> None:
     emit_mutation_audit(
-        request, target=target, operation=_OPERATION, outcome=outcome, detail=detail
+        request, target=target, operation=operation, outcome=outcome, detail=detail
     )
 
 
@@ -124,4 +141,141 @@ async def _approve(
     return JSONResponse({"check": name, "revision": approval.revision, "approved": True})
 
 
-__all__ = ["get_pulse", "post_pulse_approve"]
+async def _write_gate(
+    request: Request, operation: str, name: str | None
+) -> tuple[Path | None, dict[str, Any], JSONResponse | None]:
+    """Operator role, agent, JSON body: (workspace, body, refusal). Role first, then audit."""
+    agent_id = request.path_params["id"]
+    target = f"pulse:{name}" if name else f"pulse:{agent_id}"
+    if getattr(request.state, "role", None) != "operator":
+        _audit(request, target, "denied", "viewer role", operation)
+        return None, {}, _error("operator_role_required", 403)
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return None, {}, _error("Agent not found", 404)
+    parsed = await _json_body(request)
+    if parsed is None and request.method != "DELETE":
+        return None, {}, _error("expected a JSON object", 400)
+    return agent_root / "workspace", parsed or {}, None
+
+
+def _fields(body: dict[str, Any]) -> tuple[int, str] | None:
+    interval, action = body.get("interval_minutes"), body.get("action")
+    if not isinstance(interval, int) or isinstance(interval, bool) or not isinstance(action, str):
+        return None
+    return interval, action
+
+
+def _digest_of(workspace: Path, name: str) -> str | None:
+    found = next((s for s in arcagent.pulse_status(workspace) if s.name == name), None)
+    return None if found is None else found.definition_digest
+
+
+async def post_pulse_add(request: Request) -> JSONResponse:
+    """POST /api/agents/{id}/pulse — add one unapproved check (operator only)."""
+    probe = await _json_body(request)
+    name = probe.get("name") if probe else None
+    name = name if isinstance(name, str) else None
+    workspace, body, refusal = await _write_gate(request, "pulse.add", name)
+    if refusal is not None or workspace is None:
+        return refusal or _error("Agent not found", 404)
+    fields = _fields(body)
+    if not isinstance(name, str) or fields is None:
+        return _error("expected {name, interval_minutes, action}", 400)
+    target = f"pulse:{name}"
+    try:
+        arcagent.add_pulse_check(
+            workspace, name=name, interval_minutes=fields[0], action=fields[1]
+        )
+    except arcagent.PulseCheckInvalidError as exc:
+        duplicate = "already exists" in str(exc)
+        _audit(request, target, "denied", str(exc), "pulse.add")
+        return _error(str(exc), 409 if duplicate else 400)
+    except OSError as exc:
+        _audit(request, target, "error", str(exc), "pulse.add")
+        return _error("pulse.md could not be written", 503)
+    proposal = body.get("proposal")
+    if isinstance(proposal, str) and proposal:
+        arcagent.clear_pulse_proposal(workspace, proposal)
+    _audit(request, target, "applied", "added; pending approval", "pulse.add")
+    return JSONResponse({"check": name, "status": "unapproved"}, status_code=201)
+
+
+async def _reviewed_check(
+    request: Request, operation: str
+) -> tuple[Path, str, dict[str, Any]] | JSONResponse:
+    """Shared edit/remove gate: operator, existing check, and the digest the operator saw."""
+    name = request.path_params["name"]
+    workspace, body, refusal = await _write_gate(request, operation, name)
+    if refusal is not None or workspace is None:
+        return refusal or _error("Agent not found", 404)
+    target = f"pulse:{name}"
+    current = _digest_of(workspace, name)
+    if current is None:
+        return _error("not found", 404)
+    seen = body.get("definition_digest")
+    if not isinstance(seen, str) or not seen:
+        return _error("expected definition_digest", 400)
+    if seen != current:
+        _audit(request, target, "denied", "changed since reviewed", operation)
+        return _error("pulse check changed since it was reviewed", 409)
+    return workspace, name, body
+
+
+async def put_pulse_check(request: Request) -> JSONResponse:
+    """PUT /api/agents/{id}/pulse/{name} — rewrite one check; it returns to pending approval."""
+    gate = await _reviewed_check(request, "pulse.edit")
+    if isinstance(gate, JSONResponse):
+        return gate
+    workspace, name, body = gate
+    fields = _fields(body)
+    if fields is None:
+        return _error("expected {interval_minutes, action, definition_digest}", 400)
+    try:
+        arcagent.edit_pulse_check(workspace, name, interval_minutes=fields[0], action=fields[1])
+    except arcagent.PulseCheckInvalidError as exc:
+        _audit(request, f"pulse:{name}", "denied", str(exc), "pulse.edit")
+        return _error(str(exc), 400)
+    except OSError as exc:
+        _audit(request, f"pulse:{name}", "error", str(exc), "pulse.edit")
+        return _error("pulse.md could not be written", 503)
+    _audit(request, f"pulse:{name}", "applied", "edited; pending approval", "pulse.edit")
+    return JSONResponse({"check": name, "status": "changes_pending"})
+
+
+async def delete_pulse_check(request: Request) -> JSONResponse:
+    """DELETE /api/agents/{id}/pulse/{name} — remove one check."""
+    gate = await _reviewed_check(request, "pulse.remove")
+    if isinstance(gate, JSONResponse):
+        return gate
+    workspace, name, _ = gate
+    try:
+        arcagent.remove_pulse_check(workspace, name)
+    except arcagent.PulseCheckInvalidError as exc:
+        return _error(str(exc), 404)
+    except OSError as exc:
+        _audit(request, f"pulse:{name}", "error", str(exc), "pulse.remove")
+        return _error("pulse.md could not be written", 503)
+    _audit(request, f"pulse:{name}", "applied", "removed", "pulse.remove")
+    return JSONResponse({"check": name, "removed": True})
+
+
+async def delete_pulse_proposal(request: Request) -> JSONResponse:
+    """DELETE /api/agents/{id}/pulse/proposals/{name} — dismiss an agent proposal."""
+    name = request.path_params["name"]
+    workspace, _, refusal = await _write_gate(request, "pulse.dismiss", name)
+    if refusal is not None or workspace is None:
+        return refusal or _error("Agent not found", 404)
+    arcagent.clear_pulse_proposal(workspace, name)
+    _audit(request, f"pulse:{name}", "applied", "proposal dismissed", "pulse.dismiss")
+    return JSONResponse({"proposal": name, "dismissed": True})
+
+
+__all__ = [
+    "delete_pulse_check",
+    "delete_pulse_proposal",
+    "get_pulse",
+    "post_pulse_add",
+    "post_pulse_approve",
+    "put_pulse_check",
+]
