@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { WorkflowsPage } from './workflows'
 
 afterEach(() => {
@@ -52,4 +52,36 @@ it('lists templates and creates a workflow from the chosen one', async () => {
     path: '/api/workflows/from-template',
     body: { template: 'digest', workflow_id: 'nightly' },
   })
+})
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="where">{location.pathname + location.search}</div>
+}
+
+it('opens the run named by ?run= on its workflow detail page', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (path: RequestInfo | URL) => {
+      const p = String(path)
+      if (p === '/api/workflow-runs/run-42') {
+        return new Response(
+          JSON.stringify({ run_id: 'run-42', workflow_id: 'nightly', status: 'done', nodes: [], path_taken: [] }),
+        )
+      }
+      return new Response(JSON.stringify({ workflows: [] }))
+    }),
+  )
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <MemoryRouter initialEntries={['/workflows?run=run-42']}>
+      <QueryClientProvider client={client}>
+        <Routes>
+          <Route path="/workflows" element={<WorkflowsPage />} />
+          <Route path="/workflows/:id" element={<LocationProbe />} />
+        </Routes>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+  expect((await screen.findByTestId('where')).textContent).toBe('/workflows/nightly?run=run-42')
 })
