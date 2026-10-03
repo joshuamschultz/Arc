@@ -621,3 +621,79 @@ async def test_an_agent_that_opted_out_of_shared_stores_is_never_moved(
         finally:
             await second.shutdown()
             await first.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# A fresh process syncs on its own (connections sweep D1)
+# ---------------------------------------------------------------------------
+
+
+async def _attached_at_boot(agent: Any, account: Provider) -> None:
+    """What the connectors module does at boot: attach the granted source. Nothing else.
+
+    No listing, no card, no "Sync now": any of those wakes the sync monitor and
+    hides the defect this guards (the monitor slept an hour after every start).
+    """
+    await agent._runtime_deps.source_catalog.register(account.connection_id, account)
+
+
+async def test_a_granted_connection_syncs_by_itself_after_a_fresh_start(
+    deployment: Deployment,
+    enable_modules: Any,
+    scripted_llm: ScriptedLLM,
+    arcstore: FakeBackend,  # noqa: F811 — the module's shared-arcstore fixture
+) -> None:
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    agent = await start_knowledge_agent(deployment, enable_modules, sync=_SYNC)
+    try:
+        await approve(agent, (await grant(agent, account)).approval_id)
+    finally:
+        await agent.shutdown()
+
+    restarted = await start_knowledge_agent(deployment, enable_modules, installed=True)
+    store = ArcStoreSourceSyncStore(arcstore)
+    try:
+        await _attached_at_boot(restarted, account)
+
+        async def synced() -> bool:
+            state = await store.get_state(knowledge_principal("wiki"), "wiki")
+            return state.status.value == "complete"
+
+        assert await _until(synced, seconds=30), await store.list_for_connection("wiki")
+        found = await ask(restarted, scripted_llm, "document_search", {"query": "billing portal"})
+        assert "in August" in found, found
+    finally:
+        await restarted.shutdown()
+
+
+async def test_an_own_copy_moves_to_the_shared_store_on_the_first_automatic_sync(
+    deployment: Deployment,
+    enable_modules: Any,
+    scripted_llm: ScriptedLLM,
+) -> None:
+    """The DGX upgrade for one agent: restart, and the move happens with no click at all."""
+    account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
+    agent = await start_knowledge_agent(
+        deployment, enable_modules, sync={**_SYNC, "shared_stores": False}
+    )
+    try:
+        await connect(agent, account)
+    finally:
+        await agent.shutdown()
+    assert _documents_under(Path(agent._config.agent.workspace)), "nothing to move"
+
+    toml = deployment.agent_dir / "arcagent.toml"
+    text = toml.read_text(encoding="utf-8")
+    toml.write_text(text.replace("shared_stores = false", "shared_stores = true"), "utf-8")
+    restarted = await start_knowledge_agent(deployment, enable_modules, installed=True)
+    try:
+        await _attached_at_boot(restarted, account)
+
+        async def moved() -> bool:
+            return await _migrated((restarted,))
+
+        assert await _until(moved, seconds=30), "the own copy was never moved"
+        found = await ask(restarted, scripted_llm, "document_search", {"query": "billing portal"})
+        assert "in August" in found, found
+    finally:
+        await restarted.shutdown()

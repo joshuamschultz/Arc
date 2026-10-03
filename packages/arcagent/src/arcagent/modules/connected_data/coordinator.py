@@ -322,10 +322,14 @@ class ConnectedDataCoordinator:
             raise
         finally:
             heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
             if not lease_lost:
-                await self._state.release_lease(
-                    agent_did, source_id, owner_id=owner_id, fencing_token=lease.fencing_token
+                # Shielded: shutdown cancels a run and the catalog's retire cancels
+                # it again. A second cancel landing here skipped the release, and
+                # the lease then blocked the next process for max_seconds.
+                await asyncio.shield(
+                    self._state.release_lease(
+                        agent_did, source_id, owner_id=owner_id, fencing_token=lease.fencing_token
+                    )
                 )
         return await self._state.get_state(agent_did, source_id)
 

@@ -631,3 +631,47 @@ async def test_closing_the_service_releases_the_shared_store_keys() -> None:
     await service.close()
 
     assert shared.closed == 1
+
+
+# --- a run stopped twice still gives its lease back --------------------------------------
+
+
+class _SlowReleaseStore(InMemorySourceSyncStore):
+    """Releasing the lease takes a moment, long enough for a second cancel to land."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.releasing = asyncio.Event()
+        self.may_release = asyncio.Event()
+
+    async def release_lease(self, *args: Any, **kwargs: Any) -> None:
+        self.releasing.set()
+        await self.may_release.wait()
+        await super().release_lease(*args, **kwargs)
+
+
+async def test_a_run_cancelled_again_while_releasing_still_releases_its_lease() -> None:
+    """Shutdown cancels a run; the catalog's retire cancels it again.
+
+    A second cancel landing inside the release skipped it, so the lease stayed
+    live for max_seconds and the next process could not sync for that long.
+    """
+    store = _SlowReleaseStore()
+    run = asyncio.create_task(
+        ConnectedDataCoordinator(_OneLongFetch(None), _Ingest(), store).run(
+            SourceDescription(connection_id="mail", source_kind="test", account_id="a"),
+            agent_did=_DID,
+            owner_id="worker",
+            limits=SyncLimits(max_seconds=60, max_duty_fraction=1.0, retries=0),
+        )
+    )
+    await asyncio.sleep(0.05)
+    run.cancel()
+    await asyncio.wait_for(store.releasing.wait(), timeout=2.0)
+    run.cancel()  # the second stop, mid-release
+    await asyncio.gather(run, return_exceptions=True)
+    store.may_release.set()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert await store.acquire_lease(_DID, "mail", "next-process", ttl_seconds=60) is not None
