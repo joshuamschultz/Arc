@@ -29,6 +29,7 @@ class SessionRunCoordinator:
 
     def __init__(self) -> None:
         self._locks: dict[str, asyncio.Lock] = {}
+        self._holders: dict[str, str] = {}
         self._delivery_locks: dict[str, asyncio.Lock] = {}
         self.active_runs: dict[str, arcrun.RunHandle] = {}
         self._injection_targets: dict[str, arcrun.RunHandle] = {}
@@ -40,16 +41,30 @@ class SessionRunCoordinator:
     async def turn(self, session_key: str) -> AsyncIterator[None]:
         lock = self._lock(session_key)
         async with lock:
-            yield
+            self._mark_holder(session_key)
+            try:
+                yield
+            finally:
+                self._holders.pop(session_key, None)
 
     async def acquire_turn(self, session_key: str) -> None:
         """Reserve a turn whose completion happens in a background finalizer."""
         await self._lock(session_key).acquire()
+        self._mark_holder(session_key)
 
     def release_turn(self, session_key: str) -> None:
         lock = self._locks.get(session_key)
         if lock is not None and lock.locked():
+            self._holders.pop(session_key, None)
             lock.release()
+
+    def turn_holder(self, session_key: str) -> str | None:
+        """Name of the task holding ``session_key``'s turn, for stall diagnosis."""
+        return self._holders.get(session_key)
+
+    def _mark_holder(self, session_key: str) -> None:
+        task = asyncio.current_task()
+        self._holders[session_key] = task.get_name() if task is not None else "unknown"
 
     @asynccontextmanager
     async def delivery(self, session_key: str) -> AsyncIterator[None]:
@@ -100,4 +115,5 @@ class SessionRunCoordinator:
         self.active_runs.clear()
         self._injection_targets.clear()
         self._locks.clear()
+        self._holders.clear()
         self._delivery_locks.clear()

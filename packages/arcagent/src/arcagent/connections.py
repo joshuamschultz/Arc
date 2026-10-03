@@ -786,6 +786,22 @@ def _visible_placements(plan: ConnectorPlan) -> frozenset[str]:
     )
 
 
+def _vaulted_token_field(plan: ConnectorPlan) -> str | None:
+    """The vault field a pasted token belongs in, when no host login takes it.
+
+    A host binary that reads a token on stdin owns its own credential and wins.
+    Otherwise the bundle's declared bearer, or its one sensitive secret; with
+    several and no bearer the token is ambiguous and nothing is stored.
+    """
+    if any(required.token_command for required in plan.manifest.host_requires):
+        return None
+    credential = plan.manifest.credential
+    if credential is not None and credential.bearer:
+        return credential.bearer
+    sensitive = [required.name for required in plan.secrets if required.sensitive]
+    return sensitive[0] if len(sensitive) == 1 else None
+
+
 def _authorization(
     instance: str,
     plan: ConnectorPlan,
@@ -849,6 +865,7 @@ class Connections:
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
+        reconcile_wait_seconds: float = 5.0,
     ) -> None:
         self._world = world
         # The cipher sealing connector credentials. Resolved from the operator key
@@ -871,6 +888,10 @@ class Connections:
         # The one HTTP call to a provider's token endpoint (injectable for tests).
         self._token_post = token_post
         self._host_step_timeout = host_step_timeout
+        # Bound on the in-process fast path. The mutation is durable (and queued)
+        # before any agent is asked, so an operator request never waits out an
+        # agent that is busy — it reports activation_pending instead.
+        self._reconcile_wait_seconds = reconcile_wait_seconds
         # The time a health check is stamped with. Injectable so a test can walk the
         # ten-minute and 24-hour escalation bounds without waiting for them.
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
@@ -893,6 +914,7 @@ class Connections:
         host_step_timeout: float | None = None,
         clock: Callable[[], datetime] | None = None,
         credential_cipher: CredentialCipher | None = None,
+        reconcile_wait_seconds: float = 5.0,
     ) -> Connections:
         """Resolve a deployment and bind it to a chain in one step."""
         world = resolve_deployment(
@@ -913,6 +935,7 @@ class Connections:
             host_step_timeout=host_step_timeout,
             clock=clock,
             credential_cipher=credential_cipher,
+            reconcile_wait_seconds=reconcile_wait_seconds,
         )
 
     @property
@@ -1607,11 +1630,12 @@ class Connections:
         a token on stdin IS run, and the answer is the probe taken afterwards —
         the only evidence a sign-in worked.
 
-        **The token enters and does not come back.** It reaches the binary's stdin
-        and nothing else: it is in no field of the returned
-        :class:`Authorization`, no log record, and no audit event (LLM02, LLM07).
-        Arc stores no copy — the binary owns its own credential, and a second copy
-        would be a second place to leak it from.
+        **The token enters and does not come back.** It is in no field of the
+        returned :class:`Authorization`, no log record, and no audit event (LLM02,
+        LLM07). A binary that reads it on stdin owns its own credential, so Arc
+        stores no copy. A bundle with no such login, whose credential Arc places
+        itself (GitHub's ``GH_TOKEN``), gets it sealed in its vault field instead —
+        the one place that bundle reads it from.
 
         Args:
             instance: The connected account to sign in.
@@ -1627,7 +1651,15 @@ class Connections:
         """
         with self._audit.open() as sink:
             plan = self._plan_for(instance, sink)
-            note = await self._run_login(plan, token, sink)
+        vaulted = _vaulted_token_field(plan) if token else None
+        if vaulted is not None:
+            # No host login takes this token: Arc itself places it (GitHub's
+            # GH_TOKEN since P18-3). Vault it, exactly as a re-auth would.
+            await self.reauth(plan, {vaulted: token})
+            note = f"Stored the token for {plan.extension}."
+        with self._audit.open() as sink:
+            if vaulted is None:
+                note = await self._run_login(plan, token, sink)
             probe = await self._reachability(plan, sink)
             sign_in = await self._sign_in_state(plan, sink)
             supplied = await self._supplied(plan, sink)
@@ -2495,43 +2527,50 @@ class Connections:
     async def _reconcile_agents(
         self, agents: Sequence[str]
     ) -> tuple[ConnectorReconcileResult, ...]:
-        """Queue every projection then use this process as an optional fast path."""
+        """Queue every projection then use this process as an optional, bounded fast path."""
         commands = await self._reconcile_queue().enqueue(agents)
-        outcomes: list[ConnectorReconcileResult] = []
         queue = self._reconcile_queue()
-        for command in commands:
-            agent = command.agent
-            try:
+        return tuple(
+            await asyncio.gather(*(self._fast_path(queue, command) for command in commands))
+        )
+
+    async def _fast_path(
+        self, queue: ConnectorReconcileQueue, command: Any
+    ) -> ConnectorReconcileResult:
+        """Apply one queued command live if the agent answers within the bound."""
+        agent = command.agent
+        try:
+            async with asyncio.timeout(self._reconcile_wait_seconds):
                 result = (
                     await self._connector_control.reconcile(agent)
                     if self._connector_control is not None
                     else None
                 )
-            except Exception as exc:
-                outcomes.append(
-                    ConnectorReconcileResult(
-                        status="activation_pending",
-                        agent=agent,
-                        revision=command.revision,
-                        detail=f"reconcile retry pending: {exc}",
-                    )
-                )
-                continue
-            if result is None:
-                outcomes.append(
-                    ConnectorReconcileResult(
-                        status="activation_pending",
-                        agent=agent,
-                        revision=command.revision,
-                        detail="agent is not running in this process",
-                    )
-                )
-                continue
-            outcome = replace(result, agent=agent, revision=command.revision)
-            if outcome.status == "applied":
-                await queue.acknowledge(command, outcome)
-            outcomes.append(outcome)
-        return tuple(outcomes)
+        except TimeoutError:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail="the agent is still applying this change",
+            )
+        except Exception as exc:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail=f"reconcile retry pending: {exc}",
+            )
+        if result is None:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                agent=agent,
+                revision=command.revision,
+                detail="agent is not running in this process",
+            )
+        outcome = replace(result, agent=agent, revision=command.revision)
+        if outcome.status == "applied":
+            await queue.acknowledge(command, outcome)
+        return outcome
 
     def _reconcile_queue(self) -> ConnectorReconcileQueue:
         return ConnectorReconcileQueue(self._open_reconcile_backend, actor_did=self._world.did)

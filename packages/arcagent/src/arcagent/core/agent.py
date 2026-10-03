@@ -115,6 +115,8 @@ _logger = logging.getLogger("arcagent.agent")
 _OPERATOR_KEY_REF = "operator"
 _SHUTDOWN_STEP_TIMEOUT_SECONDS = 5.0
 _DELIVERY_STREAM_QUEUE_MAXSIZE = 32
+_TURN_START_REASON = "The agent did not start your message in time. Try again shortly."
+_TURN_FAILED_REASON = "The run failed. The details are in the server log."
 #: The operation contract a module registers (``@capability(name=...)``) to serve
 #: :meth:`ArcAgent.run_memory_promotion`; an operation name, not a module name.
 _MEMORY_PROMOTION = "memory_promotion"
@@ -260,7 +262,9 @@ class ArcAgent:
         # concurrent sessions; turns through each still run sequentially
         # via arcrun. ``session(key)`` opens-or-resumes by key.
         self._sessions: dict[str, SessionManager] = {}
-        self._sessions_lock = asyncio.Lock()
+        # One open lock per key: a slow open (a large history read) of one
+        # conversation never stalls another conversation's turn.
+        self._session_open_locks: dict[str, asyncio.Lock] = {}
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._vault_resolver: Any = None
@@ -347,13 +351,18 @@ class ArcAgent:
 
         return await enable_module_persisted(self, name)
 
-    async def reconcile_connectors(self) -> Any:
+    async def reconcile_connectors(self, *, wait_seconds: float = 4.0) -> Any:
         """Refresh this started agent's connector tools from durable grants.
 
         This is the narrow in-process control seam used by operator surfaces.
         A started agent without the optional connector module has successfully
         reconciled to an empty connector snapshot; only a process that cannot
         locate this agent should report activation as pending.
+
+        The fast path is bounded by ``wait_seconds``: past it the reconcile keeps
+        running under this agent's task supervisor and the caller is told
+        ``activation_pending`` (the durable queue also re-applies it), so an
+        operator request never waits on a long-running sync.
         """
         from arcagent.connector_control import ConnectorReconcileResult
         from arcagent.core.agent_lifecycle import activate_runtime_bindings
@@ -373,7 +382,14 @@ class ArcAgent:
             return ConnectorReconcileResult(
                 status="applied", detail="connector module exposes no live reconciler"
             )
-        return await reconcile()
+        task = self._background_tasks.create(reconcile(), name="connectors:reconcile")
+        done, _pending = await asyncio.wait({task}, timeout=wait_seconds)
+        if not done:
+            return ConnectorReconcileResult(
+                status="activation_pending",
+                detail="still applying on the agent; it finishes in the background",
+            )
+        return task.result()
 
     async def notify_operator(self, text: str, *, idempotency_key: str) -> str | None:
         """Put one notice in front of the operator, on the channel they last used.
@@ -967,10 +983,13 @@ class ArcAgent:
         pass a deterministic key to get a stable local session.
         """
         self._ensure_started()
+        existing = self._sessions.get(key)
+        if existing is not None:
+            return existing
         # Guard get-or-create: open_or_resume awaits, so two concurrent callers
         # with the same key could otherwise both build a manager over the same
         # jsonl and clobber each other (split-brain history).
-        async with self._sessions_lock:
+        async with self._session_open_locks.setdefault(key, asyncio.Lock()):
             existing = self._sessions.get(key)
             if existing is not None:
                 return existing
@@ -1340,7 +1359,11 @@ class ArcAgent:
             except Exception:
                 _logger.exception("Interactive delivery stream failed for session %s", session_key)
                 if not terminal_sent:
-                    await queue.put(DeliveryTerminalEvent(run_id="", sequence=0, status="failed"))
+                    await queue.put(
+                        DeliveryTerminalEvent(
+                            run_id="", sequence=0, status="failed", reason=_TURN_FAILED_REASON
+                        )
+                    )
                     terminal_sent = True
             finally:
                 started.set()
@@ -1362,10 +1385,20 @@ class ArcAgent:
             task = asyncio.create_task(pump(), name=f"delivery_stream:{session_key}")
             self._delivery_stream_tasks.add(task)
             task.add_done_callback(self._delivery_stream_tasks.discard)
-            await started.wait()
+            _logger.info("Turn start: session=%s", session_key)
+            began = await self._await_turn_start(started, task, session_key)
+        if not began:
+            # Yielded after the delivery lock is released, so a slow consumer
+            # cannot hold the session closed.
+            yield DeliveryTerminalEvent(
+                run_id="", sequence=0, status="failed", reason=_TURN_START_REASON
+            )
+            return
 
         try:
             while item := await queue.get():
+                if isinstance(item, DeliveryTerminalEvent):
+                    _logger.info("Turn finish: session=%s status=%s", session_key, item.status)
                 yield item
         finally:
             if not task.done():
@@ -1379,6 +1412,32 @@ class ArcAgent:
                     task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
+
+    async def _await_turn_start(
+        self, started: asyncio.Event, pump: asyncio.Task[None], session_key: str
+    ) -> bool:
+        """Wait, bounded, for an interactive turn to reach its run.
+
+        On timeout the pump is cancelled (releasing whatever it queued on) and
+        the caller fails the turn visibly. The WARNING names the session and the
+        task holding its turn, so the next stall is diagnosable from the log.
+        """
+        bound = self._config.session.turn_start_timeout_seconds
+        try:
+            async with asyncio.timeout(bound):
+                await started.wait()
+        except TimeoutError:
+            _logger.warning(
+                "Turn did not start within %.0fs: session=%s turn_holder=%s",
+                bound,
+                session_key,
+                self._run_coordinator.turn_holder(session_key) or "none",
+            )
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
+            return False
+        return True
 
     def active_run(self, session_key: str) -> arcrun.RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""

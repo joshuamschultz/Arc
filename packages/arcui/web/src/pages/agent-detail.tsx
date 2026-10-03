@@ -98,6 +98,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { AgentIdentity } from '@/components/AgentIdentity'
+import { newRequestId } from '@/lib/request-id'
 import type { ColumnDef } from '@tanstack/react-table'
 import type {
   Agent,
@@ -1886,7 +1887,7 @@ function RunsTab({ agentId }: { agentId: string }) {
 }
 
 function inboxIdempotencyKey(operation: string): string {
-  return `${operation}-${crypto.randomUUID()}`
+  return `${operation}-${newRequestId()}`
 }
 
 type InboxParticipant = {

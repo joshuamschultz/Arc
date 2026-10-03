@@ -130,6 +130,21 @@ class TestAuditEventsAreObservable:
         captured = capsys.readouterr().err
         assert "TelegramAdapter: connecting" in captured
 
+    def test_chat_turn_start_and_finish_reach_captured_output(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A chat that never answers must show how far its turn got."""
+        from arccli.commands.ui import _configure_logging
+
+        _configure_logging(verbose=False)
+
+        logging.getLogger("arcgateway.session").info("Session s1: turn start platform=web")
+        logging.getLogger("arcagent.agent").info("Turn finish: session=s1 status=failed")
+
+        captured = capsys.readouterr().err
+        assert "Session s1: turn start" in captured
+        assert "Turn finish: session=s1" in captured
+
     def test_debug_still_suppressed_without_verbose(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:

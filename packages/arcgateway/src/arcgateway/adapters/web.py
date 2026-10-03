@@ -484,6 +484,10 @@ class WebPlatformAdapter:
         if meta is None:
             return  # socket already unregistered — drop silently
         agent_did, user_did = meta
+        # No content is logged; this line proves a browser message arrived.
+        _logger.info(
+            "WebPlatformAdapter: message received chat_id=%s client_seq=%s", chat_id, client_seq
+        )
 
         raw_payload: dict[str, Any] = {"client_seq": client_seq} if client_seq is not None else {}
         parts: list[Part] = []
@@ -532,6 +536,8 @@ class WebPlatformAdapter:
                 return
             payload = self._stream_payload(delta, event="end")
             payload["status"] = delta.status
+            if delta.status != "completed" and delta.content:
+                payload["reason"] = delta.content
         elif delta.kind == "tool_call":
             tool_name = delta.content.split(maxsplit=1)[0]
             if not tool_name:

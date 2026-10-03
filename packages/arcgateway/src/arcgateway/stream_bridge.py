@@ -141,6 +141,11 @@ class StreamBridge:
                             {"target": str(target)},
                         )
 
+        if not accumulated_parts and terminal.status != "completed" and terminal.content:
+            # A turn that failed before any text still owes the chat a reply.
+            accumulated_parts.append(terminal.content)
+            buffer.append(terminal.content)
+
         accumulated = "".join(accumulated_parts)
 
         if edit_count > 0 or flood_disabled:

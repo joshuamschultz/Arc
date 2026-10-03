@@ -136,6 +136,33 @@ def test_a_user_message_gets_an_agent_reply(client: TestClient, scripted_llm: Sc
     assert "How did the quarter go?" in scripted_llm.last_prompt_text
 
 
+def test_the_browser_frame_shape_gets_a_reply(
+    client: TestClient, scripted_llm: ScriptedLLM
+) -> None:
+    """The dashboard sends client_seq + request_id; that exact frame must answer.
+
+    Every other journey sent a bare ``{type, text}``. The real UI's frame, with
+    its UUIDv4 ``request_id``, went untested while chat was dead in production.
+    """
+    import uuid
+
+    scripted_llm.replies.append("Shape accepted.")
+    ws = _open_chat(client, "journey")
+    try:
+        ws.send_json(
+            {
+                "type": "message",
+                "text": "hello",
+                "client_seq": 1,
+                "attachment_ids": [],
+                "request_id": str(uuid.uuid4()),
+            }
+        )
+        assert _reply_text(ws) == "Shape accepted."
+    finally:
+        ws.__exit__(None, None, None)
+
+
 def test_a_tool_call_runs_and_is_signed_into_the_audit_chain(
     client: TestClient, scripted_llm: ScriptedLLM
 ) -> None:

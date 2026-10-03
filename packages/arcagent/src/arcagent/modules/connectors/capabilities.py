@@ -85,6 +85,7 @@ from arcagent.extension.grants import Connection, ConnectionRegistry
 from arcagent.extension.loader import ExtensionLoader, LoadedExtension
 from arcagent.extension.manifest import ToolPolicy
 from arcagent.extension.secrets import SecretStore
+from arcagent.extension.source_catalog import SourceCatalog
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.install import (
@@ -112,6 +113,8 @@ class _PreparedRegistry:
         self.tools: dict[str, Any] = {}
         self.policy = registry.policy
         self.sources: dict[str, Any] = {}
+        #: What each source adapter was built from; equal means "unchanged".
+        self.source_fingerprints: dict[str, str] = {}
         self.unsupported_sources: set[str] = set()
 
     def register(self, tool: Any) -> None:
@@ -135,6 +138,11 @@ class Connectors:
         # bundle, re-read every secret, and tore down every source adapter on a
         # 5-second loop. None means "not yet attached".
         self._grant_signature: str | None = None
+        # Reconciles are serialized: a background fast path and the queue drain
+        # may both run one, and two interleaved replacements would race.
+        self._reconcile_lock = asyncio.Lock()
+        # Fingerprint each source adapter was attached from, by connection id.
+        self._source_fingerprints: dict[str, str] = {}
 
     async def setup(self, ctx: Any) -> None:
         del ctx  # Loader passes None; state lives in _runtime.
@@ -194,27 +202,50 @@ class Connectors:
                 revision=self._revision,
                 detail="connector module is not running in this process",
             )
-        state = _runtime.state()
-        prepared = _PreparedRegistry(registry)
-        await self._attach(state, prepared)
-        accepted = registry.replace_owned(set(self._registered), list(prepared.tools.values()))
-        state = _runtime.state()
-        if state.source_catalog is not None:
-            for registration in await state.source_catalog.snapshot():
-                if registration.connection_id not in prepared.sources:
-                    if registration.connection_id in prepared.unsupported_sources:
-                        await state.source_catalog.unregister(registration.connection_id)
-                    elif registration.connection_id.split(":", 1)[0] not in _granted_source_ids(
-                        state
-                    ):
-                        await _revoke_connected_source(state, registration.connection_id)
-            for connection_id, adapter in prepared.sources.items():
-                await state.source_catalog.register(connection_id, adapter)
-        self._registered = tuple(sorted(accepted))
-        self._revision += 1
-        return ConnectorReconcileResult(
-            status="applied", revision=self._revision, tools=self._registered
-        )
+        async with self._reconcile_lock:
+            state = _runtime.state()
+            prepared = _PreparedRegistry(registry)
+            await self._attach(state, prepared)
+            accepted = registry.replace_owned(set(self._registered), list(prepared.tools.values()))
+            state = _runtime.state()
+            if state.source_catalog is not None:
+                await self._reconcile_sources(state, state.source_catalog, prepared)
+            self._registered = tuple(sorted(accepted))
+            self._revision += 1
+            return ConnectorReconcileResult(
+                status="applied", revision=self._revision, tools=self._registered
+            )
+
+    async def _reconcile_sources(
+        self, state: _runtime._State, catalog: SourceCatalog, prepared: _PreparedRegistry
+    ) -> None:
+        """Hand the catalog only what changed; an unchanged source keeps its running sync.
+
+        Re-registering every source with a fresh adapter made each grant change
+        retire every adapter, so one removal waited out (or cancelled) the
+        longest-running sync on the agent.
+        """
+        attached = {item.connection_id for item in await catalog.snapshot()}
+        for connection_id in attached - set(prepared.sources):
+            self._source_fingerprints.pop(connection_id, None)
+            if connection_id in prepared.unsupported_sources:
+                await catalog.unregister(connection_id)
+            elif connection_id.split(":", 1)[0] not in _granted_source_ids(state):
+                await _revoke_connected_source(state, connection_id)
+        for connection_id, adapter in prepared.sources.items():
+            fingerprint = prepared.source_fingerprints.get(connection_id)
+            if (
+                connection_id in attached
+                and fingerprint is not None
+                and self._source_fingerprints.get(connection_id) == fingerprint
+            ):
+                # The freshly built adapter was never used; adapters reopen lazily,
+                # so closing it releases nothing the attached one needs.
+                await adapter.close_source()
+                continue
+            await catalog.register(connection_id, adapter)
+            if fingerprint is not None:
+                self._source_fingerprints[connection_id] = fingerprint
 
     async def _drain_reconcile_commands(self) -> None:
         queue = self._reconcile_queue
@@ -608,8 +639,10 @@ def _register_sources(ctx: _AttachContext, prepared: _Prepared) -> None:
         if not adapters:
             ctx.registry.unsupported_sources.add(instance)
         else:
+            fingerprint = _source_fingerprint(prepared)
             for suffix, source_adapter in adapters.items():
                 connection_id = instance if not suffix else f"{instance}:{suffix}"
+                ctx.registry.source_fingerprints[connection_id] = fingerprint
                 ctx.registry.sources[connection_id] = SourceAuthorizationBinding(
                     source_adapter,
                     connection_id=connection_id,
@@ -618,6 +651,20 @@ def _register_sources(ctx: _AttachContext, prepared: _Prepared) -> None:
                     grant_active=lambda: _source_grant_active(state, instance),
                     audit_sink=_audit_sink(state),
                 )
+
+
+def _source_fingerprint(prepared: _Prepared) -> str:
+    """What a connection's source adapter is built from, minus who it is granted to.
+
+    Credentials are read live by the adapter on each call, so a re-auth does not
+    need a new adapter; a changed connection setting or bundle does.
+    """
+    payload = (
+        prepared.configured.model_dump_json(exclude={"agents"}),
+        str(prepared.loaded.path),
+        prepared.loaded.manifest.model_dump_json(),
+    )
+    return hashlib.sha256(repr(payload).encode("utf-8")).hexdigest()
 
 
 def _grant_signature(state: _runtime._State) -> str | None:

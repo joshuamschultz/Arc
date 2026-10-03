@@ -374,9 +374,10 @@ function ConnectionCard({
               variant="destructive"
               size="xs"
               disabled={busy}
+              aria-busy={remove.isPending}
               onClick={() => remove.mutate(inst.instance)}
             >
-              Confirm remove
+              {remove.isPending ? 'Removing…' : 'Confirm remove'}
             </Button>
             <Button variant="ghost" size="xs" onClick={() => setConfirmRemove(false)}>
               Cancel

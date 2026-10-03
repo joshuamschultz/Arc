@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from arcagent.extension.source import SourceAdapter
 
@@ -30,17 +30,27 @@ class SourceRegistration:
 class _Entry:
     registration: SourceRegistration
     leases: int = 0
+    #: Tasks holding a lease, so a retired adapter's runs can be cancelled.
+    holders: set[asyncio.Task[object]] = field(default_factory=set)
 
 
 class SourceCatalog:
-    """Explicit, per-agent source registry with deterministic teardown."""
+    """Explicit, per-agent source registry with deterministic teardown.
+
+    Replacing or removing a connection never waits for a sync that is using the
+    old adapter. The old entry is retired: its lease holders are cancelled
+    cooperatively (a sync marks itself cancelled and keeps its cursor), and the
+    adapter is closed in the background once its last lease is released. A
+    six-hour sync therefore cannot block an operator's grant change or removal.
+    """
 
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
         self._condition = asyncio.Condition()
+        self._retiring: set[asyncio.Task[None]] = set()
 
     async def register(self, connection_id: str, adapter: SourceAdapter) -> None:
-        """Register or replace a connection and close the previous adapter.
+        """Register or replace a connection and retire the previous adapter.
 
         The replacement is installed before the old one is torn down, so the
         connection is never absent. Detaching first left a window in which the
@@ -54,19 +64,15 @@ class SourceCatalog:
             if previous is not None and previous.registration.adapter is adapter:
                 return
             self._entries[connection_id] = _Entry(registration)
-        if previous is None:
-            return
-        # Only now wait out whatever was still using the old adapter.
-        async with self._condition:
-            while previous.leases:
-                await self._condition.wait()
-        await _close(previous.registration)
+        if previous is not None:
+            await self._retire(previous)
 
     async def unregister(self, connection_id: str) -> None:
-        """Remove and close one connection, if it is attached."""
-        previous = await self._detach(connection_id)
+        """Remove one connection, if it is attached, and retire its adapter."""
+        async with self._condition:
+            previous = self._entries.pop(connection_id, None)
         if previous is not None:
-            await _close(previous)
+            await self._retire(previous)
 
     async def snapshot(self) -> tuple[SourceRegistration, ...]:
         """Return a stable snapshot for a synchronizer iteration."""
@@ -74,38 +80,74 @@ class SourceCatalog:
             return tuple(entry.registration for entry in self._entries.values())
 
     @contextlib.asynccontextmanager
-    async def lease(self, connection_id: str) -> AsyncIterator[SourceRegistration | None]:
-        """Hold an adapter alive while one sync operation uses it."""
+    async def lease(
+        self, connection_id: str, *, cancel_on_retire: bool = False
+    ) -> AsyncIterator[SourceRegistration | None]:
+        """Hold an adapter alive while one sync operation uses it.
+
+        With ``cancel_on_retire`` the holding task is cancelled when the adapter
+        is replaced or removed, so a long run never delays the operator's change;
+        the run must treat cancellation as a clean stop (keep its cursor).
+        """
+        task = asyncio.current_task() if cancel_on_retire else None
         async with self._condition:
             entry = self._entries.get(connection_id)
             if entry is None:
                 yield None
                 return
             entry.leases += 1
+            if task is not None:
+                entry.holders.add(task)
             registration = entry.registration
         try:
             yield registration
         finally:
             async with self._condition:
                 entry.leases -= 1
+                if task is not None:
+                    entry.holders.discard(task)
                 if entry.leases == 0:
                     self._condition.notify_all()
 
+    async def drain_retired(self) -> None:
+        """Wait until every retired adapter has been closed."""
+        while self._retiring:
+            pending = tuple(self._retiring)
+            await asyncio.gather(*pending, return_exceptions=True)
+            # A finished task's done-callback has not run yet; awaiting an
+            # already-finished gather never yields, so drop them here.
+            self._retiring.difference_update(pending)
+
     async def close(self) -> None:
-        """Close every adapter and empty the catalog."""
+        """Retire every adapter, then wait for all of them to close."""
         async with self._condition:
             connection_ids = tuple(self._entries)
         for connection_id in connection_ids:
             await self.unregister(connection_id)
+        await self.drain_retired()
 
-    async def _detach(self, connection_id: str) -> SourceRegistration | None:
+    async def _retire(self, entry: _Entry) -> None:
+        """Close ``entry``'s adapter now if idle, else cancel its runs and close later."""
         async with self._condition:
-            entry = self._entries.pop(connection_id, None)
-            if entry is None:
-                return None
+            holders = tuple(entry.holders)
+            busy = entry.leases > 0
+        if not busy:
+            await _close(entry.registration)
+            return
+        for holder in holders:
+            holder.cancel()
+        closer = asyncio.create_task(
+            self._close_when_released(entry),
+            name=f"source_catalog:retire:{entry.registration.connection_id}",
+        )
+        self._retiring.add(closer)
+        closer.add_done_callback(self._retiring.discard)
+
+    async def _close_when_released(self, entry: _Entry) -> None:
+        async with self._condition:
             while entry.leases:
                 await self._condition.wait()
-        return entry.registration
+        await _close(entry.registration)
 
 
 async def _close(registration: SourceRegistration) -> None:

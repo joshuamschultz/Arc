@@ -298,3 +298,18 @@ async def test_no_summary_on_zero_edits() -> None:
         await bridge.consume(_stream(*tokens), target, adapter)
 
     assert "gateway.message.turn_summary" not in audit_events
+
+
+async def test_failed_turn_with_no_text_delivers_its_reason() -> None:
+    """A turn that failed before any text must not leave the chat silent."""
+    bridge = StreamBridge()
+    adapter = _make_adapter()
+    failed = Delta(
+        kind="done", is_final=True, status="failed", content="The agent did not start in time."
+    )
+
+    with patch("arcgateway.stream_bridge._audit"):
+        await bridge.consume(_stream(failed), _target(), adapter)
+
+    adapter.edit_message.assert_awaited()
+    assert adapter.edit_message.await_args.args[2] == "The agent did not start in time."

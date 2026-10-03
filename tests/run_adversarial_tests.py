@@ -330,6 +330,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_deployment_grant.py",
         "packages/arcui/tests/test_health.py",
     ),
+    "stuck sync blocking revocation or chat (DGX 2026-10-03)": (
+        # A six-hour sync holding a source lease never blocks operator removal
+        # or a grant change; the in-process fast path is bounded; a turn that
+        # cannot start fails visibly instead of freezing the channel.
+        "packages/arcagent/tests/unit/extension/test_source_catalog.py",
+        "packages/arcagent/tests/integration/test_connection_grants.py",
+        "packages/arcagent/tests/unit/core/test_turn_start_bound.py",
+    ),
     "accepted run and intent ledger refusal": (
         "packages/arcagent/tests/architecture/test_run_owner_optional_absence.py",
         "packages/arcstore/tests/unit/test_accepted_runs.py",
