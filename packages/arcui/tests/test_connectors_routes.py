@@ -1356,6 +1356,37 @@ def test_authorize_with_a_token_runs_the_login_and_reports_the_real_result(
     assert resp.json()["sign_in"] == "signed_in"
 
 
+def test_a_pasted_token_for_a_vaulted_credential_is_stored_and_proved(world: Path) -> None:
+    """GitHub's shape since P18-3: no host login, one vaulted token Arc places.
+
+    The card's token form posts here. It used to drop the token on the floor (no
+    login to hand it to), probe without it, and report the operator's act as
+    denied. The token must land in the connection's vault field and the probe
+    must then answer with it.
+    """
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client, secrets={"api_token": "stale-token"}).status_code == 200
+
+    resp = _authorize(client, {"token": _SENTINEL})
+
+    assert resp.status_code == 200, resp.text
+    assert _SENTINEL not in resp.text
+    assert _custody_value(client, world, _INSTANCE, "api_token") == _SENTINEL
+    assert resp.json()["reachable"] is True
+
+
+def test_a_pasted_token_needs_the_operator(world: Path) -> None:
+    client, _agent_id, _dir = _agent(world)
+    _write_bundle(_bundles(world))
+    assert _install(client, secrets={"api_token": "stale-token"}).status_code == 200
+
+    resp = _authorize(client, {"token": _SENTINEL}, token="viewer")
+
+    assert resp.status_code == 403
+    assert _custody_value(client, world, _INSTANCE, "api_token") == "stale-token"
+
+
 def test_authorize_never_returns_the_token(world: Path) -> None:
     """The response body is rendered in a browser and cached by the query client.
 

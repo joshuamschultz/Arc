@@ -337,7 +337,7 @@ export function GatedCapabilitiesPage() {
           </>
         }
       />
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-6">
           {/* Guidance-first: one plain sentence on what a held capability is and
               why, shown even when the queue is empty. No dead ends. */}

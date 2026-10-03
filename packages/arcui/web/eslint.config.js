@@ -23,7 +23,17 @@ export default defineConfig([
       // (`const { drop, ...rest } = obj`); don't flag the intentionally
       // unused sibling.
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
+      // crypto.randomUUID is undefined outside a secure context (a plain-http
+      // dashboard on a tailnet IP), and calling it there silently killed chat.
+      'no-restricted-properties': [
+        'error',
+        { object: 'crypto', property: 'randomUUID', message: 'Use newRequestId() from @/lib/request-id.' },
+      ],
     },
+  },
+  {
+    files: ['src/lib/request-id.ts', '**/*.test.{ts,tsx}'],
+    rules: { 'no-restricted-properties': 'off' },
   },
   {
     // shadcn/ui primitives co-locate a component with its CVA variants

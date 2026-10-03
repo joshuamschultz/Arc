@@ -632,7 +632,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
           </div>
         )}
         {type !== 'manual' && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Not before
@@ -1244,7 +1244,7 @@ export function WorkflowDetailPage() {
           </div>
         }
       />
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <QueryState query={workflow}>
           {(data) => (
             <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">

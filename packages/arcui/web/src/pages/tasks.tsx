@@ -109,7 +109,7 @@ export function TasksPage() {
           </>
         }
       />
-      <div className="flex-1 space-y-4 overflow-hidden p-6">
+      <div className="flex-1 space-y-4 overflow-hidden p-4 md:p-6">
         {creationNotice && <div role="status" className="rounded-md border border-border p-2 text-xs">{creationNotice}</div>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InsightStat

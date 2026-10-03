@@ -301,9 +301,37 @@ def _owned_triggers(definitions: Any, agent_name: str) -> dict[str, Any]:
     return triggers
 
 
+def mark_unapproved_schedules(store: ScheduleStore) -> int:
+    """Disable every row that has no signed revision; return how many were newly marked.
+
+    Rows written before the control authority carry no approval, so registering a
+    successor revision against them is refused by design. They are never
+    auto-approved: the row is switched off, tagged ``unapproved`` (the dashboard
+    reads that), and logged as ONE warning line, once. A row already marked stays
+    quiet on later startups, and a row already off (operator, breaker, archived)
+    keeps its own reason: it cannot fire, so there is nothing to park.
+    """
+    newly_marked = 0
+    for entry in store.load():
+        if entry.approval is not None or not entry.enabled:
+            continue
+        marked = entry.metadata.model_copy(
+            update={"disabled_reason": "unapproved", "disabled_at": _now(), "next_fire_at": None}
+        )
+        store.update(entry.id, {"enabled": False, "metadata": marked.model_dump()})
+        _logger.warning(
+            "schedule %s has no signed revision (created before control approval); "
+            "disabled until an operator re-approves it",
+            entry.id,
+        )
+        newly_marked += 1
+    return newly_marked
+
+
 async def reconcile_workflow_schedules() -> None:
     """Backfill this agent's schedule store from the workflows it owns. Best-effort."""
     try:
+        mark_unapproved_schedules(_runtime.state().store)
         definitions = _definitions()
         if definitions is None:
             return
@@ -316,6 +344,8 @@ async def reconcile_workflow_schedules() -> None:
             current = state.store.get(entry.id)
             if current is None:
                 state.store.add(await _approve_derived(entry, previous=None))
+            elif current.approval is None:
+                continue  # legacy row: already marked unapproved, never auto-approved
             elif (rearm := _breaker_rearm(current)) is not None:
                 state.store.update(entry.id, rearm)
                 _logger.warning("re-armed breaker-disabled schedule %s", entry.id)
@@ -325,7 +355,7 @@ async def reconcile_workflow_schedules() -> None:
             if desired_entry(workflow_id, trigger, state.config) is not None
         }
         for entry in state.store.load():
-            if _is_derived(entry) and entry.id not in wanted:
+            if _is_derived(entry) and entry.id not in wanted and entry.approval is not None:
                 await _disable_derived(entry)
         _logger.info("Reconciled %d owned workflow trigger(s) into the scheduler", len(triggers))
     except Exception:  # reason: a sync failure must never break scheduler startup
@@ -345,12 +375,15 @@ async def sync_workflow_schedule(workflow_id: str) -> None:
         entry = desired_entry(workflow_id, bundle.effective_trigger, state.config, anchor=_now())
         current = state.store.get(derived_id(workflow_id))
         if entry is None:
-            if current is not None and _is_derived(current):
+            if current is not None and _is_derived(current) and current.approval is not None:
                 await _disable_derived(current)
             return
         if current is None:
             state.store.add(await _approve_derived(entry, previous=None))
             return
+        if current.approval is None:
+            mark_unapproved_schedules(state.store)
+            return  # a legacy row needs operator re-approval, not a derived revision
         updates: dict[str, Any] = {
             "workflow_id": workflow_id,
             "action": "workflow_run",
@@ -417,6 +450,7 @@ __all__ = [
     "derived_id",
     "desired_entry",
     "full_reconcile",
+    "mark_unapproved_schedules",
     "parse_cron_tz",
     "push_one",
     "reconcile_workflow_schedules",

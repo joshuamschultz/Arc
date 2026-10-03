@@ -17,9 +17,11 @@ import {
  * right-side tooltips. Expanded, it grows to show every icon beside its label
  * under a section header per cluster. The choice persists (useSidebar).
  */
-export function Sidebar() {
+export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {
   const { dark, toggle } = useTheme()
-  const { expanded, toggle: toggleExpanded } = useSidebar()
+  const { expanded: persisted, toggle: toggleExpanded } = useSidebar()
+  // The slide-over drawer always shows labels: a 64px icon rail is a desktop idiom.
+  const expanded = mobile || persisted
 
   // A control that adapts to width: icon-only with a tooltip when collapsed, a
   // full labelled row when expanded. Used for the footer's non-link buttons.
@@ -59,8 +61,13 @@ export function Sidebar() {
   return (
     <nav
       className={cn(
-        'flex h-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar py-3 transition-[width] duration-200 ease-out',
-        expanded ? 'w-[220px] items-stretch px-3' : 'w-[64px] items-center',
+        'flex h-full flex-col border-sidebar-border bg-sidebar py-3',
+        mobile
+          ? 'w-full items-stretch px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]'
+          : cn(
+              'max-md:hidden shrink-0 border-r transition-[width] duration-200 ease-out',
+              expanded ? 'w-[220px] items-stretch px-3' : 'w-[64px] items-center',
+            ),
       )}
       aria-label="Primary"
     >
@@ -84,13 +91,15 @@ export function Sidebar() {
       {/* Collapse/expand lives here, at the top of the menu, as its own
           button — not a nav row buried near Settings — so it reads as a rail
           control, not a destination. */}
-      <div className={cn('mb-2 flex', expanded ? 'justify-start' : 'justify-center')}>
-        {railButton(
-          toggleExpanded,
-          expanded ? 'Collapse' : 'Expand',
-          expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />,
-        )}
-      </div>
+      {!mobile && (
+        <div className={cn('mb-2 flex', expanded ? 'justify-start' : 'justify-center')}>
+          {railButton(
+            toggleExpanded,
+            expanded ? 'Collapse' : 'Expand',
+            expanded ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />,
+          )}
+        </div>
+      )}
 
       <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto">
         {NAV_GROUPS.map((group, gi) => {
@@ -115,6 +124,7 @@ export function Sidebar() {
                   <NavLink
                     to={`/${item.path}`}
                     aria-label={item.label}
+                    onClick={onNavigate}
                     className={({ isActive }) =>
                       cn(
                         'flex h-11 items-center rounded-[11px] text-sidebar-foreground/60 transition-colors duration-150 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',

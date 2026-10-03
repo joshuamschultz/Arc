@@ -161,7 +161,9 @@ async def test_for_http_carries_client_info_and_read_timeout(
     captured: dict[str, Any] = {}
 
     class _StubHttp:
-        def __call__(self, url: str, headers: dict[str, str] | None = None) -> _StubHttp:
+        def __call__(
+            self, url: str, headers: dict[str, str] | None = None, **_sdk: object
+        ) -> _StubHttp:
             return self
 
         async def __aenter__(self) -> tuple[str, str, str]:

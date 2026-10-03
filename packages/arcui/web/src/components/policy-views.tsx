@@ -72,6 +72,7 @@ export function TopPerformers({ bullets, limit = 6 }: { bullets: PolicyBullet[];
       {top.length === 0 ? (
         <p className="text-xs text-muted-foreground">No usage recorded yet</p>
       ) : (
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <THead>
@@ -92,6 +93,7 @@ export function TopPerformers({ bullets, limit = 6 }: { bullets: PolicyBullet[];
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </Card>
   )

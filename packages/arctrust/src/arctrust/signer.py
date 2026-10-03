@@ -28,7 +28,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 from arctrust import keypair
-from arctrust.transit_cipher import notary_decrypt, notary_encrypt
+from arctrust.transit_cipher import TransitCipher, notary_decrypt, notary_encrypt
 
 ED25519 = "ed25519"
 ECDSA_P256 = "ecdsa-p256"
@@ -81,6 +81,16 @@ class VaultTransit(Protocol):
     def sign(self, key_ref: str, message: bytes) -> bytes: ...
 
     def public_key(self, key_ref: str) -> bytes: ...
+
+
+@runtime_checkable
+class CustodyTransit(VaultTransit, TransitCipher, Protocol):
+    """A deployment's custody transit: signs AND encrypts by reference.
+
+    :class:`FileNotaryTransit` (the local notary) and
+    :class:`arctrust.vault_transit.VaultTransit` (HashiCorp Vault) both satisfy it;
+    :func:`arctrust.operator_transit_for` picks one per deployment.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +376,7 @@ __all__ = [
     "ED25519",
     "IN_PROCESS",
     "VAULT_TRANSIT",
+    "CustodyTransit",
     "FileNotaryTransit",
     "InProcessSigner",
     "Signer",

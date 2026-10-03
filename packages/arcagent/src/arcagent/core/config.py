@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import tomlkit
-from arctrust import ValidatorsConfig
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from arctrust import ValidatorsConfig, VaultTransitConfig
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from arcagent.core.config_loading import (
     apply_env_overrides as _apply_env_overrides,
@@ -216,6 +216,23 @@ class ToolConfig(BaseModel):
     # (``arc connector add-mcp``). Absolute paths or bare program names; empty means
     # no arbitrary binary becomes a server. Federal accepts no operator-added server.
     mcp_stdio_allow: list[str] = []
+    # Private ranges (CIDR) an operator-added HTTP MCP server may be reached at above
+    # personal tier — an internal 10.x server. Link-local, metadata, multicast and
+    # reserved space is refused here and again at connect time, whatever is listed.
+    egress_allow_cidrs: list[str] = []
+    # Opt-in above personal tier: HTTP MCP connections go through HTTPS_PROXY/NO_PROXY.
+    # The proxy resolves names, so connect-time DNS pinning does not cover proxied hosts.
+    mcp_via_proxy: bool = False
+
+    @field_validator("egress_allow_cidrs")
+    @classmethod
+    def _valid_egress_cidrs(cls, entries: list[str]) -> list[str]:
+        # Imported here: the guard lives in the extension layer, which imports core.
+        from arcagent.extension.egress_guard import parse_allow_cidrs
+
+        parse_allow_cidrs(entries)
+        return entries
+
     # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
     # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
     # Unlabeled tools default to UNCLASSIFIED (no gating).
@@ -352,6 +369,10 @@ class SessionConfig(BaseModel):
     # is skipped (messages left intact) rather than awaited forever. "Timeouts on
     # everything external" (CLAUDE.md).
     compaction_timeout_seconds: float = Field(default=30.0, gt=0)
+    # Bound on an interactive turn reaching its run: session open, the turn
+    # lock and prompt assembly. Past it the channel gets a terminal "failed"
+    # with a plain reason instead of a silent, frozen chat.
+    turn_start_timeout_seconds: float = Field(default=120.0, gt=0)
 
 
 class TeamSection(BaseModel):
@@ -516,10 +537,19 @@ class SecurityConfig(BaseModel):
     notary_keystore: str = Field(
         default="",
         description=(
-            "vault_transit only: keystore for the reference out-of-process "
-            "FileNotaryTransit signer (dev/CI without an HSM). Empty → "
-            "<operator_key_dir>/notary. A real deployment swaps this seam for a "
-            "Vault Transit / PKCS#11 HSM adapter. SPEC-037 REQ-006."
+            "vault_transit without [security.vault]: keystore for the local "
+            "out-of-process FileNotaryTransit (signing + connector sealing). "
+            "Empty → <operator_key_dir>/notary. Ignored when [security.vault] "
+            "configures HashiCorp Vault Transit. SPEC-037 REQ-006."
+        ),
+    )
+    vault: VaultTransitConfig | None = Field(
+        default=None,
+        description=(
+            "[security.vault]: HashiCorp Vault Transit as the custody transit "
+            "(operator signing + connector credential sealing by reference). "
+            "Absent → the local notary. Implies custody='vault_transit'. See "
+            "docs/runbooks/operate/vault-transit.md."
         ),
     )
     require_fips: bool = Field(
@@ -599,7 +629,17 @@ class SecurityConfig(BaseModel):
                 setattr(self, knob.name, resolved)
         elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
             self.custody = "vault_transit"
+        self._require_vault_transit_custody()
         return self
+
+    def _require_vault_transit_custody(self) -> None:
+        """A ``[security.vault]`` block means Vault custody; never beside ``in_process``."""
+        if self.vault is None:
+            return
+        if "custody" not in self.model_fields_set:
+            self.custody = "vault_transit"
+        if self.custody != "vault_transit":
+            raise ValueError('[security.vault] needs custody = "vault_transit"')
 
     def _floor_skill_revision_anchor(self) -> None:
         """Federal never trusts a local journal for the active skill revision."""

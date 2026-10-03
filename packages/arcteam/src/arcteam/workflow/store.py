@@ -349,8 +349,8 @@ class DefinitionStore:
         # the incoming files are about to overwrite exactly those bytes.
         self._retain_current(bundle_root)
         for target, body in incoming.items():
-            _atomic_write(target, body)
-        _atomic_write(bundle_root / DEFINITION_FILE, text.encode("utf-8"))
+            atomic_write(target, body)
+        atomic_write(bundle_root / DEFINITION_FILE, text.encode("utf-8"))
         (bundle_root / SIDECAR_FILE).unlink(missing_ok=True)
 
         bundle = self.load(definition.id)
@@ -542,10 +542,10 @@ class DefinitionStore:
         definition = parse_definition(tomllib.loads(current.read_text(encoding="utf-8")))
         archive = bundle_root / VERSIONS_DIR
         archive.mkdir(exist_ok=True)
-        _atomic_write(archive / f"{definition.version}.toml", current.read_bytes())
+        atomic_write(archive / f"{definition.version}.toml", current.read_bytes())
         sidecar = bundle_root / SIDECAR_FILE
         if sidecar.is_file():
-            _atomic_write(archive / f"{definition.version}.arcsig", sidecar.read_bytes())
+            atomic_write(archive / f"{definition.version}.arcsig", sidecar.read_bytes())
         self._retain_files(
             bundle_root, definition, archive / f"{definition.version}{FILES_SUFFIX}"
         )
@@ -562,7 +562,7 @@ class DefinitionStore:
         for reference in referenced_files(definition):
             source = confine(bundle_root.resolve(), reference)
             if source is not None and source.is_file():
-                _atomic_write(destination / reference, source.read_bytes())
+                atomic_write(destination / reference, source.read_bytes())
 
     def last_signed_version(self, workflow_id: str) -> int | None:
         """The newest retained revision that carries a signature, or None.
@@ -676,7 +676,7 @@ def _record_signature(
     store: DefinitionStore, bundle: WorkflowBundle, signature: ArtifactSignature, signer_did: str
 ) -> WorkflowBundle:
     """Write the detached sidecar, reload, and emit the one ``workflow.signed`` event."""
-    _atomic_write(bundle.root / SIDECAR_FILE, signature.to_json().encode("utf-8"))
+    atomic_write(bundle.root / SIDECAR_FILE, signature.to_json().encode("utf-8"))
     workflow_id = bundle.definition.id
     signed = store.load(workflow_id)
     store.emit_audit(
@@ -721,7 +721,7 @@ def _escape_issue(reference: str) -> ValidationIssue:
     )
 
 
-def _atomic_write(path: Path, body: bytes) -> None:
+def atomic_write(path: Path, body: bytes) -> None:
     """Write via temp file, fsync, rename — a reader never sees a partial file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")

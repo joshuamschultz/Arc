@@ -21,8 +21,10 @@ from arcagent.extension.source import (
     SourceResource,
     SyncSource,
     SyncSourcePage,
-    classify_cli_failure,
 )
+
+from ._tool_json import tool_payload
+from .drive_source import build_drive_adapter
 
 _CURSOR_VERSION = 1
 
@@ -230,10 +232,14 @@ class GmailSourceAdapter:
         return payload
 
 
-def build_source_adapter(context: dict[str, Any]) -> GmailSourceAdapter:
-    # Two mailboxes are already two sources: the source key includes the
-    # connection id. ``account_id`` stays constant so an existing index keeps its key.
-    return GmailSourceAdapter(context["attachment"])
+def build_source_adapters(context: dict[str, Any]) -> dict[str, Any]:
+    """One grant, two isolated streams: mail, and Drive under its own ``:drive`` source.
+
+    Two mailboxes are already two sources: the source key includes the connection
+    id. Mail keeps the bare connection id (and a constant ``account_id``) so an
+    existing index keeps its key.
+    """
+    return {"": GmailSourceAdapter(context["attachment"]), "drive": build_drive_adapter(context)}
 
 
 def _message_object(message: dict[str, Any]) -> SourceObject:
@@ -368,25 +374,5 @@ def _history_failure(error: SourceError) -> SourceError:
 
 
 def _payload(result: Any) -> dict[str, Any]:
-    """The tool's JSON, or the tool's own words about why there is none.
-
-    A failed call returns readable prose in ``content``. Parsing that as JSON
-    reported "Gmail returned invalid JSON" over every real cause — an expired
-    grant, a revoked scope, a rate limit — and left an operator with nothing to
-    act on.
-    """
-    if getattr(result, "outcome", None) is not None and str(result.outcome) != "ok":
-        # Classify on the WHOLE message, report a truncated one. Google puts the
-        # reason at the END, after a request URL long enough that a 256-character
-        # detail cut "invalid_grant" off — so a revoked token classified as
-        # transient and was retried every cycle forever.
-        full = str(result.content)
-        raise SourceError(classify_cli_failure(full), full[:256])
-    try:
-        parsed = json.loads(result.content)
-    except json.JSONDecodeError as exc:
-        detail = str(result.content)[:200].strip() or "an empty response"
-        raise SourceError(
-            SourceFailureCode.TRANSIENT, f"Gmail returned no JSON: {detail}"
-        ) from exc
-    return parsed if isinstance(parsed, dict) else {"messages": parsed}
+    """The tool's JSON, or the tool's own words about why there is none."""
+    return tool_payload(result, "Gmail", list_key="messages")

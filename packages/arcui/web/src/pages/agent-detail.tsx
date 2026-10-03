@@ -98,6 +98,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { AgentIdentity } from '@/components/AgentIdentity'
+import { newRequestId } from '@/lib/request-id'
 import type { ColumnDef } from '@tanstack/react-table'
 import type {
   Agent,
@@ -1779,7 +1780,7 @@ function KnowledgeTab({ agentId }: { agentId: string }) {
   }
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
-      <TabsList className="mb-4 flex-wrap">
+      <TabsList className="mb-1">
         {KNOWLEDGE_TABS.map((t) => (
           <TabsTrigger key={t.value} value={t.value}>
             {t.label}
@@ -1886,7 +1887,7 @@ function RunsTab({ agentId }: { agentId: string }) {
 }
 
 function inboxIdempotencyKey(operation: string): string {
-  return `${operation}-${crypto.randomUUID()}`
+  return `${operation}-${newRequestId()}`
 }
 
 type InboxParticipant = {
@@ -2478,11 +2479,11 @@ export function AgentDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3.5">
+      <div className="flex items-center gap-3 border-b border-border px-4 md:px-6 py-3.5">
         <button
           type="button"
           onClick={() => navigate('/agents')}
-          className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="flex size-8 max-md:size-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           aria-label="Back to agents"
         >
           <ArrowLeft className="size-4" />
@@ -2500,9 +2501,9 @@ export function AgentDetailPage() {
       <Tabs
         value={current}
         onValueChange={(v) => navigate(`/agents/${id}/${v}`)}
-        className="border-b border-border px-6"
+        className="border-b border-border px-4 md:px-6"
       >
-        <TabsList className="my-2 h-auto flex-wrap">
+        <TabsList className="my-2 h-auto">
           {TABS.map((t) => (
             <TabsTrigger key={t} value={t} title={fieldHelp(`agent.tab.${t}`, 'agents/:id')?.description}>
               {TAB_LABEL[t]}
@@ -2511,7 +2512,7 @@ export function AgentDetailPage() {
         </TabsList>
       </Tabs>
 
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 md:p-6">
         <FieldHelp helpKey={`agent.tab.${current}`} route="agents/:id" />
         {TAB_RENDER[current](id)}
       </div>

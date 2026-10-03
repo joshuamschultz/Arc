@@ -246,7 +246,9 @@ async def test_for_http_forwards_headers_and_initializes_before_yield(
     captured: dict[str, Any] = {}
 
     class _StubHttp:
-        def __call__(self, url: str, headers: dict[str, str] | None = None) -> _StubHttp:
+        def __call__(
+            self, url: str, headers: dict[str, str] | None = None, **_sdk: object
+        ) -> _StubHttp:
             captured["url"] = url
             captured["headers"] = headers
             return self

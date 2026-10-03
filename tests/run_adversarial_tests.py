@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -277,6 +278,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # label above the clearance is refused; a missing or unknown label is the
     # clearance (fail upward); a caller-named or unattested lower label, an
     # undecided write and a direct backend save are all still no-write-down.
+    # Entity de-dup folds one card's facts into another. A series lookalike name,
+    # a hostile confirmer naming cards across levels, the model-callable merge
+    # primitive aimed across levels, and an unknown label at federal all fold
+    # nothing: a merge never moves a fact across a classification level.
+    "classification laundering via entity merge (de-dup across levels)": (
+        "packages/arcmemory/tests/security/test_entity_merge_abuse.py",
+        "packages/arcmemory/tests/unit/test_entity_dedup.py",
+    ),
     "classification laundering via a forged lower shared label (alpha-2 item 16)": (
         "packages/arcteam/tests/security/test_declassified_share.py",
         "packages/arcagent/tests/modules/memory/test_promotion_bridge.py",
@@ -321,6 +330,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_deployment_grant.py",
         "packages/arcui/tests/test_health.py",
     ),
+    "stuck sync blocking revocation or chat (DGX 2026-10-03)": (
+        # A six-hour sync holding a source lease never blocks operator removal
+        # or a grant change; the in-process fast path is bounded; a turn that
+        # cannot start fails visibly instead of freezing the channel.
+        "packages/arcagent/tests/unit/extension/test_source_catalog.py",
+        "packages/arcagent/tests/integration/test_connection_grants.py",
+        "packages/arcagent/tests/unit/core/test_turn_start_bound.py",
+    ),
     "accepted run and intent ledger refusal": (
         "packages/arcagent/tests/architecture/test_run_owner_optional_absence.py",
         "packages/arcstore/tests/unit/test_accepted_runs.py",
@@ -338,6 +355,21 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # request is refused. Every outcome is audited.
         "packages/arcagent/tests/unit/modules/pulse/test_pulse_approval.py",
         "packages/arcui/tests/integration/test_pulse_approval_routes.py",
+        "packages/arccli/tests/test_pulse_command.py",
+        "tests/journeys/test_journey_pulse_approval.py",
+    ),
+    "viewer or agent adds, edits or removes a pulse check": (
+        # pulse.md is operator-only: a viewer or unauthenticated caller is refused
+        # (and audited) before anything is written, an agent can only file a
+        # proposal (never write pulse.md, whose files its tools cannot touch),
+        # field-marker and heading injection in the action text is refused or
+        # flattened, and a write never approves: the check runs only after the
+        # operator approves the exact text.
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_editing.py",
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_proposals.py",
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_propose_tool.py",
+        "packages/arcagent/tests/unit/tools/test_protected_paths.py",
+        "packages/arcui/tests/integration/test_pulse_edit_routes.py",
         "packages/arccli/tests/test_pulse_command.py",
         "tests/journeys/test_journey_pulse_approval.py",
     ),
@@ -565,6 +597,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_mcp_server_routes.py",
         "packages/arccli/tests/test_cli_connector_add_mcp.py",
     ),
+    # P12: a hostname judged safe when the operator added the server can be re-pointed
+    # afterwards (DNS rebinding). The http client resolves the host itself on every
+    # connect, judges EVERY address (link-local, metadata, multicast, unspecified always;
+    # loopback and private above personal unless allowlisted), connects to the address it
+    # judged while keeping the name for Host and TLS SNI, and audits the refusal: a public
+    # first answer then 169.254.169.254 on the second connect never reaches the network.
+    "operator-added MCP server: DNS rebinding pinned to the validated address (alpha-2 P12)": (
+        "packages/arcagent/tests/security/test_mcp_dns_rebinding.py",
+    ),
     # P18-2: connector credentials live in sealed custody rows. A replayed or stalled
     # renewal commit is refused by the fenced lease; a ciphertext copied between
     # connections fails to open (AAD) and never reaches the provider; a handle dies
@@ -587,6 +628,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_migration_never_drops_credentials.py",
         "packages/arcagent/tests/unit/extension/test_custody_migrate_no_loss.py",
         "packages/arcui/tests/test_startup_migrates_connections_env.py",
+    ),
+    # Vault Transit adapter: a look-alike Vault (other CA) or a redirect never
+    # receives the secret_id; a key swapped behind a pinned name cannot sign for the
+    # operator; a weakened (exportable/derived/backup) key is never used; a
+    # transplanted credential does not open; an outage never falls back; no token
+    # or secret lands in the deployment tree; env cannot repoint the transit; an
+    # audit sink that signs through the transit cannot deadlock it.
+    "HashiCorp Vault Transit custody — rogue Vault, redirect, key swap, weakened "
+    "key, transplant, outage fallback, env repoint (alpha-2 P18-2F Vault)": (
+        "packages/arctrust/tests/test_vault_transit_abuse.py",
+        "packages/arctrust/tests/test_transit_contract.py",
+        "packages/arcagent/tests/unit/core/test_security_vault_config.py",
     ),
     # P18-2F: under vault_transit the custody key never enters the process. The old
     # in-process seed opens nothing; a transplanted or downgraded (seed-planted xc1)
@@ -631,6 +684,66 @@ def targets() -> list[str]:
     return ordered
 
 
+def _fail(message: str) -> None:
+    sys.stderr.write(f"ADVERSARIAL BATTERY FAILED: {message}\n")
+    sys.stderr.flush()
+
+
+def _describe_exit(code: int) -> str:
+    """A negative code is a signal (a crashed interpreter), not a pytest verdict."""
+    if code < 0:
+        return f"was killed by signal {-code}"
+    return f"exited {code}"
+
+
+def _failing_cases(report: Path) -> list[str]:
+    """``file::test: first line of the reason`` for every failed or errored case."""
+    lines: list[str] = []
+    for case in ET.parse(report).getroot().iter("testcase"):  # noqa: S314 - our own pytest report
+        problem = case.find("failure")
+        if problem is None:
+            problem = case.find("error")
+        if problem is None:
+            continue
+        reason = (problem.get("message") or problem.text or "").strip().splitlines()
+        shown = reason[0] if reason else "no message"
+        lines.append(f"{case.get('classname', '')}::{case.get('name', '')}: {shown}")
+    return lines
+
+
+def _tests_run(report: Path) -> int:
+    return sum(
+        int(suite.get("tests", "0"))
+        for suite in ET.parse(report).getroot().iter("testsuite")  # noqa: S314
+    )
+
+
+def verdict(report: Path, returncode: int) -> int:
+    """Print what happened, on stderr, and return the exit status to use.
+
+    The status is never zero unless pytest exited zero AND at least one test ran, and a
+    non-zero status always comes with the failing suite and the reason.
+    """
+    if not report.is_file() or report.stat().st_size == 0:
+        _fail(
+            f"pytest {_describe_exit(returncode)} and wrote no test report; the run died "
+            "before or outside the tests (collection crash, interpreter crash, or an "
+            "exit in a conftest). Re-run the pytest command above directly to see why."
+        )
+        return returncode or 1
+    failures = _failing_cases(report)
+    for line in failures:
+        _fail(line)
+    if returncode != 0:
+        if not failures:
+            _fail(f"pytest {_describe_exit(returncode)} with no failing test in the report")
+        return returncode
+    if _tests_run(report) == 0:
+        _fail("pytest exited 0 but ran no tests; the battery is not guarding anything")
+        return 3
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run pytest over the curated battery and return its exact exit status."""
     missing = [path for path in targets() if not (ROOT / path).is_file()]
@@ -641,18 +754,22 @@ def main(argv: list[str] | None = None) -> int:
 
     for threat, paths in SCENARIOS.items():
         sys.stdout.write(f"{threat}: {len(paths)} suite(s)\n")
-    command = [sys.executable, "-m", "pytest", *targets(), *(argv or [])]
     with tempfile.TemporaryDirectory(prefix="arc-adversarial-") as isolated_home:
+        report = Path(isolated_home) / "report.xml"
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            f"--junitxml={report}",
+            *targets(),
+            *(argv or []),
+        ]
         environment = os.environ.copy()
         environment["HOME"] = isolated_home
         environment["ARC_CONFIG_DIR"] = str(Path(isolated_home) / ".arc")
         environment["ARC_TEAM_ROOT"] = str(Path(isolated_home) / "arc")
-        return subprocess.run(
-            command,
-            cwd=ROOT,
-            env=environment,
-            check=False,
-        ).returncode
+        returncode = subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+        return verdict(report, returncode)
 
 
 if __name__ == "__main__":

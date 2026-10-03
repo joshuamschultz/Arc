@@ -383,14 +383,45 @@ def _runtime() -> Any:
 
 def _loaded_capabilities(agent: arcagent.ArcAgent) -> Any:
     """The memory capability module the agent loaded from its signed install."""
-    agent_dir = agent._config_path.parent.resolve()
+    return _capabilities_under(agent._config_path.parent.resolve())
+
+
+def _capabilities_under(agent_dir: Path) -> Any:
+    """The loaded module under ``agent_dir`` that defines ``consolidate_poll_once``.
+
+    Reads only ``__file__`` and the module ``__dict__``: a plain ``hasattr`` on every
+    module in ``sys.modules`` runs lazy ``__getattr__`` hooks (transformers imports
+    torchvision there), which made this helper fail whenever another suite had loaded one.
+    """
     for module in list(sys.modules.values()):
-        path = getattr(module, "__file__", None) or ""
-        if hasattr(module, "consolidate_poll_once") and Path(path).resolve().is_relative_to(
+        path = vars(module).get("__file__")
+        if not isinstance(path, str) or not path:
+            continue
+        if "consolidate_poll_once" in vars(module) and Path(path).resolve().is_relative_to(
             agent_dir
         ):
             return module
     raise AssertionError(f"no memory capabilities loaded from {agent_dir}")
+
+
+def test_finding_the_capability_module_never_triggers_lazy_module_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types
+
+    class _Lazy(types.ModuleType):
+        def __getattr__(self, name: str) -> Any:
+            raise ModuleNotFoundError("a lazy import the helper must never trigger")
+
+    lazy = _Lazy("zz_lazy_probe")
+    lazy.__dict__["__file__"] = str(tmp_path / "elsewhere.py")
+    target = types.ModuleType("zz_capabilities_probe")
+    target.__dict__["__file__"] = str(tmp_path / "caps.py")
+    target.__dict__["consolidate_poll_once"] = object()
+    monkeypatch.setitem(sys.modules, "zz_lazy_probe", lazy)
+    monkeypatch.setitem(sys.modules, "zz_capabilities_probe", target)
+
+    assert _capabilities_under(tmp_path.resolve()) is target
 
 
 async def _say(agent: arcagent.ArcAgent, text: str) -> str:

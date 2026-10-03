@@ -111,7 +111,7 @@ export function QueuePage() {
         title="Model call queue"
         description="Inspect call state and control admission for this deployment."
       />
-      <div className="space-y-6 overflow-auto p-6">
+      <div className="space-y-6 overflow-auto p-4 md:p-6">
         <p className="max-w-3xl text-sm text-muted-foreground">
           This is the waiting room for model calls. When many agents ask the model provider
           for answers at once, the queue lets a set number run together and holds the rest in

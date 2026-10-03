@@ -218,3 +218,27 @@ async def test_public_delivery_events_map_without_reflection_or_duplicate_termin
         ("done", "", 4),
     ]
     assert deltas[-1].status == "cancelled"
+
+
+class _StuckStartAgent:
+    """An agent whose turn could not start: one terminal failure with a reason."""
+
+    async def stream_delivered_message(
+        self, **_: Any
+    ) -> AsyncIterator[arcagent.DeliveryStreamEvent]:
+        yield arcagent.DeliveryTerminalEvent(
+            run_id="", sequence=0, status="failed", reason="The agent did not start in time."
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_terminal_reason_reaches_the_done_delta() -> None:
+    async def _factory(agent_did: str) -> _StuckStartAgent:
+        return _StuckStartAgent()
+
+    deltas = [d async for d in await AsyncioExecutor(agent_factory=_factory).run(_event())]
+
+    final = deltas[-1]
+    assert final.kind == "done" and final.is_final
+    assert final.status == "failed"
+    assert final.content == "The agent did not start in time."

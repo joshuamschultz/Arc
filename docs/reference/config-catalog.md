@@ -67,7 +67,7 @@ list `[]`) · `max_tokens` (int > 0, `4096`) · `temperature` (float, `0.7`) ·
 
 **`[tools.policy]`** — `config.py:186` — `allow` `[]` · `deny` `[]` ·
 `timeout_seconds` (int 1–300, `30`) · `allowed_paths` `[]` · `protected_paths`
-`[]` · `egress_allowlist` `[]` · `egress_allow` `[]` · `mcp_stdio_allow` `[]` · `classifications` `{}` ·
+`[]` · `egress_allowlist` `[]` · `egress_allow` `[]` · `mcp_stdio_allow` `[]` · `egress_allow_cidrs` `[]` · `mcp_via_proxy` (bool, `False`) · `classifications` `{}` ·
 `egress_clearances` `{}`
 
 **`[tools.human_gate]`** — `config.py:241` — `timeout_seconds` (float, `300.0`) ·

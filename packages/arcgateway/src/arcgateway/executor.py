@@ -148,7 +148,8 @@ class Delta(BaseModel):
         kind: "token" for LLM output text, "tool_call" for tool invocations,
             "done" for the final sentinel with full summary.
         content: Text fragment (for kind=="token") or tool call description
-            (for kind=="tool_call"). Empty string for "done".
+            (for kind=="tool_call"). For "done", the plain user-safe reason of
+            a non-completed outcome, else empty.
         is_final: True only on the terminal "done" delta.
         turn_id: Run-level turn identifier for idempotency keys.
         sequence: Monotonic event number within ``turn_id`` when supplied by
@@ -452,9 +453,10 @@ class AsyncioExecutor:
                                         sequence=stream_event.sequence,
                                         occurrence_id=event.occurrence_id,
                                     )
-                                case arcagent.DeliveryTerminalEvent(status=status):
+                                case arcagent.DeliveryTerminalEvent(status=status, reason=reason):
                                     yield Delta(
                                         kind="done",
+                                        content=reason,
                                         is_final=True,
                                         turn_id=stream_event.run_id or turn_id,
                                         sequence=stream_event.sequence,

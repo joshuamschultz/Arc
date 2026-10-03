@@ -75,7 +75,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const showLogin = loginAvailable === true && !useToken
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background p-6">
+    <div className="flex h-dvh items-center justify-center bg-background p-4 md:p-6">
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-lg">
         <div className="mb-5 flex items-center gap-2">
           <ArcLogo />

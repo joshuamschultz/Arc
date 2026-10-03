@@ -121,7 +121,7 @@ export function ToolsSkillsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Tools & Skills" description="Fleet capability matrix and skill directory." />
-      <div className="flex-1 space-y-6 overflow-auto p-6">
+      <div className="flex-1 space-y-6 overflow-auto p-4 md:p-6">
         <CapabilityImportPanel />
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Tools" value={tools.length} icon={<Wrench className="size-4" />} />

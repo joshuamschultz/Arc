@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ExtensionError
+from arcagent.core.tier import Tier
 from arcagent.extension.attachment import ExtensionAttachment, Requirement, RequirementKind
 from arcagent.extension.cli_attachment import (
     CliAttachment,
@@ -21,11 +22,13 @@ from arcagent.extension.cli_attachment import (
     CredentialEnv,
 )
 from arcagent.extension.credential_broker import AccessTokenHandle
+from arcagent.extension.egress_guard import EgressPolicy
 from arcagent.extension.environment import scrubbed_environment
 from arcagent.extension.launcher import sandbox_policy_for
 from arcagent.extension.manifest import ExtensionManifest
 from arcagent.extension.mcp_policy import McpResilience, McpToolPolicy
 from arcagent.extension.native_attachment import NativeAttachment
+from arcagent.extension.pinned_transport import RefusalSink
 from arcagent.extension.secrets import Secret
 from arcagent.extension.source import SourceAdapter
 from arcagent.modules.connectors.credential_placement import (
@@ -41,6 +44,16 @@ def _refuse(message: str, **details: Any) -> ExtensionError:
         message=f"probe: {message}",
         details={"step": "probe", **details},
     )
+
+
+def _egress_policy(tier: Tier | None) -> EgressPolicy:
+    """The HTTP-MCP address policy: the deployment's allowlist and proxy opt-in, at ``tier``.
+
+    ``tier`` omitted means the deployment's own tier.
+    """
+    from arcagent.connections import deployment_egress_policy, deployment_tier
+
+    return deployment_egress_policy(tier if tier is not None else deployment_tier())
 
 
 def _same_origin(url: str, origin: str) -> bool:
@@ -234,8 +247,14 @@ def build_attachment(
     download_dir: Path | None = None,
     credential: AccessTokenHandle | None = None,
     config_dir: Path | None = None,
+    tier: Tier | None = None,
+    egress_audit: RefusalSink | None = None,
 ) -> ExtensionAttachment:
     """Build the declared attachment at the sole credential-reveal boundary.
+
+    ``tier`` is the tier an ``http`` MCP server's connect-time address policy is judged
+    at; omitted, it is the deployment's own tier. ``egress_audit`` is told of every
+    connect the policy refuses, so a rebinding attempt leaves an audit record.
 
     ``credential`` is the connection's :class:`AccessTokenHandle` (P18-2). A
     ``native`` or ``cli`` attachment receives sensitive values ONLY through it, at
@@ -361,6 +380,8 @@ def build_attachment(
                 resilience=http_config.resilience,
                 client_name=http_config.client_name,
                 requirements=requirements,
+                egress=_egress_policy(tier),
+                on_egress_refused=egress_audit,
             )
             return _with_source_adapter(
                 manifest, bundle, _namespaced(mcp_attachment, http_config.namespace)

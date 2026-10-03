@@ -112,7 +112,7 @@ export function CreateTaskSheet({
               className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] hover:border-muted-foreground/40 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Priority</label>
               <FieldHelp helpKey="task.priority" />

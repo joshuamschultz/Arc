@@ -470,7 +470,8 @@ async def test_two_connections_sync_their_own_mailboxes(world: _World) -> None:
     await capability.reconcile()
 
     registrations = {item.connection_id: item for item in await catalog.snapshot()}
-    assert set(registrations) == {"blackarc", "systems"}
+    # Each Google connection is two streams: its mailbox, and its Drive.
+    assert set(registrations) == {"blackarc", "systems", "blackarc:drive", "systems:drive"}
     for instance, account in (("blackarc", _A), ("systems", _B)):
         source = registrations[instance].adapter
         await source.inspect_source(InspectSource(connection_id=instance))
@@ -487,6 +488,28 @@ async def test_two_connections_sync_their_own_mailboxes(world: _World) -> None:
         assert account in content.content.decode()
         other = _B if account == _A else _A
         assert other not in content.content.decode()
+
+
+async def test_reconcile_keeps_an_unchanged_source_adapter(world: _World) -> None:
+    """A reconcile for some other change must not restart every running sync.
+
+    Re-registering every source with a fresh adapter made each grant change wait
+    for (or cancel) the longest sync on the agent: a Remove took 24 minutes.
+    """
+    await world.connect("blackarc", _A, [_BOTH])
+    await world.connect("systems", _B, [_BOTH])
+    catalog = SourceCatalog()
+    await world.start(_BOTH, catalog=catalog)
+    capability = Connectors()
+    capability._registry = _runtime.state().tool_registry
+    await capability.reconcile()
+    before = {item.connection_id: item.adapter for item in await catalog.snapshot()}
+
+    await capability.reconcile()
+
+    after = {item.connection_id: item.adapter for item in await catalog.snapshot()}
+    assert set(after) == set(before)
+    assert all(after[key] is before[key] for key in before)
 
 
 # --- the approved contract (Q3) --------------------------------------------------

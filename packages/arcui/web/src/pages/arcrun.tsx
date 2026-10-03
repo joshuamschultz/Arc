@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FieldHelp } from '@/components/help'
 import { RunRiver } from '@/components/run-river'
@@ -44,6 +44,9 @@ export function ArcRunPage() {
 
   const [searchParams] = useSearchParams()
   const runParam = searchParams.get('run')
+  // Below md the list and the run are two screens, not two columns: a deep link
+  // opens the run, otherwise the list comes first.
+  const [detailOpen, setDetailOpen] = useState(Boolean(runParam))
 
   // Initial selection: the deep-linked run, else the newest. Render-time set
   // converges (active becomes non-null, the guard is then false).
@@ -91,14 +94,20 @@ export function ArcRunPage() {
           colorFor={(n) => colorByName.get(n)}
           onOpen={(r) => {
             setActive(r)
+            setDetailOpen(true)
             setMode('trace')
           }}
         />
       ) : (
       <div className="flex flex-1 overflow-hidden">
-        <aside className="flex w-[300px] shrink-0 flex-col border-r border-border">
+        <aside
+          className={cn(
+            'flex w-full shrink-0 flex-col border-r border-border md:w-[300px]',
+            detailOpen && 'max-md:hidden',
+          )}
+        >
           <div className="border-b border-border p-2.5">
-            <div className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm text-muted-foreground max-md:min-h-11">
               <Search className="size-3.5" />
               <input
                 aria-label="Search runs"
@@ -116,7 +125,7 @@ export function ArcRunPage() {
                 <LoadingRows rows={6} />
               </div>
             ) : filtered.length === 0 ? (
-              <div className="p-6">
+              <div className="p-4 md:p-6">
                 <EmptyState title="No runs recorded" description="Runs appear here as agents work." />
               </div>
             ) : (
@@ -126,7 +135,10 @@ export function ArcRunPage() {
                   <button
                     key={r.run_id}
                     type="button"
-                    onClick={() => setActive(r)}
+                    onClick={() => {
+                      setActive(r)
+                      setDetailOpen(true)
+                    }}
                     className={cn(
                       'flex w-full flex-col gap-1.5 border-b border-border px-4 py-3 text-left transition-colors hover:bg-muted/40',
                       active?.run_id === r.run_id && 'bg-primary/8',
@@ -169,7 +181,14 @@ export function ArcRunPage() {
           </div>
         </aside>
 
-        <main className="flex-1 overflow-auto">
+        <main className={cn('min-w-0 flex-1 overflow-auto', !detailOpen && 'max-md:hidden')}>
+          <button
+            type="button"
+            onClick={() => setDetailOpen(false)}
+            className="flex min-h-11 items-center gap-1.5 px-4 text-sm font-medium text-muted-foreground hover:text-foreground md:hidden"
+          >
+            <ArrowLeft className="size-4" /> All runs
+          </button>
           <RunRiver run={active} />
         </main>
       </div>

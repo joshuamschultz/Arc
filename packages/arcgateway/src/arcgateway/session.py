@@ -552,6 +552,8 @@ class SessionRouter:
         except Exception:  # reason: re-raise after log
             _logger.exception("Executor error in session %s", session_key)
             raise
+        finally:
+            _logger.info("Session %s: turn finish platform=%s", session_key, event.platform)
 
     async def dispatch_and_await(
         self,

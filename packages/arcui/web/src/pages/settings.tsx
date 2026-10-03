@@ -98,7 +98,7 @@ export function SettingsPage() {
         }
       />
       {!scope ? (
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-4 md:p-6">
           <EmptyState
             title="No scope selected"
             description="Pick System (~/.arc) or an agent from the selector to view and edit its settings."
@@ -110,7 +110,7 @@ export function SettingsPage() {
           onValueChange={setTab}
           className="flex flex-1 flex-col overflow-hidden"
         >
-          <div className="border-b border-border px-6">
+          <div className="border-b border-border px-4 md:px-6">
             <TabsList className="my-2">
               {visibleFiles.map((f) => (
                 <TabsTrigger key={f.key} value={f.key}>
@@ -132,7 +132,7 @@ export function SettingsPage() {
             <TabsContent
               key={f.key}
               value={f.key}
-              className="flex-1 overflow-auto p-6"
+              className="flex-1 overflow-auto p-4 md:p-6"
             >
               <ConfigFilePanel
                 system={isSystem}
@@ -146,7 +146,7 @@ export function SettingsPage() {
           {!isSystem && (
             <TabsContent
               value={MEMORY_SHARING_TAB}
-              className="flex-1 overflow-auto p-6"
+              className="flex-1 overflow-auto p-4 md:p-6"
             >
               <div className="mx-auto max-w-xl">
                 <MemoryPromotionPanel
@@ -157,7 +157,7 @@ export function SettingsPage() {
               </div>
             </TabsContent>
           )}
-          <TabsContent value="keys" className="flex-1 overflow-auto p-6">
+          <TabsContent value="keys" className="flex-1 overflow-auto p-4 md:p-6">
             <div className="mx-auto max-w-5xl space-y-4">
               <div className="flex items-start gap-3">
                 <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-muted/40 text-muted-foreground">

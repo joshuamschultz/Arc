@@ -163,7 +163,16 @@ the connection's approval mode.
 | `google_gmail_trash`, `google_gmail_untrash` | Move to Trash and back | write |
 | `google_gmail_send`, `google_gmail_draft_send`, `google_gmail_reply`, `google_gmail_reply_all`, `google_gmail_forward` | Send mail | send (egress) |
 | `google_drive_list` | List or filter Drive files | read |
+| `google_drive_files`, `google_drive_changes`, `google_drive_file`, `google_drive_drives`, `google_drive_read` | Drive indexing: page files, read the change feed, read one file as text (Docs, Sheets, Slides exported; pdf, docx, xlsx, md, txt, html downloaded; 10 MB cap) | read |
 | `google_calendar_list`, `google_calendar_events`, `google_calendar_freebusy` | Calendars, events, availability | read |
+
+Drive is indexed as its own knowledge source beside Gmail (`<connection>:drive`).
+In ArcUI, open the connection's Knowledge card for Drive and choose All of Drive, a
+shared drive, or top-level folders (a folder covers its whole subtree), then approve
+the mapping. Sync is incremental through the Drive change feed. Trashed files and
+files that are no longer shared with the account leave the index. A file over 10 MB
+or of a type no extractor reads is skipped, with a per-file finding. A folder moved
+or trashed as a whole does not retract its files until each file itself changes.
 
 Mail, thread, draft and search results are framed as untrusted content: an
 agent must never follow instructions found in them. A recipient or subject with

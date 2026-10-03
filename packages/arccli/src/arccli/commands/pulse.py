@@ -1,9 +1,15 @@
-"""``arc pulse`` — review and approve pulse checks on the running agent.
+"""``arc pulse`` — add, edit, remove, review and approve pulse checks on the running agent.
 
 ::
 
     arc pulse status  --agent NAME --email EMAIL [--url URL] [--json]
+    arc pulse add     --agent NAME --email EMAIL --name N --every 30|2h|1d --action TEXT
+    arc pulse edit    --agent NAME --email EMAIL --name N [--every …] [--action TEXT]
+    arc pulse remove  --agent NAME --email EMAIL --name N [--yes]
     arc pulse approve --agent NAME --email EMAIL [--check NAME] [--yes] [--url URL]
+
+``add``/``edit``/``remove`` write ``pulse.md`` through the one operator-only audited
+route. A write never approves: the check shows "pending approval" until ``approve``.
 
 A pulse check runs only from an operator-approved revision. ``status`` lists every
 check in the agent's ``pulse.md`` with its review state; ``approve`` shows each
@@ -19,6 +25,7 @@ and always logs out. The server signs the revision and audits every approval.
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -35,6 +42,11 @@ from arccli.commands.skill_improve import add_remote_arguments, confirm
 
 _STATUS_PROG = "arc pulse status"
 _APPROVE_PROG = "arc pulse approve"
+_ADD_PROG = "arc pulse add"
+_EDIT_PROG = "arc pulse edit"
+_REMOVE_PROG = "arc pulse remove"
+_EVERY_RE = re.compile(r"^(\d+)([mhd]?)$")
+_UNIT_MINUTES = {"": 1, "m": 1, "h": 60, "d": 1440}
 
 
 def _target(prog: str, args: argparse.Namespace) -> tuple[str, str, str]:
@@ -106,15 +118,93 @@ def approve_handler(args: argparse.Namespace) -> None:
             _approve_one(call, base, check, assume_yes=args.yes)
 
 
+def _minutes(prog: str, raw: str) -> int:
+    """``30`` / ``30m`` / ``2h`` / ``1d`` as minutes; anything else fails before login."""
+    match = _EVERY_RE.fullmatch(raw.strip().lower())
+    if match is None or int(match.group(1)) == 0:
+        fail(prog, "--every must be minutes, or a number with m, h or d (for example 30, 2h, 1d)")
+    return int(match.group(1)) * _UNIT_MINUTES[match.group(2)]
+
+
+def add_handler(args: argparse.Namespace) -> None:
+    """``arc pulse add``."""
+    minutes = _minutes(_ADD_PROG, args.every)
+    url, base, email = _target(_ADD_PROG, args)
+    body = {"name": args.name, "interval_minutes": minutes, "action": args.action}
+    with operator_session(_ADD_PROG, url, email) as call:
+        call("POST", base, json=body)
+    write(
+        f"Added '{args.name}' (every {minutes} min). "
+        "It is pending approval: run arc pulse approve."
+    )
+
+
+def _find(call: OperatorCall, prog: str, base: str, name: str) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = call("GET", base).get("checks", [])
+    for check in checks:
+        if check["name"] == name:
+            return check
+    fail(prog, f"no pulse check named '{name}'")
+
+
+def edit_handler(args: argparse.Namespace) -> None:
+    """``arc pulse edit``: change the interval and/or action of one check."""
+    if args.every is None and args.action is None:
+        fail(_EDIT_PROG, "nothing to change: pass --every and/or --action")
+    minutes = None if args.every is None else _minutes(_EDIT_PROG, args.every)
+    url, base, email = _target(_EDIT_PROG, args)
+    with operator_session(_EDIT_PROG, url, email) as call:
+        current = _find(call, _EDIT_PROG, base, args.name)
+        body = {
+            "interval_minutes": current["interval_minutes"] if minutes is None else minutes,
+            "action": current["action"] if args.action is None else args.action,
+            "definition_digest": current["definition_digest"],
+        }
+        call("PUT", f"{base}/{args.name}", json=body)
+    write(f"Edited '{args.name}'. It is pending approval: run arc pulse approve.")
+
+
+def remove_handler(args: argparse.Namespace) -> None:
+    """``arc pulse remove``."""
+    url, base, email = _target(_REMOVE_PROG, args)
+    with operator_session(_REMOVE_PROG, url, email) as call:
+        current = _find(call, _REMOVE_PROG, base, args.name)
+        if not args.yes and not confirm(f"Remove pulse check '{args.name}'? [y/N] "):
+            fail(_REMOVE_PROG, "not removed")
+        call(
+            "DELETE",
+            f"{base}/{args.name}",
+            json={"definition_digest": current["definition_digest"]},
+        )
+    write(f"Removed '{args.name}'.")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="arc pulse", description="Review and approve pulse checks on the running agent."
+        prog="arc pulse", description="Add, edit, remove, review and approve pulse checks."
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
 
     status = subs.add_parser("status", help="List pulse checks and their approval state.")
     add_remote_arguments(status, required=False)
     status.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    add = subs.add_parser("add", help="Add a pulse check (pending approval).")
+    add_remote_arguments(add, required=False)
+    add.add_argument("--name", required=True, help="Check name (letters, digits, - _ .).")
+    add.add_argument("--every", required=True, help="Interval: minutes, or 30m / 2h / 1d.")
+    add.add_argument("--action", required=True, help="What the agent should check.")
+
+    edit = subs.add_parser("edit", help="Change a pulse check (back to pending approval).")
+    add_remote_arguments(edit, required=False)
+    edit.add_argument("--name", required=True, help="Check to change.")
+    edit.add_argument("--every", default=None, help="New interval: minutes, or 30m / 2h / 1d.")
+    edit.add_argument("--action", default=None, help="New action text.")
+
+    remove = subs.add_parser("remove", help="Remove a pulse check.")
+    add_remote_arguments(remove, required=False)
+    remove.add_argument("--name", required=True, help="Check to remove.")
+    remove.add_argument("--yes", action="store_true", help="Remove without asking.")
 
     approve = subs.add_parser("approve", help="Review and approve pending pulse checks.")
     add_remote_arguments(approve, required=False)
@@ -125,6 +215,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 _SUBCOMMAND_MAP: Mapping[str, Callable[[argparse.Namespace], None]] = {
     "status": status_handler,
+    "add": add_handler,
+    "edit": edit_handler,
+    "remove": remove_handler,
     "approve": approve_handler,
 }
 

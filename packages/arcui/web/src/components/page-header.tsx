@@ -11,8 +11,8 @@ interface PageHeaderProps {
 /** Standard page heading used across every section. */
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-border px-4 py-3 md:px-6 md:py-4">
+      <div className="min-w-0 flex-1 basis-48">
         <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-[-0.02em] text-foreground">
           {title}
         </h1>
@@ -22,7 +22,7 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
           </p>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
         {actions}
         <ScreenHelp />
         <OperatorAvatarMenu />

@@ -129,7 +129,9 @@ class ScheduleMetadata(BaseModel):
     # Why a disabled row is disabled. ``operator`` and ``archived`` are
     # deliberate and stay put; ``breaker`` is the engine's own trip and is
     # re-armed automatically, so an outage can never become a permanent off.
-    disabled_reason: Literal["operator", "breaker", "archived"] | None = None
+    # ``unapproved`` marks a legacy row with no signed revision: it never fires
+    # until an operator re-approves it through the control authority.
+    disabled_reason: Literal["operator", "breaker", "archived", "unapproved"] | None = None
     disabled_at: str | None = None
     # What the schedule itself says about its last firing, so a row answers
     # "did it run, when is it next, and why not" without a log search.

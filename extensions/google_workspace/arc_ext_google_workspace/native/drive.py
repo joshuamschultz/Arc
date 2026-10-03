@@ -11,7 +11,7 @@ BASE: Final = "https://www.googleapis.com/drive/v3"
 _FIELDS: Final = "files(id,name,mimeType,modifiedTime,size,webViewLink),nextPageToken"
 
 
-def _quoted(value: str) -> str:
+def quoted(value: str) -> str:
     """A Drive query string literal: backslash and quote escaped."""
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -21,7 +21,7 @@ def _query(args: Mapping[str, Any]) -> str:
     parent = text_arg(args, "parent")
     clauses = ["trashed = false"]
     if parent:
-        clauses.append(f"{_quoted(parent)} in parents")
+        clauses.append(f"{quoted(parent)} in parents")
     elif not user_filter:
         clauses.append("'root' in parents")
     if user_filter:

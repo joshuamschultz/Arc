@@ -92,3 +92,50 @@ it('opens the run named by ?run= on its workflow detail page', async () => {
   )
   expect((await screen.findByTestId('where')).textContent).toBe('/workflows/nightly?run=run-42')
 })
+
+it('shows an unreadable workflow with a red badge and the fix, not an empty list', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            workflows: [
+              {
+                id: 'morning-briefing',
+                name: 'morning-briefing',
+                version: 0,
+                status: 'unreadable',
+                health: 'unreadable',
+                health_detail: 'cannot be read (join: not allowed)',
+                health_fix: 'arc workflow migrate --dry-run, then arc workflow migrate --resign',
+              },
+              {
+                id: 'seo',
+                name: 'seo',
+                version: 2,
+                status: 'draft',
+                health: 'needs_resign',
+                health_detail: 'its signature no longer matches',
+                health_fix: 'arc workflow sign seo',
+              },
+            ],
+          }),
+        ),
+    ),
+  )
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <WorkflowsPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+  expect(await screen.findByText('Unreadable')).toBeTruthy()
+  expect(screen.getByText(/join: not allowed/)).toBeTruthy()
+  expect(screen.getByText(/arc workflow migrate --dry-run/)).toBeTruthy()
+  expect(screen.getByText('Needs re-sign')).toBeTruthy()
+  expect(screen.getByText('arc workflow sign seo')).toBeTruthy()
+  expect(screen.queryByText('No workflows yet')).toBeNull()
+})

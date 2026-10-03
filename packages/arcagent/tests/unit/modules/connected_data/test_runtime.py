@@ -121,20 +121,20 @@ async def test_sync_monitor_catalog_failures_are_bounded_and_cancel_promptly() -
 
 
 @pytest.mark.asyncio
-async def test_catalog_revoke_waits_for_active_sync_lease() -> None:
+async def test_catalog_revoke_returns_at_once_and_closes_after_the_lease() -> None:
     catalog = SourceCatalog()
     source = FakeSource()
     await catalog.register("dropbox", source)
 
     async with catalog.lease("dropbox") as registration:
         assert registration is not None
-        revoke = asyncio.create_task(catalog.unregister("dropbox"))
-        await asyncio.sleep(0)
-        assert not revoke.done()
+        async with asyncio.timeout(1):
+            await catalog.unregister("dropbox")
+        assert await catalog.snapshot() == ()
+        # Never closed under a reader that still holds it.
         assert not source.closed
-    await revoke
+    await catalog.drain_retired()
     assert source.closed
-    assert await catalog.snapshot() == ()
 
 
 @pytest.mark.asyncio

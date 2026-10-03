@@ -108,6 +108,8 @@ class EntityRecord(BaseModel):
     links_to: list[str] = Field(default_factory=list)
     facts: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    #: Earlier names/slugs this card was merged from — recall still resolves them.
+    aliases: list[str] = Field(default_factory=list)
 
 
 class LinkRecord(BaseModel):
@@ -485,6 +487,7 @@ class MemoryOperator:
                     links_to=entity.links_to,
                     facts=[format_fact(fact) for fact in entity.facts],
                     tags=entity.tags,
+                    aliases=entity.aliases,
                 )
             )
         return records

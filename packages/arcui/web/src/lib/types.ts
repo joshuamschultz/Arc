@@ -541,6 +541,7 @@ export interface EntityRecord {
   links_to: string[]
   facts: string[]
   tags: string[]
+  aliases: string[] // earlier names this entity was merged from (recall still finds them)
 }
 
 export interface LinkRecord {
@@ -938,7 +939,9 @@ export interface ToolDetail {
 // through) rather than a tight contract, so this dashboard degrades gracefully
 // if the real shape adds fields rather than 500ing on an unrecognized key.
 
-export type WorkflowStatus = 'draft' | 'signed' | 'archived'
+export type WorkflowStatus = 'draft' | 'signed' | 'archived' | 'unreadable'
+
+export type WorkflowHealth = 'ok' | 'unsigned' | 'needs_resign' | 'unreadable'
 export type WorkflowNodeKind = 'agent' | 'tool' | 'script' | 'router' | 'gate'
 export type WorkflowRunStatus =
   'pending' | 'running' | 'waiting_gate' | 'done' | 'done_with_failures' | 'failed' | 'cancelled'
@@ -996,7 +999,7 @@ export interface WorkflowSchedule {
   agent_id: string
   schedule_id: string
   enabled: boolean
-  disabled_reason?: 'operator' | 'breaker' | 'archived' | null
+  disabled_reason?: 'operator' | 'breaker' | 'archived' | 'unapproved' | null
   disabled_at?: string | null
   next_fire_at?: string | null
   last_fired_at?: string | null
@@ -1016,6 +1019,12 @@ export interface WorkflowSummary {
   status: WorkflowStatus
   trigger?: Dict | null
   last_run?: WorkflowLastRun | null
+  /** Parse + signature health. `unreadable` rows have no detail page. */
+  health?: WorkflowHealth
+  /** The problem in plain words, when `health` is not ok. */
+  health_detail?: string
+  /** The command that fixes it. */
+  health_fix?: string
 }
 
 export interface WorkflowDetail extends WorkflowSummary {

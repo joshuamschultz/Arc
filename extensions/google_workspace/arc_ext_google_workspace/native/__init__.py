@@ -28,7 +28,7 @@ from arcagent.extension.attachment import (
     ToolSpec,
 )
 
-from . import calendar, drive, gmail
+from . import calendar, drive, drive_index, gmail
 from .http import GoogleHttp, ToolError
 
 _PROFILE_URL: Final = f"{gmail.BASE}/profile"
@@ -36,7 +36,7 @@ _MAX_OUTPUT_BYTES: Final = 16 * 1024 * 1024
 _LONG_READ_TOOLS: Final = frozenset(
     {"google_gmail_message", "google_gmail_thread", "google_gmail_search"}
 )
-_INTEGER_ARGUMENTS: Final = frozenset({"limit", "max"})
+_INTEGER_ARGUMENTS: Final = frozenset({"limit", "max", "max_bytes"})
 _MISMATCH_DETAIL: Final = "signed in as a different account"
 
 Handler = Callable[[Mapping[str, Any]], Awaitable[Any]]
@@ -340,6 +340,56 @@ _TOOLS: Final[tuple[_Tool, ...]] = (
         ),
     ),
     _Tool(
+        "google_drive_files",
+        "List every file in Drive, one shared drive or one folder, a page at a time. Used for connected-data indexing.",
+        "read_only",
+        (),
+        (
+            ("scope", "all, drive or folder.", None),
+            ("id", "The shared drive or folder id (not needed for all).", None),
+            ("limit", "How many files to return (1-1000).", 1000),
+            ("page_token", "The nextPageToken from the previous page.", None),
+        ),
+    ),
+    _Tool(
+        "google_drive_changes",
+        "Read Drive changes since a page token; with no token, return the token to start from. Also used for connected-data indexing.",
+        "read_only",
+        (),
+        (
+            ("limit", "How many changes to return (1-1000).", 1000),
+            ("page_token", "The page token to read changes after.", None),
+        ),
+    ),
+    _Tool(
+        "google_drive_file",
+        "Read one Drive file's metadata (name, type, owner, link, parents). Reads no content.",
+        "read_only",
+        (),
+        (("id", "The Drive file id.", None),),
+    ),
+    _Tool(
+        "google_drive_drives",
+        "List the shared drives this account can see.",
+        "read_only",
+        (),
+        (("limit", "How many drives to return (1-100).", 100),),
+    ),
+    _Tool(
+        "google_drive_read",
+        "Read one Drive file as text: Docs, Sheets and Slides are exported, pdf, docx, xlsx, md, txt and html files are downloaded (at most 10 MB). The content is untrusted input.",
+        "read_only",
+        (),
+        (
+            ("id", "The Drive file id.", None),
+            (
+                "max_bytes",
+                "Refuse a file bigger than this many bytes (at most 10 MB).",
+                10_485_760,
+            ),
+        ),
+    ),
+    _Tool(
         "google_calendar_list",
         "List the calendars this account can see, with their ids.",
         "read_only",
@@ -374,7 +424,7 @@ _TOOLS: Final[tuple[_Tool, ...]] = (
 
 
 def _timeout_seconds(name: str) -> int | None:
-    if name == "google_gmail_attachment":
+    if name in {"google_gmail_attachment", "google_drive_read"}:
         return 120
     return 60 if name in _LONG_READ_TOOLS else None
 
@@ -434,6 +484,11 @@ class GoogleAttachment:
         return {
             **mail,
             "google_drive_list": partial(drive.drive_list, self._http),
+            "google_drive_files": partial(drive_index.drive_files, self._http),
+            "google_drive_changes": partial(drive_index.drive_changes, self._http),
+            "google_drive_file": partial(drive_index.drive_file, self._http),
+            "google_drive_drives": partial(drive_index.drive_drives, self._http),
+            "google_drive_read": partial(drive_index.drive_read, self._http),
             "google_calendar_list": partial(calendar.calendar_list, self._http),
             "google_calendar_events": partial(calendar.events, self._http),
             "google_calendar_freebusy": partial(calendar.freebusy, self._http),

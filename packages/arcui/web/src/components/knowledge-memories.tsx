@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Pencil, Search, Trash2, X } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { Pencil, Trash2, X } from 'lucide-react'
+import { SearchInput } from '@/components/ui/search-input'
 import { FieldHelp } from '@/components/help'
 import { Button } from '@/components/ui/button'
 import {
@@ -361,16 +361,13 @@ export function MemoryBrowser({
 
   return (
     <div className="space-y-3">
-      <div className="relative w-full max-w-sm">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search memories (ranked recall)…"
-          className="pl-8"
-        />
-        <FieldHelp helpKey="knowledge.memory.search" route="knowledge" />
-      </div>
+      <SearchInput
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search memories (ranked recall)…"
+        helpKey="knowledge.memory.search"
+        helpRoute="knowledge"
+      />
 
       {searching ? (
         <SearchResults agentId={agentId} q={q} />
@@ -387,7 +384,7 @@ export function MemoryBrowser({
         >
           {(data) => (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+              <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-xs">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40">
                     <tr className="border-b border-border">

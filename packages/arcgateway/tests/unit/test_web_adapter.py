@@ -997,3 +997,29 @@ async def test_replay_drop_oldest_emits_audit_event() -> None:
     assert len(drops) >= 1
     assert drops[0]["chat_id"] == "chat-1"
     await adapter.disconnect()
+
+
+async def test_failed_end_frame_carries_its_plain_reason() -> None:
+    """The browser is told why a turn failed, so the chat never just freezes."""
+    adapter = _make_adapter()
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+
+    await adapter.dispatch_delta(
+        target,
+        Delta(
+            kind="done",
+            is_final=True,
+            turn_id="run-9",
+            status="failed",
+            content="The agent did not start in time.",
+        ),
+    )
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    end = next(frame for frame in ws.sent if frame.get("event") == "end")
+    assert end["status"] == "failed"
+    assert end["reason"] == "The agent did not start in time."
+    await adapter.disconnect()

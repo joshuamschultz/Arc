@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from arctrust import (
     AppendOnlyMediumWitness,
     ArcTrustFipsError,
-    FileNotaryTransit,
+    CustodyTransit,
     OperatorKey,
     RecordCipher,
     Signer,
@@ -124,7 +124,7 @@ def resolve_credential_cipher(agent: Any) -> CredentialCipher | None:
         return None
 
 
-def resolve_transit(_agent: Any, sec: Any) -> FileNotaryTransit:
+def resolve_transit(_agent: Any, sec: Any) -> CustodyTransit:
     """The out-of-process transit, via the one arctrust resolver (fail-closed)."""
     return operator_transit_for(sec)
 

@@ -47,7 +47,7 @@ export function OperatorAvatarMenu() {
           <button
             type="button"
             aria-label="Operator menu"
-            className="flex size-9 items-center justify-center rounded-[10px] bg-secondary text-[11px] font-bold text-secondary-foreground shadow-sm outline-none transition-colors hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="flex size-9 max-md:size-11 items-center justify-center rounded-[10px] bg-secondary text-[11px] font-bold text-secondary-foreground shadow-sm outline-none transition-colors hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             {avatarInitials}
           </button>

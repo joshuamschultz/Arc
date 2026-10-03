@@ -201,7 +201,7 @@ export function HomePage() {
         title="Home"
         description="What needs you right now, and how your agents are doing."
       />
-      <div className="flex-1 space-y-6 overflow-auto p-6">
+      <div className="flex-1 space-y-6 overflow-auto p-4 md:p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InsightStat label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
           <InsightStat label="Online" value={online} />

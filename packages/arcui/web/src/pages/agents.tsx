@@ -23,7 +23,7 @@ export function AgentsPage() {
         description="The agents working for you, and what each is doing right now."
         actions={<RestartGatewayButton />}
       />
-      <div className="flex-1 space-y-5 overflow-auto p-6">
+      <div className="flex-1 space-y-5 overflow-auto p-4 md:p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <InsightStat label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
           <InsightStat label="Online" value={online} icon={<Wifi className="size-4" />} />

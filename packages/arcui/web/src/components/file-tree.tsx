@@ -412,14 +412,14 @@ export function FileTree({
   const [selected, setSelected] = useState<string | null>(null)
   // Reset selection when switching roots so the viewer never shows a stale file.
   return (
-    <div className="grid h-[70vh] max-h-[720px] min-h-[320px] grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
-      <div className="overflow-auto border-r border-border p-2">
+    <div className="grid h-auto max-h-none grid-cols-1 overflow-hidden md:h-[70vh] md:max-h-[720px] md:min-h-[320px] md:grid-cols-[minmax(220px,300px)_1fr] rounded-lg border border-border bg-card shadow-xs">
+      <div className="max-h-64 overflow-auto border-b border-r-0 border-border p-2 md:max-h-none md:border-b-0 md:border-r">
         <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           {rootLabel ?? root}
         </div>
         <TreeLevel agentId={agentId} root={root} path="" depth={0} selected={selected} onSelect={setSelected} />
       </div>
-      <div className="overflow-hidden">
+      <div className="min-h-[50dvh] overflow-hidden md:min-h-0">
         {selected ? (
           <FileViewer
             key={`${agentId}:${root}:${selected}`}

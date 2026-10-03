@@ -434,3 +434,77 @@ class TestReenableAfterBreaker:
         meta = _entry(agent_dir, "sched_ffa77e980f06")["metadata"]
         assert meta["disabled_reason"] == "operator"
         assert meta["disabled_at"]
+
+
+_APPROVE_URL = _URL + "/approve"
+
+
+class TestApproveLegacy:
+    """An operator re-approves a pre-authority schedule through the authority."""
+
+    @staticmethod
+    def _mark_unapproved(agent_dir: Path) -> None:
+        entries = _load(agent_dir)
+        entries[0]["enabled"] = False
+        entries[0]["metadata"].update(
+            disabled_reason="unapproved", disabled_at="2026-10-01T00:00:00Z"
+        )
+        (agent_dir / "workspace" / "schedules.json").write_text(json.dumps(entries))
+
+    def test_approve_registers_current_definition_and_reenables(
+        self, ctx: tuple[TestClient, Path]
+    ) -> None:
+        client, agent_dir = ctx
+        self._mark_unapproved(agent_dir)
+        resp = client.post(_APPROVE_URL, headers=_op())
+        assert resp.status_code == 200, resp.text
+        row = _entry(agent_dir, "sched_ffa77e980f06")
+        assert row["approval"]["revision"] == 1
+        assert row["enabled"] is True
+        assert row["metadata"]["disabled_reason"] is None
+        assert row["expression"] == "40 10 * * *"  # the definition is unchanged
+
+    def test_approve_is_audited(
+        self, ctx: tuple[TestClient, Path], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client, _ = ctx
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            client.post(_APPROVE_URL, headers=_op())
+        events = [
+            json.loads(r.message)
+            for r in caplog.records
+            if r.name == "arcui.audit" and '"ui.mutation"' in r.message
+        ]
+        assert any(
+            e["details"]["operation"] == "schedule.approve"
+            and e["details"]["outcome"] == "applied"
+            for e in events
+        )
+
+    def test_viewer_cannot_approve(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+        before = _entry(agent_dir, "sched_ffa77e980f06")
+        assert client.post(_APPROVE_URL, headers=_viewer()).status_code == 403
+        assert _entry(agent_dir, "sched_ffa77e980f06") == before
+
+    def test_already_approved_schedule_is_refused(self, ctx: tuple[TestClient, Path]) -> None:
+        client, _ = ctx
+        assert client.post(_APPROVE_URL, headers=_op()).status_code == 200
+        assert client.post(_APPROVE_URL, headers=_op()).status_code == 409
+
+    def test_refused_authority_leaves_row_unapproved(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+
+        class Refusing(_Authority):
+            async def register_revision(self, **kwargs: Any) -> arcagent.SignedControlRevision:
+                raise arcagent.ControlArtifactRefusedError("operator proof rejected")
+
+        client.app.state.schedule_control_authority = Refusing()
+        before = _entry(agent_dir, "sched_ffa77e980f06")
+        assert client.post(_APPROVE_URL, headers=_op()).status_code == 403
+        assert _entry(agent_dir, "sched_ffa77e980f06") == before
+
+    def test_unknown_schedule_404(self, ctx: tuple[TestClient, Path]) -> None:
+        client, _ = ctx
+        resp = client.post("/api/agents/alpha/schedules/nope/approve", headers=_op())
+        assert resp.status_code == 404

@@ -68,6 +68,10 @@ def _resolve_value_and_default(config: BaseModel, dotted_id: str) -> tuple[Any, 
     model_cls: type[BaseModel] = type(config)
     for part in parts[:-1]:
         instance = getattr(instance, part)
+        if instance is None:
+            # An optional section left unset (e.g. ``[security.vault]``): every
+            # leaf under it is absent, which is its default.
+            return None, None
         model_cls = type(instance)
     leaf_name = parts[-1]
     value = getattr(instance, leaf_name)

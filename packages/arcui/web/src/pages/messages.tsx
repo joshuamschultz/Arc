@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertCircle, Hash, MessageSquare, RotateCcw, ScrollText, ShieldAlert } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Hash, MessageSquare, RotateCcw, ScrollText, ShieldAlert } from 'lucide-react'
 import { ThinkingTrace, ToolChip } from '@/components/ai'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -227,8 +227,8 @@ function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <span className="flex items-center gap-2.5">
           <span
             className="flex size-8 items-center justify-center rounded-md text-xs font-semibold text-primary-foreground"
@@ -330,7 +330,7 @@ function ChatPanel({
           ))}
         </div>
       )}
-      <div className="flex shrink-0 items-end gap-2 border-t border-border bg-card/30 p-3">
+      <div className="flex shrink-0 items-end gap-2 border-t border-border bg-card/30 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-slot="composer">
         <div className="flex w-full flex-col gap-2">
         <AttachmentPicker
           key={sessionKey ?? 'not-ready'}
@@ -613,8 +613,8 @@ function ChannelPanel({
   }, [rows, handleColor, agentNames])
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <span className="flex min-w-0 items-start gap-2">
           <Hash className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
           <span className="flex min-w-0 flex-col leading-tight">
@@ -635,7 +635,7 @@ function ChannelPanel({
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex flex-col gap-2 border-t border-border bg-card/30 p-3">
+      <div className="flex flex-col gap-2 border-t border-border bg-card/30 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-slot="composer">
         {sendError ? (
           <p role="alert" className="text-[11px] text-destructive">
             {sendError}
@@ -735,8 +735,9 @@ export function MessagesPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Messages" description="Direct agent chat and team channels." actions={<OperatorModeToggle />} />
-      <div className="grid flex-1 grid-cols-[260px_1fr] overflow-hidden">
-        <aside className="overflow-auto border-r border-border bg-sidebar/40 p-2">
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[260px_1fr]">
+        {/* Below md the rooms and the open conversation are two screens. */}
+        <aside className={cn('min-w-0 overflow-auto border-r border-border bg-sidebar/40 p-2', sel && 'max-md:hidden')}>
           <div className="mb-1 flex items-center gap-2 border-b border-border px-2 pb-2.5 pt-1">
             <span className="grid size-6 place-items-center rounded-md bg-primary text-[11px] font-bold text-primary-foreground">
               A
@@ -829,9 +830,17 @@ export function MessagesPage() {
           })}
         </aside>
 
-        <main className="overflow-hidden">
+        <main className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden', !sel && 'max-md:hidden')}>
+          <button
+            type="button"
+            aria-label="Back to rooms"
+            onClick={() => setSel(null)}
+            className="flex min-h-11 shrink-0 items-center gap-1.5 border-b border-border px-4 text-sm font-medium text-muted-foreground hover:text-foreground md:hidden"
+          >
+            <ArrowLeft className="size-4" /> Rooms
+          </button>
           {!sel ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex min-h-0 flex-1 items-center justify-center">
               <EmptyState icon={<MessageSquare className="size-7" />} title="Select a conversation" description="Pick a channel to follow, or an agent to chat." />
             </div>
           ) : sel.kind === 'agent' ? (
@@ -853,7 +862,7 @@ export function MessagesPage() {
               agentNames={agentNames}
             />
           ) : (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex min-h-0 flex-1 items-center justify-center">
               <EmptyState icon={<Hash className="size-7" />} title="Channel not found" description="It may have been removed." />
             </div>
           )}

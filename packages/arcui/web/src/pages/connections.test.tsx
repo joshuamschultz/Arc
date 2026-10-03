@@ -134,6 +134,28 @@ describe('ConnectionCard health row', () => {
     }
   })
 
+  it('a slow remove shows Removing… on the button, not a stuck pink button', async () => {
+    const { card } = await renderCard([row()])
+    const serve = vi.mocked(fetch).getMockImplementation()!
+    let finish: (response: Response) => void = () => {}
+    vi.mocked(fetch).mockImplementation((request, init) =>
+      init?.method === 'DELETE'
+        ? new Promise<Response>((resolve) => { finish = resolve })
+        : serve(request, init),
+    )
+    await userEvent.click(within(card).getByRole('button', { name: /Advanced/ }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Remove/ }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm remove' }))
+
+    expect(await within(card).findByRole('button', { name: 'Removing…' })).toBeTruthy()
+
+    finish(new Response(JSON.stringify({
+      instance: 'gmail-olivia', removed_secrets: [], removed_config: true, removed_state: true,
+      activations: [{ agent: 'a', status: 'activation_pending', revision: 1, tools: [], detail: '' }],
+    })))
+    await waitFor(() => expect(within(card).queryByRole('button', { name: 'Removing…' })).toBeNull())
+  })
+
   it('needs_you shows reason and the action label', async () => {
     const { card } = await renderCard([needsYou()])
     expect(within(card).getByText(/Needs you: Google sign-in expired or was revoked/)).toBeTruthy()
@@ -249,5 +271,20 @@ describe('?connection= deep link', () => {
     expect(card.className).toContain('ring-2')
     expect(other.closest('[data-connection-card]')!.className).not.toContain('ring-2')
     await waitFor(() => expect(scroll).toHaveBeenCalled())
+  })
+})
+
+describe('ConnectionsPage mobile layout', () => {
+  it('reflows cards by available width and lets action rows wrap', async () => {
+    const { card } = await renderCard([row(), row({ instance: 'gmail-two' })])
+    const grid = card.parentElement as HTMLElement
+    // Auto-fit columns collapse to one at medium widths; a fixed 2-up grid clipped the second column.
+    expect(grid.className).toContain('minmax(min(100%')
+    expect(grid.className).not.toMatch(/(^|\s)md:grid-cols-2/)
+    expect(card.className).toContain('min-w-0')
+    const actions = within(card).getByRole('button', { name: /Advanced/ }).parentElement as HTMLElement
+    expect(actions.className).toContain('flex-wrap')
+    const body = actions.closest('.p-4') as HTMLElement
+    expect(body.className).toContain('flex-wrap')
   })
 })

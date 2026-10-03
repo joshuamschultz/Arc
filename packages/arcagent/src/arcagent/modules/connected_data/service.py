@@ -787,7 +787,9 @@ class ConnectedDataService:
         """One supervised run: its crash or stall is this source's alone."""
         connection_id = registration.connection_id
         try:
-            async with self._catalog.lease(connection_id) as leased:
+            # Cancelled if the operator replaces or removes this source: the
+            # coordinator marks the run cancelled and keeps its cursor.
+            async with self._catalog.lease(connection_id, cancel_on_retire=True) as leased:
                 more_work = False if leased is None else await self._run_leased(leased)
         except asyncio.CancelledError:
             raise

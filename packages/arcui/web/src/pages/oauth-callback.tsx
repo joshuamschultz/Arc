@@ -55,7 +55,7 @@ export function OAuthCallbackPage() {
   }, [captured])
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background p-6">
+    <div className="flex h-dvh items-center justify-center bg-background p-4 md:p-6">
       <div className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-8 shadow-lg">
         <ArcLogo />
         <CallbackBody outcome={outcome} />

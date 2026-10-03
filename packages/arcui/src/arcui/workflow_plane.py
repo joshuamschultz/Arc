@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from arcstore.runs import NodeState
+from arcteam.workflow.migrate import check_bundle
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arctrust import sanitize_error_text
 
@@ -123,6 +124,22 @@ def _snapshot_fields(state: NodeState) -> dict[str, Any]:
     }
 
 
+def _unreadable_row(workflow_id: str, health: dict[str, str]) -> dict[str, Any]:
+    """The list row for a bundle that no longer parses: id, state, reason, fix."""
+    return {
+        "id": workflow_id,
+        "name": workflow_id,
+        "owner": "",
+        "version": 0,
+        "status": "unreadable",
+        "signer_did": None,
+        "trigger": None,
+        "schedule": None,
+        "last_run": None,
+        **health,
+    }
+
+
 def slugify(name: str) -> str:
     """A workflow id from a human name. Ids are names, never paths."""
     slug = _SLUG.sub("-", name.strip().lower()).strip("-.")
@@ -169,10 +186,20 @@ class DashboardWorkflowPlane:
         del actor
         summaries: list[dict[str, Any]] = []
         for workflow_id in self._definitions.list_ids(include_archived=include_archived):
-            bundle = self._load(workflow_id)
-            if bundle is None:
+            check = check_bundle(self._definitions, workflow_id)
+            health = {
+                "health": check.state,
+                "health_detail": check.detail,
+                "health_fix": check.fix,
+            }
+            if check.state == "unreadable":
+                # Never drop a bundle: a list that hides what it cannot read is
+                # indistinguishable from "no workflows" and killed every cron.
+                summaries.append(_unreadable_row(workflow_id, health))
                 continue
-            summaries.append(await self._summary(bundle))
+            bundle = self._load(workflow_id)
+            if bundle is not None:
+                summaries.append({**await self._summary(bundle), **health})
         return summaries
 
     async def get_workflow(

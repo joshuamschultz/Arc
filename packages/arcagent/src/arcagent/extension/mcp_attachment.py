@@ -50,6 +50,7 @@ from arcagent.extension.attachment import (
     ToolResult,
     ToolSpec,
 )
+from arcagent.extension.egress_guard import EgressPolicy
 from arcagent.extension.mcp_policy import (
     DEFAULT_POLICY as _DEFAULT_POLICY,
 )
@@ -63,6 +64,7 @@ from arcagent.extension.mcp_policy import (
 from arcagent.extension.mcp_policy import (
     UnavailableError as _UnavailableError,
 )
+from arcagent.extension.pinned_transport import RefusalSink, pinned_client_factory
 
 _logger = logging.getLogger(__name__)
 
@@ -175,6 +177,8 @@ class SdkMcpClient:
         resilience: McpResilience | None = None,
         client_name: str = "arc",
         requirements: list[Requirement] | None = None,
+        egress: EgressPolicy | None = None,
+        on_egress_refused: RefusalSink | None = None,
     ) -> SdkMcpClient:
         """A client for a hosted MCP server reached over Streamable HTTP.
 
@@ -183,15 +187,24 @@ class SdkMcpClient:
         never a pooled one held open. ``headers`` carries auth (the connector builder
         passes ``Authorization: Bearer <token>``); it is captured here, not per call,
         because the SDK transport takes a plain header mapping.
+
+        Every connection resolves the host itself, judges every address against
+        ``egress`` and connects to the address it judged (DNS-rebinding defence), so the
+        add-time URL check cannot be outlived by a re-pointed name. ``egress`` defaults to
+        the strict tier policy, never to an unpinned client; ``on_egress_refused`` is how
+        the caller audits a refusal.
         """
         header_map = dict(headers) if headers else None
         resolved = resilience or McpResilience()
         read_timeout = timedelta(seconds=resolved.timeout_seconds)
         client_info = Implementation(name=client_name, version=__version__)
+        pinned = pinned_client_factory(egress or EgressPolicy(), on_egress_refused)
 
         @asynccontextmanager
         async def factory() -> AsyncIterator[ClientSession]:
-            async with streamablehttp_client(url, headers=header_map) as (read, write, _):
+            async with streamablehttp_client(
+                url, headers=header_map, httpx_client_factory=pinned
+            ) as (read, write, _):
                 async with ClientSession(
                     read, write, read_timeout_seconds=read_timeout, client_info=client_info
                 ) as session:
