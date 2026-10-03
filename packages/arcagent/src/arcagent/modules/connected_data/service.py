@@ -435,7 +435,13 @@ class ConnectedDataService:
             return SourceOperationResult(connection_id, "not_found")
         self._paused.add(connection_id)
         await self._cancel(connection_id)
-        shared = await self._unsubscribe(connection_id, reason="revoked")
+        try:
+            shared = await self._unsubscribe(connection_id, reason="revoked")
+        except Exception:
+            # Fail closed: while the subscription cannot be removed the agent can
+            # still read, so the revoke is not done and reconcile tries again.
+            _logger.exception("connected-data unsubscribe failed: %s", connection_id)
+            return SourceOperationResult(connection_id, "refused", "unsubscribe_failed")
         ingest, description = await self._ingest_for(registration, use_cached=True)
         if ingest is None or description is None:
             return SourceOperationResult(connection_id, "refused", "ingest_port_unavailable")
@@ -934,6 +940,9 @@ class ConnectedDataService:
         raw_description = await registration.adapter.inspect_source(
             InspectSource(connection_id=connection_id)
         )
+        # An operator-requested run is consumed here, whichever store it syncs.
+        forced = connection_id in self._forced
+        self._forced.discard(connection_id)
         candidate = self._ingest_factory(raw_description)
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         try:
@@ -946,13 +955,15 @@ class ConnectedDataService:
             # The port holds this run's memory-database connection; a run that
             # ends, fails or is cancelled (stall, revoke, shutdown) gives it back.
             await _release(ingest)
-        return await self._run_shared(registration, raw_description, lane)
+        return await self._run_shared(registration, raw_description, lane, forced=forced)
 
     async def _run_shared(
         self,
         registration: SourceRegistration,
         raw_description: SourceDescription,
         lane: KnowledgeSubscription,
+        *,
+        forced: bool,
     ) -> bool:
         """Sync a shared connection once for every agent that reads it (P18-4).
 
@@ -965,8 +976,6 @@ class ConnectedDataService:
             return False
         writer = await self._shared.writer(connection_id, lane.approval_id)
         try:
-            forced = connection_id in self._forced
-            self._forced.discard(connection_id)
             if not forced and await self._shared_is_fresh(connection_id, lane):
                 await self._adopt_shared_status(connection_id, raw_description, writer, lane)
                 return False
@@ -1213,15 +1222,15 @@ class ConnectedDataService:
             description = await self._with_generation(raw_description, private)
             plan = await approved(description)
             if plan is None or set(plan.homes) != SHARED_HOMES:
-                await self._unsubscribe(connection_id, reason="mapping_not_shared")
+                await self._leave(connection_id, raw_description, "mapping_not_shared")
                 return None
             if await self._documents_indexed(private, description) > 0:
                 # The agent's own store still holds this connection: migrate it
                 # first, or every document would be read twice.
-                await self._unsubscribe(connection_id, reason="migration_pending")
+                await self._leave(connection_id, raw_description, "migration_pending")
                 return None
             if not shared.claim_profile(connection_id):
-                await self._unsubscribe(connection_id, reason="embedding_profile_differs")
+                await self._leave(connection_id, raw_description, "embedding_profile_differs")
                 return None
             return await self._subscribe(connection_id, raw_description, plan.mapping_id)
         except Exception:
@@ -1285,6 +1294,13 @@ class ConnectedDataService:
             {"source": _safe_id(connection_id), "store": current.principal, "reason": reason},
         )
         return True
+
+    async def _leave(
+        self, connection_id: str, raw_description: SourceDescription, reason: str
+    ) -> None:
+        """Stop reading a shared store, and purge it if no agent reads it any more."""
+        if await self._unsubscribe(connection_id, reason=reason):
+            await self._purge_unread_store(connection_id, raw_description)
 
     async def _purge_unread_store(
         self, connection_id: str, description: SourceDescription
