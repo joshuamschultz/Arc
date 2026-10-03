@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from arcstore.runs import NodeState
-from arcteam.workflow.migrate import check_bundle
+from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arctrust import sanitize_error_text
 
@@ -190,7 +190,7 @@ class DashboardWorkflowPlane:
             health = {
                 "health": check.state,
                 "health_detail": check.detail,
-                "health_fix": check.fix,
+                "health_fix_action": check.fix_action,
             }
             if check.state == "unreadable":
                 # Never drop a bundle: a list that hides what it cannot read is
@@ -441,6 +441,40 @@ class DashboardWorkflowPlane:
         )
         return ControlPlaneResult(
             value={"approval_id": approval.id, "status": "pending_operator_approval"}
+        )
+
+    async def migrate_workflow(
+        self,
+        workflow_id: str,
+        *,
+        apply: bool,
+        signer: Any | None,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Preview or apply the one-time bundle migration for ONE workflow.
+
+        The same function ``arc workflow migrate`` calls. With ``signer`` (the
+        operator's signing handle) a migrated bundle that carried a signature is
+        re-signed; a signer other than the pinned operator key is refused.
+        """
+        del actor
+        if workflow_id not in self._definitions.list_ids(include_archived=True):
+            return ControlPlaneResult(not_found=True)
+        result = migrate_bundle(
+            self._definitions,
+            workflow_id,
+            dry_run=not apply,
+            signer=signer if apply else None,
+            signer_did="" if signer is None else operator_signer_did(signer),
+        )
+        return ControlPlaneResult(
+            value={
+                "workflow_id": result.workflow_id,
+                "action": result.action,
+                "files": list(result.files),
+                "nodes": list(result.nodes),
+                "reason": result.reason,
+            }
         )
 
     async def archive_workflow(

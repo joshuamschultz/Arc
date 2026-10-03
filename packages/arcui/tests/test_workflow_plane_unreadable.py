@@ -69,7 +69,7 @@ async def test_a_legacy_bundle_is_listed_as_unreadable_with_the_fix(plane: Any) 
     row = rows[0]
     assert row["status"] == "unreadable"
     assert "join" in row["health_detail"]
-    assert "arc workflow migrate" in row["health_fix"]
+    assert row["health_fix_action"] == "migrate"
 
 
 async def test_a_stale_signature_is_listed_as_needing_resign(plane: Any) -> None:
@@ -83,7 +83,7 @@ async def test_a_stale_signature_is_listed_as_needing_resign(plane: Any) -> None
 
     assert rows[0]["id"] == "onboarding"
     assert rows[0]["health"] == "needs_resign"
-    assert "arc workflow sign onboarding" in rows[0]["health_fix"]
+    assert rows[0]["health_fix_action"] == "migrate"
 
 
 async def test_a_healthy_bundle_has_no_health_problem(plane: Any) -> None:

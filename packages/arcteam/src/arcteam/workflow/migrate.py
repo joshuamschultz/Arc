@@ -53,6 +53,10 @@ _JOIN_ALL_LINE = re.compile(
     r"^[ \t]*join[ \t]*=[ \t]*([\"'])all\1[ \t]*(#.*)?\r?\n?", re.MULTILINE
 )
 _MIGRATE_FIX = "arc workflow migrate --dry-run, then arc workflow migrate --resign"
+_SIGN_FIX = "arc workflow sign {workflow_id}"
+
+#: The one repair the dashboard offers as a button (no command to copy).
+FixAction = Literal["", "migrate", "sign"]
 
 
 class BundleCheck(BaseModel):
@@ -63,7 +67,10 @@ class BundleCheck(BaseModel):
     workflow_id: str
     state: BundleState
     detail: str = ""
+    #: The shell command for the CLI surface. A dashboard never shows it.
     fix: str = ""
+    #: The same repair as a typed button a dashboard offers.
+    fix_action: FixAction = ""
 
     @property
     def is_failure(self) -> bool:
@@ -102,6 +109,7 @@ def check_bundle(store: DefinitionStore, workflow_id: str) -> BundleCheck:
                 f"read ({_plain_parse_error(exc)})"
             ),
             fix=_MIGRATE_FIX,
+            fix_action="migrate",
         )
     if bundle.is_verified:
         return BundleCheck(workflow_id=workflow_id, state="ok")
@@ -113,13 +121,15 @@ def check_bundle(store: DefinitionStore, workflow_id: str) -> BundleCheck:
                 "this workflow's signature no longer matches its contents or the "
                 "operator key, so it will not run as signed"
             ),
-            fix=f"arc workflow sign {workflow_id}",
+            fix=_SIGN_FIX.format(workflow_id=workflow_id),
+            fix_action="migrate",
         )
     return BundleCheck(
         workflow_id=workflow_id,
         state="unsigned",
         detail="this workflow is an unsigned draft",
-        fix=f"arc workflow sign {workflow_id}",
+        fix=_SIGN_FIX.format(workflow_id=workflow_id),
+        fix_action="sign",
     )
 
 
@@ -203,19 +213,36 @@ def migrate_store(
     because the canonical form changed with it.
     """
     return tuple(
-        _migrate_bundle(store, workflow_id, dry_run=dry_run, signer=signer, signer_did=signer_did)
+        migrate_bundle(store, workflow_id, dry_run=dry_run, signer=signer, signer_did=signer_did)
         for workflow_id in store.list_ids(include_archived=True)
     )
 
 
-def _migrate_bundle(
+def operator_signer_did(signer: Signer) -> str:
+    """The DID a CLI or dashboard re-sign records for the operator signing handle."""
+    return f"operator:{signer.public_key.hex()[:16]}"
+
+
+def migrate_bundle(
     store: DefinitionStore,
     workflow_id: str,
     *,
     dry_run: bool,
-    signer: Signer | None,
-    signer_did: str,
+    signer: Signer | None = None,
+    signer_did: str = "",
 ) -> MigrationResult:
+    """Migrate ONE bundle; with ``signer``, re-sign it (the dashboard's button).
+
+    A ``signer`` that is not the key the store pins is refused before anything is
+    written: a re-sign must never produce a signature the runtime would not trust.
+    """
+    pinned = store.pinned_operator_key
+    if signer is not None and pinned is not None and signer.public_key != pinned:
+        return MigrationResult(
+            workflow_id=workflow_id,
+            action="refused",
+            reason="the signer is not the pinned operator key; nothing was changed",
+        )
     bundle_root = store.path_for(workflow_id)
     rewrites, nodes, reason = _plan(bundle_root)
     if reason:
@@ -261,8 +288,11 @@ def _migrate_bundle(
 __all__ = [
     "BundleCheck",
     "BundleState",
+    "FixAction",
     "MigrationResult",
     "check_bundle",
     "check_store",
+    "migrate_bundle",
     "migrate_store",
+    "operator_signer_did",
 ]

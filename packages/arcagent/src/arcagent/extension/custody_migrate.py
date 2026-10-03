@@ -22,6 +22,7 @@ plaintext backup: the refusal itself keeps the original file until it is resolve
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -44,6 +45,12 @@ MIGRATOR_DID = "did:arc:system:migrator"
 
 #: The refusal when a non-empty value would be lost.
 MIGRATION_UNDECLARED_KEYS = "MIGRATION_UNDECLARED_KEYS"
+
+#: The refusal when the operator's per-key answers do not fit the file.
+MIGRATION_BAD_DECISION = "MIGRATION_BAD_DECISION"
+
+#: Beside the legacy file: the names (never values) the operator chose to keep.
+KEPT_SUFFIX = ".kept"
 
 #: How the deleted file backend spelled a coordinate as an env key.
 _LEGACY_PREFIX = "ARC_SECRET"
@@ -88,6 +95,20 @@ def _legacy_spellings(connection: str, suffix: str) -> tuple[str, str]:
 
 
 @dataclass(frozen=True)
+class KeyDecisions:
+    """The operator's answer for each key Arc could not place on its own.
+
+    Keys only, never values. ``mapped`` sends a key's value to a connection field
+    a bundle declares (``(connection, field)``); ``kept`` leaves it in the file on
+    purpose; ``dropped`` discards it on purpose (audited by name).
+    """
+
+    mapped: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    kept: frozenset[str] = frozenset()
+    dropped: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class MigrationReport:
     """What the migration did, or (dry run) would do. Names only; never a value."""
 
@@ -107,6 +128,10 @@ class MigrationReport:
     dropped: tuple[str, ...] = ()
     #: Keys whose value was empty: they held no credential.
     empty: tuple[str, ...] = ()
+    #: Keys the operator chose to leave in the file; they no longer refuse the move.
+    kept: tuple[str, ...] = ()
+    #: ``connection/field`` coordinates a bundle declares: where a key may be mapped.
+    targets: tuple[str, ...] = ()
     connections: tuple[str, ...] = ()
     deleted: bool = False
     path: str = ""
@@ -120,6 +145,12 @@ class _Plan:
     apps: dict[str, tuple[str, str]] = field(default_factory=dict)
     app_keys: set[str] = field(default_factory=set)
     unresolved: dict[str, str] = field(default_factory=dict)
+    #: key -> why it was dropped on purpose.
+    dropped: dict[str, str] = field(default_factory=dict)
+    kept: set[str] = field(default_factory=set)
+    #: Keys the operator chose to keep in THIS run (audited once).
+    newly_kept: set[str] = field(default_factory=set)
+    targets: tuple[str, ...] = ()
     empty: tuple[str, ...] = ()
 
 
@@ -233,6 +264,7 @@ async def _plan(
     for key in values:
         if key not in accounted:
             plan.unresolved[key] = UNDECLARED
+    plan.targets = tuple(sorted({str(ref) for ref in declared.values()}))
     return plan
 
 
@@ -246,12 +278,105 @@ def _report(
         apps=tuple(sorted(plan.apps)),
         app_keys=tuple(sorted(plan.app_keys)),
         unresolved=tuple(sorted(plan.unresolved.items())),
+        dropped=tuple(sorted(plan.dropped)),
+        kept=tuple(sorted(plan.kept)),
+        targets=plan.targets,
         empty=plan.empty,
         connections=tuple(sorted({ref.connection for ref in written.values()})),
         path=str(env_path),
         dry_run=dry_run,
         deleted=deleted,
     )
+
+
+def _kept_path(env_path: Path) -> Path:
+    return env_path.with_name(env_path.name + KEPT_SUFFIX)
+
+
+def _read_kept(env_path: Path) -> frozenset[str]:
+    """Key names the operator chose to keep. Names only; an unreadable list is empty."""
+    try:
+        names = json.loads(_kept_path(env_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(name for name in names if isinstance(name, str))
+
+
+def _write_kept(env_path: Path, names: set[str]) -> None:
+    """Owner-only, atomic: the kept-key names beside the file they describe."""
+    path = _kept_path(env_path)
+    temp = path.with_name(path.name + ".tmp")
+    fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(sorted(names)).encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.replace(temp, path)
+
+
+def _bad_decision(message: str, keys: list[str]) -> ExtensionError:
+    return ExtensionError(
+        code=MIGRATION_BAD_DECISION, message=message, details={"keys": sorted(keys)}
+    )
+
+
+def _check_decisions(plan: _Plan, decisions: KeyDecisions) -> None:
+    """Refuse answers that do not fit the file, before anything is written."""
+    answers = [*decisions.mapped, *decisions.kept, *decisions.dropped]
+    twice = sorted({key for key in answers if answers.count(key) > 1})
+    if twice:
+        raise _bad_decision("a key can have only one answer", twice)
+    unknown = sorted(set(answers) - set(plan.unresolved))
+    if unknown:
+        raise _bad_decision("these keys are not waiting for an answer", unknown)
+    unmappable = sorted(key for key in decisions.mapped if plan.unresolved[key] != UNDECLARED)
+    if unmappable:
+        raise _bad_decision("these keys cannot be mapped to a field", unmappable)
+    declared = set(plan.targets)
+    outside = sorted(
+        key for key, (name, fld) in decisions.mapped.items() if f"{name}/{fld}" not in declared
+    )
+    if outside:
+        raise _bad_decision("no connection declares the field these keys map to", outside)
+    taken = {str(ref) for ref in (*plan.moves.values(), *plan.already.values())}
+    targets = [f"{name}/{fld}" for name, fld in decisions.mapped.values()]
+    clash = sorted(
+        key
+        for key, (name, fld) in decisions.mapped.items()
+        if f"{name}/{fld}" in taken or targets.count(f"{name}/{fld}") > 1
+    )
+    if clash:
+        raise _bad_decision("two values would land on the same field", clash)
+
+
+async def _apply_decisions(
+    plan: _Plan,
+    decisions: KeyDecisions,
+    entries: Mapping[str, str],
+    reader: SecretStore | None,
+) -> None:
+    """Resolve the operator's per-key answers into the plan (nothing is written yet)."""
+    _check_decisions(plan, decisions)
+    mapped = {
+        key: SecretRef(connection=name, field=fld) for key, (name, fld) in decisions.mapped.items()
+    }
+    for key in mapped:
+        del plan.unresolved[key]
+    await _classify_declared(plan, {key: entries[key] for key in mapped}, mapped, reader)
+    for key in decisions.kept:
+        del plan.unresolved[key]
+    plan.kept |= decisions.kept
+    plan.newly_kept |= decisions.kept
+    for key in decisions.dropped:
+        plan.dropped[key] = plan.unresolved.pop(key)
+
+
+def _apply_persisted_keeps(plan: _Plan, kept_names: frozenset[str]) -> None:
+    """A key kept earlier stays kept: it no longer refuses the migration."""
+    for key in sorted(plan.unresolved):
+        if key in kept_names:
+            del plan.unresolved[key]
+            plan.kept.add(key)
 
 
 async def migrate_connector_secrets(
@@ -267,12 +392,17 @@ async def migrate_connector_secrets(
     app_store: OAuthAppStore | None = None,
     dry_run: bool = False,
     drop_undeclared: bool = False,
+    decisions: KeyDecisions | None = None,
 ) -> MigrationReport:
     """Move ``env_path`` into sealed custody and app slots, verify, delete, audit.
 
+    ``decisions`` carries the operator's per-key answers (map, keep, drop). A kept
+    key stays in the file, which is then rewritten without everything else.
+
     Raises:
         ExtensionError: ``MIGRATION_UNDECLARED_KEYS`` when a non-empty value would
-            be lost and ``drop_undeclared`` is not set (nothing written, file kept);
+            be lost and no answer covers it (nothing written, file kept);
+            ``MIGRATION_BAD_DECISION`` when an answer does not fit the file;
             ``MIGRATION_VERIFY_FAILED`` when a value read back differs (file kept);
             or the store's own refusal (no cipher, a symlinked or loose file).
     """
@@ -289,6 +419,8 @@ async def migrate_connector_secrets(
         reader=secret_store,
         apps=app_store,
     )
+    await _apply_decisions(plan, decisions or KeyDecisions(), entries, secret_store)
+    _apply_persisted_keeps(plan, _read_kept(env_path))
     if dry_run:
         return _report(plan, env_path, dry_run=True)
     if secret_store is None or verify_store is None or (plan.apps and app_store is None):
@@ -299,18 +431,36 @@ async def migrate_connector_secrets(
         )
     if plan.unresolved and not drop_undeclared:
         raise _refuse(plan, env_path, actor_did, sink)
+    plan.dropped.update(plan.unresolved)
+    plan.unresolved.clear()
     for key, ref in plan.moves.items():
         await secret_store.put(ref, entries[key])
     await _verify(plan.moves, entries, verify_store())
     if app_store is not None:
         await _move_apps(plan, app_store, actor_did, sink)
     _audit_drops(plan, actor_did, sink)
-    _delete(env_path)
-    report = replace(
-        _report(plan, env_path, deleted=True),
-        unresolved=(),
-        dropped=tuple(sorted(plan.unresolved)),
-    )
+    _audit_kept(plan, actor_did, sink)
+    await _settle_file(env_path, entries, plan)
+    report = replace(_report(plan, env_path), deleted=not plan.kept)
+    if plan.moves or plan.apps or plan.dropped or plan.newly_kept:
+        _audit_migrated(plan, report, actor_did, sink)
+    return report
+
+
+async def _settle_file(env_path: Path, entries: Mapping[str, str], plan: _Plan) -> None:
+    """Delete the file, or leave only the keys the operator kept (verified first)."""
+    if not plan.kept:
+        _delete(env_path)
+        _kept_path(env_path).unlink(missing_ok=True)
+        return
+    _write_kept(env_path, plan.kept)
+    file = EnvFile(env_path)
+    for key in entries:
+        if key not in plan.kept:
+            await file.delete(key)
+
+
+def _audit_migrated(plan: _Plan, report: MigrationReport, actor_did: str, sink: AuditSink) -> None:
     emit(
         AuditEvent(
             actor_did=actor_did,
@@ -322,12 +472,12 @@ async def migrate_connector_secrets(
                 "already": len(plan.already),
                 "apps": list(report.apps),
                 "dropped": list(report.dropped),
+                "kept": list(report.kept),
                 "connections": list(report.connections),
             },
         ),
         sink,
     )
-    return report
 
 
 def _refuse(plan: _Plan, env_path: Path, actor_did: str, sink: AuditSink) -> ExtensionError:
@@ -391,14 +541,29 @@ async def _move_apps(
 
 def _audit_drops(plan: _Plan, actor_did: str, sink: AuditSink) -> None:
     """One audit event per value dropped on purpose: its key and why, never the value."""
-    for key in sorted(plan.unresolved):
+    for key in sorted(plan.dropped):
         emit(
             AuditEvent(
                 actor_did=actor_did,
                 action="connection.credential.dropped",
                 target="secret:connections.env",
                 outcome="allow",
-                extra={"key": key, "reason": plan.unresolved[key]},
+                extra={"key": key, "reason": plan.dropped[key]},
+            ),
+            sink,
+        )
+
+
+def _audit_kept(plan: _Plan, actor_did: str, sink: AuditSink) -> None:
+    """One audit event per key the operator chose to keep: its name, never the value."""
+    for key in sorted(plan.newly_kept):
+        emit(
+            AuditEvent(
+                actor_did=actor_did,
+                action="connection.credential.kept",
+                target="secret:connections.env",
+                outcome="allow",
+                extra={"key": key},
             ),
             sink,
         )
@@ -502,9 +667,11 @@ async def reseal_connector_secrets(
 
 __all__ = [
     "LEGACY_ENV_FILENAME",
+    "MIGRATION_BAD_DECISION",
     "MIGRATION_UNDECLARED_KEYS",
     "MIGRATOR_DID",
     "DeclaredFields",
+    "KeyDecisions",
     "LegacyApp",
     "LegacyApps",
     "MigrationReport",

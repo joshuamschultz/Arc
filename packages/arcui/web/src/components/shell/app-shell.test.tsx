@@ -7,6 +7,7 @@ import { AppShell } from '@/components/shell/app-shell'
 
 vi.mock('@/components/approval-notification-listener', () => ({ ApprovalNotificationListener: () => null }))
 vi.mock('@/components/command-palette', () => ({ CommandPalette: () => null }))
+vi.mock('@/components/custody-repair-panel', () => ({ CustodyBanner: () => null }))
 
 afterEach(cleanup)
 

@@ -102,6 +102,9 @@ import type {
   Trace,
   TracesResponse,
   WorkflowDetail,
+  WorkflowMigration,
+  CustodyDecision,
+  CustodyStatus,
   WorkflowRunDetail,
   WorkflowRunsResponse,
   WorkflowsListResponse,
@@ -1460,6 +1463,17 @@ export const useRequestSignature = (workflowId: string) => {
   })
 }
 
+export const useMigrateWorkflow = (workflowId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<WorkflowMigration, Error, { apply: boolean; resign: boolean }>({
+    mutationFn: (body) =>
+      apiPost(`/api/workflows/${encodeURIComponent(workflowId)}/migrate`, body),
+    onSuccess: (_result, body) => {
+      if (body.apply) queryClient.invalidateQueries({ queryKey: ['workflows'] })
+    },
+  })
+}
+
 // The prompt a node actually runs. Fetched only when a panel opens it — a
 // bundle's bodies are not part of the definition payload.
 export const useWorkflowFile = (workflowId: string, path: string | null) =>
@@ -2053,5 +2067,25 @@ export const useSendAgentMail = (agentId: string) => {
         { 'Idempotency-Key': idempotencyKey },
       ),
     onSuccess: () => client.invalidateQueries({ queryKey: ['agent', agentId, 'inbox'] }),
+  })
+}
+
+/** The credential-custody review state. Operator only; a viewer's 403 hides the banner. */
+export const useCustody = () =>
+  useQuery<CustodyStatus>({
+    queryKey: ['custody'],
+    queryFn: ({ signal }) => apiGet('/api/custody', signal),
+    retry: false,
+    refetchInterval: 60_000,
+  })
+
+export const useResolveCustody = () => {
+  const queryClient = useQueryClient()
+  return useMutation<CustodyStatus, Error, CustodyDecision[]>({
+    mutationFn: (decisions) => apiPost('/api/custody/resolve', { decisions }),
+    onSuccess: (status) => {
+      queryClient.setQueryData(['custody'], status)
+      queryClient.invalidateQueries({ queryKey: ['connections'] })
+    },
   })
 }
