@@ -195,9 +195,9 @@ class MutableConnectionBackend(Protocol):
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
 
-    async def mutable_query(
+    async def mutable_query_keyed(
         self, collection: str, *, where: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[tuple[str, dict[str, Any]]]: ...
 
     async def mutable_delete(
         self, collection: str, key: str, *, actor_did: str, sink: Any | None = None
@@ -262,14 +262,18 @@ class ConnectionStateStore:
         where: dict[str, Any] = {}
         if status is not None:
             where["status"] = status
-        rows = await self._backend.mutable_query(self._COLLECTION, where=where)
+        rows = await self._backend.mutable_query_keyed(self._COLLECTION, where=where)
         records: list[ConnectionRecord] = []
-        for row in rows:
-            key = str(row.get("connection", "?"))
+        for key, row in rows:
             try:
                 records.append(self._load(key, row))
             except ExtensionError as exc:
-                _logger.error("skipping unreadable connection state row: %s", exc.message)
+                _logger.error(
+                    "skipping unreadable connection state row: collection=%s key=%s fields=%s",
+                    self._COLLECTION,
+                    key,
+                    exc.details["fields"],
+                )
         return records
 
     async def statuses(self) -> dict[str, ConnectionStatus]:
@@ -457,7 +461,12 @@ class ConnectionStateStore:
             raise ExtensionError(
                 code="CONNECTION_STATE_UNREADABLE",
                 message=f"connection state row is unreadable: {key}",
-                details={"connection": key, "errors": exc.error_count()},
+                details={
+                    "connection": key,
+                    "errors": exc.error_count(),
+                    # Names only: ``exc.errors()`` input values could hold secrets.
+                    "fields": sorted({".".join(str(p) for p in e["loc"]) for e in exc.errors()}),
+                },
             ) from exc
 
 

@@ -284,3 +284,17 @@ async def test_approval_mutation_and_outbox_share_one_commit(
     assert len(outbox) == 1
     assert outbox[0]["record_id"] == "approval-event-1"
     assert outbox[0]["extra"] == event
+
+
+async def test_mutable_query_keyed_returns_the_storage_key_with_each_row(
+    arcstore_backend: ArcStoreBackend,
+) -> None:
+    await arcstore_backend.mutable_write("kc", "a", {"n": 1}, actor_did=_ACTOR)
+    await arcstore_backend.mutable_write("kc", "b", {"n": 2}, actor_did=_ACTOR)
+    await arcstore_backend.mutable_write("other", "c", {"n": 1}, actor_did=_ACTOR)
+
+    everything = await arcstore_backend.mutable_query_keyed("kc")
+    filtered = await arcstore_backend.mutable_query_keyed("kc", where={"n": 2})
+
+    assert sorted(key for key, _ in everything) == ["a", "b"]
+    assert [(key, row["n"]) for key, row in filtered] == [("b", 2)]

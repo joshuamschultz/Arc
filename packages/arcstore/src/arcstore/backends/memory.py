@@ -431,6 +431,20 @@ class FakeBackend(SourceSyncBackend):
             ]
         return rows if where is None else [row for row in rows if _matches(row, where)]
 
+    async def mutable_query_keyed(
+        self,
+        collection: str,
+        *,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        async with self._lock:
+            keyed = [
+                (key, _decode(item))
+                for (name, key), item in self._mutable.items()
+                if name == collection
+            ]
+        return keyed if where is None else [(k, row) for k, row in keyed if _matches(row, where)]
+
     async def mutable_task_page(
         self,
         *,

@@ -63,6 +63,15 @@ def table_for_kind(kind: str) -> str:
 class TaskBoardBackend(Protocol):
     """Optional indexed task-board capability; absence is reported as unavailable."""
 
+    async def mutable_query_keyed(
+        self,
+        collection: str,
+        *,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Like :meth:`mutable_query`, but each row comes with its storage key."""
+        ...
+
     async def mutable_task_page(
         self,
         *,
