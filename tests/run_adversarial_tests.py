@@ -341,6 +341,21 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arccli/tests/test_pulse_command.py",
         "tests/journeys/test_journey_pulse_approval.py",
     ),
+    "viewer or agent adds, edits or removes a pulse check": (
+        # pulse.md is operator-only: a viewer or unauthenticated caller is refused
+        # (and audited) before anything is written, an agent can only file a
+        # proposal (never write pulse.md, whose files its tools cannot touch),
+        # field-marker and heading injection in the action text is refused or
+        # flattened, and a write never approves: the check runs only after the
+        # operator approves the exact text.
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_editing.py",
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_proposals.py",
+        "packages/arcagent/tests/unit/modules/pulse/test_pulse_propose_tool.py",
+        "packages/arcagent/tests/unit/tools/test_protected_paths.py",
+        "packages/arcui/tests/integration/test_pulse_edit_routes.py",
+        "packages/arccli/tests/test_pulse_command.py",
+        "tests/journeys/test_journey_pulse_approval.py",
+    ),
     "scheduled control revision and occurrence replay refusal": (
         "packages/arcagent/tests/unit/core/test_control_contract.py",
         "packages/arcagent/tests/unit/modules/scheduler/test_signed_dispatch.py",

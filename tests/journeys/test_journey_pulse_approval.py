@@ -86,3 +86,51 @@ async def test_pulse_check_fires_only_after_operator_approval(
         assert arcagent.pulse_status(workspace)[0].status == "changes_pending"
     finally:
         await agent.shutdown()
+
+
+async def test_pulse_check_added_by_the_operator_writer_needs_approval_then_fires(
+    deployment: Deployment, enable_modules: Any, scripted_llm: ScriptedLLM
+) -> None:
+    """The add/edit path (what the arcui route and ``arc pulse add`` call) never self-approves."""
+    import arcagent
+    from arcagent.modules.pulse import _runtime
+    from arccli.commands.agent._common import load_cli_agent
+
+    enable_modules("pulse")
+    install_modules(deployment)
+    agent, _config, _path = load_cli_agent(deployment.agent_dir)
+    await agent.startup()
+    try:
+        state = _runtime.state()
+        engine, authority = state.engine, state.control_artifact_authority
+        assert engine is not None and authority is not None
+        workspace = state.workspace
+        prompt = "Watch the build queue"
+
+        arcagent.add_pulse_check(workspace, name="queue", interval_minutes=5, action=prompt)
+        await engine._pulse()
+        assert _prompt_runs(scripted_llm, prompt) == 0, "a freshly added check ran unapproved"
+        assert [s.status for s in arcagent.pulse_status(workspace)] == ["unapproved"]
+
+        async def operator_proof(purpose: str, artifact_id: str, definition: bytes) -> bytes:
+            return authority.operator_proof(purpose, artifact_id, definition)  # type: ignore[attr-defined]
+
+        await arcagent.approve_pulse_check(
+            workspace,
+            "queue",
+            reviewed_digest=arcagent.pulse_status(workspace)[0].definition_digest,
+            tenant_id=state.control_tenant_id or "",
+            agent_did=state.agent_did,
+            authority=authority,
+            actor_proof_source=operator_proof,
+        )
+        await engine._pulse()
+        assert _prompt_runs(scripted_llm, prompt) == 1
+
+        arcagent.edit_pulse_check(workspace, "queue", interval_minutes=5, action="Watch payroll")
+        (workspace / "pulse-state.json").unlink()
+        await engine._pulse()
+        assert _prompt_runs(scripted_llm, "Watch payroll") == 0, "an edited check ran unapproved"
+        assert arcagent.pulse_status(workspace)[0].status == "changes_pending"
+    finally:
+        await agent.shutdown()
