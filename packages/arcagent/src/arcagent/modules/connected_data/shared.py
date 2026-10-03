@@ -17,6 +17,11 @@ through its own subscription.
 * **What is shared.** Only the DOCUMENT home: extracted text, its chunks and its
   vectors. Memory, profile, blob and datastore homes are an agent's own state
   (ADR-029); an agent whose mapping selects any of them keeps its own sync.
+* **Signed index.** The store's ``index.md`` / ``log.md`` seal is signed by the
+  connection's knowledge principal, never an agent: its key is a capability
+  arctrust custody resolves (:func:`arctrust.knowledge_signer_for`), pinned for
+  the store's root while this agent has it open and released at :meth:`close`.
+  Without a custody key nothing is signed and readers trust nothing (fail closed).
 * **Vectors.** A store is embedded once, so every reader must embed queries the
   same way. The first writer claims the store's embedding profile; an agent
   configured differently keeps its own store rather than read mismatched vectors.
@@ -24,11 +29,14 @@ through its own subscription.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from arctrust import knowledge_signer_for
 from arctrust.paths import connected_knowledge_dir
 
 from arcagent.connected_data import KnowledgeHome
@@ -112,6 +120,8 @@ class SharedKnowledge:
         self._profile = profile
         self._audit_sink = audit_sink
         self._root = root
+        #: The release of each store root's pinned seal key, per root this agent opened.
+        self._held: dict[Path, Callable[[], None]] = {}
 
     def root(self, connection_id: str) -> Path:
         """Where one connection's shared store lives (resolved per call)."""
@@ -144,6 +154,7 @@ class SharedKnowledge:
 
     async def _port(self, connection_id: str, authority: Any) -> ArcMemoryIngestAdapter:
         principal = knowledge_principal(connection_id)
+        await self._hold_seal_key(connection_id, principal)
         return ArcMemoryIngestAdapter(
             self.root(connection_id),
             principal,
@@ -153,6 +164,31 @@ class SharedKnowledge:
             audit_sink=self._audit_sink,
             authority=authority,
         )
+
+    async def _hold_seal_key(self, connection_id: str, principal: str) -> None:
+        """Pin the store principal's key for the store root (once per root per agent).
+
+        Held for as long as this agent has the store open, not per port: the
+        store's folder listings are re-indexed by a debounced drain that runs
+        after a sync's port has closed, and it must still be able to sign.
+        """
+        root = self.root(connection_id).resolve()
+        if root in self._held:
+            return
+        try:
+            seal = import_module("arcmemory.okf_seal")
+        except ImportError:  # no memory extra: this agent writes and reads no index
+            return
+        signer = await asyncio.to_thread(knowledge_signer_for, principal)
+        if signer is None or root in self._held:
+            return
+        self._held[root] = seal.hold_memory_identity(root, signer)
+
+    def close(self) -> None:
+        """Release every store key this agent pinned (module teardown)."""
+        held, self._held = self._held, {}
+        for release in held.values():
+            release()
 
     def _embedder_once(self) -> Any | None:
         if not self._embedder_built:

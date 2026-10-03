@@ -165,6 +165,7 @@ from arctrust.identity import (
     validate_did,
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
+from arctrust.knowledge_signer import KnowledgeSigner, knowledge_signer_for
 from arctrust.monotonic import (
     AnchorHead,
     AnchorUnavailableError,
@@ -495,6 +496,7 @@ __all__ = [
     "HostedRekeyError",
     "InProcessSigner",
     "KeyPair",
+    "KnowledgeSigner",
     "LocalControlArtifactAuthority",
     "LocalRunTriggerIssuer",
     "MachineRekeyError",
@@ -593,6 +595,7 @@ __all__ = [
     "iban_mod97_valid",
     "identity_dir",
     "invalidate_cache",
+    "knowledge_signer_for",
     "load_authority_config",
     "load_issuer_pubkey",
     "load_operator_pubkey",
