@@ -125,6 +125,12 @@ class _CountingBackend:
         self.calls.append("query")
         return await self._inner.mutable_query(collection, where=where)
 
+    async def mutable_query_keyed(
+        self, collection: str, *, where: dict[str, Any] | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        self.calls.append("query")
+        return await self._inner.mutable_query_keyed(collection, where=where)
+
 
 class _BarrierBackend:
     """Real backend whose merges all wait on one barrier — forces interleaving."""
@@ -191,6 +197,11 @@ class _BarrierBackend:
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         return await self._inner.mutable_query(collection, where=where)
+
+    async def mutable_query_keyed(
+        self, collection: str, *, where: dict[str, Any] | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        return await self._inner.mutable_query_keyed(collection, where=where)
 
 
 @pytest.fixture
@@ -579,6 +590,33 @@ async def test_list_survives_one_unreadable_row_and_logs_it(
     assert sorted(r.connection for r in records) == ["gmail_primary", "jira_primary"]
     assert "poisoned" not in {r.connection for r in records}
     assert any("poisoned" in message for message in caplog.messages)
+
+
+async def test_unreadable_row_log_names_collection_key_and_fields_never_values(
+    store: ConnectionStateStore,
+    backend: FakeBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from arcagent.extension.state import CONNECTION_COLLECTION
+
+    # The drift shape seen in production: the stored value carries no
+    # ``connection`` field and an unknown one, so the key lives only in the row key.
+    await backend.mutable_write(
+        CONNECTION_COLLECTION,
+        "drifted_conn",
+        {"status": "connected", "mystery_field": "SECRET-VALUE-123"},
+        actor_did=_ACTOR,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        assert await store.list() == []
+
+    text = " ".join(caplog.messages)
+    assert "drifted_conn" in text
+    assert CONNECTION_COLLECTION in text
+    assert "mystery_field" in text
+    assert "SECRET-VALUE-123" not in text
+    assert "?" not in text
 
 
 # --- opener -----------------------------------------------------------------

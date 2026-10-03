@@ -492,6 +492,20 @@ class PostgresBackend(SourceSyncBackend):
             rows = await connection.fetch(statement, *params)
         return [_mutable_row(row) for row in rows]
 
+    async def mutable_query_keyed(
+        self,
+        collection: str,
+        *,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        params: list[Any] = [collection]
+        statement = "SELECT key, value, updated_at FROM mutable_records WHERE collection=$1"
+        if where:
+            statement += " AND " + " AND ".join(_where_clauses(where, params))
+        async with self._require_pool().acquire() as connection:
+            rows = await connection.fetch(statement, *params)
+        return [(str(row["key"]), _mutable_row(row)) for row in rows]
+
     async def mutable_task_page(
         self,
         *,
