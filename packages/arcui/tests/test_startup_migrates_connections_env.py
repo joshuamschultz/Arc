@@ -84,7 +84,7 @@ async def test_startup_refuses_to_drop_an_undeclared_value(tmp_path: Path) -> No
         await migrate_at_startup(connections)
 
     message = str(caught.value)
-    assert "JIRA_API_TOKEN" in message and "--drop-undeclared" in message
+    assert "JIRA_API_TOKEN" in message and "Custody panel" in message
     assert "orphan-2" not in message
     assert env.read_text() == body
     assert await backend.mutable_query(CREDENTIAL_COLLECTION) == []
@@ -97,7 +97,7 @@ async def test_startup_fails_closed_when_migration_cannot_complete(tmp_path: Pat
     env.parent.mkdir(parents=True, exist_ok=True)
     env.symlink_to(target)
 
-    with pytest.raises(CredentialMigrationRefusedError, match="migrate-secrets"):
+    with pytest.raises(CredentialMigrationRefusedError, match="Custody panel"):
         await migrate_at_startup(connections)
 
     assert env.is_symlink() and target.read_text().startswith("ARC_SECRET")

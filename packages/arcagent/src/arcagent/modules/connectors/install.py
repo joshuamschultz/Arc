@@ -395,7 +395,7 @@ async def resolve_secrets(
             extension=manifest.extension.name,
             connection=connection,
         )
-    # An OAuth connector's refresh token is absent until `arc connector authorize`
+    # An OAuth connector's refresh token is absent until its Connect step
     # obtains it. That is not a missing credential to refuse the build over — the
     # attachment builds without it and probes as unauthenticated until it is stored,
     # which is the honest state of a connection whose sign-in is not finished. Once
@@ -423,11 +423,14 @@ async def resolve_secrets(
     if missing:
         raise _refuse(
             "secrets",
-            f"{connection} has no stored credential for {', '.join(missing)} — "
-            f"run 'arc connector auth {connection}'",
+            f"{connection} has no stored credential for {', '.join(missing)}; "
+            f"reconnect it from the Connections page",
             extension=manifest.extension.name,
             connection=connection,
             missing=missing,
+            # Typed, so a card renders the Reconnect button instead of parsing prose.
+            reason_code="credential_missing",
+            action="reconnect",
         )
     return resolved
 

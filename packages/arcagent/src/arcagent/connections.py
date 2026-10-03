@@ -87,6 +87,7 @@ from arcagent.extension.credential_broker import AccessTokenHandle, credential_p
 from arcagent.extension.credentials import holds_grant
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
+    KeyDecisions,
     LegacyApp,
     MigrationReport,
     ResealReport,
@@ -695,6 +696,10 @@ class HostSetupReport:
     installed: bool
     detail: str
     manual_steps: str = ""
+    #: A code a surface renders as a button, never prose naming a command. ``""`` means
+    #: nothing is asked of the person; ``restart_arc`` means the program was placed but
+    #: only a restarted Arc can find it.
+    action: str = ""
 
 
 #: Whether this connection's account is actually connected. More than two states,
@@ -1164,9 +1169,47 @@ class Connections:
         the next scheduled probe picks the connection up.
         """
         try:
-            await self.check_health(instance, checked_by=causal.actor_did(), source="operator")
+            record = await self.check_health(
+                instance, checked_by=causal.actor_did(), source="operator"
+            )
+            if record.status == "healthy":
+                # Only a working connection can show what it serves. A tool that appeared or
+                # changed while the credential was dead is asked about now, in the same
+                # visit, rather than at the next agent attach.
+                await self._review_contract(instance)
         except Exception:  # reason: bookkeeping after a verb that already succeeded
             _logger.warning("health check after operator verb failed: %s", instance, exc_info=True)
+
+    async def _review_contract(self, instance: str) -> None:
+        """Raise the card's approve step when the connection serves a tool nobody approved.
+
+        The same verdict the agent's attach takes (:class:`ToolContractLedger`), taken
+        here too so the card does not depend on an agent restarting to find out.
+        """
+        from arcagent.extension.contract_ledger import (
+            LEDGER_DID,
+            ContractVerdict,
+            ToolContractLedger,
+        )
+
+        with self._audit.open() as sink:
+            attachment = await self._attachment(self._plan_for(instance, sink), sink)
+            state = await self._connection_state()
+            verdicts = await ToolContractLedger(state, connection=instance, sink=sink).review(
+                await attachment.describe_tools()
+            )
+            unapproved = sum(1 for v in verdicts.values() if v is not ContractVerdict.UNCHANGED)
+            if unapproved:
+                await ConnectionHealthAuthority(state, sink=sink).record(
+                    instance,
+                    HealthSignal(
+                        ok=False,
+                        source="contract",
+                        checked_by=LEDGER_DID,
+                        reason_code="contract_changed",
+                        detail=str(unapproved),
+                    ),
+                )
 
     @staticmethod
     async def _ensure_record(
@@ -1824,9 +1867,10 @@ class Connections:
         if remaining:
             return HostSetupReport(
                 False,
-                f"Installed {path}, but {remaining[0].name} is still not on this host's "
-                f"PATH — add {target} to PATH and try again.",
+                f"Installed {remaining[0].name} in {target}, but Arc cannot see it yet. "
+                "Restart Arc, then check again.",
                 steps,
+                action="restart_arc",
             )
         return HostSetupReport(
             True, f"Installed {path}, verified against its published digest.", steps
@@ -2185,7 +2229,8 @@ class Connections:
             raise _refuse(
                 "BUNDLE_UNSIGNED",
                 f"{len(unverified)} file(s) in {name!r} are unsigned or fail verification; "
-                "sign it with `arc connector sign` first",
+                "it has to be signed with the operator key before it can be installed",
+                action="sign_bundle",
             )
         root = installed_extensions_dir()
         target = root / name
@@ -2437,7 +2482,11 @@ class Connections:
         return outcome
 
     async def migrate_secrets(
-        self, *, dry_run: bool = False, drop_undeclared: bool = False
+        self,
+        *,
+        dry_run: bool = False,
+        drop_undeclared: bool = False,
+        decisions: KeyDecisions | None = None,
     ) -> MigrationReport:
         """Move the legacy plaintext credential file into sealed custody, once (P18-2).
 
@@ -2500,8 +2549,9 @@ class Connections:
                 app_store=custody.apps if custody is not None else None,
                 dry_run=dry_run,
                 drop_undeclared=drop_undeclared,
+                decisions=decisions,
             )
-        for instance in report.connections if report.deleted else ():
+        for instance in () if report.dry_run else report.connections:
             await self._push_credential_change(instance)
         return report
 
@@ -2743,10 +2793,11 @@ class Connections:
             f"granting {instance!r} to these agents raises it to {required.value}, "
             f"and this deployment cannot hold its credential at that tier "
             f"({VAULT_REQUIRED}: connector credentials need the Vault Transit row cipher). "
-            f'Set [security] custody = "vault_transit" with a serving transit, run '
-            f"`arc connector migrate-secrets --reseal`, then connect {instance!r} again.",
+            f"The operator has to move this deployment's credentials into the vault, then "
+            f"connect {instance!r} again.",
             connection=instance,
             required_tier=required.value,
+            action="reseal_credentials",
         )
 
     def _record(self, sink: AuditSink, action: str, instance: str, agents: Sequence[str]) -> None:
@@ -3039,6 +3090,7 @@ __all__ = [
     "HostSetupReport",
     "HostVerdict",
     "InstallReport",
+    "KeyDecisions",
     "McpServerAdded",
     "MigrationReport",
     "OAuthBegin",

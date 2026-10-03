@@ -54,6 +54,7 @@ has never distinguished individual humans behind the one operator token.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -63,6 +64,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit, emit_read_audit
+from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import ErrorResponse
 
 # arcui holds no agent identity; operator-originated writes are attributed to
@@ -215,6 +217,17 @@ class WorkflowControlPlane(Protocol):
         self, workflow_id: str, *, actor: OperatorActor
     ) -> ControlPlaneResult:
         """Queue this exact draft for the operator approval that signs it."""
+        ...
+
+    async def migrate_workflow(
+        self,
+        workflow_id: str,
+        *,
+        apply: bool,
+        signer: Any | None,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Preview (``apply=False``) or apply the one-time bundle migration."""
         ...
 
     async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
@@ -688,6 +701,55 @@ async def request_signature(request: Request) -> JSONResponse:
     return _relay(request, result, target=target, operation="workflow.sign.request", ok_status=201)
 
 
+async def migrate_workflow(request: Request) -> JSONResponse:
+    """POST /api/workflows/{id}/migrate — repair an unreadable bundle (operator only).
+
+    Body ``{"apply": bool, "resign": bool}``; the default is a preview that
+    writes nothing. ``resign`` signs through the operator signing handle, the
+    same path ``arc workflow migrate --resign`` takes, so only the pinned
+    operator key can re-sign. The body never carries a key.
+    """
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}"
+    denial = _require_operator(request, target=target, operation="workflow.migrate")
+    if denial is not None:
+        return denial
+
+    plane = _control_plane(request)
+    if plane is None:
+        return _error("workflow_control_plane_unavailable", 503)
+    body = await _json_body(request)
+    if body is None:
+        return _error("invalid_body", 400)
+    apply = body.get("apply") is True
+    signer = None
+    if apply and body.get("resign") is True:
+        try:
+            signer = await asyncio.to_thread(operator_signer_for_request, request)
+        except Exception:  # reason: an unresolvable operator key is a refusal, never a 500
+            emit_mutation_audit(
+                request,
+                target=target,
+                operation="workflow.migrate",
+                outcome="denied",
+                detail="operator_signer_unavailable",
+            )
+            return _error("operator_signer_unavailable", 503)
+    result = await plane.migrate_workflow(
+        workflow_id, apply=apply, signer=signer, actor=_actor(request)
+    )
+    operation = "workflow.migrate" if apply else "workflow.migrate.preview"
+    detail = "" if result.value is None else str(result.value.get("action", ""))
+    return _relay(
+        request,
+        result,
+        target=target,
+        operation=operation,
+        ok_status=200,
+        applied_detail=f"resign={signer is not None} action={detail}",
+    )
+
+
 async def test_run_workflow(request: Request) -> JSONResponse:
     """POST /api/workflows/{id}/test-run — try a draft safely (operator only).
 
@@ -823,6 +885,7 @@ routes = [
     Route("/api/workflows/{id}", get_workflow, methods=["GET"]),
     Route("/api/workflows/{id}", patch_workflow, methods=["PATCH"]),
     Route("/api/workflows/{id}/request-signature", request_signature, methods=["POST"]),
+    Route("/api/workflows/{id}/migrate", migrate_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/file", get_workflow_file, methods=["GET"]),
     Route("/api/workflows/{id}/file", put_workflow_file, methods=["PUT"]),
     Route("/api/workflows/{id}/archive", archive_workflow, methods=["POST"]),

@@ -111,7 +111,7 @@ REASONS: Final[Mapping[ReasonCode, ReasonSpec]] = {
         "terminal", "needs_you", "reconnect", "Token expires {detail}; paste a new one"
     ),
     "contract_changed": ReasonSpec(
-        "sticky", "needs_you", "approve", "{detail} tool(s) changed; approve them"
+        "sticky", "needs_you", "approve", "{detail} tool(s) are new or changed; approve them"
     ),
     "host_missing": ReasonSpec(
         "terminal", "needs_you", "install_host", "{detail} is not installed on this computer"
@@ -166,15 +166,19 @@ def effective_probe(manifest: ExtensionManifest) -> HealthProbe | None:
 def custody_of(manifest: ExtensionManifest) -> CredentialCustody:
     """Who holds this bundle's credential, read from the manifest and nothing else.
 
-    ``arc``: Arc stores it (an OAuth flow, or declared sensitive secrets on a
-    non-CLI bundle). ``host``: the vendor binary's own store holds it. ``none``: no
-    credential at all.
+    ``arc``: Arc stores it (an OAuth flow, or any declared sensitive secret, even
+    on a CLI bundle: GitHub's ``gh`` is spawned with a token Arc vaulted).
+    ``host``: Arc holds nothing and the vendor binary's own store does. ``none``: no
+    credential at all. Sensitive secrets are checked BEFORE the host binary, because
+    a bundle that declares both has handed Arc the credential.
     """
     if manifest.oauth is not None:
         return "arc"
+    if any(secret.sensitive for secret in manifest.secrets):
+        return "arc"
     if manifest.extension.attachment == "cli" and manifest.host_requires:
         return "host"
-    return "arc" if any(secret.sensitive for secret in manifest.secrets) else "none"
+    return "none"
 
 
 #: Producer codes that name a reason directly (the column "input" of design 1.2).
@@ -277,7 +281,7 @@ def action_label(action: ConnectionAction, *, provider: str = "", detail: str = 
     if action == "reconnect":
         return f"Reconnect {provider}".strip()
     if action == "approve":
-        return "Approve changed tools"
+        return "Approve new or changed tools"
     if action == "install_host":
         return f"Install {detail}".strip() if detail else "Show install steps"
     return ""

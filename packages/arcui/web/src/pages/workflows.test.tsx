@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -108,7 +108,7 @@ it('shows an unreadable workflow with a red badge and the fix, not an empty list
                 status: 'unreadable',
                 health: 'unreadable',
                 health_detail: 'cannot be read (join: not allowed)',
-                health_fix: 'arc workflow migrate --dry-run, then arc workflow migrate --resign',
+                health_fix_action: 'migrate',
               },
               {
                 id: 'seo',
@@ -117,7 +117,7 @@ it('shows an unreadable workflow with a red badge and the fix, not an empty list
                 status: 'draft',
                 health: 'needs_resign',
                 health_detail: 'its signature no longer matches',
-                health_fix: 'arc workflow sign seo',
+                health_fix_action: 'migrate',
               },
             ],
           }),
@@ -134,8 +134,59 @@ it('shows an unreadable workflow with a red badge and the fix, not an empty list
   )
   expect(await screen.findByText('Unreadable')).toBeTruthy()
   expect(screen.getByText(/join: not allowed/)).toBeTruthy()
-  expect(screen.getByText(/arc workflow migrate --dry-run/)).toBeTruthy()
+  expect(screen.getAllByRole('button', { name: 'Preview fix' })).toHaveLength(2)
   expect(screen.getByText('Needs re-sign')).toBeTruthy()
-  expect(screen.getByText('arc workflow sign seo')).toBeTruthy()
+  expect(screen.queryByText(/arc workflow/)).toBeNull()
   expect(screen.queryByText('No workflows yet')).toBeNull()
+})
+
+it('previews, then migrates and re-signs an unreadable workflow with buttons only', async () => {
+  const calls: { url: string; body: unknown }[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body))
+        calls.push({ url, body })
+        return new Response(
+          JSON.stringify({
+            workflow_id: 'morning-briefing',
+            action: body.apply ? 'rewritten' : 'would_rewrite',
+            files: ['workflow.toml'],
+            nodes: ['a'],
+            reason: '',
+          }),
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          workflows: [
+            {
+              id: 'morning-briefing',
+              name: 'morning-briefing',
+              version: 0,
+              status: 'unreadable',
+              health: 'unreadable',
+              health_detail: 'cannot be read (join: not allowed)',
+              health_fix_action: 'migrate',
+            },
+          ],
+        }),
+      )
+    }),
+  )
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <WorkflowsPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview fix' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Migrate and re-sign' }))
+  await waitFor(() => expect(calls).toHaveLength(2))
+  expect(calls[0].body).toEqual({ apply: false, resign: false })
+  expect(calls[1].body).toEqual({ apply: true, resign: true })
+  expect(calls[1].url).toContain('/api/workflows/morning-briefing/migrate')
 })

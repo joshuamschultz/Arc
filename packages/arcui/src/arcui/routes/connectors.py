@@ -208,6 +208,30 @@ def _refused(exc: ExtensionError) -> JSONResponse:
     return _error(exc.message, 404 if _not_found(exc) else 400)
 
 
+async def _card(
+    request: Request,
+    connections: Connections,
+    defined: dict[str, Connection],
+    entries: dict[str, CatalogEntry],
+) -> CardContext:
+    """The stored facts a card needs, plus which one-click sign-in apps are not set up."""
+    providers = {
+        entry.oauth_provider
+        for connection in defined.values()
+        if (entry := entries.get(connection.extension)) is not None
+        and entry.oauth
+        and entry.oauth_provider
+    }
+    unset: set[str] = set()
+    for provider in sorted(providers):
+        try:
+            if not (await connections.oauth_app_status(provider)).configured:
+                unset.add(provider)
+        except ExtensionError:
+            continue  # an unreadable slot is "unknown", never a claim that it is empty
+    return await load_card_context(request, sorted(defined), missing_apps=frozenset(unset))
+
+
 def _row(
     instance: str,
     connection: Connection,
@@ -224,7 +248,12 @@ def _row(
     """
     usable = entry if entry is not None and not entry.error else None
     label = usable.display_name or usable.name if usable is not None else connection.extension
-    health = card.fields(instance, provider=label) if card is not None else {}
+    oauth_provider = usable.oauth_provider if usable is not None else ""
+    health = (
+        card.fields(instance, provider=label, oauth_provider=oauth_provider)
+        if card is not None
+        else {}
+    )
     return ConnectorInstance(
         instance=instance,
         extension=connection.extension,
@@ -234,7 +263,7 @@ def _row(
         approval=connection.approval,
         agents=list(connection.agents),
         connect_kind=connect_kind(usable),
-        oauth_provider=usable.oauth_provider if usable is not None else "",
+        oauth_provider=oauth_provider,
         **health,
     )
 
@@ -446,6 +475,7 @@ def _catalog_entry(
                 choices=list(declared.choices),
                 default=declared.default,
                 warning=declared.blank_warning,
+                managed=_is_connect_managed(entry, declared.name),
             )
             for declared in entry.secrets
         ],
@@ -470,7 +500,15 @@ def _catalog_entry(
             for tool in entry.tools
         ],
         root=str(entry.path.parent),
+        auto_installable=entry.auto_installable,
+        oauth_provider=entry.oauth_provider,
     )
+
+
+def _is_connect_managed(entry: CatalogEntry, secret: str) -> bool:
+    """True when the OAuth Connect step, not the person, supplies this field."""
+    flow = entry.oauth_flow
+    return flow is not None and flow.refresh_token_secret == secret
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +532,7 @@ async def get_connections(request: Request) -> JSONResponse:
 
     # One read of the health records and one of each connection's sync rows. No
     # credential is read and nothing is spawned: a page view is a database read.
-    card = await load_card_context(request, sorted(defined))
+    card = await _card(request, connections, defined, entries)
     return JSONResponse(
         ConnectionsResponse(
             connections=[
@@ -525,7 +563,7 @@ async def get_agent_connectors(request: Request) -> JSONResponse:
     except ExtensionError as exc:
         return _refused(exc)
 
-    card = await load_card_context(request, sorted(granted))
+    card = await _card(request, connections, granted, entries)
     return JSONResponse(
         AgentConnectorsResponse(
             instances=[
@@ -726,11 +764,12 @@ async def _change_grant(request: Request, *, granting: bool) -> JSONResponse:
     if connection is None:
         return _error("connector grant did not produce a connection", 500)
     current = _connections(request)
-    card = await load_card_context(request, [instance])
+    entries = _catalog_entries(current)
+    card = await _card(request, current, {instance: connection}, entries)
     body = _row(
         instance,
         connection,
-        _catalog_entries(current).get(connection.extension),
+        entries.get(connection.extension),
         card=card,
     ).model_dump(mode="json")
     body["activations"] = _activation_payload(mutation.activations)
@@ -1070,7 +1109,7 @@ async def _connection_row(
     """One connection's listing row, exactly as ``GET /api/connections`` shows it."""
     connection = connections.registry.get(instance)
     entries = _catalog_entries(connections)
-    card = await load_card_context(request, [instance])
+    card = await _card(request, connections, {instance: connection}, entries)
     row = _row(instance, connection, entries.get(connection.extension), card=card)
     return JSONResponse(row.model_dump(mode="json"))
 
@@ -1255,7 +1294,10 @@ async def post_connector_host_setup(request: Request) -> JSONResponse:
     )
     return JSONResponse(
         ConnectorHostSetupResponse(
-            installed=report.installed, detail=report.detail, manual_steps=report.manual_steps
+            installed=report.installed,
+            detail=report.detail,
+            manual_steps=report.manual_steps,
+            action=report.action,
         ).model_dump(mode="json")
     )
 

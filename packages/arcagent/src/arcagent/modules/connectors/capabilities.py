@@ -53,7 +53,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -473,7 +473,14 @@ async def _prepare(ctx: _AttachContext, instance: str, configured: Connection) -
         )
         served = await _servable_tools(ctx, instance, loaded, connection)
     except ExtensionError as exc:
-        _refused(ctx.sink, state, "attach_refused", exc.message, instance=instance)
+        _refused(
+            ctx.sink,
+            state,
+            "attach_refused",
+            exc.message,
+            instance=instance,
+            typed=_typed_reason(exc),
+        )
         return None
     except Exception as exc:  # reason: fail-closed — one bad bundle, one dead connection
         _refused(
@@ -797,14 +804,18 @@ async def _servable_tools(
     # startup is one the upstream added afterwards — the rug-pull's other half,
     # and no more callable than a description that changed underneath.
     verdicts = await ledger.review(specs)
-    suspended = sum(1 for verdict in verdicts.values() if verdict is ContractVerdict.SUSPENDED)
-    if suspended:
-        await _report_contract_changed(ctx, instance, suspended)
+    # NEW is as uncallable as SUSPENDED: a verb nobody approved is withheld, so the
+    # card must ask for the approval instead of staying green and silent.
+    unapproved = sum(
+        1 for verdict in verdicts.values() if verdict is not ContractVerdict.UNCHANGED
+    )
+    if unapproved:
+        await _report_contract_changed(ctx, instance, unapproved)
     return [spec for spec in specs if verdicts[spec.name] is ContractVerdict.UNCHANGED]
 
 
 async def _report_contract_changed(ctx: _AttachContext, instance: str, count: int) -> None:
-    """Tell the health authority tools were suspended, so the card asks for approval.
+    """Tell the health authority tools were withheld (changed or new); the card asks for approval.
 
     Sticky on the record: the credential working again does not make a changed
     contract safe, only an operator's approval does.
@@ -930,10 +941,29 @@ def _audit_sink(state: _runtime._State) -> AuditSink:
     return TelemetryAuditSink(state.telemetry) if state.telemetry is not None else NullSink()
 
 
+def _typed_reason(exc: ExtensionError) -> dict[str, str]:
+    """The refusal's machine-readable reason and UI action, when it carries them."""
+    return {
+        key: value
+        for key in ("reason_code", "action")
+        if isinstance(value := exc.details.get(key), str)
+    }
+
+
 def _refused(
-    sink: AuditSink, state: _runtime._State, reason: str, message: str, *, instance: str = ""
+    sink: AuditSink,
+    state: _runtime._State,
+    reason: str,
+    message: str,
+    *,
+    instance: str = "",
+    typed: Mapping[str, str] | None = None,
 ) -> None:
-    """Record one denied connection through the single emission chokepoint (AU-2)."""
+    """Record one denied connection through the single emission chokepoint (AU-2).
+
+    ``typed`` is the refusal's ``reason_code`` and ``action``: what a card renders as a
+    button, so the operator never has to read prose to learn what to click.
+    """
     _logger.warning("connectors: %s%s — %s", reason, f" [{instance}]" if instance else "", message)
     emit(
         AuditEvent(
@@ -942,7 +972,7 @@ def _refused(
             target=f"connector:{instance}" if instance else "connector",
             outcome="deny",
             tier=state.tier,
-            extra={"instance": instance, "reason": reason, "detail": message},
+            extra={"instance": instance, "reason": reason, "detail": message, **(typed or {})},
         ),
         sink,
     )

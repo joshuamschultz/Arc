@@ -65,19 +65,41 @@ def display_status(
     return status
 
 
+def _app_first_hint(shown: ConnectionDisplayStatus, missing_app: str) -> dict[str, Any]:
+    """What the card shows when nothing can connect until the sign-in app exists.
+
+    ``missing_app`` is the OAuth provider whose deployment slot is empty (``""`` when
+    it is set up, or the connection has no OAuth flow). A healthy card ignores it: the
+    connection already holds a grant.
+    """
+    if not missing_app or shown == "healthy":
+        return {"app_missing": False}
+    label = missing_app.capitalize()
+    return {
+        "app_missing": True,
+        "reason_text": f"Set up the {label} sign-in app first",
+        # Still `reconnect`: the OAuth panel opens on the app form while the slot is
+        # empty. Only the words change, so the button says what it really does.
+        "action": "reconnect",
+        "action_label": f"Set up {label} sign-in app",
+    }
+
+
 def health_view(
     record: arcagent.ConnectionRecord | None,
     sync_rows: Sequence[SourceSyncRow],
     *,
     provider: str,
     now: datetime,
+    missing_app: str = "",
 ) -> dict[str, Any]:
     """The health fields of a card row, as keyword arguments for the schema."""
     shown = display_status(record, sync_rows, now)
+    hint = _app_first_hint(shown, missing_app)
     if record is None:
-        return {"display_status": shown}
+        return {"display_status": shown, **hint}
     notice = record.last_notice
-    return {
+    fields: dict[str, Any] = {
         "status": record.status,
         "display_status": shown,
         "reason_code": record.reason_code,
@@ -94,6 +116,7 @@ def health_view(
             else None
         ),
     }
+    return {**fields, **hint}
 
 
 def probe_view(record: arcagent.ConnectionRecord, *, provider: str) -> ConnectionHealthView:
@@ -162,22 +185,32 @@ class CardContext:
         sync_rows: Mapping[str, list[SourceSyncRow]],
         names: Mapping[str, str],
         now: datetime,
+        missing_apps: frozenset[str] = frozenset(),
     ) -> None:
         self.records = records
         self.sync_rows = sync_rows
         self.names = names
         self.now = now
+        self.missing_apps = missing_apps
 
-    def fields(self, instance: str, *, provider: str) -> dict[str, Any]:
+    def fields(self, instance: str, *, provider: str, oauth_provider: str = "") -> dict[str, Any]:
         """Health and knowledge fields for one card row."""
         rows = self.sync_rows.get(instance, [])
         return {
-            **health_view(self.records.get(instance), rows, provider=provider, now=self.now),
+            **health_view(
+                self.records.get(instance),
+                rows,
+                provider=provider,
+                now=self.now,
+                missing_app=oauth_provider if oauth_provider in self.missing_apps else "",
+            ),
             "knowledge_sync": knowledge_rows(rows, self.names, self.now),
         }
 
 
-async def load_card_context(request: Request, instances: Sequence[str]) -> CardContext:
+async def load_card_context(
+    request: Request, instances: Sequence[str], *, missing_apps: frozenset[str] = frozenset()
+) -> CardContext:
     """Read the health records (one list) and each connection's sync rows (one list each).
 
     An unreadable store degrades to "unknown" for every card rather than a 500: a
@@ -198,7 +231,7 @@ async def load_card_context(request: Request, instances: Sequence[str]) -> CardC
                 sync_rows[instance] = await per_agent_rows(rows, subscriptions)
         except Exception:  # reason: the page must render with unknown statuses, not 500
             logger.exception("connection view: could not read health state")
-    return CardContext(records, sync_rows, agent_names(request), datetime.now(UTC))
+    return CardContext(records, sync_rows, agent_names(request), datetime.now(UTC), missing_apps)
 
 
 __all__ = [

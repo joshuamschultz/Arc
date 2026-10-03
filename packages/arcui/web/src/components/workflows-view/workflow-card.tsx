@@ -1,10 +1,13 @@
 import { useNavigate } from 'react-router-dom'
 import { GitBranch, Zap } from 'lucide-react'
+import { useState } from 'react'
 import { StatusChip } from '@/components/ai'
+import { Button } from '@/components/ui/button'
+import { useMigrateWorkflow, useRequestSignature } from '@/lib/queries'
 import { SignedSeal } from '@/components/hitl'
 import { relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { WorkflowStatus, WorkflowSummary } from '@/lib/types'
+import type { WorkflowMigration, WorkflowStatus, WorkflowSummary } from '@/lib/types'
 
 /* ---------------------------------------------------------------------------
  * Workflows list presentation. Distinctive, summary-first cards for a business
@@ -101,7 +104,102 @@ export function WorkflowSummaryStrip({ workflows }: { workflows: WorkflowSummary
   )
 }
 
-/** A bundle that cannot be read: shown in red with the fix, never hidden. No detail page. */
+const MIGRATION_WORDS: Record<WorkflowMigration['action'], string> = {
+  unchanged: 'Nothing to change.',
+  would_rewrite: 'This will remove the old fields from the file.',
+  rewritten: 'Fixed.',
+  would_resign: 'This will sign it again with your operator key.',
+  resigned: 'Signed again.',
+  refused: 'Not changed.',
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : 'The request failed.'
+}
+
+/** Migrate: preview first, then apply, with or without a fresh signature. */
+function MigrateButtons({ id }: { id: string }) {
+  const migrate = useMigrateWorkflow(id)
+  const [preview, setPreview] = useState<WorkflowMigration | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  const run = async (apply: boolean, resign: boolean) => {
+    setError(null)
+    try {
+      const result = await migrate.mutateAsync({ apply, resign })
+      setPreview(result)
+      setDone(apply && result.action !== 'refused')
+    } catch (e) {
+      setError(messageOf(e))
+    }
+  }
+
+  const canApply = preview != null && !done && preview.action !== 'refused'
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={migrate.isPending} onClick={() => run(false, false)}>
+          Preview fix
+        </Button>
+        {canApply && (
+          <>
+            <Button size="sm" disabled={migrate.isPending} onClick={() => run(true, false)}>
+              Migrate
+            </Button>
+            <Button size="sm" disabled={migrate.isPending} onClick={() => run(true, true)}>
+              Migrate and re-sign
+            </Button>
+          </>
+        )}
+      </div>
+      {preview && (
+        <p className="text-xs text-foreground" role="status">
+          {preview.reason || MIGRATION_WORDS[preview.action]}
+          {preview.nodes.length > 0 && ` Steps changed: ${preview.nodes.join(', ')}.`}
+        </p>
+      )}
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Sign: asks for the operator approval whose grant signs this exact draft. */
+function SignButton({ id }: { id: string }) {
+  const request = useRequestSignature(id)
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <Button size="sm" disabled={request.isPending || request.isSuccess} onClick={() => request.mutate()}>
+          Sign
+        </Button>
+      </div>
+      {request.isSuccess && (
+        <p className="text-xs text-foreground" role="status">
+          Sent to Approvals. Approve it there to sign this workflow.
+        </p>
+      )}
+      {request.isError && (
+        <p className="text-xs text-destructive" role="alert">
+          {messageOf(request.error)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** The one repair button a card offers, from the typed action. Never a command. */
+function RepairActions({ w }: { w: WorkflowSummary }) {
+  if (w.health_fix_action === 'migrate') return <MigrateButtons id={w.id} />
+  if (w.health_fix_action === 'sign' && w.health === 'unsigned') return <SignButton id={w.id} />
+  return null
+}
+
+/** A bundle that cannot be read: shown in red with the reason and the repair button. */
 function UnreadableCard({ w }: { w: WorkflowSummary }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-4">
@@ -110,11 +208,7 @@ function UnreadableCard({ w }: { w: WorkflowSummary }) {
         <WorkflowLifecycle status="unreadable" />
       </div>
       <p className="text-xs text-foreground">{w.health_detail}</p>
-      {w.health_fix && (
-        <p className="text-xs text-muted-foreground">
-          Fix: <code className="font-mono text-foreground">{w.health_fix}</code>
-        </p>
-      )}
+      <RepairActions w={w} />
     </div>
   )
 }
@@ -132,10 +226,11 @@ function LinkedWorkflowCard({ w }: { w: WorkflowSummary }) {
     w.trigger != null ? String((w.trigger as Record<string, unknown>).type ?? 'manual') : 'manual'
 
   return (
+    <div className="flex flex-col rounded-lg border border-border bg-card transition-colors hover:border-foreground/15 hover:bg-muted/30">
     <button
       type="button"
       onClick={() => navigate(`/workflows/${encodeURIComponent(w.id)}`)}
-      className="group flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/15 hover:bg-muted/30"
+      className="group flex flex-col gap-3 p-4 text-left"
     >
       <div className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
@@ -166,9 +261,7 @@ function LinkedWorkflowCard({ w }: { w: WorkflowSummary }) {
       </div>
 
       {w.health === 'needs_resign' && (
-        <p className="text-xs text-muted-foreground">
-          {w.health_detail} Fix: <code className="font-mono text-foreground">{w.health_fix}</code>
-        </p>
+        <p className="text-xs text-muted-foreground">{w.health_detail}</p>
       )}
 
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -195,5 +288,11 @@ function LinkedWorkflowCard({ w }: { w: WorkflowSummary }) {
         )}
       </div>
     </button>
+    {(w.health === 'needs_resign' || w.health === 'unsigned') && w.health_fix_action && (
+      <div className="border-t border-border p-4">
+        <RepairActions w={w} />
+      </div>
+    )}
+    </div>
   )
 }

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { BundleCard, ConnectionsPage } from '@/pages/connections'
-import type { CatalogBundle, ConnectorInstance } from '@/lib/types'
+import type { CatalogBundle, ConnectorInstance, CustodyStatus } from '@/lib/types'
 
 afterEach(() => {
   cleanup()
@@ -18,7 +18,7 @@ const bundle = (perAccount: boolean): CatalogBundle => ({
   approval_default: 'ask', knowledge_mode: 'source', knowledge_reason: '',
   secrets: perAccount ? [{ name: 'account', prompt: 'Google account', sensitive: false, value: '' }] : [],
   host_requires: [{ name: 'gog', instruction: 'install gog', satisfied: true }],
-  tools: [], root: '/ext',
+  tools: [], root: '/ext', auto_installable: true, oauth_provider: '',
 })
 
 function wrap(ui: React.ReactNode) {
@@ -49,14 +49,21 @@ const row = (over: Partial<ConnectorInstance> = {}): ConnectorInstance => ({
   knowledge_mode: 'source', knowledge_reason: '', approval: 'ask', agents: [],
   status: 'healthy', display_status: 'healthy', reason_code: null, reason_text: null,
   action: 'none', action_label: '', last_checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
-  last_success_at: null, last_notice: null, connect_kind: 'oauth', oauth_provider: 'google', knowledge_sync: [],
+  last_success_at: null, last_notice: null, connect_kind: 'oauth', oauth_provider: 'google', app_missing: false, knowledge_sync: [],
   ...over,
 })
 
 interface StubCall { url: string; method: string; body: unknown }
 
 // Serves the page's reads and records every request made.
-function stubApi(connections: ConnectorInstance[], opts: { appConfigured?: boolean } = {}) {
+interface StubOptions {
+  appConfigured?: boolean
+  bundles?: CatalogBundle[]
+  signIn?: string
+  custody?: CustodyStatus
+}
+
+function stubApi(connections: ConnectorInstance[], opts: StubOptions = {}) {
   const urls: string[] = []
   const calls: StubCall[] = []
   vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -69,7 +76,7 @@ function stubApi(connections: ConnectorInstance[], opts: { appConfigured?: boole
     })
     const json = (body: unknown) => new Response(JSON.stringify(body))
     if (path.includes('/api/team/roster')) return json({ agents: [] })
-    if (path.includes('/api/connectors/catalog')) return json({ available: [bundle(true)], unreadable: [] })
+    if (path.includes('/api/connectors/catalog')) return json({ available: opts.bundles ?? [bundle(true)], unreadable: [] })
     if (path.endsWith('/api/oauth-apps/google')) {
       return json({
         provider: 'google', configured: opts.appConfigured ?? true, client_id_hint: '1234…',
@@ -83,6 +90,17 @@ function stubApi(connections: ConnectorInstance[], opts: { appConfigured?: boole
       })
     }
     if (path.endsWith('/api/oauth/complete')) return json(connections[0])
+    if (path.endsWith('/api/custody')) {
+      return json(opts.custody ?? { state: 'ok', keys: [], targets: [], affected_connections: [] })
+    }
+    if (path.endsWith('/probe')) return json({ reachable: true, detail: 'Reached GitHub as josh.' })
+    if (path.endsWith('/authorize')) {
+      return json({ sign_in: 'signed_in', reachable: true, detail: 'ok', command: '' })
+    }
+    if (path.endsWith('/auth-status')) {
+      return json({ sign_in: opts.signIn ?? 'signed_out', reachable: false, detail: '', command: '' })
+    }
+    if (path.endsWith('/auth') && init?.method === 'PUT') return json({ instance: 'x', fields: ['token'] })
     if (path.endsWith('/auth')) {
       return json({
         instance: 'gmail-olivia', extension: 'google_workspace', extension_display_name: 'Google Workspace',
@@ -96,7 +114,7 @@ function stubApi(connections: ConnectorInstance[], opts: { appConfigured?: boole
   return { urls, calls }
 }
 
-async function renderCard(connections: ConnectorInstance[], opts: { appConfigured?: boolean } = {}) {
+async function renderCard(connections: ConnectorInstance[], opts: StubOptions = {}) {
   localStorage.setItem('arcui_operator_mode', '1')
   const { urls, calls } = stubApi(connections, opts)
   wrap(<ConnectionsPage />)
@@ -286,5 +304,122 @@ describe('ConnectionsPage mobile layout', () => {
     expect(actions.className).toContain('flex-wrap')
     const body = actions.closest('.p-4') as HTMLElement
     expect(body.className).toContain('flex-wrap')
+  })
+})
+
+const githubBundle = (): CatalogBundle => ({
+  ...bundle(false), name: 'github', display_name: 'GitHub', attachment: 'cli',
+  secrets: [{ name: 'token', prompt: 'A fine-grained personal access token', sensitive: true, value: '' }],
+  host_requires: [],
+})
+
+const readwiseBundle = (): CatalogBundle => ({
+  ...bundle(false), name: 'readwise_reader', display_name: 'Readwise Reader', attachment: 'cli',
+  secrets: [],
+  host_requires: [{ name: 'readwise', instruction: 'npm i -g @readwise/cli', satisfied: false }],
+  auto_installable: false,
+})
+
+describe('Reconnect by connection kind (J-U6, J-U9)', () => {
+  it('a token connection opens the re-auth form, which stores the pasted token', async () => {
+    const github = needsYou({
+      instance: 'gh', extension: 'github', extension_display_name: 'GitHub',
+      connect_kind: 'token', oauth_provider: '', action_label: 'Reconnect GitHub',
+    })
+    const { card, calls } = await renderCard([github], { bundles: [githubBundle()] })
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Reconnect GitHub' }))
+
+    expect(await screen.findByText('Re-authenticate gh')).toBeTruthy()
+    expect(screen.queryByText(/keeps its own sign-in/)).toBeNull()
+    await userEvent.type(await screen.findByLabelText('token'), 'ghp_new')
+    await userEvent.click(screen.getByRole('button', { name: 'Replace credentials' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ secrets: { token: 'ghp_new' } })
+    expect(await screen.findByText('Reached GitHub as josh.')).toBeTruthy()
+    // The card re-reads its stored status once the credential is stored and proved.
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url.endsWith('/api/connections')).length).toBeGreaterThan(1),
+    )
+  })
+
+  it('a host-login connection leads with a token box and never shows a command to copy', async () => {
+    const readwise = needsYou({
+      instance: 'rw', extension: 'readwise_reader', extension_display_name: 'Readwise Reader',
+      connect_kind: 'host_login', oauth_provider: '', action_label: 'Reconnect Readwise Reader',
+    })
+    const { card, calls } = await renderCard([readwise], { bundles: [readwiseBundle()] })
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Reconnect Readwise Reader' }))
+
+    const box = await within(card).findByLabelText('Access token')
+    expect(within(card).queryByText(/terminal/)).toBeNull()
+    await userEvent.type(box, 'rw-token')
+    await userEvent.click(within(card).getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/rw/authorize'))).toBe(true))
+    expect(calls.find((c) => c.url.endsWith('/rw/authorize'))?.body).toEqual({ token: 'rw-token' })
+  })
+
+  it('a card whose sign-in app is missing says so and opens the app form', async () => {
+    const { card } = await renderCard(
+      [needsYou({
+        app_missing: true, reason_text: 'Set up the Google sign-in app first',
+        action_label: 'Set up Google sign-in app',
+      })],
+      { appConfigured: false },
+    )
+    expect(within(card).getByText(/Set up the Google sign-in app first/)).toBeTruthy()
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Set up Google sign-in app' }))
+
+    expect(await within(card).findByLabelText('Client ID')).toBeTruthy()
+  })
+
+  it('a new or changed tool contract offers an Approve button that approves', async () => {
+    const { card, calls } = await renderCard([
+      needsYou({
+        reason_code: 'contract_changed', reason_text: '2 tool(s) are new or changed; approve them',
+        action: 'approve', action_label: 'Approve new or changed tools',
+      }),
+    ])
+    await userEvent.click(within(card).getByRole('button', { name: 'Approve new or changed tools' }))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/approve'))).toBe(true))
+  })
+})
+
+describe('the Install button is only offered when it can succeed (D18)', () => {
+  it('a bundle Arc can never install gets a plain sentence and no Install wording', () => {
+    wrap(<BundleCard bundle={readwiseBundle()} connectedCount={0} operatorMode onConnect={() => {}} />)
+    expect(screen.getByText(/cannot install/i)).toBeTruthy()
+    expect(screen.queryByText(/can install it when you connect/)).toBeNull()
+    expect(screen.queryByText(/npm i -g/)).toBeNull()
+  })
+})
+
+describe('credential custody review on the card (J-C1)', () => {
+  const review: CustodyStatus = {
+    state: 'needs_review',
+    keys: [{ key: 'OLD_SLACK_TOKEN', reason: 'undeclared', kept: false }],
+    targets: [{ connection: 'gmail-olivia', field: 'account' }],
+    affected_connections: ['gmail-olivia'],
+  }
+
+  it('an affected card says Credentials need review and a button opens the repair panel', async () => {
+    const { card } = await renderCard([row(), row({ instance: 'gmail-two' })], { custody: review })
+
+    expect(await within(card).findByText('Credentials need review')).toBeTruthy()
+    const other = screen.getByText('gmail-two', { selector: '[data-connection-card] span' })
+    expect(other.closest('[data-connection-card]')!.querySelector('[data-custody-review]')).toBeNull()
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Review credentials' }))
+
+    expect(await within(card).findByText('OLD_SLACK_TOKEN')).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Apply answers' })).toBeTruthy()
+  })
+
+  it('a deployment with nothing to review shows no notice on any card', async () => {
+    const { card } = await renderCard([row()])
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(card.querySelector('[data-custody-review]')).toBeNull()
   })
 })

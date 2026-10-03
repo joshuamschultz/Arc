@@ -46,6 +46,8 @@ entrypoint = "arc_ext_dropbox"
 [[secrets]]
 name = "refresh_token"
 prompt = "Set for you when you connect: you never paste this. Set up Dropbox sign-in once (your app's App key and App secret from dropbox.com/developers/apps; Permissions tab: files.metadata.read, files.content.read, files.content.write), then click Connect and paste the one-time code Dropbox shows."
+# Filled by the Connect flow, never by the operator: the add form must not demand it.
+required = false
 
 # One-click connect in the provider-shows-a-code mode (`redirect = "none"`): the
 # operator pastes the code Dropbox shows, so nothing has to be registered with the

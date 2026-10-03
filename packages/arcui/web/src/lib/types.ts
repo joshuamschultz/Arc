@@ -1023,8 +1023,20 @@ export interface WorkflowSummary {
   health?: WorkflowHealth
   /** The problem in plain words, when `health` is not ok. */
   health_detail?: string
-  /** The command that fixes it. */
-  health_fix?: string
+  /** The one-click repair the card offers; there is never a command to copy. */
+  health_fix_action?: WorkflowFixAction
+}
+
+/** What a workflow's repair button does: migrate the file format, or ask for a signature. */
+export type WorkflowFixAction = '' | 'migrate' | 'sign'
+
+/** One workflow's migration preview or result (`POST /api/workflows/:id/migrate`). */
+export interface WorkflowMigration {
+  workflow_id: string
+  action: 'unchanged' | 'would_rewrite' | 'rewritten' | 'would_resign' | 'resigned' | 'refused'
+  files: string[]
+  nodes: string[]
+  reason: string
 }
 
 export interface WorkflowDetail extends WorkflowSummary {
@@ -1164,6 +1176,8 @@ export interface ConnectorSecret {
    *  blank-warning text; on a connection's auth read it is non-empty only
    *  when the stored value IS blank. */
   warning?: string
+  /** True for the OAuth refresh token: Connect fills it in, so the form never asks for it. */
+  managed?: boolean
 }
 
 /** A binary (or similar) the bundle needs on this host. `satisfied` is this
@@ -1199,6 +1213,11 @@ export interface CatalogBundle {
   host_requires: HostRequirement[]
   tools: ConnectorTool[]
   root: string
+  /** False when Arc can never place this bundle's host program itself, so no Install
+   *  button is offered and the page says so plainly. */
+  auto_installable: boolean
+  /** The sign-in app a one-click connect uses; empty unless the bundle is OAuth. */
+  oauth_provider: string
 }
 
 /** A bundle on the search path whose manifest would not parse — surfaced
@@ -1238,6 +1257,9 @@ export interface ConnectorInstance {
   connect_kind: ConnectionConnectKind
   /** The OAuth provider behind a `connect_kind` of `oauth`; empty otherwise. */
   oauth_provider: string
+  /** A one-click connection whose sign-in app is not set up: the card's action opens
+   *  that form first. */
+  app_missing: boolean
   knowledge_sync: ConnectionKnowledgeSync[]
 }
 
@@ -1471,6 +1493,9 @@ export interface HostSetupResponse {
   installed: boolean
   detail: string
   manual_steps?: string
+  /** What to offer next as a code, never prose naming a command. `restart_arc` means
+   *  the program is placed but only a restarted Arc can see it; empty asks nothing. */
+  action?: string
 }
 
 /** Sign-in state of a connector that holds its own credentials (no declared
@@ -1753,3 +1778,27 @@ export interface SharedKnowledgeSearchHit {
 export interface SharedKnowledgeSearchResponse {
   hits: SharedKnowledgeSearchHit[]
 }
+
+/** Why a saved credential key could not be placed (names only; never a value). */
+export type CustodyReason =
+  | 'undeclared'
+  | 'custody_differs'
+  | 'app_slot_differs'
+  | 'app_pair_incomplete'
+  | 'app_values_disagree'
+
+/** `GET /api/custody`: what waits for the operator's answer. */
+export interface CustodyStatus {
+  state: 'ok' | 'needs_review' | 'blocked'
+  /** Set when `state` is `blocked`: why the review could not even start. */
+  code?: string
+  keys: { key: string; reason: CustodyReason; kept: boolean }[]
+  targets: { connection: string; field: string }[]
+  affected_connections: string[]
+}
+
+/** One answer for one key. A drop carries the key typed back as confirmation. */
+export type CustodyDecision =
+  | { key: string; action: 'map'; connection: string; field: string }
+  | { key: string; action: 'keep' }
+  | { key: string; action: 'drop'; confirm: string }

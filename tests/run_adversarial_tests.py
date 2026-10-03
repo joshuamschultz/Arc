@@ -640,6 +640,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_mcp_server_routes.py",
         "packages/arccli/tests/test_cli_connector_add_mcp.py",
     ),
+    # Connection-card truth (alpha-2 UJ-0, D4): a tool the upstream added while the
+    # credential was dead, or that nobody approved, stays uncallable; a reconnect is never
+    # an approval; the card asks for the approval in the same visit.
+    "connector rug-pull: new tools stay uncallable and the card asks (alpha-2 D4)": (
+        "packages/arcagent/tests/unit/modules/connectors/test_contract_card.py",
+        "packages/arcagent/tests/unit/test_check_health.py",
+    ),
     # P12: a hostname judged safe when the operator added the server can be re-pointed
     # afterwards (DNS rebinding). The http client resolves the host itself on every
     # connect, judges EVERY address (link-local, metadata, multicast, unspecified always;
@@ -671,6 +678,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_migration_never_drops_credentials.py",
         "packages/arcagent/tests/unit/extension/test_custody_migrate_no_loss.py",
         "packages/arcui/tests/test_startup_migrates_connections_env.py",
+        # J1-4: the dashboard answers per key (map, keep, drop). A viewer cannot read
+        # or resolve; a drop needs the key typed back; an unanswered key still
+        # refuses; no value appears in any response; the read-back proof is unchanged.
+        "packages/arcagent/tests/unit/extension/test_custody_migrate_decisions.py",
+        "packages/arcui/tests/test_custody_routes.py",
+        # J1-5: a viewer cannot migrate a workflow; a re-sign is made only by the
+        # pinned operator key (any other signer is refused, nothing written).
+        "packages/arcui/tests/test_workflow_repair_routes.py",
+        "packages/arcteam/tests/unit/workflow/test_migrate.py",
     ),
     # Vault Transit adapter: a look-alike Vault (other CA) or a redirect never
     # receives the secret_id; a key swapped behind a pinned name cannot sign for the
