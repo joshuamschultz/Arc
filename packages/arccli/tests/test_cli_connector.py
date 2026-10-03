@@ -971,6 +971,47 @@ def test_authorize_oauth_without_the_provider_app_says_set_it_up_first(
     assert "oauth-app dropbox" in capsys.readouterr().err
 
 
+def test_oauth_app_takes_tenant_cloud_and_a_piped_secret_never_from_argv(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """A deploy pipes a freshly minted secret in; tenant and cloud come as flags."""
+    import argparse
+    import io
+
+    from arccli.commands.connector import _oauth_app
+
+    class _Apps:
+        oauth_redirect_uri = "http://127.0.0.1:8420/oauth/callback"
+
+        def __init__(self) -> None:
+            self.saved: dict[str, Any] = {}
+
+        async def set_oauth_app(self, provider: str, **values: str) -> None:
+            self.saved = {"provider": provider, **values}
+
+    apps = _Apps()
+    monkeypatch.setattr("arccli.commands.connector._connections", lambda _args: apps)
+    monkeypatch.setattr("sys.stdin", io.StringIO("minted-secret-value\n"))
+    _oauth_app(
+        argparse.Namespace(
+            provider="microsoft",
+            client_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            tenant_id="11111111-2222-3333-4444-555555555555",
+            cloud="global",
+            client_secret_stdin=True,
+        )
+    )
+
+    assert apps.saved == {
+        "provider": "microsoft",
+        "client_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "client_secret": "minted-secret-value",
+        "tenant_id": "11111111-2222-3333-4444-555555555555",
+        "cloud": "global",
+    }
+    assert "minted-secret-value" not in capsys.readouterr().out
+
+
 class TestSemanticLayer:
     """The surface an operator uses to say what their data MEANS."""
 

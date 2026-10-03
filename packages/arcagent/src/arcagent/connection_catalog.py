@@ -21,6 +21,7 @@ from arcagent.extension.catalog import (
 from arcagent.extension.manifest import (
     DeclaredTool,
     HostRequirement,
+    OAuthFlow,
     SecretRequirement,
     load_manifest,
 )
@@ -91,6 +92,8 @@ class CatalogEntry:
     oauth_provider: str = ""
     #: Where the operator creates that provider's OAuth app ("" when undeclared).
     oauth_console_url: str = ""
+    #: The whole ``[oauth]`` flow, for surfaces that set its app slot up (tenant, clouds).
+    oauth_flow: OAuthFlow | None = None
 
 
 def catalog(
@@ -153,6 +156,7 @@ def _catalog_entry(resolution: ExtensionResolution, tier: Tier) -> CatalogEntry:
         oauth=manifest.oauth is not None,
         oauth_provider=manifest.oauth.provider if manifest.oauth is not None else "",
         oauth_console_url=(manifest.oauth.console_url or "") if manifest.oauth is not None else "",
+        oauth_flow=manifest.oauth,
     )
 
 

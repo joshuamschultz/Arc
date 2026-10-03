@@ -373,12 +373,6 @@ async def test_release_gate_mail_adapters_expose_resources_and_versioned_message
                     "google_gmail_messages": {"messages": [{"id": "m-1", "historyId": "h-1"}]},
                     "google_gmail_message": {"id": "m-1", "historyId": "h-1", "body": "launch"},
                 }
-            else:
-                payloads = {
-                    "list-mail-folders": {"value": [{"id": "inbox", "displayName": "Inbox"}]},
-                    "list-mail-messages": {"value": [{"id": "m-1", "changeKey": "k-1"}]},
-                    "get-mail-message": {"id": "m-1", "changeKey": "k-1", "bodyPreview": "launch"},
-                }
             return SimpleNamespace(content=json.dumps(payloads[name]))
 
     if adapter_kind == "gmail":
@@ -387,9 +381,18 @@ async def test_release_gate_mail_adapters_expose_resources_and_versioned_message
         adapter = GmailSourceAdapter(Attachment())
         expected_kind = "gmail"
     else:
-        from extensions.microsoft365.arc_ext_microsoft365.source import OutlookSourceAdapter
+        from extensions.microsoft365.arc_ext_microsoft365.source import build_source_adapters
+        from packages.arcagent.tests.microsoft_fakes import FakeGraph, StaticCredential
 
-        adapter = OutlookSourceAdapter(Attachment())
+        graph = FakeGraph(None, upn="josh@agency.gov", static_token="graph-access-token")
+        graph.add_message("m-1", subject="Plan", body="launch", sender="ann@agency.gov")
+        adapter = build_source_adapters(
+            {
+                "credential": StaticCredential("graph-access-token"),
+                "cloud": "global",
+                "transport": graph.transport(),
+            }
+        )["outlook"]
         expected_kind = "outlook"
 
     description = await adapter.inspect_source(
@@ -411,14 +414,14 @@ async def test_release_gate_mail_adapters_expose_resources_and_versioned_message
     assert description.source_kind == expected_kind
     assert resources and resources[0].resource_id
     assert page.objects[0].object_id == "m-1"
-    assert content.content == b"launch"
+    assert b"launch" in content.content
 
 
 def test_release_gate_provider_matrix_has_each_declared_source_seam() -> None:
     """Every Alpha connector must expose the same source lifecycle contract.
 
     Outlook and OneDrive intentionally remain separate source instances even
-    though Microsoft grants one MCP attachment.  This assertion is the release
+    though Microsoft grants one native Graph attachment.  This assertion is the release
     tripwire for accidentally shipping only the Outlook half of that grant.
     """
 

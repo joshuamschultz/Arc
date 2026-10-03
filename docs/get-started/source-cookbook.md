@@ -57,8 +57,8 @@ authorize` · **OAuth (host)** = provider's own binary/MCP owns the token.
 | **Supabase** | `postgresql` *(same bundle)* | DSN (vault) | Supabase direct or pooler URL as the DSN |
 | **S3 / MinIO** | `s3` | key/token (SigV4) | `access_key_id`, `secret_access_key`, optional `session_token`, `region`, `endpoint_url` |
 | **Dropbox** | `dropbox` | **OAuth (native)** | `app_key`, `app_secret`; run `arc connector authorize` for the refresh token |
-| **OneDrive** | `microsoft365` | OAuth (host) | Entra `MS365_MCP_CLIENT_ID` / `_TENANT_ID` / `_CLIENT_SECRET`; `ms-365-mcp-server --login` |
-| **Outlook** | `microsoft365` *(same bundle)* | OAuth (host) | same MS365 Entra values / device-code login |
+| **OneDrive** | `microsoft365` | OAuth (Arc) | Set up Microsoft sign-in once (Entra client ID, tenant ID, secret, cloud), then Connect; token sealed in Arc custody |
+| **Outlook** | `microsoft365` *(same bundle)* | OAuth (Arc) | same Microsoft sign-in; one Connect covers mail, calendar and OneDrive |
 | **Gmail** | `google_workspace` | OAuth (Arc) | Set up Google sign-in once, then Connect per account; token sealed in Arc custody |
 | **Slack** | `slack` | key/token (Bearer) | User OAuth token `xoxp-…` in secret `user_token` |
 | **Confluence** | `confluence` | key/token (Basic) | `api_token`, `email`, `base_url` |
@@ -83,11 +83,17 @@ provider matrix.)*
   `app_key`/`app_secret`, then `arc connector authorize` exchanges the one-time
   code for a vault-held refresh token; access tokens are minted per call
   (`grant_type=refresh_token`). Select the root or explicit folders.
-- **Microsoft 365** (`extensions/microsoft365/` → OneDrive + Outlook).
-  Install the pinned `ms-365-mcp-server` (needs Node ≥ 20), configure the Entra
-  application values through the connector secret surface, and complete its
-  device-code login. **One grant contributes two distinct sources** (Outlook and
-  OneDrive), each with its own resources and mapping.
+- **Microsoft 365** (`extensions/microsoft365/` → OneDrive + Outlook). No
+  binary, no Node, no device code. Register a single-tenant Entra app (Web
+  redirect = the address ArcUI shows; delegated Graph permissions `openid`,
+  `profile`, `offline_access`, `User.Read`, `Mail.Read`, `Mail.Send`,
+  `Calendars.ReadWrite`, `Files.Read`; **Grant admin consent**, which GCC
+  tenants require). Set up Microsoft sign-in once with the client ID, tenant ID
+  (GUID), secret and cloud: **Commercial / GCC** covers commercial and GCC
+  (moderate); GCC High and DoD are the other two choices. Then click
+  **Connect**. **One grant contributes two distinct sources** (Outlook and
+  OneDrive), each with its own resources and mapping; Outlook syncs by Graph
+  delta. Full steps: [Connections runbook](../runbooks/operate/connections.md#microsoft-365-setup).
 - **Gmail / Google Workspace** (`extensions/google_workspace/`). No binary.
   Set up Google sign-in once (the OAuth client ID and secret), then click
   **Connect** on each account's card; Arc seals the refresh token and checks the

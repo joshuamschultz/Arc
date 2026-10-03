@@ -160,16 +160,16 @@ def test_mcp_bundle_builds_the_existing_attachment_with_declared_tool_policy(
     assert attachment._tools["acme_read"].classification == "read_only"
 
 
-def test_microsoft365_mcp_manifest_builds_a_stdio_attachment() -> None:
+def test_microsoft365_manifest_builds_a_native_attachment_with_two_sources() -> None:
+    """No host binary, no typed credential: Arc's sign-in is the only requirement."""
     manifest_path = Path(__file__).parents[6] / "extensions" / "microsoft365" / "extension.toml"
     manifest = load_manifest(manifest_path.read_text(encoding="utf-8"), tier=Tier.PERSONAL)
 
     attachment = build_attachment(manifest, manifest_path.parent, {})
 
     assert isinstance(attachment, ExtensionAttachment)
-    assert [(item.kind.value, item.name) for item in attachment.requirements()] == [
-        ("host", "ms-365-mcp-server")
-    ]
+    assert attachment.requirements() == []
+    assert manifest.host_requires == [] and manifest.artifact is None
     source_adapters = attachment.source_adapters()
     assert set(source_adapters) == {"outlook", "onedrive"}
     assert all(isinstance(source, SourceAdapter) for source in source_adapters.values())

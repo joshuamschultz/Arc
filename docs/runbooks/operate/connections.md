@@ -197,10 +197,12 @@ the fact from recall.
 - **Dropbox:** create a scoped Dropbox app, provide its app key/secret, then run
   `arc connector authorize` to exchange the one-time code for a vault-held
   refresh token. Select the root or explicit folders.
-- **Microsoft 365:** install the pinned `ms-365-mcp-server`, configure the Entra
-  application values through the connector secret surface, and complete its
-  device-code login. One grant contributes distinct Outlook and OneDrive
-  sources, so each has its own resources and mapping.
+- **Microsoft 365 (Outlook, calendar, OneDrive; commercial and GCC):** no
+  binary and no device code. Arc talks to Microsoft Graph directly and keeps the
+  refresh token in its own sealed storage. See
+  [Microsoft 365 setup](#microsoft-365-setup) below. One connection contributes
+  two distinct sources, Outlook (`<name>:outlook`) and OneDrive
+  (`<name>:onedrive`), each with its own resources and mapping.
 - **S3/MinIO:** provide vault-backed access key material, region and an HTTPS
   endpoint. Grant the credential read-only list/get access only to intended
   buckets; then select buckets or narrower prefixes.
@@ -220,6 +222,61 @@ Knowledge journey: enable sync if needed, select the least-privilege resource
 set, approve its destination, sync, then verify retrieval in **Documents**.
 1Password is intentionally excluded because vault items are credentials rather
 than knowledge documents and must never enter embedding or retrieval indexes.
+
+### Microsoft 365 setup
+
+Do this once per deployment. It works for Microsoft 365 commercial and for
+**GCC (moderate)** tenants: both use `login.microsoftonline.com` and
+`graph.microsoft.com`. GCC High and DoD are a different cloud setting, not a
+different setup.
+
+1. **Register the app in Microsoft Entra.** Entra admin center → App
+   registrations → New registration. Supported account types: *Accounts in this
+   organizational directory only* (single tenant).
+2. **Add the redirect address.** Platform **Web**. The value is the address the
+   "Set up Microsoft sign-in" panel shows, which is `<[ui] public_base_url>/oauth/callback`,
+   or `http://127.0.0.1:8420/oauth/callback` when no public URL is set. The
+   portal's Redirect URI box refuses `http://127.0.0.1…`: add it in the app's
+   **Manifest** (`replyUrlsWithType`, `"type": "Web"`) instead, or give ArcUI an
+   https `public_base_url`. If the browser you sign in with is not on the ArcUI
+   host, the callback page cannot load: paste the address you landed on into
+   the card's "Didn't come back?" box.
+3. **Create a client secret.** Certificates & secrets → New client secret → copy
+   the **Value** (not the Secret ID). Entra shows it once.
+4. **Add API permissions.** Microsoft Graph → *Delegated*: `openid`, `profile`,
+   `offline_access`, `User.Read`, `Mail.Read`, `Mail.Send`,
+   `Calendars.ReadWrite`, `Files.Read`. Then click **Grant admin consent**.
+   GCC tenants usually block users from consenting for themselves, so an admin
+   must do this once; without it, sign-in stops at "Need admin approval".
+5. **Set up Microsoft sign-in in Arc.** Connections → Microsoft 365 → paste the
+   Application (client) ID, the Directory (tenant) ID (a GUID from the Overview
+   page; `common` is refused) and the secret, and pick the cloud
+   (*Commercial / GCC* unless the tenant is GCC High or DoD) → Save. Headless:
+   `arc connector oauth-app microsoft --client-id <id> --tenant-id <guid> --cloud global --client-secret-stdin`
+   with the secret on stdin.
+6. **Connect.** Add a Microsoft 365 connection (optionally naming the mailbox in
+   `account`), click **Connect**, sign in. Arc checks the sign-in came from your
+   tenant (`tid`) as that account before it stores anything. The card turns
+   **Healthy**.
+7. **Knowledge.** Grant the connection to an agent, then **Configure & sync** on
+   the card: pick the Outlook folder (Inbox by default) and the OneDrive folder,
+   approve the mapping, run the first sync. Outlook uses Graph's message delta,
+   so later syncs fetch only changes and deletions.
+
+Why each permission: `openid`/`profile` give Arc the sign-in's tenant and
+account to check (no data); `offline_access` gives the refresh token;
+`User.Read` is the health check; `Mail.Read` reads mail; `Mail.Send` is used
+only by `send-mail`, which asks for approval; `Calendars.ReadWrite` lets
+`create-calendar-event` invite attendees (also approval-gated); `Files.Read`
+reads only the user's own OneDrive.
+
+Honest limits: Entra rotates the refresh token on every refresh (Arc stores
+each new one). A password reset, an admin revoking sessions, or a Conditional
+Access change can end the sign-in; the card then says **Reconnect** and you get
+one notice. Changing the app's tenant or cloud in Arc makes existing
+connections ask for a reconnect: a token from one directory is never sent to
+another. In OneDrive for Business, selecting a subfolder (rather than the whole
+drive) may be refused by Graph's delta query; select the drive root if so.
 
 ### Sync cadence
 

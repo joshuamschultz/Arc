@@ -335,19 +335,28 @@ def _authorize_oauth(connections: Any, instance: str, auth: arcagent.Authorizati
 
 
 def _oauth_app(args: argparse.Namespace) -> None:
-    """Set a provider's sign-in app up once for this deployment (client id + secret).
+    """Set a provider's sign-in app up once for this deployment.
 
-    The secret is read from a hidden prompt, never argv, and sealed into custody.
-    Prints the redirect URI to register with the provider.
+    The secret is never argv: a hidden prompt, or one line on stdin with
+    ``--client-secret-stdin`` (so a deploy can pipe a freshly minted secret straight
+    in). A tenant-bound provider (Microsoft) also takes ``--tenant-id`` and
+    ``--cloud``. Prints the redirect URI to register with the provider.
     """
     connections = _connections(args)
     _out(f"Redirect URI to register with {args.provider}: {connections.oauth_redirect_uri}")
-    client_id = input("Client ID: ").strip()
-    client_secret = getpass.getpass("Client secret (hidden): ").strip()
+    client_id = (args.client_id or input("Client ID: ")).strip()
+    if args.client_secret_stdin:
+        client_secret = sys.stdin.readline().strip()
+    else:
+        client_secret = getpass.getpass("Client secret (hidden): ").strip()
     try:
         asyncio.run(
             connections.set_oauth_app(
-                args.provider, client_id=client_id, client_secret=client_secret
+                args.provider,
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=args.tenant_id or "",
+                cloud=args.cloud or "",
             )
         )
     except arcagent.ExtensionError as exc:
@@ -879,6 +888,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "provider", help="Provider app slot, as the bundle's [oauth] provider names it."
+    )
+    p.add_argument("--client-id", default="", help="The app's client ID (else prompted).")
+    p.add_argument("--tenant-id", default="", help="Directory (tenant) ID GUID, for Microsoft.")
+    p.add_argument(
+        "--cloud", default="", help="Cloud key for Microsoft: global (default), usgov or dod."
+    )
+    p.add_argument(
+        "--client-secret-stdin",
+        action="store_true",
+        help="Read the client secret as one line from stdin instead of a hidden prompt.",
     )
     _add_common(p)
 

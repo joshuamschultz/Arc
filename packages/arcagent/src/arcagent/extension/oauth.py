@@ -50,6 +50,7 @@ from arcagent.extension.credentials import (
     RenewedCredential,
 )
 from arcagent.extension.manifest import OAuthFlow
+from arcagent.extension.oauth_apps import bind_flow
 from arcagent.extension.secrets import Secret
 
 #: Refusal codes a surface branches on.
@@ -254,6 +255,8 @@ class PendingAuthorization:
     #: The account the connection is for, captured at begin ("" = not yet bound).
     intended_account: str = ""
     scopes: tuple[str, ...] = ()
+    #: The app slot (client, tenant, cloud) the consent URL was built for.
+    app_binding: str = ""
 
 
 def _state_invalid() -> ExtensionError:
@@ -539,22 +542,28 @@ def _positive_int(value: Any) -> int:
     return max(number, 0)
 
 
-#: Scopes that ask for a behaviour (a refresh token), not a permission: a provider
-#: need not list them in the grant. The exchange already refuses a grant with no
-#: refresh token, so the behaviour is proven by its result.
-_REQUEST_ONLY_SCOPES = frozenset({"offline_access"})
+#: Scopes that ask for a behaviour or an identity, not a data permission: a provider
+#: need not list them in the grant. ``offline_access`` is proven by the exchange
+#: (it refuses a grant with no refresh token); the OpenID identity scopes are proven
+#: by the id_token account check, which runs before this one.
+_REQUEST_ONLY_SCOPES = frozenset({"offline_access", "openid", "profile", "email"})
 
 
 def missing_scopes(requested: Sequence[str], granted: str | None) -> tuple[str, ...]:
     """The requested scopes the grant lacks (granular consent can drop some).
 
     A provider that answers no ``scope`` granted what was asked (RFC 6749 5.1).
+    Matching ignores case and a resource prefix: a directory provider answers
+    ``https://graph.example/Mail.Read`` for a requested ``Mail.Read``.
     """
     if granted is None:
         return ()
-    have = set(granted.split())
+    have = {scope.casefold() for scope in granted.split()}
+    have |= {scope.rsplit("/", 1)[-1] for scope in have if "/" in scope}
     return tuple(
-        scope for scope in requested if scope not in have and scope not in _REQUEST_ONLY_SCOPES
+        scope
+        for scope in requested
+        if scope.casefold() not in have and scope not in _REQUEST_ONLY_SCOPES
     )
 
 
@@ -583,6 +592,38 @@ def verified_id_token_email(
     ``azp`` when ``aud`` is a list) is our client, ``iss`` is an allowed issuer,
     it has not expired, and the email is verified.
     """
+    claims = _checked_claims(id_token, client_id=client_id, issuers=issuers, now=now)
+    if claims.get("email_verified") is not True:
+        raise _mismatch("the account's email address is not verified")
+    return _address(claims.get("email"))
+
+
+def verified_id_token_username(
+    id_token: str | None,
+    *,
+    client_id: str,
+    issuers: Sequence[str],
+    tenant: str = "",
+    now: Callable[[], float] = time.time,
+) -> str:
+    """The casefolded sign-in name a directory ``id_token`` names, or ``ACCOUNT_MISMATCH``.
+
+    For a directory provider (``account = "openid_username"``): ``aud``, ``iss``
+    (already bound to the tenant) and ``exp`` as for email, plus ``tid`` must equal
+    the app slot's ``tenant`` when one is set, so a sign-in completed in another
+    directory never binds. The name is ``preferred_username`` (else ``email``).
+    """
+    claims = _checked_claims(id_token, client_id=client_id, issuers=issuers, now=now)
+    tid = claims.get("tid")
+    if tenant and not (isinstance(tid, str) and hmac.compare_digest(tid.casefold(), tenant)):
+        raise _mismatch("the sign-in came from a different directory (tenant)")
+    name = claims.get("preferred_username") or claims.get("email")
+    return _address(name)
+
+
+def _checked_claims(
+    id_token: str | None, *, client_id: str, issuers: Sequence[str], now: Callable[[], float]
+) -> dict[str, Any]:
     claims = _id_token_claims(id_token)
     if not _audience_ok(claims, client_id):
         raise _mismatch("the sign-in was issued to a different app")
@@ -591,12 +632,13 @@ def verified_id_token_email(
     expires = claims.get("exp")
     if not isinstance(expires, (int, float)) or expires + _ID_TOKEN_LEEWAY_SECONDS < now():
         raise _mismatch("the sign-in has expired")
-    if claims.get("email_verified") is not True:
-        raise _mismatch("the account's email address is not verified")
-    email = claims.get("email")
-    if not isinstance(email, str) or "@" not in email or _unprintable(email, allow_space=False):
+    return claims
+
+
+def _address(value: object) -> str:
+    if not isinstance(value, str) or "@" not in value or _unprintable(value, allow_space=False):
         raise _mismatch("the sign-in names no email address")
-    return email.casefold()
+    return value.casefold()
 
 
 def _id_token_claims(id_token: str | None) -> dict[str, Any]:
@@ -709,6 +751,8 @@ async def refresh_access_token(
     * any other 4xx: terminal ``auth_required``.
     """
     grant = {"grant_type": "refresh_token", "refresh_token": request.refresh_token.reveal()}
+    if request.flow.refresh_scopes and request.flow.scopes:
+        grant["scope"] = request.flow.scope_separator.join(request.flow.scopes)
     token_post = token_request(
         request.flow, grant, client_id=request.client_id, client_secret=request.client_secret
     )
@@ -788,6 +832,7 @@ __all__ = [
     "PkcePair",
     "PostToken",
     "TokenPost",
+    "bind_flow",
     "build_authorize_url",
     "checked_callback",
     "declined",
@@ -803,4 +848,5 @@ __all__ = [
     "send_token_post",
     "token_request",
     "verified_id_token_email",
+    "verified_id_token_username",
 ]

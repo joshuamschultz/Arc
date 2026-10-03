@@ -7,8 +7,15 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
-from arcagent.extension.source import ListSourceResources, SourceObjectKind, SyncSource
+from arcagent.extension.source import (
+    ListSourceResources,
+    SourceError,
+    SourceFailureCode,
+    SourceObjectKind,
+    SyncSource,
+)
 
 
 class _GmailAttachment:
@@ -58,57 +65,58 @@ class _GmailAttachment:
         raise AssertionError(tool)
 
 
-class _OutlookAttachment:
+_GRAPH = "https://graph.microsoft.com/v1.0"
+
+
+class _OutlookGraph:
+    """Graph's message delta feed: two pages, then a delta round with a deletion."""
+
     def __init__(self) -> None:
         self.round = 0
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.paths: list[str] = []
         self.messages = {
-            "a": {
-                "id": "a",
-                "changeKey": "key-a",
-                "lastModifiedDateTime": "2026-08-23T10:00:00Z",
-                "bodyPreview": "first",
-            },
-            "b": {
-                "id": "b",
-                "changeKey": "key-b",
-                "lastModifiedDateTime": "2026-08-23T10:01:00Z",
-                "bodyPreview": "second",
-            },
-            "c": {
-                "id": "c",
-                "changeKey": "key-c",
-                "lastModifiedDateTime": "2026-08-23T10:02:00Z",
-                "bodyPreview": "third",
-            },
-            "d": {
-                "id": "d",
-                "changeKey": "key-d",
-                "lastModifiedDateTime": "2026-08-23T10:03:00Z",
-                "bodyPreview": "fourth",
-            },
+            key: {
+                "id": key,
+                "changeKey": f"key-{key}",
+                "lastModifiedDateTime": f"2026-08-23T10:0{index}:00Z",
+                "bodyPreview": key,
+            }
+            for index, key in enumerate("abcd")
         }
 
-    async def invoke(self, tool: str, arguments: dict[str, Any]) -> Any:
-        self.calls.append((tool, arguments))
-        if tool == "list-mail-messages":
-            skip = arguments.get("skip", 0)
-            if self.round == 0:
-                payload = {
-                    0: {
-                        "value": [self.messages["a"], self.messages["b"]],
-                        "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skip=2",
-                    },
-                    2: {"value": [self.messages["c"]]},
-                }[skip]
-            else:
-                payload = {
-                    "value": [self.messages["d"], {"id": "a", "@removed": {"reason": "deleted"}}]
-                }
-            return SimpleNamespace(content=json.dumps(payload))
-        if tool == "get-mail-message":
-            return SimpleNamespace(content=json.dumps(self.messages[arguments["message_id"]]))
-        raise AssertionError(tool)
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.paths.append(str(request.url))
+        assert request.headers["prefer"] == "odata.maxpagesize=2"
+        page = request.url.params.get("page")
+        token = request.url.params.get("deltatoken")
+        base = f"{_GRAPH}/me/mailFolders/inbox/messages/delta"
+        if token == "t1":
+            removed = {"id": "a", "@removed": {"reason": "deleted"}}
+            body = {
+                "value": [self.messages["d"], removed],
+                "@odata.deltaLink": f"{base}?deltatoken=t2",
+            }
+        elif page == "2":
+            body = {"value": [self.messages["c"]], "@odata.deltaLink": f"{base}?deltatoken=t1"}
+        else:
+            body = {
+                "value": [self.messages["b"], self.messages["a"]],
+                "@odata.nextLink": f"{base}?page=2",
+            }
+        return httpx.Response(200, json=body)
+
+
+class _Credential:
+    async def bearer(self) -> Any:
+        from arcagent.extension.secrets import Secret
+
+        return Secret("token")
+
+    async def invalidate(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -141,16 +149,19 @@ async def test_gmail_pages_then_uses_history_for_changed_and_deleted_messages() 
 
 
 @pytest.mark.asyncio
-async def test_outlook_pages_repeat_and_normalize_graph_deletions() -> None:
-    module = importlib.import_module("extensions.microsoft365.arc_ext_microsoft365.source")
-    attachment = _OutlookAttachment()
-    adapter = module.OutlookSourceAdapter(attachment)
+async def test_outlook_pages_then_reads_the_delta_for_changes_and_deletions() -> None:
+    source = importlib.import_module("extensions.microsoft365.arc_ext_microsoft365.source")
+    graph_module = importlib.import_module(
+        "extensions.microsoft365.arc_ext_microsoft365.native.graph"
+    )
+    fake = _OutlookGraph()
+    client = graph_module.GraphClient(_Credential(), transport=fake.transport())
+    adapter = source.OutlookSourceAdapter(client)
 
     first = await adapter.sync_source(SyncSource(connection_id="outlook", page_size=2))
     second = await adapter.sync_source(
         SyncSource(connection_id="outlook", checkpoint=first.next_checkpoint, page_size=2)
     )
-    attachment.round = 1
     third = await adapter.sync_source(
         SyncSource(connection_id="outlook", checkpoint=second.next_checkpoint, page_size=2)
     )
@@ -161,7 +172,25 @@ async def test_outlook_pages_repeat_and_normalize_graph_deletions() -> None:
     assert third.objects[1].kind is SourceObjectKind.DELETED
     assert third.objects[1].deleted
     assert all(isinstance(item.metadata["revision"], int) for item in first.objects)
-    assert ("list-mail-messages", {"folder": "inbox", "top": 2, "skip": 2}) in attachment.calls
+    assert "/me/mailFolders/inbox/messages/delta" in fake.paths[0]
+
+
+@pytest.mark.asyncio
+async def test_outlook_refuses_a_checkpoint_off_the_graph_host_or_from_the_old_cursor() -> None:
+    source = importlib.import_module("extensions.microsoft365.arc_ext_microsoft365.source")
+    graph_module = importlib.import_module(
+        "extensions.microsoft365.arc_ext_microsoft365.native.graph"
+    )
+    fake = _OutlookGraph()
+    adapter = source.OutlookSourceAdapter(
+        graph_module.GraphClient(_Credential(), transport=fake.transport())
+    )
+    hostile = json.dumps({"v": 2, "folder": "inbox", "link": "https://evil.example/v1.0/x"})
+    for checkpoint in (hostile, json.dumps({"v": 1, "skip": 2, "complete": False})):
+        with pytest.raises(SourceError) as refused:
+            await adapter.sync_source(SyncSource(connection_id="outlook", checkpoint=checkpoint))
+        assert refused.value.code is SourceFailureCode.CHECKPOINT_INVALID
+    assert fake.paths == []
 
 
 @pytest.mark.asyncio

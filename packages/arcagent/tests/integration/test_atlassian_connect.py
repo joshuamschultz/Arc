@@ -39,6 +39,7 @@ from arcagent.extension.custody_select import Custody, open_custody
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.manifest import load_manifest
 from arcagent.extension.oauth import refresh_access_token
+from arcagent.extension.oauth_apps import OAuthApp
 from arcagent.extension.secrets import Secret
 from arcagent.extension.state import ConnectionStateStore, open_connection_state
 from arcagent.modules.connectors.install import install_connector, plan_connector
@@ -250,8 +251,12 @@ def _planner(world: _World, owner: str, backend: FakeBackend, now: datetime) -> 
     async def refresh(request: RefreshRequest):  # type: ignore[no-untyped-def]  # test shim
         return await refresh_access_token(request, post=world.provider.post)
 
-    async def client(_flow: object) -> tuple[str, Secret]:
-        return world.provider.client_id, Secret(world.provider.client_secret)
+    async def client(_flow: object) -> OAuthApp:
+        return OAuthApp(
+            provider="atlassian",
+            client_id=world.provider.client_id,
+            client_secret=Secret(world.provider.client_secret),
+        )
 
     async def open_backend() -> FakeBackend:
         return backend

@@ -44,6 +44,10 @@ _PROVIDER = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9._~\-]{1,256}$")
 _MAX_SECRET_LENGTH = 512
 _HINT_LENGTH = 12
+#: A directory id is a GUID. ``common``/``organizations``/``consumers`` and domain
+#: names are refused: a tenant-bound sign-in must name its one directory.
+_TENANT_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_CLOUD_KEY = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,10 @@ class OAuthApp:
     provider: str
     client_id: str
     client_secret: Secret
+    #: The directory (tenant) GUID, lowercase; "" for a provider with no tenants.
+    tenant_id: str = ""
+    #: The cloud KEY of the bundle's ``[oauth.clouds]`` table; "" when none applies.
+    cloud: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,77 @@ class OAuthAppStatus:
     provider: str
     configured: bool
     client_id_hint: str = ""
+    #: Not secrets: a tenant id and a cloud key are shown so an operator can check them.
+    tenant_id: str = ""
+    cloud: str = ""
+
+
+def _app_invalid(message: str, field: str) -> ExtensionError:
+    return ExtensionError(code="OAUTH_APP_INVALID", message=message, details={"field": field})
+
+
+def app_cloud(flow: OAuthFlow, app: OAuthApp) -> str:
+    """The cloud KEY this app uses: its own, else the flow's default; "" without clouds.
+
+    Raises:
+        ExtensionError: ``OAUTH_APP_INVALID`` for a key the signed manifest does not declare.
+    """
+    if not flow.clouds:
+        return ""
+    key = app.cloud or flow.default_cloud
+    if key not in flow.clouds:
+        raise _app_invalid("that is not a cloud this sign-in app can use", "cloud")
+    return key
+
+
+def bind_flow(flow: OAuthFlow, app: OAuthApp) -> OAuthFlow:
+    """``flow`` with its ``{tenant}`` / ``{login_host}`` templates filled from ``app``.
+
+    The host comes from the SIGNED manifest's cloud table, looked up by the slot's
+    cloud KEY: no slot value is ever spliced into a URL as a host. The tenant is a
+    GUID (checked when the slot was saved, and again here). A flow with no
+    templates is returned unchanged.
+
+    Raises:
+        ExtensionError: ``OAUTH_APP_INVALID`` — a tenant-bound flow whose slot has no
+            valid tenant id, or a cloud key the manifest does not declare.
+    """
+    if not flow.app_tenant and not flow.clouds:
+        return flow
+    values: dict[str, str] = {}
+    if flow.app_tenant:
+        if not _TENANT_ID.fullmatch(app.tenant_id):
+            raise _app_invalid(
+                f"the {flow.provider} sign-in app has no directory (tenant) ID; set it up again",
+                "tenant_id",
+            )
+        values["tenant"] = app.tenant_id
+    cloud = app_cloud(flow, app)
+    if cloud:
+        values["login_host"] = flow.clouds[cloud].login_host
+
+    def fill(template: str) -> str:
+        for name, value in values.items():
+            template = template.replace("{" + name + "}", value)
+        return template
+
+    return flow.model_copy(
+        update={
+            "authorize_url": fill(flow.authorize_url),
+            "token_url": fill(flow.token_url),
+            "id_token_issuers": [fill(issuer) for issuer in flow.id_token_issuers],
+        }
+    )
+
+
+def app_binding(flow: OAuthFlow, app: OAuthApp) -> dict[str, str]:
+    """The non-secret fields a grant is bound to (stored with it, compared on refresh)."""
+    bound: dict[str, str] = {}
+    if flow.app_tenant:
+        bound["tenant_id"] = app.tenant_id
+    if flow.clouds:
+        bound["cloud"] = app_cloud(flow, app)
+    return bound
 
 
 def _utcnow() -> datetime:
@@ -74,6 +153,24 @@ def _check_provider(provider: str) -> None:
             code="OAUTH_APP_INVALID",
             message="that is not a provider name",
             details={},
+        )
+
+
+def _check_binding(tenant_id: str, cloud: str) -> None:
+    if tenant_id and not _TENANT_ID.fullmatch(tenant_id):
+        raise ExtensionError(
+            code="OAUTH_APP_INVALID",
+            message=(
+                "the tenant ID must be the directory's ID, a GUID like "
+                "11111111-2222-3333-4444-555555555555 (not common or a domain name)"
+            ),
+            details={"field": "tenant_id"},
+        )
+    if cloud and not _CLOUD_KEY.fullmatch(cloud):
+        raise ExtensionError(
+            code="OAUTH_APP_INVALID",
+            message="that is not a cloud this sign-in app can use",
+            details={"field": "cloud"},
         )
 
 
@@ -114,16 +211,33 @@ class OAuthAppStore:
         self._clock = clock
 
     async def put(
-        self, provider: str, *, client_id: str, client_secret: str, actor_did: str
+        self,
+        provider: str,
+        *,
+        client_id: str,
+        client_secret: str,
+        actor_did: str,
+        tenant_id: str = "",
+        cloud: str = "",
     ) -> None:
-        """Set (or replace) a provider's app. Values are checked before anything is stored."""
+        """Set (or replace) a provider's app. Values are checked before anything is stored.
+
+        ``tenant_id`` / ``cloud`` are shape-checked here; whether the bundle needs
+        them, and whether ``cloud`` is one it declares, is the caller's check
+        (:meth:`arcagent.connections.Connections.set_oauth_app`), which knows the flow.
+        """
         _check_provider(provider)
         client_id = client_id.strip()
         client_secret = client_secret.strip()
+        tenant_id = tenant_id.strip().lower()
+        cloud = cloud.strip()
         _check_values(client_id, client_secret)
+        _check_binding(tenant_id, cloud)
         row = {
             "provider": provider,
             "client_id": client_id,
+            "tenant_id": tenant_id,
+            "cloud": cloud,
             "client_secret": await self._seal(provider, client_secret),
             "cipher": self._cipher.kind,
             "updated_at": self._clock().isoformat(),
@@ -154,6 +268,8 @@ class OAuthAppStore:
             provider=provider,
             client_id=str(row.get("client_id") or ""),
             client_secret=Secret(await self._open(provider, row)),
+            tenant_id=str(row.get("tenant_id") or ""),
+            cloud=str(row.get("cloud") or ""),
         )
 
     async def status(self, provider: str) -> OAuthAppStatus:
@@ -163,7 +279,13 @@ class OAuthAppStore:
         if row is None:
             return OAuthAppStatus(provider=provider, configured=False)
         hint = str(row.get("client_id") or "")[:_HINT_LENGTH]
-        return OAuthAppStatus(provider=provider, configured=True, client_id_hint=hint)
+        return OAuthAppStatus(
+            provider=provider,
+            configured=True,
+            client_id_hint=hint,
+            tenant_id=str(row.get("tenant_id") or ""),
+            cloud=str(row.get("cloud") or ""),
+        )
 
     async def forget(self, provider: str, *, actor_did: str) -> bool:
         """Delete a provider's slot. Its connections then need a new app to refresh."""
@@ -175,10 +297,9 @@ class OAuthAppStore:
             self._audit("oauth_app.delete", provider, actor_did)
         return removed
 
-    async def client_for(self, flow: OAuthFlow) -> tuple[str, Secret] | None:
+    async def client_for(self, flow: OAuthFlow) -> OAuthApp | None:
         """The renewer's :class:`~arcagent.extension.credentials.ClientCredentialSource`."""
-        app = await self.get(flow.provider)
-        return None if app is None else (app.client_id, app.client_secret)
+        return await self.get(flow.provider)
 
     @property
     def cipher_kind(self) -> str:
@@ -297,4 +418,7 @@ __all__ = [
     "OAuthApp",
     "OAuthAppStatus",
     "OAuthAppStore",
+    "app_binding",
+    "app_cloud",
+    "bind_flow",
 ]
