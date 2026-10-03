@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import aiorwlock
+from arctrust import causal
 
 from arcagent.core.background_tasks import BackgroundTaskSupervisor
 from arcagent.tools._decorator import (
@@ -249,7 +250,7 @@ class CapabilityRegistry:
             await _drain_task(entry.task)
         for entry in candidate_tasks.values():
             entry.task = asyncio.create_task(
-                entry.fn(None), name=f"capability_task:{entry.meta.name}"
+                _detached(entry), name=f"capability_task:{entry.meta.name}"
             )
 
     # --- Tools ------------------------------------------------------------
@@ -366,7 +367,7 @@ class CapabilityRegistry:
 
         if spawn:
             entry.task = self._task_supervisor.create(
-                entry.fn(None), name=f"capability_task:{entry.meta.name}"
+                _detached(entry), name=f"capability_task:{entry.meta.name}"
             )
         result = self._diff_result(
             old.meta.name if old else None  # version not on task meta
@@ -560,6 +561,18 @@ class CapabilityRegistry:
 
 
 # --- Helpers --------------------------------------------------------------
+
+
+async def _detached(entry: BackgroundTaskEntry) -> None:
+    """Run a background loop as its own causal root (item 20).
+
+    The loop is started by whatever reload or startup happened to run it — often
+    while serving a UI request or a turn. Its acts belong to the loop, never to
+    that request, so the inherited context is replaced before the body runs.
+    """
+    loop_root = causal.root("system", f"did:arc:system:{entry.meta.name}")
+    with causal.bind(loop_root):
+        await entry.fn(None)
 
 
 async def _drain_task(task: asyncio.Task[None] | None) -> None:

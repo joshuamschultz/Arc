@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arctrust import causal
+
 from arcagent.core.control_contract import (
     ControlArtifactAuthority,
     ControlArtifactRefusedError,
@@ -333,17 +335,23 @@ class PulseEngine:
         prepare = self._prepare_collected_request
         if authority is None or tenant_id is None or issuer is None or prepare is None:
             raise ControlArtifactUnavailableError("signed pulse capability unavailable")
-        return await dispatch_signed_pulse(
-            check,
-            prompt=prompt,
-            due_at=due_at,
-            tenant_id=tenant_id,
-            agent_did=self._agent_did,
-            authority=authority,
-            issuer=issuer,
-            prepare=prepare,
-            run_fn=self._agent_run_fn,
+        # Item 20: a pulse firing is caused by its check, on the owning agent's
+        # behalf — a fresh root, so nothing bound by the timer's starter leaks in.
+        firing = causal.root(
+            "scheduler", f"did:arc:pulse:{check.name}", on_behalf_of=self._agent_did or None
         )
+        with causal.bind(firing):
+            return await dispatch_signed_pulse(
+                check,
+                prompt=prompt,
+                due_at=due_at,
+                tenant_id=tenant_id,
+                agent_did=self._agent_did,
+                authority=authority,
+                issuer=issuer,
+                prepare=prepare,
+                run_fn=self._agent_run_fn,
+            )
 
     # --- Check selection ---
 

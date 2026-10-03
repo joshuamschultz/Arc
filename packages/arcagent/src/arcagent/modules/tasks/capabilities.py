@@ -41,12 +41,13 @@ import re
 import sys
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import arcrun
+from arctrust import causal
 
 from arcagent.core.session_internal.capability_ledger import (
     CarriedLegs,
@@ -1233,7 +1234,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
     # complete be reached by splitting it across two nodes (COMP-015). Binding
     # the run's legs into this dispatch closes that: the ledger unions them into
     # every policy evaluation inside, and records back what this node lit.
-    with _node_dispatch(st, node) as carrier:
+    with _task_root(task, node, self_did), _node_dispatch(st, node) as carrier:
         if node is not None and node.kind == "script" and node.script:
             # A script node is deterministic code, not a model turn: run its
             # bundle script directly instead of the loop (SPEC-061). It still
@@ -1267,6 +1268,31 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             st.running.pop(task.id, None)
     if node is not None and carrier is not None:
         await _persist_run_legs(st, task, node, carrier.snapshot(), self_did)
+
+
+def _task_root(
+    task: Task, node: WorkflowNode | None, self_did: str
+) -> AbstractContextManager[causal.CausalContext]:
+    """Bind the causal root one dispatched task runs under (item 20).
+
+    A workflow node acts as its workflow, on behalf of whoever created the row;
+    an ordinary task is the agent acting for the task's creator. Either way the
+    task id (and the node's run and node ids) ride every act inside — the turn,
+    its tool calls and the policy records they produce. A fresh root, so the
+    dispatch loop's own system binding never stands in for the cause.
+    """
+    ids: dict[str, str] = {"task_id": task.id}
+    if node is None:
+        return causal.bind(causal.root("agent", self_did, on_behalf_of=task.creator_did, **ids))
+    ids |= {"workflow_run_id": node.run_id, "node_id": node.node_id}
+    return causal.bind(
+        causal.root(
+            "workflow",
+            f"did:arc:workflow:{node.workflow_id}",
+            on_behalf_of=task.creator_did,
+            **ids,
+        )
+    )
 
 
 @contextmanager
