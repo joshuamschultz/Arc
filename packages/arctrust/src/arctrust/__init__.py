@@ -215,6 +215,7 @@ from arctrust.paths import (
     users_file,
 )
 from arctrust.policy import (
+    INTERACTIVE_ORIGIN,
     ApprovalGrant,
     ClassificationLayer,
     ClearanceContext,
@@ -230,11 +231,14 @@ from arctrust.policy import (
     enrollment_to_wire,
     grant_from_wire,
     grant_to_wire,
+    scenario_grant_from_wire,
+    scenario_grant_to_wire,
     scenario_key,
     sign_enrollment_grant,
     sign_scenario_grant,
     verify_approval_for_hash,
     verify_enrollment,
+    verify_interactive_grant,
     verify_scenario_grant,
 )
 from arctrust.record_envelope import RecordEnvelopeCipher
@@ -434,6 +438,7 @@ __all__ = [
     "DEFAULT_OFF_ENTITIES",
     "ECDSA_P256",
     "ED25519",
+    "INTERACTIVE_ORIGIN",
     "LOCAL_ANCHOR_CUSTODY",
     "MAX_REGEX_SCAN_LENGTH",
     "OPERATOR",
@@ -615,6 +620,8 @@ __all__ = [
     "runtime_bin",
     "runtime_venv",
     "sanitize_error_text",
+    "scenario_grant_from_wire",
+    "scenario_grant_to_wire",
     "scenario_key",
     "sign",
     "sign_artifact",
@@ -646,6 +653,7 @@ __all__ = [
     "verify_challenge",
     "verify_deployment_grant",
     "verify_enrollment",
+    "verify_interactive_grant",
     "verify_local_head_witnessed",
     "verify_rekey_grant",
     "verify_rekey_intent",

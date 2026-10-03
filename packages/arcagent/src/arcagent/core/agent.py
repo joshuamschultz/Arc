@@ -99,7 +99,12 @@ from arcagent.streaming import (
     DeliveryToolEvent,
 )
 from arcagent.tools._policy_fill import resolve_provider_limits
-from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
+from arcagent.tools.human_gate import (
+    ApprovalChannel,
+    HumanGate,
+    HumanGateConfig,
+    StandingGrantSource,
+)
 from arcagent.utils.causality import agent_scope
 
 if TYPE_CHECKING:
@@ -740,6 +745,10 @@ class ArcAgent:
             ),
             audit_sink=policy_sink,
             channel=approval_channel,
+            # The operator's "Always allow" rows live beside the pending rows.
+            standing_grants=(
+                approval_channel if isinstance(approval_channel, StandingGrantSource) else None
+            ),
         )
         self._human_gate = human_gate
         self._tool_registry = ToolRegistry(

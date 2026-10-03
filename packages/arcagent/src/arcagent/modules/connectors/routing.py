@@ -35,12 +35,13 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, emit
 
+from arcagent.extension.approval import ConnectionBoundAttachment
 from arcagent.extension.attachment import (
     ExtensionAttachment,
     ProbeResult,
@@ -76,7 +77,7 @@ class RoutedMember:
     read_only: bool = False
 
 
-class RoutedAttachment:
+class RoutedAttachment(ConnectionBoundAttachment):
     """Satisfies :class:`~arcagent.extension.attachment.ExtensionAttachment` over members.
 
     Args:
@@ -132,6 +133,16 @@ class RoutedAttachment:
     def static_specs(self) -> list[ToolSpec]:
         """:meth:`describe_tools`, synchronously — the routed set is fixed at build."""
         return [self._with_selector(spec) for spec in self._specs.values()]
+
+    def destination_for(self, tool: str, args: Mapping[str, Any]) -> str:
+        """The connection a call would act on, or ``""`` when it names none usable.
+
+        Resolved exactly as :meth:`invoke` resolves it, so an operator's standing
+        grant for one connection is never matched against another; an empty
+        answer is a destination no grant covers.
+        """
+        member, _ = self._resolve(args.get(self._routing.argument))
+        return member.instance if member is not None else ""
 
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         """Resolve the connection, check it may run ``tool``, and run it there."""

@@ -55,6 +55,13 @@ class PendingApproval(BaseModel):
     # agent before the row is written — the store treats them as opaque data.
     arguments: dict[str, str] = Field(default_factory=dict)
     provenance: list[dict[str, Any]] = Field(default_factory=list)
+    # "Always allow" scope (SPEC-035 OQ-3, 2026-10-03): the destination class of
+    # the egress this call adds (None: it adds none), the verb a standing grant
+    # would cover, and whether the agent's tier lets the operator make it stand
+    # (never federal). Display + scope only — the agent re-verifies any grant.
+    destination: str | None = None
+    grant_tool: str = ""
+    standing_eligible: bool = False
     status: ApprovalStatus = "pending"
     note: str = ""
     grant: dict[str, Any] | None = None

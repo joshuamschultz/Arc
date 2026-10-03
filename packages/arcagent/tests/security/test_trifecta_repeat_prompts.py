@@ -1,38 +1,52 @@
 """Operator incident 2026-10-03 — 103 Approve clicks in ~85 minutes for one chat.
 
-Reproduces the observed DGX sequence for ``josh_agent`` (Olivia), web-chat
-session ``82dca58cd015a1f1``:
+Replays the observed DGX sequence for ``josh_agent`` (Olivia), web-chat session
+``82dca58cd015a1f1``, through the REAL approval path: the registry's trifecta
+gate, the real :class:`HumanGate`, the real arcstore-backed approval channel and
+standing-grant store, and the same ``approve_always`` operation arcui's "Always
+allow" button and ``arc approve --always`` run. Only the operator's clicks are
+simulated.
 
-1. ``read``/``grep``/``knowledge_search`` light ``private_data``;
-2. ``bash`` lights ``untrusted_input``;
-3. ``dropbox_upload`` lights ``external_comms`` -> trifecta complete -> the
-   operator clicks Approve once (one-shot grant bound to that call's hash);
-4. the agent then fans out ~94 read-only connector calls (``slack_search``,
-   ``slack_read_channel``, ``dropbox_list`` ...) that carry NO trifecta leg —
-   and EVERY one of them prompted again, because the session union already
-   holds all three legs and ``GlobalLayer`` tests the union, not the call;
-5. a second ``dropbox_upload`` (different content) prompted again.
+The sequence: ``read`` (private_data) -> ``bash`` (untrusted_input) ->
+``dropbox_upload`` to the operator's Dropbox (external_comms) completes the
+trifecta and prompts; the agent then fans out read-only connector calls and a
+second upload. Before the fix every one of those prompted again.
 
-The two ``xfail(strict=True)`` tests below state the operator's expectation.
-They are red today on purpose; each needs a design ruling before it is made
-green (SPEC-035 REQ-015 AC1 currently REQUIRES step 5 to re-prompt, and
-SPEC-035 OQ-3 leaves a standing per-session grant undecided). ``strict=True``
-means the day a fix lands, the marker must be removed — it cannot silently
-keep "expecting failure".
-
-The passing test pins the part of the design that already holds (SPEC-057
-G4/REQ-010): delivering to the operator's own channel is not an exfiltration
-leg, so chat replies never complete the trifecta.
+Josh's ruling (SPEC-035 OQ-3, 2026-10-03): "Always allow" makes the combination
+stand for that agent, scoped to the composition and the egress destination. A
+plain Approve stays one-shot. A new destination prompts. Revoke bites on the
+next call. Federal never honours a standing grant. One click covers both the
+trifecta gate and the connection's own outbound gate.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from arcstore.approvals import ApprovalStore
+from arcstore.backends.memory import FakeBackend
+from arcstore.standing_grants import (
+    StandingGrant,
+    StandingGrantRefusedError,
+    StandingGrantStore,
+    approve_always,
+    standing_grant_id,
+)
 from arctrust.identity import AgentIdentity
-from arctrust.policy import ApprovalGrant, OperatorApprovalAuthority, sign_approval_for_hash
+from arctrust.policy import (
+    INTERACTIVE_ORIGIN,
+    OperatorApprovalAuthority,
+    grant_to_wire,
+    scenario_grant_to_wire,
+    sign_approval_for_hash,
+    sign_scenario_grant,
+)
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
@@ -46,11 +60,17 @@ from arcagent.core.session_internal.capability_ledger import (
     bind_session_id,
     reset_session_id,
 )
-from arcagent.core.tool_policy import build_pipeline
+from arcagent.core.tool_policy import PolicyDenied, build_pipeline
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
-from arcagent.tools.human_gate import ApprovalRequest, HumanGate
+from arcagent.extension.approval import ApprovalBinding
+from arcagent.extension.attachment import ToolOutcome, ToolResult, ToolSpec
+from arcagent.extension.bridge import CapabilityBridge
+from arcagent.tools.approval_channel import ArcStoreApprovalChannel
+from arcagent.tools.human_gate import HumanGate
 
 _SESSION = "82dca58cd015a1f1"
+_DROPBOX = "personal_dropbox"
+Choice = Literal["approve", "always", "deny"]
 
 
 class _Telemetry:
@@ -71,7 +91,12 @@ class _Telemetry:
         return _Span()
 
 
-def _tool(name: str, tags: list[str]) -> RegisteredTool:
+def _account(arguments: Mapping[str, Any]) -> str:
+    """Stands in for the connector router: the connection a call reaches."""
+    return str(arguments.get("account", _DROPBOX))
+
+
+def _tool(name: str, tags: list[str], *, destination: Any = None) -> RegisteredTool:
     async def _execute(**kwargs: Any) -> str:
         return f"{name} ok {sorted(kwargs)}"
 
@@ -84,146 +109,433 @@ def _tool(name: str, tags: list[str]) -> RegisteredTool:
         source="test",
         classification="state_modifying",
         capability_tags=tags,
+        destination=destination,
     )
 
 
 # The tags each tool really carries on the DGX (extensions/slack + dropbox
 # manifests; built-in read/bash): connector reads declare NO capability tags.
-_TOOLS = [
-    _tool("read", ["file_read"]),
-    _tool("bash", ["subprocess"]),
-    _tool("dropbox_upload", ["network_egress"]),
-    _tool("slack_search", []),
-    _tool("slack_read_channel", []),
-    _tool("notify_user", ["network_egress"]),
-    _tool("messaging_send", ["network_egress"]),
-]
+def _tools() -> list[RegisteredTool]:
+    return [
+        _tool("read", ["file_read"]),
+        _tool("bash", ["subprocess"]),
+        _tool("dropbox_upload", ["network_egress"], destination=_account),
+        _tool("dropbox_delete", ["network_egress"], destination=_account),
+        _tool("slack_search", []),
+        _tool("slack_read_channel", []),
+        _tool("notify_user", ["network_egress"]),
+        _tool("messaging_send", ["network_egress"]),
+    ]
 
 
-class _Operator:
-    """The arcui Approve button: records each prompt, signs every one."""
+@dataclass
+class _Deployment:
+    """One box: the shared arcstore, the operator key, and an Approve button."""
 
-    def __init__(self) -> None:
-        self.signer = InProcessSigner(bytes(SigningKey.generate()))
-        self._authority = OperatorApprovalAuthority(self.signer)
-        self.prompts: list[ApprovalRequest] = []
+    backend: FakeBackend
+    approvals: ApprovalStore
+    standing: StandingGrantStore
+    signer: InProcessSigner
+    choice: Choice = "approve"
+    prompts: list[str] = field(default_factory=list)
 
-    async def approve(self, request: ApprovalRequest) -> ApprovalGrant | None:
-        self.prompts.append(request)
-        return sign_approval_for_hash(request.call_hash, self._authority)
+    @property
+    def operator(self) -> OperatorApprovalAuthority:
+        return OperatorApprovalAuthority(self.signer)
+
+    async def click(self) -> None:
+        """Resolve every pending row the way the operator chose (arcui's handlers)."""
+        for row in await self.approvals.list(status="pending"):
+            self.prompts.append(row.tool)
+            if self.choice == "always":
+                await approve_always(self.approvals, self.standing, row, self.operator)
+            elif self.choice == "approve":
+                grant = sign_approval_for_hash(row.call_hash, self.operator)
+                await self.approvals.resolve(
+                    row.id,
+                    status="approved",
+                    actor_did=self.operator.did,
+                    resolved_by=self.operator.did,
+                    grant=grant_to_wire(grant),
+                )
+            else:
+                await self.approvals.resolve(
+                    row.id, status="denied", actor_did="operator", resolved_by="operator"
+                )
 
 
-def _olivia(operator: _Operator) -> ToolRegistry:
-    identity = AgentIdentity.generate("local", "executor")
-    gate = HumanGate(
-        operator_signer=operator.signer,
-        agent_did=identity.did,
-        tier="personal",
-        channel=operator.approve,
+@contextlib.asynccontextmanager
+async def _deployment() -> AsyncIterator[_Deployment]:
+    backend = FakeBackend()
+    await backend.start()
+    box = _Deployment(
+        backend=backend,
+        approvals=ApprovalStore(backend),
+        standing=StandingGrantStore(backend),
+        signer=InProcessSigner(bytes(SigningKey.generate())),
     )
-    reg = ToolRegistry(
+
+    async def operator_at_the_desk() -> None:
+        while True:
+            await box.click()
+            await asyncio.sleep(0.005)
+
+    desk = asyncio.create_task(operator_at_the_desk())
+    try:
+        yield box
+    finally:
+        desk.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await desk
+
+
+@dataclass
+class _Agent:
+    registry: ToolRegistry
+    gate: HumanGate
+    identity: AgentIdentity
+    audit: list[tuple[str, dict[str, Any]]]
+
+
+def _agent(
+    box: _Deployment, *, tier: str = "personal", identity: AgentIdentity | None = None
+) -> _Agent:
+    identity = identity or AgentIdentity.generate("local", "executor")
+    channel = ArcStoreApprovalChannel(
+        box.approvals,
+        standing_store=box.standing,
+        id_factory=lambda: f"req-{len(box.prompts)}-{id(object())}",
+        agent_label="Olivia",
+        poll_interval_seconds=0.005,
+    )
+    audit: list[tuple[str, dict[str, Any]]] = []
+    gate = HumanGate(
+        operator_signer=box.signer,
+        agent_did=identity.did,
+        tier=tier,
+        audit_sink=lambda event, payload: audit.append((event, payload)),
+        channel=channel,
+        standing_grants=channel,
+    )
+    registry = ToolRegistry(
         config=ToolsConfig(),
         bus=ModuleBus(),
         telemetry=_Telemetry(),
         policy_pipeline=build_pipeline(
-            tier="personal",
+            tier=tier,  # type: ignore[arg-type]  # test passes the literal tiers
             agent_registry={identity.did: identity.public_key},
             forbidden_compositions=[LETHAL_TRIFECTA],
         ),
         identity=identity,
-        tier="personal",
+        tier=tier,  # type: ignore[arg-type]  # test passes the literal tiers
         capability_ledger=SessionCapabilityLedger(),
         human_gate=gate,
     )
-    for tool in _TOOLS:
-        reg.register(tool)
-    return reg
+    for tool in _tools():
+        registry.register(tool)
+    return _Agent(registry=registry, gate=gate, identity=identity, audit=audit)
 
 
-async def _call(reg: ToolRegistry, name: str, **args: Any) -> Any:
-    token = bind_session_id(_SESSION)
+async def _call(agent: _Agent, name: str, *, session: str = _SESSION, **args: Any) -> Any:
+    token = bind_session_id(session)
     try:
-        return await reg._create_wrapped_execute(reg.tools[name])(args)
+        return await agent.registry._create_wrapped_execute(agent.registry.tools[name])(args)
     finally:
         reset_session_id(token)
 
 
-async def _complete_trifecta_with_one_approval(reg: ToolRegistry, operator: _Operator) -> None:
-    await _call(reg, "read", path="notes/brian.md")
-    await _call(reg, "bash", command="ls exports/")
-    await _call(reg, "dropbox_upload", path="/Olivia/brian.md", content="v1", mode="add")
-    assert len(operator.prompts) == 1, "the completing upload must prompt exactly once"
+async def _complete_trifecta(agent: _Agent, *, session: str = _SESSION) -> None:
+    await _call(agent, "read", session=session, path="notes/brian.md")
+    await _call(agent, "bash", session=session, command="ls exports/")
+    await _call(agent, "dropbox_upload", session=session, path="/Olivia/brian.md", content="v1")
 
 
-@pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "2026-10-03 incident: a call carrying NO trifecta leg is gated once the "
-        "session union is saturated (GlobalLayer tests session|call, not the call). "
-        "Needs a ruling: does a leg-less call ever need approval? See report."
-    ),
+# --- the incident, replayed ---------------------------------------------------
+
+
+async def test_always_allow_once_then_the_same_work_never_prompts_again() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        await _complete_trifecta(olivia)
+        assert box.prompts == ["dropbox_upload"]
+
+        for channel in ("C01", "C02", "C03"):
+            await _call(olivia, "slack_read_channel", channel=channel, limit="50")
+        await _call(olivia, "slack_search", query="Brian Trentham")
+        await _call(olivia, "bash", command="ls exports/")
+        await _call(olivia, "dropbox_upload", path="/Olivia/clay.md", content="v2")
+
+        assert box.prompts == ["dropbox_upload"]
+        used = [p for e, p in olivia.audit if e == "human_gate.standing_grant_used"]
+        assert len(used) == 6
+        assert all(p["grant_id"].startswith("sg-") and p["call_hash"] for p in used)
+        [row] = await box.standing.active_for(olivia.identity.did)
+        assert row.use_count == 6
+        assert row.destination == _DROPBOX
+
+
+async def test_standing_grant_survives_a_new_session_and_a_restart() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        identity = AgentIdentity.generate("local", "executor")
+        await _complete_trifecta(_agent(box, identity=identity))
+        box.choice = "deny"
+
+        restarted = _agent(box, identity=identity)  # fresh ledger, gate, channel
+        await _complete_trifecta(restarted, session="next-morning")
+
+        assert box.prompts == ["dropbox_upload"]
+
+
+async def test_plain_approve_stays_one_shot() -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        await _complete_trifecta(olivia)
+        await _call(olivia, "dropbox_upload", path="/Olivia/clay.md", content="v2")
+
+        assert box.prompts == ["dropbox_upload", "dropbox_upload"]
+        assert await box.standing.list() == []
+
+
+async def test_new_destination_still_prompts() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        await _complete_trifecta(olivia)
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _call(
+                olivia, "dropbox_upload", path="/x.md", content="v2", account="work_dropbox"
+            )
+
+        assert box.prompts == ["dropbox_upload", "dropbox_upload"]
+
+
+async def test_other_egress_verb_to_the_same_destination_still_prompts() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        await _complete_trifecta(olivia)
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _call(olivia, "dropbox_delete", path="/Olivia/brian.md")
+
+        assert box.prompts == ["dropbox_upload", "dropbox_delete"]
+
+
+async def test_revoked_grant_prompts_again_on_the_next_call() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        await _complete_trifecta(olivia)
+        [row] = await box.standing.active_for(olivia.identity.did)
+
+        await box.standing.revoke(row.id, actor_did=box.operator.did)
+        box.choice = "deny"
+        with pytest.raises(PolicyDenied):
+            await _call(olivia, "slack_search", query="Brian")
+
+        assert box.prompts == ["dropbox_upload", "slack_search"]
+
+
+async def test_grant_for_one_agent_never_covers_another() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        await _complete_trifecta(_agent(box))
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _complete_trifecta(_agent(box))
+
+        assert box.prompts == ["dropbox_upload", "dropbox_upload"]
+
+
+async def test_grant_for_a_narrower_combination_never_covers_a_wider_one() -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        operator = box.operator
+        await box.standing.put(
+            _stored(olivia, operator, composition=frozenset({"external_comms", "private_data"})),
+            actor_did=operator.did,
+        )
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _complete_trifecta(olivia)
+
+        assert box.prompts == ["dropbox_upload"]
+
+
+@pytest.mark.parametrize("forgery", ["foreign_key", "agent_key", "edited", "unsigned"])
+async def test_forged_or_unsigned_grant_row_is_ignored(forgery: str) -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        signer: Any = {
+            "foreign_key": OperatorApprovalAuthority(
+                InProcessSigner(bytes(SigningKey.generate()))
+            ),
+            "agent_key": olivia.identity,
+        }.get(forgery, box.operator)
+        row = _stored(olivia, signer)
+        if forgery == "edited":
+            row = row.model_copy(update={"grant": {**row.grant, "connection": "work_dropbox"}})
+        if forgery == "unsigned":
+            row = row.model_copy(update={"grant": {**row.grant, "signature": ""}})
+        await box.standing.put(row, actor_did="attacker")
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _complete_trifecta(olivia)
+
+        assert box.prompts == ["dropbox_upload"]
+
+
+async def test_federal_refuses_a_stored_standing_grant_and_never_offers_one() -> None:
+    async with _deployment() as box:
+        olivia = _agent(box, tier="federal")
+        await box.standing.put(_stored(olivia, box.operator), actor_did=box.operator.did)
+        box.choice = "approve"
+
+        await _complete_trifecta(olivia)
+
+        assert box.prompts == ["dropbox_upload"]
+        [row] = await box.approvals.list(status="approved")
+        assert row.standing_eligible is False
+        with pytest.raises(StandingGrantRefusedError):
+            await approve_always(
+                box.approvals,
+                box.standing,
+                row.model_copy(update={"status": "pending"}),
+                box.operator,
+            )
+
+
+# --- one click covers the connection's own outbound gate ------------------------
+
+
+_UPLOAD = ToolSpec(
+    name="dropbox_upload",
+    description="Upload a file.",
+    classification="state_modifying",
+    capability_tags=["network_egress"],
 )
-async def test_legless_reads_after_one_approval_do_not_prompt() -> None:
-    operator = _Operator()
-    reg = _olivia(operator)
-    await _complete_trifecta_with_one_approval(reg, operator)
-
-    for channel in ("C01", "C02", "C03"):
-        await _call(reg, "slack_read_channel", channel=channel, limit="50")
-    await _call(reg, "slack_search", query="Brian Trentham")
-
-    assert len(operator.prompts) == 1, [p.tool_name for p in operator.prompts]
 
 
-@pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Operator intent #2 (approve a combination once, it stays approved) "
-        "contradicts SPEC-035 REQ-015 AC1 (one-shot, call-hash bound) and the "
-        "ScenarioGrant design (interactive origin=None matches no standing grant). "
-        "Needs a ruling on grant scope. See report."
-    ),
-)
-async def test_same_combination_again_does_not_prompt() -> None:
-    operator = _Operator()
-    reg = _olivia(operator)
-    await _complete_trifecta_with_one_approval(reg, operator)
+class _Dropbox:
+    def __init__(self) -> None:
+        self.uploads: list[dict[str, Any]] = []
 
-    await _call(reg, "dropbox_upload", path="/Olivia/clay.md", content="v2", mode="add")
+    def requirements(self) -> list[Any]:
+        return []
 
-    assert len(operator.prompts) == 1, [p.tool_name for p in operator.prompts]
+    async def probe(self) -> Any:
+        return None
+
+    async def describe_tools(self) -> list[ToolSpec]:
+        return [_UPLOAD]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
+        self.uploads.append(dict(args))
+        return ToolResult(tool=tool, outcome=ToolOutcome.OK, content="uploaded")
 
 
-@pytest.mark.asyncio
+def _connect_dropbox(agent: _Agent) -> _Dropbox:
+    """Attach a Dropbox connection the way the connectors module does: bound, bridged."""
+    dropbox = _Dropbox()
+    binding = ApprovalBinding(instance=_DROPBOX, agent_did=agent.identity.did, gate=agent.gate)
+    del agent.registry.tools["dropbox_upload"]
+    CapabilityBridge(
+        registry=agent.registry,
+        attachment=binding.bind(dropbox, [_UPLOAD]),
+        transport=ToolTransport.NATIVE,
+        source="extension:dropbox",
+    ).register([_UPLOAD])
+    return dropbox
+
+
+async def test_plain_approve_asks_once_for_both_gates() -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        dropbox = _connect_dropbox(olivia)
+
+        await _complete_trifecta(olivia)
+
+        assert box.prompts == ["dropbox_upload"]
+        assert len(dropbox.uploads) == 1
+
+
+async def test_always_allow_covers_the_connection_gate_in_a_fresh_session() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        dropbox = _connect_dropbox(olivia)
+        await _complete_trifecta(olivia)
+        box.choice = "deny"
+
+        # No trifecta here: only the connection's outbound gate fires — and the
+        # standing grant for this connection already answers it.
+        await _call(olivia, "dropbox_upload", session="fresh", path="/a.md", content="x")
+
+        assert box.prompts == ["dropbox_upload"]
+        assert len(dropbox.uploads) == 2
+
+
+async def test_connection_gate_still_asks_when_the_trifecta_gate_did_not() -> None:
+    async with _deployment() as box:
+        olivia = _agent(box)
+        dropbox = _connect_dropbox(olivia)
+
+        await _call(olivia, "dropbox_upload", session="fresh", path="/a.md", content="x")
+
+        assert box.prompts == ["personal_dropbox.dropbox_upload"]
+        assert len(dropbox.uploads) == 1
+
+
+# --- the owner's own channel is not an exfiltration leg (SPEC-057 G4) ------------
+
+
 async def test_reply_to_owner_channel_is_not_an_exfil_leg() -> None:
-    """SPEC-057 G4/REQ-010 — the operator's own channel never completes the trifecta."""
-    operator = _Operator()
-    reg = _olivia(operator)
-    await _call(reg, "read", path="notes/brian.md")
-    await _call(reg, "bash", command="curl https://example.com")
+    async with _deployment() as box:
+        olivia = _agent(box)
+        await _call(olivia, "read", path="notes/brian.md")
+        await _call(olivia, "bash", command="curl https://example.com")
 
-    await _call(reg, "notify_user", message="Brian's notes are in Dropbox.")
-    await _call(reg, "messaging_send", to=OWNER_CHANNEL, body="done")
+        await _call(olivia, "notify_user", message="Brian's notes are in Dropbox.")
+        await _call(olivia, "messaging_send", to=OWNER_CHANNEL, body="done")
 
-    assert operator.prompts == []
-    ledger = reg._capability_ledger
-    assert ledger is not None
-    assert EXTERNAL_COMMS not in ledger.snapshot(_SESSION)
+        assert box.prompts == []
+        ledger = olivia.registry._capability_ledger
+        assert ledger is not None
+        assert EXTERNAL_COMMS not in ledger.snapshot(_SESSION)
 
 
-@pytest.mark.asyncio
 async def test_non_owner_recipient_still_completes_the_trifecta() -> None:
-    """The owner exemption never widens to a third party (abuse case)."""
-    operator = _Operator()
-    reg = _olivia(operator)
-    await _call(reg, "read", path="notes/brian.md")
-    await _call(reg, "bash", command="curl https://example.com")
+    async with _deployment() as box:
+        olivia = _agent(box)
+        await _call(olivia, "read", path="notes/brian.md")
+        await _call(olivia, "bash", command="curl https://example.com")
 
-    await _call(reg, "messaging_send", to=f"{OWNER_CHANNEL},agent://stranger", body="x")
+        await _call(olivia, "messaging_send", to=f"{OWNER_CHANNEL},agent://stranger", body="x")
 
-    assert len(operator.prompts) == 1
+        assert box.prompts == ["messaging_send"]
+
+
+async def test_grant_for_one_recipient_never_covers_an_added_recipient() -> None:
+    async with _deployment() as box:
+        box.choice = "always"
+        olivia = _agent(box)
+        await _call(olivia, "read", path="notes/brian.md")
+        await _call(olivia, "bash", command="curl https://example.com")
+        await _call(olivia, "messaging_send", to="agent://alice", body="x")
+        box.choice = "deny"
+
+        with pytest.raises(PolicyDenied):
+            await _call(olivia, "messaging_send", to="agent://alice,agent://mallory", body="y")
+
+        assert box.prompts == ["messaging_send", "messaging_send"]
 
 
 def test_fixture_tools_match_shipped_manifests() -> None:
@@ -236,3 +548,34 @@ def test_fixture_tools_match_shipped_manifests() -> None:
         assert "capability_tags" not in block, verb
     upload = dropbox.split('name = "dropbox_upload"', 1)[1].split("[[", 1)[0]
     assert 'capability_tags = ["network_egress"]' in upload
+
+
+def _stored(
+    agent: _Agent,
+    signer: Any,
+    *,
+    composition: frozenset[str] = LETHAL_TRIFECTA,
+) -> StandingGrant:
+    """A standing-grant row as arcui writes it, signed by ``signer``."""
+    grant = sign_scenario_grant(
+        operator=signer,
+        agent_did=agent.identity.did,
+        tool_name="dropbox_upload",
+        composition=composition,
+        origin=INTERACTIVE_ORIGIN,
+        connection=_DROPBOX,
+    )
+    return StandingGrant(
+        id=standing_grant_id(
+            agent_did=agent.identity.did,
+            tool="dropbox_upload",
+            composition=sorted(composition),
+            destination=_DROPBOX,
+        ),
+        agent_did=agent.identity.did,
+        tool="dropbox_upload",
+        composition=sorted(composition),
+        destination=_DROPBOX,
+        grant=scenario_grant_to_wire(grant),
+        granted_by=signer.did,
+    )

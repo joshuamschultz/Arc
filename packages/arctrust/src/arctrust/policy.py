@@ -121,6 +121,12 @@ class ApprovalGrant(BaseModel):
     signature: bytes
 
 
+#: ``ScenarioGrant.origin`` of an operator's "Always allow" on an interactive
+#: approval (SPEC-035 OQ-3 ruling, 2026-10-03). Matched only by
+#: :func:`verify_interactive_grant`; never by the automated-driver path.
+INTERACTIVE_ORIGIN = "interactive"
+
+
 class ScenarioGrant(BaseModel):
     """Operator-signed standing approval for one recurring automated scenario.
 
@@ -678,6 +684,10 @@ def verify_scenario_grant(
     """
     if origin is None or connection is None:
         return False
+    # An interactive standing grant is matched by :func:`verify_interactive_grant`
+    # under its own rules; it never stands in for an automated driver.
+    if grant.origin == INTERACTIVE_ORIGIN:
+        return False
     if grant.approver_did == agent_did:  # ASI09 — no self-approval, ever.
         return False
     if (
@@ -688,7 +698,12 @@ def verify_scenario_grant(
         or grant.connection != connection
     ):
         return False
-    if not did_matches_pubkey(grant.approver_did, grant.public_key):
+    return _scenario_signature_valid(grant)
+
+
+def _scenario_signature_valid(grant: ScenarioGrant) -> bool:
+    """Whether the approver key matches its DID and signed exactly these fields."""
+    if not grant.signature or not did_matches_pubkey(grant.approver_did, grant.public_key):
         return False
     key = scenario_key(
         agent_did=grant.agent_did,
@@ -697,8 +712,80 @@ def verify_scenario_grant(
         origin=grant.origin,
         connection=grant.connection,
     )
-    return verify_signature(
-        grant.algorithm, key.encode("utf-8"), grant.signature, grant.public_key
+    try:
+        return verify_signature(
+            grant.algorithm, key.encode("utf-8"), grant.signature, grant.public_key
+        )
+    except Exception:  # reason: a malformed key or signature is a refusal, not a crash
+        return False
+
+
+def verify_interactive_grant(
+    grant: ScenarioGrant,
+    *,
+    agent_did: str,
+    tool_name: str,
+    legs: frozenset[str],
+    destination: str | None,
+    tier: str,
+) -> bool:
+    """Whether an operator's "Always allow" covers this call. Fail-closed.
+
+    Josh's ruling (2026-10-03, SPEC-035 OQ-3): an operator who approves a
+    trifecta combination for an agent may make it stand. The grant covers a
+    later call by the SAME agent when:
+
+    - every leg the call would hold (``legs`` = session legs + the call's own)
+      sits inside the approved ``composition`` — a wider set prompts again;
+    - if the call adds egress (``destination`` is not ``None``), it goes to the
+      approved destination class (``connection``) through the approved verb
+      (``tool_name``) — a new destination prompts again. A call that adds no
+      egress (``destination is None``) is covered by the composition alone.
+
+    Never at federal: a standing interactive waiver is refused outright there.
+    The grant must be signed by someone other than the agent; pinning the
+    signer to the deployment operator is the caller's job, as for one-shots.
+    """
+    if tier == "federal" or grant.origin != INTERACTIVE_ORIGIN:
+        return False
+    if grant.approver_did == agent_did or grant.agent_did != agent_did:
+        return False
+    if not legs <= grant.composition:
+        return False
+    if destination is not None and (
+        not destination or grant.connection != destination or grant.tool_name != tool_name
+    ):
+        return False
+    return _scenario_signature_valid(grant)
+
+
+def scenario_grant_to_wire(grant: ScenarioGrant) -> dict[str, Any]:
+    """JSON-safe form of a :class:`ScenarioGrant` (bytes base64, legs sorted)."""
+    return {
+        "agent_did": grant.agent_did,
+        "tool_name": grant.tool_name,
+        "composition": sorted(grant.composition),
+        "origin": grant.origin,
+        "connection": grant.connection,
+        "approver_did": grant.approver_did,
+        "public_key": base64.b64encode(grant.public_key).decode("ascii"),
+        "algorithm": grant.algorithm,
+        "signature": base64.b64encode(grant.signature).decode("ascii"),
+    }
+
+
+def scenario_grant_from_wire(data: dict[str, Any]) -> ScenarioGrant:
+    """Reconstruct a :class:`ScenarioGrant` from :func:`scenario_grant_to_wire` output."""
+    return ScenarioGrant(
+        agent_did=str(data["agent_did"]),
+        tool_name=str(data["tool_name"]),
+        composition=frozenset(str(leg) for leg in data["composition"]),
+        origin=str(data["origin"]),
+        connection=str(data["connection"]),
+        approver_did=str(data["approver_did"]),
+        public_key=base64.b64decode(str(data["public_key"])),
+        algorithm=str(data.get("algorithm", "ed25519")),
+        signature=base64.b64decode(str(data["signature"])),
     )
 
 

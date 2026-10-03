@@ -34,7 +34,7 @@ binds to the real recipient regardless, because the call hash covers the argumen
 from __future__ import annotations
 
 import logging
-import re
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -49,6 +49,8 @@ from arcagent.core.session_internal.capability_ledger import (
     current_session_id,
     legs_for_call,
 )
+from arcagent.core.session_internal.dispatch_approval import approved_dispatch_for
+from arcagent.core.session_internal.egress_destination import outbound_target
 from arcagent.extension.attachment import (
     ExtensionAttachment,
     ProbeResult,
@@ -69,38 +71,9 @@ ApprovalMode = Literal["none", "outbound", "all"]
 
 _MODES: frozenset[str] = frozenset(get_args(ApprovalMode))
 
-#: What an argument value has to look like to be an outbound destination. Shape,
-#: not name: an extension picks its own argument names and core may not learn any
-#: of them (REQ-280), so a list of vendor-blessed keys would be both a coupling
-#: and a hole the first time an extension called the field ``recipient``.
-_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"[^\s@,;<>\"']+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
-    re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s\"']+"),
-)
-
 #: The restrictive spec an undeclared tool is judged as. An upstream that serves a
 #: verb the manifest never declared must not buy the free-read path by omission.
 _UNDECLARED = ToolSpec(name="", classification="state_modifying")
-
-
-def outbound_target(arguments: Mapping[str, Any]) -> str:
-    """Return the first destination this call names, or ``""`` if it names none.
-
-    Args:
-        arguments: The call's real, unredacted arguments.
-
-    Returns:
-        An address the operator can recognise — a mail recipient, a URL — or the
-        empty string, which is itself informative: this call sends nothing to a
-        named external destination.
-    """
-    for value in arguments.values():
-        text = str(value)
-        for pattern in _TARGET_PATTERNS:
-            found = pattern.search(text)
-            if found is not None:
-                return found.group(0)
-    return ""
 
 
 @dataclass(frozen=True)
@@ -204,8 +177,26 @@ class ApprovalBinding:
             return ApprovalDecision(allowed=True, reason="not_required")
 
         target = outbound_target(arguments)
+        already = approved_dispatch_for(spec.name, arguments)
+        if already is not None:
+            # The operator already approved exactly this call at the trifecta
+            # gate in this dispatch — one click, not two (2026-10-03).
+            self._audit(
+                spec,
+                target,
+                action="connector.approval_granted",
+                outcome="allow",
+                basis=already.basis,
+            )
+            return ApprovalDecision(allowed=True, reason="approved_in_dispatch")
+
         legs = self._legs(spec, arguments)
-        grant = await self._gate.request(self._subject(spec, arguments, legs), legs=legs)
+        grant = await self._gate.request(
+            self._subject(spec, arguments, legs),
+            legs=legs,
+            destination=self._instance,
+            grant_tool=spec.name,
+        )
         if grant is None:
             self._audit(spec, target, action="connector.approval_denied", outcome="deny")
             return ApprovalDecision(allowed=False, reason="approval_denied")
@@ -263,7 +254,9 @@ class ApprovalBinding:
             capability_tags=legs,
         )
 
-    def _audit(self, spec: ToolSpec, target: str, *, action: str, outcome: str) -> None:
+    def _audit(
+        self, spec: ToolSpec, target: str, *, action: str, outcome: str, basis: str = ""
+    ) -> None:
         """Record the verdict through the single emission chokepoint."""
         if self._sink is None:
             return
@@ -279,13 +272,30 @@ class ApprovalBinding:
                     "outbound_target": target,
                     "mode": self._mode,
                     "classification": spec.classification,
+                    "basis": basis,
                 },
             ),
             self._sink,
         )
 
 
-class _GatedAttachment:
+class ConnectionBoundAttachment(ABC):
+    """An attachment Arc itself bound to a connection — the only kind trusted to
+    name where a call goes.
+
+    An operator's standing "Always allow" is scoped to a connection id. The
+    registry asks the attachment which connection a call would reach; only
+    attachments built by Arc's own binding code (the per-connection gate and
+    the connector router) answer, so an extension's own object can never claim
+    another connection's grant.
+    """
+
+    @abstractmethod
+    def destination_for(self, tool: str, args: Mapping[str, Any]) -> str:
+        """The connection id this call would act on, or ``""`` if none."""
+
+
+class _GatedAttachment(ConnectionBoundAttachment):
     """One attachment with its outbound calls behind :class:`ApprovalBinding`.
 
     A whole :class:`~arcagent.extension.attachment.ExtensionAttachment`, not a
@@ -314,6 +324,10 @@ class _GatedAttachment:
     async def describe_tools(self) -> list[ToolSpec]:
         return await self._attachment.describe_tools()
 
+    def destination_for(self, tool: str, args: Mapping[str, Any]) -> str:
+        """Every call through this attachment goes to its one connection."""
+        return self._binding.instance
+
     async def invoke(self, tool: str, args: dict[str, Any]) -> ToolResult:
         """Authorize, then call — never the other way round.
 
@@ -341,5 +355,5 @@ __all__ = [
     "ApprovalBinding",
     "ApprovalDecision",
     "ApprovalMode",
-    "outbound_target",
+    "ConnectionBoundAttachment",
 ]
