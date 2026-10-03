@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from arcstore.backends.memory import FakeBackend
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -80,3 +83,21 @@ def test_store_failed_start_retries_and_readiness_recovers() -> None:
             time.sleep(0.05)
         assert client.get("/api/ready").status_code == 200
     assert backend.calls >= 2
+
+
+def test_health_reports_the_bundle_the_served_index_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The id a stale tab compares against is the entry script of the HTML served."""
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text(
+        '<html><head><script type="module" src="/assets/index-Zq9_x-1.js"></script></head></html>'
+    )
+    monkeypatch.setattr("arcui.server._STATIC_DIR", tmp_path)
+
+    with TestClient(create_app(arcstore_backend=FakeBackend())) as client:
+        body = client.get("/api/health").json()
+        served = client.get("/").text
+
+    assert body == {"status": "ok", "bundle": "index-Zq9_x-1.js"}
+    assert "/assets/index-Zq9_x-1.js" in served

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiGet } from '@/lib/api'
 import { getToken } from '@/lib/auth'
+import { checkForNewBuild } from '@/lib/stale-build'
 import { newRequestId } from '@/lib/request-id'
 import type { Dict, SessionReplayResponse } from '@/lib/types'
 
@@ -120,6 +121,8 @@ export function useChatSession(agentId: string | null) {
 
       ws.addEventListener('open', () => {
         ws.send(JSON.stringify({ token: getToken() }))
+        // A reconnect after a deploy lands on the new server; see if this tab is old.
+        if (attempts.current > 0) void checkForNewBuild()
         attempts.current = 0
         deadline.current = 0
       })
