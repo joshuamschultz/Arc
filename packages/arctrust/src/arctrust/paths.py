@@ -353,14 +353,35 @@ def extensions_dir(base: Base = None) -> Path:
     return arc_state(base) / "extensions"
 
 
+# Process state, set on first use (never at import): the runtime version each
+# ``runtime/current`` link pointed at when this process first asked. Keyed by the
+# link so a different Arc home (tests, multi-home tooling) pins independently.
+_BOOT_RUNTIME_EXTENSIONS: dict[Path, Path] = {}
+
+
 def runtime_extensions_dir() -> Path:
-    """Return the extension bundles the active install ships: ``<arc_runtime>/extensions``.
+    """Return the extension bundles the booted install ships.
 
     Code-bearing connector bundles execute from the install (``~/.arc``), never
     from the operator tree (``~/arc``), which any process running as the operator
     can write.
+
+    The ``runtime/current`` symlink is resolved ONCE, on the first call in this
+    process, and that concrete ``runtime/<version>/extensions`` path is returned
+    for every later call. A deploy that flips ``current`` mid-run therefore
+    cannot make one process mix old and new code, and swapping the link between
+    verification and load cannot redirect a load to unverified code (TOCTOU).
+    Resolution is per call to the single resolver, never at import; only the
+    pin is process state. A new process boots on the new version.
     """
-    return arc_runtime() / "extensions"
+    link = arc_runtime()
+    pinned = _BOOT_RUNTIME_EXTENSIONS.get(link)
+    if pinned is None:
+        if not link.exists():
+            return link / "extensions"
+        pinned = link.resolve() / "extensions"
+        _BOOT_RUNTIME_EXTENSIONS[link] = pinned
+    return pinned
 
 
 def installed_extensions_dir() -> Path:
