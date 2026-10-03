@@ -328,11 +328,33 @@ export interface HomeNeedsWaiting {
   preview: string
 }
 
+/** A pulse check that cannot run until approved. ``definition_digest`` is the
+ * text the operator is shown; the pulse approve route refuses it if it changed. */
+export interface HomeNeedsPulse {
+  agent_id: string
+  agent_label: string
+  check: string
+  interval_minutes: number
+  action: string
+  definition_digest: string
+  changed: boolean
+}
+
+/** A legacy schedule with no signed revision; it cannot fire until approved. */
+export interface HomeNeedsSchedule {
+  agent_id: string
+  agent_label: string
+  schedule_id: string
+  name: string
+}
+
 export interface HomeNeedsResponse {
   approvals: HomeNeedsQueue<PendingApproval>
   capabilities: HomeNeedsQueue<HomeNeedsCapability>
   review_tasks: HomeNeedsQueue<Task>
   waiting_on_human: HomeNeedsQueue<HomeNeedsWaiting>
+  pulse: HomeNeedsQueue<HomeNeedsPulse>
+  schedules: HomeNeedsQueue<HomeNeedsSchedule>
   total: number
 }
 
@@ -1617,6 +1639,25 @@ export const useApproveWorkflowSchedule = (
         queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] }),
         queryClient.invalidateQueries({ queryKey: ['workflows'] }),
         queryClient.invalidateQueries({ queryKey: ['agent', schedule.agent_id, 'schedules'] }),
+      ]),
+  })
+}
+
+/**
+ * Approve one legacy schedule from the needs-you inbox. Same route as
+ * ``useApproveWorkflowSchedule``; the inbox has no workflow in hand.
+ */
+export const useApproveAgentSchedule = () => {
+  const queryClient = useQueryClient()
+  return useMutation<unknown, Error, { agent_id: string; schedule_id: string }>({
+    mutationFn: ({ agent_id, schedule_id }) =>
+      apiPost(
+        `/api/agents/${encodeURIComponent(agent_id)}/schedules/${encodeURIComponent(schedule_id)}/approve`,
+      ),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['home', 'needs'] }),
+        queryClient.invalidateQueries({ queryKey: ['workflows'] }),
       ]),
   })
 }

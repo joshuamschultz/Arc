@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AppShell } from '@/components/shell/app-shell'
@@ -11,17 +12,20 @@ vi.mock('@/components/command-palette', () => ({ CommandPalette: () => null }))
 afterEach(cleanup)
 
 function showShell() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <TooltipProvider>
-      <MemoryRouter initialEntries={['/home']}>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="home" element={<p>Home body</p>} />
-            <Route path="agents" element={<p>Agents body</p>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </TooltipProvider>,
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={['/home']}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route path="home" element={<p>Home body</p>} />
+              <Route path="agents" element={<p>Agents body</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -48,6 +52,24 @@ it('closes the drawer after a navigation link is chosen', async () => {
   await userEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Fleet' }))
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(screen.getByText('Agents body')).toBeTruthy()
+})
+
+it('badges the Needs you nav item with everything waiting on the operator', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const body =
+        String(request) === '/api/home/needs' ? { total: 3 } : { connections: [], extensions_roots: [] }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }),
+  )
+  showShell()
+  const badges = await screen.findAllByTestId('needs-you-badge')
+  expect(badges[0].textContent).toBe('3')
+  vi.unstubAllGlobals()
 })
 
 it('hides the desktop rail below md and never fixes a width past the viewport', () => {

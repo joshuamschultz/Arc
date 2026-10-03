@@ -4,29 +4,37 @@ import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { QueryState, EmptyState } from '@/components/states'
 import { ApprovalRequest, ContextNote } from '@/components/hitl'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
+import { NeedsYouInbox } from '@/components/needs-you-inbox'
+import { useNeedsYouCount } from '@/hooks/use-needs-you-count'
 import { useApprovals } from '@/lib/queries'
 
 export function ApprovalsPage() {
   const approvals = useApprovals()
   const [operatorMode] = useOperatorMode()
+  const waiting = useNeedsYouCount()
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title="Approvals"
-        description="Actions your agents can't take without your sign-off."
+        title="Needs you"
+        description="Everything waiting on you: approvals, pulse checks, schedules and connections."
         actions={<OperatorModeToggle />}
       />
       <div className="flex-1 overflow-auto p-4 md:p-6">
+        <div className="mx-auto mb-3 max-w-3xl">
+          <NeedsYouInbox operatorMode={operatorMode} />
+        </div>
         <QueryState
           query={approvals}
           isEmpty={(data) => data.approvals.length === 0}
           empty={
-            <EmptyState
-              icon={<ShieldAlert className="size-7" />}
-              title="No pending approvals"
-              description="When an agent needs your sign-off to act, the request appears here."
-            />
+            waiting > 0 ? null : (
+              <EmptyState
+                icon={<ShieldAlert className="size-7" />}
+                title="Nothing needs you"
+                description="When an agent needs your sign-off to act, the request appears here."
+              />
+            )
           }
         >
           {(data) => (

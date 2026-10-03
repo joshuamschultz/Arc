@@ -114,6 +114,15 @@ export function HomePage() {
     items: [],
   }
 
+  const pulseQueue: HomeNeedsResponse['pulse'] = homeNeedsQ.data?.pulse ?? {
+    count: 0,
+    items: [],
+  }
+  const schedulesQueue: HomeNeedsResponse['schedules'] = homeNeedsQ.data?.schedules ?? {
+    count: 0,
+    items: [],
+  }
+
   const runs = useMemo<RunSummary[]>(() => runsQ.data?.runs ?? [], [runsQ.data])
   const runsWindowed = useMemo<RunSummary[]>(
     () => runsWindowedQ.data?.runs ?? [],
@@ -153,6 +162,8 @@ export function HomePage() {
     ['running', 'in_progress'].includes((r.status || '').toLowerCase()),
   ).length
   const needsYou =
+    pulseQueue.count +
+    schedulesQueue.count +
     approvalsQueue.count +
     capabilitiesQueue.count +
     reviewQueue.count +
@@ -298,6 +309,42 @@ export function HomePage() {
             </div>
           ) : (
             <div className="grid gap-2.5">
+              {pulseQueue.items.map((p) => (
+                <NeedsRow
+                  key={`pulse-${p.agent_id}-${p.check}`}
+                  tone="warning"
+                  icon={<ShieldAlert className="size-4" />}
+                  identity={agentByAgentId.get(p.agent_id)?.identity}
+                  fallbackName={p.agent_label}
+                  color={agentByAgentId.get(p.agent_id)?.color}
+                  message={
+                    <>
+                      pulse check <span className="font-mono">{p.check}</span> will not run until
+                      you approve it
+                    </>
+                  }
+                  href="/approvals"
+                  cta="Approve"
+                />
+              ))}
+              {schedulesQueue.items.map((s) => (
+                <NeedsRow
+                  key={`sched-${s.agent_id}-${s.schedule_id}`}
+                  tone="warning"
+                  icon={<ShieldAlert className="size-4" />}
+                  identity={agentByAgentId.get(s.agent_id)?.identity}
+                  fallbackName={s.agent_label}
+                  color={agentByAgentId.get(s.agent_id)?.color}
+                  message={
+                    <>
+                      schedule <span className="font-mono">{s.name}</span> cannot fire until you
+                      approve it
+                    </>
+                  }
+                  href="/approvals"
+                  cta="Approve"
+                />
+              ))}
               {approvalsQueue.items.map((a) => (
                 <NeedsRow
                   key={`ap-${a.id}`}

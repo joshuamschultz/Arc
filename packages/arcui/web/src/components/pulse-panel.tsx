@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { PulseCheckForm } from '@/components/pulse-check-form'
 import { QueryState } from '@/components/states'
-import { ApiError, apiDelete, apiGet, apiPost } from '@/lib/api'
-import { pulseKey, pulsePath, type PulseCheckDraft } from '@/lib/pulse'
+import { ApiError, apiDelete, apiGet } from '@/lib/api'
+import { pulseKey, pulsePath, useApprovePulseCheck, type PulseCheckDraft } from '@/lib/pulse'
 import { humanizeInterval } from '@/lib/schedule-format'
 import { cn } from '@/lib/utils'
 
@@ -48,7 +48,7 @@ const errorText = (e: Error) => (e instanceof ApiError ? e.message : 'The reques
 const EXAMPLE_ACTION = 'look for customer emails nobody has answered in a day and tell me who is waiting.'
 
 /** Diff lines coloured by their +/- marker; context lines stay muted. */
-function DiffBlock({ diff }: { diff: string }) {
+export function DiffBlock({ diff }: { diff: string }) {
   return (
     <pre className="overflow-x-auto rounded-md border border-border bg-muted/30 p-2 font-mono text-xs">
       {diff.split('\n').map((line, i) => (
@@ -153,18 +153,8 @@ function CheckRow({
   authorityAvailable: boolean
   onEdit: (draft: PulseCheckDraft) => void
 }) {
-  const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
-  const approve = useMutation<unknown, Error, void>({
-    // The digest is the one this row displayed, so an edit since is refused server-side.
-    mutationFn: () =>
-      apiPost(`${pulsePath(agentId)}/approve`, {
-        check: check.name,
-        definition_digest: check.definition_digest,
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: pulseKey(agentId) }),
-    onError: (e) => setError(errorText(e)),
-  })
+  const approve = useApprovePulseCheck(agentId)
 
   return (
     <li className="space-y-2 rounded-md border border-border p-3">
@@ -197,7 +187,10 @@ function CheckRow({
               size="sm"
               onClick={() => {
                 setError(null)
-                approve.mutate()
+                approve.mutate(
+                  { check: check.name, definition_digest: check.definition_digest },
+                  { onError: (e) => setError(errorText(e)) },
+                )
               }}
               disabled={approve.isPending || !authorityAvailable}
               aria-label={`Approve ${check.name}`}

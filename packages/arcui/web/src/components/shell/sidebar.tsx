@@ -5,6 +5,7 @@ import { NAV_ITEMS, NAV_GROUPS, GROUP_LABELS } from '@/app/nav'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { useSidebar } from '@/hooks/use-sidebar'
+import { useNeedsYouCount } from '@/hooks/use-needs-you-count'
 import {
   Tooltip,
   TooltipContent,
@@ -22,6 +23,7 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
   const { expanded: persisted, toggle: toggleExpanded } = useSidebar()
   // The slide-over drawer always shows labels: a 64px icon rail is a desktop idiom.
   const expanded = mobile || persisted
+  const needsYou = useNeedsYouCount()
 
   // A control that adapts to width: icon-only with a tooltip when collapsed, a
   // full labelled row when expanded. Used for the footer's non-link buttons.
@@ -134,7 +136,18 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
                       )
                     }
                   >
-                    <item.icon className="size-[20px] shrink-0" />
+                    <span className="relative grid shrink-0 place-items-center">
+                      <item.icon className="size-[20px]" />
+                      {item.path === 'approvals' && needsYou > 0 && (
+                        <span
+                          data-testid="needs-you-badge"
+                          aria-label={`${needsYou} waiting on you`}
+                          className="absolute -right-2 -top-2 grid min-w-4 place-items-center rounded-full bg-status-error px-1 text-[10px] font-bold leading-4 text-white"
+                        >
+                          {needsYou > 99 ? '99+' : needsYou}
+                        </span>
+                      )}
+                    </span>
                     {expanded && (
                       <span className="truncate text-[13px] font-medium">{item.label}</span>
                     )}

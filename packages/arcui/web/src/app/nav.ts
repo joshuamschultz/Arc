@@ -55,7 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
   { path: 'messages', label: 'Chat', icon: MessageSquare, group: 'work' },
   { path: 'tasks', label: 'Tasks', icon: ListChecks, group: 'work' },
 
-  { path: 'approvals', label: 'Approvals', icon: ShieldAlert, group: 'govern' },
+  { path: 'approvals', label: 'Needs you', icon: ShieldAlert, group: 'govern' },
   { path: 'gated', label: 'Pending capabilities', icon: PackageCheck, group: 'govern' },
   { path: 'policy', label: 'Rules', icon: ShieldCheck, group: 'govern' },
   { path: 'security', label: 'Audit', icon: Shield, group: 'govern' },

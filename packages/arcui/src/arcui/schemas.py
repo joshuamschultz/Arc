@@ -457,6 +457,10 @@ class HomeNeedsResponse(BaseModel):
     It counts channel questions ONLY — a run paused on an approval or a workflow
     gate is already in ``approvals`` / ``review_tasks`` and is excluded here by
     structural provenance, so it is never double-counted.
+
+    ``pulse`` and ``schedules`` carry the pulse checks and legacy schedules that
+    cannot run until the operator approves them. Each row holds what the owning
+    subsystem's own approve route needs, so the inbox adds no second approval path.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -465,6 +469,8 @@ class HomeNeedsResponse(BaseModel):
     capabilities: HomeNeedsQueue
     review_tasks: HomeNeedsQueue
     waiting_on_human: HomeNeedsQueue
+    pulse: HomeNeedsQueue
+    schedules: HomeNeedsQueue
     total: int
 
 

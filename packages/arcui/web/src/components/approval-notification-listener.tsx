@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Bell } from 'lucide-react'
 import { apiGet, apiPost } from '@/lib/api'
+import type { HomeNeedsPulse } from '@/lib/queries'
 
 const ENABLED_KEY = 'arcui_approval_notifications_enabled'
 const SEEN_KEY = 'arcui_approval_notifications_seen'
@@ -27,6 +28,33 @@ function writeSeen(seen: Set<string>): void {
     localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-256)))
   } catch {
     /* Notification delivery remains server-backed when storage is unavailable. */
+  }
+}
+
+/**
+ * A pulse check waiting for approval has no approvals-store row, so it raises its
+ * own notice. The seen key includes the definition digest: an edited check that
+ * needs approval again notifies again, an unchanged one never repeats.
+ */
+async function notifyPendingPulse(seen: Set<string>, isStopped: () => boolean): Promise<void> {
+  let pending: HomeNeedsPulse[]
+  try {
+    pending = (await apiGet<{ pulse?: { items: HomeNeedsPulse[] } }>('/api/home/needs')).pulse?.items ?? []
+  } catch {
+    return
+  }
+  for (const item of pending) {
+    const key = `pulse:${item.agent_id}:${item.check}:${item.definition_digest}`
+    if (isStopped() || seen.has(key)) continue
+    try {
+      const notice = new Notification('Pulse check waiting for approval', {
+        body: `${item.agent_label}: ${item.check}`,
+      })
+      notice.onclick = () => window.location.assign('/approvals')
+      seen.add(key)
+    } catch {
+      return
+    }
   }
 }
 
@@ -107,6 +135,7 @@ export function ApprovalNotificationListener() {
           break
         }
       }
+      await notifyPendingPulse(seen, () => stopped)
       writeSeen(seen)
     }
     void poll()
