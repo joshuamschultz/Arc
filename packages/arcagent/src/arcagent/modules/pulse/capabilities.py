@@ -31,8 +31,11 @@ import logging
 from typing import Any
 
 from arcagent.modules.pulse import _runtime
+from arcagent.modules.pulse.editing import PulseCheckInvalidError
 from arcagent.modules.pulse.engine import PulseEngine
-from arcagent.tools._decorator import capability, hook
+from arcagent.modules.pulse.proposals import propose_pulse_check
+from arcagent.tools._decorator import capability, hook, tool
+from arcagent.utils.audit import safe_audit
 
 _logger = logging.getLogger("arcagent.modules.pulse.capabilities")
 
@@ -108,6 +111,42 @@ async def bind_agent_run_fn(ctx: Any) -> None:
         _logger.info("Bound agent_run_fn via agent:ready hook")
 
 
+@tool(
+    name="pulse_propose",
+    description=(
+        "Propose a new periodic pulse check for your operator to review. You cannot "
+        "write pulse.md yourself: the proposal only appears in the operator's pulse "
+        "panel, and nothing runs until the operator adds and approves it."
+    ),
+    classification="state_modifying",
+    capability_tags=["pulse"],
+    when_to_use=(
+        "You notice a recurring thing that should be checked on a timer (an inbox, a "
+        "queue, a deadline) and no pulse check covers it."
+    ),
+)
+async def pulse_propose(name: str, interval_minutes: int, action: str, reason: str = "") -> str:
+    """File a pending pulse proposal; never touches pulse.md."""
+    st = _runtime.state()
+    try:
+        propose_pulse_check(
+            st.workspace,
+            name=name,
+            interval_minutes=interval_minutes,
+            action=action,
+            reason=reason,
+        )
+    except PulseCheckInvalidError as exc:
+        return f"proposal not filed: {exc}"
+    await safe_audit(
+        st.telemetry,
+        "pulse.proposed",
+        {"check": name, "interval_minutes": interval_minutes},
+        logger=_logger,
+    )
+    return f"Proposal '{name}' filed. It runs only if your operator adds and approves it."
+
+
 # --- Helpers ---------------------------------------------------------------
 
 
@@ -127,4 +166,5 @@ async def _noop_run_fn(prompt: str, **kwargs: Any) -> str:
 __all__ = [
     "Pulse",
     "bind_agent_run_fn",
+    "pulse_propose",
 ]

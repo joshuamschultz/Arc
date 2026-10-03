@@ -32,6 +32,8 @@ DEFAULT_PROTECTED_NAMES: tuple[str, ...] = (
     "policy_pinned.md",
     "context.md",
     "pulse.md",
+    "pulse-proposals.json",
+    "pulse-approved.json",
 )
 
 ProtectedAuditSink = Callable[[str, dict[str, Any]], None]

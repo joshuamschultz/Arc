@@ -260,6 +260,21 @@ def __getattr__(name: str) -> Any:
         from arcagent.modules.pulse import approval as pulse_approval
 
         return getattr(pulse_approval, name)
+    if name in {
+        "PulseCheckInvalidError",
+        "add_pulse_check",
+        "edit_pulse_check",
+        "remove_pulse_check",
+    }:
+        from arcagent.modules.pulse import editing as pulse_editing
+
+        return getattr(pulse_editing, name)
+    if name in {"clear_pulse_proposal", "list_pulse_proposals"}:
+        from arcagent.modules.pulse import proposals as pulse_proposals
+
+        return getattr(
+            pulse_proposals, {"clear_pulse_proposal": "clear_proposal"}.get(name, "list_proposals")
+        )
     if name == "register_schedule_revision":
         from arcagent.modules.scheduler.registration import register_schedule_revision
 
@@ -369,6 +384,7 @@ __all__ = [
     "PersonalKnowledgePort",
     "ProbeResult",
     "PromotionSource",
+    "PulseCheckInvalidError",
     "QueueCancellation",
     "QueueControlSnapshot",
     "QueueLimits",
@@ -400,6 +416,7 @@ __all__ = [
     "ToolVetoedError",
     "VerifiedRunAuthorization",
     "action_label",
+    "add_pulse_check",
     "append_module_scan_roots",
     "approve_pulse_check",
     "audit_tier_relaxations",
@@ -410,6 +427,7 @@ __all__ = [
     "builtin_capabilities_path",
     "catalog",
     "classifier_models",
+    "clear_pulse_proposal",
     "collect_agent_capability_inventory",
     "config_render",
     "deep_merge",
@@ -417,6 +435,7 @@ __all__ = [
     "deployment_tier",
     "discover_modules",
     "dumps_toml",
+    "edit_pulse_check",
     "find_secret",
     "generate_schedule_id",
     "global_capabilities_root",
@@ -424,6 +443,7 @@ __all__ = [
     "intake_capability_archive",
     "iter_model_modules",
     "list_gated",
+    "list_pulse_proposals",
     "load_config",
     "load_signature",
     "make_spawn_tool",
@@ -439,6 +459,7 @@ __all__ = [
     "pulse_status",
     "read_capability_source",
     "register_schedule_revision",
+    "remove_pulse_check",
     "resolve_deployment",
     "resolve_roots",
     "resolve_workspace_import_policy",
