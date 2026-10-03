@@ -16,6 +16,7 @@ in the clear so a surface can show a hint of it.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,10 +24,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.connector_cipher import CredentialSealError
+from arctrust.connector_cipher import CredentialCustodyUnavailableError, CredentialSealError
 
 from arcagent.core.errors import ExtensionError
-from arcagent.extension.custody import CredentialCipher
+from arcagent.extension.custody import CredentialCipher, custody_unavailable
 from arcagent.extension.manifest import OAuthFlow
 from arcagent.extension.secrets import Secret
 from arcagent.extension.state import MutableConnectionBackend
@@ -123,7 +124,7 @@ class OAuthAppStore:
         row = {
             "provider": provider,
             "client_id": client_id,
-            "client_secret": self._seal(provider, client_secret),
+            "client_secret": await self._seal(provider, client_secret),
             "cipher": self._cipher.kind,
             "updated_at": self._clock().isoformat(),
         }
@@ -152,7 +153,7 @@ class OAuthAppStore:
         return OAuthApp(
             provider=provider,
             client_id=str(row.get("client_id") or ""),
-            client_secret=Secret(self._open(provider, row)),
+            client_secret=Secret(await self._open(provider, row)),
         )
 
     async def status(self, provider: str) -> OAuthAppStatus:
@@ -179,27 +180,76 @@ class OAuthAppStore:
         app = await self.get(flow.provider)
         return None if app is None else (app.client_id, app.client_secret)
 
-    def _seal(self, provider: str, value: str) -> str:
+    @property
+    def cipher_kind(self) -> str:
+        """The cipher new slots are sealed with (``xc1`` in process, ``transit1`` in Vault)."""
+        return self._cipher.kind
+
+    async def providers(self) -> list[str]:
+        """Every provider with a slot (what a re-seal walks)."""
+        rows = await self._backend.mutable_query(OAUTH_APP_COLLECTION)
+        return sorted(str(row["provider"]) for row in rows if "provider" in row)
+
+    async def sealed_by(self, provider: str) -> str | None:
+        """The cipher kind a provider's slot is sealed with, or ``None`` when absent."""
+        row = await self._backend.mutable_read(OAUTH_APP_COLLECTION, provider)
+        return None if row is None else str(row.get("cipher") or "")
+
+    async def reseal(self, provider: str, *, source: CredentialCipher, actor_did: str) -> bool:
+        """Move one slot sealed by ``source`` under this store's cipher (P18-2F).
+
+        The new ciphertext is opened again before it is written, so a slot is never
+        replaced by something this deployment cannot read. False when the slot is
+        absent or already under this cipher (a re-run is a no-op).
+
+        Raises:
+            ExtensionError: ``CREDENTIAL_UNREADABLE`` (sealed under neither cipher)
+                or ``CREDENTIAL_CUSTODY_UNAVAILABLE`` (the vault cannot answer).
+        """
+        _check_provider(provider)
+        row = await self._backend.mutable_read(OAUTH_APP_COLLECTION, provider)
+        if row is None or row.get("cipher") == self._cipher.kind:
+            return False
+        if row.get("cipher") != source.kind:
+            raise _unreadable(provider)
+        secret = await _run(provider, source.open, str(row.get("client_secret") or ""))
+        resealed = await self._seal(provider, secret.decode("utf-8"))
+        moved = {**row, "client_secret": resealed, "cipher": self._cipher.kind}
+        if await self._open(provider, moved) != secret.decode("utf-8"):
+            raise _unreadable(provider)
+        await self._backend.mutable_merge(
+            OAUTH_APP_COLLECTION,
+            provider,
+            {"client_secret": resealed, "cipher": self._cipher.kind},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        self._audit("oauth_app.resealed", provider, actor_did)
+        return True
+
+    async def _seal(self, provider: str, value: str) -> str:
+        """Seal off the event loop: a transit cipher is a blocking round trip."""
         try:
-            return self._cipher.seal(
-                value.encode("utf-8"), scope=_scope(provider), slot=_SEALED_SLOT
+            sealed = await asyncio.to_thread(
+                self._cipher.seal, value.encode("utf-8"), scope=_scope(provider), slot=_SEALED_SLOT
             )
+        except CredentialCustodyUnavailableError:
+            raise custody_unavailable(_scope(provider)) from None
         except CredentialSealError:
             raise ExtensionError(
                 code="SECRET_VALUE_INVALID",
                 message="the client secret could not be sealed",
                 details={"provider": provider},
             ) from None
+        return sealed
 
-    def _open(self, provider: str, row: dict[str, Any]) -> str:
+    async def _open(self, provider: str, row: dict[str, Any]) -> str:
         if row.get("cipher") != self._cipher.kind:
             raise _unreadable(provider)
+        opened = await _run(provider, self._cipher.open, str(row.get("client_secret") or ""))
         try:
-            opened = self._cipher.open(
-                str(row.get("client_secret") or ""), scope=_scope(provider), slot=_SEALED_SLOT
-            )
             return opened.decode("utf-8")
-        except (CredentialSealError, UnicodeDecodeError):
+        except UnicodeDecodeError:
             raise _unreadable(provider) from None
 
     def _audit(self, action: str, provider: str, actor_did: str) -> None:
@@ -215,6 +265,18 @@ class OAuthAppStore:
             ),
             self._sink,
         )
+
+
+async def _run(provider: str, operation: Callable[..., bytes], sealed: str) -> bytes:
+    """Open one sealed slot value off the loop, mapping failures to custody refusals."""
+    try:
+        return await asyncio.to_thread(
+            operation, sealed, scope=_scope(provider), slot=_SEALED_SLOT
+        )
+    except CredentialCustodyUnavailableError:
+        raise custody_unavailable(_scope(provider)) from None
+    except CredentialSealError:
+        raise _unreadable(provider) from None
 
 
 def _scope(provider: str) -> str:

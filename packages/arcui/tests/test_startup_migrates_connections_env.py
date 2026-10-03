@@ -53,7 +53,7 @@ async def test_startup_migrates_then_starts(tmp_path: Path) -> None:
     rows = CredentialRowStore(backend, CIPHER)
     row = await rows.read("work_slack")
     assert row is not None
-    assert rows.open_field(row, "user_token").reveal() == "xoxp-secret-1"  # type: ignore[union-attr]
+    assert (await rows.open_field(row, "user_token")).reveal() == "xoxp-secret-1"  # type: ignore[union-attr]
     raw = str(await backend.mutable_query(CREDENTIAL_COLLECTION))
     assert "xoxp-secret-1" not in raw and "orphan-2" not in raw
     # A second start has nothing to do.

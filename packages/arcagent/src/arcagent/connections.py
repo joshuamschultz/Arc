@@ -83,14 +83,17 @@ from arcagent.extension.credential_broker import AccessTokenHandle, credential_p
 from arcagent.extension.custody import CredentialCipher
 from arcagent.extension.custody_migrate import (
     MigrationReport,
+    ResealReport,
     legacy_env_path,
     migrate_connector_secrets,
+    reseal_connector_secrets,
 )
 from arcagent.extension.custody_select import (
     VAULT_REQUIRED,
     Custody,
     deployment_cipher,
     open_custody,
+    reseal_source_cipher,
 )
 from arcagent.extension.grants import (
     BAD_NAME,
@@ -1480,7 +1483,9 @@ class Connections:
         rows = (await self._custody(sink)).rows
         try:
             row = await rows.read(instance)
-            token = rows.open_field(row, flow.refresh_token_secret) if row is not None else None
+            token = (
+                await rows.open_field(row, flow.refresh_token_secret) if row is not None else None
+            )
         except ExtensionError:
             token = None
         if token is None:
@@ -2255,6 +2260,56 @@ class Connections:
             await self._push_credential_change(instance)
         return report
 
+    async def reseal_secrets(self, *, dry_run: bool = False) -> ResealReport:
+        """Move in-process-sealed custody rows under the vault's Transit cipher (P18-2F).
+
+        For a deployment that switched from ``in_process`` to ``vault_transit``
+        custody. Explicit and operator-run by design: it reads the OLD on-disk
+        operator key once, which a long-running server under ``vault_transit``
+        must never hold. Each row moves in one verified CAS (crash-safe); a
+        re-run skips rows already moved (idempotent). Running agents are pushed
+        the change.
+
+        Raises:
+            ExtensionError: not on ``vault_transit``, the old key is gone, the
+                transit cannot serve, or a row is sealed under neither key.
+        """
+        source = reseal_source_cipher(self._world.arc_dir)
+        with self._audit.open() as sink:
+            custody = await self._custody(sink)
+            if custody.rows.cipher_kind != "transit1":
+                raise _refuse(
+                    VAULT_REQUIRED,
+                    "this deployment does not seal connector credentials in a vault",
+                )
+            report = await reseal_connector_secrets(
+                custody.rows,
+                source=source,
+                actor_did=causal.actor_did(),
+                sink=sink,
+                dry_run=dry_run,
+            )
+            report = replace(report, apps=await self._reseal_apps(custody, source, dry_run))
+        for instance in report.resealed:
+            await self._push_credential_change(instance)
+        return report
+
+    @staticmethod
+    async def _reseal_apps(
+        custody: Custody, source: CredentialCipher, dry_run: bool
+    ) -> tuple[str, ...]:
+        """Move every OAuth app slot sealed by ``source`` under the vault cipher too."""
+        apps = custody.apps
+        moved: list[str] = []
+        for provider in await apps.providers():
+            if dry_run:
+                if await apps.sealed_by(provider) == source.kind:
+                    moved.append(provider)
+                continue
+            if await apps.reseal(provider, source=source, actor_did=causal.actor_did()):
+                moved.append(provider)
+        return tuple(moved)
+
     @_on_connection
     async def approve(self, instance: str) -> tuple[str, ...]:
         """Record the tool contract this connection serves RIGHT NOW as approved.
@@ -2394,6 +2449,17 @@ class Connections:
             required_tier=required.value,
         )
 
+    def _federal_grade_cipher(self) -> bool:
+        """True when this deployment seals credentials by reference in its transit."""
+        if self._credential_cipher is None:
+            try:
+                self._credential_cipher = deployment_cipher(
+                    self._world.arc_dir, tier=self._world.tier
+                )
+            except ExtensionError:
+                return False
+        return self._credential_cipher.kind == "transit1"
+
     def _refuse_silent_rehome(self, instance: str, agents: Sequence[str], sink: AuditSink) -> None:
         """Refuse a grant that would raise the tier past the store holding the credential.
 
@@ -2416,14 +2482,17 @@ class Connections:
         if required is not Tier.FEDERAL:
             return
         # Federal custody is Vault Transit only (FIPS forbids the in-process
-        # XChaCha20 cipher); until the Transit row cipher ships (P18-2F) there is no
-        # store that can hold this credential at federal stringency.
+        # XChaCha20 cipher). A deployment whose credentials are sealed by the
+        # Transit row cipher (P18-2F) already holds them at federal stringency.
+        if self._federal_grade_cipher():
+            return
         raise _refuse(
             TIER_WOULD_RISE,
             f"granting {instance!r} to these agents raises it to {required.value}, "
             f"and this deployment cannot hold its credential at that tier "
             f"({VAULT_REQUIRED}: connector credentials need the Vault Transit row cipher). "
-            f"Configure it, then connect {instance!r} again.",
+            f'Set [security] custody = "vault_transit" with a serving transit, run '
+            f"`arc connector migrate-secrets --reseal`, then connect {instance!r} again.",
             connection=instance,
             required_tier=required.value,
         )

@@ -822,9 +822,18 @@ def _new(args: argparse.Namespace) -> None:
         )
         bundle = result.bundle
         assert bundle is not None  # noqa: S101 — ok=True always carries the bundle
+        owner_note = (
+            ""
+            if args.owner
+            else (
+                f"Owner is the placeholder {bundle.definition.owner}, which no agent answers to: "
+                f"re-run with `--owner @<agent>` before you sign and run it.\n"
+            )
+        )
         write(
             f"Created draft workflow {bundle.definition.id} from template {args.template} "
             f"(status={bundle.status}).\n"
+            f"{owner_note}"
             f"Next: read it with `arc workflow show {args.id}`, try it with "
             f"`arc workflow test {args.id}`, then sign it with `arc workflow sign {args.id}`."
         )

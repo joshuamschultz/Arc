@@ -33,7 +33,7 @@ def custody_field(backend: Any, arc_dir: Path, connection: str, field: str) -> s
     row = asyncio.run(store.read(connection))
     if row is None:
         return None
-    secret = store.open_field(row, field)
+    secret = asyncio.run(store.open_field(row, field))
     return None if secret is None else secret.reveal()
 
 

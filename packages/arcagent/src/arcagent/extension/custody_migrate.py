@@ -24,6 +24,7 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.paths import config_file
 
 from arcagent.core.errors import ExtensionError
+from arcagent.extension.custody import CredentialCipher, CredentialRowStore
 from arcagent.extension.grants import ConnectionRegistry
 from arcagent.extension.secrets import EnvFile, SecretRef, SecretStore
 
@@ -181,11 +182,75 @@ def _delete(env_path: Path) -> None:
         os.close(fd)
 
 
+@dataclass(frozen=True)
+class ResealReport:
+    """What a re-seal did. Connection names only; never a value."""
+
+    resealed: tuple[str, ...] = ()
+    #: Rows already under the target cipher (a re-run skips them).
+    already: tuple[str, ...] = ()
+    dry_run: bool = False
+    #: Rows a dry run would re-seal.
+    pending: tuple[str, ...] = ()
+    #: OAuth app slots (providers) moved, or that a dry run would move (P18-3).
+    apps: tuple[str, ...] = ()
+
+
+async def reseal_connector_secrets(
+    rows: CredentialRowStore,
+    *,
+    source: CredentialCipher,
+    actor_did: str,
+    sink: AuditSink,
+    dry_run: bool = False,
+) -> ResealReport:
+    """Re-seal every ``source``-sealed custody row under ``rows``' cipher (P18-2F).
+
+    Used when a deployment moves from ``in_process`` to ``vault_transit``
+    custody. Each row moves in ONE verified compare-and-set
+    (:meth:`CredentialRowStore.reseal`), so the job is crash-safe (a crash leaves
+    every row wholly under one cipher) and idempotent (a re-run skips rows
+    already moved). The first refusal stops the run; rows already moved stay
+    moved and a re-run continues from there.
+
+    Raises:
+        ExtensionError: ``CREDENTIAL_CUSTODY_UNAVAILABLE`` (the transit cannot
+            answer), ``CREDENTIAL_UNREADABLE`` (a row sealed under neither key),
+            or ``CREDENTIAL_STORE_BUSY``.
+    """
+    names = await rows.connections()
+    if dry_run:
+        pending = []
+        for name in names:
+            row = await rows.read(name)
+            if row is not None and row.cipher == source.kind:
+                pending.append(name)
+        return ResealReport(dry_run=True, pending=tuple(pending))
+    resealed: list[str] = []
+    already: list[str] = []
+    for name in names:
+        moved = await rows.reseal(name, source=source, actor_did=actor_did)
+        (resealed if moved else already).append(name)
+    emit(
+        AuditEvent(
+            actor_did=actor_did,
+            action="connection.credential.resealed_all",
+            target="secret:connector_credentials",
+            outcome="allow",
+            extra={"count": len(resealed), "connections": resealed, "to": rows.cipher_kind},
+        ),
+        sink,
+    )
+    return ResealReport(resealed=tuple(resealed), already=tuple(already))
+
+
 __all__ = [
     "LEGACY_ENV_FILENAME",
     "MIGRATOR_DID",
     "DeclaredFields",
     "MigrationReport",
+    "ResealReport",
     "legacy_env_path",
     "migrate_connector_secrets",
+    "reseal_connector_secrets",
 ]

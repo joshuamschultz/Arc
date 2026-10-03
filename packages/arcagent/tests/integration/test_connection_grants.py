@@ -35,6 +35,7 @@ from unittest.mock import MagicMock
 import pytest
 from arcrun import ToolContext
 from arcstore.backends.memory import FakeBackend
+from arctrust import FileNotaryTransit, TransitConnectorCipher
 from arctrust.audit import AuditEvent
 from arctrust.paths import arc_team, config_file
 from arctrust.signer import InProcessSigner
@@ -52,7 +53,7 @@ from arcagent.core.errors import ExtensionError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.tier import Tier
 from arcagent.core.tool_registry import ToolRegistry
-from arcagent.extension.custody import CREDENTIAL_COLLECTION
+from arcagent.extension.custody import CREDENTIAL_COLLECTION, CredentialCipher
 from arcagent.extension.grants import NO_SUCH_CONNECTION, Connection, ConnectionRegistry
 from arcagent.modules.connectors import _runtime
 from arcagent.modules.connectors.capabilities import Connectors
@@ -115,6 +116,7 @@ class _Deployment:
             self.agent_dir(name)
         self.sink = _RecordingSink()
         self.arcstore_backend = FakeBackend()
+        self.cipher: CredentialCipher = make_cipher()
 
     async def open_arcstore(self) -> FakeBackend:
         return self.arcstore_backend
@@ -153,7 +155,7 @@ class _Deployment:
             extensions_root=self.root,
             audit=AuditChain.held(self.sink),
             state_opener=self.open_arcstore,
-            credential_cipher=make_cipher(),
+            credential_cipher=self.cipher,
         )
 
     async def connect(self, *, agents: tuple[str, ...] = _GRANTED) -> None:
@@ -190,7 +192,7 @@ class _Deployment:
             tier="personal",
             human_gate=_gate(self.did(agent)),
             arcstore_opener=self.open_arcstore if with_arcstore else None,
-            credential_cipher=make_cipher(),
+            credential_cipher=self.cipher,
         )
         capability = Connectors()
         await capability.setup(None)
@@ -681,6 +683,27 @@ async def test_the_refused_grant_changed_nothing(deployment: _Deployment) -> Non
     assert deployment.connections().connections()[_CONNECTION].agents == _GRANTED
     registry = await deployment.start_agent(_UNGRANTED[0])
     assert not any(tool in registry.tools for tool in _SERVED)
+
+
+async def test_granting_a_federal_agent_succeeds_when_credentials_are_sealed_in_transit(
+    deployment: _Deployment, tmp_path: Path
+) -> None:
+    """P18-2F: a Transit-sealed credential already sits at federal stringency.
+
+    Under ``vault_transit`` custody every value is sealed by reference in the
+    transit (AES-256-GCM, FIPS-approved), so granting a federal agent re-homes
+    nothing and the refusal no longer applies.
+    """
+    deployment.cipher = TransitConnectorCipher(FileNotaryTransit(tmp_path / "notary"))
+    await deployment.connect()
+    _harden(deployment, _UNGRANTED[0], "federal")
+
+    granted = deployment.connections().grant(_CONNECTION, [_UNGRANTED[0]])
+
+    assert _UNGRANTED[0] in granted.agents
+    rows = await _custody_rows(deployment)
+    assert [row["cipher"] for row in rows] == ["transit1"]
+    assert _TOKEN not in str(rows)
 
 
 async def test_a_connector_arc_holds_no_credential_for_can_still_be_granted(

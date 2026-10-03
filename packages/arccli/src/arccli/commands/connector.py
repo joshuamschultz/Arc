@@ -714,6 +714,9 @@ def _install_bundle(args: argparse.Namespace) -> None:
 def _migrate_secrets(args: argparse.Namespace) -> None:
     """Move the legacy credential file into sealed custody: verify, delete, audit."""
     connections = _connections(args)
+    if args.reseal:
+        _reseal_secrets(connections, dry_run=args.dry_run)
+        return
     try:
         report = asyncio.run(connections.migrate_secrets(dry_run=args.dry_run))
     except arcagent.ExtensionError as exc:
@@ -732,6 +735,29 @@ def _migrate_secrets(args: argparse.Namespace) -> None:
         _out(f"Nothing was written. {report.path} is unchanged.")
     elif report.deleted:
         _out(f"Deleted {report.path}.")
+
+
+def _reseal_secrets(connections: Any, *, dry_run: bool) -> None:
+    """Move in-process-sealed credentials under the vault (P18-2F). Safe to re-run."""
+    try:
+        report = asyncio.run(connections.reseal_secrets(dry_run=dry_run))
+    except arcagent.ExtensionError as exc:
+        _fail(f"{exc.message} (rows already moved stay moved; re-run to continue)")
+    if report.dry_run:
+        _out(f"Would re-seal {len(report.pending)} connection(s) under the vault key.")
+        for name in report.pending:
+            _out(f"  pending : {name}")
+        for provider in report.apps:
+            _out(f"  pending : {provider} sign-in app")
+        _out("Nothing was written.")
+        return
+    _out(f"Re-sealed {len(report.resealed)} connection(s) under the vault key.")
+    for name in report.resealed:
+        _out(f"  resealed: {name}")
+    for name in report.already:
+        _out(f"  already : {name}")
+    for provider in report.apps:
+        _out(f"  resealed: {provider} sign-in app")
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +906,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show which credentials would move and which leftovers would be dropped.",
+    )
+    p.add_argument(
+        "--reseal",
+        action="store_true",
+        help=(
+            "After switching to custody = vault_transit: re-seal credentials sealed under "
+            "the old in-process operator key into the vault. Crash-safe and safe to re-run."
+        ),
     )
     _add_common(p)
 

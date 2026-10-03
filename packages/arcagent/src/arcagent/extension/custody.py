@@ -25,13 +25,15 @@ This module is the only one that touches the collection.
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from arctrust.audit import AuditEvent, AuditSink, emit
-from arctrust.connector_cipher import CredentialSealError
+from arctrust.connector_cipher import CredentialCustodyUnavailableError, CredentialSealError
 from pydantic import BaseModel, ConfigDict, Field
 
 from arcagent.core.errors import ExtensionError
@@ -150,6 +152,23 @@ def unreadable(connection: str, reason: str) -> ExtensionError:
     )
 
 
+def custody_unavailable(connection: str) -> ExtensionError:
+    """The refusal when the custody transit cannot answer (P18-2F). Fail closed.
+
+    Distinct from :func:`unreadable`: the stored value is fine, the vault holding
+    its key is not reachable, so the operator must NOT reconnect (that would
+    replace a good credential); the card says "wait".
+    """
+    return ExtensionError(
+        code="CREDENTIAL_CUSTODY_UNAVAILABLE",
+        message=(
+            f"the credential vault is not answering, so the credential for {connection!r} "
+            "is locked until it is back; nothing was read or written"
+        ),
+        details={"connection": connection, "retryable": True},
+    )
+
+
 def _busy(connection: str) -> ExtensionError:
     return ExtensionError(
         code="CREDENTIAL_STORE_BUSY",
@@ -205,42 +224,53 @@ class CredentialRowStore:
         row = await self.read(connection)
         return None if row is None else row.generation
 
-    def open_field(self, row: CredentialRow, name: str) -> Secret | None:
+    async def open_field(self, row: CredentialRow, name: str) -> Secret | None:
         """One field's value, or ``None`` when the row does not hold it.
 
         Raises:
             ExtensionError: ``CREDENTIAL_UNREADABLE`` for a row sealed by another
-                cipher or a value that does not open for this coordinate.
+                cipher or a value that does not open for this coordinate;
+                ``CREDENTIAL_CUSTODY_UNAVAILABLE`` when the custody transit
+                cannot answer.
         """
         sealed = row.fields.get(name)
         if sealed is None:
             return None
-        return Secret(self._open(row, sealed.sealed, name))
+        return Secret(await self._open(row, sealed.sealed, name))
 
-    def open_access(self, row: CredentialRow) -> AccessToken | None:
+    async def open_access(self, row: CredentialRow) -> AccessToken | None:
         access = row.access
         if access is None:
             return None
         return AccessToken(
-            token=Secret(self._open(row, access.sealed, ACCESS_SLOT)),
+            token=Secret(await self._open(row, access.sealed, ACCESS_SLOT)),
             issued_at=parse_time(access.issued_at),
             expires_at=parse_time(access.expires_at),
             scope=access.scope,
         )
 
-    def _open(self, row: CredentialRow, sealed: str, slot: str) -> str:
-        if row.cipher != self._cipher.kind:
-            raise unreadable(row.connection, "it was sealed by a different cipher")
+    async def _open(self, row: CredentialRow, sealed: str, slot: str) -> str:
+        self._require_cipher(row)
+        # Off the event loop: a transit cipher is a blocking round trip (P18-2F).
         try:
-            return self._cipher.open(sealed, scope=row.connection, slot=slot).decode("utf-8")
+            raw = await asyncio.to_thread(
+                self._cipher.open, sealed, scope=row.connection, slot=slot
+            )
+            return raw.decode("utf-8")
+        except CredentialCustodyUnavailableError:
+            raise custody_unavailable(row.connection) from None
         except (CredentialSealError, UnicodeDecodeError):
             raise unreadable(
                 row.connection, "it does not open under this deployment's key"
             ) from None
 
-    def _seal(self, connection: str, slot: str, value: str) -> str:
+    async def _seal(self, connection: str, slot: str, value: str) -> str:
         try:
-            return self._cipher.seal(value.encode("utf-8"), scope=connection, slot=slot)
+            return await asyncio.to_thread(
+                self._cipher.seal, value.encode("utf-8"), scope=connection, slot=slot
+            )
+        except CredentialCustodyUnavailableError:
+            raise custody_unavailable(connection) from None
         except CredentialSealError as exc:
             raise ExtensionError(
                 code="SECRET_VALUE_INVALID",
@@ -264,7 +294,7 @@ class CredentialRowStore:
             _check_coordinate("field", name)
         stamp = _iso(self._clock())
         sealed = {
-            name: SealedField(sealed=self._seal(connection, name, value), updated_at=stamp)
+            name: SealedField(sealed=await self._seal(connection, name, value), updated_at=stamp)
             for name, value in values.items()
         }
         for _ in range(_CAS_ATTEMPTS):
@@ -305,10 +335,13 @@ class CredentialRowStore:
         extra = dict(fields or {})
         for name in extra:
             _check_coordinate("field", name)
-        sealed_refresh = self._seal(connection, refresh_field, refresh_token)
-        sealed_access = self._seal(connection, ACCESS_SLOT, access_token)
+        sealed_refresh = await self._seal(connection, refresh_field, refresh_token)
+        sealed_access = await self._seal(connection, ACCESS_SLOT, access_token)
         sealed_extra = {
-            name: {"sealed": self._seal(connection, name, value), "updated_at": _iso(issued_at)}
+            name: {
+                "sealed": await self._seal(connection, name, value),
+                "updated_at": _iso(issued_at),
+            }
             for name, value in extra.items()
         }
         for _ in range(_CAS_ATTEMPTS):
@@ -352,6 +385,78 @@ class CredentialRowStore:
             if await self._cas(row, patch, actor_did=actor_did):
                 return removed
         raise _busy(connection)
+
+    # --- re-sealing under this store's cipher (P18-2F) ------------------------
+
+    async def reseal(self, connection: str, *, source: CredentialCipher, actor_did: str) -> bool:
+        """Move one row from ``source``'s cipher to this store's, in ONE CAS.
+
+        Every value is opened with ``source``, sealed with this store's cipher,
+        opened again and compared in constant time, and only then written, with
+        ``cipher`` flipped in the same ``update_if``. A crash at any point leaves
+        the row wholly under one cipher; a concurrent change makes the CAS lose and
+        the row is re-read. Values, ``generation`` and the lease are unchanged.
+
+        Returns:
+            True when the row was re-sealed; False when it is already under this
+            store's cipher (idempotent) or does not exist.
+
+        Raises:
+            ExtensionError: ``CREDENTIAL_UNREADABLE`` for a row under neither
+                cipher or a value that does not open; ``CREDENTIAL_CUSTODY_UNAVAILABLE``
+                when the transit cannot answer; ``CREDENTIAL_STORE_BUSY`` after
+                bounded CAS losses.
+        """
+        for _ in range(_CAS_ATTEMPTS):
+            row = await self.read(connection)
+            if row is None or row.cipher == self._cipher.kind:
+                return False
+            if row.cipher != source.kind:
+                raise unreadable(connection, "it is sealed under neither the old nor the new key")
+            patch = await self._resealed_patch(row, source)
+            if await self._cas(row, patch, actor_did=actor_did):
+                self._audit_resealed(connection, sealed_by=row.cipher, actor_did=actor_did)
+                return True
+        raise _busy(connection)
+
+    async def _resealed_patch(
+        self, row: CredentialRow, source: CredentialCipher
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        for name, value in row.fields.items():
+            moved = await self._move(row.connection, value.sealed, name, source)
+            fields[name] = {"sealed": moved, "updated_at": value.updated_at}
+        access = None
+        if row.access is not None:
+            moved = await self._move(row.connection, row.access.sealed, ACCESS_SLOT, source)
+            access = {**row.access.model_dump(), "sealed": moved}
+        return {"fields": fields, "access": access, "cipher": self._cipher.kind}
+
+    async def _move(
+        self, connection: str, sealed: str, slot: str, source: CredentialCipher
+    ) -> str:
+        """Open under ``source``, seal under this cipher, verify the read-back."""
+        where = {"scope": connection, "slot": slot}
+        plain = await _call_cipher(connection, source.open, sealed, **where)
+        moved = (await _call_cipher(connection, self._cipher.seal, plain, **where)).decode()
+        check = await _call_cipher(connection, self._cipher.open, moved, **where)
+        if not hmac.compare_digest(check, plain):
+            raise unreadable(connection, "it did not read back as written after re-sealing")
+        return moved
+
+    def _audit_resealed(self, connection: str, *, sealed_by: str, actor_did: str) -> None:
+        if self._sink is None:
+            return
+        emit(
+            AuditEvent(
+                actor_did=actor_did,
+                action="connection.credential.resealed",
+                target=f"connection:{connection}",
+                outcome="allow",
+                extra={"from": sealed_by, "to": self._cipher.kind},
+            ),
+            self._sink,
+        )
 
     async def forget(self, connection: str, *, actor_did: str) -> bool:
         """Delete the whole row, so no undeclared leftover survives a removal."""
@@ -439,9 +544,9 @@ class CredentialRowStore:
         or a replayed commit from an older lease).
         """
         connection = lease.connection
-        sealed_access = self._seal(connection, ACCESS_SLOT, access_token)
+        sealed_access = await self._seal(connection, ACCESS_SLOT, access_token)
         sealed_refresh = (
-            self._seal(connection, refresh_field, rotated_refresh)
+            await self._seal(connection, refresh_field, rotated_refresh)
             if rotated_refresh is not None
             else None
         )
@@ -487,7 +592,7 @@ class CredentialRowStore:
 
     def _require_cipher(self, row: CredentialRow) -> None:
         if row.cipher != self._cipher.kind:
-            raise unreadable(row.connection, "it was sealed by a different cipher")
+            raise unreadable(row.connection, _cipher_mismatch(row.cipher, self._cipher.kind))
 
     async def _cas(
         self,
@@ -529,6 +634,28 @@ class CredentialRowStore:
         )
 
 
+async def _call_cipher(
+    connection: str, operation: Callable[..., Any], value: Any, *, scope: str, slot: str
+) -> bytes:
+    """Run one cipher operation off the loop, mapping failures to custody refusals."""
+    try:
+        result: bytes | str = await asyncio.to_thread(operation, value, scope=scope, slot=slot)
+    except CredentialCustodyUnavailableError:
+        raise custody_unavailable(connection) from None
+    except CredentialSealError:
+        raise unreadable(connection, "it does not open under the key it claims") from None
+    return result.encode("ascii") if isinstance(result, str) else result
+
+
+def _cipher_mismatch(sealed_by: str, current: str) -> str:
+    if sealed_by == "xc1" and current == "transit1":
+        return (
+            "it is still sealed under the in-process key; run "
+            "`arc connector migrate-secrets --reseal` to move it into the vault"
+        )
+    return "it was sealed by a different cipher"
+
+
 def _holds(row: CredentialRow, lease: RefreshLease) -> bool:
     held = row.lease
     return held is not None and held.owner == lease.owner and held.fence == lease.fence
@@ -555,7 +682,7 @@ class SealedCredentialBackend:
         row = await self._rows.read(ref.connection)
         if row is None:
             return None
-        found = self._rows.open_field(row, ref.field)
+        found = await self._rows.open_field(row, ref.field)
         return None if found is None else found.reveal()
 
     async def put(self, ref: SecretRef, value: str) -> None:

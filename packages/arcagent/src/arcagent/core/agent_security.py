@@ -102,8 +102,9 @@ def resolve_credential_cipher(agent: Any) -> CredentialCipher | None:
     """The cipher sealing connector credentials for this agent, or None with one warning.
 
     The same derivation the operator surfaces use (P18-2): the in-process operator
-    seed this agent already custodies. ``vault_transit`` keeps the seed out of the
-    process; until the Transit row cipher ships (P18-2F) such an agent holds no
+    seed this agent already custodies, or under ``vault_transit`` the Transit row
+    cipher over the same transit that signs for it (P18-2F; the custody key never
+    enters this process). A cipher that cannot be built leaves the agent with no
     connector custody, and a bundle that declares a credential is refused by name.
     """
     from arcagent.core.errors import ExtensionError
@@ -111,12 +112,14 @@ def resolve_credential_cipher(agent: Any) -> CredentialCipher | None:
 
     sec = agent._config.security
     try:
+        transit = agent._resolve_transit(sec) if sec.custody == VAULT_TRANSIT else None
         return connector_cipher(
             custody=sec.custody,
             operator_key=agent._operator_key,
+            transit=transit,
             require_fips=sec.require_fips,
         )
-    except (ExtensionError, ArcTrustFipsError) as exc:
+    except (ExtensionError, ArcTrustFipsError, SignerError) as exc:
         _logger.warning("connector credentials unavailable to this agent: %s", exc)
         return None
 

@@ -131,7 +131,7 @@ async def _refresh_token(backend: FakeBackend) -> str | None:
     """The refresh token as custody holds it: a sealed field, opened with the cipher."""
     rows = CredentialRowStore(backend, make_cipher())
     row = await rows.read(_INSTANCE)
-    found = rows.open_field(row, "refresh_token") if row is not None else None
+    found = await rows.open_field(row, "refresh_token") if row is not None else None
     return found.reveal() if found is not None else None
 
 

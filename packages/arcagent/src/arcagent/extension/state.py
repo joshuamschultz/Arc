@@ -66,6 +66,7 @@ ReasonCode = Literal[
     "contract_changed",
     "host_missing",
     "renewer_unavailable",
+    "custody_unavailable",
     "provider_unavailable",
     "rate_limited",
     "sync_failed",

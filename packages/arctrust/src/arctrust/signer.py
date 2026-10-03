@@ -28,6 +28,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 from arctrust import keypair
+from arctrust.transit_cipher import notary_decrypt, notary_encrypt
 
 ED25519 = "ed25519"
 ECDSA_P256 = "ecdsa-p256"
@@ -304,6 +305,18 @@ class FileNotaryTransit:
 
     def public_key(self, key_ref: str) -> bytes:
         return (self._keystore / f"{key_ref}{self._PUB_SUFFIX}").read_bytes()
+
+    def encrypt(self, key_ref: str, plaintext: bytes, *, aad: bytes) -> str:
+        """Encrypt by reference (:class:`arctrust.transit_cipher.TransitCipher`).
+
+        A separate notary process holds the AES-256-GCM key; this process never
+        reads it (P18-2F connector credential custody).
+        """
+        return notary_encrypt(self._keystore, key_ref, plaintext, aad=aad)
+
+    def decrypt(self, key_ref: str, ciphertext: str, *, aad: bytes) -> bytes:
+        """Decrypt by reference; refuses ciphertext not bound to ``aad``."""
+        return notary_decrypt(self._keystore, key_ref, ciphertext, aad=aad)
 
 
 # ---------------------------------------------------------------------------

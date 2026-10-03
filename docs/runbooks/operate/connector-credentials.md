@@ -56,9 +56,46 @@ arc connector migrate-secrets             # move, verify, delete the file
 | Custody | Who | Connector credentials |
 |---|---|---|
 | `in_process` | personal, and enterprise when chosen | sealed with a key derived from the operator key |
-| `vault_transit` | enterprise default, federal always | **refused** until the Vault Transit row cipher ships (P18-2F) |
+| `vault_transit` | enterprise default, federal always | sealed by reference in the transit (AES-256-GCM); the key never enters an Arc process |
 
 Federal deployments must use Vault Transit. XChaCha20 is not FIPS-approved.
+
+### Vault Transit custody (enterprise and federal)
+
+Each value is sent to the deployment's transit for encryption and decryption. The
+transit holds the key `connector-credentials`. Arc never reads it. The associated
+data binds each value to its connection and field, the same as in-process.
+
+The reference transit is the notary keystore that already signs for the operator
+(`[security] notary_keystore`, default `<operator_key_dir>/notary`). It mints
+`connector-credentials.aes256` (`0600`) the first time a credential is sealed.
+Back up that file with the keystore. If it is lost, every connection must be
+connected again.
+
+If the transit does not answer, nothing is read or written. The connection card
+shows **"Arc's credential vault is not answering"** with action **wait**. Do not
+reconnect: the stored credential is fine. It clears when the transit is back.
+
+Steps for an enterprise deployment (custody defaults to `vault_transit`):
+
+1. Provision the notary keystore so it can serve the `operator` key.
+2. Restart arc. New credentials are now sealed in the transit.
+
+Steps for an enterprise deployment that ran `custody = "in_process"` before:
+
+1. Keep the old operator key file in place.
+2. Set `[security] custody = "vault_transit"` and provision the notary keystore.
+3. Run `arc connector migrate-secrets --reseal --dry-run` to see the rows that will move.
+4. Run `arc connector migrate-secrets --reseal`. Each row moves in one verified
+   write. It is safe to run again after a crash; rows that already moved are skipped.
+5. Restart arc. Until step 4 runs, such rows show "could not be read" and name the
+   reseal command.
+
+Federal: the same steps; `require_fips = true` also needs a FIPS-validated
+OpenSSL provider, or Arc refuses to start.
+
+The reseal is a manual, audited command on purpose. It must read the old
+in-process key once. A long-running server under `vault_transit` must never hold it.
 
 ## Rotating the operator key
 
@@ -71,4 +108,5 @@ Reconnect each one after a rotation.
 
 Any process that runs as the deployment user and holds the operator key can derive
 the custody key. At the personal tier, the handle is a code and audit boundary, not
-an operating-system boundary. Vault Transit (federal) takes the key out of the process.
+an operating-system boundary. Vault Transit (enterprise default, federal always)
+takes the key out of the process.

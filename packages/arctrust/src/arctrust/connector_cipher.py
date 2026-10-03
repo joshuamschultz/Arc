@@ -22,6 +22,13 @@ Three properties are load-bearing:
 XChaCha20-Poly1305 is not a FIPS-approved algorithm, so a deployment that requires
 FIPS refuses this cipher and must hold connector credentials under Vault Transit.
 
+:class:`TransitConnectorCipher` is the ``vault_transit`` row cipher (P18-2F): the
+same ``seal``/``open`` contract and the same associated data, but every value is
+encrypted by reference in the transit under a non-exportable AES-256-GCM key, so
+the custody key never enters this process. A transit that cannot answer raises
+:class:`CredentialCustodyUnavailableError`, never a plaintext or in-process
+fallback.
+
 Errors never carry plaintext or ciphertext.
 """
 
@@ -44,9 +51,12 @@ from nacl.exceptions import CryptoError
 
 from arctrust.fips import assert_fips_if_required
 from arctrust.operator import OperatorKey
+from arctrust.transit_cipher import TransitCipher, TransitDecryptError, TransitUnavailableError
 
 #: Version + cipher tag every sealed value starts with.
 SEALED_PREFIX = "v1.xc."
+#: The same for values sealed by the transit (P18-2F).
+TRANSIT_PREFIX = "v1.tr."
 
 #: Largest plaintext accepted; matches the old env-file value cap.
 MAX_PLAINTEXT_BYTES = 64 * 1024
@@ -60,6 +70,15 @@ _COORDINATE = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
 
 class CredentialSealError(ValueError):
     """A credential could not be sealed or opened. The message names no material."""
+
+
+class CredentialCustodyUnavailableError(RuntimeError):
+    """The custody transit cannot answer; the credential is locked, not lost.
+
+    Deliberately NOT a :class:`CredentialSealError`: an unreachable vault says
+    nothing about the stored value, so it must never be reported as "unreadable,
+    reconnect" (which would have the operator destroy a good credential).
+    """
 
 
 def _derive_connector_key(seed: bytes) -> bytes:
@@ -152,9 +171,78 @@ class ConnectorSecretCipher:
             ) from None
 
 
+class TransitConnectorCipher:
+    """Seal/open connector credentials by reference in the custody transit.
+
+    AES-256-GCM (FIPS-approved) under the transit's key ``KEY_REF``; associated
+    data is exactly the in-process cipher's, so the ``(scope, slot)`` binding is
+    identical at every tier. Holds only the transit handle and the key name.
+    """
+
+    KEY_REF: ClassVar[str] = "connector-credentials"
+    _ALGORITHM: ClassVar[str] = "aes-256-gcm"
+
+    __slots__ = ("_key_ref", "_transit")
+
+    def __init__(
+        self, transit: TransitCipher, *, key_ref: str = KEY_REF, require_fips: bool = False
+    ) -> None:
+        if require_fips:
+            assert_fips_if_required(require_fips=True, algorithm=self._ALGORITHM)
+        self._transit = transit
+        self._key_ref = key_ref
+
+    @property
+    def kind(self) -> Literal["transit1"]:
+        """Recorded on every custody row so a row sealed by another cipher is refused."""
+        return "transit1"
+
+    def seal(self, plaintext: bytes, *, scope: str, slot: str) -> str:
+        """Encrypt one value bound to ``(scope, slot)`` in the transit.
+
+        Raises:
+            CredentialSealError: bad coordinate or oversize value.
+            CredentialCustodyUnavailableError: the transit cannot answer.
+        """
+        if len(plaintext) > MAX_PLAINTEXT_BYTES:
+            raise CredentialSealError("credential value is too large to seal")
+        aad = _aad(scope, slot)
+        try:
+            return TRANSIT_PREFIX + self._transit.encrypt(self._key_ref, plaintext, aad=aad)
+        except TransitUnavailableError:
+            raise CredentialCustodyUnavailableError(
+                "the credential custody transit cannot seal right now"
+            ) from None
+
+    def open(self, sealed: str, *, scope: str, slot: str) -> bytes:
+        """Decrypt one value, refusing anything not sealed for exactly ``(scope, slot)``.
+
+        Raises:
+            CredentialSealError: wrong prefix, malformed, tampered, another key,
+                or a value sealed for another coordinate.
+            CredentialCustodyUnavailableError: the transit cannot answer.
+        """
+        aad = _aad(scope, slot)
+        if not sealed.startswith(TRANSIT_PREFIX):
+            raise CredentialSealError("sealed credential was not made by this cipher")
+        try:
+            return self._transit.decrypt(self._key_ref, sealed[len(TRANSIT_PREFIX) :], aad=aad)
+        except TransitDecryptError:
+            raise CredentialSealError(
+                "sealed credential does not open for this coordinate under this key"
+            ) from None
+        except TransitUnavailableError:
+            raise CredentialCustodyUnavailableError(
+                "the credential custody transit cannot open right now"
+            ) from None
+
+
 __all__ = [
     "MAX_PLAINTEXT_BYTES",
     "SEALED_PREFIX",
+    "TRANSIT_PREFIX",
     "ConnectorSecretCipher",
+    "CredentialCustodyUnavailableError",
     "CredentialSealError",
+    "TransitConnectorCipher",
 ]

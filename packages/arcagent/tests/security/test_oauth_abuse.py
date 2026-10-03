@@ -156,7 +156,7 @@ class World:
     async def field(self, name: str) -> str | None:
         rows = CredentialRowStore(self.backend, make_cipher())
         row = await rows.read(INSTANCE)
-        found = rows.open_field(row, name) if row is not None else None
+        found = await rows.open_field(row, name) if row is not None else None
         return found.reveal() if found is not None else None
 
     async def status(self) -> str:
@@ -364,3 +364,32 @@ async def test_invalid_grant_sets_needs_you_once_and_stops_calling(world: World)
     assert records[INSTANCE].notice_seq == notices, "the operator was told more than once"
     record = await world.connect()
     assert record.status == "healthy", "reconnecting clears it"
+
+
+class _VaultCipher:
+    """A stand-in transit cipher: a different key and a different kind."""
+
+    kind = "transit1"
+
+    def __init__(self) -> None:
+        self._inner = make_cipher("vault")
+
+    def seal(self, plaintext: bytes, *, scope: str, slot: str) -> str:
+        return self._inner.seal(plaintext, scope=scope, slot=slot)
+
+    def open(self, sealed: str, *, scope: str, slot: str) -> bytes:
+        return self._inner.open(sealed, scope=scope, slot=slot)
+
+
+async def test_app_slot_reseals_under_the_vault_cipher(world: World) -> None:
+    vault = OAuthAppStore(world.backend, _VaultCipher())
+    with pytest.raises(ExtensionError) as caught:
+        await vault.get("google")
+    assert caught.value.code == "CREDENTIAL_UNREADABLE", "not readable before the move"
+    assert await vault.reseal("google", source=make_cipher(), actor_did="did:t")
+    app = await vault.get("google")
+    assert app is not None and app.client_secret.reveal() == world.provider.client_secret
+    assert await vault.sealed_by("google") == "transit1"
+    assert not await vault.reseal("google", source=make_cipher(), actor_did="did:t")
+    with pytest.raises(ExtensionError):
+        await OAuthAppStore(world.backend, make_cipher()).get("google")
