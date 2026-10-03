@@ -278,3 +278,90 @@ async def test_background_work_spawned_mid_run_never_inherits_the_runs_ids(
     assert not leaked, f"the background job inherited the run's {leaked}"
     assert job_ctx.request_id != run_ctx.request_id
     assert job_ctx.initiator == "system" and job_ctx.initiator_id != agent._identity.did
+
+
+# ---------------------------------------------------------------------------
+# Contract 2 — a timed connector probe is caused by the probe loop, not a person
+# ---------------------------------------------------------------------------
+
+
+class _HealthyAcme:
+    """What the provider answers a probe: reachable. The one double on this path."""
+
+    def requirements(self) -> list[Any]:
+        return []
+
+    async def probe(self) -> Any:
+        from arcagent.extension.attachment import ProbeResult
+
+        return ProbeResult(reachable=True, tools=await self.describe_tools(), detail="")
+
+    async def describe_tools(self) -> list[Any]:
+        from arcagent.extension.attachment import ToolSpec
+
+        return [ToolSpec(name="ping", description="Ping Acme.", classification="read_only")]
+
+    async def invoke(self, tool: str, args: dict[str, Any]) -> Any:
+        from arcagent.extension.attachment import ToolResult
+
+        return ToolResult(tool=tool, content="pong")
+
+
+async def test_a_timed_connector_probe_is_attributed_to_the_probe_loop_and_its_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe loop runs while an operator page view is in flight; it never borrows it.
+
+    The loop is started from inside a bound UI-session root — exactly where
+    arcui's lifespan starts it while requests are already being served — and
+    every row the probe writes must still name the probe loop and the connection.
+    """
+    import arcagent
+    from arctrust.audit import WormSink
+    from arctrust.keypair import generate_keypair
+    from arctrust.signer import InProcessSigner
+    from arcui.connection_health import ConnectionHealthMonitor
+
+    from packages.arcui.tests.connection_fleet import INSTANCE, Fleet
+
+    fleet = Fleet(tmp_path, monkeypatch)
+    await asyncio.to_thread(fleet.install)
+    chain = tmp_path / "data" / "worm" / "audit-chain-arcui.jsonl"
+    sink = WormSink(chain, InProcessSigner(generate_keypair().private_key))
+
+    async def opener() -> Any:
+        return fleet.backend
+
+    monitor = ConnectionHealthMonitor(
+        lambda: arcagent.Connections.for_deployment(
+            audit=arcagent.AuditChain.held(sink),
+            state_opener=opener,
+            attachment_factory=lambda *_a, **_kw: _HealthyAcme(),
+        ),
+        store_opener=opener,
+        agents_resolver=lambda _instance: [],
+        sink=sink,
+        rng=lambda: 0.0,
+        initial_delay_seconds=0,
+    )
+    with causal.bind(causal.root("ui_session", "did:arc:ui:session:page-view")):
+        monitor.start()
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10
+        while not chain_events(chain, "connection.health.checked"):
+            assert loop.time() < deadline, "the probe loop never checked the connection"
+            await asyncio.sleep(0.01)
+    finally:
+        await monitor.stop()
+        sink.close()
+
+    (checked,) = chain_events(chain, "connection.health.checked")
+    assert checked["target"] == f"connection:{INSTANCE}"
+    rows = chain_events(chain)
+    for row in rows:
+        ctx = row["causal"]
+        assert ctx["initiator"] == "connector_probe", f"{row['action']} borrowed {ctx}"
+        assert ctx["initiator_id"] == arcagent.PROBE_DID
+        assert ctx["on_behalf_of"] is None
+        assert ctx["connection_id"] == INSTANCE, f"{row['action']} lost its connection"
