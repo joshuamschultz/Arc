@@ -691,7 +691,7 @@ def test_every_subcommand_is_reachable() -> None:
         "cancel",
         "retry",
         "sign",
-        "verify",
+        "templates",
         "verify",
         "migrate",
         "check",
