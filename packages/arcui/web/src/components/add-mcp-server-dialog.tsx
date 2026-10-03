@@ -260,7 +260,7 @@ export function AddMcpServerDialog({
                 </p>
               </div>
               {rows.map((row, index) => (
-                <div key={index} className="grid grid-cols-3 gap-2">
+                <div key={index} className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div className="space-y-1.5">
                     <label htmlFor={`mcp-env-field-${index}`} className={LABEL}>Credential name</label>
                     <Input

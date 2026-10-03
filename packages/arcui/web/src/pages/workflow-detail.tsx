@@ -632,7 +632,7 @@ function TriggerChannelTab({ workflow }: { workflow: WorkflowDetail }) {
           </div>
         )}
         {type !== 'manual' && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Not before

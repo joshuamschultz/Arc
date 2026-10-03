@@ -101,8 +101,8 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
         // Newest day is the default selection until the user picks one.
         const active = selected ?? data.items[0]?.day ?? null
         return (
-        <div className="grid h-[70vh] max-h-[720px] min-h-[320px] grid-cols-[minmax(180px,240px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
-          <div className="overflow-auto border-r border-border bg-card/60 p-2">
+        <div className="grid h-auto max-h-none grid-cols-1 overflow-hidden md:h-[70vh] md:max-h-[720px] md:min-h-[320px] md:grid-cols-[minmax(180px,240px)_1fr] rounded-lg border border-border bg-card shadow-xs">
+          <div className="max-h-48 overflow-auto border-b border-border bg-card/60 p-2 md:max-h-none md:border-b-0 md:border-r">
             <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Days
             </div>
@@ -128,7 +128,7 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
               ))}
             </ul>
           </div>
-          <div className="overflow-hidden">
+          <div className="min-h-[50dvh] overflow-hidden md:min-h-0">
             {active ? (
               <DayDetail agentId={agentId} day={active} />
             ) : (

@@ -2482,7 +2482,7 @@ export function AgentDetailPage() {
         <button
           type="button"
           onClick={() => navigate('/agents')}
-          className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="flex size-8 max-md:size-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           aria-label="Back to agents"
         >
           <ArrowLeft className="size-4" />
