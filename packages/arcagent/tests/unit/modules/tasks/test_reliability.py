@@ -19,6 +19,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from arcstore.tasks import RUN_ENDED_UNFINISHED, SERVICE_RESTART_INTERRUPTED
 from arctrust import AgentIdentity
 
 _OPERATOR = "did:arc:test:human/operator"
@@ -204,8 +205,25 @@ class TestStuckReclaim:
         task = await st.store.get("t1")
         assert task is not None
         assert task.status == "todo"  # reclaimed for re-dispatch
-        assert task.last_error and "stuck" in task.last_error
+        # The first pass after a restart names the restart, not a vague "stuck":
+        # the operator must be able to tell a crash loop from a hung step.
+        assert task.last_error == SERVICE_RESTART_INTERRUPTED
         assert st.reclaim_done is True
+
+    async def test_stale_reclaim_says_the_run_ended_without_finishing(self, state: Any) -> None:
+        from arcagent.modules.tasks.capabilities import _reliability_tick
+
+        st, identity = state
+        st.reclaim_done = True  # past the startup pass: no restart happened
+        st.config = st.config.model_copy(update={"stuck_reclaim_seconds": 0})
+        await _seed_todo(st, identity, "t1", max_attempts=3)
+        await st.store.start_task("t1", identity.did, run_id="r1")
+
+        await _reliability_tick()
+
+        task = await st.store.get("t1")
+        assert task is not None and task.status == "todo"
+        assert task.last_error == RUN_ENDED_UNFINISHED
 
     async def test_steady_state_respects_threshold(self, state: Any) -> None:
         from arcagent.modules.tasks.capabilities import _reliability_tick

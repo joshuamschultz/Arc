@@ -13,8 +13,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from arcstore.tasks import Priority, Task, TaskStatus, reclaim_allowance_s
+from arcstore.tasks import (
+    RUN_ENDED_UNFINISHED,
+    SERVICE_RESTART_INTERRUPTED,
+    Priority,
+    Task,
+    TaskStatus,
+    reclaim_allowance_s,
+)
 
 ClaimReason = Literal["assigned", "continue_current", "no_tasks_available"]
 
-__all__ = ["ClaimReason", "Priority", "Task", "TaskStatus", "reclaim_allowance_s"]
+__all__ = [
+    "RUN_ENDED_UNFINISHED",
+    "SERVICE_RESTART_INTERRUPTED",
+    "ClaimReason",
+    "Priority",
+    "Task",
+    "TaskStatus",
+    "reclaim_allowance_s",
+]

@@ -346,6 +346,15 @@ class MutableTaskBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
+# Why an in-flight attempt was taken back. Every reclaimer writes one of these
+# exact strings to ``last_error`` so a run view can explain it in plain words.
+#: The process running the attempt stopped (crash, kill, deploy) mid-attempt.
+SERVICE_RESTART_INTERRUPTED = (
+    "interrupted: the Arc service restarted while this step was running"
+)
+#: The attempt's run ended in a live process without completing or failing it.
+RUN_ENDED_UNFINISHED = "stuck: the step's run ended without completing or failing it"
+
 # A live attempt may run to its own timeout; the reclaimer waits this much longer
 # so a turn finishing at its timeout is never reclaimed and double-run.
 RECLAIM_MARGIN_S = 60.0
