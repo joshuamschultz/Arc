@@ -103,6 +103,7 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
             "page_size": 50,
             "total": 3,
             "messages": [{"role": "user", "content": "hi"}],
+            "run_in_flight": False,
         },
     ),
     (schemas.TasksResponse, {"tasks": []}),

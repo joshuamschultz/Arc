@@ -53,6 +53,7 @@ from arcui.routes.agent_detail.connect_voice import (
     post_voice_test,
     post_voice_wake,
 )
+from arcui.routes.agent_detail.context_window import get_context_window
 from arcui.routes.agent_detail.files_write import delete_file, put_file_write
 from arcui.routes.agent_detail.inbox import (
     get_inbox_messages,
@@ -209,6 +210,7 @@ routes = [
     Route("/api/agents/{id}/inbox/{thread_id}/handoffs", post_inbox_handoff, methods=["POST"]),
     Route("/api/agents/{id}/stats", get_stats, methods=["GET"]),
     Route("/api/agents/{id}/traces", get_traces, methods=["GET"]),
+    Route("/api/agents/{id}/context-window", get_context_window, methods=["GET"]),
     Route("/api/agents/{id}/audit", get_audit, methods=["GET"]),
     Route("/api/agents/{id}/policy", get_policy, methods=["GET"]),
     Route("/api/agents/{id}/policy/bullets", get_policy_bullets, methods=["GET"]),
