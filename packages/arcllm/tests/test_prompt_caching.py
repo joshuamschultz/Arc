@@ -219,3 +219,49 @@ class TestOpenAICacheTelemetry:
         from arcllm.adapters.google import GoogleAdapter
 
         assert "_parse_usage" not in vars(GoogleAdapter)
+
+
+# --- Rolling breakpoint skips the per-call ephemeral message ----------------
+
+
+def _history_then_time(stamp: str) -> list[Message]:
+    return [
+        Message(role="system", content="sys"),
+        Message(role="user", content="First question"),
+        Message(role="assistant", content="First answer"),
+        Message(role="user", content="Second question"),
+        Message(role="user", content=f"Current date/time: {stamp}", ephemeral=True),
+    ]
+
+
+def _marked_indexes(body: dict) -> list[int]:
+    return [
+        i
+        for i, m in enumerate(body["messages"])
+        if isinstance(m["content"], list) and any("cache_control" in b for b in m["content"])
+    ]
+
+
+class TestRollingBreakpointSkipsEphemeral:
+    def test_breakpoint_lands_on_last_history_message_not_time_message(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        body = adapter._build_request_body(_history_then_time("2026-10-04 10:00 UTC"))
+
+        assert _marked_indexes(body) == [2]  # "Second question"
+        assert isinstance(body["messages"][-1]["content"], str)  # time text untouched
+
+    def test_prefix_through_breakpoint_is_byte_identical_across_calls(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        first = adapter._build_request_body(_history_then_time("2026-10-04 10:00 UTC"))
+        second = adapter._build_request_body(_history_then_time("2026-10-04 10:07 UTC"))
+
+        cut = _marked_indexes(first)[0] + 1
+        assert first["messages"][:cut] == second["messages"][:cut]
+        assert first["messages"][cut:] != second["messages"][cut:]
+
+    def test_only_ephemeral_messages_get_no_message_breakpoint(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        body = adapter._build_request_body(
+            [Message(role="user", content="Current date/time: x", ephemeral=True)]
+        )
+        assert _marked_indexes(body) == []

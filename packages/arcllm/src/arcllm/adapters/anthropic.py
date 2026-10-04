@@ -168,15 +168,25 @@ class AnthropicAdapter(BaseAdapter):
             for text in parts
         ]
 
-    def _apply_last_message_breakpoint(self, formatted: list[dict[str, Any]]) -> None:
-        """Mark the tail of the conversation as the rolling cache breakpoint.
+    def _apply_last_message_breakpoint(
+        self, formatted: list[dict[str, Any]], remaining: list[Message]
+    ) -> None:
+        """Mark the last stable history message as the rolling cache breakpoint.
 
-        String content is promoted to a one-block list so the marker can
-        attach; a block list gets the marker on its last block.
+        ``ephemeral`` messages (a loop's per-call context such as the current
+        time) change on every call, so a breakpoint on one would never hit; the
+        marker goes on the last non-ephemeral message and the ephemeral tail
+        rides after the cached prefix. String content is promoted to a
+        one-block list so the marker can attach; a block list gets the marker
+        on its last block.
         """
-        content = formatted[-1]["content"]
+        stable = [i for i, m in enumerate(remaining) if not m.ephemeral]
+        if not stable:
+            return
+        target = formatted[stable[-1]]
+        content = target["content"]
         if isinstance(content, str):
-            formatted[-1]["content"] = [
+            target["content"] = [
                 {"type": "text", "text": content, "cache_control": self._cache_control()}
             ]
         elif content:
@@ -224,7 +234,7 @@ class AnthropicAdapter(BaseAdapter):
             if tool_choice is not None:
                 body["tool_choice"] = tool_choice
         if caching and formatted:
-            self._apply_last_message_breakpoint(formatted)
+            self._apply_last_message_breakpoint(formatted, remaining)
         rf = self._validate_response_format(kwargs.get("response_format"))
         if rf is not None:
             self._apply_structured_output(body, rf, tools)
