@@ -781,7 +781,8 @@ class MemoryOperator:
         scope, freshen = self._chunk_scope(session_id, source_id)
         if freshen:
             await self._index_chunks(scope, embed=False)
-        ids = await self._backend.recency_order(scope.key)
+        # Unbounded on purpose: this browse reports ``total`` and pages by offset.
+        ids = await self._backend.recency_order(scope.key, None)
         recalls, meta = await self._hydrate_chunks(scope.key, ids)
         kept = self._gate_chunks(recalls, clearance)
         page = kept[offset : offset + limit]

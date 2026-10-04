@@ -84,6 +84,8 @@ _COLLAPSE_OVERFETCH = 4
 _DOC_VECTOR_WEIGHT = 2
 _DOC_RRF_K = 5
 _CITATION_FIELD_CAP = 300
+#: Newest chunks read per listed document by ``list_documents``.
+_LIST_CHUNKS_PER_DOC = 64
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -344,7 +346,9 @@ class DocIndex:
         backend = open_index_backend(self._cfg.index_backend, db=self._db)
         hits: list[DocHit] = []
         seen: set[str] = set()
-        for chunk_id in await backend.recency_order(scope.key):
+        # Bounded: a document spans many chunks, so read enough of the newest
+        # chunks to fill ``limit`` documents without listing the whole pool.
+        for chunk_id in await backend.recency_order(scope.key, limit * _LIST_CHUNKS_PER_DOC):
             meta = await backend.chunk_meta(scope.key, chunk_id)
             pointer = meta[0] if meta is not None else ""
             if pointer in seen:

@@ -10,11 +10,15 @@ code edit. ``sqlite`` (default, per-agent file) and ``postgres`` (pgvector, a
 shared server) are the two concrete backends; an unknown name is a plain
 configuration ``ValueError``.
 
-CRITICAL FIX carried by this module: ``vec_search`` is scope-isolated via a join
-against ``chunks`` (``vec0`` itself carries no scope column). The prior inline
-implementation in ``surface.py`` scanned ``vec0`` globally, leaking one agent's
-chunk ids into another agent's vector search (LLM08). The Postgres backend keeps
-the same isolation with a ``WHERE scope = $1`` on its single ``chunks`` table.
+Scope isolation (LLM08): ``vec0`` carries no scope column, so the SQLite backend
+answers vector search from a per-scope HNSW sidecar (``index/ann.py``) and maps its
+keys back through ``chunks`` filtered on ``scope``. The Postgres backend keeps the
+same isolation with a ``WHERE scope = $1`` on its single ``chunks`` table.
+
+Bounded and off-loop: every ranked channel takes a top-k (``VEC_SEARCH_TOP_K``
+by default) and every SQLite call runs on the DB's worker thread
+(``MemoryDB.run``). A 978k-vector pool scored in Python on the event loop once
+blocked it past the 60 s systemd watchdog.
 
 ``asyncpg``/``pgvector`` are the optional ``[postgres]`` extra, lazy-imported
 inside the Postgres methods so importing this module never needs them; absence at
@@ -29,12 +33,12 @@ import importlib.util
 import os
 import re
 import sqlite3
-import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from arcmemory.db import MemoryDB
+from arcmemory.index import ann
 
 try:  # optional [vec] extra — guarded, mirrors db.py
     import sqlite_vec
@@ -42,6 +46,16 @@ try:  # optional [vec] extra — guarded, mirrors db.py
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover - exercised only where the extra is absent
     _SQLITE_VEC_IMPORTABLE = False
+
+
+#: Default depth of every ranked channel (vec, bm25, recency): each returns at
+#: most this many ids, best first, so fusion above is O(k), not O(scope).
+VEC_SEARCH_TOP_K = 200
+#: Ids bound per ``IN (...)`` statement, well under SQLite's variable limit.
+_SQL_BATCH = 500
+#: Most postings (summed document counts of the kept terms) one BM25 query may
+#: score: ~50 ms of FTS5 work on a 2026 laptop core.
+_BM25_POSTINGS_BUDGET = 100_000
 
 
 @dataclass(frozen=True)
@@ -135,20 +149,30 @@ class IndexBackend(Protocol):
         """
         ...
 
-    async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
-        """Scope-filtered cosine search; best match first. ``[]`` when unavailable."""
+    async def vec_search(
+        self, scope: str, query_embedding: list[float], top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
+        """Scope-filtered cosine top-``top_k``; best match first. ``[]`` when unavailable."""
         ...
 
-    async def bm25_search(self, scope: str, query: str) -> list[str]:
-        """FTS5/BM25 chunk ids for ``query`` within ``scope`` (best match first)."""
+    async def bm25_search(
+        self, scope: str, query: str, top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
+        """Top-``top_k`` FTS/BM25 chunk ids for ``query`` within ``scope`` (best first)."""
         ...
 
-    async def chunk_texts(self, scope: str) -> list[tuple[str, str]]:
-        """``(chunk_id, text)`` for every chunk in ``scope`` (graph-scan input)."""
+    async def chunk_texts(
+        self, scope: str, *, terms: Sequence[str] | None = None, limit: int | None = None
+    ) -> list[tuple[str, str]]:
+        """``(chunk_id, text)`` in ``scope``, at most ``limit`` rows (``None``: all).
+
+        With ``terms``, only chunks whose text matches any term (as a phrase),
+        newest first — the bounded candidate set of the graph channel.
+        """
         ...
 
-    async def recency_order(self, scope: str) -> list[str]:
-        """Every chunk id in ``scope``, newest first."""
+    async def recency_order(self, scope: str, limit: int | None = VEC_SEARCH_TOP_K) -> list[str]:
+        """The ``limit`` newest chunk ids in ``scope`` (``None``: every one), newest first."""
         ...
 
     async def chunk_meta(self, scope: str, chunk_id: str) -> tuple[str, str, float | None] | None:
@@ -169,7 +193,13 @@ class IndexBackend(Protocol):
 
 
 class SqliteIndexBackend:
-    """The default ``IndexBackend`` — the existing per-agent ``MemoryDB`` SQLite."""
+    """The default ``IndexBackend`` — the existing per-agent ``MemoryDB`` SQLite.
+
+    Every method runs its SQL on the DB's worker thread (``MemoryDB.run``), never
+    on the event loop. Vector search goes through the per-scope HNSW sidecar
+    (``index/ann.py``); every ``vec0`` write here stamps the scope's generation
+    and hands the exact change to that sidecar after commit.
+    """
 
     def __init__(self, db: MemoryDB) -> None:
         self._db = db
@@ -206,242 +236,432 @@ class SqliteIndexBackend:
         )
 
     async def upsert_chunks(self, scope: str, chunks: Sequence[ChunkWrite]) -> None:
-        conn = self._db.connect()
-        try:
-            for chunk in chunks:
-                self._write_chunk(conn, scope, chunk)
-        except BaseException:
-            conn.rollback()
-            raise
-        conn.commit()
+        vec = self.vec_available
 
-    def _write_chunk(self, conn: sqlite3.Connection, scope: str, chunk: ChunkWrite) -> None:
-        # ``ON CONFLICT ... DO UPDATE`` (not ``INSERT OR REPLACE``): REPLACE deletes
-        # and re-inserts the row, so any column omitted from the statement — here
-        # ``embedded_hash`` — would silently reset to NULL on every lexical-only
-        # write, erasing the record that this chunk's vector is already current
-        # (H-REG-1). The UPDATE form touches exactly the columns named, so a
-        # ``None`` embedding preserves whatever ``embedded_hash`` was already
-        # stored, and a real embedding stamps it to this write's content_hash.
-        embedded_hash = chunk.content_hash if chunk.embedding is not None else None
-        # The text row is replaced through the rowid its chunk row remembers —
-        # a lookup by ``fts_chunks.chunk_id`` (UNINDEXED) reads the whole index.
-        prior = conn.execute(
-            "SELECT fts_rowid FROM chunks WHERE chunk_id=? AND scope=?", (chunk.chunk_id, scope)
-        ).fetchone()
-        if prior is not None and prior[0] is not None:
-            conn.execute("DELETE FROM fts_chunks WHERE rowid=?", (prior[0],))
-        fts_rowid = conn.execute(
-            "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-            (chunk.chunk_id, scope, chunk.text),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO chunks "
-            "(chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash, "
-            "fts_rowid) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(chunk_id) DO UPDATE SET "
-            "scope=excluded.scope, source_path=excluded.source_path, mtime=excluded.mtime, "
-            "classification=excluded.classification, content_hash=excluded.content_hash, "
-            "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash), "
-            "fts_rowid=excluded.fts_rowid",
-            (
-                chunk.chunk_id,
-                scope,
-                chunk.source_path,
-                chunk.mtime,
-                chunk.classification,
-                chunk.content_hash,
-                embedded_hash,
-                fts_rowid,
-            ),
-        )
-        if chunk.embedding is not None and self.vec_available:
-            conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk.chunk_id,))
-            conn.execute(
-                "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
-                (chunk.chunk_id, sqlite_vec.serialize_float32(chunk.embedding)),
-            )
+        def work(conn: sqlite3.Connection) -> None:
+            changes = _VectorChanges()
+            try:
+                for chunk in chunks:
+                    _write_chunk(conn, scope, chunk, changes if vec else None)
+                deltas = changes.stamp(conn)
+            except BaseException:
+                conn.rollback()
+                raise
+            conn.commit()
+            ann.apply_deltas(self._db, deltas)
+
+        await self._db.run(work)
 
     async def stored_hashes(self, scope: str) -> dict[str, str]:
-        conn = self._db.connect()
-        return {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (scope,)
-            ).fetchall()
-        }
+        return await self._db.run(
+            lambda conn: {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT chunk_id, content_hash FROM chunks WHERE scope=?", (scope,)
+                )
+            }
+        )
 
     async def stored_mtimes(self, scope: str) -> dict[str, float]:
-        conn = self._db.connect()
-        return {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT chunk_id, mtime FROM chunks WHERE scope=? AND mtime IS NOT NULL",
-                (scope,),
-            ).fetchall()
-        }
+        return await self._db.run(
+            lambda conn: {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT chunk_id, mtime FROM chunks WHERE scope=? AND mtime IS NOT NULL",
+                    (scope,),
+                )
+            }
+        )
 
     async def embedded_hashes(self, scope: str) -> dict[str, str]:
-        conn = self._db.connect()
-        return {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT chunk_id, embedded_hash FROM chunks "
-                "WHERE scope=? AND embedded_hash IS NOT NULL",
-                (scope,),
-            ).fetchall()
-        }
+        return await self._db.run(
+            lambda conn: {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT chunk_id, embedded_hash FROM chunks "
+                    "WHERE scope=? AND embedded_hash IS NOT NULL",
+                    (scope,),
+                )
+            }
+        )
 
     async def delete_scope(self, scope: str) -> None:
-        conn = self._db.connect()
-        if self.vec_available:
-            ids = [
-                row[0]
-                for row in conn.execute(
-                    "SELECT chunk_id FROM chunks WHERE scope=?", (scope,)
-                ).fetchall()
-            ]
-            if ids:
-                # Placeholders are only "?" repeated per bound id — never interpolated
-                # data — and every value is still passed as a SQL parameter below.
-                placeholders = ",".join("?" for _ in ids)
-                conn.execute(
-                    f"DELETE FROM vec0 WHERE chunk_id IN ({placeholders})",  # noqa: S608
-                    ids,
-                )
-        conn.execute("DELETE FROM fts_chunks WHERE scope=?", (scope,))
-        conn.execute("DELETE FROM chunks WHERE scope=?", (scope,))
-        conn.commit()
+        vec = self.vec_available
+
+        def work(conn: sqlite3.Connection) -> None:
+            deltas: dict[str, ann.VectorDelta] = {}
+            try:
+                if vec:
+                    ids = [
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT chunk_id FROM chunks WHERE scope=?", (scope,)
+                        ).fetchall()
+                    ]
+                    _delete_vectors(conn, ids)
+                    after = ann.mark_scope_written(conn, scope)
+                    deltas[scope] = ann.VectorDelta(after - 1, after, reset=True)
+                conn.execute("DELETE FROM fts_chunks WHERE scope=?", (scope,))
+                conn.execute("DELETE FROM chunks WHERE scope=?", (scope,))
+            except BaseException:
+                conn.rollback()
+                raise
+            conn.commit()
+            ann.apply_deltas(self._db, deltas)
+
+        await self._db.run(work)
 
     async def delete_object(self, scope: str, object_id: str) -> None:
-        conn = self._db.connect()
-        # A primary-key range, not ``LIKE``: LIKE cannot use the key index, so
-        # every object delete walked the scope's rows (and, on ``fts_chunks``,
-        # the whole text index). ``#`` + 1 is ``$``, so the range is exactly the
-        # ``<object_id>#…`` windows; a collection index also owns its bare id.
-        prefix = object_id + "#"
-        rows = [
-            (chunk_id, fts_rowid)
-            for chunk_id, fts_rowid, owner in conn.execute(
-                "SELECT chunk_id, fts_rowid, scope FROM chunks "
-                "WHERE chunk_id=? OR (chunk_id>=? AND chunk_id<?)",
-                (
-                    object_id if object_id.startswith("index:") else prefix,
-                    prefix,
-                    object_id + "$",
-                ),
-            ).fetchall()
-            if owner == scope
-        ]
-        if not rows:
-            return
-        ids = [row[0] for row in rows]
-        placeholders = ",".join("?" for _ in ids)
-        if self.vec_available:
-            conn.execute(f"DELETE FROM vec0 WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
-        text_rows = [row[1] for row in rows if row[1] is not None]
-        if text_rows:
-            marks = ",".join("?" for _ in text_rows)
-            conn.execute(f"DELETE FROM fts_chunks WHERE rowid IN ({marks})", text_rows)  # noqa: S608
-        conn.execute(f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
-        conn.commit()
+        vec = self.vec_available
+
+        def work(conn: sqlite3.Connection) -> None:
+            rows = _object_rows(conn, scope, object_id)
+            if not rows:
+                return
+            ids = [row[0] for row in rows]
+            deltas: dict[str, ann.VectorDelta] = {}
+            try:
+                if vec:
+                    _delete_vectors(conn, ids)
+                    after = ann.mark_scope_written(conn, scope)
+                    deltas[scope] = ann.VectorDelta(
+                        after - 1, after, removed=[row[2] for row in rows]
+                    )
+                text_rows = [row[1] for row in rows if row[1] is not None]
+                if text_rows:
+                    marks = ",".join("?" for _ in text_rows)
+                    conn.execute(
+                        f"DELETE FROM fts_chunks WHERE rowid IN ({marks})",  # noqa: S608
+                        text_rows,
+                    )
+                placeholders = ",".join("?" for _ in ids)
+                conn.execute(f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})", ids)  # noqa: S608
+            except BaseException:
+                conn.rollback()
+                raise
+            conn.commit()
+            ann.apply_deltas(self._db, deltas)
+
+        await self._db.run(work)
 
     async def repath_object(self, scope: str, object_id: str, source_path: str) -> int:
-        conn = self._db.connect()
-        # The same primary-key range as ``delete_object``: exactly ``<object_id>#…``.
-        cursor = conn.execute(
-            "UPDATE chunks SET source_path=? WHERE scope=? AND chunk_id>=? AND chunk_id<? "
-            "AND source_path<>?",
-            (source_path, scope, object_id + "#", object_id + "$", source_path),
-        )
-        conn.commit()
-        return cursor.rowcount
+        def work(conn: sqlite3.Connection) -> int:
+            # The same primary-key range as ``delete_object``: exactly ``<object_id>#…``.
+            cursor = conn.execute(
+                "UPDATE chunks SET source_path=? WHERE scope=? AND chunk_id>=? AND chunk_id<? "
+                "AND source_path<>?",
+                (source_path, scope, object_id + "#", object_id + "$", source_path),
+            )
+            conn.commit()
+            return cursor.rowcount
 
-    async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
-        """Brute-force cosine over ``vec0``, JOINed to ``chunks`` for scope isolation.
+        return await self._db.run(work)
 
-        ``vec0`` carries no scope column of its own; the join is what stops a search
-        scoped to one agent from ever scoring another agent's vectors (LLM08).
+    async def vec_search(
+        self, scope: str, query_embedding: list[float], top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
+        """Top-k cosine via the scope's HNSW sidecar; nearest first, never another scope.
+
+        The index is per scope and the key -> chunk map re-checks ``scope``, so
+        a search scoped to one agent can never return another's chunk (LLM08).
+        Chunks with a non-positive similarity are not returned.
         """
-        if not self.vec_available:
+        if not self.vec_available or top_k <= 0:
             return []
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT v.chunk_id, v.embedding FROM vec0 v "
-            "JOIN chunks c ON c.chunk_id = v.chunk_id WHERE c.scope = ?",
-            (scope,),
-        ).fetchall()
-        scored: list[tuple[float, str]] = []
-        for chunk_id, blob in rows:
-            vector = list(struct.unpack(f"{len(blob) // 4}f", blob))
-            scored.append((_cosine(query_embedding, vector), chunk_id))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
-        return [chunk_id for score, chunk_id in scored if score > 0.0]
-
-    async def bm25_search(self, scope: str, query: str) -> list[str]:
-        if not query:
+        index = ann.scope_ann(self._db, scope)
+        generation = await self._db.run(lambda conn: ann.read_generation(conn, scope))
+        hits = await asyncio.to_thread(index.search, query_embedding, top_k, generation)
+        if not hits:
             return []
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT chunk_id FROM fts_chunks "
-            "WHERE scope=? AND fts_chunks MATCH ? ORDER BY bm25(fts_chunks)",
-            (scope, query),
-        ).fetchall()
-        return [row[0] for row in rows]
+        return await self._db.run(lambda conn: ann.keys_to_chunk_ids(conn, scope, hits))
 
-    async def chunk_texts(self, scope: str) -> list[tuple[str, str]]:
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT chunk_id, text FROM fts_chunks WHERE scope=?", (scope,)
-        ).fetchall()
-        return [(row[0], row[1]) for row in rows]
+    async def bm25_search(
+        self, scope: str, query: str, top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
+        if not query or top_k <= 0:
+            return []
 
-    async def recency_order(self, scope: str) -> list[str]:
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT chunk_id FROM chunks WHERE scope=? ORDER BY COALESCE(mtime, 0) DESC, chunk_id",
-            (scope,),
-        ).fetchall()
-        return [row[0] for row in rows]
+        def work(conn: sqlite3.Connection) -> list[str]:
+            return [
+                row[0]
+                for row in conn.execute(
+                    "SELECT chunk_id FROM fts_chunks "
+                    "WHERE scope=? AND fts_chunks MATCH ? ORDER BY bm25(fts_chunks) LIMIT ?",
+                    (scope, _affordable_fts_query(conn, query), top_k),
+                )
+            ]
+
+        return await self._db.run(work)
+
+    async def chunk_texts(
+        self, scope: str, *, terms: Sequence[str] | None = None, limit: int | None = None
+    ) -> list[tuple[str, str]]:
+        bound = -1 if limit is None else limit
+        if terms is None:
+            sql = "SELECT chunk_id, text FROM fts_chunks WHERE scope=? LIMIT ?"
+            params: tuple[Any, ...] = (scope, bound)
+        else:
+            query = _phrase_query(terms)
+            if not query:
+                return []
+            # Newest first by rowid, NOT by bm25: FTS5 walks doclists in rowid
+            # order, so the LIMIT stops the scan early instead of scoring every
+            # chunk that names a common entity.
+            sql = (
+                "SELECT chunk_id, text FROM fts_chunks WHERE scope=? AND fts_chunks MATCH ? "
+                "ORDER BY rowid DESC LIMIT ?"
+            )
+            params = (scope, query, bound)
+        return await self._db.run(
+            lambda conn: [(row[0], row[1]) for row in conn.execute(sql, params)]
+        )
+
+    async def recency_order(self, scope: str, limit: int | None = VEC_SEARCH_TOP_K) -> list[str]:
+        return await self._db.run(
+            lambda conn: [
+                row[0]
+                for row in conn.execute(
+                    "SELECT chunk_id FROM chunks WHERE scope=? "
+                    "ORDER BY COALESCE(mtime, 0) DESC, chunk_id LIMIT ?",
+                    (scope, -1 if limit is None else limit),
+                )
+            ]
+        )
 
     async def chunk_meta(self, scope: str, chunk_id: str) -> tuple[str, str, float | None] | None:
-        conn = self._db.connect()
-        row = conn.execute(
-            "SELECT source_path, classification, mtime FROM chunks WHERE chunk_id=? AND scope=?",
-            (chunk_id, scope),
-        ).fetchone()
+        row = await self._db.run(
+            lambda conn: conn.execute(
+                "SELECT source_path, classification, mtime FROM chunks "
+                "WHERE chunk_id=? AND scope=?",
+                (chunk_id, scope),
+            ).fetchone()
+        )
         if row is None:
             return None
         return (row[0], row[1], row[2])
 
     async def chunk_text(self, scope: str, chunk_id: str) -> str | None:
-        conn = self._db.connect()
-        row: sqlite3.Row | None = conn.execute(
-            "SELECT fts_chunks.text FROM chunks "
-            "JOIN fts_chunks ON fts_chunks.rowid = chunks.fts_rowid "
-            "WHERE chunks.chunk_id=? AND chunks.scope=?",
-            (chunk_id, scope),
-        ).fetchone()
-        return row[0] if row is not None else None
+        row = await self._db.run(
+            lambda conn: conn.execute(
+                "SELECT fts_chunks.text FROM chunks "
+                "JOIN fts_chunks ON fts_chunks.rowid = chunks.fts_rowid "
+                "WHERE chunks.chunk_id=? AND chunks.scope=?",
+                (chunk_id, scope),
+            ).fetchone()
+        )
+        return str(row[0]) if row is not None else None
 
     async def scope_classifications(self, scope: str) -> set[str]:
         """Distinct labels of a scope's content chunks (collection indexes excluded)."""
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT DISTINCT classification FROM chunks "
-            "WHERE scope=? AND substr(chunk_id, 1, 6) != 'index:'",
-            (scope,),
-        ).fetchall()
-        return {str(row[0] or "") for row in rows}
+        return await self._db.run(
+            lambda conn: {
+                str(row[0] or "")
+                for row in conn.execute(
+                    "SELECT DISTINCT classification FROM chunks "
+                    "WHERE scope=? AND substr(chunk_id, 1, 6) != 'index:'",
+                    (scope,),
+                )
+            }
+        )
 
     async def scopes_with_prefix(self, prefix: str) -> list[str]:
-        conn = self._db.connect()
-        rows = conn.execute(
-            "SELECT DISTINCT scope FROM chunks WHERE substr(scope, 1, ?) = ? ORDER BY scope",
-            (len(prefix), prefix),
+        return await self._db.run(
+            lambda conn: [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT scope FROM chunks WHERE substr(scope, 1, ?) = ? "
+                    "ORDER BY scope",
+                    (len(prefix), prefix),
+                )
+            ]
+        )
+
+
+class _VectorChanges:
+    """Vector adds/removes gathered across one write transaction, per scope."""
+
+    def __init__(self) -> None:
+        self._added: dict[str, dict[int, bytes]] = {}
+        self._removed: dict[str, list[int]] = {}
+
+    def add(self, scope: str, key: int, blob: bytes) -> None:
+        self._added.setdefault(scope, {})[key] = blob
+
+    def remove(self, scope: str, key: int) -> None:
+        self._removed.setdefault(scope, []).append(key)
+
+    def stamp(self, conn: sqlite3.Connection) -> dict[str, ann.VectorDelta]:
+        """Bump each touched scope's generation (inside the open txn); return its delta."""
+        deltas: dict[str, ann.VectorDelta] = {}
+        for scope in sorted({*self._added, *self._removed}):
+            after = ann.mark_scope_written(conn, scope)
+            deltas[scope] = ann.VectorDelta(
+                after - 1,
+                after,
+                removed=self._removed.get(scope, []),
+                added=self._added.get(scope, {}),
+            )
+        return deltas
+
+
+def _object_rows(
+    conn: sqlite3.Connection, scope: str, object_id: str
+) -> list[tuple[str, int | None, int]]:
+    """``(chunk_id, fts_rowid, key)`` of one object's chunks in ``scope``.
+
+    A primary-key range, not ``LIKE``: LIKE cannot use the key index, so every
+    object delete walked the scope's rows (and, on ``fts_chunks``, the whole text
+    index). ``#`` + 1 is ``$``, so the range is exactly the ``<object_id>#…``
+    windows; a collection index also owns its bare id.
+    """
+    prefix = object_id + "#"
+    return [
+        (chunk_id, fts_rowid, int(key))
+        for chunk_id, fts_rowid, owner, key in conn.execute(
+            "SELECT chunk_id, fts_rowid, scope, rowid FROM chunks "
+            "WHERE chunk_id=? OR (chunk_id>=? AND chunk_id<?)",
+            (object_id if object_id.startswith("index:") else prefix, prefix, object_id + "$"),
         ).fetchall()
-        return [str(row[0]) for row in rows]
+        if owner == scope
+    ]
+
+
+def _write_chunk(
+    conn: sqlite3.Connection, scope: str, chunk: ChunkWrite, changes: _VectorChanges | None
+) -> None:
+    """Write one chunk's provenance row, text row and (if given) vector.
+
+    ``changes`` is ``None`` when sqlite-vec is unavailable (no ``vec0``).
+    """
+    # ``ON CONFLICT ... DO UPDATE`` (not ``INSERT OR REPLACE``): REPLACE deletes
+    # and re-inserts the row, so any column omitted from the statement — here
+    # ``embedded_hash`` — would silently reset to NULL on every lexical-only
+    # write, erasing the record that this chunk's vector is already current
+    # (H-REG-1). The UPDATE form touches exactly the columns named, so a
+    # ``None`` embedding preserves whatever ``embedded_hash`` was already
+    # stored, and a real embedding stamps it to this write's content_hash. It
+    # also keeps the row id, which is the chunk's key in the HNSW sidecar.
+    embedded_hash = chunk.content_hash if chunk.embedding is not None else None
+    prior = conn.execute(
+        "SELECT fts_rowid, scope, rowid FROM chunks WHERE chunk_id=?", (chunk.chunk_id,)
+    ).fetchone()
+    # The text row is replaced through the rowid its chunk row remembers —
+    # a lookup by ``fts_chunks.chunk_id`` (UNINDEXED) reads the whole index.
+    if prior is not None and prior[1] == scope and prior[0] is not None:
+        conn.execute("DELETE FROM fts_chunks WHERE rowid=?", (prior[0],))
+    fts_rowid = conn.execute(
+        "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
+        (chunk.chunk_id, scope, chunk.text),
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO chunks "
+        "(chunk_id, scope, source_path, mtime, classification, content_hash, embedded_hash, "
+        "fts_rowid) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(chunk_id) DO UPDATE SET "
+        "scope=excluded.scope, source_path=excluded.source_path, mtime=excluded.mtime, "
+        "classification=excluded.classification, content_hash=excluded.content_hash, "
+        "embedded_hash=COALESCE(excluded.embedded_hash, chunks.embedded_hash), "
+        "fts_rowid=excluded.fts_rowid",
+        (
+            chunk.chunk_id,
+            scope,
+            chunk.source_path,
+            chunk.mtime,
+            chunk.classification,
+            chunk.content_hash,
+            embedded_hash,
+            fts_rowid,
+        ),
+    )
+    if changes is not None:
+        _write_vector(conn, scope, chunk, prior, changes)
+
+
+def _write_vector(
+    conn: sqlite3.Connection,
+    scope: str,
+    chunk: ChunkWrite,
+    prior: tuple[Any, ...] | None,
+    changes: _VectorChanges,
+) -> None:
+    """Write the chunk's vector and record what the sidecar must change.
+
+    A chunk id is global, so an upsert under a new scope MOVES the chunk (and any
+    vector it already has): the old scope's index must drop it (LLM08) and the
+    new scope's must gain it, even on a lexical-only write.
+    """
+    key = int(prior[2]) if prior is not None else _chunk_key(conn, chunk.chunk_id)
+    moved_from = prior[1] if prior is not None and prior[1] != scope else None
+    if moved_from is not None:
+        changes.remove(moved_from, key)
+    if chunk.embedding is not None:
+        blob = sqlite_vec.serialize_float32(chunk.embedding)
+        conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (chunk.chunk_id,))
+        conn.execute(
+            "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)", (chunk.chunk_id, blob)
+        )
+        changes.add(scope, key, blob)
+    elif moved_from is not None:
+        row = conn.execute(
+            "SELECT embedding FROM vec0 WHERE chunk_id=?", (chunk.chunk_id,)
+        ).fetchone()
+        if row is not None:
+            changes.add(scope, key, bytes(row[0]))
+
+
+def _chunk_key(conn: sqlite3.Connection, chunk_id: str) -> int:
+    row = conn.execute("SELECT rowid FROM chunks WHERE chunk_id=?", (chunk_id,)).fetchone()
+    return int(row[0])
+
+
+def _delete_vectors(conn: sqlite3.Connection, chunk_ids: Sequence[str]) -> None:
+    """Delete these chunks' ``vec0`` rows (``vec0`` carries no scope column)."""
+    for offset in range(0, len(chunk_ids), _SQL_BATCH):
+        batch = list(chunk_ids[offset : offset + _SQL_BATCH])
+        # Placeholders are only "?" repeated per bound id — never interpolated data.
+        marks = ",".join("?" for _ in batch)
+        conn.execute(f"DELETE FROM vec0 WHERE chunk_id IN ({marks})", batch)  # noqa: S608
+
+
+def _affordable_fts_query(conn: sqlite3.Connection, query: str) -> str:
+    """Narrow an OR-of-terms query to the terms that fit the postings budget.
+
+    BM25 scores every chunk any OR-ed term matches, so one near-universal word in
+    a long question made a 1.2M-chunk search cost seconds. Terms are taken
+    rarest first while their combined document count fits
+    ``_BM25_POSTINGS_BUDGET``; the rarest is always kept. A term this common
+    carries almost no IDF weight, so the ranking barely moves. A term the
+    vocabulary does not list costs nothing and is always kept. Any query that is
+    not a plain OR of quoted terms is returned unchanged.
+    """
+    terms = list(dict.fromkeys(re.findall(r'"([^"]+)"', query)))
+    if len(terms) < 2 or query != " OR ".join(f'"{term}"' for term in terms):
+        return query
+    doc_count = {term: _term_doc_count(conn, term) for term in terms}
+    kept: list[str] = []
+    spent = 0
+    for term in sorted(terms, key=lambda term: (doc_count[term], term)):
+        if kept and spent + doc_count[term] > _BM25_POSTINGS_BUDGET:
+            break
+        kept.append(term)
+        spent += doc_count[term]
+    return " OR ".join(f'"{term}"' for term in kept)
+
+
+def _term_doc_count(conn: sqlite3.Connection, term: str) -> int:
+    row = conn.execute("SELECT doc FROM fts_chunks_vocab WHERE term=?", (term,)).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _phrase_query(terms: Sequence[str]) -> str:
+    """An FTS5 OR-of-phrases over ``terms``' alnum tokens (operator-free, LLM01)."""
+    phrases = []
+    for term in terms:
+        tokens = [token for token in re.split(r"[^0-9A-Za-z]+", term.lower()) if token]
+        if tokens:
+            phrases.append('"' + " ".join(tokens) + '"')
+    return " OR ".join(dict.fromkeys(phrases))
 
 
 # Module-level pool cache keyed by DSN, guarded by a lock: per-op backend
@@ -451,9 +671,6 @@ class SqliteIndexBackend:
 # override); every value crossing the seam is coerced to a concrete type below.
 _POOLS: dict[str, Any] = {}
 _POOL_LOCK = asyncio.Lock()
-
-#: Bound on rows returned by the ANN scan — nearest-first, then RRF-fused above.
-_VEC_SEARCH_LIMIT = 200
 
 
 class PostgresIndexBackend:
@@ -674,7 +891,9 @@ class PostgresIndexBackend:
             )
         return int(status.rsplit(" ", 1)[-1])
 
-    async def vec_search(self, scope: str, query_embedding: list[float]) -> list[str]:
+    async def vec_search(
+        self, scope: str, query_embedding: list[float], top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
         """Scope-filtered cosine ANN via the pgvector ``<=>`` operator, nearest first."""
         pool = await self._pool()
         async with pool.acquire() as conn:
@@ -684,11 +903,13 @@ class PostgresIndexBackend:
                 "ORDER BY embedding <=> $2 LIMIT $3",
                 scope,
                 query_embedding,
-                _VEC_SEARCH_LIMIT,
+                top_k,
             )
         return [str(row["chunk_id"]) for row in rows]
 
-    async def bm25_search(self, scope: str, query: str) -> list[str]:
+    async def bm25_search(
+        self, scope: str, query: str, top_k: int = VEC_SEARCH_TOP_K
+    ) -> list[str]:
         """FTS via ``to_tsquery``; parses the FTS5-formatted query into OR'd tokens."""
         tokens = _parse_fts_tokens(query)
         if not tokens:
@@ -699,25 +920,44 @@ class PostgresIndexBackend:
             rows = await conn.fetch(
                 "SELECT chunk_id FROM chunks "
                 "WHERE scope=$1 AND tsv @@ to_tsquery('english', $2) "
-                "ORDER BY ts_rank_cd(tsv, to_tsquery('english', $2)) DESC",
+                "ORDER BY ts_rank_cd(tsv, to_tsquery('english', $2)) DESC LIMIT $3",
                 scope,
                 tsquery,
+                top_k,
             )
         return [str(row["chunk_id"]) for row in rows]
 
-    async def chunk_texts(self, scope: str) -> list[tuple[str, str]]:
+    async def chunk_texts(
+        self, scope: str, *, terms: Sequence[str] | None = None, limit: int | None = None
+    ) -> list[tuple[str, str]]:
         pool = await self._pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT chunk_id, text FROM chunks WHERE scope=$1", scope)
+            if terms is None:
+                rows = await conn.fetch(
+                    "SELECT chunk_id, text FROM chunks WHERE scope=$1 LIMIT $2", scope, limit
+                )
+            else:
+                tsquery = _phrase_tsquery(terms)
+                if not tsquery:
+                    return []
+                rows = await conn.fetch(
+                    "SELECT chunk_id, text FROM chunks "
+                    "WHERE scope=$1 AND tsv @@ to_tsquery('english', $2) "
+                    "ORDER BY ts_rank_cd(tsv, to_tsquery('english', $2)) DESC LIMIT $3",
+                    scope,
+                    tsquery,
+                    limit,
+                )
         return [(str(row["chunk_id"]), str(row["text"])) for row in rows]
 
-    async def recency_order(self, scope: str) -> list[str]:
+    async def recency_order(self, scope: str, limit: int | None = VEC_SEARCH_TOP_K) -> list[str]:
         pool = await self._pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT chunk_id FROM chunks WHERE scope=$1 "
-                "ORDER BY COALESCE(mtime, 0) DESC, chunk_id",
+                "ORDER BY COALESCE(mtime, 0) DESC, chunk_id LIMIT $2",
                 scope,
+                limit,
             )
         return [str(row["chunk_id"]) for row in rows]
 
@@ -781,6 +1021,16 @@ def _parse_fts_tokens(query: str) -> list[str]:
     return [token for token in tokens if token]
 
 
+def _phrase_tsquery(terms: Sequence[str]) -> str:
+    """A tsquery OR-of-phrases over ``terms``' alnum tokens (operator-free, LLM01)."""
+    phrases = []
+    for term in terms:
+        tokens = [token for token in re.split(r"[^0-9A-Za-z]+", term.lower()) if token]
+        if tokens:
+            phrases.append("(" + " <-> ".join(tokens) + ")")
+    return " | ".join(dict.fromkeys(phrases))
+
+
 def open_index_backend(
     backend: str = "sqlite", *, db: MemoryDB, dsn: str | None = None
 ) -> IndexBackend:
@@ -817,6 +1067,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 __all__ = [
+    "VEC_SEARCH_TOP_K",
+    "ChunkWrite",
     "IndexBackend",
     "PostgresIndexBackend",
     "SqliteIndexBackend",

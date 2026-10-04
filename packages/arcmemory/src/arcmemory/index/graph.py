@@ -19,6 +19,7 @@ Every edge is scoped: activation never crosses a scope boundary (LLM08).
 from __future__ import annotations
 
 import math
+import sqlite3
 from datetime import UTC, datetime
 
 from arcmemory.config import MemoryConfig
@@ -127,9 +128,14 @@ class WeightedGraph:
         ).fetchone()
         return float(row[0]) if row else 0.0
 
-    def neighbors(self, scope: str, node: str) -> list[tuple[str, float]]:
-        """Undirected neighbors of ``node`` with edge weights."""
-        conn = self._db.connect()
+    def neighbors(
+        self, scope: str, node: str, *, conn: sqlite3.Connection | None = None
+    ) -> list[tuple[str, float]]:
+        """Undirected neighbors of ``node`` with edge weights.
+
+        ``conn`` lets an off-loop caller read through its own thread's connection.
+        """
+        conn = conn if conn is not None else self._db.connect()
         rows = conn.execute(
             "SELECT dst, weight FROM edges WHERE scope=? AND src=? "
             "UNION ALL SELECT src, weight FROM edges WHERE scope=? AND dst=?",
@@ -240,12 +246,14 @@ class WeightedGraph:
         sources: dict[str, float],
         *,
         max_hops: int | None = None,
+        conn: sqlite3.Connection | None = None,
     ) -> dict[str, float]:
         """Flow activation from ``sources`` over the weighted graph (ACT-R fan effect).
 
         Returns activation for every reached node (sources included). A node's
         contribution to a neighbor is ``act * weight * max(0, S - ln(fan))``,
-        hop-capped so the walk is bounded regardless of graph size.
+        hop-capped so the walk is bounded regardless of graph size. Pass ``conn``
+        to run the walk on a worker thread's own connection (``MemoryDB.run``).
         """
         hops = self._cfg.max_hops if max_hops is None else max_hops
         activation: dict[str, float] = dict(sources)
@@ -254,7 +262,7 @@ class WeightedGraph:
         for _ in range(hops):
             contributions: dict[str, float] = {}
             for node, act in frontier.items():
-                neigh = self.neighbors(scope, node)
+                neigh = self.neighbors(scope, node, conn=conn)
                 fan = len(neigh)
                 if fan == 0:
                     continue

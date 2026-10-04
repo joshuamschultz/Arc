@@ -24,6 +24,7 @@ from arcmemory.collection_index import memory_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.degrade import warn_once
+from arcmemory.index import ann
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.source import embed_text, iter_source_chunks
 from arcmemory.mdfile import card_files, parse_document
@@ -200,9 +201,14 @@ class IndexRebuilder:
         conn.execute("DELETE FROM edges WHERE scope=?", (scope,))
         conn.execute("DELETE FROM chunks WHERE scope=?", (scope,))
         conn.execute("DELETE FROM insight_trigger WHERE scope=?", (scope,))
+        if self._db.vec_available:
+            ann.mark_scope_written(conn, scope)
         conn.commit()
 
         await self._rebuild_chunks(reuse)
+        if self._db.vec_available:
+            # vec0 was rewritten behind the sidecar's delta path: rebuild it now.
+            ann.mark_stale(self._db, scope)
         self._rebuild_link_edges()
         self._rebuild_assoc_edges()
 
@@ -282,6 +288,8 @@ class IndexRebuilder:
                     "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
                     (sc.chunk_id, sqlite_vec.serialize_float32(fresh_by_idx[i])),
                 )
+        if self._db.vec_available:
+            ann.mark_scope_written(conn, self._scope.key)
         conn.commit()
 
     async def _embed(self, texts: list[str]) -> list[list[float]] | None:

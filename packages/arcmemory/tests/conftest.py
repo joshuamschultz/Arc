@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
 import pytest
 from arctrust.identity import AgentIdentity
 
@@ -89,3 +90,56 @@ def config() -> MemoryConfig:
 @pytest.fixture
 def embedder() -> StubEmbedder:
     return StubEmbedder()
+
+
+def low_rank_vectors(n: int, dims: int, *, seed: int, rank: int = 32) -> np.ndarray:
+    """Seeded unit vectors on a low-rank manifold, shaped like real sentence embeddings.
+
+    Real embedding sets have a low intrinsic dimension; i.i.d. Gaussian points in
+    384-d are a near-tie worst case no ANN index (or any real corpus) looks like.
+    """
+    rng = np.random.default_rng(seed)
+    latent = rng.standard_normal((n, rank)).astype(np.float32)
+    basis = rng.standard_normal((rank, dims)).astype(np.float32)
+    raw = latent @ basis + 0.1 * rng.standard_normal((n, dims)).astype(np.float32)
+    return (raw / np.linalg.norm(raw, axis=1, keepdims=True)).astype(np.float32)
+
+
+def bulk_load_vectors(
+    db: MemoryDB, scope: str, vectors: np.ndarray, *, prefix: str = "doc", start: int = 0
+) -> list[str]:
+    """Write chunk + fts + vec0 rows straight through SQL, the way an existing
+    deployed index.db already holds them (no sidecar, no generation stamp).
+
+    Returns the chunk ids in vector order. Text carries a shared ``corpus`` term
+    plus a per-row token so BM25/graph channels have something to match.
+    """
+    conn = db.connect()
+    ids = [f"{prefix}:{start + i}#0" for i in range(len(vectors))]
+    for offset in range(0, len(ids), 5000):
+        batch = ids[offset : offset + 5000]
+        for i, chunk_id in enumerate(batch, start=offset):
+            fts_rowid = conn.execute(
+                "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
+                (chunk_id, scope, f"corpus alpha row{start + i} topic{(start + i) % 97}"),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO chunks (chunk_id, scope, source_path, mtime, classification, "
+                "content_hash, embedded_hash, fts_rowid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chunk_id,
+                    scope,
+                    f"src/{chunk_id}",
+                    float(start + i),
+                    "unclassified",
+                    f"h{start + i}",
+                    f"h{start + i}",
+                    fts_rowid,
+                ),
+            )
+        conn.executemany(
+            "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
+            [(cid, vectors[i].tobytes()) for i, cid in enumerate(batch, start=offset)],
+        )
+        conn.commit()
+    return ids

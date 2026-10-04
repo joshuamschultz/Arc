@@ -14,9 +14,13 @@ retrieval degrades to BM25 + graph rather than raising.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 try:  # optional [vec] extra — guarded, never fatal
     import sqlite_vec
@@ -34,6 +38,8 @@ Durability = Literal["full", "normal"]
 
 # Default embedding width (bge-small / MiniLM are both 384-dim).
 DEFAULT_DIMS = 384
+
+_T = TypeVar("_T")
 
 _VEC_MISSING = (
     "SEMANTIC RECALL IS OFF: the sqlite-vec package is not installed, so the vec0 "
@@ -85,6 +91,17 @@ def sqlite_vec_loadable() -> bool:
         conn.close()
 
 
+def open_db_connection(db_path: Path) -> sqlite3.Connection:
+    """A read-mostly connection to an existing index DB, with sqlite-vec loaded.
+
+    For background readers (the vector-sidecar builder) that know only the
+    file path; the caller owns the connection and closes it on its own thread.
+    """
+    conn = sqlite3.connect(str(db_path))
+    _load_sqlite_vec(conn)
+    return conn
+
+
 class MemoryDB:
     """Opens/creates the per-agent index DB and owns its schema.
 
@@ -102,6 +119,13 @@ class MemoryDB:
         self._db_path = self._workspace / "memory" / "index.db"
         self._conn: sqlite3.Connection | None = None
         self._vec_available = False
+        self._instance_id = ""
+        # Off-loop access: ONE dedicated worker thread owning ONE connection.
+        # sqlite3 connections are bound to the thread that opened them
+        # (check_same_thread), so the worker's connection is opened, used and
+        # closed only on that thread; the loop-thread ``_conn`` is never shared.
+        self._worker: ThreadPoolExecutor | None = None
+        self._worker_conn: sqlite3.Connection | None = None
 
     @property
     def db_path(self) -> Path:
@@ -119,28 +143,80 @@ class MemoryDB:
         """Embedding width the ``vec0`` table was created for."""
         return self._dims
 
+    @property
+    def instance_id(self) -> str:
+        """Random id stamped into this DB file at creation.
+
+        Distinguishes a re-created file at the same path from the old one, so a
+        cached derivative (the vector sidecar) can never outlive its source.
+        """
+        self.connect()
+        return self._instance_id
+
     def connect(self) -> sqlite3.Connection:
         """Open the DB (creating the file + schema on first call)."""
         if self._conn is not None:
             return self._conn
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn, self._vec_available = self._open()
+        self._conn = conn
+        self._create_schema(conn)
+        row = conn.execute("SELECT value FROM index_meta WHERE key='instance_id'").fetchone()
+        self._instance_id = str(row[0])
+        return conn
+
+    def open_connection(self) -> sqlite3.Connection:
+        """A NEW connection to this DB file (pragmas + sqlite-vec), no schema work.
+
+        The caller owns it and must use and close it on one thread. ``connect``
+        uses this for the loop-thread connection; the off-loop worker and the
+        vector-sidecar builder each open their own.
+        """
+        return self._open()[0]
+
+    def _open(self) -> tuple[sqlite3.Connection, bool]:
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
-        # Commits run on the event-loop thread; under FULL each one waits on an
-        # fsync. Only a provider-rebuildable store opts into NORMAL.
+        # Under FULL each commit waits on an fsync. Only a provider-rebuildable
+        # store opts into NORMAL.
         conn.execute(
             "PRAGMA synchronous=NORMAL"
             if self._durability == "normal"
             else "PRAGMA synchronous=FULL"
         )
-        self._vec_available = _load_sqlite_vec(conn)
-        self._conn = conn
-        self._create_schema(conn)
-        return conn
+        return conn, _load_sqlite_vec(conn)
+
+    async def run(self, work: Callable[[sqlite3.Connection], _T]) -> _T:
+        """Run ``work(conn)`` off the event loop, on this DB's worker thread.
+
+        Every call shares one worker thread and its own connection, so calls run
+        one at a time in submission order (a write is visible to the next read)
+        and no connection ever crosses threads. ``work`` must finish its own
+        transaction (commit or roll back) before it returns.
+        """
+        self.connect()  # schema exists before the worker's first statement
+        if self._worker is None:
+            self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arcmemory-db")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._worker, self._run_on_worker, work)
+
+    def _run_on_worker(self, work: Callable[[sqlite3.Connection], _T]) -> _T:
+        if self._worker_conn is None:
+            self._worker_conn = self.open_connection()
+        return work(self._worker_conn)
+
+    def _close_worker_conn(self) -> None:
+        if self._worker_conn is not None:
+            self._worker_conn.close()
+            self._worker_conn = None
 
     def close(self) -> None:
-        """Close the connection (idempotent)."""
+        """Close both connections and stop the worker thread (idempotent)."""
+        if self._worker is not None:
+            self._worker.submit(self._close_worker_conn)
+            self._worker.shutdown(wait=True)
+            self._worker = None
         if self._conn is not None:
             self._conn.close()
             self._conn = None
@@ -179,6 +255,12 @@ class MemoryDB:
             "fts_rowid INTEGER)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope)")
+        # Recency is a top-k channel: this index lets ``ORDER BY ... LIMIT k``
+        # read k rows instead of sorting every chunk in the scope.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_scope_recency "
+            "ON chunks(scope, COALESCE(mtime, 0) DESC, chunk_id)"
+        )
         # H-REG-1: ``content_hash`` tracks freshness for the CHEAP lexical write
         # (chunk row + fts/BM25 row, no embedder needed). ``embedded_hash`` tracks,
         # separately, which content_hash the VECTOR was last embedded for — so a
@@ -194,6 +276,11 @@ class MemoryDB:
             "USING fts5(chunk_id UNINDEXED, scope UNINDEXED, text)"
         )
         self._link_fts_rowids(conn)
+        # Per-term document counts, so BM25 can price a query before running it.
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks_vocab "
+            "USING fts5vocab(fts_chunks, 'row')"
+        )
 
         # Semantic + cue graph: weighted edges carrying Hebbian/decay state.
         conn.execute(
@@ -203,6 +290,9 @@ class MemoryDB:
             "last_hit TEXT, hits INTEGER NOT NULL DEFAULT 0, "
             "PRIMARY KEY (scope, src, dst, kind))"
         )
+        # Undirected neighbor lookups match ``dst`` too; without this every
+        # spreading-activation hop scanned the scope's whole edge list.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(scope, dst)")
 
         if self._vec_available:
             conn.execute(
@@ -229,6 +319,22 @@ class MemoryDB:
                 "WHERE chunk_id IN (SELECT chunk_id FROM vec0)"
             )
             conn.commit()
+
+        # Per-scope vector version stamp. Every transaction that changes a
+        # scope's vec0 rows bumps its generation; the HNSW sidecar records the
+        # generation it reflects, so any mismatch (a crash before the sidecar
+        # was saved, another writer, a rebuild) is detected and healed.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS vec_generation ("
+            "scope TEXT PRIMARY KEY, generation INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO index_meta (key, value) VALUES ('instance_id', ?)",
+            (uuid.uuid4().hex,),
+        )
 
         # Abstraction-space trigger vectors — kept in a SEPARATE table from the
         # surface ``vec0`` chunks (SDD 7) so surface noise cannot drown a minted
@@ -330,4 +436,4 @@ class MemoryDB:
         return added
 
 
-__all__ = ["DEFAULT_DIMS", "MemoryDB"]
+__all__ = ["DEFAULT_DIMS", "MemoryDB", "open_db_connection"]
