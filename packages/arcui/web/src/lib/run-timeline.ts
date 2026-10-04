@@ -131,6 +131,7 @@ export interface LlmItem {
   requestId?: string | null
   agentLabel?: string | null
   costUsd?: number | null
+  provider?: string | null
   cacheReadTokens?: number | null
   cacheWriteTokens?: number | null
 }
@@ -146,15 +147,16 @@ export interface RunItem {
 }
 
 /** One-line cache summary for a model call: "cache read 900 · write 0 · hit 90%".
- *  `tokensIn` is Anthropic-style uncached input, so the prompt total is
- *  tokensIn + read + write. Null cache fields read as "-". */
+ *  Anthropic's prompt_tokens EXCLUDE cached tokens, so the prompt total is
+ *  tokensIn + read + write; OpenAI-style providers INCLUDE them, so the total is
+ *  tokensIn. Null cache fields read as "-". */
 export function cacheSummary(item: LlmItem): string {
   const { cacheReadTokens: read, cacheWriteTokens: write } = item
   if (read == null && write == null) return 'cache -'
   const r = read ?? 0
   const w = write ?? 0
-  const total = item.tokensIn + r + w
-  const hit = total > 0 ? `${Math.round((r / total) * 100)}%` : '-'
+  const total = item.provider === 'anthropic' ? item.tokensIn + r + w : item.tokensIn
+  const hit = total > 0 ? `${Math.min(100, Math.round((r / total) * 100))}%` : '-'
   return `cache read ${r} · write ${w} · hit ${hit}`
 }
 
@@ -340,6 +342,7 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         requestId: e.request_id,
         agentLabel: e.agent_label,
         costUsd: e.cost_usd,
+        provider: e.provider ?? null,
         cacheReadTokens: e.cache_read_tokens ?? null,
         cacheWriteTokens: e.cache_write_tokens ?? null,
       })

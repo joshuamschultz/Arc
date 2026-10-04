@@ -743,6 +743,7 @@ export interface TimelineEntry {
   model?: string | null
   agent_label?: string | null
   cost_usd?: number | null
+  provider?: string | null
   prompt_tokens?: number | null
   completion_tokens?: number | null
   cache_read_tokens?: number | null

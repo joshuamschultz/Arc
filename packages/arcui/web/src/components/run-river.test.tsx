@@ -139,7 +139,7 @@ describe('RunRiver context prep', () => {
 
   it('shows cache read, write and hit percent on a model call', async () => {
     const rows = prepRows()
-    rows[4] = { ...rows[4], prompt_tokens: 100, completion_tokens: 5, cache_read_tokens: 800, cache_write_tokens: 100 }
+    rows[4] = { ...rows[4], provider: 'anthropic', prompt_tokens: 100, completion_tokens: 5, cache_read_tokens: 800, cache_write_tokens: 100 }
     renderRiver(rows)
     expect(await screen.findByText(/cache read 800 · write 100 · hit 80%/)).toBeTruthy()
   })
@@ -147,5 +147,12 @@ describe('RunRiver context prep', () => {
   it('shows a dash when the model call has no cache fields', async () => {
     renderRiver(prepRows())
     expect(await screen.findByText(/cache -/)).toBeTruthy()
+  })
+
+  it('computes hit percent from prompt_tokens alone for an OpenAI-style provider', async () => {
+    const rows = prepRows()
+    rows[4] = { ...rows[4], provider: 'openai', prompt_tokens: 1000, completion_tokens: 5, cache_read_tokens: 800, cache_write_tokens: null }
+    renderRiver(rows)
+    expect(await screen.findByText(/cache read 800 · write 0 · hit 80%/)).toBeTruthy()
   })
 })
