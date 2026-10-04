@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from arcmemory.collection_index import memory_maintainer, routing_text, source_maintainer
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.index.backend import ChunkWrite, IndexBackend, open_index_backend
+from arcmemory.index.backend import ChunkWrite, IndexBackend, doc_pool_backend
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import SourceChunk, bounded_chunks
 from arcmemory.index.surface import SurfaceIndex
@@ -84,6 +84,8 @@ _COLLAPSE_OVERFETCH = 4
 _DOC_VECTOR_WEIGHT = 2
 _DOC_RRF_K = 5
 _CITATION_FIELD_CAP = 300
+#: Newest chunks read per listed document by ``list_documents``.
+_LIST_CHUNKS_PER_DOC = 64
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -145,7 +147,7 @@ class DocIndex:
     async def index_source(self, source_id: str, agent_did: str, chunks: list[SourceChunk]) -> int:
         """Upsert every chunk under this source's doc-scope; return count indexed."""
         scope = doc_scope(agent_did, source_id)
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         embeddings = await self._embed(backend, [c.text for c in chunks])
         await backend.upsert_chunks(
             scope.key,
@@ -172,7 +174,7 @@ class DocIndex:
         leaves a stale copy behind in its source's pool.
         """
         scope = doc_scope(agent_did, source_id)
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         await backend.delete_object(scope.key, object_key(source_id, object_id))
         await backend.delete_object(scope.key, object_id)
 
@@ -186,14 +188,14 @@ class DocIndex:
         changes. Returns the number of chunks updated (0 when already current).
         """
         scope = doc_scope(agent_did, source_id)
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         return await backend.repath_object(
             scope.key, object_key(source_id, object_id), source_path
         )
 
     async def delete_source(self, source_id: str, agent_did: str) -> None:
         """Delete every indexed chunk in one connected source's isolated pool."""
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         await backend.delete_scope(doc_scope(agent_did, source_id).key)
 
     async def refresh_collection_index(
@@ -211,7 +213,7 @@ class DocIndex:
         File work runs off the event loop. Returns the number of listed entries.
         """
         scope = doc_scope(agent_did, source_id).key
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         maintainer = source_maintainer(collection_root)
         base_id = f"index:{source_id}"
         indexed = await _indexed_windows(backend, scope, base_id)
@@ -232,7 +234,7 @@ class DocIndex:
     ) -> None:
         """Swap the indexed routing windows, skipping the embed when nothing changed."""
         scope = doc_scope(agent_did, source_id).key
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         base_id = f"index:{source_id}"
         label = dominating_classification(sorted(await backend.scope_classifications(scope)))
         meta = await backend.chunk_meta(scope, base_id)
@@ -278,7 +280,7 @@ class DocIndex:
         """The source ids to search: the requested ones, or every pool this agent owns."""
         if wanted is not None:
             return list(dict.fromkeys(wanted))
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         prefix = doc_scope(agent_did, "").key
         return [scope[len(prefix) :] for scope in await backend.scopes_with_prefix(prefix)]
 
@@ -287,7 +289,7 @@ class DocIndex:
     ) -> list[DocHit]:
         """Fused search of exactly one source's pool, floor-filtered and hydrated."""
         scope = doc_scope(agent_did, source_id)
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         surface = SurfaceIndex(
             self._db,
             self._workspace,
@@ -341,10 +343,12 @@ class DocIndex:
         if not self._cfg.doc_search_enabled or not source_id:
             return []
         scope = doc_scope(agent_did, source_id)
-        backend = open_index_backend(self._cfg.index_backend, db=self._db)
+        backend = doc_pool_backend(self._db)
         hits: list[DocHit] = []
         seen: set[str] = set()
-        for chunk_id in await backend.recency_order(scope.key):
+        # Bounded: a document spans many chunks, so read enough of the newest
+        # chunks to fill ``limit`` documents without listing the whole pool.
+        for chunk_id in await backend.recency_order(scope.key, limit * _LIST_CHUNKS_PER_DOC):
             meta = await backend.chunk_meta(scope.key, chunk_id)
             pointer = meta[0] if meta is not None else ""
             if pointer in seen:
