@@ -42,16 +42,18 @@ import asyncio
 import fcntl
 import logging
 import os
+import sqlite3
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Literal, TextIO
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from arcmemory.config import MemoryConfig
-from arcmemory.db import MemoryDB
+from arcmemory.db import PENDING_EMBED_SQL, MemoryDB
 from arcmemory.index.backend import (
     EmbedBacklog,
     EmbeddingWrite,
@@ -442,14 +444,121 @@ def backfill_writer_lock(db_path: Path) -> BackfillWriterLock:
         return lock
 
 
+def backfill_owner(db_path: Path) -> int | None:
+    """The PID of the process that owns this index file's backfill, ``None`` when unclaimed.
+
+    Probes with a second open file, so it answers for any process, this one
+    included (a claim this process holds reports this process's PID).
+    """
+    lock_path = Path(db_path).parent / _LOCK_FILE
+    try:
+        handle = lock_path.open("r", encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    with handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            text = handle.read().strip()
+            return int(text) if text.isdigit() else -1
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return None
+
+
+def read_embed_backlog(db_path: Path) -> dict[str, EmbedBacklog]:
+    """Every document pool's coverage in one SQLite index file, read-only.
+
+    For an operator watching the backfill: opens the file read-only (no schema
+    work, no writes), so it is safe beside the serving process. Blocking; ``{}``
+    when the file does not exist.
+    """
+    if not Path(db_path).is_file():
+        return {}
+    conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True)
+    try:
+        totals = conn.execute(
+            "SELECT scope, COUNT(*) FROM chunks WHERE instr(scope, ?) > 0 GROUP BY scope",
+            (DOC_SCOPE_MARKER,),
+        ).fetchall()
+        pending = dict(conn.execute(_READ_PENDING, (DOC_SCOPE_MARKER,)).fetchall())
+    finally:
+        conn.close()
+    return {
+        str(scope): EmbedBacklog(total=int(total), pending=int(pending.get(scope, 0)))
+        for scope, total in sorted(totals)
+    }
+
+
+_READ_PENDING = (
+    "SELECT scope, COUNT(*) FROM chunks "  # noqa: S608 - interpolates only a module constant
+    f"WHERE instr(scope, ?) > 0 AND {PENDING_EMBED_SQL} GROUP BY scope"
+)
+
+
+@dataclass(frozen=True)
+class BackfillOutcome:
+    """How an operator's one-shot run of one store ended."""
+
+    #: ``done`` (nothing left), ``blocked`` (another process owns the store) or
+    #: ``embedder_down`` (it stayed unavailable through every retry).
+    status: Literal["done", "blocked", "embedder_down"]
+    embedded: int
+
+
+async def backfill_store(
+    workspace: Path,
+    config: MemoryConfig,
+    embedder: Embedder | None,
+    *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    on_progress: Callable[[int], None] | None = None,
+    retries: int = 5,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> BackfillOutcome:
+    """Backfill every document pool of one store to completion (an operator's run).
+
+    Refuses (``blocked``) while another process owns the store, writing nothing.
+    Waits out an embedder outage with the usual backoff, at most ``retries``
+    times in a row. The claim is released at the end, so the service can take
+    the store over when it next starts. ``on_progress`` gets the running total
+    of vectors written after each tick.
+    """
+    db = MemoryDB(workspace)
+    backfill = DocEmbedBackfill(db, config, embedder, scope_prefix="", batch_size=batch_size)
+    embedded = failures = 0
+    try:
+        while True:
+            tick = await backfill.run_batches(DEFAULT_TICK_BATCHES)
+            embedded += tick.embedded
+            if on_progress is not None and tick.embedded:
+                on_progress(embedded)
+            if tick.blocked:
+                return BackfillOutcome(status="blocked", embedded=embedded)
+            if tick.exhausted:
+                return BackfillOutcome(status="done", embedded=embedded)
+            failures = failures + 1 if tick.embedder_down else 0
+            if failures > retries:
+                return BackfillOutcome(status="embedder_down", embedded=embedded)
+            if tick.embedder_down:
+                await sleep(backfill.next_delay(tick))
+    finally:
+        # Only this process's own claim is released (a no-op when it never held one).
+        backfill_writer_lock(db.db_path).release()
+        db.close()
+
+
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_TICK_BATCHES",
     "DOC_SCOPE_MARKER",
     "EMBED_OPERATION",
+    "BackfillOutcome",
     "BackfillPacer",
     "BackfillTick",
     "BackfillWriterLock",
     "DocEmbedBackfill",
+    "backfill_owner",
+    "backfill_store",
     "backfill_writer_lock",
+    "read_embed_backlog",
 ]

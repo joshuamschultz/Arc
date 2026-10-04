@@ -623,7 +623,13 @@ def embedding_profile(agent_did: str) -> str:
     settings = _embed_settings(agent_did)
     if settings is None:
         return "lexical"
-    return hashlib.sha256("\0".join(settings).encode("utf-8")).hexdigest()[:16]
+    return profile_of(*settings)
+
+
+def profile_of(embed_backend: str, embed_model: str, embed_base_url: str) -> str:
+    """The profile name of one ``embed_*`` setting triple (see :func:`embedding_profile`)."""
+    joined = "\0".join((embed_backend, embed_model, embed_base_url))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
 
 
 class DelegatedAuthority(Protocol):
@@ -664,4 +670,5 @@ __all__ = [
     "DelegatedAuthority",
     "embedding_profile",
     "memory_embedder",
+    "profile_of",
 ]
