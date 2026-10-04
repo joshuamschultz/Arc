@@ -13,7 +13,7 @@ import {
   Sparkles,
   Layers,
 } from 'lucide-react'
-import { mergeTimeline, describeAction, type Item } from '@/lib/run-timeline'
+import { mergeTimeline, describeAction, cacheSummary, type Item } from '@/lib/run-timeline'
 import { StatusChip } from '@/components/ai'
 import { ContextPrepGroup } from '@/components/context-prep-group'
 import { SignedSeal } from '@/components/hitl'
@@ -305,7 +305,7 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
   const summary = isTool
     ? toolSummary(item.input)
     : isLlm && (item.tokensIn || item.tokensOut)
-      ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out`
+      ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out · ${cacheSummary(item)}`
       : null
   const status = isTool ? item.status : item.kind === 'run' ? (item.outcome ?? undefined) : undefined
   const held = isTool && (item.status === 'running' || item.status === 'stale')

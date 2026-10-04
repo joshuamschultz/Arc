@@ -131,6 +131,8 @@ export interface LlmItem {
   requestId?: string | null
   agentLabel?: string | null
   costUsd?: number | null
+  cacheReadTokens?: number | null
+  cacheWriteTokens?: number | null
 }
 export interface RunItem {
   kind: 'run'
@@ -143,6 +145,19 @@ export interface RunItem {
   outcome?: string | null
 }
 
+/** One-line cache summary for a model call: "cache read 900 · write 0 · hit 90%".
+ *  `tokensIn` is Anthropic-style uncached input, so the prompt total is
+ *  tokensIn + read + write. Null cache fields read as "-". */
+export function cacheSummary(item: LlmItem): string {
+  const { cacheReadTokens: read, cacheWriteTokens: write } = item
+  if (read == null && write == null) return 'cache -'
+  const r = read ?? 0
+  const w = write ?? 0
+  const total = item.tokensIn + r + w
+  const hit = total > 0 ? `${Math.round((r / total) * 100)}%` : '-'
+  return `cache read ${r} · write ${w} · hit ${hit}`
+}
+
 export interface RetrievalCandidate {
   source_kind: string
   source: string
@@ -153,11 +168,17 @@ export interface RetrievalCandidate {
   snippet: string
   included: boolean
   reason: string
+  tokens?: number
 }
 export interface RetrievalStep {
   name: string
   latency_ms: number
   status: string
+  found?: number
+}
+export interface PrefixTier {
+  sha256: string
+  tokens: number
 }
 export interface RetrievalPrep {
   status: string
@@ -176,8 +197,18 @@ export interface RetrievalPrep {
 export interface ContextPrepItem {
   kind: 'context'
   ts?: string | null
-  strategy?: { strategy: string; reason: string; latency_ms: number } | null
-  system?: { cached: boolean; tokens: number; sha256: string } | null
+  strategy?: {
+    strategy: string
+    reason: string
+    latency_ms: number
+    selected_by?: 'only' | 'model' | 'fallback'
+  } | null
+  system?: {
+    cached: boolean
+    tokens: number
+    sha256: string
+    tiers?: { session: PrefixTier; run: PrefixTier }
+  } | null
   retrieval?: RetrievalPrep | null
   session?: { turns: number; tokens: number } | null
   skipped: { step: string; reason: string }[]
@@ -309,6 +340,8 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         requestId: e.request_id,
         agentLabel: e.agent_label,
         costUsd: e.cost_usd,
+        cacheReadTokens: e.cache_read_tokens ?? null,
+        cacheWriteTokens: e.cache_write_tokens ?? null,
       })
     } else {
       items.push({

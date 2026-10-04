@@ -12,7 +12,7 @@ import { JsonBlock } from '@/components/json-block'
 import { LoadingRows, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { TraceDrawer } from '@/components/trace-drawer'
-import { mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
+import { cacheSummary, mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
 import { SignedMark } from '@/components/audit/ledger'
 import { useRunAudit, useRunRecalls, useRunTimeline } from '@/lib/queries'
 import { fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
@@ -136,6 +136,7 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
             {fmtNumber(item.tokensIn)} in / {fmtNumber(item.tokensOut)} out tok
           </span>
         )}
+        <span className="tabular-nums text-muted-foreground">{cacheSummary(item)}</span>
         {item.latency_ms != null && (
           <span className="tabular-nums text-muted-foreground">{fmtLatency(item.latency_ms)}</span>
         )}

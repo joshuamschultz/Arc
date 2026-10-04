@@ -109,4 +109,43 @@ describe('RunRiver context prep', () => {
     expect(screen.getByText('<script>alert(1)</script>')).toBeTruthy()
     expect(document.querySelector('script')).toBeNull()
   })
+
+  it('marks a fallback strategy pick', async () => {
+    const rows = prepRows()
+    rows[0].extra = { strategy: 'react', reason: 'model unavailable', latency_ms: 30, selected_by: 'fallback' }
+    renderRiver(rows)
+    await userEvent.click(await screen.findByRole('button', { name: /context prep/i }))
+    expect(screen.getByText(/react \(fallback\)/)).toBeTruthy()
+  })
+
+  it('shows each prefix tier with tokens and an 8-character hash', async () => {
+    const rows = prepRows()
+    rows[1].extra = {
+      cached: false,
+      tokens: 1200,
+      sha256: 'x',
+      tiers: {
+        session: { sha256: 'aaaaaaaabbbbbbbb', tokens: 800 },
+        run: { sha256: 'ccccccccdddddddd', tokens: 400 },
+      },
+    }
+    renderRiver(rows)
+    await userEvent.click(await screen.findByRole('button', { name: /context prep/i }))
+    expect(screen.getByText(/cached: no/)).toBeTruthy()
+    expect(screen.getByText(/session tier: 800 tok/).textContent).toContain('aaaaaaaa')
+    expect(screen.getByText(/run tier: 400 tok/).textContent).toContain('cccccccc')
+    expect(screen.queryByText(/aaaaaaaab/)).toBeNull()
+  })
+
+  it('shows cache read, write and hit percent on a model call', async () => {
+    const rows = prepRows()
+    rows[4] = { ...rows[4], prompt_tokens: 100, completion_tokens: 5, cache_read_tokens: 800, cache_write_tokens: 100 }
+    renderRiver(rows)
+    expect(await screen.findByText(/cache read 800 · write 100 · hit 80%/)).toBeTruthy()
+  })
+
+  it('shows a dash when the model call has no cache fields', async () => {
+    renderRiver(prepRows())
+    expect(await screen.findByText(/cache -/)).toBeTruthy()
+  })
 })

@@ -38,6 +38,7 @@ function Candidate({ item }: { item: RetrievalCandidate }) {
           {item.source_kind}: {item.source}
         </span>
         <span className="tabular-nums">score {item.score.toFixed(2)}</span>
+        {item.tokens != null && <span className="tabular-nums">{fmtNumber(item.tokens)} tok</span>}
         <span>{item.classification}</span>
         <span>{item.reason}</span>
       </div>
@@ -95,13 +96,24 @@ export function ContextPrepGroup({ item }: { item: ContextPrepItem }) {
         <ol className="ml-[22px] mt-2 space-y-3 rounded-lg border border-border bg-muted/20 p-3">
           {item.strategy && (
             <SubStep label="Strategy selected">
-              {item.strategy.strategy} — {item.strategy.reason}
+              {item.strategy.strategy}
+              {item.strategy.selected_by === 'fallback' && ' (fallback)'} — {item.strategy.reason}
               <span className="ml-2 tabular-nums text-muted-foreground">{fmtLatency(item.strategy.latency_ms)}</span>
             </SubStep>
           )}
           {item.system && (
             <SubStep label="System context">
               cached: {item.system.cached ? 'yes' : 'no'} · {fmtNumber(item.system.tokens)} tok
+              {item.system.tiers && (
+                <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                  {(['session', 'run'] as const).map((name) => (
+                    <li key={name}>
+                      {name} tier: {fmtNumber(item.system!.tiers![name].tokens)} tok ·{' '}
+                      <span className="font-mono">{item.system!.tiers![name].sha256.slice(0, 8)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </SubStep>
           )}
           {r && (
@@ -114,6 +126,13 @@ export function ContextPrepGroup({ item }: { item: ContextPrepItem }) {
                 </span>
               </div>
               {r.reason && <p className="mb-1 text-muted-foreground">{r.reason}</p>}
+              {r.steps.length > 0 && (
+                <p className="mb-1 text-muted-foreground">
+                  {r.steps
+                    .map((s) => `${s.name} ${s.status}${s.found != null ? ` (${s.found} found)` : ''} ${fmtLatency(s.latency_ms)}`)
+                    .join(' · ')}
+                </p>
+              )}
               <ul className="space-y-1.5">
                 {r.items.map((c, i) => (
                   <Candidate key={`${c.source}-${i}`} item={c} />
