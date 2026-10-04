@@ -382,8 +382,8 @@ accumulator, so a scope's completion and embed spend add up together.
 ### Prompt caching
 
 Provider-level, config-driven (`ProviderSettings.enable_prompt_caching`, default
-**on** — a pure cost/latency win on a stable prefix) with `cache_ttl` of `"1h"`
-(default) or `"5m"`. Only adapters with explicit cache breakpoints (Anthropic)
+**on** — a pure cost/latency win on a stable prefix) with `cache_ttl_system` (`"1h"`) and `cache_ttl_tail` (`"5m"`)
+(each `"1h"` or `"5m"`; system must not be shorter than tail). Only adapters with explicit cache breakpoints (Anthropic)
 read these; OpenAI-wire adapters ignore them. Anthropic caps a request at 4
 breakpoints, so its adapter budgets them across the last tool, the conversation
 tail, and up to two system segments (`_extract_system`), ordered most-stable

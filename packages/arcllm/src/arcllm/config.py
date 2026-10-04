@@ -155,19 +155,32 @@ class ProviderSettings(BaseModel):
     # breakpoints (Anthropic) read these; OpenAI-wire adapters ignore them.
     # Default on: caching is a pure cost/latency win on a stable prefix.
     enable_prompt_caching: bool = True
-    # "1h" (default) or "5m". A 1h write costs ~2x base vs ~1.25x for 5m, but an
-    # Arc agent's turn cadence — scheduled runs, chat replies minutes apart — is
-    # routinely longer than five minutes, so a 5m entry usually expires before it
-    # is ever read. One extra read inside the hour already pays the difference
-    # back. Set "5m" for a genuinely chatty deployment or a tighter exfil window.
-    cache_ttl: str = "1h"
+    # Two cache tiers. Anthropic requires longer TTLs to precede shorter ones in
+    # request order (tools -> system -> messages), so the system tier must be
+    # at least as long as the tail tier.
+    # System (stable prefix): "1h" default. A 1h write costs ~2x base vs ~1.25x
+    # for 5m, but an Arc agent's turns (scheduled runs, chat replies minutes
+    # apart) often outlast five minutes, so a 5m prefix usually expires unread.
+    cache_ttl_system: str = "1h"
+    # Tail (rolling last-history-message breakpoint): "5m" default. It is
+    # rewritten every turn, so the cheaper short write is the right tier.
+    cache_ttl_tail: str = "5m"
 
-    @field_validator("cache_ttl")
+    @field_validator("cache_ttl_system", "cache_ttl_tail")
     @classmethod
     def _validate_cache_ttl(cls, v: str) -> str:
         if v not in ("5m", "1h"):
-            raise ValueError(f"cache_ttl must be '5m' or '1h'. Got: {v}")
+            raise ValueError(f"cache TTL must be '5m' or '1h'. Got: {v}")
         return v
+
+    @model_validator(mode="after")
+    def _validate_cache_ttl_order(self) -> "ProviderSettings":
+        if self.cache_ttl_system == "5m" and self.cache_ttl_tail == "1h":
+            raise ValueError(
+                "cache_ttl_tail must not be longer than cache_ttl_system: "
+                "Anthropic requires longer TTLs before shorter ones"
+            )
+        return self
 
     @field_validator("base_url")
     @classmethod

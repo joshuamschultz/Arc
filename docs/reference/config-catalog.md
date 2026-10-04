@@ -187,7 +187,7 @@ litellm, mistral, moonshot, ollama, together, vllm, xai). Fields: `api_format`
 *req* · `base_url` *req* (HTTPS enforced for remote hosts, `:83`) · `api_key_env`
 *req* · `api_key_required` (bool, `True`) · `default_model` *req* ·
 `default_temperature` *req* · `vault_path` (`""`) · `enable_prompt_caching`
-(bool, `True`) · `cache_ttl` (`"1h"`; only `"5m"`/`"1h"`). Nested
+(bool, `True`) · `cache_ttl_system` (`"1h"`), `cache_ttl_tail` (`"5m"`); only `"5m"`/`"1h"`, system not shorter than tail. Nested
 `[providers.<name>.models.<model>]` — `arcllm/config.py:65`: `context_window`,
 `max_output_tokens`, `supports_tools`, `supports_vision`, `supports_thinking`,
 `supports_temperature` (`True`), `input_modalities`, and four `cost_*_per_1m`
