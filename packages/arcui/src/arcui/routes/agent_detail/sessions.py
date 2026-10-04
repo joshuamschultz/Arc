@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from arcgateway import fs_reader
 from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
@@ -25,6 +25,9 @@ from arcui.schemas import (
     SessionsListResponse,
     TasksResponse,
 )
+
+if TYPE_CHECKING:
+    from arcgateway.session import SessionRouter
 
 # Preview snippet cap for the Inbox row — enough to identify the message,
 # never the whole body.
@@ -203,6 +206,16 @@ async def get_sessions(request: Request) -> JSONResponse:
     )
 
 
+def _turn_in_flight(request: Request, sid: str) -> bool:
+    """Whether the gateway has a turn running for this session right now.
+
+    ``False`` on a read-only deployment (no ``session_router``): nothing there
+    can run a turn, so nothing is in flight.
+    """
+    router: SessionRouter | None = getattr(request.app.state, "session_router", None)
+    return router is not None and router.is_session_in_flight(sid)
+
+
 async def get_session_replay(request: Request) -> JSONResponse:
     agent_id = request.path_params["id"]
     sid = request.path_params["sid"]
@@ -261,6 +274,7 @@ async def get_session_replay(request: Request) -> JSONResponse:
             page_size=page_size,
             total=total,
             messages=window,
+            run_in_flight=_turn_in_flight(request, sid),
         ).model_dump(mode="json")
     )
 

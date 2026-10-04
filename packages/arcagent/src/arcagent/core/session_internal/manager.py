@@ -27,6 +27,7 @@ import arcrun
 from arcprompt import PromptSource, StockPromptSource
 
 from arcagent.core.config import ContextConfig, SessionConfig
+from arcagent.core.session_internal.context import TURN_CONTEXT_KEY
 from arcagent.utils.io import format_messages
 from arcagent.utils.sanitizer import sanitize_text
 
@@ -37,6 +38,14 @@ _logger = logging.getLogger("arcagent.session_manager")
 _MAX_REPLAY_FILE_BYTES = 64 * 1024 * 1024
 _MAX_REPLAY_LINE_BYTES = 2 * 1024 * 1024
 _MAX_REPLAY_RECORDS = 100_000
+
+
+def _apply_turn_context(messages: list[dict[str, Any]], entry: dict[str, Any]) -> None:
+    """Re-attach a stored turn context to the user record it belongs to."""
+    index = entry.get("index")
+    turn = entry.get(TURN_CONTEXT_KEY)
+    if isinstance(index, int) and 0 <= index < len(messages) and isinstance(turn, str):
+        messages[index] = {**messages[index], TURN_CONTEXT_KEY: turn}
 
 
 def _load_session_records(
@@ -72,6 +81,9 @@ def _load_session_records(
                 continue
             if entry.get("type") == "checkpoint":
                 checkpoint = entry
+                continue
+            if entry.get("type") == "turn_context":
+                _apply_turn_context(messages, entry)
                 continue
             if entry.get("type") == "compaction_boundary":
                 baseline = entry.get("messages")
@@ -254,6 +266,27 @@ class SessionManager:
         self._messages = []
         _logger.info("Opened session: %s", key)
         return []
+
+    async def attach_turn_context(self, turn: str) -> None:
+        """Attach this turn's retrieved material to the user turn just appended.
+
+        The user turn is written the moment the turn is accepted, before recall
+        runs, so the retrieved material arrives later. It is journaled as its own
+        ``turn_context`` line pointing at the user record's index, so the log stays
+        append-only and the user message is never written twice.
+        """
+        if not turn:
+            return
+        async with self._lock:
+            if not self._messages or self._messages[-1].get("role") != "user":
+                return
+            index = len(self._messages) - 1
+            self._messages[index] = {**self._messages[index], TURN_CONTEXT_KEY: turn}
+            self._revision += 1
+            if self._jsonl_path is not None:
+                line = {"type": "turn_context", "index": index, TURN_CONTEXT_KEY: turn}
+                with open(self._jsonl_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(line) + "\n")
 
     async def append_message(self, message: dict[str, Any]) -> None:
         """Thread-safe append to message list and JSONL file.

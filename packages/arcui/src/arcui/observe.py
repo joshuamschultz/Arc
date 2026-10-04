@@ -131,6 +131,10 @@ def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[
         # None for a chat/completion call, which never stamps one.
         "operation": extra.get("operation"),
         "job": _call_job(agent_label, extra),
+        # Which session and kind of call produced this prompt (stamped by arcllm
+        # on queued calls); None on a call that carried no identity.
+        "session_id": extra.get("session_id"),
+        "call_origin": extra.get("call_origin"),
     }
     if not include_bodies:
         return trace

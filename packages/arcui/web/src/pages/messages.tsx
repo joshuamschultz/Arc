@@ -183,7 +183,8 @@ function ChatPanel({
   agentColor: string
   commands: CommandOption[]
 }) {
-  const { messages, status, sessionKey, sendMessage, resetForNewSession } = useChatSession(agentId)
+  const { messages, status, sessionKey, working, sendMessage, resetForNewSession } =
+    useChatSession(agentId)
   const uploader = useAttachmentUploader(agentId, sessionKey)
   const [text, setText] = useComposerDraft(`agent:${agentId}`)
   const [resetting, setResetting] = useState(false)
@@ -317,6 +318,15 @@ function ChatPanel({
               )
             })}
           </>
+        )}
+        {working && (
+          <div
+            role="status"
+            data-testid="chat-working"
+            className="self-start px-1.5 py-1 text-xs italic text-muted-foreground"
+          >
+            {agentLabel} is working…
+          </div>
         )}
         <div ref={endRef} />
       </div>

@@ -449,10 +449,13 @@ async def _dispatch_stream_locked(
     # so the two halves share one timeline instead of assembly falling outside it.
     run_id = run_id or str(uuid.uuid4())
     with turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of):
+        # The person's words are durable before recall or any model call, so a
+        # reader who returns mid-turn finds their own message in the history.
+        await session.append_message({"role": "user", "content": content or input_text})
         with agent._queue_run_context(session.session_id, run_id):
             run_ctx = await build_run_context(agent, input_text)
         telemetry, bus, model, provider, prompt, bridge, prompt_source = run_ctx
-        await session.append_message(prompt.session_record(content or input_text))
+        await session.attach_turn_context(prompt.turn)
         history = wire_messages(session.get_messages(), workspace=agent._workspace)
         transform = agent._context.transform_context if agent._context else None
         # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
@@ -588,6 +591,7 @@ async def start_tracked_run(
             turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of),
             agent._queue_run_context(session.session_id, run_id),
         ):
+            await session.append_message({"role": "user", "content": content or input_text})
             (
                 _telemetry,
                 _bus,
@@ -597,7 +601,7 @@ async def start_tracked_run(
                 bridge,
                 prompt_source,
             ) = await build_run_context(agent, input_text)
-            await session.append_message(prompt.session_record(content or input_text))
+            await session.attach_turn_context(prompt.turn)
             history = wire_messages(session.get_messages(), workspace=agent._workspace)
             transform = agent._context.transform_context if agent._context else None
             max_tokens, max_cost_usd = resolve_run_budget(agent._config)

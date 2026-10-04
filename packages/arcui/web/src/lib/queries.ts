@@ -110,6 +110,7 @@ import type {
   ToolsResponse,
   Trace,
   TracesResponse,
+  ContextWindowResponse,
   WorkflowDetail,
   WorkflowMigration,
   CustodyDecision,
@@ -1050,6 +1051,12 @@ export const useAgentTraces = (agentId: string, limit = 200) =>
   useApiQuery<TracesResponse>(
     ['agent', agentId, 'traces', limit],
     `/api/agents/${agentId}/traces?limit=${limit}`,
+  )
+
+export const useAgentContextWindow = (agentId: string) =>
+  useApiQuery<ContextWindowResponse>(
+    ['agent', agentId, 'context-window'],
+    `/api/agents/${agentId}/context-window`,
   )
 
 export const useAgentSessions = (agentId: string) =>
