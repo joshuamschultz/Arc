@@ -165,6 +165,9 @@ class RunState:
     # cascade trip.
     max_repeat: int | None = None
     max_consecutive_errors: int | None = None
+    # Cap on one tool result's text, in estimated tokens (4 chars per token).
+    # ``None`` disables the cap; over it the model sees the head plus a marker.
+    max_tool_result_tokens: int | None = 8000
     # Breaker running state (REQ-020/021/025). ``runaway_signature`` is the last
     # single-call signature seen; ``runaway_count`` its consecutive-turn streak
     # (a distinct-signature batch resets it — that is progress, REQ-025).
