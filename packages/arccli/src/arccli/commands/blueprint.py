@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from arctrust.paths import audit_dir, config_file, operator_root
 
 _logger = logging.getLogger("arccli.commands.blueprint")
@@ -69,18 +70,17 @@ def apply_to_disk(
     ``tier.relaxation_granted`` (per relaxed knob) and ``blueprint.applied`` — routed to
     the operator WORM sink at enterprise/federal, else a structured log.
     """
-    from arcagent.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
-    blueprint = resolve_blueprint(
+    blueprint = arcagent.blueprints.resolve_blueprint(
         name,
         tier=deployment_tier,
         user_dir=user_dir,
         operator_public_key=operator_public_key(arc_dir),
     )
     base = _read_existing(target)
-    merged = apply_blueprint(blueprint, base, deployment_tier=deployment_tier)
+    merged = arcagent.blueprints.apply_blueprint(blueprint, base, deployment_tier=deployment_tier)
 
     # A --dry-run must leave NO trace: it writes no config AND emits no WORM record.
     # Auditing an "applied" event for a run that applied nothing is false AU-9/10
@@ -88,7 +88,7 @@ def apply_to_disk(
     if not dry_run:
         audit_apply(blueprint, merged, arc_dir, audit=audit)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(dumps_toml(merged), encoding="utf-8")
+        target.write_text(arcagent.blueprints.dumps_toml(merged), encoding="utf-8")
     return target, merged
 
 
@@ -175,14 +175,15 @@ def _worm_sink(arc_dir: Path) -> Any:
 
 
 def _list(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import list_blueprints
 
     from arccli.commands.operator import operator_public_key
 
     arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     rows = [
         [bp.name, bp.version, bp.tier, bp.source, _signed_label(bp)]
-        for bp in list_blueprints(operator_public_key=operator_public_key(arc_dir))
+        for bp in arcagent.blueprints.list_blueprints(
+            operator_public_key=operator_public_key(arc_dir)
+        )
     ]
     if rows:
         _print_table(["Name", "Version", "Tier", "Source", "Signed"], rows)
@@ -197,26 +198,26 @@ def _signed_label(bp: Any) -> str:
 
 
 def _show(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import dumps_toml, resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
     arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
-    bp = resolve_blueprint(args.name, tier=tier, operator_public_key=operator_public_key(arc_dir))
+    bp = arcagent.blueprints.resolve_blueprint(
+        args.name, tier=tier, operator_public_key=operator_public_key(arc_dir)
+    )
     _write(f"# blueprint: {bp.name} v{bp.version} (tier={bp.tier}, source={bp.source})")
-    _write(dumps_toml(bp.overlay).rstrip())
+    _write(arcagent.blueprints.dumps_toml(bp.overlay).rstrip())
 
 
 def _verify(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
     arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
     try:
-        bp = resolve_blueprint(
+        bp = arcagent.blueprints.resolve_blueprint(
             args.name, tier=tier, operator_public_key=operator_public_key(arc_dir)
         )
     except (FileNotFoundError, ValueError) as exc:
@@ -261,11 +262,9 @@ def _apply(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: {exc}\n")
         sys.exit(1)
 
-    from arcagent.blueprints import dumps_toml
-
     if dry_run:
         _write(f"# --dry-run — merged config for {target} (not written):")
-        _write(dumps_toml(merged).rstrip())
+        _write(arcagent.blueprints.dumps_toml(merged).rstrip())
         return
     _write(f"Applied blueprint {args.name!r} -> {target}")
     _write(f"  effective tier: {merged.get('security', {}).get('tier')}")
@@ -273,8 +272,6 @@ def _apply(args: argparse.Namespace) -> None:
 
 def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
     """Resolve + materialize a blueprint's full surface into an existing agent home."""
-    from arcagent.blueprints import resolve_blueprint
-    from arcagent.blueprints_materialize import materialize_blueprint
 
     from arccli.commands.operator import (
         operator_capability_signer,
@@ -284,10 +281,10 @@ def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
 
     deployment_tier = _deployment_tier(agent_dir / "arcagent.toml", arc_dir)
     try:
-        bp = resolve_blueprint(
+        bp = arcagent.blueprints.resolve_blueprint(
             name, tier=deployment_tier, operator_public_key=operator_public_key(arc_dir)
         )
-        result = materialize_blueprint(
+        result = arcagent.blueprints_materialize.materialize_blueprint(
             bp,
             agent_dir,
             deployment_tier=deployment_tier,

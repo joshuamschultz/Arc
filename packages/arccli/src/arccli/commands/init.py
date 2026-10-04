@@ -229,26 +229,23 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
     (defaults win over the blueprint), the tier floored by stringency-max, and the apply
     audited. Written concretely (dict -> TOML) so the layered CLI/gateway load reads it.
     """
-    from arcagent.blueprints import dumps_toml
 
     base = _arcagent_base_config(tier)
     effective = tier
     if blueprint_name:
-        from arcagent.blueprints import apply_blueprint, resolve_blueprint
-
         from arccli.commands.blueprint import audit_apply
         from arccli.commands.operator import operator_public_key
 
-        bp = resolve_blueprint(
+        bp = arcagent.blueprints.resolve_blueprint(
             blueprint_name,
             tier=tier,
             operator_public_key=operator_public_key(),
         )
-        base = apply_blueprint(bp, base, deployment_tier=tier)
+        base = arcagent.blueprints.apply_blueprint(bp, base, deployment_tier=tier)
         effective = str(base.get("security", {}).get("tier", tier))
         audit_apply(bp, base, operator_root())
     header = _USER_CONFIG_HEADER.format(pkg="arcagent", tier=tier)
-    return header + "\n" + dumps_toml(base), effective
+    return header + "\n" + arcagent.blueprints.dumps_toml(base), effective
 
 
 def _generate_gateway_toml(tier: str) -> str:
@@ -334,7 +331,6 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     applies the blueprint config UNDER it and writes the persona to ``workspace/identity.md``.
     The agent keeps an isolated workspace; project access is granted at ``arc tui`` launch.
     """
-    from arcagent.blueprints import resolve_blueprint
 
     from arccli.commands.agent.create import _create
 
@@ -346,7 +342,7 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     bp = None
     if blueprint:
         try:
-            bp = resolve_blueprint(blueprint, tier=base_tier)
+            bp = arcagent.blueprints.resolve_blueprint(blueprint, tier=base_tier)
         except (FileNotFoundError, ValueError) as exc:
             sys.stderr.write(f"Error: {exc}\n")
             sys.exit(1)
@@ -374,11 +370,9 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     # key, so re-minting here yields the SAME key to sign blueprint-shipped capabilities.
     result = None
     if bp is not None:
-        from arcagent.blueprints_materialize import materialize_blueprint
-
         from arccli.commands.operator import operator_capability_signer, operator_signer_pair
 
-        result = materialize_blueprint(
+        result = arcagent.blueprints_materialize.materialize_blueprint(
             bp,
             agent_dir,
             deployment_tier=tier,

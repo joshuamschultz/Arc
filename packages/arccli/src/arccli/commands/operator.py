@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from arcagent.blueprints_materialize import CapabilitySigner
+import arcagent
 from arctrust import (
     OperatorKey,
     RecordCipher,
@@ -160,7 +160,7 @@ def operator_signer_pair() -> tuple[str, bytes] | None:
     return OperatorApprovalAuthority(key.into_signer()).did, key.seed
 
 
-def operator_capability_signer() -> CapabilitySigner | None:
+def operator_capability_signer() -> arcagent.blueprints_materialize.CapabilitySigner | None:
     """The operator signer handle for capability signing — ``None`` when unavailable."""
     from arctrust import SignerError
 
@@ -168,7 +168,7 @@ def operator_capability_signer() -> CapabilitySigner | None:
         did, signer = operator_signer_and_did()
     except (OSError, ValueError, RuntimeError, SignerError):
         return None
-    return CapabilitySigner(did=did, signer=signer)
+    return arcagent.blueprints_materialize.CapabilitySigner(did=did, signer=signer)
 
 
 def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
