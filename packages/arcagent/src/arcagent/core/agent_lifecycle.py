@@ -634,7 +634,7 @@ def _warn_config_without_folder(agent: ArcAgent) -> None:
                         "module": name,
                         "module_root": str(module_root()),
                         "reason": "config enables the module but no module folder is present",
-                        "remedy": f"install {name} from its signed bundle in Settings > Maintenance",
+                        "remedy": f"install {name} from its signed bundle (Settings, Maintenance)",
                     },
                 )
 
