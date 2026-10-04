@@ -7,6 +7,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { ContextPrepGroup } from '@/components/context-prep-group'
 import { JsonBlock } from '@/components/json-block'
 import { LoadingRows, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
@@ -116,6 +117,13 @@ function ToolRow({ item }: { item: ToolItem }) {
 
 function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId: string) => void }) {
   if (item.kind === 'tool') return <ToolRow item={item} />
+  if (item.kind === 'context') {
+    return (
+      <div className="px-3 py-1.5">
+        <ContextPrepGroup item={item} />
+      </div>
+    )
+  }
   if (item.kind === 'llm') {
     const traceId = item.traceId
     const inner = (
@@ -151,6 +159,7 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
       <span className="w-12 shrink-0 tabular-nums">{fmtTime(item.ts)}</span>
       <Circle className="size-2.5 shrink-0" />
       <span>
+        {item.kind === 'run' && item.outcome === 'failed' && <StatusText value="failed" />}{' '}
         {item.kind === 'spawn'
           ? `Spawned sub-agent ${(item.childDid.split('/').pop() ?? '').slice(0, 8)}`
           : item.name}

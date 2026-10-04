@@ -69,8 +69,15 @@ export function describeAction(item: Item): { title: string; description: string
     }
     return { title: item.model, description: 'Model call — the agent thought about what to do next' }
   }
+  if (item.kind === 'context') {
+    return { title: 'Context prep', description: 'What the agent gathered before its first model turn' }
+  }
   if (item.kind === 'run') {
     const key = item.name.toLowerCase()
+    if (key === 'run.not_started') {
+      const reason = typeof item.extra?.reason === 'string' ? item.extra.reason : null
+      return { title: 'Run did not start', description: reason ?? 'The run ended before the model loop' }
+    }
     if (key === 'strategy.selected' || key === 'strategy.select') {
       const strategy = typeof item.extra?.strategy === 'string' ? item.extra.strategy : null
       if (strategy) {
@@ -132,6 +139,48 @@ export interface RunItem {
   // Small scalar detail the backend carries on a lifecycle run_event — e.g.
   // `strategy` on `strategy.selected`, so the trace can say WHICH strategy.
   extra?: Record<string, unknown> | null
+  // Terminal outcome on a run_event — `failed` on `run.not_started`.
+  outcome?: string | null
+}
+
+export interface RetrievalCandidate {
+  source_kind: string
+  source: string
+  title: string
+  path?: string
+  score: number
+  classification: string
+  snippet: string
+  included: boolean
+  reason: string
+}
+export interface RetrievalStep {
+  name: string
+  latency_ms: number
+  status: string
+}
+export interface RetrievalPrep {
+  status: string
+  reason?: string
+  query: string
+  latency_ms: number
+  budget_ms: number
+  top_k: number
+  token_cap: number
+  tokens_injected: number
+  steps: RetrievalStep[]
+  items: RetrievalCandidate[]
+}
+// Everything the harness did before the first model turn, folded from the
+// `strategy.selected` + `context.*` run_events into one step group.
+export interface ContextPrepItem {
+  kind: 'context'
+  ts?: string | null
+  strategy?: { strategy: string; reason: string; latency_ms: number } | null
+  system?: { cached: boolean; tokens: number; sha256: string } | null
+  retrieval?: RetrievalPrep | null
+  session?: { turns: number; tokens: number } | null
+  skipped: { step: string; reason: string }[]
 }
 export interface SpawnItem {
   kind: 'spawn'
@@ -140,7 +189,37 @@ export interface SpawnItem {
   role?: string | null
   outcome?: string | null
 }
-export type Item = ToolItem | LlmItem | RunItem | SpawnItem
+export type Item = ToolItem | LlmItem | RunItem | SpawnItem | ContextPrepItem
+
+const isRunEvent = (e: TimelineEntry, name: string) => e.kind === 'run_event' && e.name === name
+const isContextRow = (e: TimelineEntry) =>
+  e.kind === 'run_event' && typeof e.name === 'string' && e.name.startsWith('context.')
+
+function hasContextPrep(entries: TimelineEntry[]): boolean {
+  return entries.some(isContextRow)
+}
+
+function newContextPrep(): ContextPrepItem {
+  return { kind: 'context', strategy: null, system: null, retrieval: null, session: null, skipped: [] }
+}
+
+/** Move one run_event into the prep group. Only the first `strategy.selected`
+ *  joins it — later strategy picks stay as their own steps. */
+function absorbIntoContextPrep(prep: ContextPrepItem, e: TimelineEntry): boolean {
+  const extra = (e.extra ?? {}) as Record<string, unknown>
+  if (isRunEvent(e, 'strategy.selected') && !prep.strategy) {
+    prep.strategy = extra as unknown as ContextPrepItem['strategy']
+    return true
+  }
+  if (!isContextRow(e)) return false
+  if (e.name === 'context.system') prep.system = extra as unknown as ContextPrepItem['system']
+  else if (e.name === 'context.retrieval') prep.retrieval = extra as unknown as RetrievalPrep
+  else if (e.name === 'context.session') prep.session = extra as unknown as ContextPrepItem['session']
+  else if (e.name === 'context.skipped') {
+    prep.skipped.push({ step: String(extra.step ?? ''), reason: String(extra.reason ?? '') })
+  }
+  return true
+}
 
 /**
  * Fold raw timeline rows into display items, pairing tool start/end by name.
@@ -150,8 +229,18 @@ export type Item = ToolItem | LlmItem | RunItem | SpawnItem
 export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Item[] {
   const items: Item[] = []
   const pending = new Map<string, ToolItem[]>()
+  const prep = hasContextPrep(entries) ? newContextPrep() : null
+  let prepPlaced = false
 
   for (const e of entries) {
+    if (prep && absorbIntoContextPrep(prep, e)) {
+      if (!prepPlaced) {
+        prep.ts = e.ts
+        items.push(prep)
+        prepPlaced = true
+      }
+      continue
+    }
     if (e.kind === 'tool_event') {
       const name = e.tool_name ?? '—'
       if (e.phase === 'start') {
@@ -222,7 +311,13 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         costUsd: e.cost_usd,
       })
     } else {
-      items.push({ kind: 'run', ts: e.ts, name: e.name ?? 'event', extra: e.extra ?? null })
+      items.push({
+        kind: 'run',
+        ts: e.ts,
+        name: e.name ?? 'event',
+        extra: e.extra ?? null,
+        outcome: e.outcome ?? null,
+      })
     }
   }
   if (!runIsLive) {
