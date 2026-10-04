@@ -44,6 +44,7 @@ from arcteam.workflow.errors import (
     WorkflowReferenceError,
     WorkflowValidationError,
 )
+from arcteam.workflow.failure import FailureReason, explain_node_error, run_failure_reason
 from arcteam.workflow.models import (
     MAX_DEFINITION_BYTES,
     MAX_NODES,
@@ -121,6 +122,7 @@ __all__ = [
     "Compare",
     "DefinitionStatus",
     "DefinitionStore",
+    "FailureReason",
     "GateNode",
     "GateNotAuthorizedError",
     "InputSpec",
@@ -166,6 +168,7 @@ __all__ = [
     "dump_toml",
     "embedded_reference_strings",
     "evaluate",
+    "explain_node_error",
     "file_manifest",
     "is_reference",
     "load_sidecar",
@@ -179,6 +182,7 @@ __all__ = [
     "references_in",
     "resolve_args",
     "resolve_value",
+    "run_failure_reason",
     "sign_definition",
     "sign_definition_with_signer",
     "validate_definition",

@@ -66,7 +66,7 @@ function LocationProbe() {
   return <div data-testid="where">{location.pathname + location.search}</div>
 }
 
-it('opens the run named by ?run= on its workflow detail page', async () => {
+it('opens the run named by ?run= on its own run page', async () => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (path: RequestInfo | URL) => {
@@ -85,12 +85,12 @@ it('opens the run named by ?run= on its workflow detail page', async () => {
       <QueryClientProvider client={client}>
         <Routes>
           <Route path="/workflows" element={<WorkflowsPage />} />
-          <Route path="/workflows/:id" element={<LocationProbe />} />
+          <Route path="/workflows/:id/runs/:runId" element={<LocationProbe />} />
         </Routes>
       </QueryClientProvider>
     </MemoryRouter>,
   )
-  expect((await screen.findByTestId('where')).textContent).toBe('/workflows/nightly?run=run-42')
+  expect((await screen.findByTestId('where')).textContent).toBe('/workflows/nightly/runs/run-42')
 })
 
 it('shows an unreadable workflow with a red badge and the fix, not an empty list', async () => {

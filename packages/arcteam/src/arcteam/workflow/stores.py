@@ -35,7 +35,13 @@ from uuid import uuid4
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState, PathEntry, Run, RunStore
-from arcstore.tasks import Task, TaskStore, _validate_free_text, reclaim_allowance_s
+from arcstore.tasks import (
+    SERVICE_RESTART_INTERRUPTED,
+    Task,
+    TaskStore,
+    _validate_free_text,
+    reclaim_allowance_s,
+)
 from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
@@ -531,7 +537,7 @@ class WorkflowTaskStore:
     async def _reclaim_one(
         self, row: Task, *, now: datetime, actor_did: str, fence: RunnerFence | None
     ) -> Task | None:
-        reason = "attempt abandoned: its process stopped mid-run (reclaimed on resume)"
+        reason = SERVICE_RESTART_INTERRUPTED
         # A node executor reads this to refuse a blind re-run of a tool that
         # cannot dedupe its effect (the first attempt may have half-run).
         stamp = {"reclaimed_at": now.isoformat()}
