@@ -37,6 +37,7 @@ from arcagent.connected_data import (
     TransientSyncError,
 )
 from arcagent.modules.connected_data.pacing import DutyCycleLimiter
+from arcagent.modules.connected_data.sync_worker.specs import SyncWorkerUnavailableError
 
 # Failures that are about ONE object, not the account. The source is healthy — it
 # knows a size, a deletion, a content type or a version this side only guessed at —
@@ -62,12 +63,17 @@ _FATAL_SYNC_CODES = frozenset(
         SourceFailureCode.RATE_LIMITED.value,
         SourceFailureCode.CHECKPOINT_INVALID.value,
         SourceFailureCode.TRANSIENT.value,
+        SyncWorkerUnavailableError.code,
     }
 )
 
 
 _CHECKPOINT_INVALID = SourceFailureCode.CHECKPOINT_INVALID.value
 _RATE_LIMITED = SourceFailureCode.RATE_LIMITED.value
+#: Runs that end at their last committed page and come back later, counted as
+#: nothing: the provider paced us, or the sync worker that writes the store is
+#: restarting. The cursor is kept either way.
+_DEFERRED_CODES = frozenset({_RATE_LIMITED, SyncWorkerUnavailableError.code})
 
 _logger = logging.getLogger("arcagent.modules.connected_data.coordinator")
 
@@ -284,10 +290,12 @@ class ConnectedDataCoordinator:
                 raise
             await self._emit("awaiting_mapping", source, {})
         except SyncError as exc:
-            await self._finish_after_failure(source, run)
-            if exc.code == _RATE_LIMITED:
+            if exc.code in _DEFERRED_CODES:
+                if exc.code == _RATE_LIMITED:
+                    await self._finish_after_failure(source, run)
                 lease_lost = await self._defer(source, run, exc)
                 raise
+            await self._finish_after_failure(source, run)
             try:
                 await self._set_status(
                     agent_did,
@@ -603,11 +611,12 @@ class ConnectedDataCoordinator:
                 return
 
     async def _defer(self, source: SourceDescription, run: _Run, exc: SyncError) -> bool:
-        """End a rate-limited run as deferred; True when the lease was already lost.
+        """End a run as deferred; True when the lease was already lost.
 
-        Pages committed before the limit stay committed and the cursor is kept.
-        The row reads ``idle`` with ``rate_limited``, not ``failed``: the account
-        is healthy and the provider named when to come back.
+        Pages committed before it stay committed and the cursor is kept. The row
+        reads ``idle`` with the reason, not ``failed``: the account is healthy.
+        A rate limit means the provider named when to come back; an unavailable
+        sync worker means the store's writer is restarting.
         """
         try:
             await self._set_status(
@@ -616,12 +625,17 @@ class ConnectedDataCoordinator:
                 SyncStatus.IDLE,
                 owner_id=run.owner_id,
                 fencing_token=run.fencing_token,
-                error_code=_RATE_LIMITED,
+                error_code=exc.code,
             )
         except LeaseLostError:
             await self._emit("lease_lost", source, {})
             return True
-        await self._emit("rate_limited", source, {"retry_after": exc.retry_after})
+        if exc.code == _RATE_LIMITED:
+            await self._emit("rate_limited", source, {"retry_after": exc.retry_after})
+        else:
+            await self._emit(
+                "deferred", source, {"reason": exc.code, "retry_after": exc.retry_after}
+            )
         return False
 
     def _elapsed(self, run: _Run) -> float:

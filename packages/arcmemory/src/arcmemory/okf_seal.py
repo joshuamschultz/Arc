@@ -178,6 +178,61 @@ def hold_memory_identity(root: Path, signer: SealSigner) -> Callable[[], None]:
     return release
 
 
+def bound_signer(root: Path) -> SealSigner | None:
+    """The key pinned for the collection at ``root`` in this process, if any.
+
+    Exposes the signer's public half to a caller that must describe it to another
+    process (the sync worker), which signs nothing itself.
+    """
+    bound = _binding_for(root)
+    return None if bound is None else bound[0].signer
+
+
+def sign_for(root: Path, message: bytes) -> bytes:
+    """Sign one seal for a collection under ``root`` with this process's pinned key.
+
+    The delegated half of :meth:`CollectionSeal.write` for a process that writes a
+    store but holds no key (the sync worker). The key is never handed out: this
+    signs, and only a well-formed seal payload for a collection inside ``root``
+    under exactly the pinned identity, so the capability cannot be turned into a
+    signer of arbitrary bytes (a confused deputy). Raises ``PermissionError``
+    otherwise.
+    """
+    bound = _binding_for(root)
+    if bound is None or not _can_sign(bound[0].signer):
+        raise PermissionError(f"no agent signing key bound for {root}")
+    binding, base = bound
+    signer = binding.signer
+    if not message.startswith(_DOMAIN):
+        raise PermissionError("not a seal payload")
+    try:
+        document = json.loads(message[len(_DOMAIN) :].decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise PermissionError("not a seal payload") from exc
+    if (
+        not isinstance(document, dict)
+        or canonical_json(document) != message[len(_DOMAIN) :]
+        or document.get("kind") != _KIND
+        or document.get("v") != _VERSION
+        or not _collection_within(document.get("collection"), base)
+        or document.get("did") != signer.did
+        or document.get("algorithm") != signer.algorithm
+        or document.get("public_key") != signer.public_key.hex()
+    ):
+        raise PermissionError("seal payload does not match the pinned collection key")
+    return signer.sign(message)
+
+
+def _collection_within(collection: Any, base: str) -> bool:
+    """A seal's collection path lies at or below ``base`` (both relative to the binding)."""
+    if not isinstance(collection, str) or not collection:
+        return False
+    parts = collection.split("/")
+    if collection.startswith("/") or ".." in parts:
+        return False
+    return base == "." or collection == base or collection.startswith(base + "/")
+
+
 def _key(path: Path) -> str:
     return str(Path(path).resolve())
 
@@ -377,7 +432,9 @@ __all__ = [
     "SealPending",
     "SealSigner",
     "bind_memory_identity",
+    "bound_signer",
     "hold_memory_identity",
     "release_memory_identity",
     "sha256_hex",
+    "sign_for",
 ]

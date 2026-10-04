@@ -94,11 +94,19 @@ class MemoryDB:
     """
 
     def __init__(
-        self, workspace: Path, *, dims: int = DEFAULT_DIMS, durability: Durability = "full"
+        self,
+        workspace: Path,
+        *,
+        dims: int = DEFAULT_DIMS,
+        durability: Durability = "full",
+        read_only: bool = False,
     ) -> None:
         self._workspace = Path(workspace)
         self._dims = dims
         self._durability = durability
+        #: A reader in a process that must never write this store (the main
+        #: process, while the sync worker owns every connected-data write).
+        self._read_only = read_only
         self._db_path = self._workspace / "memory" / "index.db"
         self._conn: sqlite3.Connection | None = None
         self._vec_available = False
@@ -123,6 +131,9 @@ class MemoryDB:
         """Open the DB (creating the file + schema on first call)."""
         if self._conn is not None:
             return self._conn
+        if self._read_only:
+            self._conn = self._connect_read_only()
+            return self._conn
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
@@ -138,6 +149,27 @@ class MemoryDB:
         self._conn = conn
         self._create_schema(conn)
         return conn
+
+    def _connect_read_only(self) -> sqlite3.Connection:
+        """A connection that cannot write: the file opened ``mode=ro`` and ``query_only``.
+
+        A store that does not exist yet reads as empty: an in-memory database
+        with the schema, so no reader ever creates or migrates the file.
+        """
+        if self._db_path.is_file():
+            conn = sqlite3.connect(f"{self._db_path.resolve().as_uri()}?mode=ro", uri=True)
+            self._vec_available = _load_sqlite_vec(conn)
+        else:
+            conn = sqlite3.connect(":memory:")
+            self._vec_available = _load_sqlite_vec(conn)
+            self._create_schema(conn)
+        conn.execute("PRAGMA query_only=ON")
+        return conn
+
+    @property
+    def read_only(self) -> bool:
+        """Whether this handle can never write its store."""
+        return self._read_only
 
     def close(self) -> None:
         """Close the connection (idempotent)."""

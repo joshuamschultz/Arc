@@ -341,8 +341,12 @@ class ConnectedDataService:
         review_port: ReviewPort | None = None,
         authority: MappingAuthority | None = None,
         durability: Durability = "full",
+        read_only: bool = False,
     ) -> None:
         self._workspace = Path(workspace)
+        #: A reader that may search and list but never write: the main process,
+        #: while the sync worker owns every connected-data store write.
+        self._read_only = read_only
         self._agent_did = agent_did
         self._approval = approval_store
         #: Set only for a connection-scoped store (P18-4): its writes are authorized
@@ -351,7 +355,7 @@ class ConnectedDataService:
         self._authority = authority
         self._config = config or MemoryConfig()
         self._audit = audit_sink
-        self._db = MemoryDB(self._workspace, durability=durability)
+        self._db = MemoryDB(self._workspace, durability=durability, read_only=read_only)
         self._embedder = embedder
         self._object_state = object_state or InMemoryObjectState()
         self._reviews = review_port or ProfileReviewStore(
@@ -368,6 +372,11 @@ class ConnectedDataService:
 
     def _source_id(self, source: ConnectedSource) -> str:
         return source_instance_id(self._agent_did, source)
+
+    def _require_writable(self) -> None:
+        """Refuse a write through a read-only handle, before it touches anything."""
+        if self._read_only:
+            raise PermissionError("this connected-data store handle is read-only")
 
     def allowed_homes(self, source: ConnectedSource) -> tuple[MemoryHome, ...]:
         """Return destinations compatible with a source without vendor coupling."""
@@ -429,6 +438,7 @@ class ConnectedDataService:
 
     async def require_approved_mapping(self, source: ConnectedSource) -> ApprovedMapping:
         """Load an exact active approval, or stage one safe default proposal."""
+        self._require_writable()
         await self._require_current_generation(source)
         if self._authority is not None:
             return await self._delegated_mapping(source, self._authority)
@@ -561,6 +571,7 @@ class ConnectedDataService:
         A document already here at the same version is deduplicated. Only the
         DOCUMENT home moves; a dry run counts and writes nothing.
         """
+        self._require_writable()
         mapping = await self.require_approved_mapping(source)
         if MemoryHome.DOCUMENT not in mapping.homes:
             raise SourceMappingDeniedError("shared store does not hold documents")
@@ -647,6 +658,7 @@ class ConnectedDataService:
         mapping: ApprovedMapping,
     ) -> None:
         """Safely replace one object version after verifying its exact mapping."""
+        self._require_writable()
         await self._require_current_generation(source)
         proposal = self._proposal(source, tuple(mapping.homes))
         if (
@@ -821,6 +833,7 @@ class ConnectedDataService:
 
     async def reset_source(self, source: ConnectedSource) -> None:
         """Clear a source snapshot while preserving its approved mapping."""
+        self._require_writable()
         await self._clear_source(source, remove_mapping=False)
 
     async def complete_snapshot(
@@ -830,6 +843,7 @@ class ConnectedDataService:
         mapping: ApprovedMapping,
     ) -> None:
         """Delete active objects absent from one fully successful source snapshot."""
+        self._require_writable()
         await self._require_current_generation(source)
         proposal = self._proposal(source, tuple(mapping.homes))
         if (
@@ -868,6 +882,7 @@ class ConnectedDataService:
         here, so no mapping is consulted — but a fenced (stale) worker is still
         refused.
         """
+        self._require_writable()
         await self._require_current_generation(source)
         source_id = self._source_id(source)
         root = self._document_root(source_id)
@@ -884,6 +899,7 @@ class ConnectedDataService:
         between sync runs. This rebuilds the root ``index.md`` through the same
         refresh a sync run ends with, and only when the guide document changed.
         """
+        self._require_writable()
         await self._require_current_generation(source)
         source_id = self._source_id(source)
         root = self._document_root(source_id)
@@ -949,6 +965,7 @@ class ConnectedDataService:
 
     async def purge_source(self, source: ConnectedSource) -> None:
         """Irreversibly remove every retrievable artifact of a disconnected source."""
+        self._require_writable()
         await self._clear_source(source, remove_mapping=True)
 
     def close(self) -> None:
@@ -1201,6 +1218,7 @@ class ConnectedDataService:
 
     async def delete_document(self, source: ConnectedSource, object_id: str) -> DocumentStatus:
         """Remove one extracted document's index/file while preserving other destinations."""
+        self._require_writable()
         source_id = self._source_id(source)
         document = await self.get_document(source, object_id)
         await self._doc_index().delete_object(source_id, self._agent_did, object_id)
@@ -1222,6 +1240,7 @@ class ConnectedDataService:
 
     async def reindex_document(self, source: ConnectedSource, object_id: str) -> bool:
         """Rebuild exactly one document's chunks from its canonical extracted text."""
+        self._require_writable()
         document = await self.get_document(source, object_id)
         if document is None:
             return False
@@ -1236,6 +1255,7 @@ class ConnectedDataService:
         going through ``reindex_document`` per document re-listed every
         document for each one.
         """
+        self._require_writable()
         source_id = self._source_id(source)
         outcomes = [
             await self._reindex_one(source_id, document)
@@ -1254,6 +1274,7 @@ class ConnectedDataService:
         again and a finished tree reports all zeros. The routing-index chunk is
         not re-embedded here; the next sync's ``finish_sync`` refreshes it.
         """
+        self._require_writable()
         await self._require_current_generation(source)
         source_id = self._source_id(source)
         moves = await asyncio.to_thread(self._plan_relayout, source_id)

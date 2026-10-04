@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import inspect
 import logging
-import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -52,9 +51,10 @@ from arcagent.modules.connected_data.health import (
     ConnectionHealthTracker,
     is_terminal_sync_failure,
 )
-from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
 from arcagent.modules.connected_data.shared import SHARED_HOMES, SharedKnowledge
 from arcagent.modules.connected_data.supervision import SyncSchedule
+from arcagent.modules.connected_data.sync_worker.remote_port import RemoteIngestPort
+from arcagent.modules.connected_data.sync_worker.specs import SyncWorkerUnavailableError
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 _CATALOG_RETRY_MAX_SECONDS = 30.0
@@ -999,8 +999,8 @@ class ConnectedDataService:
             # count nothing. A terminal failure (a revoked credential) needs a
             # human, not a retry: surface it as needs_attention, notify once, and
             # back the source off the timer. Anything else is retried after a backoff.
-            if exc.code == SourceFailureCode.RATE_LIMITED.value:
-                await self._run_deferred(connection_id, exc.retry_after)
+            if exc.code in _DEFERRING_CODES:
+                await self._run_deferred(connection_id, exc.code, exc.retry_after)
             elif is_terminal_sync_failure(exc.code):
                 await self._mark_needs_attention(connection_id, exc.code or "auth_required")
                 self._timing.completed(connection_id, more_work=False)
@@ -1011,23 +1011,31 @@ class ConnectedDataService:
         else:
             self._timing.completed(connection_id, more_work=more_work)
 
-    async def _run_deferred(self, connection_id: str, retry_after: float | None) -> None:
-        """A rate-limited run: no strike, no traceback, next run when the provider said.
+    async def _run_deferred(
+        self, connection_id: str, code: str, retry_after: float | None
+    ) -> None:
+        """A deferred run: no strike, no traceback, next run when it was told to.
 
-        The coordinator kept every committed page and left the row ``idle`` with
-        ``rate_limited``. A provider that named no time waits one restart backoff.
+        Either the provider paced us (``rate_limited``) or the sync worker that
+        writes the store is restarting (``sync_worker_unavailable``). The
+        coordinator kept every committed page and left the row ``idle`` with the
+        code. With no time named, it waits one restart backoff.
         """
         delay = self._rate_limit_wait if retry_after is None else retry_after
         self._timing.deferred(connection_id, delay)
         self._statuses[connection_id] = self._still_described(
             connection_id,
             status="idle",
-            detail=SourceFailureCode.RATE_LIMITED.value,
+            detail=code,
             state=await self._persisted_state(connection_id),
         )
         await self._emit(
             "connected_data.sync.deferred",
-            {"source": _safe_id(connection_id), "retry_in_seconds": round(delay, 3)},
+            {
+                "source": _safe_id(connection_id),
+                "reason": code,
+                "retry_in_seconds": round(delay, 3),
+            },
         )
 
     async def _run_failed(
@@ -1500,7 +1508,7 @@ class ConnectedDataService:
                 # The agent's own store still holds this connection: migrate it
                 # first, or every document would be read twice.
                 reason = _MIGRATION_PENDING
-            elif not shared.claim_profile(connection_id):
+            elif not await shared.claim_profile(connection_id, plan.mapping_id):
                 reason = "embedding_profile_differs"
             if plan is None or reason:
                 await self._stay_own(connection_id, raw_description, reason)
@@ -1595,19 +1603,19 @@ class ConnectedDataService:
         try:
             if await (await shared.registry()).for_connection(connection_id):
                 return
-            reader = await shared.reader(connection_id)
+            orphan = await shared.orphan(connection_id)
             try:
-                described = await self._with_generation(description, reader)
+                described = await self._with_generation(description, orphan)
                 if not await self._store.purge(principal, connection_id):
                     await self._emit(
                         "connected_data.knowledge.purge_deferred",
                         {**audit, "reason": "sync_lease_active"},
                     )
                     return
-                await reader.purge_source(described)
+                await orphan.purge_source(described)
+                await orphan.drop_store()
             finally:
-                await _release(reader)
-            await asyncio.to_thread(shutil.rmtree, shared.root(connection_id), True)
+                await _release(orphan)
         except Exception as exc:  # reason: the agent's own revoke already took effect
             _logger.exception("connected-data shared store purge failed: %s", connection_id)
             await self._emit(
@@ -1868,7 +1876,7 @@ class ConnectedDataService:
         candidate = factory(raw)
         private = await candidate if inspect.isawaitable(candidate) else candidate
         try:
-            if not isinstance(private, ArcMemoryIngestAdapter):
+            if not isinstance(private, RemoteIngestPort):
                 return MigrationResult(connection_id, "refused", "migration_unsupported")
             description = await self._with_generation(raw, private)
             plan = await private.approved_mapping(description)
@@ -1891,7 +1899,7 @@ class ConnectedDataService:
                         target, private, description, dry_run=True
                     )
                     return MigrationResult(connection_id, "would_migrate", "", **counts)
-                if not shared.claim_profile(connection_id):
+                if not await shared.claim_profile(connection_id, plan.mapping_id):
                     return MigrationResult(connection_id, "refused", "embedding_profile_differs")
                 adopted = await self._adopt_under_lease(
                     connection_id, writer, target, private, description
@@ -2232,6 +2240,11 @@ _QUIET_MIGRATION_STATUSES = frozenset({"already_shared", "nothing_to_migrate", "
 class _SyncStalledError(RuntimeError):
     """A run outlived its time bound plus grace: it is stuck, not slow."""
 
+
+#: Runs that end deferred rather than failed: nothing is wrong with the source.
+_DEFERRING_CODES = frozenset(
+    {SourceFailureCode.RATE_LIMITED.value, SyncWorkerUnavailableError.code}
+)
 
 #: Source failures that pass on their own: the provider was down or pacing us.
 _TEMPORARY_SOURCE_CODES = frozenset({SourceFailureCode.TRANSIENT, SourceFailureCode.RATE_LIMITED})
