@@ -28,6 +28,7 @@ from arcmemory.doc_index import DocIndex, doc_scope
 from arcmemory.index import ann
 from arcmemory.index.backend import (
     ChunkWrite,
+    EmbedBacklog,
     EmbeddingWrite,
     PendingEmbed,
     SqliteIndexBackend,
@@ -691,3 +692,93 @@ async def test_a_store_port_without_write_authority_never_backfills(tmp_path: Pa
     finally:
         service.close()
         ann.forget_loaded_indexes()
+
+
+class _PostgresShaped(SqliteIndexBackend):
+    """Stands in for the Brain's Postgres backend: a different store with no doc pools.
+
+    Production (2026-10-04): the fleet set ``index_backend = "postgres"`` for the
+    Brain, but connected-data ports build their ``MemoryConfig`` with no override,
+    so every doc pool lives in the workspace SQLite file. A backfill driven from
+    the Brain's config looked in Postgres, found nothing, and never touched the
+    1.2M pending SQLite chunks.
+    """
+
+    async def embed_backlog(self, scope_prefix: str) -> dict[str, EmbedBacklog]:
+        del scope_prefix
+        return {}
+
+
+async def test_doc_pools_drain_where_connected_data_wrote_them_not_the_brains_backend(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from arcmemory.connected_data import ConnectedDataService
+
+    workspace = tmp_path / "agent-ws"
+    sqlite_db = MemoryDB(workspace)
+    try:
+        await DocIndex(
+            sqlite_db, workspace, MemoryConfig(), embedder=_DownEmbedder()
+        ).index_source("dropbox", _AGENT, _chunks("dropbox", 20))
+        brain_side = DocEmbedBackfill(
+            sqlite_db,
+            MemoryConfig(),
+            _WideEmbedder(),
+            scope_prefix=doc_scope(_AGENT, "").key,
+            backend=_PostgresShaped(sqlite_db),
+        )
+        assert (await brain_side.run_batches(10)).exhausted  # the Brain's store: nothing
+    finally:
+        sqlite_db.close()
+
+    # The connected-data side (the writer of these pools) drains them, even though
+    # a backfill over a different backend of the same workspace just ran.
+    service = ConnectedDataService(
+        workspace, _AGENT, approval_store=None, embedder=_WideEmbedder()
+    )
+    try:
+        with caplog.at_level("INFO", logger="arcmemory.index.backfill"):
+            await service.maintain_embeddings()
+        scope = doc_scope(_AGENT, "dropbox").key
+        assert (await service.embed_backlog())[scope].pending == 0
+        started = [r.getMessage() for r in caplog.records if "pending" in r.getMessage()]
+        assert any("sqlite" in line and "20 chunk(s) pending" in line for line in started)
+    finally:
+        service.close()
+        ann.forget_loaded_indexes()
+
+
+async def test_backfills_over_different_backends_never_share_a_pass(bdb: MemoryDB) -> None:
+    """A Postgres-side backfill mid-run must not block (or steer) the SQLite one."""
+    await _index_during_outage(bdb, "dropbox", _chunks("dropbox", 5))
+    release = asyncio.Event()
+
+    class _SlowBackend(_PostgresShaped):
+        async def embed_backlog(self, scope_prefix: str) -> dict[str, EmbedBacklog]:
+            await release.wait()
+            return {}
+
+    other = asyncio.ensure_future(
+        DocEmbedBackfill(
+            bdb,
+            MemoryConfig(),
+            _RecordingEmbedder(),
+            scope_prefix=doc_scope(_AGENT, "").key,
+            backend=_SlowBackend(bdb),
+        ).run_batches(5)
+    )
+    await asyncio.sleep(0.05)
+    tick = await _backfill(bdb, _RecordingEmbedder()).run_batches(5)
+    assert tick.embedded == 5
+    release.set()
+    await other
+
+
+async def test_every_pass_start_names_its_backend_and_backlog_even_when_empty(
+    bdb: MemoryDB, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A backfill looking at the wrong store must say so, not idle silently."""
+    with caplog.at_level("INFO", logger="arcmemory.index.backfill"):
+        await _backfill(bdb, _RecordingEmbedder()).run_batches(5)
+    lines = [r.getMessage() for r in caplog.records]
+    assert any("sqlite" in line and "0 chunk(s) pending" in line for line in lines)

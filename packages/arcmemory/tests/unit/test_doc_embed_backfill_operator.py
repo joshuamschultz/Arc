@@ -151,3 +151,20 @@ def test_a_claim_names_the_owning_process(tmp_path: Path) -> None:
         assert (db_path.parent / ".embed-backfill.lock").read_text().strip() == str(os.getpid())
     finally:
         claim.release()
+
+
+async def test_a_store_run_drains_the_file_it_names_whatever_the_agents_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fleet runs the Brain on Postgres; doc pools still live in the SQLite file.
+
+    An operator's run is over one ``index.db``: an agent config carrying
+    ``index_backend = "postgres"`` must not send it to look somewhere else.
+    """
+    monkeypatch.delenv("ARC_MEMORY_PG_DSN", raising=False)
+    workspace = tmp_path / "ws"
+    scope = await _seed(workspace, 9)
+    outcome = await backfill_store(workspace, MemoryConfig(index_backend="postgres"), _Wide())
+    assert outcome.status == "done"
+    assert outcome.embedded == 9
+    assert read_embed_backlog(workspace / "memory" / "index.db")[scope].pending == 0

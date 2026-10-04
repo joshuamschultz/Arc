@@ -497,12 +497,14 @@ class ArcMemoryBrain:
         await self._bundle(session_id).retriever.index(embed=True)
 
     async def backfill_doc_embeddings(self, *, max_batches: int) -> BackfillTick:
-        """Embed up to ``max_batches`` batches of this agent's doc-pool chunks lacking a vector.
+        """Embed up to ``max_batches`` batches of doc-pool chunks lacking a vector.
 
-        Chunks a connected source wrote while the embedder could not serve are
-        stored lexical-only; this is their retry, run by a background maintainer
-        (never on a turn). Bounded per call, never raises on embedder trouble:
-        the returned tick says whether to keep going, idle, or back off.
+        Covers the doc pools THIS Brain writes (``ingest_batch`` routed to the
+        document home), in the Brain's own index backend. Connected-data syncs
+        write their pools through their own port and store, and are backfilled
+        through that same port (arcagent's connected-data service), never here:
+        the two may live in different backends. Run by a background maintainer,
+        never on a turn; bounded per call, never raises on embedder trouble.
         """
         return await self._doc_embed_backfill().run_batches(max_batches)
 

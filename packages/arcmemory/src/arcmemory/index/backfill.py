@@ -59,6 +59,8 @@ from arcmemory.index.backend import (
     EmbeddingWrite,
     IndexBackend,
     PendingEmbed,
+    PostgresIndexBackend,
+    SqliteIndexBackend,
     open_index_backend,
 )
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -129,7 +131,8 @@ class DocEmbedBackfill:
         self._actor = actor_did or scope_prefix or "arcmemory"
         self._claim = backfill_writer_lock(db.db_path)
         self._audit: AuditSink = audit_sink or NullSink()
-        self._pass = _pass_state(db.db_path, scope_prefix)
+        self._label = _backend_label(self._backend, db)
+        self._pass = _pass_state(db.db_path, scope_prefix, type(self._backend).__qualname__)
 
     async def backlog(self) -> dict[str, EmbedBacklog]:
         """Every document pool's total and pending chunk counts (operator progress)."""
@@ -216,17 +219,30 @@ class DocEmbedBackfill:
         self._pass.cursors.clear()
         self._pass.embedded = 0
         self._pass.pending = sum(b.pending for b in backlog.values())
+        self._report_pass_start(len(backlog))
         if not backlog:
             return False
-        _logger.info(
-            "embed backfill: %d chunk(s) pending across %d document pool(s) under %r",
-            self._pass.pending,
-            len(backlog),
-            self._prefix,
-        )
         self._emit("started", pending=self._pass.pending, embedded=0, pools=len(backlog))
         self._pass.last_log = time.monotonic()
         return True
+
+    def _report_pass_start(self, pools: int) -> None:
+        """Name the store and its backlog at the start of a pass, so a wrong store shows.
+
+        Every pass with work is logged; an empty one only when the backlog just
+        changed (startup, or a backlog that drained), so an idle loop stays quiet
+        but a backfill looking at an empty store says so once.
+        """
+        if self._pass.pending == 0 and self._pass.last_reported == 0:
+            return
+        self._pass.last_reported = self._pass.pending
+        _logger.info(
+            "embed backfill pass on %s: %d chunk(s) pending across %d document pool(s) under %r",
+            self._label,
+            self._pass.pending,
+            pools,
+            self._prefix,
+        )
 
     async def _embed_page(self, scope: str, items: list[PendingEmbed]) -> int | None:
         """Embed and store one page; ``None`` when the embedder could not serve it.
@@ -308,7 +324,7 @@ class DocEmbedBackfill:
         self._pass.pending = 0
 
     def _emit(self, phase: str, *, pending: int, embedded: int, pools: int = 0) -> None:
-        extra = {"pending": str(pending), "embedded": str(embedded)}
+        extra = {"pending": str(pending), "embedded": str(embedded), "store": self._label}
         if pools:
             extra["pools"] = str(pools)
         emit(
@@ -349,6 +365,15 @@ class BackfillPacer:
         return self.idle_s if tick.exhausted or tick.blocked else self.busy_s
 
 
+def _backend_label(backend: IndexBackend, db: MemoryDB) -> str:
+    """Which store a backfill works on, for logs and audit (never a DSN or secret)."""
+    if isinstance(backend, SqliteIndexBackend):
+        return f"sqlite {db.db_path}"
+    if isinstance(backend, PostgresIndexBackend):
+        return "postgres"
+    return type(backend).__name__
+
+
 @dataclass
 class _PassState:
     """Where one index file's backfill pass has got to (one per file and prefix)."""
@@ -362,15 +387,23 @@ class _PassState:
     last_log: float = 0.0
     #: A backfill of this file is mid-run in this process.
     running: bool = False
+    #: The backlog the last pass-start line reported (``None`` before the first).
+    last_reported: int | None = None
     pacer: BackfillPacer = field(default_factory=BackfillPacer)
 
 
-_PASSES: dict[tuple[Path, str], _PassState] = {}
+_PASSES: dict[tuple[Path, str, str], _PassState] = {}
 _PASSES_GUARD = threading.Lock()
 
 
-def _pass_state(db_path: Path, scope_prefix: str) -> _PassState:
-    key = (Path(db_path).resolve(), scope_prefix)
+def _pass_state(db_path: Path, scope_prefix: str, backend_kind: str) -> _PassState:
+    """The pass of one store: an index file's path, a scope prefix and a backend kind.
+
+    The backend kind is part of the key: a Brain on Postgres and a connected-data
+    port on the workspace SQLite file share a path and prefix but not a store, and
+    must neither share a queue nor block each other.
+    """
+    key = (Path(db_path).resolve(), scope_prefix, backend_kind)
     with _PASSES_GUARD:
         state = _PASSES.get(key)
         if state is None:
@@ -515,7 +548,7 @@ async def backfill_store(
     retries: int = 5,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> BackfillOutcome:
-    """Backfill every document pool of one store to completion (an operator's run).
+    """Backfill every document pool of one SQLite index file to completion (operator run).
 
     Refuses (``blocked``) while another process owns the store, writing nothing.
     Waits out an embedder outage with the usual backoff, at most ``retries``
@@ -524,7 +557,17 @@ async def backfill_store(
     of vectors written after each tick.
     """
     db = MemoryDB(workspace)
-    backfill = DocEmbedBackfill(db, config, embedder, scope_prefix="", batch_size=batch_size)
+    # The run is over this one index FILE (its readout, owner and claim are all
+    # file-based), so it reads and writes that file, whatever index backend the
+    # config names for the agent's own memory.
+    backfill = DocEmbedBackfill(
+        db,
+        config,
+        embedder,
+        scope_prefix="",
+        batch_size=batch_size,
+        backend=SqliteIndexBackend(db),
+    )
     embedded = failures = 0
     try:
         while True:

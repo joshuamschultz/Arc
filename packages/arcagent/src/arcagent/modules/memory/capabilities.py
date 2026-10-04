@@ -1263,10 +1263,12 @@ _DOC_BACKFILL_IDLE_SECONDS = 300.0
 
 @background_task(name="memory_doc_embed_backfill", interval=_DOC_BACKFILL_IDLE_SECONDS)
 async def memory_doc_embed_backfill_loop(_ctx: Any) -> None:
-    """Give connected-document chunks the vectors an embedder outage left missing.
+    """Give the Brain's own document pools the vectors an embedder outage left missing.
 
-    A source's chunks are embedded once, at write time; any written while the
-    embedder could not serve are stored lexical-only. The Brain owns the retry
+    Pools the Brain writes (pushed records routed to the document home) are
+    embedded once, at write time; any written while the embedder could not serve
+    are stored lexical-only. Connected-data pools live in the store their sync
+    writes and are backfilled by the connected-data service. The Brain owns the retry
     (bounded ticks, background embed lane, backoff while the embedder is down);
     this loop only drives it off the turn path and sleeps what each tick asks.
     Obeys the same kill switch as the sleep loop: it is embedding work.

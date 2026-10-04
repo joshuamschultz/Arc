@@ -262,6 +262,7 @@ class ConnectedDataService:
         failure_ceiling: int = 5,
         shared: SharedKnowledge | None = None,
         guide_refresh_debounce_seconds: float = 2.0,
+        own_store_opener: Callable[[], Awaitable[IngestPort]] | None = None,
     ) -> None:
         self._catalog = catalog
         self._agent_did = agent_did
@@ -310,6 +311,9 @@ class ConnectedDataService:
         # connections this agent reads from a shared store, by connection id; a
         # connection absent from it is synced into the agent's own store as before.
         self._shared = shared
+        #: Opens the agent's own document store, the one its syncs write doc pools
+        #: to; the embed backfill drains it through that same port.
+        self._own_store_opener = own_store_opener
         self._lanes: dict[str, KnowledgeSubscription] = {}
         #: Why a connection reads its own store, when the lane decision said so.
         self._lane_waits: dict[str, str] = {}
@@ -334,7 +338,7 @@ class ConnectedDataService:
         # an interval later: the monitor otherwise slept on an empty catalog.
         self._stop_listening = self._catalog.on_change(self._wake.set)
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
-        if self._shared is not None:
+        if self._shared is not None or self._own_store_opener is not None:
             self._embed_backfill = asyncio.create_task(
                 self._embed_backfill_loop(), name="connected-data-embed-backfill"
             )
@@ -946,9 +950,12 @@ class ConnectedDataService:
             await asyncio.sleep(await self.embed_backfill_once())
 
     async def embed_backfill_once(self) -> float:
-        """One bounded embed-backfill tick per shared store this agent subscribes to.
+        """One bounded embed-backfill tick of the agent's own store and each shared one.
 
-        Each store is reached through a WRITER port, so the subscriber's grant is
+        The own store is opened through the same port the syncs write its doc pools
+        with, so the backfill drains the store those pools actually live in (not
+        wherever the agent's memory index happens to be configured). Each shared
+        store is reached through a WRITER port, so the subscriber's grant is
         re-checked before anything is written. arcmemory keeps it to one backfill
         per store at a time (other subscribers' ticks report it busy) and never
         rewrites text, only vectors, so a sync of the same store may run
@@ -956,22 +963,31 @@ class ConnectedDataService:
         finds it taken skips its whole run. Returns the seconds until the next
         tick: the soonest any store asked for.
         """
-        if self._shared is None or not self._lanes or _embedding_off():
+        if _embedding_off():
             return _EMBED_BACKFILL_IDLE_SECONDS
-        delays = [
-            await self._embed_backfill_store(connection_id, lane.approval_id)
-            for connection_id, lane in tuple(self._lanes.items())
-        ]
+        delays = [_EMBED_BACKFILL_IDLE_SECONDS]
+        if self._own_store_opener is not None:
+            delays.append(await self._embed_backfill_port("own store", self._own_store_opener))
+        shared = self._shared
+        if shared is None:
+            return min(delays)
+        for connection_id, lane in tuple(self._lanes.items()):
+            delays.append(
+                await self._embed_backfill_port(
+                    _safe_id(connection_id),
+                    partial(shared.writer, connection_id, lane.approval_id),
+                )
+            )
         return min(delays)
 
-    async def _embed_backfill_store(self, connection_id: str, approval_id: str) -> float:
-        """One store's tick through a writer port; the seconds that store asks to wait."""
-        if self._shared is None:
-            return _EMBED_BACKFILL_IDLE_SECONDS
+    async def _embed_backfill_port(
+        self, label: str, open_port: Callable[[], Awaitable[IngestPort]]
+    ) -> float:
+        """One store's tick through its port; the seconds that store asks to wait."""
         try:
-            port = await self._shared.writer(connection_id, approval_id)
+            port = await open_port()
         except Exception:  # reason: one store's failure must not stop the others
-            _logger.warning("embed backfill: cannot open %s", _safe_id(connection_id))
+            _logger.warning("embed backfill: cannot open %s", label)
             return _EMBED_BACKFILL_RETRY_SECONDS
         try:
             maintain = getattr(port, "maintain_embeddings", None)
@@ -979,7 +995,7 @@ class ConnectedDataService:
                 return _EMBED_BACKFILL_IDLE_SECONDS
             return float(await maintain())
         except Exception:  # reason: one store's failure must not stop the others
-            _logger.warning("embed backfill of %s failed", _safe_id(connection_id), exc_info=True)
+            _logger.warning("embed backfill of %s failed", label, exc_info=True)
             return _EMBED_BACKFILL_RETRY_SECONDS
         finally:
             await _release(port)
