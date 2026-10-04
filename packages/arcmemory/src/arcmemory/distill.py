@@ -29,6 +29,7 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel, BeforeValidator, Field
 
 from arcmemory.config import MemoryConfig
+from arcmemory.entity_kind import normalize_kind
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
@@ -84,6 +85,9 @@ class FactCandidate(BaseModel):
     hits: int = 1
     name: str | None = None
     entity_type: str = "unknown"
+    #: Orthogonal descriptors only (topic, project, client, status). A tag that names
+    #: the type is dropped on write (:func:`arcmemory.entity_kind.normalize_card`).
+    tags: _StrList = Field(default_factory=list)
     classification: str = "unclassified"
 
 
@@ -305,15 +309,18 @@ async def _fuzzy_entity_match(
     unavailable; ``match`` stays ``None`` in that case so the caller degrades
     cleanly (no LLM to ask, no auto-fold to fall back to).
     """
+    kind = normalize_kind(entity_type)
     cross_type_exact = [
         s
         for s in store.slugs()
         if (e := store.read(s))
-        and e.entity_type != entity_type
+        and normalize_kind(e.entity_type) != kind
         and e.name.strip().lower() == name.strip().lower()
     ]
     same_type = [
-        (s, e) for s in store.slugs() if (e := store.read(s)) and e.entity_type == entity_type
+        (s, e)
+        for s in store.slugs()
+        if (e := store.read(s)) and normalize_kind(e.entity_type) == kind
     ]
     if not same_type:
         return None, cross_type_exact
@@ -402,6 +409,7 @@ async def extract_facts(
                 name=cand.name,
                 entity_type=cand.entity_type,
                 classification=cand.classification,
+                tags=cand.tags,
             )
             fact = next(f for f in entity.facts if f.predicate == cand.predicate)
             applied.append((resolved, fact))

@@ -39,6 +39,7 @@ from arctrust.policy import PolicyContext, PolicyPipeline, ToolCall, sign_call
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.distill import EntityDisambiguator, confidence_from_hits, resolve_entity
+from arcmemory.entity_dedup import marked_distinct
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
@@ -313,7 +314,11 @@ class _MemoryToolFactory:
     async def _merge_entities(self, args: dict[str, Any]) -> str:
         canonical = canonical_slug(str(args.get("canonical", "")))
         other = canonical_slug(str(args.get("other", "")))
-        if self._semantic.merge_into(canonical, other, strict=self._cfg.tier == "federal"):
+        if marked_distinct(self._semantic, canonical, other):
+            return f"no merge ({other}->{canonical}): the operator marked these not the same"
+        if self._semantic.merge_into(
+            canonical, other, strict=self._cfg.tier == "federal", basis="agent"
+        ):
             self._graph.rename_node(self._scope.key, other, canonical)
             self._semantic.repoint_links(other, canonical)
             return f"merged {other}->{canonical}"

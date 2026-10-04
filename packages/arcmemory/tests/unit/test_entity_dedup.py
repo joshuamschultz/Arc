@@ -341,16 +341,23 @@ async def test_system_cards_are_never_deduped(workspace, db, scope) -> None:
     assert sorted(store.slugs()) == ["source-aa", "source-ab"]
 
 
-async def test_never_merges_across_classification_levels(workspace, db, scope) -> None:
+async def test_a_cross_level_pair_needs_confirmation_and_keeps_the_higher_label(
+    workspace, db, scope
+) -> None:
     store, graph = _store(workspace, db, scope)
     _card(store, "thesis-7", "Thesis 7", "thing", classification="cui")
     _card(store, "thesis-7-byoa", "Thesis 7: Bring Your Own Agent", "thesis")
 
-    result = await _deduper(store, graph, scope, confirmer=RecordingConfirmer()).run(apply=True)
+    unconfirmed = await _deduper(store, graph, scope, confirmer=RejectingConfirmer()).run(
+        apply=True
+    )
+    assert unconfirmed.merged == []
+    assert unconfirmed.plan.certain == []  # a series match alone never crosses a level
 
-    assert result.merged == []
-    assert sorted(store.slugs()) == ["thesis-7", "thesis-7-byoa"]
-    assert result.plan.blocked == [["thesis-7", "thesis-7-byoa"]]
+    confirmed = await _deduper(store, graph, scope, confirmer=RecordingConfirmer()).run(apply=True)
+    [(_, survivor)] = confirmed.merged
+    card = store.read(survivor)
+    assert card is not None and card.classification == "cui"
 
 
 async def test_federal_fails_closed_on_an_unknown_classification_label(
@@ -367,13 +374,17 @@ async def test_federal_fails_closed_on_an_unknown_classification_label(
     assert len(personal.merged) == 1  # unknown label reads as unclassified off-federal
 
 
-async def test_store_merge_primitive_refuses_a_cross_level_fold(workspace, db, scope) -> None:
+async def test_store_merge_primitive_lifts_a_cross_level_fold_to_the_higher_label(
+    workspace, db, scope
+) -> None:
     store, _ = _store(workspace, db, scope)
     _card(store, "a", "Alpha Card", "project", classification="secret")
     _card(store, "b", "Alpha Card", "project", classification="unclassified")
 
-    assert store.merge_into("b", "a", strict=False) is False
-    assert sorted(store.slugs()) == ["a", "b"]
+    assert store.merge_into("b", "a", strict=False) is True
+    card = store.read("b")
+    assert card is not None and card.classification == "secret"
+    assert store.slugs() == ["b"]
 
 
 # -- non-lossy, link-rewriting, audited, idempotent -----------------------------
@@ -430,6 +441,7 @@ async def test_each_fold_writes_an_audited_merge_record(workspace, db, scope) ->
             "basis": "series",
             "entity_type": "thesis",
             "folded_name": "Thesis 5",
+            "classification": "unclassified",
         }
     ]
     assert "memory.dedup_pass" in recorder.actions()

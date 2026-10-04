@@ -33,13 +33,15 @@ from pathlib import Path
 from typing import Literal
 
 from arcokf import IndexEntry, listable_dir, validate_folder_index
-from arctrust.audit import AuditSink, NullSink
+from arctrust.audit import AuditEvent, AuditSink, NullSink
+from arctrust.audit import emit as emit_audit
 from arctrust.classification import Classification, dominates, parse_classification
 from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.doc_index import DocHit, doc_scope
+from arcmemory.entity_dedup import DuplicateProposal, EntityDeduper
 from arcmemory.index.backend import IndexBackend, open_index_backend
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -47,6 +49,7 @@ from arcmemory.index.surface import SurfaceIndex, _fts_query
 from arcmemory.mdfile import card_files
 from arcmemory.retrieve import Retriever
 from arcmemory.security import gate_no_read_up
+from arcmemory.slug import canonical_slug
 from arcmemory.status import SemanticStatus
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
@@ -493,8 +496,86 @@ class MemoryOperator:
         return records
 
     def get_entity(self, slug: str, *, session_id: str | None = None) -> EntityRecord | None:
-        """Fetch a single entity record (None if absent)."""
-        return next((e for e in self.list_entities(session_id=session_id) if e.slug == slug), None)
+        """Fetch a single entity record (None if absent).
+
+        An id a merge folded away redirects to the card it was folded into.
+        """
+        target = self._semantic(session_id).resolve(slug)
+        return next(
+            (e for e in self.list_entities(session_id=session_id) if e.slug == target), None
+        )
+
+    # -- duplicate review (the "Review duplicates" panel) --------------------
+
+    async def duplicate_proposals(self) -> list[DuplicateProposal]:
+        """Proposed merges a person can accept or refuse (no model call is made)."""
+        return await self._deduper(actor_did=self._agent_did).proposals()
+
+    def merge_duplicates(self, slugs: list[str], *, actor_did: str) -> MutationResult:
+        """Fold ``slugs`` into one card on a person's say-so (audited ``memory.entity_merged``)."""
+        entry_id = "+".join(sorted(slugs))
+        if len(set(slugs)) < 2 or any(s != canonical_slug(s) for s in slugs):
+            return self._refused("merge", entry_id, actor_did, "name two or more entity slugs")
+        merged = self._deduper(actor_did=actor_did).merge(slugs, basis="operator")
+        if not merged:
+            return self._refused(
+                "merge", entry_id, actor_did, "these cards cannot be merged into one"
+            )
+        return MutationResult(
+            status=MutationStatus.APPLIED,
+            operation="merge",
+            actor_did=actor_did,
+            entry_id=merged[0][1],
+        )
+
+    def reject_duplicates(self, slugs: list[str], *, actor_did: str) -> MutationResult:
+        """Remember "Not the same" for ``slugs`` so they are never proposed again."""
+        entry_id = "+".join(sorted(slugs))
+        if len(set(slugs)) < 2 or any(s != canonical_slug(s) for s in slugs):
+            return self._refused("reject", entry_id, actor_did, "name two or more entity slugs")
+        self._deduper(actor_did=actor_did).reject(slugs, actor_did=actor_did)
+        return MutationResult(
+            status=MutationStatus.APPLIED,
+            operation="reject",
+            actor_did=actor_did,
+            entry_id=entry_id,
+        )
+
+    def _deduper(self, *, actor_did: str) -> EntityDeduper:
+        scope = self._scope(None)
+
+        def _emit(action: str, target: str, extra: dict[str, object]) -> None:
+            emit_audit(
+                AuditEvent(
+                    actor_did=actor_did,
+                    action=action,
+                    target=target,
+                    outcome="allow",
+                    classification=str(extra.get("classification") or "unclassified"),
+                    tier=self._cfg.tier,
+                    extra={**extra, "agent_did": self._agent_did, "initiator": "operator"},
+                ),
+                self._audit,
+            )
+
+        return EntityDeduper(
+            self._semantic(None),
+            self._graph,
+            scope.key,
+            config=self._cfg,
+            embedder=self._embedder,
+            emit=_emit,
+        )
+
+    @staticmethod
+    def _refused(operation: str, entry_id: str, actor_did: str, error: str) -> MutationResult:
+        return MutationResult(
+            status=MutationStatus.ERROR,
+            operation=operation,
+            actor_did=actor_did,
+            entry_id=entry_id,
+            error=error,
+        )
 
     # -- connector-data views (SPEC-073 A1) ---------------------------------
 
