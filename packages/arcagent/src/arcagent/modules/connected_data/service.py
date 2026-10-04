@@ -879,7 +879,7 @@ class ConnectedDataService:
         self, *, status: str | None = None, source_id: str | None = None
     ) -> tuple[Any, ...]:
         """Read provenance-bearing profile candidates through the ingest port seam."""
-        adapter = await self._first_ingest_adapter()
+        adapter = await self._review_port()
         list_items = getattr(adapter, "list_review_items", None) if adapter is not None else None
         if not callable(list_items):
             return ()
@@ -887,7 +887,7 @@ class ConnectedDataService:
 
     async def resolve_review(self, review_id: str, decision: str) -> Any | None:
         """Apply an operator-authenticated review decision through the typed seam."""
-        adapter = await self._first_ingest_adapter()
+        adapter = await self._review_port()
         resolve = getattr(adapter, "resolve_review", None) if adapter is not None else None
         return None if not callable(resolve) else await resolve(review_id, decision)
 
@@ -895,7 +895,7 @@ class ConnectedDataService:
         self, profile_id: str, *, clearance: str = "unclassified"
     ) -> Any | None:
         """Read approved profile context through the optional ingest seam."""
-        adapter = await self._first_ingest_adapter()
+        adapter = await self._review_port()
         context = getattr(adapter, "profile_context", None) if adapter is not None else None
         return None if not callable(context) else await context(profile_id, clearance=clearance)
 
@@ -903,7 +903,7 @@ class ConnectedDataService:
         self, profile_id: str, query: str, *, clearance: str = "unclassified"
     ) -> tuple[Any, ...]:
         """Search approved profile facts through the optional ingest seam."""
-        adapter = await self._first_ingest_adapter()
+        adapter = await self._review_port()
         recall = getattr(adapter, "profile_recall", None) if adapter is not None else None
         return (
             ()
@@ -1498,18 +1498,36 @@ class ConnectedDataService:
             )
             return 0
 
-    async def _first_ingest_adapter(self) -> IngestPort | None:
+    async def _review_port(self) -> IngestPort | None:
+        """An ingest port onto this agent's profile review store, or ``None``.
+
+        The review store belongs to the agent, not to a provider, so any granted
+        connection's port reaches it. A connection already described is used as
+        is (no provider call); only when none is does it inspect, and a
+        connection that cannot be inspected (no credential, outage) is skipped
+        rather than failing the read. This is polled by the operator UI, so a
+        dead credential must never turn it into an error.
+        """
         if self._ingest_factory is None:
             return None
         registrations = await self._catalog.snapshot()
-        if not registrations:
-            return None
-        registration = registrations[0]
-        source = await registration.adapter.inspect_source(
-            InspectSource(connection_id=registration.connection_id)
-        )
-        candidate = self._ingest_factory(source)
-        return await candidate if inspect.isawaitable(candidate) else candidate
+        known = [r for r in registrations if r.connection_id in self._descriptions]
+        for registration in [*known, *(r for r in registrations if r not in known)]:
+            description = self._descriptions.get(registration.connection_id)
+            if description is None:
+                try:
+                    description = await registration.adapter.inspect_source(
+                        InspectSource(connection_id=registration.connection_id)
+                    )
+                except Exception:  # reason: an uninspectable source must not hide the store
+                    _logger.debug(
+                        "profile reviews: %s could not be inspected; trying the next",
+                        registration.connection_id,
+                    )
+                    continue
+            candidate = self._ingest_factory(description)
+            return await candidate if inspect.isawaitable(candidate) else candidate
+        return None
 
     async def _ingest_for(
         self, registration: SourceRegistration, *, use_cached: bool = False

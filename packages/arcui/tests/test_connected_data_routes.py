@@ -442,3 +442,60 @@ def test_a_real_refusal_keeps_400_and_the_sources_own_words() -> None:
     response = client.get(_RESOURCES, headers={"Authorization": "Bearer viewer"})
     assert response.status_code == 400
     assert response.json() == {"error": "select one folder"}
+
+
+# --- 2026-10-04: a connection with no credential 500'd the profile-review poll ---------
+
+
+def test_profile_reviews_answer_200_when_a_granted_connection_has_no_credential() -> None:
+    """The real service behind the route: confluence (no credential) is granted first."""
+    import asyncio
+
+    from arcagent.connected_data import SyncLimits
+    from arcagent.core.errors import ExtensionError
+    from arcagent.extension.source import InspectSource, SourceDataShape, SourceDescription
+    from arcagent.extension.source_catalog import SourceCatalog
+    from arcagent.modules.connected_data.service import ConnectedDataService
+
+    class _Dead:
+        async def inspect_source(self, request: InspectSource) -> SourceDescription:
+            raise ExtensionError(code="CREDENTIAL_MISSING", message="no stored credential")
+
+        async def close_source(self) -> None:
+            return None
+
+    class _Live(_Dead):
+        async def inspect_source(self, request: InspectSource) -> SourceDescription:
+            return SourceDescription(
+                connection_id=request.connection_id,
+                source_kind="dropbox",
+                account_id="account",
+                data_shape=SourceDataShape.DOCUMENT,
+            )
+
+    class _Port:
+        async def list_review_items(self, **_: Any) -> list[_Review]:
+            return [_Review()]
+
+    catalog = SourceCatalog()
+    asyncio.run(catalog.register("confluence", _Dead()))
+    asyncio.run(catalog.register("dropbox", _Live()))
+    service = ConnectedDataService(
+        catalog,
+        agent_did="did:arc:olivia",
+        sync_store_opener=None,
+        ingest_factory=lambda _description: _Port(),
+        limits=SyncLimits(),
+        global_concurrency=1,
+    )
+    client, _fake = _client()
+    agent = client.app.state.embedded_agent_cache["did:arc:olivia"]
+    agent._capability_registry = _Registry(service)  # type: ignore[arg-type]  # reason: real service
+
+    response = client.get(
+        "/api/agents/olivia/knowledge/profile-reviews?status=pending",
+        headers={"Authorization": "Bearer operator"},
+    )
+
+    assert response.status_code == 200
+    assert [item["field"] for item in response.json()["items"]] == ["timezone"]
