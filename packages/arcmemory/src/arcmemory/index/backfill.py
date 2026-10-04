@@ -55,21 +55,20 @@ from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arcmemory.config import MemoryConfig
 from arcmemory.db import PENDING_EMBED_SQL, MemoryDB
 from arcmemory.index.backend import (
+    DOC_SCOPE_MARKER,
     EmbedBacklog,
     EmbeddingWrite,
     IndexBackend,
     PendingEmbed,
     PostgresIndexBackend,
     SqliteIndexBackend,
-    open_index_backend,
+    doc_pool_backend,
 )
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.source import embed_text
 
 _logger = logging.getLogger(__name__)
 
-#: The scope-key segment every document pool carries (``<did>:doc:<source>``).
-DOC_SCOPE_MARKER = ":doc:"
 #: Texts per embed call: the local embed worker's own batch cap, so one backfill
 #: request is one encode and a live recall waits behind at most one of them.
 DEFAULT_BATCH_SIZE = 256
@@ -122,7 +121,7 @@ class DocEmbedBackfill:
     ) -> None:
         if batch_size <= 0:
             raise ValueError(f"batch_size must be > 0, got {batch_size!r}")
-        self._backend = backend or open_index_backend(config.index_backend, db=db)
+        self._backend = backend or doc_pool_backend(db)
         self._embedder = embedder
         self._prefix = scope_prefix
         self._batch_size = batch_size
@@ -557,17 +556,9 @@ async def backfill_store(
     of vectors written after each tick.
     """
     db = MemoryDB(workspace)
-    # The run is over this one index FILE (its readout, owner and claim are all
-    # file-based), so it reads and writes that file, whatever index backend the
-    # config names for the agent's own memory.
-    backfill = DocEmbedBackfill(
-        db,
-        config,
-        embedder,
-        scope_prefix="",
-        batch_size=batch_size,
-        backend=SqliteIndexBackend(db),
-    )
+    # Doc pools live in the doc-pool store (``doc_pool_backend``), whatever index
+    # backend the config names for the agent's own memory.
+    backfill = DocEmbedBackfill(db, config, embedder, scope_prefix="", batch_size=batch_size)
     embedded = failures = 0
     try:
         while True:
@@ -593,7 +584,6 @@ async def backfill_store(
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_TICK_BATCHES",
-    "DOC_SCOPE_MARKER",
     "EMBED_OPERATION",
     "BackfillOutcome",
     "BackfillPacer",

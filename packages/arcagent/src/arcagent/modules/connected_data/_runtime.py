@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -40,19 +39,15 @@ class _State:
         self.credential_renewals = kwargs.get("credential_renewals")
         self.telemetry = kwargs.get("telemetry")
         supplied_factory = kwargs.get("ingest_port_factory")
-        #: Opens the agent's own document store: the same port the sync writes its
-        #: doc pools through, so the embed backfill drains exactly that store.
-        self.own_store_opener: OwnStoreOpener | None = (
-            None
-            if supplied_factory is not None
-            else _arc_memory_own_store(
-                self.workspace, self.agent_did, self.arcstore_opener, self.telemetry
-            )
-        )
         self.ingest_port_factory: IngestPortFactory | None = (
             supplied_factory
             if supplied_factory is not None
-            else _ingest_factory(self.own_store_opener)
+            else _arc_memory_ingest_factory(
+                self.workspace,
+                self.agent_did,
+                self.arcstore_opener,
+                self.telemetry,
+            )
         )
         #: One sync and one store per connection (P18-4); only with the default
         #: ArcMemory ingest and an ArcStore to hold the subscriptions.
@@ -122,22 +117,14 @@ def reset() -> None:
     _state_var.set(None)
 
 
-#: Opens one port onto the agent's own (workspace) document store.
-OwnStoreOpener = Callable[[], Awaitable[ArcMemoryIngestAdapter]]
-
-
-def _arc_memory_own_store(
+def _arc_memory_ingest_factory(
     workspace: Path, agent_did: str, arcstore_opener: Any, telemetry: Any
-) -> OwnStoreOpener | None:
-    """Compose optional ArcMemory only through the injected ArcStore seam.
-
-    The one definition of the agent's own document store: every sync port and the
-    embed backfill open it here, so they always agree on where doc pools live.
-    """
+) -> IngestPortFactory | None:
+    """Compose optional ArcMemory only through the injected ArcStore seam."""
     if arcstore_opener is None:
         return None
 
-    async def open_own_store() -> ArcMemoryIngestAdapter:
+    async def build(_: Any) -> ArcMemoryIngestAdapter:
         from arcagent.tools.approval_store import open_approval_store
 
         approval_store, backend = await open_approval_store(opener=arcstore_opener)
@@ -148,17 +135,6 @@ def _arc_memory_own_store(
             object_state=ArcStoreObjectState(backend, actor_did=agent_did),
             audit_sink=_audit_sink(telemetry),
         )
-
-    return open_own_store
-
-
-def _ingest_factory(open_own_store: OwnStoreOpener | None) -> IngestPortFactory | None:
-    """A sync's ingest port: the agent's own store, whatever source it syncs."""
-    if open_own_store is None:
-        return None
-
-    async def build(_: Any) -> ArcMemoryIngestAdapter:
-        return await open_own_store()
 
     return build
 

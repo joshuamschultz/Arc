@@ -51,7 +51,6 @@ class ConnectedData:
             health=_health_reporter(state),
             renewals=state.credential_renewals,
             shared=state.shared_knowledge,
-            own_store_opener=state.own_store_opener,
         )
         await state.service.start()
         self._service = state.service

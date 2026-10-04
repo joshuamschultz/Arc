@@ -37,6 +37,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from arcmemory.config import MemoryConfig
 from arcmemory.db import PENDING_EMBED_SQL, MemoryDB
 from arcmemory.index import ann
 
@@ -1260,6 +1261,39 @@ def open_index_backend(
     raise ValueError(f"Unknown arcmemory index backend: {backend!r}. Use 'sqlite' or 'postgres'.")
 
 
+#: The scope-key segment every document pool carries (``<did>:doc:<source>``,
+#: see :func:`arcmemory.doc_index.doc_scope`).
+DOC_SCOPE_MARKER = ":doc:"
+
+
+def is_doc_pool_scope(scope: str) -> bool:
+    """Whether ``scope`` names a document pool rather than an agent's memory scope."""
+    return DOC_SCOPE_MARKER in scope
+
+
+def doc_pool_backend(db: MemoryDB) -> IndexBackend:
+    """THE store an agent's document pools live in: its workspace ``index.db``.
+
+    The one answer to "where do doc pools live", used by every doc path —
+    connected-data writes, the Brain's ``ingest_batch`` document home,
+    ``document_search``, operator views and the embed backfill. It does not
+    follow ``MemoryConfig.index_backend``: that setting places the agent's own
+    memory scope, and connected-data ports never carried it, so honouring it
+    here split one agent's pools across two stores (the Brain searched an empty
+    Postgres while every document sat in SQLite). A shared connection store is
+    the same rule applied to that store's own workspace.
+    """
+    return SqliteIndexBackend(db)
+
+
+def backend_for_scope(scope: str, config: MemoryConfig, db: MemoryDB) -> IndexBackend:
+    """The backend holding ``scope``: the doc-pool store for a document pool, else the
+    configured memory backend (``config.index_backend``)."""
+    if is_doc_pool_scope(scope):
+        return doc_pool_backend(db)
+    return open_index_backend(config.index_backend, db=db)
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity of two equal-length vectors (0.0 on a zero vector)."""
     dot = sum(x * y for x, y in zip(a, b, strict=False))
@@ -1271,6 +1305,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 __all__ = [
+    "DOC_SCOPE_MARKER",
     "VEC_SEARCH_TOP_K",
     "ChunkWrite",
     "EmbedBacklog",
@@ -1279,5 +1314,8 @@ __all__ = [
     "PendingEmbed",
     "PostgresIndexBackend",
     "SqliteIndexBackend",
+    "backend_for_scope",
+    "doc_pool_backend",
+    "is_doc_pool_scope",
     "open_index_backend",
 ]

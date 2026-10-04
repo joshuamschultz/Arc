@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.fusion import RRF_K, rrf_fuse
-from arcmemory.index.backend import VEC_SEARCH_TOP_K, IndexBackend, open_index_backend
+from arcmemory.index.backend import VEC_SEARCH_TOP_K, IndexBackend, backend_for_scope
 from arcmemory.index.backend import _cosine as _cosine
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -133,7 +133,7 @@ class SurfaceIndex:
         self._cfg = config or MemoryConfig()
         self._embedder = embedder
         self._audit = audit_sink if audit_sink is not None else NullSink()
-        self._backend: IndexBackend = open_index_backend(self._cfg.index_backend, db=db)
+        self._backend: IndexBackend = backend_for_scope(scope.key, self._cfg, db)
         self._graph = WeightedGraph(db, self._cfg)
         self._episodic = EpisodicStore(db, workspace)
         self._mem_dir = self._workspace / "memory"
