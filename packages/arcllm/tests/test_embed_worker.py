@@ -198,3 +198,37 @@ async def test_model_loads_once_on_the_worker_thread(monkeypatch: pytest.MonkeyP
         await asyncio.gather(*(emb.embed(["x"], model="m", provider=embedder) for _ in range(4)))
     assert loads == ["arcllm-embed-worker"]
     assert gated.threads == {"arcllm-embed-worker"}
+
+
+async def test_a_cancelled_waiter_never_strands_the_requests_queued_with_it(
+    model: _GatedModel,
+) -> None:
+    """2026-10-04 MC hang triage: could a timed-out (cancelled) recall strand a future?
+
+    A bus handler timeout cancels its embed while the request sits in the queue
+    behind an in-flight encode. The worker must skip only that request, resolve
+    every other one in the same batch, and keep serving later requests from both
+    lanes. Disproved as the hang's cause: no future is left unresolved.
+    """
+    embedder = emb.LocalEmbedder("m")
+    first = await _start_blocked(embedder, model)
+    doomed = asyncio.create_task(
+        emb.embed(["doomed"], model="m", provider=embedder, operation="retrieve:surface")
+    )
+    kept = asyncio.create_task(
+        emb.embed(["kept"], model="m", provider=embedder, operation="retrieve:surface")
+    )
+    background = asyncio.create_task(
+        emb.embed(["bg"], model="m", provider=embedder, operation="embed:backfill")
+    )
+    await asyncio.sleep(0.05)
+    doomed.cancel()
+    model.release.set()
+    await asyncio.wait_for(asyncio.gather(first, kept, background), _WAIT)
+    with pytest.raises(asyncio.CancelledError):
+        await doomed
+    later = await asyncio.wait_for(
+        emb.embed(["later"], model="m", provider=embedder, operation="retrieve:surface"), _WAIT
+    )
+    assert len(later.vectors) == 1
+    assert all("doomed" not in call for call in model.calls[1:])

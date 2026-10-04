@@ -66,7 +66,7 @@ _CHARS_PER_TOKEN = 4
 # roster, already within the agent's clearance by construction. Wiring a
 # classified store into it would invalidate that reasoning and require a gate
 # here.
-_TURN_SECTIONS = frozenset({"recall", "teams"})
+_TURN_SECTIONS = frozenset({"connection_status", "teams"})
 
 # Bus-injected sections known to hold still for the life of the process. A
 # section we cannot vouch for defaults to the run tier instead: an unknown
@@ -158,10 +158,22 @@ def with_turn_context(user_text: str, turn: str) -> str:
     ``turn`` is defanged first — see :func:`_defang` for why retrieved material
     must not be able to name its own container.
     """
-    if not turn:
+    block = turn_context_block(turn)
+    if not block:
         return user_text
+    return f"{block}\n\n{user_text}" if user_text else block
+
+
+def turn_context_block(turn: str) -> str:
+    """``turn`` as its ``<agent-context>`` element, or ``""`` when there is none.
+
+    It goes BEFORE the person's words: reference data first, the question last,
+    which is how a model reads long inputs best (agent-loop research, G4).
+    """
+    if not turn:
+        return ""
     body = _defang(turn, _RESERVED_TAGS)
-    return f"{user_text}\n\n<{TURN_CONTEXT_TAG}>\n{body}\n</{TURN_CONTEXT_TAG}>"
+    return f"<{TURN_CONTEXT_TAG}>\n{body}\n</{TURN_CONTEXT_TAG}>"
 
 
 @dataclass(frozen=True)
@@ -169,9 +181,10 @@ class AssembledPrompt:
     """A system prompt split by how often each part changes.
 
     ``session`` and ``run`` are the ordered provider cache segments (most
-    stable first). ``turn`` is this turn's retrieved material, which the caller
-    attaches to the user's message via :meth:`turn_text` — persisted with that
-    message, so the next turn's prefix is still byte-identical.
+    stable first). ``turn`` is this turn's live material (connection status,
+    team inbox). The dispatcher joins it with the Context prep retrieval and
+    stores the result with the user's turn (``SessionManager.attach_turn_
+    context``), so it rides AFTER the cached prefix and replays byte-identically.
     """
 
     session: str
@@ -191,23 +204,6 @@ class AssembledPrompt:
         """
         return [s for s in (self.session, self.run) if s]
 
-    def session_record(self, user_text: str | list[dict[str, Any]]) -> dict[str, Any]:
-        """The user turn as it is stored: what the person said, plus a sibling
-        field holding this turn's retrieved material.
-
-        Stored, not discarded, because the bytes sent on this turn must be
-        reproducible on the next one or the cached prefix stops matching. Kept
-        out of ``content`` so the session stays the conversation.
-
-        ``user_text`` is a list of blocks when the person sent more than words
-        (SPEC-065): an artefact is stored as a reference, so a media turn costs
-        the log kilobytes and re-opens on a later turn.
-        """
-        record: dict[str, Any] = {"role": "user", "content": user_text}
-        if self.turn:
-            record[TURN_CONTEXT_KEY] = self.turn
-        return record
-
     def as_text(self) -> str:
         """The system prompt as one string, for callers that take a single prompt."""
         return "\n\n".join(self.segments)
@@ -218,7 +214,7 @@ def wire_messages(records: Sequence[dict[str, Any]], *, workspace: Path) -> list
 
     Each record's stored turn context is re-attached verbatim, so a replayed
     turn is byte-identical to the turn as first sent. This is the counterpart
-    of :meth:`AssembledPrompt.session_record`; the two must stay paired.
+    of :meth:`SessionManager.attach_turn_context`; the two must stay paired.
 
     This is also the one place a stored media reference becomes bytes
     (SPEC-065 COMP-009): block content goes through
@@ -237,7 +233,7 @@ def wire_messages(records: Sequence[dict[str, Any]], *, workspace: Path) -> list
         if isinstance(content, list):
             blocks = translator.to_model_content(content)
             if turn:
-                blocks.append(arcrun.TextBlock(text=with_turn_context("", turn).lstrip()))
+                blocks.insert(0, arcrun.TextBlock(text=turn_context_block(turn)))
             out.append(arcrun.Message(role=record["role"], content=blocks))
             continue
         if turn and isinstance(content, str):

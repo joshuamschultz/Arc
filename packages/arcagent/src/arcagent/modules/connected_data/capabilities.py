@@ -87,12 +87,16 @@ async def inject_connections_catalog(ctx: Any) -> None:
     sections = ctx.data.get("sections")
     if not isinstance(sections, dict):
         return
-    lines = [_catalog_line(entry) for entry in await service.catalog_entries()]
-    if not lines:
+    entries = await service.catalog_entries()
+    if not entries:
         return
     prompts = ctx.data.get("prompt_source") or st.prompt_source
     preamble = prompts.resolve("arcagent", "connected_data_catalog")
-    sections["connections"] = preamble + "\n" + "\n".join(lines)
+    # The list and the guides change only on an operator action, so they sit in
+    # the cached system prompt. Sync status flips on its own; it rides with the
+    # turn instead, so a status change never re-bills the cached prefix (G5).
+    sections["connections"] = preamble + "\n" + "\n".join(_catalog_line(e) for e in entries)
+    sections["connection_status"] = "\n".join(f"- {e.name}: {e.status}" for e in entries)
 
 
 def _catalog_line(entry: CatalogEntry) -> str:
@@ -101,7 +105,7 @@ def _catalog_line(entry: CatalogEntry) -> str:
     Only a preview: the full guide reaches the agent when a tool touches the
     source, once per run, so standing context stays lean.
     """
-    line = f"- {entry.name} ({entry.kind}): status={entry.status}; homes={entry.homes_text}"
+    line = f"- {entry.name} ({entry.kind}): homes={entry.homes_text}"
     if entry.guide:
         line += f"\n  operator guide: {entry.guide}"
     return line

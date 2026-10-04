@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import uuid
+import weakref
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import arcrun
@@ -29,6 +32,12 @@ from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
 from arcagent.core import known_channels, turn_context
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
+from arcagent.core.context_prep import (
+    ContextPrep,
+    estimate_tokens,
+    prepare_context,
+    spool_run_event,
+)
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import AssembledPrompt, SessionManager, wire_messages
 from arcagent.core.session_internal.capability_ledger import (
@@ -40,7 +49,6 @@ from arcagent.core.telemetry import AgentTelemetry, TelemetryAuditSink
 from arcagent.tools._policy_fill import resolve_run_budget
 from arcagent.tools.approval_policy import narrowed_loop_controls
 from arcagent.utils.causality import agent_scope, turn_root
-from arcagent.utils.moment import moment_cues
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -48,27 +56,50 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("arcagent.agent_dispatch")
 
 
-async def build_run_context(
-    agent: ArcAgent, task: str
-) -> tuple[
-    AgentTelemetry,
-    ModuleBus,
-    Any,  # model
-    AgentCapabilityProvider,  # the unified capability surface for arcrun
-    AssembledPrompt,  # tiered system prompt + this turn's context
-    Callable[[arcrun.Event], None],  # bridge
-    PromptSource,  # this run's frozen, overlay-aware prompts, for arcrun
-]:
-    """Prepare shared run context for the streaming run.
+@dataclass(frozen=True)
+class RunContext:
+    """Everything a turn needs before its first model call.
 
-    Assembles the agent's capabilities into an ``AgentCapabilityProvider``
-    (ADR-023): policy-wrapped registry tools (invocable) + the agent's skills
-    (lazily loaded) + spawn (dispatched with live context). Merges the harness
-    preamble and orchestration guidance into the system prompt. Strategy
-    guidance is not assembled here: arcrun adds the guidance of the strategy it
-    actually runs, resolved through the returned ``PromptSource`` — the same
-    run-frozen snapshot every section here came from. Emits
-    ``agent:pre_respond`` before returning.
+    ``turn`` is the per-turn material stored with the user's message (Context
+    prep retrieval first, then live state such as connection status); it rides
+    after the cached system prefix. ``strategy`` is the pre-selected strategy the
+    run is pinned to (``None`` when the caller pins its own, as resume does).
+    """
+
+    telemetry: AgentTelemetry
+    bus: ModuleBus
+    model: Any
+    provider: AgentCapabilityProvider
+    prompt: AssembledPrompt
+    bridge: Callable[[arcrun.Event], None]
+    prompt_source: PromptSource
+    turn: str
+    strategy: arcrun.StrategyChoice | None
+
+
+async def build_run_context(
+    agent: ArcAgent,
+    task: str,
+    *,
+    run_id: str,
+    session: SessionManager | None = None,
+    allowed_strategies: list[str] | None = None,
+    choose: bool = True,
+) -> RunContext:
+    """Prepare a turn: strategy, stable system context, retrieval, in that trace order.
+
+    The steps, as the run trace shows them before the first model call:
+
+    1. **Strategy** — picked from cheap inputs (the request and the last two
+       exchanges) on ``[arcrun] strategy_model``, CONCURRENTLY with retrieval:
+       neither waits for the other, and retrieval can never sway the choice.
+    2. **System context** — the stable, cached prefix (identity, policy, the
+       capability manifest, guides, ``context.md``). Nothing per-turn goes in it.
+    3. **Retrieval** — :func:`prepare_context`, the one bounded pass.
+    4. **Session** — the history the run will carry.
+
+    Assembles the capability surface (ADR-023) and emits ``agent:pre_respond``
+    (with the retrieved text as ``insight``) before returning.
     """
     from arcagent.core.model_manager import create_arcrun_bridge
 
@@ -87,6 +118,15 @@ async def build_run_context(
     # above its own identity; like every other prompt it is operator-overridable.
     harness_sections = {"base": prompt_source.resolve("arcagent", "base_system")}
 
+    strategy: arcrun.StrategyChoice | None = None
+    if choose:
+        strategy, prep = await asyncio.gather(
+            _choose_strategy(agent, task, session, allowed_strategies, prompt_source),
+            prepare_context(agent, task),
+        )
+    else:
+        prep = await prepare_context(agent, task)
+
     # Orchestration: spawn_task is context-dependent (reads depth/budget from the
     # loop's ToolContext), so it is dispatched directly, not routed through the
     # context-free invoke() path. Children inherit spawn + the invoke tools.
@@ -95,12 +135,16 @@ async def build_run_context(
         from arcagent.orchestration import RootTokenBudget, make_spawn_tool
 
         spawn_guidance = prompt_source.resolve("arcagent", "spawn_guidance")
-        child_prompt = await context.assemble_system_prompt(
-            agent._workspace,
-            extra_sections={**harness_sections, "spawn_guidance": spawn_guidance},
-            prompt_source=prompt_source,
-        )
-        child_system_prompt = child_prompt.as_text()
+        child_sections = {**harness_sections, "spawn_guidance": spawn_guidance}
+
+        async def child_system_prompt() -> str:
+            # Assembled only if the model spawns: a turn that never does pays for
+            # one prompt assembly, not two (every assembly re-runs every hook).
+            child = await context.assemble_system_prompt(
+                agent._workspace, extra_sections=child_sections, prompt_source=prompt_source
+            )
+            return child.as_text()
+
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
         # Shared cross-child token pool (LLM10) — one per run, capping the
         # aggregate spend of every child the model spawns this turn.
@@ -109,7 +153,7 @@ async def build_run_context(
         spawn_tool = make_spawn_tool(
             model=model,
             tools=child_tools,
-            system_prompt=child_system_prompt,
+            system_prompt_factory=child_system_prompt,
             spawn_timeout_seconds=agent._config.spawn.timeout_seconds,
             max_concurrent_spawns=agent._config.spawn.max_concurrent,
             # A spawned child gets its OWN turn cap ([spawn].max_turns, default 50)
@@ -124,28 +168,14 @@ async def build_run_context(
         ctx_tools = [spawn_tool]
         harness_sections = {**harness_sections, "spawn_guidance": spawn_guidance}
 
-    # SPEC-071 — announce candidate user-turn moments BEFORE the prompt is
-    # assembled, so a proactive recall fired this turn lands in THIS turn's
-    # prompt (assembly runs once per run and drains the memory subscriber's
-    # buffer below). Two user-turn detectors (entity_seen + topic_shift) => two
-    # moments; in-window dedup stops any double-injection of the same card. No
-    # session id is cleanly in scope here (build_run_context takes only agent +
-    # task), so the Brain falls back to its default scope.
-    if task:
-        moment_payload: dict[str, Any] = {
-            "cues": moment_cues(task),
-            "text": task,
-            "session_id": None,
-        }
-        await bus.emit("agent:moment", {"kind": "entity_seen", **moment_payload})
-        await bus.emit("agent:moment", {"kind": "topic_shift", **moment_payload})
-
     prompt = await context.assemble_system_prompt(
         agent._workspace,
         extra_sections=harness_sections,
-        query=task,
         prompt_source=prompt_source,
     )
+    turn = "\n\n".join(part for part in (prep.text, prompt.turn) if part)
+    if choose:
+        _record_context_prep(agent, run_id, strategy, prompt, prep, session, turn)
     # The turn's origin channel is read HERE, in the dispatch task that bound it
     # a few lines earlier, and travels stamped on every progress event the bridge
     # forwards. A consumer therefore never has to work out where to answer.
@@ -173,8 +203,134 @@ async def build_run_context(
         skill_files=agent._skill_files,
     )
 
-    await bus.emit("agent:pre_respond", {"task": task})
-    return telemetry, bus, model, provider, prompt, bridge, prompt_source
+    # ``insight`` is this turn's retrieved context, handed to the skills improver
+    # (and any other pre-respond reader) so nothing retrieves a second time.
+    await bus.emit("agent:pre_respond", {"task": task, "insight": prep.text})
+    return RunContext(
+        telemetry=telemetry,
+        bus=bus,
+        model=model,
+        provider=provider,
+        prompt=prompt,
+        bridge=bridge,
+        prompt_source=prompt_source,
+        turn=turn,
+        strategy=strategy,
+    )
+
+
+#: Earlier session messages the strategy selector sees: the last two exchanges.
+_STRATEGY_RECENT_MESSAGES = 4
+
+
+async def _choose_strategy(
+    agent: ArcAgent,
+    task: str,
+    session: SessionManager | None,
+    allowed: list[str] | None,
+    prompt_source: PromptSource,
+) -> arcrun.StrategyChoice:
+    """The turn's strategy from cheap inputs only, on the configured strategy model."""
+    recent: list[str] = []
+    if session is not None:
+        earlier = session.get_messages()[:-1]  # the request itself is ``task``
+        recent = [
+            f"{m.get('role', '')}: {arcrun.content_text(m.get('content'))}"
+            for m in earlier[-_STRATEGY_RECENT_MESSAGES:]
+            if m.get("role") in ("user", "assistant")
+        ]
+    registry = agent._tool_registry
+    return await arcrun.choose_strategy(
+        allowed,
+        agent._ensure_strategy_model(),
+        task=task,
+        recent=recent,
+        tool_names=sorted(registry.tools) if registry is not None else (),
+        prompt_source=prompt_source,
+        timeout=agent._config.arcrun.strategy_timeout_seconds,
+    )
+
+
+def _record_context_prep(
+    agent: ArcAgent,
+    run_id: str,
+    strategy: arcrun.StrategyChoice | None,
+    prompt: AssembledPrompt,
+    prep: ContextPrep,
+    session: SessionManager | None,
+    turn: str,
+) -> None:
+    """Write the pre-model steps to the run trace in the order the request is built.
+
+    Strategy, then the stable system context (with per-tier hashes, and whether
+    the prefix is byte-identical to this session's previous turn so the provider
+    cache can hit), then retrieval and any skipped step, then the session.
+    """
+    if strategy is not None:
+        spool_run_event(
+            agent,
+            run_id,
+            "strategy.selected",
+            {
+                "strategy": strategy.name,
+                "reason": strategy.reason,
+                "selected_by": strategy.selected_by,
+                "latency_ms": strategy.latency_ms,
+            },
+        )
+    tiers = {
+        "session": _sha256(prompt.session),
+        "run": _sha256(prompt.run),
+    }
+    prefix = _sha256("\n".join(prompt.segments))
+    previous = _LAST_PREFIX.get(session) if session is not None else None
+    if session is not None:
+        _LAST_PREFIX[session] = prefix
+    spool_run_event(
+        agent,
+        run_id,
+        "context.system",
+        {
+            "cached": previous == prefix,
+            "tokens": estimate_tokens(prompt.as_text()),
+            "sha256": prefix,
+            "tiers": {
+                name: {"sha256": digest, "tokens": estimate_tokens(text)}
+                for (name, digest), text in zip(
+                    tiers.items(), (prompt.session, prompt.run), strict=True
+                )
+            },
+        },
+    )
+    spool_run_event(
+        agent, run_id, "context.retrieval", prep.trace, outcome=str(prep.trace.get("status"))
+    )
+    for skipped in prep.skipped:
+        spool_run_event(agent, run_id, "context.skipped", dict(skipped))
+    messages = session.get_messages() if session is not None else []
+    spool_run_event(
+        agent,
+        run_id,
+        "context.session",
+        {
+            "turns": sum(1 for m in messages if m.get("role") == "user"),
+            "messages": len(messages),
+            "tokens": estimate_tokens(
+                "".join(arcrun.content_text(m.get("content")) for m in messages)
+            )
+            + estimate_tokens(turn),
+        },
+    )
+
+
+#: The last system prefix hash per live session, so the trace can say whether a
+#: turn's cached prefix still matches the one before it. Weak: it goes with the
+#: session object.
+_LAST_PREFIX: weakref.WeakKeyDictionary[SessionManager, str] = weakref.WeakKeyDictionary()
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _run_prompt_source(agent: ArcAgent, telemetry: AgentTelemetry) -> PromptSource:
@@ -452,10 +608,25 @@ async def _dispatch_stream_locked(
         # The person's words are durable before recall or any model call, so a
         # reader who returns mid-turn finds their own message in the history.
         await session.append_message({"role": "user", "content": content or input_text})
-        with agent._queue_run_context(session.session_id, run_id):
-            run_ctx = await build_run_context(agent, input_text)
-        telemetry, bus, model, provider, prompt, bridge, prompt_source = run_ctx
-        await session.attach_turn_context(prompt.turn)
+        controls = narrowed_loop_controls(agent, session, allowed_strategies)
+        try:
+            with agent._queue_run_context(session.session_id, run_id):
+                run_ctx = await build_run_context(
+                    agent,
+                    input_text,
+                    run_id=run_id,
+                    session=session,
+                    allowed_strategies=controls["allowed_strategies"],
+                )
+        except Exception as exc:
+            record_not_started(agent, run_id, f"turn preparation failed ({type(exc).__name__})")
+            raise
+        telemetry, bus, model = run_ctx.telemetry, run_ctx.bus, run_ctx.model
+        provider, prompt, bridge = run_ctx.provider, run_ctx.prompt, run_ctx.bridge
+        prompt_source = run_ctx.prompt_source
+        if run_ctx.strategy is not None:
+            controls["allowed_strategies"] = [run_ctx.strategy.name]
+        await session.attach_turn_context(run_ctx.turn)
         history = wire_messages(session.get_messages(), workspace=agent._workspace)
         transform = agent._context.transform_context if agent._context else None
         # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
@@ -500,7 +671,7 @@ async def _dispatch_stream_locked(
                         audit_sink=TelemetryAuditSink(telemetry),
                         on_handle=on_handle,
                         prompt_source=prompt_source,
-                        **narrowed_loop_controls(agent, session, allowed_strategies),
+                        **controls,
                     )
                     async with contextlib.aclosing(
                         cast(AsyncGenerator[arcrun.StreamEvent, None], raw_stream)
@@ -542,6 +713,16 @@ async def _dispatch_stream_locked(
                 "automated": False,
             },
         )
+
+
+def record_not_started(agent: ArcAgent, run_id: str, reason: str) -> None:
+    """Close a run that died before its model loop began, so it never reads "running".
+
+    arcrun writes the terminal ``loop.complete`` only for a loop it started; a
+    turn that failed in preparation, or was abandoned by the turn-start bound,
+    otherwise left only its pre-model trace rows and showed "Running" forever.
+    """
+    spool_run_event(agent, run_id, "run.not_started", {"reason": reason}, outcome="failed")
 
 
 async def start_tracked_run(
@@ -592,16 +773,25 @@ async def start_tracked_run(
             agent._queue_run_context(session.session_id, run_id),
         ):
             await session.append_message({"role": "user", "content": content or input_text})
-            (
-                _telemetry,
-                _bus,
-                model,
-                provider,
-                prompt,
-                bridge,
-                prompt_source,
-            ) = await build_run_context(agent, input_text)
-            await session.attach_turn_context(prompt.turn)
+            controls = narrowed_loop_controls(agent, session, None)
+            try:
+                run_ctx = await build_run_context(
+                    agent,
+                    input_text,
+                    run_id=run_id,
+                    session=session,
+                    allowed_strategies=controls["allowed_strategies"],
+                )
+            except Exception as exc:
+                record_not_started(
+                    agent, run_id, f"turn preparation failed ({type(exc).__name__})"
+                )
+                raise
+            model, provider, prompt = run_ctx.model, run_ctx.provider, run_ctx.prompt
+            bridge, prompt_source = run_ctx.bridge, run_ctx.prompt_source
+            if run_ctx.strategy is not None:
+                controls["allowed_strategies"] = [run_ctx.strategy.name]
+            await session.attach_turn_context(run_ctx.turn)
             history = wire_messages(session.get_messages(), workspace=agent._workspace)
             transform = agent._context.transform_context if agent._context else None
             max_tokens, max_cost_usd = resolve_run_budget(agent._config)
@@ -624,7 +814,7 @@ async def start_tracked_run(
                     max_cost_usd=max_cost_usd,
                     run_id=run_id,
                     prompt_source=prompt_source,
-                    **narrowed_loop_controls(agent, session, None),
+                    **controls,
                 )
             finally:
                 reset_session_id(session_token)

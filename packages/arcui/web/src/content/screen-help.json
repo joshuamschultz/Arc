@@ -2930,9 +2930,14 @@
         "description": "Enable provider-side prompt caching when supported by the adapter."
       },
       {
-        "key": "settings.arcllm.providers.*.provider.cache_ttl",
-        "label": "Prompt cache lifetime",
-        "description": "Select the supported prompt-cache lifetime for this provider."
+        "key": "settings.arcllm.providers.*.provider.cache_ttl_system",
+        "label": "System prompt cache lifetime",
+        "description": "How long the provider keeps the cached system prompt (1h or 5m). Use 1h: it is reused across idle gaps."
+      },
+      {
+        "key": "settings.arcllm.providers.*.provider.cache_ttl_tail",
+        "label": "Conversation cache lifetime",
+        "description": "How long the provider keeps the cached conversation tail (5m or 1h). It must not be longer than the system prompt lifetime."
       },
       {
         "key": "settings.arcllm.providers.*.models.*.context_window",

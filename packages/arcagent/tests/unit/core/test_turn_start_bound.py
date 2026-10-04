@@ -82,7 +82,11 @@ async def test_stuck_turn_start_yields_failed_frame_within_bound(
             holding.set()
             await release.wait()
 
-    with patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_reply):
+    trace: list[Any] = []
+    with (
+        patch("arcagent.core.agent_dispatch.arcrun.run_stream", side_effect=_reply),
+        patch("arcagent.core.context_prep.spool_record", side_effect=trace.append),
+    ):
         await agent.startup()
         holder = asyncio.create_task(hold_session_turn())
         try:
@@ -93,6 +97,12 @@ async def test_stuck_turn_start_yields_failed_frame_within_bound(
             assert isinstance(events[-1], DeliveryTerminalEvent)
             assert events[-1].status == "failed"
             assert "did not start" in events[-1].reason
+            # The abandoned run is closed on its own trace, never left "Running".
+            closed = [r for r in trace if r.name == "run.not_started"]
+            assert len(closed) == 1
+            assert closed[0].outcome == "failed"
+            assert "did not start within" in closed[0].extra["reason"]
+            assert closed[0].request_id
 
             # The bound released the delivery lock: once the holder is gone the
             # same session answers normally.

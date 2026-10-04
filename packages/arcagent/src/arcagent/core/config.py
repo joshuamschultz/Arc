@@ -373,6 +373,20 @@ class SessionConfig(BaseModel):
     # lock and prompt assembly. Past it the channel gets a terminal "failed"
     # with a plain reason instead of a silent, frozen chat.
     turn_start_timeout_seconds: float = Field(default=120.0, gt=0)
+    # Context prep: the turn's one pre-model retrieval. ``context_prep_budget_
+    # seconds`` bounds the whole stage; past it the turn continues WITHOUT
+    # retrieved context and the run trace says so. Memory and connected
+    # documents each have a top-k, a token cap and a score floor (a score of 0 is
+    # never relevant, whatever the floor); ``context_token_cap`` bounds the sum
+    # of everything injected.
+    context_prep_budget_seconds: float = Field(default=1.5, gt=0)
+    context_memory_top_k: int = Field(default=5, ge=0)
+    context_memory_token_cap: int = Field(default=1024, ge=0)
+    context_memory_score_floor: float = Field(default=0.0, ge=0)
+    context_docs_top_k: int = Field(default=3, ge=0)
+    context_docs_token_cap: int = Field(default=1500, ge=0)
+    context_docs_score_floor: float = Field(default=0.05, ge=0)
+    context_token_cap: int = Field(default=2500, ge=0)
 
 
 class TeamSection(BaseModel):
@@ -743,6 +757,28 @@ class ArcRunConfig(BaseModel):
     """
 
     max_turns: int = Field(default=120, gt=0, description="Hard cap on agentic loop turns.")
+    strategy_model: str = Field(
+        default="",
+        description=(
+            "Model that picks each turn's strategy (one short tool call on the "
+            "request and the last two turns). Point it at a small, fast model. "
+            "Empty = the agent's own model."
+        ),
+    )
+    strategy_timeout_seconds: float = Field(
+        default=3.0,
+        gt=0,
+        description="Wall-clock cap on the strategy selection call; past it the turn uses react.",
+    )
+    max_tool_result_tokens: int | None = Field(
+        default=8000,
+        gt=0,
+        description=(
+            "Largest tool result the model sees, in estimated tokens. A longer "
+            "result keeps its head and ends with a marker telling the model how "
+            "much was cut and to re-call the tool more narrowly. None = no cap."
+        ),
+    )
     tool_timeout: float | None = Field(
         default=None,
         gt=0,

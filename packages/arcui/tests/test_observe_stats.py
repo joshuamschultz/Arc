@@ -436,6 +436,31 @@ class TestComputeRuns:
         runs = compute_runs(events)
         assert runs[0]["status"] == "limited"
 
+    def test_a_run_that_never_started_is_failed_not_running(self) -> None:
+        # 2026-10-04: a chat turn died in prompt prep; its embedding calls left
+        # llm_call rows under its run id and no terminal, so it read "Running"
+        # for good. ``run.not_started`` is that run's terminal.
+        recent = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        rows = [
+            {
+                "kind": "llm_call",
+                "request_id": "r",
+                "actor_did": "did:a",
+                "model": "all-MiniLM-L6-v2",
+                "ts": recent,
+            },
+            {
+                "kind": "run_event",
+                "request_id": "r",
+                "actor_did": "did:a",
+                "name": "run.not_started",
+                "outcome": "failed",
+                "extra": {"reason": "turn did not start within 120s"},
+                "ts": recent,
+            },
+        ]
+        assert compute_runs(rows)[0]["status"] == "error"
+
     def test_recent_run_with_tool_error_is_still_running(self) -> None:
         # A live run that just hit a failing tool call but has not reached its
         # terminal is recovering, not failed — it must stay "running", never flip

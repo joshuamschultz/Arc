@@ -108,9 +108,9 @@ async def test_user_message_persisted_before_context_is_built(
 
     real_build = dispatch.build_run_context
 
-    async def spying_build(a: Any, task: str) -> Any:
+    async def spying_build(a: Any, task: str, **kwargs: Any) -> Any:
         seen_at_build.append(len(_user_records(workspace, "unit:early")))
-        return await real_build(a, task)
+        return await real_build(a, task, **kwargs)
 
     async def factory(*_a: Any, **_k: Any) -> AsyncIterator[StreamEvent]:
         async def gen() -> AsyncIterator[StreamEvent]:

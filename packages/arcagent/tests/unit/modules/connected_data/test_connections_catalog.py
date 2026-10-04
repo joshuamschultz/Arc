@@ -60,7 +60,9 @@ async def test_catalog_lists_connected_sources_with_a_nudge_to_search() -> None:
     await inject_connections_catalog(_ctx({"sections": sections}))
 
     block = sections["connections"]
-    assert "Slack" in block and "slack" in block and "synced" in block
+    assert "Slack" in block and "slack" in block
+    assert "status=" not in block, "sync status is a turn-tier section, not the cached catalog"
+    assert sections["connection_status"] == "- Slack: synced\n- CRM: synced"
     assert "document" in block and "datastore" in block
     # The nudge: lean toward searching them before declaring something unknown.
     assert "document_search" in block

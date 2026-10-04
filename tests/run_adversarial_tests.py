@@ -48,6 +48,14 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # A viewer cannot upload, approve or remove; refusals are audited.
         "packages/arcui/tests/test_connector_bundles_routes.py",
     ),
+    "pre-model context prep: stalled retrieval, trace leakage (LLM02/LLM10)": (
+        # A retrieval held forever (a slow store, a starved loop) never holds the
+        # turn past its budget; a turn that dies before its run is closed on the
+        # trace; a classified candidate's text never reaches the run trace.
+        "packages/arcagent/tests/integration/test_context_prep_turn.py",
+        "packages/arcagent/tests/unit/core/test_context_prep_select.py",
+        "packages/arcagent/tests/unit/core/test_turn_start_bound.py",
+    ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
         # The refusal reaches the module's audit sink in production, not only a log.

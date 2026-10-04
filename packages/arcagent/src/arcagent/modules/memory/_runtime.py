@@ -57,8 +57,6 @@ from arcagent.modules.memory.config import MemoryConfig
 
 _logger = logging.getLogger("arcagent.modules.memory._runtime")
 
-_RECALL_CACHE_CAP = 8
-
 
 class MemoryIsolationError(RuntimeError):
     """Memory state could not be resolved to the running agent's DID.
@@ -100,12 +98,9 @@ class _State:
     # The agent's prompt lookup (overlay first, then stock) for this module's own
     # prompt sections; stock when the agent handed none down.
     prompt_source: PromptSource = field(default_factory=StockPromptSource)
-    # Once-per-turn recall cache: query-hash -> injectable text (bounds the
-    # spawn double-assembly to a single retrieve).
-    recall_cache: dict[int, str] = field(default_factory=dict)
     # Proactive (detected-moment) recall text staged by the ``agent:moment``
-    # subscriber, drained + merged into ``sections["recall"]`` at the next
-    # prompt assembly. Session/turn-scoped, in-memory, rebuild-free.
+    # subscriber, drained into the next turn's Context prep retrieval as
+    # candidates. Session/turn-scoped, in-memory, rebuild-free.
     proactive_buffer: list[str] = field(default_factory=list)
     # Whether this process already seeded the routing digest from existing
     # holdings (backfill runs once per start; the digest self-dedups, but a flag

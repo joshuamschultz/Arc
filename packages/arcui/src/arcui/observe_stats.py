@@ -332,6 +332,7 @@ def _new_run(run_id: str) -> dict[str, Any]:
         "_error": False,
         "_completed": False,
         "_breached": False,
+        "_not_started": False,
     }
 
 
@@ -351,6 +352,11 @@ def _fold_event_kind(run: dict[str, Any], row: dict[str, Any]) -> None:
             # cap, not by completing. That must not read as a clean "completed".
             if (row.get("outcome") or "ok") != "ok":
                 run["_breached"] = True
+        elif name == "run.not_started":
+            # The turn died before the model loop began (its prompt prep failed or
+            # the turn-start bound expired). That IS its terminal: it is failed,
+            # never "running" (2026-10-04 MC hang).
+            run["_not_started"] = True
     elif kind == "tool_event":
         # One invocation == one ``start`` (start/end/error share a tool call).
         if row.get("phase") == "start":
@@ -391,7 +397,9 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
 def _finalize_run(run: dict[str, Any], *, now: float) -> dict[str, Any]:
     start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
     duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
-    if run["_breached"]:
+    if run["_not_started"] and not run["_completed"]:
+        status = "error"
+    elif run["_breached"]:
         # Reached a terminal by hitting a turn/cost/token cap. This is NOT the same
         # as a run that errored and died: the agent did real work and then ran out
         # of budget. Painting it red "error" is the dishonest status that made

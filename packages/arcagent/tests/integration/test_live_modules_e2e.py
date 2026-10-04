@@ -681,17 +681,15 @@ async def test_existing_memory_backfills_the_routing_digest_over_the_real_bus(
     )
 
 
-async def test_a_memory_recall_is_recorded_as_a_tool_event_in_the_run_trace(
+async def test_a_memory_recall_is_recorded_as_a_retrieval_event_in_the_run_trace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The memory lookup the operator could never see now shows in the run trace.
+    """The memory lookup the operator could never see shows in the run trace.
 
-    A recall runs while the prompt is assembled, before the loop's tool dispatch,
-    so it never spooled a tool_event and was invisible. The dispatcher now binds
-    one run id across assembly and loop, and the recall records itself as an
-    implicit tool_event under it — the same record shape a real tool writes, so it
-    renders inline with the reads. Drive a real turn and read it back from the
-    spool, correlated to a run.
+    Retrieval runs before the loop's tool dispatch, so it is not a tool call. Context
+    prep records it as one ``context.retrieval`` run_event under the turn's run id,
+    with each source's step (memory, connections, profile) and its status. Drive a
+    real turn and read it back from the spool, correlated to a run.
     """
     import arcstore.spool as spool
 
@@ -707,14 +705,13 @@ async def test_a_memory_recall_is_recorded_as_a_tool_event_in_the_run_trace(
         await _run_a_turn(agent)
 
     rows = [json.loads(line) for line in spool_file.read_text().splitlines()]
-    recalls = [
-        r
-        for r in rows
-        if r.get("tool_name") == "memory_search" and r.get("extra", {}).get("implicit")
+    retrievals = [
+        r for r in rows if r.get("kind") == "run_event" and r.get("name") == "context.retrieval"
     ]
-    assert recalls, "a memory recall was not recorded as a tool_event in the run trace"
-    assert all(r.get("request_id") for r in recalls), "recall tool_event not correlated to a run"
-    assert {"start", "end"} <= {r.get("phase") for r in recalls}
+    assert retrievals, "the memory retrieval was not recorded as a run_event in the run trace"
+    assert all(r.get("request_id") for r in retrievals), "retrieval not correlated to a run"
+    steps = {step["name"]: step["status"] for step in retrievals[0]["extra"]["steps"]}
+    assert steps.get("memory") == "ok", f"the memory step did not run cleanly: {steps}"
 
 
 # --------------------------------------------------------------------------

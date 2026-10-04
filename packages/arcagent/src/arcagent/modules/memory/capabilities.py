@@ -25,7 +25,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from html import escape
@@ -47,7 +47,6 @@ from arcagent.knowledge import (
 from arcagent.modules.memory import _runtime
 from arcagent.tools._decorator import background_task, capability, hook, tool
 from arcagent.utils.audit import safe_audit
-from arcagent.utils.trace import spool_auto_tool
 
 _logger = logging.getLogger("arcagent.modules.memory.capabilities")
 
@@ -96,186 +95,182 @@ async def _audit(event: str, detail: dict[str, Any]) -> None:
     await safe_audit(_runtime.state().telemetry, event, detail, logger=_logger)
 
 
-# -- Recall hook ---------------------------------------------------------
+# -- Context retrieval (the turn's one pre-model retrieval) ----------------
 
 
-@hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
-async def inject_recall(ctx: Any) -> None:
-    """Query-conditioned recall + proactive-moment drain into ``sections["recall"]``.
+@capability(name="context_retrieval")
+class ContextRetrieval:
+    """Serves the agent core's Context prep stage: this turn's retrieval candidates.
 
-    The query path is once-per-turn cached and ACL-gated as before. The proactive
-    buffer (staged by :func:`on_agent_moment`) is drained and merged in on every
-    assembly — including a query-less proactive-only turn (e.g. ``task_start``) —
-    then cleared whether or not it injected, so a second assembly in the same turn
-    never re-injects it.
+    Registered under the ``context_retrieval`` operation contract so the core
+    reaches it without naming this module (ADR-033). It returns CANDIDATES, not a
+    prompt: the core owns the budget, the top-k and token caps, the ranking, the
+    rendering and the run trace. Every candidate has already passed the Brain's
+    no-read-up gate at ``unclassified``.
+
+    One pass replaces the three that ran before (assembly-time recall, the
+    user-turn proactive moments and the pre-respond insight recall): the
+    request's cues seed the Brain's graph channel, which is what the entity and
+    topic moments contributed, and anything a loop moment staged since the last
+    turn is drained in as well.
     """
-    st = _runtime.state()
-    if not st.active:
-        return
-    sections = ctx.data.get("sections")
-    if not isinstance(sections, dict):
-        return
 
-    query = (ctx.data.get("query") or "").strip()
-    text = await _query_recall(st, ctx, query) if query else ""
-    if query:
-        text = _merge_recall(text, await _connected_doc_recall(st, query, text))
+    async def setup(self, ctx: Any) -> None:
+        del ctx
 
-    # Drain the proactive buffer once, regardless of the query path — its text
-    # already passed the Brain's gate when it was buffered at on_moment time.
-    proactive = list(st.proactive_buffer)
-    st.proactive_buffer.clear()
+    async def teardown(self) -> None:
+        return None
 
-    merged = _merge_recall(text, proactive)
-    if merged:
-        sections["recall"] = merged
-    profile = await _approved_profile_context(st)
-    if profile:
-        sections["profile"] = profile
+    async def retrieve(
+        self, query: str, *, memory_top_k: int, docs_top_k: int
+    ) -> Mapping[str, object]:
+        """``{"candidates": [...], "steps": [...]}`` for ``query``; best-effort per step.
+
+        The sources are searched concurrently, so the slowest one bounds the
+        stage rather than their sum.
+        """
+        st = _runtime.state()
+        if not st.active or not query.strip():
+            return {"candidates": [], "steps": []}
+        steps: list[dict[str, object]] = []
+        memory, documents, profile = await asyncio.gather(
+            _timed_step(steps, "memory", _memory_candidates(st, query, memory_top_k)),
+            _timed_step(steps, "connections", _document_candidates(st, query, docs_top_k)),
+            _timed_step(steps, "profile", _profile_candidates(st)),
+        )
+        staged = [
+            _candidate("memory", f"proactive:{index}", "staged recall", 1.0, "unclassified", text)
+            for index, text in enumerate(st.proactive_buffer)
+            if text
+        ]
+        st.proactive_buffer.clear()
+        return {"candidates": [*profile, *memory, *documents, *staged], "steps": steps}
 
 
-#: Connected documents recalled per turn. Small on purpose: the prompt budget is
-#: shared with memory recall, and the agent can always call ``document_search``.
-_DOC_RECALL_TOP_K = 3
+async def _timed_step(
+    steps: list[dict[str, object]],
+    name: str,
+    work: Coroutine[Any, Any, list[dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Run one retrieval step; record its latency and status, never raise."""
+    started = time.monotonic()
+    status = "ok"
+    found: list[dict[str, object]] = []
+    try:
+        found = await work
+    except Exception:  # reason: one failed source must not cost the others
+        _logger.warning("context retrieval step %s failed", name, exc_info=True)
+        status = "error"
+    steps.append(
+        {
+            "name": name,
+            "latency_ms": round((time.monotonic() - started) * 1000.0, 1),
+            "status": status,
+            "found": len(found),
+        }
+    )
+    return found
 
 
-async def _connected_doc_recall(st: _runtime._State, query: str, memory_text: str) -> list[str]:
-    """Top connected documents for this turn's query, once per turn, bounded.
+def _candidate(
+    source_kind: str,
+    source: str,
+    title: str,
+    score: float,
+    classification: str,
+    text: str,
+    path: str = "",
+) -> dict[str, object]:
+    return {
+        "source_kind": source_kind,
+        "source": source,
+        "title": title,
+        "path": path,
+        "score": float(score),
+        "classification": classification,
+        "text": text,
+    }
 
-    Skips any document the memory recall already surfaced, and degrades to nothing
-    (logged) rather than failing prompt assembly when the document index is down.
-    """
+
+async def _memory_candidates(
+    st: _runtime._State, query: str, top_k: int
+) -> list[dict[str, object]]:
+    """The Brain's gated recall cards for this request (query-only, no corpus embed)."""
+    if top_k <= 0:
+        return []
+    if not await _acl_allows("memory.search", st.agent_did):
+        return []
+    recall = getattr(st.brain, "recall", None)
+    if recall is None:
+        return []
+    from arcagent.utils.moment import moment_cues
+
+    cards = await recall(
+        query,
+        clearance="unclassified",
+        top_k=top_k,
+        budget=st.config.budget,
+        cues=moment_cues(query),
+        index=False,  # the turn embeds only its query; indexing is background work
+    )
+    await _audit("memory.recall", {"query_len": len(query), "hit": bool(cards)})
+    return [
+        _candidate(
+            "memory",
+            str(card.source),
+            str(card.kind),
+            float(card.score),
+            str(card.classification),
+            str(card.content),
+        )
+        for card in cards
+    ]
+
+
+async def _document_candidates(
+    st: _runtime._State, query: str, top_k: int
+) -> list[dict[str, object]]:
+    """Connected documents (this agent's pools and the shared stores it reads)."""
+    if top_k <= 0:
+        return []
     search = getattr(st.brain, "document_search", None)
     if search is None:
         return []
-    key = hash(("connected-docs", query))
-    cached = st.recall_cache.get(key)
-    if cached is not None:
-        return [cached] if cached else []
-    seen = {m.group(1) for m in _CARD_RE.finditer(memory_text)}
-    try:
-        hits = await search(query, top_k=_DOC_RECALL_TOP_K, caller_did=st.agent_did)
-        hits = await _with_shared_hits(st, query, hits, top_k=_DOC_RECALL_TOP_K)
-    except Exception:  # recall is best-effort; never block prompt assembly
-        _logger.warning("connected-document recall failed", exc_info=True)
-        return []
-    fresh = [hit for hit in hits if getattr(hit, "pointer", "") not in seen]
-    text = frame_untrusted(_doc_blocks(fresh[:_DOC_RECALL_TOP_K])) if fresh else ""
-    _cache_recall(st, key, text)
-    return [text] if text else []
+    hits = await search(query, top_k=top_k, caller_did=st.agent_did)
+    hits = await _with_shared_hits(st, query, list(hits), top_k=top_k)
+    return [
+        _candidate(
+            "connection",
+            str(getattr(hit, "source_id", "")),
+            str(getattr(hit, "title", "") or getattr(hit, "pointer", "")),
+            float(getattr(hit, "score", 0.0)),
+            str(getattr(hit, "classification", "unclassified")),
+            _doc_blocks([hit])[0][1],
+            path=str(getattr(hit, "pointer", "")),
+        )
+        for hit in hits
+    ]
 
 
-async def _approved_profile_context(st: _runtime._State) -> str:
-    """Inject only reviewed facts for the agent profile, framed as untrusted data."""
+async def _profile_candidates(st: _runtime._State) -> list[dict[str, object]]:
+    """Operator-reviewed profile facts for this agent (approved only)."""
     try:
         module = __import__("arcmemory.profile", fromlist=["ProfileReviewStore", "ReviewStatus"])
     except ImportError:
-        return ""
+        return []
     store = module.ProfileReviewStore(st.workspace, agent_did=st.agent_did)
     facts = await store.list(status=module.ReviewStatus.APPROVED, profile_id=st.agent_did)
-    if not facts:
-        return ""
-    return frame_untrusted(
-        [(f"profile:{fact.field}", f"{fact.field}: {fact.value}") for fact in facts]
-    )
-
-
-async def _query_recall(st: _runtime._State, ctx: Any, query: str) -> str:
-    """Query-conditioned recall text, once-per-turn cached and ACL-gated."""
-    key = hash(query)
-    if key in st.recall_cache:
-        return st.recall_cache[key]
-    if not await _acl_allows("memory.search", st.agent_did):
-        return ""
-    # Reuse the turn's existing abstraction (no new LLM call — OQ-1); the Brain
-    # derives the structural cue seeds from its own entity/cue graph, so a
-    # different-domain turn can still match a stored abstraction. ``summary`` is
-    # empty unless a prior handler supplied one — a Brain that ignores it degrades
-    # to lexical-only, never errors.
-    summary = str(ctx.data.get("summary") or "")
-    started = time.monotonic()
-    text = await st.brain.retrieve(
-        query,
-        clearance="unclassified",
-        top_k=st.config.top_k,
-        budget=st.config.budget,
-        summary=summary,
-        index=False,  # query-only on the turn; indexing is the background refresh's job
-    )
-    _cache_recall(st, key, text)
-    await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})
-    # This recall is a real step that never passed through tool dispatch, so
-    # record it as one — the operator sees WHY memory was consulted, not just
-    # the reads that followed. Correlates to the turn via the ambient run id.
-    spool_auto_tool(
-        "memory_search",
-        actor_did=st.agent_did,
-        latency_ms=(time.monotonic() - started) * 1000.0,
-        args=query,
-        result=text,
-        extra={"hit": bool(text)},
-    )
-    return text
-
-
-# The recall injection wire-marker (data boundary the model sees). This module owns
-# assembling sections["recall"], so it understands the block the Brain renders — it
-# reads no arcmemory type and imports no memory package (the boundary stays intact).
-_CARD_RE = re.compile(
-    r'<memory-result\b[^>]*?\bsource="([^"]*)"[^>]*>.*?</memory-result>', re.DOTALL
-)
-
-
-def _merge_recall(query_text: str, proactive: list[str]) -> str:
-    """Merge proactive entries into the query recall, deduped per CARD (SPEC-072 COMP-002).
-
-    A working-set proactive block may share a card with the same-turn query recall while
-    carrying net-new cards; whole-block dedup would re-inject the shared one. So each
-    proactive entry is filtered card-by-card against the cards already surfaced (keyed on
-    the ``source`` marker, so the same card wins even at a different fused score): only
-    net-new cards are kept, ordering query recall first. An entry with no parseable card
-    marker (e.g. a plain block) falls back to whole-entry dedup — SPEC-071 behavior.
-    """
-    seen = {m.group(1) for m in _CARD_RE.finditer(query_text)}
-    merged = query_text
-    for entry in proactive:
-        if not entry:
-            continue
-        novel = _net_new_cards(entry, seen)
-        if novel and novel not in merged:
-            merged = f"{merged}\n{novel}" if merged else novel
-    return merged
-
-
-def _net_new_cards(entry: str, seen: set[str]) -> str:
-    """Strip cards whose source is already in ``seen``; record the kept ones.
-
-    Returns the entry's preamble plus its net-new card blocks, ``""`` when every card was
-    already surfaced. An entry with no ``source``-bearing card is returned verbatim (the
-    caller then whole-entry-dedups it), preserving the pre-SPEC-072 path.
-    """
-    cards = list(_CARD_RE.finditer(entry))
-    if not cards:
-        return entry
-    preamble = entry[: cards[0].start()].rstrip()
-    kept: list[str] = []
-    for match in cards:
-        source = match.group(1)
-        if source in seen:
-            continue
-        seen.add(source)
-        kept.append(match.group(0))
-    if not kept:
-        return ""
-    body = "\n".join(kept)
-    return f"{preamble}\n{body}" if preamble else body
-
-
-def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
-    """Bounded once-per-turn recall cache (FIFO eviction)."""
-    if len(st.recall_cache) >= _runtime._RECALL_CACHE_CAP:
-        st.recall_cache.pop(next(iter(st.recall_cache)))
-    st.recall_cache[key] = text
+    return [
+        _candidate(
+            "profile",
+            f"profile:{fact.field}",
+            str(fact.field),
+            1.0,
+            "unclassified",
+            f"{fact.field}: {fact.value}",
+        )
+        for fact in facts
+    ]
 
 
 # -- Manual promotion run: "Run now" (SPEC-083 REQ-512) -------------------
@@ -446,35 +441,6 @@ async def inject_memory_disabled_note(ctx: Any) -> None:
     sections = ctx.data.get("sections")
     if isinstance(sections, dict):
         sections["memory_status"] = await _module_prompt(ctx, st, "memory_disabled_note")
-
-
-@hook(event="agent:pre_respond", priority=100)
-async def inject_insight(ctx: Any) -> None:
-    """Produce the skills-improver ``insight`` from Brain recall (SPEC-044 REQ-060 / MED-4).
-
-    Runs before the skills reader (priority 150, lower runs first) and places Brain-derived
-    recall text on ``ctx.data["insight"]`` so the improver's code/prose mutator gets
-    grounded context. ACL-gated like every Brain read; empty/absent when memory is off, so
-    the improver stays fully memory-less. (A narrower failure-only insight channel is a
-    possible SPEC-047 follow-on.)
-    """
-    st = _runtime.state()
-    if not st.active:
-        return
-    query = str(ctx.data.get("task") or "").strip()
-    if not query:
-        return
-    if not await _acl_allows("memory.search", st.agent_did):
-        return
-    text = await st.brain.retrieve(
-        query,
-        clearance="unclassified",
-        top_k=st.config.top_k,
-        budget=st.config.budget,
-        index=False,  # query-only on the turn; indexing is the background refresh's job
-    )
-    if text:
-        ctx.data["insight"] = text
 
 
 # -- Capture hooks -------------------------------------------------------
@@ -1354,6 +1320,7 @@ async def consolidate_poll_once(*, now_local: datetime | None = None) -> bool:
 
 
 __all__ = [
+    "ContextRetrieval",
     "backfill_digest_from_holdings",
     "capture_respond",
     "capture_tool",
@@ -1363,9 +1330,7 @@ __all__ = [
     "datastore_describe",
     "datastore_query",
     "document_search",
-    "inject_insight",
     "inject_memory_disabled_note",
-    "inject_recall",
     "memory_consolidate_loop",
     "memory_search",
     "on_agent_moment",

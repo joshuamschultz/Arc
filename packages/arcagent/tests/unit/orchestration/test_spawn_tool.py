@@ -25,6 +25,15 @@ async def _upper_execute(params: dict, ctx: object) -> str:
     return params.get("text", "").upper()
 
 
+def _prompt(text: str):  # type: ignore[no-untyped-def]  # reason: test helper
+    """A spawn tool's base-prompt factory that answers ``text``."""
+
+    async def factory() -> str:
+        return text
+
+    return factory
+
+
 def _make_parent_state(*, depth: int = 0, max_depth: int = 3) -> RunState:
     bus = EventBus(run_id="parent-run")
     tools = [
@@ -80,7 +89,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=tools,
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert isinstance(tool, Tool)
 
@@ -97,7 +106,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=tools,
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert tool.name == "spawn_task"
 
@@ -106,7 +115,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=[],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert "task" in tool.input_schema["properties"]
         assert "task" in tool.input_schema["required"]
@@ -116,7 +125,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=[],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert "system_prompt" in tool.input_schema["properties"]
         assert "system_prompt" not in tool.input_schema["required"]
@@ -126,7 +135,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=[],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert "tools" in tool.input_schema["properties"]
         assert "tools" not in tool.input_schema["required"]
@@ -136,7 +145,7 @@ class TestMakeSpawnTool:
         tool = make_spawn_tool(
             model=model,
             tools=[],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         assert tool.timeout_seconds == 300  # default spawn timeout (C4 fix)
 
@@ -157,7 +166,7 @@ class TestDepthLimitRejection:
         tool = make_spawn_tool(
             model=model,
             tools=tools,
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do something"}, ctx)
@@ -171,7 +180,7 @@ class TestDepthLimitRejection:
         tool = make_spawn_tool(
             model=model,
             tools=[],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do something"}, ctx)
@@ -194,7 +203,7 @@ class TestToolSubsetting:
         tool = make_spawn_tool(
             model=model,
             tools=tools,
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do X", "tools": ["nonexistent"]}, ctx)
@@ -223,7 +232,7 @@ class TestToolSubsetting:
         tool = make_spawn_tool(
             model=child_model,
             tools=tools,
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do X", "tools": ["echo"]}, ctx)
@@ -251,7 +260,7 @@ class TestRootTokenBudgetWiring:
         tool = make_spawn_tool(
             model=child_model,
             tools=[_echo_tool()],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
             root_token_budget=pool,
         )
         ctx = _make_ctx(parent_state=state)
@@ -285,7 +294,7 @@ class TestRootTokenBudgetWiring:
         tool = make_spawn_tool(
             model=child_model,
             tools=[_echo_tool()],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
             root_token_budget=pool,
         )
         ctx = _make_ctx(parent_state=state)
@@ -312,7 +321,7 @@ class TestRootTokenBudgetWiring:
         tool = make_spawn_tool(
             model=child_model,
             tools=[_echo_tool()],
-            system_prompt="test",
+            system_prompt_factory=_prompt("test"),
         )
         ctx = _make_ctx(parent_state=state)
 

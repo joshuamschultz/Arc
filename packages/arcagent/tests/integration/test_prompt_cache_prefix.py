@@ -77,12 +77,17 @@ async def test_second_turn_reuses_the_first_turns_prefix(
     agent = ArcAgent(config=agent_config, config_path=tmp_path / "arcagent.toml")
     await agent.startup()
 
-    # A module that injects fresh per-turn material, as memory recall does.
-    async def inject_recall(ctx: EventContext) -> None:
-        ctx.data["sections"]["recall"] = f"recalled for: {ctx.data['query']}"
+    # A module that injects fresh per-turn material, as the team inbox does. The
+    # spawn child prompt assembles too, so the count is not one per turn.
+    inbox_reads = 0
+
+    async def inject_inbox(ctx: EventContext) -> None:
+        nonlocal inbox_reads
+        inbox_reads += 1
+        ctx.data["sections"]["teams"] = f"recalled for: turn {inbox_reads}"
 
     assert agent._bus is not None
-    agent._bus.subscribe("agent:assemble_prompt", inject_recall, priority=50)
+    agent._bus.subscribe("agent:assemble_prompt", inject_inbox, priority=50)
 
     # The channel arcmemory captures from. It must carry the conversation only:
     # distilling the agent's own retrieved text back into memory would feed the
@@ -110,7 +115,7 @@ async def test_second_turn_reuses_the_first_turns_prefix(
 
     # 2. Per-turn material still reached the model — it rode with the user turn.
     turn_one_user = first["messages"][-1].content
-    assert "recalled for: first question" in turn_one_user
+    assert "recalled for: turn " in turn_one_user
     assert "recalled for" not in "".join(first["system_prompt"])
 
     # 3. Turn one's messages are an exact prefix of turn two's (append-only).
@@ -123,7 +128,8 @@ async def test_second_turn_reuses_the_first_turns_prefix(
     stored = [m for m in session.get_messages() if m["role"] == "user"]
     assert [m["content"] for m in stored] == ["first question", "second, unrelated question"]
     assert all("<agent-context>" not in m["content"] for m in stored)
-    assert "recalled for: first question" in stored[0]["turn_context"]
+    assert "recalled for: turn " in stored[0]["turn_context"]
+    assert stored[0]["turn_context"] != stored[1]["turn_context"]
 
     # 5. Memory capture sees the conversation, never the retrieved material.
     assert captured_for_memory

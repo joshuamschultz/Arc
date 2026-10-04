@@ -1,8 +1,6 @@
-"""Failing tests for the ``agent:moment`` proactive-buffer subscriber (SPEC-071 T-988).
+"""Tests for the ``agent:moment`` proactive-buffer subscriber (SPEC-071).
 
-Covers the two not-yet-built pieces (T-989 builds them):
-
-* a NEW ``@hook(event="agent:moment")`` subscriber in
+* the ``@hook(event="agent:moment")`` subscriber in
   ``arcagent.modules.memory.capabilities`` — expected name/signature::
 
       @hook(event="agent:moment")
@@ -15,15 +13,7 @@ Covers the two not-yet-built pieces (T-989 builds them):
   appends any non-empty returned text to a NEW ``_State.proactive_buffer:
   list[str]`` field (``packages/arcagent/src/arcagent/modules/memory/_runtime.py``).
 
-* the EXISTING ``inject_recall`` (``agent:assemble_prompt``) draining that buffer
-  and merging it into ``sections["recall"]`` — appended after, deduped against
-  the query-driven recall text, buffer cleared afterward.
-
-RED discipline: importing ``on_agent_moment`` from ``capabilities`` fails today
-(the name does not exist) — that IS the correct RED signal for a not-yet-built
-handler (see task brief). Every test body still asserts real behavior beyond
-the import, so GREEN (T-989) is driven by these assertions, not merely by the
-import succeeding.
+* ``ContextRetrieval`` draining that buffer into candidates, once.
 """
 
 from __future__ import annotations
@@ -36,7 +26,7 @@ import pytest
 
 from arcagent.brain import NullBrain
 from arcagent.modules.memory import _runtime
-from arcagent.modules.memory.capabilities import inject_recall, on_agent_moment
+from arcagent.modules.memory.capabilities import ContextRetrieval, on_agent_moment
 
 _DID = "did:arc:test-agent"
 
@@ -122,10 +112,10 @@ async def test_on_moment_subscriber_calls_brain_and_buffers_returned_text() -> N
     assert _runtime.state().proactive_buffer == ["<memory-result>proactive</memory-result>"]
 
 
-# -- 2. Injection merge -----------------------------------------------------
+# -- 2. The next context retrieval drains the buffer ------------------------
 
 
-async def test_inject_recall_drains_and_merges_proactive_buffer() -> None:
+async def test_context_retrieval_drains_the_staged_buffer_once() -> None:
     spy = _MomentSpyBrain()
     _configure_with(spy)
 
@@ -139,37 +129,16 @@ async def test_inject_recall_drains_and_merges_proactive_buffer() -> None:
             }
         )
     )
-    assert _runtime.state().proactive_buffer  # sanity: buffered before assemble runs
+    assert _runtime.state().proactive_buffer  # sanity: staged before retrieval runs
 
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
+    first = await ContextRetrieval().retrieve("who owns payments", memory_top_k=4, docs_top_k=3)
+    second = await ContextRetrieval().retrieve("who owns payments", memory_top_k=4, docs_top_k=3)
 
-    assert "recall" in sections
-    assert "<memory-result>proactive</memory-result>" in sections["recall"]
-    assert "<memory-result>who owns payments</memory-result>" in sections["recall"]
-    # Drained AND cleared — a second assemble in the same turn must not re-inject it.
+    assert "<memory-result>proactive</memory-result>" in [c["text"] for c in first["candidates"]]
+    assert "<memory-result>proactive</memory-result>" not in [
+        c["text"] for c in second["candidates"]
+    ]
     assert _runtime.state().proactive_buffer == []
-
-
-async def test_inject_recall_dedupes_identical_proactive_and_query_text() -> None:
-    """Query-driven recall and a proactive buffer surfacing the SAME card must not
-    duplicate it in the assembled section — merge is a dedup, not a blind append."""
-    shared_text = "<memory-result>same card</memory-result>"
-    spy = _MomentSpyBrain(moment_text=shared_text)
-    _configure_with(spy)
-
-    async def _same_retrieve(query: str, **_: Any) -> str:
-        return shared_text
-
-    spy.retrieve = _same_retrieve  # type: ignore[method-assign]
-
-    await on_agent_moment(
-        _ctx({"kind": "task_start", "cues": ["x"], "text": "x", "session_id": None})
-    )
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "same card"}))
-
-    assert sections["recall"].count(shared_text) == 1
 
 
 # -- 3. proactive_enabled=False -> no-op ------------------------------------
@@ -187,10 +156,10 @@ async def test_on_moment_subscriber_noop_when_proactive_disabled() -> None:
     assert _runtime.state().proactive_buffer == []
 
 
-# -- 4. Empty on_moment return injects nothing -------------------------------
+# -- 4. Empty on_moment return stages nothing ------------------------------
 
 
-async def test_empty_moment_text_buffers_nothing_and_injects_nothing() -> None:
+async def test_empty_moment_text_buffers_nothing_and_retrieves_nothing_staged() -> None:
     spy = _MomentSpyBrain(moment_text="")
     _configure_with(spy)
 
@@ -207,10 +176,8 @@ async def test_empty_moment_text_buffers_nothing_and_injects_nothing() -> None:
     assert len(spy.moment_calls) == 1  # brain WAS consulted
     assert _runtime.state().proactive_buffer == []  # but empty text never buffers
 
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "unrelated query"}))
-    # Query-driven recall still runs (unaffected), but nothing proactive rode along.
-    assert "<memory-result>proactive</memory-result>" not in sections.get("recall", "")
+    found = await ContextRetrieval().retrieve("unrelated query", memory_top_k=4, docs_top_k=3)
+    assert found["candidates"] == []
 
 
 # -- 5. NullBrain / inactive -> no-op, never raises --------------------------

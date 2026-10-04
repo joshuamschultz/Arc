@@ -96,7 +96,14 @@ list `[]`) · `max_tokens` (int > 0, `4096`) · `temperature` (float, `0.7`) ·
 ### `[session]` — `config.py:342`
 `retention_count` (int, `50`) · `retention_days` (int, `30`) ·
 `compaction_summary_max_chars` (int, `2000`) · `compaction_timeout_seconds`
-(float > 0, `30.0`)
+(float > 0, `30.0`) · `turn_start_timeout_seconds` (float > 0, `120.0`) ·
+`context_prep_budget_seconds` (float > 0, `1.5`; the whole pre-model
+retrieval; past it the turn continues without retrieved context) ·
+`context_memory_top_k` (int ≥ 0, `5`) · `context_memory_score_floor` (float ≥ 0,
+`0.0`; a score of 0 is always dropped) · `context_memory_token_cap` (int ≥ 0,
+`1024`) · `context_docs_top_k` (int ≥ 0, `3`) · `context_docs_token_cap`
+(int ≥ 0, `1500`) · `context_docs_score_floor` (float ≥ 0, `0.05`) ·
+`context_token_cap` (int ≥ 0, `2500`; everything injected)
 
 ### `[security]` — `config.py:421`
 `tier` (str, `"personal"` — `personal`/`enterprise`/`federal`) · `clearance`
@@ -162,7 +169,11 @@ raise** above what a manifest permits.
 ## `arcrun.toml` — `[arcrun]` — `config.py:642`
 `max_turns` (int > 0, `120`) · `tool_timeout` (float | None, `None`) ·
 `allowed_strategies` (list | None, `None`; federal floors to `["react"]`) ·
-`approval_opt_in` (list, `[]`)
+`approval_opt_in` (list, `[]`) · `strategy_model` (str, `""` = the agent's
+model; the model that picks each turn's strategy) · `strategy_timeout_seconds`
+(float > 0, `3.0`; past it the turn uses react) · `max_tool_result_tokens`
+(int > 0 | None, `8000`; a longer tool result keeps its head plus a re-read
+marker)
 
 **`[arcrun.sandbox]`** — `config.py:630` — `allowed_tools` (list | None, `None`
 = all tools)
