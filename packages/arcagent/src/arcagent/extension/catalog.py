@@ -146,6 +146,21 @@ def is_config_only_bundle(bundle: Path, tier: Tier) -> bool:
     return manifest.extension.attachment == "mcp"
 
 
+#: The action code for a code-bearing bundle in the operator tree: review and sign it,
+#: which installs a signed copy where code may run (UJ-6). A surface renders it as a button.
+SIGN_BUNDLE_ACTION = "sign_bundle"
+
+_AWAITS_SIGNING = (
+    "{name!r} carries code, and Arc does not run code from this folder until you "
+    "review and sign it"
+)
+
+
+def _awaits_signing(path: Path, tier: Tier) -> bool:
+    """A code-bearing bundle sitting in the operator tree, which nothing may execute."""
+    return in_operator_tree(path) and not is_config_only_bundle(path, tier)
+
+
 #: Vetted upstream extensions → their expected distribution package name.
 #: At federal tier only these names may resolve (signed-allowlist control point);
 #: the pinned version and sha256 of the artifact travel on the bundle's own
@@ -193,6 +208,8 @@ class ExtensionResolution:
         knowledge_mode: Whether this connector is a source or explicitly not indexable.
         knowledge_reason: Operator-facing reason when the connector is not indexable.
         error: Why this directory is not a usable bundle. Empty when it is one.
+        action: What the operator can do about ``error``, as a code a surface turns
+            into a button (:data:`SIGN_BUNDLE_ACTION`). Empty when there is nothing.
     """
 
     name: str
@@ -204,6 +221,7 @@ class ExtensionResolution:
     knowledge_mode: str = ""
     knowledge_reason: str = ""
     error: str = ""
+    action: str = ""
 
 
 class ExtensionCatalog:
@@ -287,14 +305,12 @@ class ExtensionCatalog:
                 self._refuse(
                     name, reason="escapes_root", message=f"{name!r} escapes the root {root}"
                 )
-            if in_operator_tree(path) and not is_config_only_bundle(path, self._tier):
+            if _awaits_signing(path, self._tier):
                 self._refuse(
                     name,
                     reason="code_in_operator_tree",
-                    message=(
-                        f"{name!r} at {path} carries code, and nothing executes from the "
-                        "operator tree; it has to be installed as a signed bundle first"
-                    ),
+                    message=_AWAITS_SIGNING.format(name=name),
+                    action=SIGN_BUNDLE_ACTION,
                 )
             return path
         self._refuse(
@@ -341,6 +357,12 @@ class ExtensionCatalog:
         )
         if root.resolve() not in path.resolve().parents:
             return replace(entry, error=f"{path.name!r} escapes the root {root}")
+        if _awaits_signing(path, self._tier):
+            return replace(
+                entry,
+                error=_AWAITS_SIGNING.format(name=path.name),
+                action=SIGN_BUNDLE_ACTION,
+            )
         try:
             validate_extension_name(path.name)
             manifest = _read_manifest(path, self._tier)
@@ -368,11 +390,12 @@ class ExtensionCatalog:
             "catalog: resolving unvetted extension %r (personal/enterprise only)", name
         )
 
-    def _refuse(self, name: str, *, reason: str, message: str) -> NoReturn:
-        """Audit the denial, then raise."""
+    def _refuse(self, name: str, *, reason: str, message: str, action: str = "") -> NoReturn:
+        """Audit the denial, then raise. ``action`` is the code a surface turns into a button."""
         self._audit("extension.blocked", name, "deny", reason=reason)
         _logger.warning("catalog: refused extension %r (%s)", name, reason)
-        raise ExtensionError(code="EXTENSION_REFUSED", message=message, details={"reason": reason})
+        details = {"reason": reason, **({"action": action} if action else {})}
+        raise ExtensionError(code="EXTENSION_REFUSED", message=message, details=details)
 
     def _audit(self, action: str, name: str, outcome: str, *, reason: str) -> None:
         """Emit one verdict through the single audit chokepoint (AU-2)."""
@@ -417,6 +440,7 @@ __all__ = [
     "EXTENSIONS_ROOT_ENV",
     "MANIFEST_NAME",
     "OFFICIAL_EXTENSIONS",
+    "SIGN_BUNDLE_ACTION",
     "ExtensionCatalog",
     "ExtensionResolution",
     "in_operator_tree",

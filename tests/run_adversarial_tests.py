@@ -37,6 +37,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # TOCTOU: swapping runtime/current after boot never redirects an extension load.
         "packages/arctrust/tests/unit/test_runtime_extensions_pin.py",
     ),
+    "connector package uploaded from the browser (UJ-6)": (
+        # zip-slip and tar-slip, a symlink escaping the root, links and device files,
+        # a zip bomb by ratio and by size, more than 2000 entries, a manifest declaring
+        # tools its code lacks (and code offering undeclared tools), staged files
+        # swapped between review and approve (and between writing and signing), a
+        # file added after the publisher signed, federal refusing an unsigned or
+        # unknown publisher, and an update adding egress that needs re-approval.
+        "packages/arcagent/tests/security/test_bundle_import_abuse.py",
+        # A viewer cannot upload, approve or remove; refusals are audited.
+        "packages/arcui/tests/test_connector_bundles_routes.py",
+    ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
         # The refusal reaches the module's audit sink in production, not only a log.

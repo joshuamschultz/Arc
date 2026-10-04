@@ -1,0 +1,38 @@
+# A small third-party connector package, used by the upload-review-sign tests.
+#
+# It is what a customer drags onto the Connections page: a manifest, the code that
+# implements it, and a skill. The "service" is a dictionary inside the code, so a
+# failure can only ever mean the package path is wrong, never that a network was down.
+
+[extension]
+name = "notes"
+display_name = "Notes"
+version = "1.0.0"
+description = "Keep short notes an agent can read back."
+attachment = "native"
+tier_floor = "personal"
+
+[knowledge]
+mode = "non_indexable"
+reason = "Notes live only in memory; there is nothing to index."
+
+[config.native]
+entrypoint = "arc_ext_notes"
+
+[[secrets]]
+name = "api_token"
+prompt = "The Notes API token."
+
+[health]
+probe = "attachment"
+
+[tools]
+allow = ["notes_echo"]
+
+[[tools.declared]]
+name = "notes_echo"
+description = "Echo a note back from the Notes service."
+classification = "read_only"
+
+[approval]
+default = "none"
