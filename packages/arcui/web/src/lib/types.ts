@@ -1066,12 +1066,21 @@ export interface WorkflowErrorsResponse {
   errors: WorkflowFieldError[]
 }
 
+/** Why a failed run failed: the node it is blamed on, a plain sentence, the raw error. */
+export interface WorkflowFailureReason {
+  node_id: string | null
+  summary: string
+  detail: string | null
+}
+
 export interface WorkflowRunSummary {
   [key: string]: unknown
   run_id: string
   status: WorkflowRunStatus
   started_at?: string
   ended_at?: string | null
+  /** Present on a failed run; `null` on every other run. */
+  failure_reason?: WorkflowFailureReason | null
 }
 
 export interface WorkflowRunsResponse {
@@ -1092,7 +1101,15 @@ export interface WorkflowRunNodeStatus {
   owner_did?: string | null
   started_at?: string | null
   completed_at?: string | null
+  /** The raw error, sanitized; the technical detail behind `error_summary`. */
   last_error?: string | null
+  /** `last_error` in plain words. */
+  error_summary?: string | null
+  /** A node that succeeded after a failed attempt: that attempt's error. */
+  recovered_from?: { summary: string; detail: string } | null
+  duration_s?: number | null
+  /** Where the node's notification is pinned to go, e.g. `telegram:123`. */
+  deliver_to?: string | null
   /** The router's chosen route id, on a `routed` node. */
   route?: string | null
   /** Why a node was skipped or cancelled (e.g. "upstream X failed: ..."). */
@@ -1109,6 +1126,7 @@ export interface WorkflowRunNodeStatus {
 export interface WorkflowRunDetail {
   [key: string]: unknown
   last_error?: string | null
+  failure_reason?: WorkflowFailureReason | null
   run_id: string
   workflow_id: string
   version: number

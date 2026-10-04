@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api'
 import { useRetryWorkflowNode } from '@/lib/queries'
-import type { WorkflowRunNodeStatus } from '@/lib/types'
+import type { WorkflowFailureReason, WorkflowRunNodeStatus } from '@/lib/types'
+import { failureLine } from '@/lib/workflow-failure'
 import { RepeatUnsafeChip } from './repeat-warning'
 
 /** A bounded wire value: small values arrive as-is, large ones as a marked preview. */
@@ -43,6 +44,18 @@ function IoBlock({ label, value }: { label: string; value: unknown }) {
           {JSON.stringify(value, null, 2)}
         </pre>
       )}
+    </details>
+  )
+}
+
+/** The raw error behind a plain reason, folded away until asked for. */
+function TechnicalDetail({ text }: { text: string }) {
+  return (
+    <details className="mt-0.5">
+      <summary className="cursor-pointer text-[11px] text-muted-foreground">Technical detail</summary>
+      <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/30 p-2 text-[11px]">
+        {text}
+      </pre>
     </details>
   )
 }
@@ -113,6 +126,8 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
   const repeatUnsafe = node.idempotent === false && node.status === 'failed'
   if (
     !node.last_error &&
+    !node.recovered_from &&
+    !node.deliver_to &&
     !hasAttempts &&
     !hasIo &&
     !showRoute &&
@@ -130,7 +145,23 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
         </span>
       )}
       {showReason && <p className="text-muted-foreground">{node.reason}</p>}
-      {node.last_error && <p className="text-status-error">{node.last_error}</p>}
+      {node.last_error && (
+        <>
+          <p className="text-status-error">{node.error_summary ?? node.last_error}</p>
+          {node.error_summary && <TechnicalDetail text={node.last_error} />}
+        </>
+      )}
+      {node.recovered_from && (
+        <>
+          <p className="text-muted-foreground">
+            {`Succeeded after an earlier attempt failed: ${node.recovered_from.summary}`}
+          </p>
+          <TechnicalDetail text={node.recovered_from.detail} />
+        </>
+      )}
+      {node.deliver_to && (
+        <p className="mt-1 text-[11px] text-muted-foreground">{`Delivers to ${node.deliver_to}`}</p>
+      )}
       {repeatUnsafe && (
         <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
           <RepeatUnsafeChip />
@@ -152,7 +183,30 @@ export function NodeDetail({ node, runId, runStatus, canRetry }: NodeDetailProps
 }
 
 /** The run-level reason a run failed; silent when there is none. */
-export function RunError({ status, lastError }: { status: string; lastError?: string | null }) {
+export function RunError({
+  status,
+  lastError,
+  failureReason,
+}: {
+  status: string
+  lastError?: string | null
+  failureReason?: WorkflowFailureReason | null
+}) {
+  if (failureReason) {
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-status-error/30 bg-status-error/10 px-2.5 py-2 text-xs text-status-error"
+        data-status={status}
+      >
+        <span className="block text-[10px] font-semibold uppercase tracking-[0.08em]">
+          Why this run failed
+        </span>
+        {failureLine(failureReason)}
+        {failureReason.detail && <TechnicalDetail text={failureReason.detail} />}
+      </div>
+    )
+  }
   if (!lastError) return null
   return (
     <div
