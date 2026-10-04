@@ -161,6 +161,11 @@ class SyncWorkerSupervisor:
         return SyncWorkerStatus(self._state, pid, self._restarts, self._detail, retry)
 
     @property
+    def loop(self) -> asyncio.AbstractEventLoop | None:
+        """The event loop this supervisor was started on, while it supervises."""
+        return self._task.get_loop() if self._task is not None else None
+
+    @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
@@ -456,11 +461,20 @@ async def shutdown_process_supervisor() -> None:
 
 
 def discard_process_supervisor() -> None:
-    """Kill and forget this process's supervisor when no event loop is left to stop it."""
+    """Stop and forget this process's supervisor from code that is not in a coroutine.
+
+    Stops it in order on the loop it was started on when that loop is still open
+    and idle; otherwise (the loop is gone) kills the child outright.
+    """
     global _PROCESS_SUPERVISOR
     supervisor, _PROCESS_SUPERVISOR = _PROCESS_SUPERVISOR, None
-    if supervisor is not None:
-        supervisor.discard()
+    if supervisor is None:
+        return
+    loop = supervisor.loop
+    if loop is not None and not loop.is_closed() and not loop.is_running():
+        loop.run_until_complete(supervisor.stop())
+        return
+    supervisor.discard()
 
 
 __all__ = [

@@ -412,9 +412,9 @@ def _shared_stores(agent: tuple[Path, str] | None) -> list[Path]:
 
 def _agent_embed_settings(agent_root: Path) -> tuple[str, str, str]:
     """The agent's ``embed_*`` settings exactly as its memory module resolves them."""
-    from arcagent.modules.memory.config import MemoryConfig as AgentMemoryConfig
+    import arcagent
 
-    backend = AgentMemoryConfig(**_memory_section(agent_root)).backend
+    backend = arcagent.MemoryConfig(**_memory_section(agent_root)).backend
     return (
         str(backend.get("embed_backend", "local")),
         str(backend.get("embed_model", "")),
@@ -423,9 +423,10 @@ def _agent_embed_settings(agent_root: Path) -> tuple[str, str, str]:
 
 
 def _agent_profile(agent_root: Path) -> str:
-    from arcagent.modules.connected_data.ingest import profile_of
+    import arcagent
 
-    return profile_of(*_agent_embed_settings(agent_root))
+    profile: str = arcagent.embedding_profile_of(*_agent_embed_settings(agent_root))
+    return profile
 
 
 def _render_backlog(store: Path) -> None:

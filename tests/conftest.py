@@ -10,8 +10,9 @@ arcllm is a workspace-editable package whose source is in packages/arcllm/src.
 
 from __future__ import annotations
 
+import inspect
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -31,16 +32,28 @@ def _ensure_workspace_packages_on_path() -> None:
 _ensure_workspace_packages_on_path()
 
 
-@pytest.fixture(autouse=True)
-async def _no_sync_worker_outlives_its_test() -> AsyncIterator[None]:
-    """A test that wrote a connected store started a sync worker; it dies with the test."""
+@pytest.fixture
+async def _stop_sync_worker_in_loop() -> AsyncIterator[None]:
     yield
     from arcagent.modules.connected_data.sync_worker.supervisor import (
-        discard_process_supervisor,
         shutdown_process_supervisor,
     )
 
-    try:
-        await shutdown_process_supervisor()
-    except RuntimeError:  # started on a loop that is already gone
-        discard_process_supervisor()
+    await shutdown_process_supervisor()
+
+
+@pytest.fixture(autouse=True)
+def _no_sync_worker_outlives_its_test(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A test that wrote a connected store started a sync worker; it dies with the test.
+
+    A coroutine test stops it in order on its own loop; anything left over (a
+    supervisor started on a loop that is gone) is killed outright.
+    """
+    if inspect.iscoroutinefunction(getattr(request, "function", None)):
+        request.getfixturevalue("_stop_sync_worker_in_loop")
+    yield
+    from arcagent.modules.connected_data.sync_worker.supervisor import (
+        discard_process_supervisor,
+    )
+
+    discard_process_supervisor()

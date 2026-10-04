@@ -980,9 +980,9 @@ def create_app(
 
 async def _start_sync_worker(app: Starlette) -> Any:
     """Spawn and supervise the sync worker; it reaches arcstore and the audit chain via us."""
-    from arcagent.modules.connected_data.sync_worker import process_supervisor
+    import arcagent
 
-    supervisor = process_supervisor()
+    supervisor = arcagent.sync_worker_supervisor()
     backend = app.state.arcstore_backend
 
     async def opener() -> Any:
@@ -998,10 +998,10 @@ async def _start_sync_worker(app: Starlette) -> Any:
 
 
 async def _stop_sync_worker(supervisor: Any) -> None:
-    from arcagent.modules.connected_data.sync_worker import shutdown_process_supervisor
+    import arcagent
 
     try:
-        await shutdown_process_supervisor()
+        await arcagent.shutdown_sync_worker()
     except Exception:  # reason: fail-open — continue shutdown; the child exits on stdin EOF
         logger.exception("lifespan: error stopping the sync worker")
     if supervisor is not None:

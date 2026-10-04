@@ -110,9 +110,9 @@ def _ui_handler(args: list[str]) -> None:
 
 def _sync_worker_handler(args: list[str]) -> None:
     """The connected-data sync worker: spawned by ``arc ui start``, never by hand."""
-    from arcagent.modules.connected_data.sync_worker.worker import main
+    import arcagent
 
-    main(args)
+    arcagent.run_sync_worker(args)
 
 
 def _queue_handler(args: list[str]) -> None:
