@@ -63,6 +63,7 @@ from arcagent.capabilities.isolated_tool import IsolatedCapabilityError, parse_a
 from arcagent.core.errors import ExtensionError
 from arcagent.core.tier import Tier
 from arcagent.extension.catalog import (
+    BUNDLES_DIRNAME,
     MANIFEST_NAME,
     in_operator_tree,
     is_config_only_bundle,
@@ -279,7 +280,7 @@ class BundleStaging:
                 validate_extension_name(name)
             except ValueError as exc:
                 raise _refuse("invalid_name", str(exc)) from exc
-            folder = Path(connections.world.arc_dir) / "extensions" / name
+            folder = Path(connections.world.arc_dir) / BUNDLES_DIRNAME / name
             if (
                 folder.is_symlink()
                 or not folder.is_dir()
@@ -402,6 +403,23 @@ class BundleStaging:
         now = self._clock()
         for staging_id in [k for k, r in self._records.items() if r.expires_at <= now]:
             self.discard(staging_id)
+        self._sweep_orphans()
+
+    def _sweep_orphans(self) -> None:
+        """Delete stagings an earlier process left behind, once they are past the TTL.
+
+        Their reviewed digests died with that process, so they can never be approved.
+        Measured on the wall clock (file times), never on this object's clock.
+        """
+        root = installed_extensions_dir() / _STAGING_DIRNAME
+        if not root.is_dir():
+            return
+        cutoff = time.time() - self._ttl
+        for holder in root.iterdir():
+            if holder.name in self._records or holder.is_symlink() or not holder.is_dir():
+                continue
+            if holder.stat().st_mtime < cutoff:
+                shutil.rmtree(holder, ignore_errors=True)
 
     def _install(
         self, record: _Record, confirm_name: str, connections: Connections

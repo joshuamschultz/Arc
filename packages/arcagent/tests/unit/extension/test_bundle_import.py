@@ -418,3 +418,24 @@ def test_connecting_an_unsigned_code_bundle_asks_for_signing(deployment: Path) -
     assert refused.value.details["reason"] == "code_in_operator_tree"
     assert refused.value.details["action"] == "sign_bundle"
     assert "arc " not in refused.value.message
+
+
+def test_staging_left_by_an_earlier_process_is_swept_after_an_hour(
+    deployment: Path, tmp_path: Path
+) -> None:
+    import os
+    import time
+
+    root = installed_extensions_dir() / ".staging"
+    stale = root / ("a" * 32) / "notes"
+    fresh = root / ("b" * 32) / "notes"
+    for folder in (stale, fresh):
+        folder.mkdir(parents=True)
+        (folder / "extension.toml").write_text("x")
+    old = time.time() - 3700
+    os.utime(stale.parent, (old, old))
+
+    BundleStaging().get("c" * 32)
+
+    assert not stale.parent.exists()
+    assert fresh.parent.exists()

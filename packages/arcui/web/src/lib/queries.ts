@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm, apiPut } from './api'
 import { auditQuery, type AuditFilters } from './audit-query'
 import type {
   AgentConnectorsResponse,
+  ConnectorBundlesResponse,
+  InstalledBundle,
+  StagedBundle,
   ConnectionGuide,
   ConnectionGuideHistory,
   ConnectionGuideStarter,
@@ -2270,3 +2273,63 @@ export const usePendingProfileReviewCounts = (agentIds: string[]) =>
     combine: (results) =>
       results.map((r, i) => ({ agentId: agentIds[i], count: r.data?.items?.length ?? 0 })),
   })
+
+// --- Connector packages ------------------------------------------------------
+
+const CONNECTOR_BUNDLES_KEY = ['connector-bundles']
+
+export const useConnectorBundles = () =>
+  useApiQuery<ConnectorBundlesResponse>(CONNECTOR_BUNDLES_KEY, '/api/connector-bundles')
+
+// A new or removed package changes the catalog and who can connect, so all three refresh.
+const useBundleInvalidator = () => {
+  const queryClient = useQueryClient()
+  return () => {
+    queryClient.invalidateQueries({ queryKey: CONNECTOR_BUNDLES_KEY })
+    queryClient.invalidateQueries({ queryKey: ['connectors', 'catalog'] })
+    queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })
+  }
+}
+
+export const useUploadConnectorBundle = () =>
+  useMutation<StagedBundle, Error, File>({
+    mutationFn: (file) => {
+      const form = new FormData()
+      form.append('file', file, file.name)
+      return apiPostForm<StagedBundle>('/api/connector-bundles/upload', form)
+    },
+  })
+
+export const useStageLocalConnectorBundle = () =>
+  useMutation<StagedBundle, Error, string>({
+    mutationFn: (name) => apiPost('/api/connector-bundles/stage-local', { name }),
+  })
+
+export const useApproveConnectorBundle = () => {
+  const invalidate = useBundleInvalidator()
+  return useMutation<
+    { installed: InstalledBundle },
+    Error,
+    { stagingId: string; confirmName: string }
+  >({
+    mutationFn: ({ stagingId, confirmName }) =>
+      apiPost(`/api/connector-bundles/${encodeURIComponent(stagingId)}/approve`, {
+        confirm_name: confirmName,
+      }),
+    onSuccess: invalidate,
+  })
+}
+
+export const useDiscardConnectorBundle = () =>
+  useMutation<{ discarded: unknown }, Error, string>({
+    mutationFn: (stagingId) =>
+      apiDelete(`/api/connector-bundles/staging/${encodeURIComponent(stagingId)}`),
+  })
+
+export const useRemoveConnectorBundle = () => {
+  const invalidate = useBundleInvalidator()
+  return useMutation<{ removed: unknown }, Error, string>({
+    mutationFn: (name) => apiDelete(`/api/connector-bundles/${encodeURIComponent(name)}`),
+    onSuccess: invalidate,
+  })
+}
