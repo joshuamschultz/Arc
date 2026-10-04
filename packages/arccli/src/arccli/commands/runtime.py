@@ -17,13 +17,12 @@ name, which is what stops ``current`` being aimed at ``state/``.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from arctrust.paths import (
-    PRE_SYMLINK_PREFIX,
     activate_runtime,
-    arc_runtime,
+    active_runtime_version,
     arc_runtime_root,
+    installed_runtime_versions,
 )
 
 from arccli.commands._shared import dispatch
@@ -32,44 +31,13 @@ from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _out
 
 
-def _is_version(entry: Path) -> bool:
-    """True when *entry* is an installed runtime an operator may activate.
-
-    Excludes the ``current`` link, a plain ``current/`` directory left by a
-    pre-symlink install, and the copy ``activate_runtime`` rescues from one.
-    Offering any of those would invite activating a tree with no venv in it.
-    """
-    return (
-        entry.is_dir()
-        and not entry.is_symlink()
-        and entry.name != arc_runtime().name
-        and not entry.name.startswith(PRE_SYMLINK_PREFIX)
-    )
-
-
-def _installed_versions() -> list[Path]:
-    """Every installed runtime, by name."""
-    root = arc_runtime_root()
-    if not root.is_dir():
-        return []
-    return sorted(p for p in root.iterdir() if _is_version(p))
-
-
-def _active_version() -> str | None:
-    """The directory name ``current`` resolves to, or ``None`` when unset."""
-    current = arc_runtime()
-    if not current.is_symlink():
-        return None
-    return current.resolve().name
-
-
 def _list(_: argparse.Namespace) -> None:
     """Print every installed runtime and mark the live one."""
-    versions = _installed_versions()
+    versions = installed_runtime_versions()
     if not versions:
         _out(f"No runtime installed under {arc_runtime_root()}.")
         return
-    active = _active_version()
+    active = active_runtime_version()
     _print_table(
         ["Version", "Status", "Path"],
         [[p.name, "ACTIVE" if p.name == active else "", str(p)] for p in versions],

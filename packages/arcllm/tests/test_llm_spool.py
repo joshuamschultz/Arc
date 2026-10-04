@@ -64,6 +64,39 @@ async def test_completion_records_llm_call(messages: list[Message]) -> None:
     assert rec.latency_ms is not None
 
 
+async def test_queued_call_stamps_its_session_and_origin(messages: list[Message]) -> None:
+    """The Context Window card must tell a chat prompt from a background one, and
+    one session's prompt from another's, so the spool row names both."""
+    from arcllm.queue_control import CallJob
+
+    job = CallJob(
+        call_id="c1",
+        tenant_id="t",
+        owner_id="o",
+        agent_id="a",
+        session_id="sess-1",
+        run_id="r1",
+        state="running",
+        version=1,
+        created_at=0.0,
+        updated_at=0.0,
+    )
+    module = TelemetryModule(_config(), _inner())
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages, _queue_job=job)
+    assert recorded[0].extra["session_id"] == "sess-1"
+    assert recorded[0].extra["call_origin"] == "chat"
+
+
+async def test_unqueued_call_stamps_no_session(messages: list[Message]) -> None:
+    module = TelemetryModule(_config(), _inner())
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages)
+    assert "session_id" not in recorded[0].extra
+
+
 async def test_completion_records_cache_breakdown(messages: list[Message]) -> None:
     """Cache read/write tokens are persisted SEPARATELY on the spool record so a
     consumer can compute hit-rate — prompt_tokens stays the summed input total."""

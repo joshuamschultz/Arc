@@ -82,6 +82,7 @@ from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
+from arcui.routes import maintenance as maintenance_routes
 from arcui.routes import mcp as mcp_routes
 from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
@@ -442,6 +443,8 @@ def create_app(
         *source_guide_routes.routes,
         *gateway_routes.routes,
         *stack_routes.routes,
+        # Settings -> Maintenance: updates, modules, blueprints, team members.
+        *maintenance_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
         *team_ws_routes.routes,

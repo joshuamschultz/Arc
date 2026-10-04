@@ -12,10 +12,9 @@ import os
 import tomllib
 from pathlib import Path
 
+from arcagent import blueprints as bp
+from arcagent.blueprints_materialize import CapabilitySigner, materialize_blueprint
 from arctrust import InProcessSigner
-
-from arccli import blueprints as bp
-from arccli.blueprints_materialize import CapabilitySigner, materialize_blueprint
 
 
 def _agent(root: Path) -> Path:

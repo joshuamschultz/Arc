@@ -119,26 +119,34 @@ function KeyRow({ entry, editable }: { entry: KeyEntry; editable: boolean }) {
 }
 
 /**
- * Fleet-wide provider keys (`~/.arc/.env`). Required-and-missing keys sort to
- * the top and carry a banner: that is exactly the state in which a fresh
- * install does not work.
+ * Fleet-wide keys (`~/.arc/.env`), one family per panel: `model` for the AI providers,
+ * `web` for the web search and page-reading services. Required-and-missing keys sort
+ * to the top and carry a banner: that is exactly the state in which a fresh install
+ * does not work. Web keys are all optional, so they never raise it.
  */
-export function KeysPanel({ editable }: { editable: boolean }) {
+export function KeysPanel({
+  editable,
+  kind = 'model',
+}: {
+  editable: boolean
+  kind?: KeyEntry['kind']
+}) {
   const keys = useKeys()
 
   return (
     <QueryState
       query={keys}
-      isEmpty={(data) => data.keys.length === 0}
+      isEmpty={(data) => data.keys.filter((k) => k.kind === kind).length === 0}
       empty={
         <EmptyState
           icon={<KeyRound className="size-7" />}
-          title="No providers"
-          description="arcllm reported no providers, so there are no keys to set here."
+          title={kind === 'web' ? 'No web services' : 'No providers'}
+          description="Arc reported nothing to set a key for here."
         />
       }
     >
-      {(data) => {
+      {(all) => {
+        const data = { ...all, keys: all.keys.filter((k) => k.kind === kind) }
         const missing = data.keys.filter((k) => k.required && !k.present)
         // Required-and-missing first, then the rest in server order.
         const rows = [...missing, ...data.keys.filter((k) => !(k.required && !k.present))]
@@ -166,7 +174,7 @@ export function KeysPanel({ editable }: { editable: boolean }) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Provider</TableHead>
+                    <TableHead>{kind === 'web' ? 'Service' : 'Provider'}</TableHead>
                     <TableHead>Environment variable</TableHead>
                     <TableHead>Required</TableHead>
                     <TableHead>Status</TableHead>

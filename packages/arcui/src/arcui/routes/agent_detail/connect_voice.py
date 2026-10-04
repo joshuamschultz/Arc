@@ -306,6 +306,9 @@ async def connect_voice_route(request: Request) -> JSONResponse:
             "token": result["token"],  # shown once so the operator can run the client
             "token_env": result["token_env"],
             "restart_required": True,
-            "message": "Voice wired. Restart the gateway, pull the models, then run arc-voice.",
+            "message": (
+                "Voice is set up. Restart Arc, then start the Arc mic app "
+                "on the computer with the microphone."
+            ),
         }
     )

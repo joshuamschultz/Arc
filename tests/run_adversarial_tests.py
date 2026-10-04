@@ -847,6 +847,23 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/test_scaffold.py",
         "tests/journeys/test_journey_first_run_in_browser.py",
     ),
+    # J1-10 (Settings -> Maintenance): a viewer switching the runtime, enabling or
+    # installing a module, adding or switching off a team member, or building an agent
+    # from a blueprint; a runtime version that is a path, ``..``, ``current`` or a
+    # name that is not installed; a module or blueprint named by a path; a staged
+    # bundle signed by a stranger or altered after signing; a member body that names
+    # a DID, a key or a foreign type; switching off the operator's own entry; a web
+    # search key written under a name no provider declares. All refused, nothing
+    # written, every attempt audited.
+    "maintenance actions by a viewer or with a path, forged bundle or forged member": (
+        "packages/arcui/tests/test_maintenance_runtime_routes.py",
+        "packages/arcui/tests/test_maintenance_modules_routes.py",
+        "packages/arcui/tests/test_maintenance_blueprints_routes.py",
+        "packages/arcui/tests/test_maintenance_team_routes.py",
+        "packages/arcui/tests/test_keys_routes.py",
+        "packages/arcbundle/tests/unit/test_admin.py",
+        "packages/arcagent/tests/unit/test_keys.py",
+    ),
 }
 
 

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arcagent.keys import WEB_PROVIDER_KEY_ENV
 from arcagent.modules.web.config import WebConfig
 from arcagent.modules.web.protocols import WebExtractProvider, WebSearchProvider
 
@@ -43,11 +44,7 @@ _logger = logging.getLogger("arcagent.modules.web._runtime")
 #: and enterprise tier. The canonical map: both the resolver call and the
 #: withholding message name the key from here, so an operator is told the exact
 #: variable to set.
-_ENV_VAR_BY_PROVIDER: dict[str, str] = {
-    "parallel": "PARALLEL_API_KEY",
-    "firecrawl": "FIRECRAWL_API_KEY",
-    "tavily": "TAVILY_API_KEY",
-}
+_ENV_VAR_BY_PROVIDER: dict[str, str] = WEB_PROVIDER_KEY_ENV
 
 #: Providers that need no credential at all. ``browser`` reads pages through the
 #: browser module's CDP backend, so basic site lookup works on a fresh box.

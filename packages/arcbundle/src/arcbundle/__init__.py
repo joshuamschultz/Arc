@@ -47,6 +47,16 @@ and ``remove``; sinks fan out from ``arctrust.audit.emit`` unchanged.
 
 from __future__ import annotations
 
+from arcbundle.admin import (
+    BUNDLE_SUFFIX,
+    StagedBundle,
+    bundle_matches_installed,
+    install_verified,
+    peek_issuer,
+    staged_bundles,
+    trusted_issuers,
+    verification_tier,
+)
 from arcbundle.builder import build_bundle
 from arcbundle.capability_copy import (
     CAPABILITIES_DIR,
@@ -63,6 +73,7 @@ from arcbundle.errors import (
     BundleManifestError,
     BundleMaterializeError,
     BundleSignatureError,
+    BundleTierError,
 )
 from arcbundle.manifest import MANIFEST_FORMAT_VERSION, BundleManifest, FileEntry
 from arcbundle.materializer import DIR_MODE, FILE_MODE, materialize, remove
@@ -81,6 +92,7 @@ from arcbundle.verifier import (
 __version__ = "0.9.0"
 
 __all__ = [
+    "BUNDLE_SUFFIX",
     "CAPABILITIES_DIR",
     "CAPABILITY_FILE",
     "DEV_ISSUER",
@@ -100,14 +112,22 @@ __all__ = [
     "BundleManifestError",
     "BundleMaterializeError",
     "BundleSignatureError",
+    "BundleTierError",
     "FileEntry",
+    "StagedBundle",
     "VerifiedBundle",
     "build_bundle",
+    "bundle_matches_installed",
     "capability_dir",
     "copy_capabilities",
+    "install_verified",
     "materialize",
+    "peek_issuer",
     "remove",
     "remove_capabilities",
     "sign_manifest",
+    "staged_bundles",
+    "trusted_issuers",
+    "verification_tier",
     "verify_bundle",
 ]

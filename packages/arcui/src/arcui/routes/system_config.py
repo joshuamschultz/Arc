@@ -31,6 +31,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.audit import emit_mutation_audit
 from arcui.routes.agent_detail.config_files import (
     _CONFIG_FILES,
     _MAX_BODY_BYTES,
@@ -92,10 +93,18 @@ async def patch_system_config(request: Request) -> JSONResponse:
     Operator-only. Preserves comments via tomlkit and refuses to write a result
     that would not re-parse as TOML.
     """
+    file = request.path_params["file"]
+    target = f"system-config:{file}"
     if getattr(request.state, "role", None) != "operator":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="system_config.patch",
+            outcome="denied",
+            detail="not an operator",
+        )
         return _error("Operator role required", 403)
 
-    file = request.path_params["file"]
     if file not in _SYSTEM_CONFIG_FILES:
         return _error(f"Unknown config file: {file}", 404)
 
@@ -135,6 +144,14 @@ async def patch_system_config(request: Request) -> JSONResponse:
         logger.exception("Failed to write system %s.toml", file)
         return _error(f"Failed to write config: {type(exc).__name__}", 500)
 
+    # Which sections changed, never what they were changed to: a config value can be a secret.
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="system_config.patch",
+        outcome="applied",
+        detail=",".join(sorted(updates)),
+    )
     logger.info("System %s.toml updated: %s", file, list(updates.keys()))
     return JSONResponse(
         AgentConfigFileResponse(

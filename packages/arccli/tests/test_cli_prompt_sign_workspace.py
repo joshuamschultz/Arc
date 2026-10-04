@@ -90,11 +90,9 @@ def test_a_scaffolded_agent_starts_with_a_signed_identity(
 def test_a_blueprint_persona_is_signed_when_it_replaces_the_scaffold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from arccli.blueprints_materialize import (
-        MaterializeResult,
-        _sign_persona,
-        operator_signer_pair,
-    )
+    from arcagent.blueprints_materialize import MaterializeResult, _sign_persona
+
+    from arccli.commands.operator import operator_signer_pair
 
     _pin_operator(tmp_path, monkeypatch)
     root = _agent_root(tmp_path)
@@ -108,7 +106,7 @@ def test_a_blueprint_persona_is_signed_when_it_replaces_the_scaffold(
 
 
 def test_a_blueprint_persona_without_an_operator_key_warns_how_to_fix_it(tmp_path: Path) -> None:
-    from arccli.blueprints_materialize import MaterializeResult, _sign_persona
+    from arcagent.blueprints_materialize import MaterializeResult, _sign_persona
 
     root = _agent_root(tmp_path)
     result = MaterializeResult(agent_dir=root, wrote_identity=True)

@@ -140,3 +140,31 @@ def test_patch_non_object_body_is_400(tmp_path: Path, monkeypatch: pytest.Monkey
         headers={"Authorization": "Bearer operator"},
     )
     assert resp.status_code == 400
+
+
+class _AuditRecorder:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def audit_event(self, name: str, fields: dict) -> None:
+        self.events.append(dict(fields))
+
+
+def test_a_config_change_is_audited_by_file_and_section_never_by_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _ = _client(tmp_path, monkeypatch)
+    audit = _AuditRecorder()
+    client.app.state.audit = audit
+
+    ok = _patch(client, "arcrun", {"loop": {"max_turns": 33}})
+    denied = _patch(client, "arcrun", {"loop": {"max_turns": 44}}, token="viewer")
+
+    assert ok.status_code == 200 and denied.status_code == 403
+    rows = [e for e in audit.events if e["operation"] == "system_config.patch"]
+    assert [(r["target"], r["outcome"]) for r in rows] == [
+        ("system-config:arcrun", "applied"),
+        ("system-config:arcrun", "denied"),
+    ]
+    assert rows[0]["detail"] == "loop"
+    assert "33" not in str(rows)

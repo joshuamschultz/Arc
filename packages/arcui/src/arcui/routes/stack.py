@@ -79,6 +79,19 @@ def _spawn_restart(argv: list[str]) -> None:
     subprocess.Popen(argv, start_new_session=True)  # noqa: S603
 
 
+def launch_stack_restart(*, with_db: bool = False) -> list[str]:
+    """Start the detached stack restart and return the launcher argv (for the audit record).
+
+    The one entry point every route that must restart Arc after a change calls
+    (Settings restart, switching the runtime version), so the launcher, its
+    cgroup escape and its override live in one place. Raises ``OSError`` when
+    the launcher cannot start.
+    """
+    argv = _restart_argv(with_db=with_db)
+    _spawn_restart(argv)
+    return argv
+
+
 async def restart_stack_route(request: Request) -> JSONResponse:
     """Trigger a full-stack restart (operator only)."""
     if not _is_operator(request):
@@ -117,4 +130,4 @@ routes = [
     Route("/api/stack/restart", restart_stack_route, methods=["POST"]),
 ]
 
-__all__ = ["restart_stack_route", "routes"]
+__all__ = ["launch_stack_restart", "restart_stack_route", "routes"]

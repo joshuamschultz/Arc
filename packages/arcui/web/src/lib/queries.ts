@@ -7,6 +7,16 @@ import type {
   ConnectorBundlesResponse,
   InstalledBundle,
   StagedBundle,
+  BlueprintCreateResponse,
+  BlueprintSummary,
+  MaintenanceModulesResponse,
+  ModuleAction,
+  ModuleChangeResponse,
+  RuntimeActivateResponse,
+  RuntimeResponse,
+  TeamMember,
+  TeamMembersResponse,
+  TeamMemberStatus,
   ConnectionGuide,
   ConnectionGuideHistory,
   ConnectionGuideStarter,
@@ -113,6 +123,7 @@ import type {
   ToolsResponse,
   Trace,
   TracesResponse,
+  ContextWindowResponse,
   WorkflowDetail,
   WorkflowMigration,
   CustodyDecision,
@@ -1055,6 +1066,12 @@ export const useAgentTraces = (agentId: string, limit = 200) =>
     `/api/agents/${agentId}/traces?limit=${limit}`,
   )
 
+export const useAgentContextWindow = (agentId: string) =>
+  useApiQuery<ContextWindowResponse>(
+    ['agent', agentId, 'context-window'],
+    `/api/agents/${agentId}/context-window`,
+  )
+
 export const useAgentSessions = (agentId: string) =>
   useApiQuery<SessionsListResponse>(
     ['agent', agentId, 'sessions'],
@@ -1769,6 +1786,95 @@ export const useClearKey = () => {
   return useMutation<KeyWriteResponse, Error, string>({
     mutationFn: (envVar) => apiDelete(`/api/keys/${encodeURIComponent(envVar)}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEYS_KEY }),
+  })
+}
+
+// --- Settings -> Maintenance ------------------------------------------------
+//
+// Every write here is operator-only on the server; these hooks only carry the
+// request. After a change the matching list is re-read, so the page shows what
+// the server now holds rather than what was asked for.
+
+const MAINTENANCE_RUNTIME_KEY = ['maintenance', 'runtime']
+const MAINTENANCE_MODULES_KEY = ['maintenance', 'modules']
+const MAINTENANCE_BLUEPRINTS_KEY = ['maintenance', 'blueprints']
+const MAINTENANCE_TEAM_KEY = ['maintenance', 'team']
+
+export const useMaintenanceRuntime = () =>
+  useApiQuery<RuntimeResponse>(MAINTENANCE_RUNTIME_KEY, '/api/maintenance/runtime')
+
+export const useActivateRuntime = () =>
+  useMutation<RuntimeActivateResponse, Error, string>({
+    mutationFn: (version) => apiPost('/api/maintenance/runtime/activate', { version }),
+  })
+
+export const useMaintenanceModules = () =>
+  useApiQuery<MaintenanceModulesResponse>(MAINTENANCE_MODULES_KEY, '/api/maintenance/modules')
+
+export const useChangeModule = () => {
+  const queryClient = useQueryClient()
+  return useMutation<
+    ModuleChangeResponse,
+    Error,
+    { module: string; agentId: string; action: ModuleAction }
+  >({
+    mutationFn: ({ module, agentId, action }) =>
+      apiPost(`/api/maintenance/modules/${encodeURIComponent(module)}/${action}`, {
+        agent_id: agentId,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_MODULES_KEY }),
+  })
+}
+
+export const useBlueprints = () =>
+  useApiQuery<{ blueprints: BlueprintSummary[] }>(
+    MAINTENANCE_BLUEPRINTS_KEY,
+    '/api/maintenance/blueprints',
+  )
+
+export const useCreateFromBlueprint = () => {
+  const queryClient = useQueryClient()
+  return useMutation<BlueprintCreateResponse, Error, { blueprint: string; agentName: string }>({
+    mutationFn: ({ blueprint, agentName }) =>
+      apiPost(`/api/maintenance/blueprints/${encodeURIComponent(blueprint)}/create`, {
+        agent_name: agentName,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['roster'] })
+      void queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY })
+    },
+  })
+}
+
+export const useTeamMembers = () =>
+  useApiQuery<TeamMembersResponse>(MAINTENANCE_TEAM_KEY, '/api/maintenance/team/members')
+
+export const useAddTeamMember = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TeamMember, Error, { handle: string; name: string; roles: string[] }>({
+    mutationFn: (body) => apiPost('/api/maintenance/team/members', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY }),
+  })
+}
+
+export const useSetMemberStatus = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TeamMember, Error, { did: string; status: TeamMemberStatus }>({
+    mutationFn: (body) => apiPost('/api/maintenance/team/members/status', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY }),
+  })
+}
+
+// Re-register an agent with the team registry: the same route the agent page's
+// "Add to team" uses, so there is one way to do it.
+export const useRegisterAgentWithTeam = () => {
+  const queryClient = useQueryClient()
+  return useMutation<{ agent_id: string; did: string; team_registered: boolean }, Error, string>({
+    mutationFn: (agentId) => apiPost(`/api/agents/${encodeURIComponent(agentId)}/register`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY })
+      void queryClient.invalidateQueries({ queryKey: ['roster'] })
+    },
   })
 }
 

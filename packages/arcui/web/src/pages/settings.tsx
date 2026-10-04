@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { KeyRound } from "lucide-react";
+import { Globe, KeyRound } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { FieldHelp } from "@/components/help";
 import { OperatorModeToggle } from "@/components/operator-mode-toggle";
@@ -17,9 +17,11 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/states";
 import { KeysPanel } from "@/components/keys-panel";
+import { WebSearchProviderPicker } from "@/components/web-search-provider-picker";
 import { MemoryPromotionPanel } from "@/components/memory-promotion-panel";
 import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
 import { PublicAccessPanel } from "@/components/settings-view/public-access-panel";
+import { MaintenancePanel } from "@/components/maintenance/maintenance-panel";
 import { UsersPanel } from "@/pages/users";
 import { useOperatorMode } from "@/hooks/use-operator-mode";
 import { useRoster } from "@/lib/queries";
@@ -138,6 +140,9 @@ export function SettingsPage() {
                   and the https certificate hang off it, so it is fleet-wide too. */}
               <TabsTrigger value="access">Access</TabsTrigger>
               <TabsTrigger value="people">People</TabsTrigger>
+              {/* Updates, modules, blueprints and the team list: upkeep that used
+                  to need a terminal. Fleet-wide, so it shows in every scope. */}
+              <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
@@ -194,10 +199,29 @@ export function SettingsPage() {
                 shown back to you; this panel only reports whether one is set.
               </ContextNote>
               <KeysPanel editable={operatorMode} />
+              <div className="flex items-start gap-3 pt-2">
+                <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-muted/40 text-muted-foreground">
+                  <Globe className="size-4" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="font-display text-[15px] font-bold text-foreground">
+                    Web search keys
+                  </h2>
+                  <p className="mt-0.5 text-[13px] leading-snug text-muted-foreground">
+                    Let agents search the web and read pages. Add a key for one service, choose it
+                    below, and turn the web module on for an agent in Maintenance.
+                  </p>
+                </div>
+              </div>
+              <KeysPanel editable={operatorMode} kind="web" />
+              <WebSearchProviderPicker editable={operatorMode} />
             </div>
           </TabsContent>
           <TabsContent value="people" className="flex-1 overflow-auto p-4 md:p-6">
             <UsersPanel />
+          </TabsContent>
+          <TabsContent value="maintenance" className="flex-1 overflow-auto p-4 md:p-6">
+            <MaintenancePanel editable={operatorMode} />
           </TabsContent>
         </Tabs>
       )}

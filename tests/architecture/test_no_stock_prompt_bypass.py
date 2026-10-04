@@ -73,7 +73,7 @@ _STOCK_LAYER_VIEWERS: dict[str, str] = {
     "arccli/src/arccli/commands/prompt.py": (
         "`arc prompt show/diff/edit`: prints stock and seeds an override from it"
     ),
-    "arccli/src/arccli/blueprints_materialize.py": (
+    "arcagent/src/arcagent/blueprints_materialize.py": (
         "blueprint materializer: renders a signed override from the stock document"
     ),
 }

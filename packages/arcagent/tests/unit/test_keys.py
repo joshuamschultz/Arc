@@ -75,7 +75,7 @@ async def test_list_covers_every_provider_and_classifier_arcllm_declares(
 
     statuses = await store.list()
     declared = [*list_provider_keys(), *list_classifier_keys()]
-    assert {status.provider for status in statuses} == {key.provider for key in declared}
+    assert {s.provider for s in statuses if s.kind == "model"} == {k.provider for k in declared}
 
 
 async def test_list_reports_presence_for_a_set_and_an_unset_key(store: KeyStore) -> None:
@@ -261,3 +261,57 @@ def test_the_default_env_file_is_the_one_the_deployment_sources(
 
 def test_an_overridden_arc_dir_still_goes_through_the_one_resolver(tmp_path: Path) -> None:
     assert default_env_file(tmp_path) == arc_config(tmp_path) / ENV_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# web search / extract keys — the same store, a second declared family
+# ---------------------------------------------------------------------------
+
+
+async def test_list_includes_the_web_provider_keys_the_web_module_reads(store: KeyStore) -> None:
+    from arcagent.keys import WEB_PROVIDER_KEY_ENV
+
+    statuses = await store.list()
+    web = {status.env_var: status for status in statuses if status.kind == "web"}
+
+    assert set(web) == set(WEB_PROVIDER_KEY_ENV.values())
+    assert set(WEB_PROVIDER_KEY_ENV) == {"parallel", "firecrawl", "tavily"}
+    assert all(status.required is False for status in web.values())
+    assert {status.kind for status in statuses if status.kind != "web"} == {"model"}
+
+
+async def test_a_web_key_is_stored_with_the_same_custody_and_reported_as_present(
+    store: KeyStore, env_file: Path
+) -> None:
+    await store.set("TAVILY_API_KEY", KEY_VALUE)
+
+    web = {s.provider: s for s in await store.list() if s.kind == "web"}
+    assert web["tavily"].present is True
+    assert web["firecrawl"].present is False
+    assert KEY_VALUE not in repr(web["tavily"])
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+
+async def test_a_web_key_can_be_forgotten(store: KeyStore) -> None:
+    await store.set("FIRECRAWL_API_KEY", KEY_VALUE)
+
+    assert await store.delete("FIRECRAWL_API_KEY") is True
+    assert await store.delete("FIRECRAWL_API_KEY") is False
+
+
+async def test_the_allowlist_still_refuses_a_name_no_provider_declares(
+    store: KeyStore, env_file: Path
+) -> None:
+    for name in ("TAVILY_API_KEY2", "tavily_api_key", "BRAVE_API_KEY", "PATH"):
+        with pytest.raises(ExtensionError) as excinfo:
+            await store.set(name, KEY_VALUE)
+        assert excinfo.value.code == "PROVIDER_KEY_UNKNOWN"
+    assert not env_file.exists()
+
+
+def test_the_web_module_reads_the_variables_this_store_writes() -> None:
+    """One map: a key set here is the key the web module resolves, by construction."""
+    from arcagent.keys import WEB_PROVIDER_KEY_ENV
+    from arcagent.modules.web import _runtime
+
+    assert _runtime._ENV_VAR_BY_PROVIDER is WEB_PROVIDER_KEY_ENV
