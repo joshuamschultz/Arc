@@ -506,6 +506,14 @@ class ArcMemoryBrain:
         """
         return await self._doc_embed_backfill().run_batches(max_batches)
 
+    async def maintain_doc_embeddings(self) -> float:
+        """One bounded backfill tick for the background maintainer; seconds to wait next.
+
+        Short while a backlog remains, long once it is clear or another process
+        owns the index file, exponentially backed off while the embedder is down.
+        """
+        return await self._doc_embed_backfill().maintain()
+
     async def doc_embed_backlog(self) -> dict[str, EmbedBacklog]:
         """Vector coverage of each of this agent's document pools (operator progress)."""
         return await self._doc_embed_backfill().backlog()

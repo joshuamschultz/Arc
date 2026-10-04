@@ -69,6 +69,8 @@ DOC_SCOPE_MARKER = ":doc:"
 #: Texts per embed call: the local embed worker's own batch cap, so one backfill
 #: request is one encode and a live recall waits behind at most one of them.
 DEFAULT_BATCH_SIZE = 256
+#: Batches per background tick (~4k chunks, ~8 s of GPU at 490 chunks/s).
+DEFAULT_TICK_BATCHES = 16
 #: The embed operation label. Not ``retrieve*``, so the worker serves it after
 #: any live recall query.
 EMBED_OPERATION = "embed:backfill"
@@ -133,11 +135,31 @@ class DocEmbedBackfill:
         return {scope: b for scope, b in sorted(found.items()) if DOC_SCOPE_MARKER in scope}
 
     async def run_batches(self, max_batches: int) -> BackfillTick:
-        """Embed and store up to ``max_batches`` batches; never raises on embedder trouble."""
+        """Embed and store up to ``max_batches`` batches; never raises on embedder trouble.
+
+        ``blocked`` when another process owns this index file's backfill, or
+        another backfill of the same file is mid-run in this process (two agents
+        reading one shared store must not both embed its backlog).
+        """
         if self._embedder is None or not self._backend.vec_available:
             return BackfillTick(exhausted=True)
-        if not self._hold_claim():
+        if self._pass.running or not self._hold_claim():
             return BackfillTick(blocked=True)
+        self._pass.running = True
+        try:
+            return await self._run(max_batches)
+        finally:
+            self._pass.running = False
+
+    async def maintain(self, max_batches: int = DEFAULT_TICK_BATCHES) -> float:
+        """One bounded tick for a background loop; returns the seconds to wait next."""
+        return self.next_delay(await self.run_batches(max_batches))
+
+    def next_delay(self, tick: BackfillTick) -> float:
+        """The pause after ``tick``, from this index file's shared :class:`BackfillPacer`."""
+        return self._pass.pacer.next_delay(tick)
+
+    async def _run(self, max_batches: int) -> BackfillTick:
         batches = embedded = 0
         refreshed = False
         while batches < max_batches:
@@ -301,32 +323,6 @@ class DocEmbedBackfill:
 
 
 @dataclass
-class _PassState:
-    """Where one index file's backfill pass has got to (one per file and prefix)."""
-
-    #: Pools still to visit in this pass, in order.
-    queue: list[str] = field(default_factory=list)
-    #: Per pool, the last chunk id this pass has handled.
-    cursors: dict[str, str] = field(default_factory=dict)
-    pending: int = 0
-    embedded: int = 0
-    last_log: float = 0.0
-
-
-_PASSES: dict[tuple[Path, str], _PassState] = {}
-_PASSES_GUARD = threading.Lock()
-
-
-def _pass_state(db_path: Path, scope_prefix: str) -> _PassState:
-    key = (Path(db_path).resolve(), scope_prefix)
-    with _PASSES_GUARD:
-        state = _PASSES.get(key)
-        if state is None:
-            state = _PASSES[key] = _PassState()
-        return state
-
-
-@dataclass
 class BackfillPacer:
     """How long a background loop sleeps after each tick.
 
@@ -349,6 +345,35 @@ class BackfillPacer:
             return delay
         self._failures = 0
         return self.idle_s if tick.exhausted or tick.blocked else self.busy_s
+
+
+@dataclass
+class _PassState:
+    """Where one index file's backfill pass has got to (one per file and prefix)."""
+
+    #: Pools still to visit in this pass, in order.
+    queue: list[str] = field(default_factory=list)
+    #: Per pool, the last chunk id this pass has handled.
+    cursors: dict[str, str] = field(default_factory=dict)
+    pending: int = 0
+    embedded: int = 0
+    last_log: float = 0.0
+    #: A backfill of this file is mid-run in this process.
+    running: bool = False
+    pacer: BackfillPacer = field(default_factory=BackfillPacer)
+
+
+_PASSES: dict[tuple[Path, str], _PassState] = {}
+_PASSES_GUARD = threading.Lock()
+
+
+def _pass_state(db_path: Path, scope_prefix: str) -> _PassState:
+    key = (Path(db_path).resolve(), scope_prefix)
+    with _PASSES_GUARD:
+        state = _PASSES.get(key)
+        if state is None:
+            state = _PASSES[key] = _PassState()
+        return state
 
 
 class BackfillWriterLock:
@@ -419,6 +444,7 @@ def backfill_writer_lock(db_path: Path) -> BackfillWriterLock:
 
 __all__ = [
     "DEFAULT_BATCH_SIZE",
+    "DEFAULT_TICK_BATCHES",
     "DOC_SCOPE_MARKER",
     "EMBED_OPERATION",
     "BackfillPacer",

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import os
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -66,6 +67,13 @@ IngestPortFactory = Callable[[SourceDescription], IngestPort | Awaitable[IngestP
 
 #: How long the short-lived lease that stamps a terminal status may be held.
 _TERMINAL_LEASE_SECONDS = 30.0
+#: How long the shared-store embed backfill loop waits when it has nothing to do.
+_EMBED_BACKFILL_IDLE_SECONDS = 300.0
+#: The wait after a shared store's backfill tick failed outright.
+_EMBED_BACKFILL_RETRY_SECONDS = 60.0
+#: The operator switch that stops background embedding (shared with the memory
+#: module's sleep loop): set it and no shared store is backfilled either.
+_EMBEDDING_OFF_ENV = "ARC_MEMORY_CONSOLIDATE_OFF"
 
 
 class _NullHealthReporter:
@@ -269,6 +277,7 @@ class ConnectedDataService:
         self._resource_store: SourceSelectionStore | None = None
         self._mapping_store: MappingProposalStore | None = None
         self._monitor: asyncio.Task[None] | None = None
+        self._embed_backfill: asyncio.Task[None] | None = None
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._statuses: dict[str, SourceRuntimeStatus] = {}
         self._mapping_statuses: dict[str, MappingProposalStatus] = {}
@@ -325,6 +334,10 @@ class ConnectedDataService:
         # an interval later: the monitor otherwise slept on an empty catalog.
         self._stop_listening = self._catalog.on_change(self._wake.set)
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
+        if self._shared is not None:
+            self._embed_backfill = asyncio.create_task(
+                self._embed_backfill_loop(), name="connected-data-embed-backfill"
+            )
         self._wake.set()
 
     async def close(self) -> None:
@@ -340,11 +353,12 @@ class ConnectedDataService:
         for retry in self._migration_retries.values():
             retry.cancel()
         self._migration_retries.clear()
-        monitor = self._monitor
+        for loop in (self._monitor, self._embed_backfill):
+            if loop is not None:
+                loop.cancel()
+                await asyncio.gather(loop, return_exceptions=True)
         self._monitor = None
-        if monitor is not None:
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
+        self._embed_backfill = None
         tasks = tuple(self._tasks.values())
         self._tasks.clear()
         for task in tasks:
@@ -925,6 +939,50 @@ class ConnectedDataService:
             except TimeoutError:
                 pass
             self._wake.clear()
+
+    async def _embed_backfill_loop(self) -> None:
+        """Keep giving shared stores' chunks the vectors an embedder outage left missing."""
+        while not self._closed:
+            await asyncio.sleep(await self.embed_backfill_once())
+
+    async def embed_backfill_once(self) -> float:
+        """One bounded embed-backfill tick per shared store this agent subscribes to.
+
+        Each store is reached through a WRITER port, so the subscriber's grant is
+        re-checked before anything is written. arcmemory keeps it to one backfill
+        per store at a time (other subscribers' ticks report it busy) and never
+        rewrites text, only vectors, so a sync of the same store may run
+        alongside; the connection's sync lease is not taken, because a sync that
+        finds it taken skips its whole run. Returns the seconds until the next
+        tick: the soonest any store asked for.
+        """
+        if self._shared is None or not self._lanes or _embedding_off():
+            return _EMBED_BACKFILL_IDLE_SECONDS
+        delays = [
+            await self._embed_backfill_store(connection_id, lane.approval_id)
+            for connection_id, lane in tuple(self._lanes.items())
+        ]
+        return min(delays)
+
+    async def _embed_backfill_store(self, connection_id: str, approval_id: str) -> float:
+        """One store's tick through a writer port; the seconds that store asks to wait."""
+        if self._shared is None:
+            return _EMBED_BACKFILL_IDLE_SECONDS
+        try:
+            port = await self._shared.writer(connection_id, approval_id)
+        except Exception:  # reason: one store's failure must not stop the others
+            _logger.warning("embed backfill: cannot open %s", _safe_id(connection_id))
+            return _EMBED_BACKFILL_RETRY_SECONDS
+        try:
+            maintain = getattr(port, "maintain_embeddings", None)
+            if not callable(maintain):
+                return _EMBED_BACKFILL_IDLE_SECONDS
+            return float(await maintain())
+        except Exception:  # reason: one store's failure must not stop the others
+            _logger.warning("embed backfill of %s failed", _safe_id(connection_id), exc_info=True)
+            return _EMBED_BACKFILL_RETRY_SECONDS
+        finally:
+            await _release(port)
 
     def _schedule_due(
         self,
@@ -2204,6 +2262,11 @@ def _instance_of(connection_id: str) -> str:
 def _canonical_source_id(ingest: IngestPort, description: SourceDescription) -> str:
     canonical = getattr(ingest, "canonical_source_id", None)
     return str(canonical(description)) if callable(canonical) else ""
+
+
+def _embedding_off() -> bool:
+    """Whether the operator has stopped background embedding via the environment."""
+    return os.environ.get(_EMBEDDING_OFF_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 async def _release(ingest: IngestPort) -> None:

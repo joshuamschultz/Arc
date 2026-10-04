@@ -233,6 +233,15 @@ class ArcMemoryIngestAdapter(IngestPort):
     def _memory_embedder(self) -> Any | None:
         return memory_embedder(self._agent_did)
 
+    async def maintain_embeddings(self) -> float:
+        """One bounded embed-backfill tick of this store; the seconds to wait next.
+
+        Vectors only, for chunks an embedder outage left lexical-only; the store's
+        own write authority is re-checked first (see arcmemory's
+        ``ConnectedDataService.backfill_embeddings``).
+        """
+        return float(await self._connected_service().maintain_embeddings())
+
     async def aclose(self) -> None:
         """Release the memory database connection this port opened, if any."""
         service, self._service = self._service, None

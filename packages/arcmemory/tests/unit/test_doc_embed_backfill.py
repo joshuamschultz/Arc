@@ -557,6 +557,7 @@ async def test_the_brain_backfills_its_own_doc_pools(tmp_path: Path) -> None:
         assert tick.embedded == 30
         assert (await brain.doc_embed_backlog())[scope].pending == 0
         assert (await brain.backfill_doc_embeddings(max_batches=10)).exhausted
+        assert await brain.maintain_doc_embeddings() == BackfillPacer().idle_s
     finally:
         outage_db.close()
         ann.forget_loaded_indexes()
@@ -631,3 +632,62 @@ async def test_a_new_instance_continues_the_pass_past_a_failing_tail(bdb: Memory
     assert resumed.exhausted is True
     pending = (await _backfill(bdb, _FailsOn()).backlog())[doc_scope(_AGENT, "aaa").key]
     assert pending.pending == 1
+
+
+async def test_one_backfill_per_index_file_runs_at_a_time_in_a_process(bdb: MemoryDB) -> None:
+    """Two agents reading one shared store must not both embed its backlog."""
+    await _index_during_outage(bdb, "dropbox", _chunks("dropbox", 20))
+    release = asyncio.Event()
+
+    class _Slow(_RecordingEmbedder):
+        async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            await release.wait()
+            return await super().embed_texts(texts)
+
+    first = asyncio.ensure_future(_backfill(bdb, _Slow(), batch_size=5).run_batches(10))
+    await asyncio.sleep(0.05)
+    second_embedder = _RecordingEmbedder()
+    second = await _backfill(bdb, second_embedder, batch_size=5).run_batches(10)
+    assert second == BackfillTick(blocked=True)
+    assert second_embedder.calls == 0
+    release.set()
+    assert (await first).embedded == 20
+
+
+async def test_maintain_runs_one_tick_and_returns_the_paced_delay(bdb: MemoryDB) -> None:
+    await _index_during_outage(bdb, "dropbox", _chunks("dropbox", 30))
+    backfill = _backfill(bdb, _RecordingEmbedder(), batch_size=10)
+    assert await backfill.maintain(max_batches=1) == BackfillPacer().busy_s
+    assert await backfill.maintain(max_batches=10) == BackfillPacer().idle_s
+    assert (await backfill.backlog())[doc_scope(_AGENT, "dropbox").key].pending == 0
+    await _index_during_outage(bdb, "github", _chunks("github", 3))
+    assert await _backfill(bdb, _DownEmbedder()).maintain() == BackfillPacer().backoff_initial_s
+
+
+async def test_a_store_port_without_write_authority_never_backfills(tmp_path: Path) -> None:
+    """A reader's port (or a revoked subscriber's) writes no vector into a shared store."""
+    from arcmemory.connected_data import ConnectedDataService
+
+    class _NoGrant:
+        async def authorized_homes(self) -> None:
+            return None
+
+    principal = "did:arc:knowledge:conn-9"
+    root = tmp_path / "shared" / "ro"
+    store_db = MemoryDB(root)
+    try:
+        await DocIndex(store_db, root, MemoryConfig(), embedder=_DownEmbedder()).index_source(
+            "src", principal, _chunks("src", 4)
+        )
+    finally:
+        store_db.close()
+    service = ConnectedDataService(
+        root, principal, approval_store=None, embedder=_WideEmbedder(), authority=_NoGrant()
+    )
+    try:
+        assert await service.backfill_embeddings(max_batches=4) == BackfillTick(blocked=True)
+        assert (await service.embed_backlog())[doc_scope(principal, "src").key].pending == 4
+        assert await service.maintain_embeddings() == BackfillPacer().idle_s
+    finally:
+        service.close()
+        ann.forget_loaded_indexes()

@@ -28,7 +28,7 @@ from arcmemory.db import Durability, MemoryDB
 from arcmemory.doc_index import DocHit, DocIndex, doc_scope, object_key
 from arcmemory.extract import ExtractionUnavailable, get_extractor
 from arcmemory.index.backend import EmbedBacklog
-from arcmemory.index.backfill import BackfillTick, DocEmbedBackfill
+from arcmemory.index.backfill import DEFAULT_TICK_BATCHES, BackfillTick, DocEmbedBackfill
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
 from arcmemory.index.source import SourceChunk
@@ -964,8 +964,19 @@ class ConnectedDataService:
         connection-scoped store that is the connection's principal, so the one
         writer holding the connection's sync lease retries what an embedder
         outage left lexical-only. Never raises on embedder trouble.
+
+        Vector-only writes still need write authority: a connection store's port
+        is re-checked against its subscriber's grant first, so a reader's port or
+        a revoked subscriber's never writes (``blocked``).
         """
+        if self._authority is not None and await self._authority.authorized_homes() is None:
+            return BackfillTick(blocked=True)
         return await self._embed_backfill().run_batches(max_batches)
+
+    async def maintain_embeddings(self, *, max_batches: int = DEFAULT_TICK_BATCHES) -> float:
+        """One bounded backfill tick for a background loop; the seconds to wait next."""
+        tick = await self.backfill_embeddings(max_batches=max_batches)
+        return self._embed_backfill().next_delay(tick)
 
     async def embed_backlog(self) -> dict[str, EmbedBacklog]:
         """Vector coverage of each document pool in this store."""
