@@ -37,7 +37,7 @@ function stub(share: { status: number; body: unknown } = { status: 200, body: { 
       }
       if (path.includes('/knowledge/insights')) return json(200, { items: [INSIGHT] })
       if (path.includes('/knowledge/procedures')) return json(200, { items: [PROC] })
-      if (path.includes('/knowledge/entities') && !path.includes('/links')) return json(200, { items: [ENTITY] })
+      if (path.includes('/knowledge/entities') && !path.includes('/links') && !path.includes('/duplicates')) return json(200, { items: [ENTITY] })
       return json(200, { items: [] })
     }),
   )

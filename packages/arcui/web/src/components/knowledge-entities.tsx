@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/sheet'
 import { EmptyState, QueryState } from '@/components/states'
 import { CardShareActions } from '@/components/knowledge-share'
+import { EntityDuplicatesPanel } from '@/components/knowledge-entity-duplicates'
 import { useEntities, useEntityLinks } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { EntityRecord } from '@/lib/types'
@@ -255,6 +256,7 @@ export function EntityBrowser({
 
   return (
     <div className="space-y-3">
+      <EntityDuplicatesPanel agentId={agentId} />
       <QueryState
         query={entities}
         isEmpty={(d) => d.items.length === 0}

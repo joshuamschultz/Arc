@@ -48,8 +48,9 @@ def test_normalize_kind_folds_free_text_onto_the_vocabulary(raw: str, kind: str)
 def test_rank_orders_vague_below_generic_below_specific() -> None:
     assert kind_rank("thing") == kind_rank("note") == kind_rank("unknown") == 0
     assert kind_rank("concept") == kind_rank("insight") == 1
-    for specific in ("thesis", "person", "company", "project"):
+    for specific in ("document", "person", "company", "project"):
         assert kind_rank(specific) == 2
+    assert kind_rank("thesis") == 3  # a thesis refines a document
 
 
 def test_more_specific_kind_keeps_the_specific_one() -> None:

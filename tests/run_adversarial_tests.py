@@ -321,13 +321,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # label above the clearance is refused; a missing or unknown label is the
     # clearance (fail upward); a caller-named or unattested lower label, an
     # undecided write and a direct backend save are all still no-write-down.
-    # Entity de-dup folds one card's facts into another. A series lookalike name,
-    # a hostile confirmer naming cards across levels, the model-callable merge
-    # primitive aimed across levels, and an unknown label at federal all fold
-    # nothing: a merge never moves a fact across a classification level.
+    # Entity de-dup folds one card's facts into another. A merge never moves a
+    # fact DOWN a level: the survivor carries the higher label, whichever side
+    # survives. A series lookalike across levels never folds without a
+    # confirmation, a hostile confirmer cannot fold cards outside the cluster it
+    # was asked about, an unknown label at federal folds nothing, and the
+    # model-callable merge tool cannot fold a pair the operator marked "Not the
+    # same". The review panel's merge/reject routes are operator-only.
     "classification laundering via entity merge (de-dup across levels)": (
         "packages/arcmemory/tests/security/test_entity_merge_abuse.py",
         "packages/arcmemory/tests/unit/test_entity_dedup.py",
+        "packages/arcmemory/tests/unit/test_entity_model_one_to_one.py",
+        "packages/arcui/tests/integration/test_knowledge_entity_duplicates.py",
     ),
     "classification laundering via a forged lower shared label (alpha-2 item 16)": (
         "packages/arcteam/tests/security/test_declassified_share.py",

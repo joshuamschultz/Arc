@@ -27,14 +27,15 @@ from arctrust.classification import parse_classification
 from arcmemory.collection_index import refresh_memory_document
 from arcmemory.entity_kind import (
     OTHER,
-    clean_tags,
     kind_rank,
     kinds_compatible,
     more_specific_kind,
+    normalize_card,
     normalize_kind,
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
+from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
 from arcmemory.types import (
     Entity,
@@ -200,10 +201,18 @@ def classification_level(label: str, *, strict: bool) -> int | None:
         return None if strict else 0
 
 
-def _same_level(a: str, b: str, *, strict: bool) -> bool:
-    """True when two labels sit on one classification level (unknown fails closed)."""
-    level = classification_level(a, strict=strict)
-    return level is not None and level == classification_level(b, strict=strict)
+def merged_classification(a: str, b: str, *, strict: bool) -> str | None:
+    """The label a fold of two cards carries: the higher of the two.
+
+    A merge never launders: the survivor is at least as restrictive as its most
+    classified source, so no fact ever moves DOWN a level. ``None`` (refuse) when
+    either label fails closed — at federal an unknown label is never merged.
+    """
+    if classification_level(a, strict=strict) is None:
+        return None
+    if classification_level(b, strict=strict) is None:
+        return None
+    return dominating_classification([a, b])
 
 
 def parse_fact(line: str) -> Fact | None:
@@ -249,6 +258,11 @@ class SemanticStore:
         #: old fact is still what was true then — so this only weights which of two
         #: competing values leads today.
         self._fact_half_life_days = fact_half_life_days
+
+    @property
+    def memory_dir(self) -> Path:
+        """The workspace ``memory/`` folder this store's cards live under."""
+        return self._dir.parent
 
     def path_for(self, slug: str) -> Path:
         """Absolute path to an entity's markdown file (slug canonicalized)."""
@@ -318,7 +332,7 @@ class SemanticStore:
             entity.entity_type = normalize_kind(entity.entity_type)
             if kind != OTHER and kind_rank(kind) >= kind_rank(entity.entity_type):
                 entity.entity_type = kind
-        entity.tags = clean_tags([*entity.tags, *(tags or [])])
+        entity.tags = [*entity.tags, *(tags or [])]
         # A write is an assertion about NOW, so a different value always leads and the
         # one it replaces becomes the ``was:`` trail — that is how a fact changes. What
         # was missing is the other half: restating the SAME value is corroboration, and
@@ -355,19 +369,23 @@ class SemanticStore:
         self._persist(entity)
         return entity
 
-    def merge_into(self, canonical_slug_: str, other_slug: str, *, strict: bool) -> bool:
-        """Fold the ``other`` entity card into ``canonical`` and delete ``other``'s file.
+    def merge_into(
+        self, canonical_slug_: str, other_slug: str, *, strict: bool, basis: str = "merge"
+    ) -> bool:
+        """Fold the ``other`` entity card into ``canonical``; ``other`` becomes a redirect.
 
         The de-dup primitive behind every entity merge. Non-destructive: every fact
         survives — a predicate the canonical lacks is copied over, a contradiction folds
-        the lower-currency value into a ``| was:`` trail, and the losing card's name/slug
-        is recorded in ``aliases`` so recall still finds it and the fold is inspectable.
-        Links and tags union; the more specific kind wins.
+        the lower-currency value into a ``| was:`` trail — and the losing card's name/slug
+        is recorded in ``aliases``, so :meth:`resolve` sends the old id to the survivor.
+        Links and tags union; the most specific kind wins; the HIGHER classification wins
+        (a fold never moves a fact down a level). The folded card's file goes, but its
+        exact bytes are kept in the merge record (:meth:`merge_history`): a merge never
+        erases history.
 
         Refused (returns False) when either card is missing, the two are one slug, their
-        kinds rule out one identity (a person is never a place), or their classification
-        levels differ — a fold never moves a fact across a level. ``strict`` (federal)
-        makes an unknown label fail closed instead of reading as unclassified.
+        kinds rule out one identity (a person is never a place), or a label fails closed
+        (``strict``/federal: an unknown label is never merged).
         """
         canonical = canonical_slug(canonical_slug_)
         other = canonical_slug(other_slug)
@@ -379,8 +397,10 @@ class SemanticStore:
             return False
         if not kinds_compatible(dst.entity_type, src.entity_type):
             return False
-        if not _same_level(dst.classification, src.classification, strict=strict):
+        label = merged_classification(dst.classification, src.classification, strict=strict)
+        if label is None:
             return False
+        folded_card = self.path_for(other).read_text(encoding="utf-8")
 
         by_predicate = {f.predicate: f for f in dst.facts}
         for fact in src.facts:
@@ -400,9 +420,26 @@ class SemanticStore:
             set(dst.aliases) | set(src.aliases) | {src.name, src.slug} - {dst.name, dst.slug}
         )
         dst.entity_type = more_specific_kind([dst.entity_type, src.entity_type])
-        dst.tags = clean_tags([*dst.tags, *src.tags])
+        dst.tags = [*dst.tags, *src.tags]
+        dst.classification = label
+        dst.cross_session_visibility = (
+            dst.cross_session_visibility and src.cross_session_visibility
+        )
         dst.confidence = _entity_confidence(dst.facts)
 
+        self._append_merge_record(
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "scope": self._scope,
+                "survivor": canonical,
+                "folded": other,
+                "folded_name": src.name,
+                "basis": basis,
+                "entity_type": more_specific_kind([dst.entity_type, src.entity_type]),
+                "classification": label,
+                "folded_card": folded_card,
+            }
+        )
         self._persist(dst)
         removed = self.path_for(other)
         removed.unlink(missing_ok=True)
@@ -426,7 +463,7 @@ class SemanticStore:
             entity.name = name
         entity.entity_type = normalize_kind(entity_type)
         if tags is not None:
-            entity.tags = clean_tags(tags)
+            entity.tags = list(tags)
         self._persist(entity)
         return True
 
@@ -462,12 +499,29 @@ class SemanticStore:
             changed += 1
         return changed
 
-    def append_merge_record(self, record: dict[str, Any]) -> None:
-        """Append one merge to ``memory/merge-log.jsonl`` (agent state, direct I/O)."""
-        path = self._dir.parent / "merge-log.jsonl"
+    def _append_merge_record(self, record: dict[str, Any]) -> None:
+        """Append one merge to ``memory/merge-log.jsonl`` (agent state, direct I/O).
+
+        Append-only: a record is never rewritten or removed (AU-9/AU-11).
+        """
+        path = self._merge_log()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+    def merge_history(self) -> list[dict[str, Any]]:
+        """Every merge record, oldest first (each holds the folded card's exact bytes)."""
+        path = self._merge_log()
+        if not path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def _merge_log(self) -> Path:
+        return self.memory_dir / "merge-log.jsonl"
 
     def remove(self, slug: str) -> bool:
         """Remove one entity card and its collection-index entry."""
@@ -532,7 +586,14 @@ class SemanticStore:
         return canonical
 
     def _persist(self, entity: Entity) -> None:
-        """Render an entity to markdown and atomically write it."""
+        """Render an entity to markdown and atomically write it.
+
+        The one write chokepoint for an entity card, so the one-type/orthogonal-tags
+        rule (:func:`~arcmemory.entity_kind.normalize_card`) holds on every path.
+        """
+        entity.entity_type, entity.tags = normalize_card(
+            entity.entity_type, entity.tags, entity.name
+        )
         frontmatter = {
             "entity_type": entity.entity_type,
             "entity_id": entity.slug,
@@ -557,6 +618,7 @@ __all__ = [
     "classification_level",
     "extract_wiki_links",
     "format_fact",
+    "merged_classification",
     "parse_fact",
     "parse_facts",
     "superseded_view",

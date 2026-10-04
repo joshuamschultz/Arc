@@ -221,10 +221,15 @@ def _render_identity(report: AgentDedupReport, *, apply: bool) -> None:
     """Print the kind cleanup and the identity de-dup plan/outcome."""
     plan = report.result.plan
     _out(f"  kinds/tags: {report.kinds.changed} card(s) {'cleaned' if apply else 'to clean'}")
+    for change in report.kinds.changes:
+        _out(
+            f"    {change.slug}: type {change.old_type} -> {change.new_type}; "
+            f"tags {list(change.old_tags)} -> {list(change.new_tags)}"
+        )
     _out(
         f"  identity: {plan.entities} entities, {len(plan.certain)} certain, "
         f"{len(plan.exact)} same-name, {len(plan.ambiguous)} to confirm (LLM), "
-        f"{len(plan.blocked)} blocked by classification"
+        f"{len(plan.blocked)} blocked (unreadable classification label)"
     )
     for group in plan.certain:
         folded = ", ".join(group.folded)
@@ -237,6 +242,11 @@ def _render_identity(report: AgentDedupReport, *, apply: bool) -> None:
         _out(f"    blocked  {', '.join(pair)}")
     if apply:
         _out(f"  {len(report.result.merged)} merged")
+        if report.proposals:
+            _out(
+                f"  {len(report.proposals)} proposal(s) left for a person: "
+                "arcui > Knowledge > Entities > Review duplicates"
+            )
 
 
 def _render_workspace(report: DedupReport, mode: str) -> None:

@@ -21,11 +21,13 @@ from __future__ import annotations
 import logging
 import re
 import tomllib
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from arcmemory.config import MemoryConfig
 from arcmemory.operator import MemoryOperator, MutationResult, MutationStatus
-from arcmemory.provider import build_embedder
+from arcmemory.provider import build_embedder, memory_config_for
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -350,6 +352,113 @@ async def get_entity(request: Request) -> JSONResponse:
             status_code=404,
         )
     return JSONResponse(entity.model_dump(mode="json"))
+
+
+# ---------------------------------------------------------------------------
+# Review duplicates — proposed entity merges (operator items 6/7, 2026-10-04)
+# ---------------------------------------------------------------------------
+
+
+def _memory_config(agent_root: Path) -> MemoryConfig:
+    """The agent's tier + dynamics, parsed the one way the brain and ``arc memory`` do."""
+    try:
+        data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return MemoryConfig()
+    section = data.get("modules", {}).get("memory", {}).get("config", {})
+    if not isinstance(section, dict):
+        return MemoryConfig()
+    return memory_config_for(section.get("backend") or {}, section.get("tier", "personal"))
+
+
+def _review_operator(agent: Any) -> MemoryOperator:
+    agent_root = Path(agent.workspace_path)
+    return MemoryOperator(
+        agent_root / "workspace",
+        agent.did,
+        config=_memory_config(agent_root),
+        embedder=_memory_embedder(agent_root, agent.did),
+    )
+
+
+async def list_entity_duplicates(request: Request) -> JSONResponse:
+    """GET .../knowledge/entities/duplicates — merges a person can accept or refuse."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+    try:
+        proposals = await _review_operator(agent).duplicate_proposals()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [asdict(p) for p in proposals]})
+
+
+async def _slugs_from(request: Request) -> list[str] | None:
+    """The ``{"slugs": [str, str, ...]}`` body, or None when it is not that shape."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    slugs = body.get("slugs") if isinstance(body, dict) else None
+    if not isinstance(slugs, list) or len(slugs) < 2:
+        return None
+    if not all(isinstance(s, str) and s for s in slugs):
+        return None
+    return slugs
+
+
+async def _review_action(request: Request, action: str) -> JSONResponse:
+    denied = _require_operator(request)
+    if denied is not None:
+        return denied
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+    slugs = await _slugs_from(request)
+    if slugs is None:
+        return JSONResponse(
+            ErrorResponse(error='body must be {"slugs": [two or more entity slugs]}').model_dump(
+                mode="json"
+            ),
+            status_code=400,
+        )
+    op = _review_operator(agent)
+    actor_did = "did:arc:ui:operator"
+    try:
+        if action == "merge":
+            result = op.merge_duplicates(slugs, actor_did=actor_did)
+        else:
+            result = op.reject_duplicates(slugs, actor_did=actor_did)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    applied = result.status is MutationStatus.APPLIED
+    emit_mutation_audit(
+        request,
+        target=f"memory://{agent_id}/entities/{'+'.join(sorted(slugs))}",
+        operation="memory.entity_merge" if action == "merge" else "memory.entity_distinct",
+        outcome="applied" if applied else "error",
+        detail=result.error or "",
+    )
+    if not applied:
+        return JSONResponse(
+            ErrorResponse(error=result.error or "refused").model_dump(mode="json"),
+            status_code=409,
+        )
+    if action == "merge":
+        return JSONResponse({"status": "applied", "survivor": result.entry_id})
+    return JSONResponse({"status": "applied"})
+
+
+async def merge_entity_duplicates(request: Request) -> JSONResponse:
+    """POST .../knowledge/entities/duplicates/merge ``{"slugs": [...]}`` (operator)."""
+    return await _review_action(request, "merge")
+
+
+async def reject_entity_duplicates(request: Request) -> JSONResponse:
+    """POST .../knowledge/entities/duplicates/reject — "Not the same", remembered (operator)."""
+    return await _review_action(request, "reject")
 
 
 async def get_entity_links(request: Request) -> JSONResponse:
@@ -774,6 +883,22 @@ routes = [
         methods=["GET"],
     ),
     Route("/api/agents/{agent_id}/knowledge/entities", list_entities, methods=["GET"]),
+    # Before ``entities/{slug}`` so "duplicates" is never read as an entity slug.
+    Route(
+        "/api/agents/{agent_id}/knowledge/entities/duplicates",
+        list_entity_duplicates,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/entities/duplicates/merge",
+        merge_entity_duplicates,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/entities/duplicates/reject",
+        reject_entity_duplicates,
+        methods=["POST"],
+    ),
     Route("/api/agents/{agent_id}/knowledge/entities/{slug}", get_entity, methods=["GET"]),
     Route(
         "/api/agents/{agent_id}/knowledge/entities/{slug}/links",

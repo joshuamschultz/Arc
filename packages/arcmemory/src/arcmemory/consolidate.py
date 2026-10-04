@@ -522,9 +522,17 @@ class Consolidator:
             owner = index.get(slug)
             if owner is None or owner == slug or self._semantic.read(owner) is None:
                 continue
-            if self._semantic.merge_into(owner, slug, strict=self._cfg.tier == "federal"):
+            if self._semantic.merge_into(
+                owner, slug, strict=self._cfg.tier == "federal", basis="alias"
+            ):
                 self._graph.rename_node(self._scope.key, slug, owner)
-                self._emit("memory.entity_merged", f"{slug}->{owner}")
+                self._semantic.repoint_links(slug, owner)
+                survivor = self._semantic.read(owner)
+                self._emit(
+                    "memory.entity_merged",
+                    f"{slug}->{owner}",
+                    survivor.classification if survivor else "unclassified",
+                )
 
     def _normalize_entity_kinds(self) -> None:
         """One canonical kind per card; drop tags that only restate a kind (idempotent)."""
@@ -734,7 +742,12 @@ class Consolidator:
             config=self._cfg,
             embedder=self._embedder,
             confirmer=self._confirmer,
-            emit=lambda action, target, extra: self._emit(action, target, extra=extra),
+            emit=lambda action, target, extra: self._emit(
+                action,
+                target,
+                str(extra.get("classification") or "unclassified"),
+                extra=extra,
+            ),
         )
 
     async def merge_duplicate_procedures(self) -> list[tuple[str, str]]:

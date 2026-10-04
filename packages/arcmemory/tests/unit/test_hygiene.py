@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.hygiene import DedupReport, dedup_workspace, discover_workspaces
+from arcmemory.mdfile import parse_document
 
 
 def _write(path: Path, text: str) -> None:
@@ -69,7 +70,8 @@ def test_apply_merges_into_canonical_and_deletes_variants(tmp_path: Path) -> Non
 
     entity_text = (ents / "custom-erp.md").read_text(encoding="utf-8")
     assert "vendor: Acme" in entity_text and "users: 200" in entity_text
-    assert "name: Custom ERP" in entity_text and "entity_type: system" in entity_text
+    assert "name: Custom ERP" in entity_text and "entity_type: product" in entity_text
+    assert parse_document(entity_text)[0]["tags"] == ["erp"]  # "system" restates the type
 
     proc_text = (procs / "deploy-agent.md").read_text(encoding="utf-8")
     assert "step one" in proc_text and "step two" in proc_text
