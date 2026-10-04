@@ -175,7 +175,7 @@ def test_apply_merges_into_canonical_and_deletes_variants(tmp_path: Path) -> Non
     assert "vendor: Acme" in entity_text
     assert "users: 200" in entity_text
     assert "name: Custom ERP" in entity_text
-    assert "entity_type: system" in entity_text
+    assert "entity_type: product" in entity_text  # "system" folds onto product
 
     # Procedure: richest steps kept, use_count summed (5 + 3).
     proc_text = (procs / "deploy-agent.md").read_text(encoding="utf-8")
@@ -293,6 +293,7 @@ def test_agent_dry_run_prints_the_plan_and_writes_nothing(
     out = capsys.readouterr().out
     assert "thesis-5-tuning <- thesis-5" in out
     assert "1 certain" in out
+    assert "thesis-5: type thing -> thesis; tags ['thesis'] -> []" in out
     assert {p.name: p.read_text() for p in ents.glob("*.md")} == before
 
 

@@ -353,6 +353,15 @@ class MutableTaskBackend(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
+# Why an in-flight attempt was taken back. Every reclaimer writes one of these
+# exact strings to ``last_error`` so a run view can explain it in plain words.
+#: The process running the attempt stopped (crash, kill, deploy) mid-attempt.
+SERVICE_RESTART_INTERRUPTED = "interrupted: the Arc service restarted while this step was running"
+#: The attempt's run ended in a live process without completing or failing it.
+RUN_ENDED_UNFINISHED = "stuck: the step's run ended without completing or failing it"
+#: The attempt outlived its explicit node timeout (plus the reclaim margin).
+NODE_TIMEOUT_EXCEEDED = "timed out: the step ran past its node timeout"
+
 # A live attempt may run to its own timeout; the reclaimer waits this much longer
 # so a turn finishing at its timeout is never reclaimed and double-run.
 RECLAIM_MARGIN_S = 60.0
@@ -366,12 +375,6 @@ ATTEMPT_LEASE_TTL_S = 4 * ATTEMPT_LEASE_BEAT_S
 # One id per OS process lifetime. A reclaimer that finds its own id on a fresh
 # lease knows the attempt is running in this very process.
 PROCESS_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex}"
-
-# Why an in-flight attempt was taken back. Stored as the row's ``last_error``
-# prefix so the operator sees the cause, not just "abandoned".
-SERVICE_RESTART_INTERRUPTED = "service_restart_interrupted"
-RUN_ENDED_UNFINISHED = "run_ended_unfinished"
-NODE_TIMEOUT_EXCEEDED = "node_timeout_exceeded"
 
 
 def reclaim_allowance_s(timeout_seconds: float | None, floor_s: float) -> float:

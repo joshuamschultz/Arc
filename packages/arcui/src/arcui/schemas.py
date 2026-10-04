@@ -408,6 +408,8 @@ class SessionReplayResponse(BaseModel):
     page_size: int
     total: int
     messages: list[dict[str, Any]]
+    # A turn for this session is running now; the chat shows "working" on return.
+    run_in_flight: bool = False
 
 
 class TasksResponse(BaseModel):
@@ -843,6 +845,8 @@ class ProviderKeyStatus(BaseModel):
     env_var: str
     required: bool
     present: bool
+    # ``model`` = an AI provider, ``web`` = a web search / extract service.
+    kind: Literal["model", "web"] = "model"
 
 
 class ProviderKeysResponse(BaseModel):

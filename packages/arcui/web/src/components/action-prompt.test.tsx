@@ -17,10 +17,10 @@ function wrap(ui: React.ReactNode) {
 }
 
 describe('ActionPrompt', () => {
-  it('sign_bundle is a plain sentence with no button and no command', () => {
+  it('sign_bundle is a plain sentence with a review button and no command', () => {
     wrap(<ActionPrompt code="sign_bundle" />)
-    expect(screen.getByText(/not signed with your key yet/)).toBeTruthy()
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText(/until you review and sign it/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Review and sign' })).toBeTruthy()
     expect(screen.queryByText(/\barc (connector|bundle|sign|add)\b/i)).toBeNull()
   })
 
@@ -56,6 +56,6 @@ describe('RefusalNotice', () => {
     const error = new ApiError(400, 'Granting gmail needs the vault.', undefined, { action: 'sign_bundle' })
     wrap(<RefusalNotice error={error} />)
     expect(screen.getByText('Granting gmail needs the vault.')).toBeTruthy()
-    expect(screen.getByText(/not signed with your key yet/)).toBeTruthy()
+    expect(screen.getByText(/until you review and sign it/)).toBeTruthy()
   })
 })

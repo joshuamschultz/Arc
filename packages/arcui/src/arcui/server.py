@@ -71,6 +71,7 @@ from arcui.routes import classifiers as classifiers_routes
 from arcui.routes import config as config_routes
 from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connected_explorer as connected_explorer_routes
+from arcui.routes import connector_bundles as connector_bundles_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import custody as custody_routes
@@ -81,6 +82,7 @@ from arcui.routes import home as home_routes
 from arcui.routes import keys as keys_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import knowledge_shared as knowledge_shared_routes
+from arcui.routes import maintenance as maintenance_routes
 from arcui.routes import mcp as mcp_routes
 from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
@@ -434,12 +436,15 @@ def create_app(
         *ui_settings_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
+        *connector_bundles_routes.routes,
         *custody_routes.routes,
         *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,
         *source_guide_routes.routes,
         *gateway_routes.routes,
         *stack_routes.routes,
+        # Settings -> Maintenance: updates, modules, blueprints, team members.
+        *maintenance_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
         *team_ws_routes.routes,

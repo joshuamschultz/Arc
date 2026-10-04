@@ -10,7 +10,7 @@ document:
 * denied keys are STRIPPED — a manifest cannot reach the vault backend, process
   tools, the tool preamble, the sandbox path floor, or identity key custody
   (the ``_DENIED_OVERLAY_PATHS`` / ``_strip_denied`` precedent in
-  ``arccli/blueprints.py``).
+  ``arcagent/blueprints.py``).
 * an unbounded tool allowlist is refused above personal (REQ-268).
 * a third-party artifact without an exact version AND a per-platform sha256 is
   rejected (REQ-290) — a floating pin is a supply-chain hole, not a convenience,
@@ -87,7 +87,7 @@ default = "outbound"
 """
 
 # Trusted-admin-only config paths a manifest must never set. Mirrors
-# ``_DENIED_OVERLAY_PATHS`` (arccli/blueprints.py:73-83): the vault backend,
+# ``_DENIED_OVERLAY_PATHS`` (arcagent/blueprints.py:73-83): the vault backend,
 # native process tools, the tool preamble, the sandbox filesystem floor, and
 # identity key custody. Hard-coded here on purpose — a green implementation that
 # quietly shrinks the denylist must fail this test.
@@ -458,7 +458,8 @@ class TestTierFloorRefusesButCannotRaise:
         #
         # ``connection_catalog.py`` copies the floor onto a catalog listing entry so
         # a surface can SHOW which bundles this deployment could run ("enterprise+")
-        # and takes no verdict from it. The MCP attachment also reads the floor to
+        # and takes no verdict from it; ``bundle_import.py`` does the same on the
+        # upload review screen (UJ-6). The MCP attachment also reads the floor to
         # select its process confinement policy. The set stays exact, so an
         # unexpected reader — or a policy resolver growing inside these readers —
         # still fails here.
@@ -473,6 +474,7 @@ class TestTierFloorRefusesButCannotRaise:
 
         assert readers == [
             Path("connection_catalog.py"),
+            Path("extension/bundle_import.py"),
             Path("extension/manifest.py"),
             Path("modules/connectors/attachments.py"),
         ]

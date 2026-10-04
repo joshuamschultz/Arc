@@ -251,6 +251,22 @@ export interface TracesResponse {
   cursor?: string | null
 }
 
+export interface ContextWindowPrompt {
+  trace_id: string
+  timestamp: string
+  model: string | null
+  input_tokens: number
+  cache_read_tokens: number | null
+  cache_write_tokens: number | null
+  output_tokens: number | null
+}
+
+export interface ContextWindowResponse {
+  session_id: string | null
+  turn_in_flight: boolean
+  prompt: ContextWindowPrompt | null
+}
+
 export interface StatsResponse {
   stats: Dict
   window: string
@@ -291,6 +307,7 @@ export interface SessionReplayResponse {
   page_size: number
   total: number
   messages: Dict[]
+  run_in_flight: boolean
 }
 
 export interface TasksResponse {
@@ -1066,12 +1083,21 @@ export interface WorkflowErrorsResponse {
   errors: WorkflowFieldError[]
 }
 
+/** Why a failed run failed: the node it is blamed on, a plain sentence, the raw error. */
+export interface WorkflowFailureReason {
+  node_id: string | null
+  summary: string
+  detail: string | null
+}
+
 export interface WorkflowRunSummary {
   [key: string]: unknown
   run_id: string
   status: WorkflowRunStatus
   started_at?: string
   ended_at?: string | null
+  /** Present on a failed run; `null` on every other run. */
+  failure_reason?: WorkflowFailureReason | null
 }
 
 export interface WorkflowRunsResponse {
@@ -1092,7 +1118,15 @@ export interface WorkflowRunNodeStatus {
   owner_did?: string | null
   started_at?: string | null
   completed_at?: string | null
+  /** The raw error, sanitized; the technical detail behind `error_summary`. */
   last_error?: string | null
+  /** `last_error` in plain words. */
+  error_summary?: string | null
+  /** A node that succeeded after a failed attempt: that attempt's error. */
+  recovered_from?: { summary: string; detail: string } | null
+  duration_s?: number | null
+  /** Where the node's notification is pinned to go, e.g. `telegram:123`. */
+  deliver_to?: string | null
   /** The router's chosen route id, on a `routed` node. */
   route?: string | null
   /** Why a node was skipped or cancelled (e.g. "upstream X failed: ..."). */
@@ -1109,6 +1143,7 @@ export interface WorkflowRunNodeStatus {
 export interface WorkflowRunDetail {
   [key: string]: unknown
   last_error?: string | null
+  failure_reason?: WorkflowFailureReason | null
   run_id: string
   workflow_id: string
   version: number
@@ -1140,6 +1175,8 @@ export interface KeyEntry {
   env_var: string
   required: boolean
   present: boolean
+  /** `model` = an AI provider; `web` = a web search / extract service. */
+  kind: 'model' | 'web'
 }
 
 export interface KeysResponse {
@@ -1151,6 +1188,118 @@ export interface KeyWriteResponse {
   env_var: string
   present: boolean
   removed?: boolean
+}
+
+// --- Settings -> Maintenance ------------------------------------------------
+
+export interface RuntimeVersion {
+  version: string
+  active: boolean
+  /** ISO time the version was put on this computer. */
+  installed_at: string
+  /** Against the version in use: older = roll back, newer = switch forward. */
+  relation: 'active' | 'older' | 'newer'
+}
+
+export interface RuntimeResponse {
+  active: string | null
+  versions: RuntimeVersion[]
+  newer_available: boolean
+  /** Plain-words line about whether anything newer is installed. */
+  note: string
+}
+
+export interface RuntimeActivateResponse {
+  restarting: boolean
+  version: string
+  message: string
+}
+
+export interface MaintenanceStagedBundle {
+  version: string | null
+  issuer: string | null
+  update_available: boolean
+}
+
+export interface MaintenanceModuleRow {
+  name: string
+  description: string
+  installed: boolean
+  staged: MaintenanceStagedBundle | null
+  /** Per agent; `enabled: null` means that agent's settings could not be read. */
+  agents: Record<string, { enabled: boolean | null }>
+}
+
+export interface MaintenanceModulesResponse {
+  agents: { agent_id: string; name: string }[]
+  modules: MaintenanceModuleRow[]
+}
+
+export type ModuleAction = 'enable' | 'disable' | 'install'
+
+export interface ModuleChangeResponse {
+  module: string
+  agent_id: string
+  enabled: boolean
+  /** True when the running agent was changed with no restart. */
+  live: boolean
+  restart_needed: boolean
+  message: string
+  version?: string
+}
+
+export interface BlueprintCreates {
+  persona: boolean
+  prompts: string[]
+  skills: string[]
+  capabilities: string[]
+  schedules: number
+  modules: string[]
+}
+
+export interface BlueprintSummary {
+  id: string
+  name: string
+  version: string
+  tier: string
+  description: string
+  source: 'packaged' | 'user'
+  signed: boolean
+  creates: BlueprintCreates
+}
+
+export interface BlueprintCreateResponse {
+  agent_id: string
+  did: string
+  team_registered: boolean
+  notice: string | null
+  created: {
+    persona: boolean
+    prompts: number
+    capabilities: number
+    skills: number
+    schedules: number
+  }
+  warnings: number
+}
+
+export type TeamMemberStatus = 'active' | 'suspended' | 'revoked'
+
+export interface TeamMember {
+  did: string
+  handle: string
+  name: string
+  type: 'agent' | 'user'
+  roles: string[]
+  status: TeamMemberStatus
+  harness: string
+  created: string
+  /** The operator's own entry: it cannot be switched off or removed here. */
+  protected: boolean
+}
+
+export interface TeamMembersResponse {
+  members: TeamMember[]
 }
 
 /** A credential a bundle declares; `prompt` is the operator-facing ask. */
@@ -1879,4 +2028,74 @@ export interface SemanticLayerSaved {
   signer_did: string
   sha256: string
   message: string
+}
+
+// --- Connector packages (add a third-party connector) ----------------------
+
+export interface InstalledBundle {
+  name: string
+  display_name: string
+  version: string
+  signer_did: string
+  used_by: string[]
+}
+
+export interface ConnectorBundlesResponse {
+  installed: InstalledBundle[]
+  /** Code packages already on this machine that Arc will not run until reviewed and signed. */
+  unsigned_local: { name: string; reason: string }[]
+}
+
+export interface BundleReviewTool {
+  name: string
+  description: string
+  classification: string
+  capability_tags: string[]
+  network: boolean
+}
+
+export interface BundleReviewSecret {
+  name: string
+  prompt: string
+  sensitive: boolean
+  required: boolean
+}
+
+export interface BundleReviewUpdate {
+  installed_version: string
+  tools_added: string[]
+  tools_removed: string[]
+  tools_changed: string[]
+  new_secrets: string[]
+  new_egress: string[]
+}
+
+export interface BundleReview {
+  name: string
+  display_name: string
+  version: string
+  description: string
+  attachment: 'native' | 'cli' | 'mcp'
+  tier_floor: string
+  publisher: { status: 'verified' | 'unknown' | 'unsigned'; signer_did: string }
+  tools: BundleReviewTool[]
+  secrets: BundleReviewSecret[]
+  host_programs: string[]
+  egress_hosts: string[]
+  skills: string[]
+  files: { path: string; size: number; executes: boolean }[]
+  executes_code: boolean
+  needs_network: boolean
+  /** Plain sentences shown as warnings. */
+  flags: string[]
+  digest: string
+  confirm_required: boolean
+  update: BundleReviewUpdate | null
+}
+
+export interface StagedBundle {
+  staging_id: string
+  /** Seconds until the review expires. */
+  expires_in: number
+  review: BundleReview
 }

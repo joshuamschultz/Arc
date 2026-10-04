@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from arcstore.backends.memory import FakeBackend
-from arcstore.tasks import Task, TaskStore
+from arcstore.tasks import SERVICE_RESTART_INTERRUPTED, Task, TaskStore
 
 from arcteam.workflow.runner import WorkflowRunner
 from arcteam.workflow.stores import WorkflowRunStore, WorkflowTaskStore
@@ -447,6 +447,9 @@ async def test_reclaim_stamps_reclaimed_at_on_the_row() -> None:
     assert reclaimed is not None and reclaimed.status == "todo"
     assert datetime.fromisoformat(str(reclaimed.metadata["reclaimed_at"])).tzinfo is not None
     assert reclaimed.metadata["flow_run_id"] == "run-ra", "the node block survives the stamp"
+    # One vocabulary for "the process died under this attempt", whichever side
+    # reclaims it — the run view explains it once, in plain words.
+    assert reclaimed.last_error == SERVICE_RESTART_INTERRUPTED
 
 
 def test_attempt_with_its_own_timeout_is_not_expired_inside_the_margin() -> None:

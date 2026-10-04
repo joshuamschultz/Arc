@@ -25,6 +25,7 @@ import {
   useWorkflowTemplates,
 } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
+import { runPath } from '@/lib/workflow-paths'
 
 /** Operator-only create-workflow form — a name + optional trigger JSON.
  *
@@ -142,13 +143,13 @@ function CreateWorkflowSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   )
 }
 
-/** `?run=<run_id>` (audit and notice deep links) opens that run on its workflow's page. */
+/** `?run=<run_id>` (audit and notice deep links) opens that run's own page. */
 function useLinkedRunTarget(): string | null {
   const [searchParams] = useSearchParams()
   const runId = searchParams.get('run')
   const run = useWorkflowRun(runId)
   if (!runId || !run.data?.workflow_id) return null
-  return `/workflows/${encodeURIComponent(run.data.workflow_id)}?run=${encodeURIComponent(runId)}`
+  return runPath(run.data.workflow_id, runId)
 }
 
 export function WorkflowsPage() {
@@ -194,7 +195,7 @@ export function WorkflowsPage() {
             <EmptyState
               icon={<GitBranch className="size-7" />}
               title="No workflows yet"
-              description="Create one from the dashboard, the CLI, or by asking an agent to build it."
+              description="Create one from the dashboard, or ask an agent to build it."
             />
           }
         >

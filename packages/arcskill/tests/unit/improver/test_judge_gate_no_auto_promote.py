@@ -136,10 +136,11 @@ async def test_judge_case_blocks_personal_auto_promotion_without_approver(tmp_pa
     # Honest routing: a pending-review/blocked audit event, not a silent skip.
     denied = [e for e in sink.events if getattr(e, "outcome", "") == "denied_no_approver"]
     assert denied, "the judge-gated candidate must be routed to review and audited, not dropped"
-    # The outcome carries WHY (the judge case that forced review) + how to get real verdicts.
+    # The outcome carries WHY (the judge case that forced review) and what a person must do.
     detail = str(denied[0].extra.get("detail", ""))
     assert "judge_rubric" in detail
-    assert "arc skill evals judge" in detail
+    assert "a person has to read the candidate" in detail
+    assert "arc " not in detail
 
 
 @pytest.mark.asyncio
@@ -154,7 +155,8 @@ async def test_judge_case_routes_to_operator_review_when_approver_wired(tmp_path
 
     # It went through the operator-review ladder (not auto-applied), then applied on grant.
     assert approver.calls == ["skill.mutation"], "the candidate must route to operator review"
-    # The operator saw WHY it needed review + the command to compute the real verdicts.
+    # The operator saw WHY it needed review, in plain words and with no command to run.
     assert "judge_rubric" in approver.details[0]
-    assert "arc skill evals judge" in approver.details[0]
+    assert "a person has to read the candidate" in approver.details[0]
+    assert "arc " not in approver.details[0]
     assert (skill_md.parent / "scripts" / "calc.py").read_bytes() == _FIXED

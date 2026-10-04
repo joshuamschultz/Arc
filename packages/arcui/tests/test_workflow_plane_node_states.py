@@ -104,7 +104,9 @@ async def test_node_row_prefers_node_states_and_falls_back_to_rows(world: Any) -
     assert nodes["collect"]["status"] == "done"
     assert nodes["collect"]["attempts"] == 4
     assert nodes["collect"]["max_attempts"] == 5
-    assert nodes["collect"]["last_error"] == "retried after a 503"
+    # A done node's earlier error is a recovery, not a failure.
+    assert nodes["collect"]["last_error"] is None
+    assert nodes["collect"]["recovered_from"]["detail"] == "retried after a 503"
     assert nodes["collect"]["completed_at"] == "2026-10-01T00:05:00+00:00"
     assert nodes["collect"]["output"] == {"n": 1}, "outputs still come from the row"
     assert nodes["deliver"]["status"] == "pending", "an unnamed node falls back to its row"

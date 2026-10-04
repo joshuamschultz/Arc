@@ -356,6 +356,12 @@ class ArcAgent:
 
         return await enable_module_persisted(self, name)
 
+    async def disable_module_persisted(self, name: str) -> str:
+        """Disable one module now and after future agent restarts."""
+        from arcagent.core.agent_lifecycle import disable_module_persisted
+
+        return await disable_module_persisted(self, name)
+
     async def reconcile_connectors(self, *, wait_seconds: float = 4.0) -> Any:
         """Refresh this started agent's connector tools from durable grants.
 

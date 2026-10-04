@@ -117,7 +117,7 @@ async def test_no_client_says_how_to_start_one(adapter: VoiceAdapter) -> None:
     live = adapter.status()
     assert live.client_connected is False
     assert live.state == "offline"
-    assert "arc-voice" in live.reason
+    assert "mic app" in live.reason
     assert live.adapter.up is True
 
 

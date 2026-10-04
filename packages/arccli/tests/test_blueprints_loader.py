@@ -1,4 +1,4 @@
-"""arccli.blueprints loader — discover / verify / merge, folder-layout + persona.
+"""arcagent.blueprints loader — discover / verify / merge, folder-layout + persona.
 
 Blueprints are folders (``<dir>/<name>/blueprint.toml`` + optional ``persona.md``).
 Built-ins live under the repo-root ``blueprints/``; user/shared presets under a
@@ -12,8 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from arccli import blueprints as bp
+from arcagent import blueprints as bp
 
 # ---------------------------------------------------------------------------
 # Built-in discovery (repo-root blueprints/, provenance-trusted)

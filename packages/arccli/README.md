@@ -176,7 +176,7 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc tui`** | Terminal viewpoint onto a served agent (soft-registered by `arctui` when installed) |
 | **`arc store`** | Operational store lifecycle — init, status, verify, backfill |
-| **`arc memory`** | Agent memory maintenance — dedup duplicates, status (semantic recall), backend (index backend health) |
+| **`arc memory`** | Agent memory maintenance — dedup duplicates, status (semantic recall), backend (index backend health), embed-backfill (doc-pool vector backlog) |
 
 ### Operator controls
 
@@ -324,6 +324,8 @@ arc memory dedup ./agents                     # dry-run: report legacy duplicate
 arc memory dedup --apply ./agents             # merge variant-slug cards into the canonical file, delete variants
 arc memory dedup --apply <agent-dir>/workspace  # one workspace, or a root that is searched for nested workspaces
 arc memory status ./agents                    # is semantic (vector) recall LIVE, or degraded to BM25 + graph? (exit 1 if down)
+arc memory embed-backfill --agent olivia --shared   # doc-pool vectors still missing, per pool (read-only; safe while arc ui runs)
+arc memory embed-backfill --agent olivia --run      # finish it here — only with arc ui stopped (refuses a store the service owns)
 arc agent memory ./my-agent --json            # straight database view of one agent's stored memory
 
 # === Multi-agent dashboard ===

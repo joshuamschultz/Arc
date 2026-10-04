@@ -689,6 +689,10 @@ class SessionRouter:
     # Observability helpers
     # -----------------------------------------------------------------------
 
+    def is_session_in_flight(self, session_key: str) -> bool:
+        """Whether a turn for ``session_key`` is running right now."""
+        return session_key in self._in_flight
+
     def active_session_count(self) -> int:
         """Return the number of sessions with a handoff still in flight."""
         return len(self._in_flight)

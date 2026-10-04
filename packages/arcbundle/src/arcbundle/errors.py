@@ -17,6 +17,7 @@ __all__ = [
     "BundleManifestError",
     "BundleMaterializeError",
     "BundleSignatureError",
+    "BundleTierError",
 ]
 
 
@@ -38,3 +39,11 @@ class BundleContentHashError(BundleError):
 
 class BundleMaterializeError(BundleError):
     """An atomic write or an inverse remove did not complete."""
+
+
+class BundleTierError(BundleError):
+    """The deployment's security tier cannot be read, so no bundle may be verified.
+
+    Guessing ``personal`` for an unreadable or unknown tier would verify a
+    development-signed bundle on a box that forbids one.
+    """

@@ -14,10 +14,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from arcagent import blueprints as bp
+from arcagent.blueprints_materialize import CapabilitySigner, materialize_blueprint
 from arctrust import InProcessSigner
-
-from arccli import blueprints as bp
-from arccli.blueprints_materialize import CapabilitySigner, materialize_blueprint
 
 
 def _write_v2_blueprint(root: Path) -> Path:

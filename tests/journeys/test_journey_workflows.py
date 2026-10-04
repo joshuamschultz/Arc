@@ -369,6 +369,38 @@ async def test_j3_retry_failed_node_skips_completed_upstream(world: _World) -> N
     assert await world.tasks.get(node_task_id(run_id, "collect", 1)) is None
 
 
+async def test_failed_run_explains_itself_and_retry_from_the_failed_node_completes_it(
+    world: _World,
+) -> None:
+    """The operator sees which node failed and why, retries it, and the run finishes."""
+    run_id = await _start_dag3_with_dead_lettered_archive(world)
+
+    (listed,) = await world.plane.list_runs("dag3", actor=world.actor)
+    assert listed["status"] == "failed"
+    assert listed["failure_reason"]["node_id"] == "archive"
+    assert listed["failure_reason"]["summary"] == (
+        "The step gave the AI more text than it can read at once."
+    )
+    assert "prompt is too long" in listed["failure_reason"]["detail"]
+    detail = await world.plane.get_run(run_id, actor=world.actor)
+    nodes = {n["node_id"]: n for n in detail["nodes"]}
+    assert nodes["archive"]["error_summary"] == listed["failure_reason"]["summary"]
+    assert nodes["notify"]["status"] == "cancelled"
+
+    retried = await world.plane.retry_node(run_id, "archive", actor=world.actor)
+    assert retried.errors is None, retried.errors
+    assert retried.value["failure_reason"] is None, "a reopened run is no longer failed"
+    for node in ("archive", "notify"):
+        row = node_task_id(run_id, node, 1)
+        await world.tasks.start_task(row, SALES)
+        await world.tasks.finish(row, status="done", resolution="ok", actor_did=SALES)
+        await world.runner.advance(run_id)
+
+    (finished,) = await world.plane.list_runs("dag3", actor=world.actor)
+    assert finished["status"] == "done"
+    assert finished["failure_reason"] is None
+
+
 _ENTERPRISE_TOML = '[security]\ntier = "enterprise"\n'
 
 

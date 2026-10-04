@@ -13,7 +13,9 @@ that store, and it is shaped by one decision (D-583): **a key value is write-onl
 The allowlist is the second load-bearing property. ``set`` writes an environment
 variable into a file the whole deployment sources, so an unchecked name is an
 arbitrary-env-var write — ``PATH``, ``LD_PRELOAD``, anything. Only a variable some
-packaged provider declares is accepted, and ``arcllm`` is the sole declarer (D-581).
+packaged provider declares is accepted: ``arcllm`` declares the model providers
+(D-581) and :data:`WEB_PROVIDER_KEY_ENV` the web search / extract services, whose
+module reads the same variables.
 
 The file itself is the same owner-only recipe connector credentials use
 (:class:`~arcagent.extension.secrets.EnvFile`, D-582), so an operator sees one file
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import arcrun
 from arctrust import causal
@@ -37,19 +40,32 @@ from arctrust.paths import env_file
 from arcagent.core.errors import ExtensionError
 from arcagent.extension.secrets import EnvFile
 
+#: Web search / extract provider -> the environment variable the web module reads
+#: its key from. The canonical map: the module resolves a key from here and this
+#: store writes to here, so the two cannot name different variables. None of the
+#: three is required — ``web_search`` simply is not offered without one.
+WEB_PROVIDER_KEY_ENV: dict[str, str] = {
+    "parallel": "PARALLEL_API_KEY",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+}
+
 
 @dataclass(frozen=True)
 class KeyStatus:
     """One provider's key coordinate and whether the store holds a value for it.
 
     Deliberately nothing else: adding a prefix or a length here would put a
-    fragment of a credential on every surface that renders this record.
+    fragment of a credential on every surface that renders this record. ``kind``
+    says which family the key belongs to (``model`` for an arcllm provider, ``web``
+    for a web search / extract service); it is a label, never part of the secret.
     """
 
     provider: str
     env_var: str
     required: bool
     present: bool
+    kind: Literal["model", "web"] = "model"
 
 
 #: The deployment's one environment file. ``arc.env``, not ``.env``: the systemd
@@ -90,6 +106,15 @@ class KeyStore:
                 present=bool(entries.get(key.api_key_env)),
             )
             for key in arcrun.model_provider_keys()
+        ) + tuple(
+            KeyStatus(
+                provider=provider,
+                env_var=env_var,
+                required=False,
+                present=bool(entries.get(env_var)),
+                kind="web",
+            )
+            for provider, env_var in WEB_PROVIDER_KEY_ENV.items()
         )
         self._audit("provider_key.list", str(self._file.path), "allow")
         return statuses
@@ -130,8 +155,9 @@ class KeyStore:
 
     @staticmethod
     def _declared(env_var: str) -> None:
-        """The allowlist: arcllm's packaged providers, and nothing beyond them."""
-        if env_var not in {key.api_key_env for key in arcrun.model_provider_keys()}:
+        """The allowlist: arcllm's packaged providers and the web providers, nothing else."""
+        declared = {key.api_key_env for key in arcrun.model_provider_keys()}
+        if env_var not in declared | set(WEB_PROVIDER_KEY_ENV.values()):
             raise ExtensionError(
                 code="PROVIDER_KEY_UNKNOWN",
                 message=f"no packaged provider reads {env_var}; refusing to touch it",
@@ -158,4 +184,11 @@ def classifier_models(name: str) -> tuple[str, ...] | None:
     return arcrun.classifier_models(name)
 
 
-__all__ = ["ExtensionError", "KeyStatus", "KeyStore", "classifier_models", "default_env_file"]
+__all__ = [
+    "WEB_PROVIDER_KEY_ENV",
+    "ExtensionError",
+    "KeyStatus",
+    "KeyStore",
+    "classifier_models",
+    "default_env_file",
+]

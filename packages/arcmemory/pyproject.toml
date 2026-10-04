@@ -36,6 +36,12 @@ dependencies = [
     # default so semantic recall works out of the box. Still guarded at load
     # time; absence degrades retrieval to BM25 + graph (never fails).
     "sqlite-vec>=0.1.6",
+    # HNSW sidecar for the SQLite vector channel: vec0 stays the source of
+    # truth, usearch answers the per-scope top-k in milliseconds instead of a
+    # Python scan of every vector (978k vectors stalled the event loop > 60s).
+    # Wheels ship for linux aarch64/x86_64 + macOS arm64/x86_64, py3.11-3.13.
+    "usearch>=2.16",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -88,7 +94,7 @@ warn_unused_configs = true
 # runtime importability check. Ignore missing imports so strict passes with or
 # without the extra installed.
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "sqlite_vec.*"]
+module = ["sqlite_vec", "sqlite_vec.*", "usearch", "usearch.*"]
 ignore_missing_imports = true
 
 # pypdf/python-docx/openpyxl are the optional [docs] extra, lazy-imported

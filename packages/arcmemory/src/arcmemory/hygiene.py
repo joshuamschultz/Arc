@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from arcmemory.collection_index import refresh_memory_document
-from arcmemory.entity_kind import clean_tags, infer_kind
+from arcmemory.entity_kind import more_specific_kind, normalize_card
 from arcmemory.mdfile import atomic_write_text, card_files, parse_document, render_document
 from arcmemory.security import dominating_classification
 from arcmemory.slug import canonical_slug
@@ -103,7 +103,7 @@ def _build_entity_doc(canonical: str, paths: list[Path]) -> str:
     """Merge entity cards: highest-confidence fact per predicate, richest metadata."""
     facts_by_pred: dict[str, Fact] = {}
     name = ""
-    entity_type = ""
+    entity_types: list[str] = []
     classifications: list[str] = []
     links: list[str] = []
     tags: list[str] = []
@@ -116,22 +116,24 @@ def _build_entity_doc(canonical: str, paths: list[Path]) -> str:
         cand_name = str(fm.get("name", "")).strip()
         if len(cand_name) > len(name):
             name = cand_name
-        if str(fm.get("entity_type", "unknown")) != "unknown":
-            entity_type = str(fm.get("entity_type"))
+        entity_types.append(str(fm.get("entity_type", "unknown")))
         classifications.append(str(fm.get("classification", "unclassified")))
         links += [str(x) for x in fm.get("links_to", [])]
         tags += [str(x) for x in fm.get("tags", [])]
 
     name = name or canonical.replace("-", " ").title()
+    kind, clean = normalize_card(
+        more_specific_kind([normalize_card(t, tags, name)[0] for t in entity_types]), tags, name
+    )
     frontmatter = {
-        "entity_type": entity_type or "unknown",
+        "entity_type": kind,
         "entity_id": canonical,
         "name": name,
         "classification": dominating_classification(classifications),
         "cross_session_visibility": False,
         "confidence": max((f.confidence for f in facts_by_pred.values()), default=0.5),
         "links_to": list(dict.fromkeys(links)),
-        "tags": list(dict.fromkeys(tags)),
+        "tags": clean,
     }
     fact_lines = "\n".join(format_fact(facts_by_pred[p]) for p in sorted(facts_by_pred))
     return render_document(frontmatter, f"# {name}\n\n## Facts\n{fact_lines}")
@@ -370,8 +372,7 @@ def normalize_entity_kinds(store: SemanticStore, *, apply: bool) -> KindMigratio
         entity = store.read(slug)
         if entity is None:
             continue
-        kind = infer_kind(entity.entity_type, entity.tags, entity.name)
-        tags = clean_tags(entity.tags)
+        kind, tags = normalize_card(entity.entity_type, entity.tags, entity.name)
         if kind == entity.entity_type and tags == entity.tags:
             continue
         changes.append(KindChange(slug, entity.entity_type, kind, tuple(entity.tags), tuple(tags)))

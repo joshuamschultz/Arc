@@ -14,20 +14,25 @@ with three candidate channels, none of which needs the other:
    types (optional: with no embedder, channels 1-2 still run, and the skip is loud).
 
 Every channel respects the same guards: kinds must be compatible (a person is never
-a place; system cards never merge) and classification levels must be EQUAL (a fold
-never moves a fact across a level; at federal an unknown label fails closed).
+a place; system cards never merge), labels must parse (at federal an unknown label
+fails closed), and a pair the operator marked "Not the same" is never proposed again
+(:class:`DistinctPairs`, keyed by every name either side has carried).
 
-A series pair whose remaining words agree is folded deterministically. Cards with an
-identical name and kind go to the narrow contradiction check. Everything else goes to
-the LLM confirmer. A fold keeps the richest card as survivor, gives it the most
-specific kind and the most descriptive name, records every old name and slug as an
-alias, unions facts/links/tags, rewrites inbound links, and writes an audited merge
-record. A second pass over the result finds nothing.
+A series pair on ONE level whose remaining words agree is folded deterministically.
+Cards with an identical name, kind and level go to the narrow contradiction check.
+Everything else (a cross-type or cross-level pair included) goes to the LLM confirmer,
+or to the operator's "Review duplicates" panel (:meth:`EntityDeduper.proposals` and
+:meth:`EntityDeduper.merge`). A fold keeps the richest card as survivor, gives it the
+most specific kind, the most descriptive name and the HIGHEST classification, records
+every old name and slug as an alias (a redirect), unions facts/links/tags, rewrites
+inbound links, and writes an audited merge record holding the folded card's bytes. A
+second pass over the result finds nothing.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from collections.abc import Callable
@@ -56,8 +61,9 @@ from arcmemory.hygiene import KindMigrationReport, normalize_entity_kinds
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
+from arcmemory.mdfile import atomic_write_text
 from arcmemory.slug import canonical_slug
-from arcmemory.stores.semantic import SemanticStore, classification_level
+from arcmemory.stores.semantic import SemanticStore, classification_level, merged_classification
 from arcmemory.types import Entity, Scope
 
 _log = logging.getLogger(__name__)
@@ -110,6 +116,11 @@ class _Card:
     level: int | None  # None = unparseable at this strictness (fails closed)
 
     @property
+    def identities(self) -> frozenset[str]:
+        """Every id this card has answered to: its slug and each alias."""
+        return frozenset({self.slug, *(canonical_slug(a) for a in self.entity.aliases)})
+
+    @property
     def residual(self) -> frozenset[str]:
         """Name words beyond the series key ("Thesis 5: X" -> {x})."""
         if self.series is None:
@@ -146,6 +157,91 @@ class EntityDedupResult:
 
     plan: EntityDedupPlan
     merged: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProposalCard:
+    """One card inside a proposed merge, as the review panel shows it."""
+
+    slug: str
+    name: str
+    entity_type: str
+    classification: str
+    tags: tuple[str, ...]
+    facts: int
+
+
+@dataclass(frozen=True)
+class DuplicateProposal:
+    """One proposed merge the operator can accept ("Merge") or refuse ("Not the same")."""
+
+    slugs: tuple[str, ...]
+    survivor: str
+    name: str
+    entity_type: str
+    classification: str
+    basis: str  # "series" | "same-name" | "candidate"
+    cards: tuple[ProposalCard, ...]
+
+
+class DistinctPairs:
+    """The operator's remembered "Not the same" decisions (agent state, direct I/O).
+
+    Stored as identity pairs in ``memory/entity-distinct.json``. A pair blocks two
+    cards when each side names either card's slug or one of its aliases, so a later
+    rename or merge of either side never re-opens the question.
+    """
+
+    def __init__(self, memory_dir: Path) -> None:
+        self._path = memory_dir / "entity-distinct.json"
+
+    def _entries(self) -> list[dict[str, Any]]:
+        if not self._path.exists():
+            return []
+        raw = json.loads(self._path.read_text(encoding="utf-8"))
+        return [dict(item) for item in raw.get("pairs", [])]
+
+    def pairs(self) -> set[frozenset[str]]:
+        """Every remembered pair."""
+        return {frozenset(item["pair"]) for item in self._entries()}
+
+    def remember(self, slugs: list[str], *, actor_did: str) -> int:
+        """Record every pair in ``slugs`` as distinct; returns how many were new."""
+        entries = self._entries()
+        known = {frozenset(item["pair"]) for item in entries}
+        added = 0
+        for a, b in combinations(sorted({canonical_slug(s) for s in slugs}), 2):
+            if frozenset((a, b)) in known:
+                continue
+            entries.append({"pair": [a, b], "by": actor_did, "ts": datetime.now(UTC).isoformat()})
+            added += 1
+        if added:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(self._path, json.dumps({"pairs": entries}, indent=2) + "\n")
+        return added
+
+
+def _known_distinct(a: _Card, b: _Card, distinct: set[frozenset[str]]) -> bool:
+    """True when the operator already said these two are not the same thing."""
+    return any(frozenset((x, y)) in distinct for x in a.identities for y in b.identities)
+
+
+def marked_distinct(store: SemanticStore, a: str, b: str) -> bool:
+    """True when the operator said cards ``a`` and ``b`` are not the same thing.
+
+    For merge paths that bypass the planner (the model-callable merge tool): a
+    remembered "Not the same" binds a model as firmly as it binds the nightly pass.
+    """
+    distinct = DistinctPairs(store.memory_dir).pairs()
+    if not distinct:
+        return False
+
+    def identities(slug: str) -> set[str]:
+        entity = store.read(slug)
+        aliases = entity.aliases if entity is not None else []
+        return {canonical_slug(slug), *(canonical_slug(alias) for alias in aliases)}
+
+    return any(frozenset((x, y)) in distinct for x in identities(a) for y in identities(b))
 
 
 class _UnionFind:
@@ -205,6 +301,7 @@ class EntityDeduper:
         self._confirmer = confirmer
         self._emit_fn = emit
         self._strict = config.tier == "federal"
+        self._distinct = DistinctPairs(store.memory_dir)
 
     # -- planning ------------------------------------------------------------
 
@@ -212,8 +309,9 @@ class EntityDeduper:
         """Read every card, run the candidate channels, and classify each cluster."""
         cards = self._cards()
         vectors = await self._vectors(cards)
+        distinct = self._distinct.pairs()
         # O(N^2) pairwise sweep — off the loop so a large store cannot pin it.
-        return await asyncio.to_thread(self._plan_sync, cards, vectors)
+        return await asyncio.to_thread(self._plan_sync, cards, vectors, distinct)
 
     def _cards(self) -> list[_Card]:
         cards: list[_Card] = []
@@ -252,22 +350,26 @@ class EntityDeduper:
         return {card.slug: vec for card, vec in zip(cards, embedded, strict=True)}
 
     def _plan_sync(
-        self, cards: list[_Card], vectors: dict[str, list[float]] | None
+        self,
+        cards: list[_Card],
+        vectors: dict[str, list[float]] | None,
+        distinct: set[frozenset[str]],
     ) -> EntityDedupPlan:
         plan = EntityDedupPlan(entities=len(cards))
         by_slug = {c.slug: c for c in cards}
         certain_uf = _UnionFind(list(by_slug))
         edges: list[tuple[str, str]] = []
         for a, b in combinations(cards, 2):
-            if not self._candidate(a, b, vectors):
+            if not self._candidate(a, b, vectors) or _known_distinct(a, b, distinct):
                 continue
             if a.level is None or b.level is None:
-                continue  # fail closed: an unparseable label is never merged
-            if a.level != b.level:
+                # Fail closed: an unparseable label is never merged, only reported.
                 plan.blocked.append(sorted([a.slug, b.slug]))
                 continue
             edges.append((a.slug, b.slug))
-            if self._series_certain(a, b):
+            # Only a same-level pair folds without a confirmation: a cross-level
+            # fold re-labels a card, so a model or a person must say yes first.
+            if a.level == b.level and self._series_certain(a, b):
                 certain_uf.union(a.slug, b.slug)
 
         representative: dict[str, str] = {slug: slug for slug in by_slug}
@@ -334,7 +436,8 @@ class EntityDeduper:
     def _same_name(members: list[str], by_slug: dict[str, _Card]) -> bool:
         cards = [by_slug[s] for s in members]
         names = {c.entity.name.strip().casefold() for c in cards}
-        return len(names) == 1 and len({c.kind for c in cards}) == 1
+        same_kind = len({c.kind for c in cards}) == 1
+        return len(names) == 1 and same_kind and len({c.level for c in cards}) == 1
 
     @staticmethod
     def _merge_group(group: list[_Card], *, basis: str) -> MergeGroup:
@@ -351,6 +454,74 @@ class EntityDeduper:
             entity_type=kind,
             basis=basis,
         )
+
+    # -- the operator's review panel -------------------------------------------
+
+    async def proposals(self) -> list[DuplicateProposal]:
+        """Every merge the engine would make or ask about, for a person to judge."""
+        plan = await self.plan()
+        groups: list[tuple[list[str], str]] = [
+            (sorted([g.survivor, *g.folded]), "series") for g in plan.certain
+        ]
+        groups += [(members, "same-name") for members in plan.exact]
+        groups += [(members, "candidate") for members in plan.ambiguous]
+        proposals: list[DuplicateProposal] = []
+        for members, basis in groups:
+            cards = self._live(members)
+            if len(cards) >= 2:
+                proposals.append(self._proposal(cards, basis))
+        return proposals
+
+    def _proposal(self, cards: list[_Card], basis: str) -> DuplicateProposal:
+        group = self._merge_group(cards, basis=basis)
+        label = cards[0].entity.classification
+        for card in cards[1:]:
+            label = (
+                merged_classification(label, card.entity.classification, strict=self._strict)
+                or label
+            )
+        return DuplicateProposal(
+            slugs=tuple(sorted(c.slug for c in cards)),
+            survivor=group.survivor,
+            name=group.name,
+            entity_type=group.entity_type,
+            classification=label,
+            basis=basis,
+            cards=tuple(
+                ProposalCard(
+                    slug=c.slug,
+                    name=c.entity.name,
+                    entity_type=c.entity.entity_type,
+                    classification=c.entity.classification,
+                    tags=tuple(c.entity.tags),
+                    facts=len(c.entity.facts),
+                )
+                for c in sorted(cards, key=lambda c: c.slug)
+            ),
+        )
+
+    def merge(self, slugs: list[str], *, basis: str) -> list[tuple[str, str]]:
+        """Fold the named cards into one; a person's "Merge" stands in for the LLM.
+
+        The same guards as every fold: two or more distinct live cards, kinds that
+        can be one thing, labels that parse. Refused (``[]``) otherwise.
+        """
+        wanted = sorted({canonical_slug(s) for s in slugs})
+        cards = self._live(wanted)
+        if len(wanted) < 2 or len(cards) != len(wanted) or not self._guarded(cards):
+            return []
+        return self._fold(self._merge_group(cards, basis=basis))
+
+    def reject(self, slugs: list[str], *, actor_did: str) -> int:
+        """Remember "Not the same" for every pair in ``slugs``; never proposed again."""
+        added = self._distinct.remember(slugs, actor_did=actor_did)
+        if added:
+            self._emit(
+                "memory.entities_marked_distinct",
+                "memory",
+                {"slugs": sorted(slugs), "pairs": added, "by": actor_did},
+            )
+        return added
 
     # -- applying ------------------------------------------------------------
 
@@ -421,17 +592,20 @@ class EntityDeduper:
             _log.warning("arcmemory de-dup: merge confirmation failed: %s", exc)
             self._skipped("confirm-failed")
             return []
+        asked = [{c.slug for c in cards} for cards in live]
         merged: list[tuple[str, str]] = []
         for subgroup in confirmed:
+            # The model may only fold cards it was asked about together.
+            if not any(set(subgroup) <= cluster for cluster in asked):
+                continue
             cards = self._live(subgroup)
             if len(cards) >= 2 and self._guarded(cards):
                 merged += self._fold(self._merge_group(cards, basis="confirmed"))
         return merged
 
     def _guarded(self, cards: list[_Card]) -> bool:
-        """Re-check the guards on a model-chosen sub-group (it may pair any two slugs)."""
-        levels = {c.level for c in cards}
-        if None in levels or len(levels) != 1:
+        """Re-check the guards on a chosen group (a model or a person may name any slugs)."""
+        if any(c.level is None for c in cards):
             return False
         return all(kinds_compatible(a.kind, b.kind) for a, b in combinations(cards, 2))
 
@@ -445,21 +619,20 @@ class EntityDeduper:
         for slug in group.folded:
             folded = self._store.read(slug)
             if folded is None or not self._store.merge_into(
-                group.survivor, slug, strict=self._strict
+                group.survivor, slug, strict=self._strict, basis=group.basis
             ):
                 continue
             self._graph.rename_node(self._scope, slug, group.survivor)
             self._store.repoint_links(slug, group.survivor)
+            survivor = self._store.read(group.survivor)
             record = {
                 "survivor": group.survivor,
                 "folded": slug,
                 "basis": group.basis,
                 "entity_type": group.entity_type,
                 "folded_name": folded.name,
+                "classification": survivor.classification if survivor else "",
             }
-            self._store.append_merge_record(
-                {**record, "ts": datetime.now(UTC).isoformat(), "scope": self._scope}
-            )
             self._emit("memory.entity_merged", f"{slug}->{group.survivor}", record)
             merged.append((slug, group.survivor))
         if merged:
@@ -493,6 +666,8 @@ class AgentDedupReport:
 
     kinds: KindMigrationReport
     result: EntityDedupResult
+    #: What is left for a person to judge (e.g. cross-type candidates, no confirmer).
+    proposals: list[DuplicateProposal] = field(default_factory=list)
 
 
 async def dedup_agent_memory(
@@ -526,7 +701,7 @@ async def dedup_agent_memory(
             action=action,
             target=target,
             outcome="allow",
-            classification="unclassified",
+            classification=str(extra.get("classification") or "unclassified"),
             tier=cfg.tier,
             extra={**extra, "initiator": "operator"},
         )
@@ -538,15 +713,20 @@ async def dedup_agent_memory(
     deduper = EntityDeduper(
         store, graph, scope.key, config=cfg, embedder=embedder, confirmer=confirmer, emit=_emit
     )
-    return AgentDedupReport(kinds=kinds, result=await deduper.run(apply=apply))
+    result = await deduper.run(apply=apply)
+    return AgentDedupReport(kinds=kinds, result=result, proposals=await deduper.proposals())
 
 
 __all__ = [
     "AgentDedupReport",
+    "DistinctPairs",
+    "DuplicateProposal",
     "EntityDedupPlan",
     "EntityDedupResult",
     "EntityDeduper",
     "MergeGroup",
+    "ProposalCard",
     "dedup_agent_memory",
+    "marked_distinct",
     "name_tokens",
 ]

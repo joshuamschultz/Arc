@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.entity_dedup import EntityDeduper
@@ -88,14 +90,43 @@ async def test_a_hostile_confirmer_cannot_pair_cards_across_levels(workspace, db
     assert secret is not None and [f.value for f in secret.facts] == ["classified location"]
 
 
-async def test_the_model_callable_merge_primitive_refuses_a_cross_level_fold(
-    workspace, db, scope
+@pytest.mark.parametrize(
+    ("survivor", "folded"), [("thesis-5", "op-nightfall"), ("op-nightfall", "thesis-5")]
+)
+async def test_the_merge_primitive_never_moves_a_secret_fact_down_a_level(
+    workspace, db, scope, survivor: str, folded: str
 ) -> None:
+    """A cross-level fold lifts the survivor to the HIGHER label, whichever side survives."""
     store, _ = _setup(workspace, db, scope)
 
-    assert store.merge_into("thesis-5", "op-nightfall", strict=False) is False
-    assert store.merge_into("op-nightfall", "thesis-5", strict=False) is False
-    assert "op-nightfall" in store.slugs() and "thesis-5" in store.slugs()
+    assert store.merge_into(survivor, folded, strict=False) is True
+
+    card = store.read(survivor)
+    assert card is not None and card.classification == "secret"
+    for slug in store.slugs():
+        other = store.read(slug)
+        assert other is not None
+        if other.classification != "secret":
+            assert all("classified" not in f.value for f in other.facts)
+    [record] = store.merge_history()
+    assert record["classification"] == "secret"
+
+
+async def test_the_agent_merge_tool_obeys_a_remembered_not_the_same(workspace, db, scope) -> None:
+    """A model cannot fold two cards the operator said are different things."""
+    from arcmemory.entity_dedup import DistinctPairs
+    from arcmemory.tools import build_memory_tools
+
+    store, _ = _setup(workspace, db, scope)
+    DistinctPairs(store.memory_dir).remember(["thesis-5", "thesis-5-tuning"], actor_did="op")
+    built = build_memory_tools(
+        workspace=workspace, db=db, config=MemoryConfig(), caller_did=scope.agent_did
+    )
+    merge = {t.name: t for t in built}["merge_entities"]
+    reply = await merge.execute({"canonical": "thesis-5-tuning", "other": "thesis-5"})
+
+    assert "not the same" in reply
+    assert {"thesis-5", "thesis-5-tuning"} <= set(store.slugs())
 
 
 async def test_federal_never_merges_an_unknown_label(workspace, db, scope) -> None:

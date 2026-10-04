@@ -50,8 +50,6 @@ import arcrun
 from arcstore.tasks import (
     ATTEMPT_LEASE_BEAT_S,
     PROCESS_INSTANCE_ID,
-    RUN_ENDED_UNFINISHED,
-    SERVICE_RESTART_INTERRUPTED,
 )
 from arctrust import causal
 
@@ -81,7 +79,13 @@ from arcagent.modules.tasks._dispatch_helpers import (
 from arcagent.modules.tasks._dispatch_helpers import (
     session_key as _session_key,
 )
-from arcagent.modules.tasks.models import Priority, Task, reclaim_allowance_s
+from arcagent.modules.tasks.models import (
+    RUN_ENDED_UNFINISHED,
+    SERVICE_RESTART_INTERRUPTED,
+    Priority,
+    Task,
+    reclaim_allowance_s,
+)
 from arcagent.modules.tasks.node_execution import (
     TEST_MODE,
     WorkflowNode,
@@ -1573,14 +1577,11 @@ async def _reliability_tick() -> None:
                 task.classification,
                 alert=True,
             )
+            # The first pass runs once per process: an in_progress row it finds
+            # was claimed by a process that is gone. Name that, so a crash loop
+            # reads as one and not as a hung step.
             reason = SERVICE_RESTART_INTERRUPTED if first_pass else RUN_ENDED_UNFINISHED
-            await _handle_attempt_failure(
-                st,
-                task.id,
-                self_did,
-                f"{reason}: no active run for this attempt — reclaimed",
-                reclaimed=True,
-            )
+            await _handle_attempt_failure(st, task.id, self_did, reason, reclaimed=True)
     st.reclaim_done = True
     await _reconcile_parents(st, self_did)
     await _route_unassigned(st, self_did)

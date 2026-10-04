@@ -348,3 +348,53 @@ async def test_persistent_enable_repairs_an_enabled_but_degraded_module(
 
     assert await agent_lifecycle.enable_module_persisted(agent, "connected_data") == "repaired"
     assert calls == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_persistent_disable_survives_restart_and_keeps_the_module_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    agent = _fake_agent(tmp_path, modules={"web": ModuleEntry(enabled=True, priority=7)})
+    agent._config_path.write_text(
+        "[agent]\nname = 'Olivia'\n\n[modules.web]\nenabled = true\npriority = 7\n"
+        "\n[modules.web.config]\ninterval_seconds = 90\n",
+        encoding="utf-8",
+    )
+
+    class _Runtime:
+        async def teardown(self) -> None: ...
+
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: _Runtime())
+
+    await agent_lifecycle.disable_module_persisted(agent, "web")
+
+    persisted = tomllib.loads(agent._config_path.read_text(encoding="utf-8"))
+    assert persisted["modules"]["web"] == {
+        "enabled": False,
+        "priority": 7,
+        "config": {"interval_seconds": 90},
+    }
+    assert agent._config.modules["web"].enabled is False
+
+
+@pytest.mark.asyncio
+async def test_persistent_disable_restores_the_config_when_the_live_teardown_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enabled_by_config(monkeypatch)
+    agent = _fake_agent(tmp_path, modules={"web": ModuleEntry(enabled=True)})
+    original = "[agent]\nname = 'Olivia'\n\n[modules.web]\nenabled = true\n"
+    agent._config_path.write_text(original, encoding="utf-8")
+
+    class _Runtime:
+        async def teardown(self) -> None:
+            raise RuntimeError("teardown failed")
+
+    monkeypatch.setattr(agent_lifecycle, "load_module_runtime", lambda _n: _Runtime())
+
+    with pytest.raises(RuntimeError, match="teardown failed"):
+        await agent_lifecycle.disable_module_persisted(agent, "web")
+
+    assert agent._config_path.read_text(encoding="utf-8") == original
+    assert agent._config.modules["web"].enabled is True

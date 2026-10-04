@@ -22,11 +22,13 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from arcstore.runs import NodeState
+from arcteam.workflow import explain_node_error, run_failure_reason
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arctrust import sanitize_error_text
@@ -120,7 +122,8 @@ def _snapshot_fields(state: NodeState) -> dict[str, Any]:
         "started_at": state.started_at,
         "completed_at": state.finished_at,
         "route": state.route,
-        "reason": state.reason,
+        # A cancel reason quotes the upstream node's raw error, so it is scrubbed too.
+        "reason": sanitize_error_text(state.reason or "", limit=500) or None,
     }
 
 
@@ -244,7 +247,7 @@ class DashboardWorkflowPlane:
         detail = _run_summary(run)
         detail["workflow_id"] = run.workflow_id
         detail["version"] = run.workflow_version
-        detail["last_error"] = run.last_error
+        detail["last_error"] = sanitize_error_text(run.last_error or "", limit=500) or None
         # Per-node state comes from the task rows — they carry the live status,
         # the row id a gate is resolved by, and the per-node run id that opens
         # the existing execution timeline. The Run's trace adds what has no row
@@ -309,7 +312,8 @@ class DashboardWorkflowPlane:
                 "iteration": entry.loop_iteration,
             }
         self._flag_unsafe_repeats(run.workflow_id, nodes)
-        detail["nodes"] = list(nodes.values())
+        self._add_deliveries(run.workflow_id, nodes)
+        detail["nodes"] = [_explained(node) for node in nodes.values()]
         return detail
 
     async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
@@ -639,6 +643,15 @@ class DashboardWorkflowPlane:
         handle = str(node.agent or bundle.definition.owner)
         return {"idempotent": self._tool_idempotent(handle, str(node.tool)) is not False}
 
+    def _add_deliveries(self, workflow_id: str, nodes: dict[str, dict[str, Any]]) -> None:
+        """Name where each node's human-facing notification goes, when it pins one."""
+        bundle = self._load(workflow_id)
+        if bundle is None:
+            return
+        for node in bundle.definition.nodes:
+            if node.deliver_to and node.id in nodes:
+                nodes[node.id]["deliver_to"] = node.deliver_to
+
     def _flag_unsafe_repeats(self, workflow_id: str, nodes: dict[str, dict[str, Any]]) -> None:
         """Mark run-view node rows whose tool must not be blindly re-run."""
         bundle = self._load(workflow_id)
@@ -700,7 +713,49 @@ def _run_summary(run: Any) -> dict[str, Any]:
         "status": run.status,
         "started_at": getattr(run, "created_at", None) or getattr(run, "started_at", None),
         "ended_at": getattr(run, "completed_at", None),
+        "failure_reason": _failure_reason(run),
     }
+
+
+def _failure_reason(run: Any) -> dict[str, Any] | None:
+    """The run list's one line: which node failed, why in plain words, and the raw error."""
+    reason = run_failure_reason(run.status, run.node_states, run.last_error)
+    if reason is None:
+        return None
+    return {
+        "node_id": reason.node_id,
+        "summary": reason.summary,
+        "detail": sanitize_error_text(reason.detail or "", limit=500) or None,
+    }
+
+
+def _explained(node: dict[str, Any]) -> dict[str, Any]:
+    """Add the plain reason and the duration to one run-view node.
+
+    A node that succeeded after a failed attempt still carries that attempt's
+    error on its row. Shown as-is it reads as a failure, so it moves to
+    ``recovered_from`` and ``last_error`` is cleared.
+    """
+    error = node.get("last_error")
+    if error and node.get("status") == "done":
+        node["recovered_from"] = {"summary": explain_node_error(error), "detail": error}
+        node["last_error"] = None
+    elif error:
+        node["error_summary"] = explain_node_error(error)
+    node["duration_s"] = _duration_s(node.get("started_at"), node.get("completed_at"))
+    return node
+
+
+def _duration_s(started: object, finished: object) -> float | None:
+    """Seconds between two ISO stamps; ``None`` unless both are present and ordered."""
+    if not isinstance(started, str) or not isinstance(finished, str):
+        return None
+    try:
+        span = datetime.fromisoformat(finished) - datetime.fromisoformat(started)
+    except ValueError:
+        return None
+    seconds = span.total_seconds()
+    return round(seconds, 3) if seconds >= 0 else None
 
 
 def _edges(definition: Any) -> list[dict[str, str]]:

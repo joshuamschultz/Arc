@@ -167,7 +167,9 @@ def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
 
-def _audit(request: Request, target: str, operation: str, outcome: str, detail: str = "") -> None:
+def agent_audit(
+    request: Request, target: str, operation: str, outcome: str, detail: str = ""
+) -> None:
     emit_mutation_audit(
         request,
         target=target,
@@ -180,7 +182,7 @@ def _audit(request: Request, target: str, operation: str, outcome: str, detail: 
 def _operator_only(request: Request, target: str, operation: str) -> JSONResponse | None:
     if getattr(request.state, "role", None) == "operator":
         return None
-    _audit(request, target, operation, "denied", "not an operator")
+    agent_audit(request, target, operation, "denied", "not an operator")
     return _error("Only an operator can add agents.", 403)
 
 
@@ -196,7 +198,9 @@ async def _team_registered(request: Request, did: str) -> bool | None:
         return None
 
 
-async def _register(request: Request, created: arcagent.scaffold.CreatedAgent) -> str | None:
+async def register_created_agent(
+    request: Request, created: arcagent.scaffold.CreatedAgent
+) -> str | None:
     """Register ``created`` with the team; return a plain notice when it could not be."""
     registry = getattr(request.app.state, "messaging_registry", None)
     if registry is None:
@@ -226,7 +230,7 @@ async def _parse(request: Request, model: type[CreateAgentBody]) -> CreateAgentB
         return "Enter an agent name. Only the name, model, tier and files can be sent."
 
 
-def _operator(request: Request) -> arcagent.scaffold.OperatorSigning:
+def operator_signing(request: Request) -> arcagent.scaffold.OperatorSigning:
     signer = operator_signer_for_request(request)
     return arcagent.scaffold.OperatorSigning(
         did=OperatorApprovalAuthority(signer).did, signer=signer
@@ -243,17 +247,17 @@ async def _create(request: Request, model: type[CreateAgentBody], operation: str
     try:
         name = arcagent.scaffold.validate_agent_name(body.name)
     except arcagent.scaffold.AgentNameError as exc:
-        _audit(request, "agent:invalid-name", operation, "denied", "unsafe name")
+        agent_audit(request, "agent:invalid-name", operation, "denied", "unsafe name")
         return _error(str(exc), 400)
     target = f"agent:{name}"
     team_root: Path | None = getattr(request.app.state, "team_root", None)
     if team_root is None:
         return _error("This Arc has no fleet folder, so it cannot hold agents.", 503)
     try:
-        operator = _operator(request)
+        operator = operator_signing(request)
     except Exception:  # reason: no signer means no signed identity; refuse before writing
         logger.warning("agents.create operator signer unavailable", exc_info=True)
-        _audit(request, target, operation, "error", "operator signer unavailable")
+        agent_audit(request, target, operation, "error", "operator signer unavailable")
         return _error("Arc's operator key is unavailable, so a new agent cannot be signed.", 503)
     documents = body.files if isinstance(body, ImportAgentBody) else None
     if documents is not None and "identity.md" not in documents:
@@ -269,13 +273,13 @@ async def _create(request: Request, model: type[CreateAgentBody], operation: str
             documents=documents,
         )
     except arcagent.scaffold.AgentExistsError as exc:
-        _audit(request, target, operation, "denied", "already exists")
+        agent_audit(request, target, operation, "denied", "already exists")
         return _error(str(exc), 409)
     except ValueError as exc:
-        _audit(request, target, operation, "denied", "invalid input")
+        agent_audit(request, target, operation, "denied", "invalid input")
         return _error(str(exc), 400)
-    notice = await _register(request, created)
-    _audit(request, target, operation, "applied", f"did={created.did}")
+    notice = await register_created_agent(request, created)
+    agent_audit(request, target, operation, "applied", f"did={created.did}")
     return JSONResponse(
         {
             "agent_id": created.name,
@@ -334,9 +338,9 @@ async def register_agent(request: Request) -> JSONResponse:
             workspace_path=str(agent_dir / "workspace"),
         )
     except ValueError as exc:
-        _audit(request, target, "agent.register", "denied", str(exc))
+        agent_audit(request, target, "agent.register", "denied", str(exc))
         return _error(f"Could not add {agent_id} to the team: {exc}", 409)
-    _audit(request, target, "agent.register", "applied", f"did={identity.did}")
+    agent_audit(request, target, "agent.register", "applied", f"did={identity.did}")
     return JSONResponse({"agent_id": agent_id, "did": identity.did, "team_registered": True})
 
 

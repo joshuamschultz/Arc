@@ -43,3 +43,21 @@ export function LazyWorkflowDetailPage() {
     </Suspense>
   )
 }
+
+// The run page draws the same graph, so it is split off with the same library.
+const WorkflowRunPage = lazy(() =>
+  import('@/pages/workflow-run')
+    .then((m) => {
+      if (typeof window !== 'undefined') sessionStorage.removeItem(RELOADED_KEY)
+      return { default: m.WorkflowRunPage }
+    })
+    .catch(retryAfterDeploy),
+)
+
+export function LazyWorkflowRunPage() {
+  return (
+    <Suspense fallback={null}>
+      <WorkflowRunPage />
+    </Suspense>
+  )
+}

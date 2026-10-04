@@ -21,7 +21,7 @@ import { SettingsPage } from '@/pages/settings'
 import { WorkflowsPage } from '@/pages/workflows'
 import { ConnectionsPage } from '@/pages/connections'
 import { OAuthCallbackPage } from '@/pages/oauth-callback'
-import { LazyWorkflowDetailPage } from './lazy-workflow-detail'
+import { LazyWorkflowDetailPage, LazyWorkflowRunPage } from './lazy-workflow-detail'
 import { DEFAULT_PATH } from './nav'
 
 export const router = createBrowserRouter([
@@ -63,6 +63,7 @@ export const router = createBrowserRouter([
       // SPEC-061 ArcFlow — workflow management surface (COMP-020).
       { path: 'workflows', element: <WorkflowsPage /> },
       { path: 'workflows/:id', element: <LazyWorkflowDetailPage /> },
+      { path: 'workflows/:id/runs/:runId', element: <LazyWorkflowRunPage /> },
 
       // SPEC-064 — connection surfaces (connectors + keys).
       { path: 'connections', element: <ConnectionsPage /> },

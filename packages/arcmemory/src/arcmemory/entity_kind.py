@@ -14,7 +14,9 @@ side, and a legacy import wrote the category a second time into ``tags``
   no information and is dropped.
 
 Kinds are RANKED so a merge or a later write keeps the more specific one: ``other``
-(rank 0) < generic ``concept`` (rank 1) < a specific kind (rank 2). Identity kinds
+(rank 0) < generic ``concept`` (rank 1) < a specific kind (rank 2) < a specific kind
+that refines another (rank 2 + its depth under :data:`_PARENTS`): a ``thesis`` is a
+kind of ``document``, so "thesis" beats "document" beats "note". Identity kinds
 (person, company, team, place, account) are mutually exclusive: a person is never
 a place, so two cards of different identity kinds are never the same entity.
 """
@@ -40,6 +42,10 @@ GENERIC_KINDS = frozenset({"concept"})
 
 #: Every kind a model-written card may carry.
 KINDS = IDENTITY_KINDS | WORK_KINDS | GENERIC_KINDS | {OTHER}
+
+#: ``kind -> the broader kind it refines``. A refined kind outranks its parent, and
+#: a tag naming either says nothing the type does not.
+_PARENTS: dict[str, str] = {"thesis": "document"}
 
 _SYNONYMS: dict[str, str] = {
     # vague -> other
@@ -78,6 +84,7 @@ _SYNONYMS: dict[str, str] = {
     "tool": "product",
     "technology": "product",
     "software": "product",
+    "system": "product",
     "service": "product",
     "platform": "product",
     "skill": "product",
@@ -128,14 +135,24 @@ def normalize_kind(raw: str) -> str:
     return _SYNONYMS.get(singular, OTHER)
 
 
+def parent_kinds(kind: str) -> tuple[str, ...]:
+    """The broader kinds ``kind`` refines, nearest first (``thesis`` -> ``document``)."""
+    chain: list[str] = []
+    current = _PARENTS.get(normalize_kind(kind))
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = _PARENTS.get(current)
+    return tuple(chain)
+
+
 def kind_rank(kind: str) -> int:
-    """0 for ``other``, 1 for the generic kind, 2 for any specific kind."""
+    """0 for ``other``, 1 for the generic kind, 2 + depth for a specific kind."""
     normalized = normalize_kind(kind)
     if normalized == OTHER:
         return 0
     if normalized in GENERIC_KINDS:
         return 1
-    return 2
+    return 2 + len(parent_kinds(normalized))
 
 
 def kinds_compatible(a: str, b: str) -> bool:
@@ -183,6 +200,19 @@ def clean_tags(tags: list[str]) -> list[str]:
     return kept
 
 
+def normalize_card(entity_type: str, tags: list[str], name: str = "") -> tuple[str, list[str]]:
+    """The ONE normalization every entity-card write goes through.
+
+    Returns ``(kind, tags)``: ``kind`` is a single value from the closed taxonomy,
+    the most specific one the card's type, legacy category tags and series name
+    support (:func:`infer_kind`); ``tags`` keep only orthogonal descriptors (topic,
+    project, client, status, sensitivity hints). A tag naming any kind, a parent
+    of one, or a synonym or plural of either is dropped, so a tag never repeats
+    what ``entity_type`` says.
+    """
+    return infer_kind(entity_type, tags, name), clean_tags(tags)
+
+
 def infer_kind(raw_type: str, tags: list[str], name: str) -> str:
     """The best kind for a legacy card: its type, else a category tag, else its name.
 
@@ -191,7 +221,7 @@ def infer_kind(raw_type: str, tags: list[str], name: str) -> str:
     migration recovers the kind the old importer stored in the wrong field.
     """
     kind = normalize_kind(raw_type)
-    if kind in SYSTEM_KINDS or kind_rank(kind) == 2:
+    if kind in SYSTEM_KINDS or kind_rank(kind) >= 2:
         return kind
     candidates = [kind] + [normalize_kind(t) for t in tags]
     numbered = numbered_label(name)
@@ -234,7 +264,9 @@ __all__ = [
     "kind_rank",
     "kinds_compatible",
     "more_specific_kind",
+    "normalize_card",
     "normalize_kind",
     "numbered_label",
+    "parent_kinds",
     "restates_kind",
 ]

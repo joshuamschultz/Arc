@@ -7,7 +7,7 @@ from typing import Any
 
 import arcrun
 
-from arcagent import scaffold
+from arcagent import blueprints, blueprints_materialize, scaffold
 from arcagent.capabilities.artifact_signing import (
     load_signature,
     sidecar_path,
@@ -64,7 +64,14 @@ from arcagent.connections import (
 )
 from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
-from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
+from arcagent.core.config import (
+    ArcAgentConfig,
+    SecurityConfig,
+    deep_merge,
+    load_config,
+    persist_module_disabled,
+    persist_module_enabled,
+)
 from arcagent.core.control_binding import build_control_artifact_authority
 from arcagent.core.control_contract import (
     ControlActionProofSource,
@@ -93,6 +100,15 @@ from arcagent.core.tool_policy import (
     summarize_tool_policy,
 )
 from arcagent.extension import ProbeResult, ToolOutcome, ToolResult
+from arcagent.extension.bundle_import import (
+    BundleReview,
+    BundleStaging,
+    InstalledBundle,
+    StagedBundle,
+    installed_bundles,
+    remove_installed_bundle,
+    unsigned_local_bundles,
+)
 from arcagent.extension.connection_health import (
     NOTICE_CLAIM_TTL,
     PROBE_DID,
@@ -322,6 +338,8 @@ __all__ = [
     "AttachmentFactory",
     "AuditChain",
     "Authorization",
+    "BundleReview",
+    "BundleStaging",
     "CallJob",
     "CallQueueCoordinator",
     "CanonicalRunRequest",
@@ -370,6 +388,7 @@ __all__ = [
     "IdentityError",
     "IdentityGraph",
     "InstallReport",
+    "InstalledBundle",
     "KeyDecisions",
     "KeyStatus",
     "KeyStore",
@@ -419,6 +438,7 @@ __all__ = [
     "SkillRuntime",
     "SourceRefusedError",
     "SourceUnreachableError",
+    "StagedBundle",
     "Tier",
     "ToolError",
     "ToolOutcome",
@@ -433,6 +453,8 @@ __all__ = [
     "append_module_scan_roots",
     "approve_pulse_check",
     "audit_tier_relaxations",
+    "blueprints",
+    "blueprints_materialize",
     "build_control_artifact_authority",
     "build_mcp_door",
     "build_prompt_resolver",
@@ -454,6 +476,7 @@ __all__ = [
     "generate_schedule_id",
     "global_capabilities_root",
     "inspect_extensions",
+    "installed_bundles",
     "intake_capability_archive",
     "is_knowledge_principal",
     "iter_model_modules",
@@ -470,10 +493,13 @@ __all__ = [
     "next_check_time",
     "oauth_redirect_uri",
     "operator_key_path",
+    "persist_module_disabled",
+    "persist_module_enabled",
     "pin_name_for",
     "pulse_status",
     "read_capability_source",
     "register_schedule_revision",
+    "remove_installed_bundle",
     "remove_pulse_check",
     "resolve_deployment",
     "resolve_roots",
@@ -496,6 +522,7 @@ __all__ = [
     "tier_rank",
     "tool",
     "trust_bundled_capabilities",
+    "unsigned_local_bundles",
     "validate_module_configs",
     "validate_skill_folder",
     "verify_file",

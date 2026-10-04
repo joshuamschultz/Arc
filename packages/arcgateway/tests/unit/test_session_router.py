@@ -338,6 +338,24 @@ class TestSessionRouterHandle:
         assert router.active_session_count() == 0
 
     @pytest.mark.asyncio
+    async def test_is_session_in_flight_names_only_the_running_session(self) -> None:
+        slow_exec = _SlowExecutor()
+        router = SessionRouter(executor=slow_exec)
+        agent = "did:arc:agent:assistant"
+        alice = build_session_key(agent, "did:arc:user:alice")
+        bob = build_session_key(agent, "did:arc:user:bob")
+
+        await router.handle(_make_event(user_did="did:arc:user:alice"))
+        await asyncio.sleep(0)
+
+        assert router.is_session_in_flight(alice) is True
+        assert router.is_session_in_flight(bob) is False
+
+        slow_exec.open_gate(alice)
+        await asyncio.sleep(0.1)
+        assert router.is_session_in_flight(alice) is False
+
+    @pytest.mark.asyncio
     async def test_no_message_is_held_back_behind_a_busy_session(self) -> None:
         """Three messages to one busy session produce three handoffs, no waiting line."""
         slow_exec = _SlowExecutor()

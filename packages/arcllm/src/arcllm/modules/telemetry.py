@@ -293,6 +293,21 @@ def agent_identity(agent_did: str | None, agent_label: str | None = None) -> Ite
 # ---------------------------------------------------------------------------
 
 
+def _call_identity_extra(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Name the session and kind of a queued call on its spool row.
+
+    Readers (the Context Window card) need to tell a person's chat prompt from a
+    background call, and one session from another. Only a call the queue
+    admitted carries an identity; any other call stamps nothing.
+    """
+    job = kwargs.get("_queue_job")
+    if not isinstance(job, CallJob) or job.session_id is None:
+        return {}
+    context = kwargs.get("_queue_context")
+    origin = context.origin if isinstance(context, CallQueueContext) else "chat"
+    return {"session_id": job.session_id, "call_origin": origin}
+
+
 class TelemetryModule(BaseModule):
     """Wraps invoke() to log timing, token usage, and cost.
 
@@ -903,6 +918,7 @@ class TelemetryModule(BaseModule):
                 # ``<model> / error: <reason>`` row, not a bare ``— / error / 0ms``.
                 error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
                 self._record_spool(
+                    call_kwargs=kwargs,
                     outcome="error",
                     model=self._inner.model_name,
                     cost=None,
@@ -912,6 +928,7 @@ class TelemetryModule(BaseModule):
                 )
                 raise
             self._record_spool(
+                call_kwargs=kwargs,
                 outcome="ok",
                 model=response.model,
                 cost=cost,
@@ -977,6 +994,7 @@ class TelemetryModule(BaseModule):
                     # same as invoke().
                     error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
                     self._record_spool(
+                        call_kwargs=kwargs,
                         outcome="error",
                         model=self._inner.model_name,
                         cost=None,
@@ -1010,6 +1028,7 @@ class TelemetryModule(BaseModule):
                 record = self._build_trace_record(response, cost, phase_timings, prepared, kwargs)
                 await self._emit_trace(record)
             self._record_spool(
+                call_kwargs=kwargs,
                 outcome="ok",
                 model=response.model,
                 cost=cost,
@@ -1128,6 +1147,7 @@ class TelemetryModule(BaseModule):
         request_body: dict[str, Any] | None = None,
         response_body: dict[str, Any] | None = None,
         error: str | None = None,
+        call_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Append one ``llm_call`` operational record to the arcstore spool.
 
@@ -1140,7 +1160,7 @@ class TelemetryModule(BaseModule):
         """
         if not self._arcstore_enabled:
             return
-        extra: dict[str, Any] = {}
+        extra: dict[str, Any] = _call_identity_extra(call_kwargs or {})
         if request_body is not None:
             extra["request_body"] = request_body
         if response_body is not None:

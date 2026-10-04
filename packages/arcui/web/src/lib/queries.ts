@@ -1,9 +1,22 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm, apiPut } from './api'
 import { auditQuery, type AuditFilters } from './audit-query'
 import type {
   AgentConnectorsResponse,
+  ConnectorBundlesResponse,
+  InstalledBundle,
+  StagedBundle,
+  BlueprintCreateResponse,
+  BlueprintSummary,
+  MaintenanceModulesResponse,
+  ModuleAction,
+  ModuleChangeResponse,
+  RuntimeActivateResponse,
+  RuntimeResponse,
+  TeamMember,
+  TeamMembersResponse,
+  TeamMemberStatus,
   ConnectionGuide,
   ConnectionGuideHistory,
   ConnectionGuideStarter,
@@ -110,6 +123,7 @@ import type {
   ToolsResponse,
   Trace,
   TracesResponse,
+  ContextWindowResponse,
   WorkflowDetail,
   WorkflowMigration,
   CustodyDecision,
@@ -1052,6 +1066,12 @@ export const useAgentTraces = (agentId: string, limit = 200) =>
     `/api/agents/${agentId}/traces?limit=${limit}`,
   )
 
+export const useAgentContextWindow = (agentId: string) =>
+  useApiQuery<ContextWindowResponse>(
+    ['agent', agentId, 'context-window'],
+    `/api/agents/${agentId}/context-window`,
+  )
+
 export const useAgentSessions = (agentId: string) =>
   useApiQuery<SessionsListResponse>(
     ['agent', agentId, 'sessions'],
@@ -1769,6 +1789,95 @@ export const useClearKey = () => {
   })
 }
 
+// --- Settings -> Maintenance ------------------------------------------------
+//
+// Every write here is operator-only on the server; these hooks only carry the
+// request. After a change the matching list is re-read, so the page shows what
+// the server now holds rather than what was asked for.
+
+const MAINTENANCE_RUNTIME_KEY = ['maintenance', 'runtime']
+const MAINTENANCE_MODULES_KEY = ['maintenance', 'modules']
+const MAINTENANCE_BLUEPRINTS_KEY = ['maintenance', 'blueprints']
+const MAINTENANCE_TEAM_KEY = ['maintenance', 'team']
+
+export const useMaintenanceRuntime = () =>
+  useApiQuery<RuntimeResponse>(MAINTENANCE_RUNTIME_KEY, '/api/maintenance/runtime')
+
+export const useActivateRuntime = () =>
+  useMutation<RuntimeActivateResponse, Error, string>({
+    mutationFn: (version) => apiPost('/api/maintenance/runtime/activate', { version }),
+  })
+
+export const useMaintenanceModules = () =>
+  useApiQuery<MaintenanceModulesResponse>(MAINTENANCE_MODULES_KEY, '/api/maintenance/modules')
+
+export const useChangeModule = () => {
+  const queryClient = useQueryClient()
+  return useMutation<
+    ModuleChangeResponse,
+    Error,
+    { module: string; agentId: string; action: ModuleAction }
+  >({
+    mutationFn: ({ module, agentId, action }) =>
+      apiPost(`/api/maintenance/modules/${encodeURIComponent(module)}/${action}`, {
+        agent_id: agentId,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_MODULES_KEY }),
+  })
+}
+
+export const useBlueprints = () =>
+  useApiQuery<{ blueprints: BlueprintSummary[] }>(
+    MAINTENANCE_BLUEPRINTS_KEY,
+    '/api/maintenance/blueprints',
+  )
+
+export const useCreateFromBlueprint = () => {
+  const queryClient = useQueryClient()
+  return useMutation<BlueprintCreateResponse, Error, { blueprint: string; agentName: string }>({
+    mutationFn: ({ blueprint, agentName }) =>
+      apiPost(`/api/maintenance/blueprints/${encodeURIComponent(blueprint)}/create`, {
+        agent_name: agentName,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['roster'] })
+      void queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY })
+    },
+  })
+}
+
+export const useTeamMembers = () =>
+  useApiQuery<TeamMembersResponse>(MAINTENANCE_TEAM_KEY, '/api/maintenance/team/members')
+
+export const useAddTeamMember = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TeamMember, Error, { handle: string; name: string; roles: string[] }>({
+    mutationFn: (body) => apiPost('/api/maintenance/team/members', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY }),
+  })
+}
+
+export const useSetMemberStatus = () => {
+  const queryClient = useQueryClient()
+  return useMutation<TeamMember, Error, { did: string; status: TeamMemberStatus }>({
+    mutationFn: (body) => apiPost('/api/maintenance/team/members/status', body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY }),
+  })
+}
+
+// Re-register an agent with the team registry: the same route the agent page's
+// "Add to team" uses, so there is one way to do it.
+export const useRegisterAgentWithTeam = () => {
+  const queryClient = useQueryClient()
+  return useMutation<{ agent_id: string; did: string; team_registered: boolean }, Error, string>({
+    mutationFn: (agentId) => apiPost(`/api/agents/${encodeURIComponent(agentId)}/register`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: MAINTENANCE_TEAM_KEY })
+      void queryClient.invalidateQueries({ queryKey: ['roster'] })
+    },
+  })
+}
+
 // --- Memory sharing (SPEC-083 COMP-028) ------------------------------------
 //
 // Per-agent promotion settings. The Jev key is NOT part of this resource: it is
@@ -2270,3 +2379,63 @@ export const usePendingProfileReviewCounts = (agentIds: string[]) =>
     combine: (results) =>
       results.map((r, i) => ({ agentId: agentIds[i], count: r.data?.items?.length ?? 0 })),
   })
+
+// --- Connector packages ------------------------------------------------------
+
+const CONNECTOR_BUNDLES_KEY = ['connector-bundles']
+
+export const useConnectorBundles = () =>
+  useApiQuery<ConnectorBundlesResponse>(CONNECTOR_BUNDLES_KEY, '/api/connector-bundles')
+
+// A new or removed package changes the catalog and who can connect, so all three refresh.
+const useBundleInvalidator = () => {
+  const queryClient = useQueryClient()
+  return () => {
+    queryClient.invalidateQueries({ queryKey: CONNECTOR_BUNDLES_KEY })
+    queryClient.invalidateQueries({ queryKey: ['connectors', 'catalog'] })
+    queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })
+  }
+}
+
+export const useUploadConnectorBundle = () =>
+  useMutation<StagedBundle, Error, File>({
+    mutationFn: (file) => {
+      const form = new FormData()
+      form.append('file', file, file.name)
+      return apiPostForm<StagedBundle>('/api/connector-bundles/upload', form)
+    },
+  })
+
+export const useStageLocalConnectorBundle = () =>
+  useMutation<StagedBundle, Error, string>({
+    mutationFn: (name) => apiPost('/api/connector-bundles/stage-local', { name }),
+  })
+
+export const useApproveConnectorBundle = () => {
+  const invalidate = useBundleInvalidator()
+  return useMutation<
+    { installed: InstalledBundle },
+    Error,
+    { stagingId: string; confirmName: string }
+  >({
+    mutationFn: ({ stagingId, confirmName }) =>
+      apiPost(`/api/connector-bundles/${encodeURIComponent(stagingId)}/approve`, {
+        confirm_name: confirmName,
+      }),
+    onSuccess: invalidate,
+  })
+}
+
+export const useDiscardConnectorBundle = () =>
+  useMutation<{ discarded: unknown }, Error, string>({
+    mutationFn: (stagingId) =>
+      apiDelete(`/api/connector-bundles/staging/${encodeURIComponent(stagingId)}`),
+  })
+
+export const useRemoveConnectorBundle = () => {
+  const invalidate = useBundleInvalidator()
+  return useMutation<{ removed: unknown }, Error, string>({
+    mutationFn: (name) => apiDelete(`/api/connector-bundles/${encodeURIComponent(name)}`),
+    onSuccess: invalidate,
+  })
+}

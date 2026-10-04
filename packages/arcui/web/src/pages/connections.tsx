@@ -21,6 +21,7 @@ import { ConnectorAuthorizePanel } from '@/components/connector-authorize-panel'
 import { OAuthConnectPanel } from '@/components/oauth-connect-panel'
 import { ConnectorSecretsSheet } from '@/components/connector-secrets-sheet'
 import { AddMcpServerDialog } from '@/components/add-mcp-server-dialog'
+import { ConnectorBundleUploadButton } from '@/components/connector-bundle-upload'
 import { HostRequirementLine } from '@/components/host-setup-panel'
 import { HostNeedsNote } from '@/components/host-needs-note'
 import { CustodyRepairPanel } from '@/components/custody-repair-panel'
@@ -656,6 +657,7 @@ export function ConnectionsPage() {
                 <Plug /> Add MCP server
               </Button>
             )}
+            <ConnectorBundleUploadButton operatorMode={operatorMode} />
             <OperatorModeToggle />
           </>
         }

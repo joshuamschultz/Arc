@@ -37,6 +37,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # TOCTOU: swapping runtime/current after boot never redirects an extension load.
         "packages/arctrust/tests/unit/test_runtime_extensions_pin.py",
     ),
+    "connector package uploaded from the browser (UJ-6)": (
+        # zip-slip and tar-slip, a symlink escaping the root, links and device files,
+        # a zip bomb by ratio and by size, more than 2000 entries, a manifest declaring
+        # tools its code lacks (and code offering undeclared tools), staged files
+        # swapped between review and approve (and between writing and signing), a
+        # file added after the publisher signed, federal refusing an unsigned or
+        # unknown publisher, and an update adding egress that needs re-approval.
+        "packages/arcagent/tests/security/test_bundle_import_abuse.py",
+        # A viewer cannot upload, approve or remove; refusals are audited.
+        "packages/arcui/tests/test_connector_bundles_routes.py",
+    ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
         # The refusal reaches the module's audit sink in production, not only a log.
@@ -138,6 +149,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcrun/tests/security/test_event_tampering.py",
         "packages/arcui/tests/test_session_replay_media.py",
         "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
+        # A provider error echoing an API key never reaches the workflow run list
+        # or run detail: the failure reason, node error, cancel reason, run error.
+        "packages/arcui/tests/test_workflow_run_failure_route.py",
     ),
     # Item 20 audit causality: the actor on a record is the real initiator and
     # cannot be claimed. A causal context forged in tool arguments or an HTTP
@@ -310,13 +324,18 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # label above the clearance is refused; a missing or unknown label is the
     # clearance (fail upward); a caller-named or unattested lower label, an
     # undecided write and a direct backend save are all still no-write-down.
-    # Entity de-dup folds one card's facts into another. A series lookalike name,
-    # a hostile confirmer naming cards across levels, the model-callable merge
-    # primitive aimed across levels, and an unknown label at federal all fold
-    # nothing: a merge never moves a fact across a classification level.
+    # Entity de-dup folds one card's facts into another. A merge never moves a
+    # fact DOWN a level: the survivor carries the higher label, whichever side
+    # survives. A series lookalike across levels never folds without a
+    # confirmation, a hostile confirmer cannot fold cards outside the cluster it
+    # was asked about, an unknown label at federal folds nothing, and the
+    # model-callable merge tool cannot fold a pair the operator marked "Not the
+    # same". The review panel's merge/reject routes are operator-only.
     "classification laundering via entity merge (de-dup across levels)": (
         "packages/arcmemory/tests/security/test_entity_merge_abuse.py",
         "packages/arcmemory/tests/unit/test_entity_dedup.py",
+        "packages/arcmemory/tests/unit/test_entity_model_one_to_one.py",
+        "packages/arcui/tests/integration/test_knowledge_entity_duplicates.py",
     ),
     "classification laundering via a forged lower shared label (alpha-2 item 16)": (
         "packages/arcteam/tests/security/test_declassified_share.py",
@@ -781,6 +800,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # own approved shareable mapping; a failed read-back keeps the own copy.
         "packages/arcagent/tests/security/test_auto_migration_requires_grant.py",
         "tests/journeys/test_journey_shared_knowledge.py",
+        # The doc-pool embed backfill writes vectors into existing chunks only: a
+        # reader's or revoked subscriber's port writes none, a write for another
+        # scope (or for content that changed) is skipped, one agent's backfill never
+        # reaches another's pools or its own memory scope, and a second process is
+        # refused a store the service owns.
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill.py",
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill_operator.py",
     ),
     # SPEC-035 OQ-3 (Josh, 2026-10-03): an operator's "Always allow" on a trifecta
     # approval stands for that agent. A grant for combination A never satisfies a
@@ -832,8 +858,26 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "secret-bearing provider errors and stale-lease reclaim of workflow nodes": (
         "packages/arctrust/tests/unit/test_sanitize_error_text.py",
         "packages/arcui/tests/test_workflow_run_detail_failure.py",
+        "packages/arcui/tests/test_workflow_run_failure_route.py",
         "packages/arcteam/tests/unit/workflow/test_runner_reclaim_liveness.py",
         "packages/arcagent/tests/unit/modules/tasks/test_attempt_lease.py",
+    ),
+    # J1-10 (Settings -> Maintenance): a viewer switching the runtime, enabling or
+    # installing a module, adding or switching off a team member, or building an agent
+    # from a blueprint; a runtime version that is a path, ``..``, ``current`` or a
+    # name that is not installed; a module or blueprint named by a path; a staged
+    # bundle signed by a stranger or altered after signing; a member body that names
+    # a DID, a key or a foreign type; switching off the operator's own entry; a web
+    # search key written under a name no provider declares. All refused, nothing
+    # written, every attempt audited.
+    "maintenance actions by a viewer or with a path, forged bundle or forged member": (
+        "packages/arcui/tests/test_maintenance_runtime_routes.py",
+        "packages/arcui/tests/test_maintenance_modules_routes.py",
+        "packages/arcui/tests/test_maintenance_blueprints_routes.py",
+        "packages/arcui/tests/test_maintenance_team_routes.py",
+        "packages/arcui/tests/test_keys_routes.py",
+        "packages/arcbundle/tests/unit/test_admin.py",
+        "packages/arcagent/tests/unit/test_keys.py",
     ),
 }
 

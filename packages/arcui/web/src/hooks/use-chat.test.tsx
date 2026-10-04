@@ -88,6 +88,37 @@ describe('useChatSession', () => {
     ).toBe(true)
   })
 
+  it('on return mid-run shows the pending user message and a working flag, until the run ends', async () => {
+    const { apiGet } = await import('@/lib/api')
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      messages: [
+        { role: 'assistant', content: 'old answer', timestamp: 't0' },
+        { role: 'user', content: 'my new question', timestamp: 't1' },
+      ],
+      run_in_flight: true,
+    })
+    const { hook, ws } = openSession()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(hook.result.current.messages.map((m) => m.text)).toEqual(['old answer', 'my new question'])
+    expect(hook.result.current.working).toBe(true)
+
+    act(() => {
+      ws.emit('message', { type: 'stream', event: 'end', run_id: 'r9', status: 'completed' })
+    })
+    expect(hook.result.current.working).toBe(false)
+  })
+
+  it('is not working when the session has no run in flight', async () => {
+    const { hook } = openSession()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(hook.result.current.working).toBe(false)
+  })
+
   it('shows an answer that finished while the tab was away once the socket returns', async () => {
     vi.useFakeTimers()
     try {

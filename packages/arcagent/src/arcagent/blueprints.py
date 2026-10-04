@@ -6,10 +6,12 @@ optional prompt markdowns (``persona.md`` — the agent identity written to
 ``workspace/identity.md`` at scaffold time). No package, no code: hand someone the
 folder and they spin it up with ``arc init --blueprint <path>``.
 
-**Not in arcagent.** The agent runtime flat-reads its own ``arcagent.toml``; it
-never resolves or merges blueprints. Blueprints are a scaffold/distribution concern
-consumed only by ``arc init`` / ``arc blueprint``, so the loader lives here in the
-CLI and reuses arcagent's config-merge, tier, and signing primitives.
+**Not part of the running agent.** The agent runtime flat-reads its own
+``arcagent.toml``; it never resolves or merges blueprints. Blueprints are a
+scaffold/distribution concern consumed by ``arc init`` / ``arc blueprint`` and the
+dashboard's "Create agent from blueprint", so the loader sits beside
+:mod:`arcagent.scaffold` — one implementation for every surface — and reuses
+arcagent's config-merge, tier, and signing primitives.
 
 **Materialize-to-disk, not a runtime layer.** A blueprint is rendered under the
 user's values and written to the concrete ``arcagent.toml`` the runtime reads
@@ -40,10 +42,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import arcagent
 from arctrust.paths import blueprints_dir
 
-_logger = logging.getLogger("arccli.blueprints")
+import arcagent
+
+_logger = logging.getLogger("arcagent.blueprints")
 
 _BLUEPRINT_TOML = "blueprint.toml"
 _PERSONA_MD = "persona.md"
@@ -154,6 +157,7 @@ class ResolvedBlueprint:
     questions: tuple[dict[str, Any], ...] = ()
     capabilities_dir: Path | None = None  # <root>/capabilities, copied + agent-signed
     skills_dir: Path | None = None  # <root>/skills, copied + agent-signed
+    description: str = ""  # the ``[blueprint] description`` line, for pickers
 
 
 def _looks_like_path(name: str) -> bool:
@@ -425,6 +429,7 @@ def _make(
         name=str(meta.get("name", "?")),
         version=str(meta.get("version", "0")),
         tier=str(meta.get("tier", "personal")),
+        description=str(meta.get("description", "")),
         overlay=overlay,
         source=source,
         signed=signed,

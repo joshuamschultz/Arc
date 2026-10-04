@@ -562,7 +562,6 @@ class WorkflowTaskStore:
         actor_did: str,
         fence: RunnerFence | None,
     ) -> Task | None:
-        why = f"{reason}: {_REASON_TEXT[reason]} (reclaimed on resume)"
         # A node executor reads this to refuse a blind re-run of a tool that
         # cannot dedupe its effect (the first attempt may have half-run).
         stamp = {"reclaimed_at": now.isoformat()}
@@ -571,7 +570,7 @@ class WorkflowTaskStore:
                 row.id,
                 actor_did=actor_did,
                 resolution=f"failed after {row.attempts} attempt(s) — last attempt abandoned",
-                last_error=why,
+                last_error=reason,
                 expected_attempts=row.attempts,
                 fence=fence,
                 metadata_patch=stamp,
@@ -579,7 +578,7 @@ class WorkflowTaskStore:
         return await self._tasks.requeue(
             row.id,
             actor_did=actor_did,
-            last_error=why,
+            last_error=reason,
             next_attempt_at=now.isoformat(),
             expected_attempts=row.attempts,
             fence=fence,
@@ -722,12 +721,6 @@ def _storable_error(reason: str | None) -> str | None:
     except ValueError:
         return "error detail withheld: rejected by the stored-text policy"
     return cleaned
-
-
-_REASON_TEXT = {
-    SERVICE_RESTART_INTERRUPTED: "the process running this attempt stopped mid-run",
-    NODE_TIMEOUT_EXCEEDED: "the attempt outlived its node timeout",
-}
 
 
 def _parse_instant(value: str | None) -> datetime | None:

@@ -22,6 +22,7 @@ export type ChatStatus = 'connecting' | 'ready' | 'reconnecting' | 'closed'
 const RECONNECT_MAX_WINDOW_MS = 60_000
 const BASE_DELAY = 800
 const MAX_DELAY = 15_000
+const WORKING_POLL_MS = 5_000
 
 function now(): string {
   return new Date().toLocaleTimeString()
@@ -38,6 +39,9 @@ export function useChatSession(agentId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<ChatStatus>('connecting')
   const [sessionKey, setSessionKey] = useState<string | null>(null)
+  // A run for this session is in flight: from the server on every history load
+  // (so a return mid-run shows it), and from the live frames while connected.
+  const [working, setWorking] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const lastSeq = useRef(-1)
@@ -95,6 +99,7 @@ export function useChatSession(agentId: string | null) {
           const liveWork = pending.current.size > 0 || prev.some((m) => m.streaming)
           return liveWork ? prev : hist
         })
+        setWorking(Boolean(data.run_in_flight) || pending.current.size > 0)
         historyLoaded.current = true
       } catch {
         /* history is best-effort */
@@ -192,6 +197,7 @@ export function useChatSession(agentId: string | null) {
         if (frame.type === 'stream') {
           const runId = String(frame.run_id ?? '')
           if (!runId) return
+          setWorking(frame.event !== 'end')
           if (frame.event === 'tool') {
             append({
               id: `tool-${runId}-${frame.event_sequence ?? frame.seq ?? Date.now()}`,
@@ -274,6 +280,16 @@ export function useChatSession(agentId: string | null) {
     }
   }, [agentId, append, loadHistory])
 
+  // While a run is in flight, re-read the log so the answer lands even if the
+  // live frames never reach this tab (it was away when the run started).
+  useEffect(() => {
+    if (!working || status !== 'ready' || !agentId || !sessionKey) return
+    const timer = setInterval(() => {
+      void loadHistory(agentId, sessionKey, true)
+    }, WORKING_POLL_MS)
+    return () => clearInterval(timer)
+  }, [working, status, agentId, sessionKey, loadHistory])
+
   const resetForNewSession = useCallback(() => {
     // The backend has already rotated the session key; drop the current thread
     // and force a reconnect through the existing close→reconnect path. The new
@@ -286,6 +302,7 @@ export function useChatSession(agentId: string | null) {
     setSessionKey(null)
     historyLoaded.current = true
     pending.current.clear()
+    setWorking(false)
     try {
       wsRef.current?.close()
     } catch {
@@ -313,6 +330,7 @@ export function useChatSession(agentId: string | null) {
       }
       const requestId = newRequestId()
       pending.current.set(requestId, { text, attachmentIds: opaqueIds })
+      setWorking(true)
       clientSeq.current += 1
       append({
         id: `u${clientSeq.current}`,
@@ -327,5 +345,5 @@ export function useChatSession(agentId: string | null) {
     [append],
   )
 
-  return { messages, status, sessionKey, sendMessage, resetForNewSession }
+  return { messages, status, sessionKey, working, sendMessage, resetForNewSession }
 }

@@ -22,7 +22,10 @@ function stub(items: unknown[]) {
     'fetch',
     vi.fn(async (request: RequestInfo | URL) => {
       const path = String(request)
-      const body = path.includes('/knowledge/entities') && !path.includes('/links') ? { items } : { items: [] }
+      const body =
+        path.includes('/knowledge/entities') && !path.includes('/links') && !path.includes('/duplicates')
+          ? { items }
+          : { items: [] }
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }),
   )

@@ -67,6 +67,7 @@ import {
   useAgentTimeseries,
   useAgentTools,
   useAgentTraces,
+  useAgentContextWindow,
   useApprovals,
   useGatedCapabilities,
   useKnowledge,
@@ -93,6 +94,7 @@ import {
   fmtCost,
   fmtLatency,
   fmtNumber,
+  fmtTime,
   jobLabel,
   relativeTime,
   shortId,
@@ -259,7 +261,12 @@ function bucketLabels(window: string, n: number): string[] {
 
 // --- Tabs ------------------------------------------------------------------
 
-function OverviewTab({ agentId }: { agentId: string }) {
+/** A session key is a long hash; the first block names it well enough. */
+function shortSession(sessionId: string | null | undefined): string {
+  return sessionId ? sessionId.slice(0, 8) : 'no session'
+}
+
+export function OverviewTab({ agentId }: { agentId: string }) {
   const navigate = useNavigate()
   const agent = useAgent(agentId)
   const config = useAgentConfig(agentId)
@@ -268,7 +275,7 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const tasks = useAgentTasks(agentId)
   const schedules = useAgentSchedules(agentId)
   const ts = useAgentTimeseries(agentId, '24h')
-  const traces = useAgentTraces(agentId, 1)
+  const contextWindow = useAgentContextWindow(agentId)
   const [activeSession, setActiveSession] = useState<string | null>(null)
 
   const a = agent.data ?? {}
@@ -284,8 +291,10 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const pruneThr = Number(ctx.prune_threshold ?? 0.7)
   const compactThr = Number(ctx.compact_threshold ?? 0.85)
   const emergencyThr = Number(ctx.emergency_threshold ?? 0.95)
-  const latest = (traces.data?.traces ?? [])[0] as Dict | undefined
-  const used = Number(latest?.prompt_tokens ?? latest?.input_tokens ?? 0)
+  // The newest completed main-model chat prompt of the chat session (server picks it).
+  const latest = contextWindow.data?.prompt ?? null
+  const turnRunning = contextWindow.data?.turn_in_flight ?? false
+  const used = Number(latest?.input_tokens ?? 0)
   const available = Math.max(0, totalCtx - used)
   const ctxPct = totalCtx > 0 ? Math.min(100, Math.round((used / totalCtx) * 100)) : 0
   const ctxTone =
@@ -372,8 +381,23 @@ function OverviewTab({ agentId }: { agentId: string }) {
 
             <InfoCard
               title="Context Window"
-              extra={<span className="text-xs text-muted-foreground">last prompt</span>}
+              extra={
+                <span className="text-xs text-muted-foreground" data-testid="ctx-label">
+                  {latest
+                    ? `last chat prompt · ${shortSession(contextWindow.data?.session_id)} · sent ${fmtTime(latest.timestamp)}`
+                    : 'no chat prompt yet'}
+                </span>
+              }
             >
+              {turnRunning && (
+                <div
+                  role="status"
+                  data-testid="ctx-turn-running"
+                  className="mb-2 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground"
+                >
+                  A turn is running now. This is the last completed prompt.
+                </div>
+              )}
               <div className="mb-1.5 flex justify-between text-xs text-muted-foreground">
                 <span>Last prompt size</span>
                 <span className="tabular-nums">{totalCtx ? `${ctxPct}%` : '—'}</span>
