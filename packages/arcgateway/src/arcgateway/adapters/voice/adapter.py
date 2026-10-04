@@ -184,11 +184,17 @@ class VoiceAdapter:
         if self._server.links():
             return PartStatus(
                 up=False,
-                reason="The mic computer stopped reporting. Check that the Arc mic app is still running.",
+                reason=(
+                    "The mic computer stopped reporting. "
+                    "Check that the Arc mic app is still running."
+                ),
             )
         return PartStatus(
             up=False,
-            reason="No mic app is connected. Start the Arc mic app on the computer with the microphone.",
+            reason=(
+                "No mic app is connected. "
+                "Start the Arc mic app on the computer with the microphone."
+            ),
         )
 
     def _engine_part(self) -> EngineStatus:
