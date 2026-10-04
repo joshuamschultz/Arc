@@ -24,12 +24,6 @@ from pathlib import Path
 from typing import Any
 
 import arcagent
-from arcagent.blueprints import ResolvedBlueprint, list_blueprints, resolve_blueprint
-from arcagent.blueprints_materialize import (
-    CapabilitySigner,
-    MaterializeResult,
-    materialize_blueprint,
-)
 from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -72,7 +66,7 @@ def _operator_key(request: Request) -> bytes | None:
     return key
 
 
-def _creates(blueprint: ResolvedBlueprint) -> dict[str, Any]:
+def _creates(blueprint: arcagent.blueprints.ResolvedBlueprint) -> dict[str, Any]:
     """What building an agent from this blueprint would put on disk."""
     root = blueprint.root
     prompts = (
@@ -104,7 +98,7 @@ def _creates(blueprint: ResolvedBlueprint) -> dict[str, Any]:
     }
 
 
-def _summary(blueprint: ResolvedBlueprint) -> dict[str, Any]:
+def _summary(blueprint: arcagent.blueprints.ResolvedBlueprint) -> dict[str, Any]:
     folder = blueprint.root.name if blueprint.root else blueprint.name
     return {
         "id": folder,
@@ -118,8 +112,8 @@ def _summary(blueprint: ResolvedBlueprint) -> dict[str, Any]:
     }
 
 
-def _listed(request: Request) -> list[ResolvedBlueprint]:
-    return list_blueprints(operator_public_key=_operator_key(request))
+def _listed(request: Request) -> list[arcagent.blueprints.ResolvedBlueprint]:
+    return arcagent.blueprints.list_blueprints(operator_public_key=_operator_key(request))
 
 
 async def get_blueprints(request: Request) -> JSONResponse:
@@ -138,20 +132,22 @@ def _refuse(request: Request, target: str, detail: str, message: str, status: in
 
 
 def _materialize(
-    request: Request, blueprint: ResolvedBlueprint, agent_dir: Path, tier: str
-) -> MaterializeResult:
+    request: Request, blueprint: arcagent.blueprints.ResolvedBlueprint, agent_dir: Path, tier: str
+) -> arcagent.blueprints_materialize.MaterializeResult:
     identity = prompt_signing.signer_for(request)
     signer = operator_signer_for_request(request)
-    return materialize_blueprint(
+    return arcagent.blueprints_materialize.materialize_blueprint(
         blueprint,
         agent_dir,
         deployment_tier=tier,
         operator_signer=(identity.did, identity.seed),
-        capability_signer=CapabilitySigner(did=identity.did, signer=signer),
+        capability_signer=arcagent.blueprints_materialize.CapabilitySigner(
+            did=identity.did, signer=signer
+        ),
     )
 
 
-def _created_summary(result: MaterializeResult) -> dict[str, Any]:
+def _created_summary(result: arcagent.blueprints_materialize.MaterializeResult) -> dict[str, Any]:
     return {
         "persona": result.wrote_identity,
         "prompts": len(result.prompt_overlays),
@@ -189,7 +185,7 @@ async def create_from_blueprint(request: Request) -> JSONResponse:
     try:
         operator = operator_signing(request)
         blueprint = await asyncio.to_thread(
-            resolve_blueprint,
+            arcagent.blueprints.resolve_blueprint,
             chosen,
             tier=tier,
             operator_public_key=operator.signer.public_key,

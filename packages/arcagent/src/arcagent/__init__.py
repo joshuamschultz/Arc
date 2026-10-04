@@ -7,7 +7,7 @@ from typing import Any
 
 import arcrun
 
-from arcagent import scaffold
+from arcagent import blueprints, blueprints_materialize, scaffold
 from arcagent.capabilities.artifact_signing import (
     load_signature,
     sidecar_path,
@@ -440,6 +440,8 @@ __all__ = [
     "append_module_scan_roots",
     "approve_pulse_check",
     "audit_tier_relaxations",
+    "blueprints",
+    "blueprints_materialize",
     "build_control_artifact_authority",
     "build_mcp_door",
     "build_prompt_resolver",

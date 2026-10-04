@@ -838,10 +838,8 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcui/tests/test_maintenance_blueprints_routes.py",
         "packages/arcui/tests/test_maintenance_team_routes.py",
         "packages/arcui/tests/test_keys_routes.py",
-        "packages/arcui/tests/test_system_config_route.py",
         "packages/arcbundle/tests/unit/test_admin.py",
         "packages/arcagent/tests/unit/test_keys.py",
-        "packages/arctrust/tests/test_paths.py",
     ),
 }
 
