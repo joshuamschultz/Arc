@@ -13,14 +13,14 @@ import asyncio
 from typing import Any
 
 from arcstore.source_sync import InMemorySourceSyncStore
-
-from arcagent.extension.source import SyncSource, SyncSourcePage
-from arcagent.extension.source_catalog import SourceCatalog
 from packages.arcagent.tests.modules.connected_data.test_connections_sweep_sync_loop import (
     _Provider,
     _service,
     _until,
 )
+
+from arcagent.extension.source import SyncSource, SyncSourcePage
+from arcagent.extension.source_catalog import SourceCatalog
 
 
 class _Gated(_Provider):

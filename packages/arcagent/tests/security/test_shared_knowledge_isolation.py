@@ -11,6 +11,11 @@ from pathlib import Path
 
 import pytest
 from arcstore.backends.memory import FakeBackend
+from packages.arcagent.tests.sync_worker_fakes import (
+    LoopbackHost,
+    approve_document_mapping,
+    serve_from,
+)
 
 from arcagent.extension.knowledge_subscriptions import (
     KnowledgeSubscription,
@@ -20,11 +25,6 @@ from arcagent.extension.knowledge_subscriptions import (
 from arcagent.extension.source import SourceDescription
 from arcagent.modules.connected_data.shared import SharedKnowledge
 from arcagent.modules.connected_data.sync_worker.host import HostSubscriberAuthority
-from packages.arcagent.tests.sync_worker_fakes import (
-    LoopbackHost,
-    approve_document_mapping,
-    serve_from,
-)
 
 _A = "did:arc:test:agent-a"
 _B = "did:arc:test:agent-b"

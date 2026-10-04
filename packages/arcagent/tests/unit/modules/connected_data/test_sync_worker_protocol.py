@@ -44,7 +44,7 @@ _SECRET = b"s" * 32
 @pytest.fixture
 def sock_dir() -> Iterator[Path]:
     # A Unix socket path must stay under ~104 bytes; pytest's tmp_path is longer.
-    path = Path(tempfile.mkdtemp(prefix="arc-sw-", dir="/tmp"))  # noqa: S108 — reason: AF_UNIX path length
+    path = Path(tempfile.mkdtemp(prefix="arc-sw-", dir="/tmp"))
     yield path
     shutil.rmtree(path, ignore_errors=True)
 
@@ -146,9 +146,7 @@ async def test_an_authenticated_call_is_answered(sock_dir: Path) -> None:
     server = await _server(sock_dir / "w.sock", handler, refused)
     try:
         mode = (sock_dir / "w.sock").stat().st_mode & 0o777
-        result, body = await _client(sock_dir / "w.sock").call(
-            "ping", {"a": 1}, b"abc", timeout=5
-        )
+        result, body = await _client(sock_dir / "w.sock").call("ping", {"a": 1}, b"abc", timeout=5)
     finally:
         await server.close()
     assert mode == 0o600, "only this user may open the socket"

@@ -27,7 +27,7 @@ def _alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     # A zombie still answers kill(0); ask ps whether it really runs.
-    state = subprocess.run(  # noqa: S603 — reason: fixed argv, test-only
+    state = subprocess.run(
         ["ps", "-o", "stat=", "-p", str(pid)],  # noqa: S607 — reason: ps from PATH in tests
         capture_output=True,
         text=True,
@@ -72,7 +72,9 @@ async def test_a_killed_worker_is_restarted() -> None:
         assert await supervisor.wait_ready(30)
         first = supervisor.status().pid
         await supervisor.kill_worker()
-        await _until(lambda: supervisor.status().state == "up" and supervisor.status().pid != first)
+        await _until(
+            lambda: supervisor.status().state == "up" and supervisor.status().pid != first
+        )
         assert supervisor.status().restarts == 1
     finally:
         await supervisor.stop()
@@ -118,7 +120,7 @@ async def test_a_write_while_the_worker_restarts_fails_fast_and_typed() -> None:
         assert await supervisor.wait_ready(30)
         await supervisor.kill_worker()
         await _until(lambda: supervisor.status().state == "restarting")
-        spec = StoreSpec(kind="own", agent_did="did:x", root="/tmp/none", authority="owner")  # noqa: S108 — reason: never opened
+        spec = StoreSpec(kind="own", agent_did="did:x", root="/tmp/none", authority="owner")
         began = time.monotonic()
         with pytest.raises(SyncWorkerUnavailableError) as caught:
             await supervisor.channel().write(spec, "finish_sync", {})
@@ -150,9 +152,7 @@ _PARENT = textwrap.dedent(
 def test_the_worker_dies_with_a_parent_killed_outright(tmp_path: Path) -> None:
     script = tmp_path / "parent.py"
     script.write_text(_PARENT, encoding="utf-8")
-    parent = subprocess.Popen(  # noqa: S603 — reason: fixed argv, test-only
-        [sys.executable, str(script)], stdout=subprocess.PIPE, text=True
-    )
+    parent = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
     try:
         assert parent.stdout is not None
         worker = int(parent.stdout.readline().strip())

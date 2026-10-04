@@ -18,13 +18,13 @@ from typing import Any
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import InMemorySourceSyncStore
+from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 from arcagent.connected_data import KnowledgeHome, MappingPlan, SyncLimits
 from arcagent.extension.source import SourceDescription
 from arcagent.modules.connected_data import service as service_module
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connected_data.shared import SharedKnowledge
-from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 _DID = "did:arc:test:agent"
 

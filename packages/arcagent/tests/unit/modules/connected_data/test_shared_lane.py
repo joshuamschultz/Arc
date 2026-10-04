@@ -15,13 +15,13 @@ import pytest
 from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import InMemorySourceSyncStore
 from arctrust.paths import connected_knowledge_dir
+from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 from arcagent.connected_data import KnowledgeHome, MappingPlan, SyncLimits
 from arcagent.extension.knowledge_subscriptions import KnowledgeSubscriptions
 from arcagent.extension.source import SourceDescription
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connected_data.shared import SharedKnowledge
-from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 _DID = "did:arc:test:agent"
 _OTHER = "did:arc:test:other"

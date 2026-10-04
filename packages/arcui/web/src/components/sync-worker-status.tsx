@@ -12,7 +12,7 @@ export interface SyncWorkerStatus {
   retry_in_seconds?: number | null
 }
 
-export const useSyncWorkerStatus = () =>
+const useSyncWorkerStatus = () =>
   useQuery<SyncWorkerStatus>({
     queryKey: ['knowledge', 'sync-worker'],
     queryFn: ({ signal }) => apiGet('/api/knowledge/sync-worker', signal),

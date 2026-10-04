@@ -570,9 +570,7 @@ async def sync_worker_status(request: Request) -> JSONResponse:
     """
     supervisor = getattr(request.app.state, "sync_worker", None)
     if supervisor is None:
-        return JSONResponse(
-            {"state": "down", "pid": None, "restarts": 0, "detail": "not started"}
-        )
+        return JSONResponse({"state": "down", "pid": None, "restarts": 0, "detail": "not started"})
     return JSONResponse(supervisor.status().as_dict())
 
 
@@ -633,7 +631,6 @@ routes = [
 
 __all__ = [
     "activate_connected_data",
-    "sync_worker_status",
     "connected_data_service",
     "connected_sources",
     "get_mapping_proposal",
@@ -646,4 +643,5 @@ __all__ = [
     "stage_mapping",
     "sync_action",
     "sync_status",
+    "sync_worker_status",
 ]
