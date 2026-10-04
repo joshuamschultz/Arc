@@ -1140,6 +1140,8 @@ export interface KeyEntry {
   env_var: string
   required: boolean
   present: boolean
+  /** `model` = an AI provider; `web` = a web search / extract service. */
+  kind: 'model' | 'web'
 }
 
 export interface KeysResponse {
@@ -1151,6 +1153,118 @@ export interface KeyWriteResponse {
   env_var: string
   present: boolean
   removed?: boolean
+}
+
+// --- Settings -> Maintenance ------------------------------------------------
+
+export interface RuntimeVersion {
+  version: string
+  active: boolean
+  /** ISO time the version was put on this computer. */
+  installed_at: string
+  /** Against the version in use: older = roll back, newer = switch forward. */
+  relation: 'active' | 'older' | 'newer'
+}
+
+export interface RuntimeResponse {
+  active: string | null
+  versions: RuntimeVersion[]
+  newer_available: boolean
+  /** Plain-words line about whether anything newer is installed. */
+  note: string
+}
+
+export interface RuntimeActivateResponse {
+  restarting: boolean
+  version: string
+  message: string
+}
+
+export interface MaintenanceStagedBundle {
+  version: string | null
+  issuer: string | null
+  update_available: boolean
+}
+
+export interface MaintenanceModuleRow {
+  name: string
+  description: string
+  installed: boolean
+  staged: MaintenanceStagedBundle | null
+  /** Per agent; `enabled: null` means that agent's settings could not be read. */
+  agents: Record<string, { enabled: boolean | null }>
+}
+
+export interface MaintenanceModulesResponse {
+  agents: { agent_id: string; name: string }[]
+  modules: MaintenanceModuleRow[]
+}
+
+export type ModuleAction = 'enable' | 'disable' | 'install'
+
+export interface ModuleChangeResponse {
+  module: string
+  agent_id: string
+  enabled: boolean
+  /** True when the running agent was changed with no restart. */
+  live: boolean
+  restart_needed: boolean
+  message: string
+  version?: string
+}
+
+export interface BlueprintCreates {
+  persona: boolean
+  prompts: string[]
+  skills: string[]
+  capabilities: string[]
+  schedules: number
+  modules: string[]
+}
+
+export interface BlueprintSummary {
+  id: string
+  name: string
+  version: string
+  tier: string
+  description: string
+  source: 'packaged' | 'user'
+  signed: boolean
+  creates: BlueprintCreates
+}
+
+export interface BlueprintCreateResponse {
+  agent_id: string
+  did: string
+  team_registered: boolean
+  notice: string | null
+  created: {
+    persona: boolean
+    prompts: number
+    capabilities: number
+    skills: number
+    schedules: number
+  }
+  warnings: number
+}
+
+export type TeamMemberStatus = 'active' | 'suspended' | 'revoked'
+
+export interface TeamMember {
+  did: string
+  handle: string
+  name: string
+  type: 'agent' | 'user'
+  roles: string[]
+  status: TeamMemberStatus
+  harness: string
+  created: string
+  /** The operator's own entry: it cannot be switched off or removed here. */
+  protected: boolean
+}
+
+export interface TeamMembersResponse {
+  members: TeamMember[]
 }
 
 /** A credential a bundle declares; `prompt` is the operator-facing ask. */

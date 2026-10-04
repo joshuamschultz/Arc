@@ -194,7 +194,7 @@ export function WorkflowsPage() {
             <EmptyState
               icon={<GitBranch className="size-7" />}
               title="No workflows yet"
-              description="Create one from the dashboard, the CLI, or by asking an agent to build it."
+              description="Create one from the dashboard, or ask an agent to build it."
             />
           }
         >

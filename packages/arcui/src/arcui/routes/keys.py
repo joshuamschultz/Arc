@@ -1,7 +1,9 @@
-"""SPEC-064 T-020 — ``/api/keys``: the fleet's provider API keys, from the web.
+"""SPEC-064 T-020 — ``/api/keys``: the fleet's API keys, from the web.
 
-``arc init`` used to end by telling the operator to append a key to ``~/.arc/.env``
-by hand. This is the same store behind a browser, and it inherits the one property
+The keys are the AI providers' and, in their own ``kind="web"`` family, the web
+search and page-reading services' (Tavily, Firecrawl, Parallel). ``arc init`` used
+to end by telling the operator to append a key to ``~/.arc/.env`` by hand. This is
+the same store behind a browser, and it inherits the one property
 that makes a web surface as safe as a terminal one (D-583): **a key value is
 write-only.** :class:`~arcagent.keys.KeyStore` has no ``get``, and the response
 models in :mod:`arcui.schemas` have no field able to hold a value — so there is no
