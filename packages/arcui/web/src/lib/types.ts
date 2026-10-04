@@ -1880,3 +1880,73 @@ export interface SemanticLayerSaved {
   sha256: string
   message: string
 }
+
+// --- Connector packages (add a third-party connector) ----------------------
+
+export interface InstalledBundle {
+  name: string
+  display_name: string
+  version: string
+  signer_did: string
+  used_by: string[]
+}
+
+export interface ConnectorBundlesResponse {
+  installed: InstalledBundle[]
+  /** Code packages already on this machine that Arc will not run until reviewed and signed. */
+  unsigned_local: { name: string; reason: string }[]
+}
+
+export interface BundleReviewTool {
+  name: string
+  description: string
+  classification: string
+  capability_tags: string[]
+  network: boolean
+}
+
+export interface BundleReviewSecret {
+  name: string
+  prompt: string
+  sensitive: boolean
+  required: boolean
+}
+
+export interface BundleReviewUpdate {
+  installed_version: string
+  tools_added: string[]
+  tools_removed: string[]
+  tools_changed: string[]
+  new_secrets: string[]
+  new_egress: string[]
+}
+
+export interface BundleReview {
+  name: string
+  display_name: string
+  version: string
+  description: string
+  attachment: 'native' | 'cli' | 'mcp'
+  tier_floor: string
+  publisher: { status: 'verified' | 'unknown' | 'unsigned'; signer_did: string }
+  tools: BundleReviewTool[]
+  secrets: BundleReviewSecret[]
+  host_programs: string[]
+  egress_hosts: string[]
+  skills: string[]
+  files: { path: string; size: number; executes: boolean }[]
+  executes_code: boolean
+  needs_network: boolean
+  /** Plain sentences shown as warnings. */
+  flags: string[]
+  digest: string
+  confirm_required: boolean
+  update: BundleReviewUpdate | null
+}
+
+export interface StagedBundle {
+  staging_id: string
+  /** Seconds until the review expires. */
+  expires_in: number
+  review: BundleReview
+}

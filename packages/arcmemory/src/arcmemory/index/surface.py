@@ -3,12 +3,16 @@
 Surface recall answers "what past text looks like this query" three ways and fuses
 them (SDD 4.5, R-2/R-3/R-11):
 
-* **vec** — cosine over the ``vec0`` embedding table (semantic; catches paraphrase
-  with no shared tokens). Brute-force in Python: per-agent chunk counts are in the
-  low tens-of-thousands, where a full scan is sub-20ms and needs no ANN (R-11).
+* **vec** — cosine top-k over the embeddings (semantic; catches paraphrase with no
+  shared tokens), answered by the backend's ANN index (an HNSW sidecar on SQLite,
+  pgvector HNSW on Postgres). A shared document pool reaches a million vectors,
+  where any full scan stalls the event loop for minutes.
 * **bm25** — FTS5 keyword match (lexical; exact-term precision).
 * **graph** — spreading activation from the query's tagged entities to the chunks
   that mention them (associative; reinforced pairs light up).
+
+Every channel is **top-k bounded** (``_CHANNEL_DEPTH``) and every blocking step
+runs off the event loop, so a search costs the same on a 1k- or a 1M-chunk scope.
 
 The three ranked lists are fused with Reciprocal Rank Fusion (``1/(k+rank)``, k=60),
 and **recency is a fourth ranked list** rather than a score multiplier — that keeps
@@ -25,6 +29,7 @@ injected, the vec list is simply dropped — BM25 + graph still answer, a
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
@@ -36,7 +41,7 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.fusion import RRF_K, rrf_fuse
-from arcmemory.index.backend import IndexBackend, open_index_backend
+from arcmemory.index.backend import VEC_SEARCH_TOP_K, IndexBackend, backend_for_scope
 from arcmemory.index.backend import _cosine as _cosine
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
@@ -69,6 +74,13 @@ class _Chunk(BaseModel):
 
 #: Chunk-id prefix of a raw episodic event; curated cards are ``file:``.
 _RAW_PREFIX = "event:"
+#: Ranked-list depth per channel fed to RRF. Ranks past this add at most
+#: 1/(k+200) each — noise next to any real hit — and cost O(scope) to produce.
+_CHANNEL_DEPTH = VEC_SEARCH_TOP_K
+#: Strongest activated graph nodes used to fetch candidate chunks, and the most
+#: candidates scored: the graph channel reads a bounded slice, never the scope.
+_GRAPH_SEED_TERMS = 32
+_GRAPH_CANDIDATES = 2000
 
 
 def _ensure_curated_present(fused: list[tuple[str, float]], top_k: int) -> list[tuple[str, float]]:
@@ -121,7 +133,7 @@ class SurfaceIndex:
         self._cfg = config or MemoryConfig()
         self._embedder = embedder
         self._audit = audit_sink if audit_sink is not None else NullSink()
-        self._backend: IndexBackend = open_index_backend(self._cfg.index_backend, db=db)
+        self._backend: IndexBackend = backend_for_scope(scope.key, self._cfg, db)
         self._graph = WeightedGraph(db, self._cfg)
         self._episodic = EpisodicStore(db, workspace)
         self._mem_dir = self._workspace / "memory"
@@ -264,14 +276,15 @@ class SurfaceIndex:
 
     async def search(self, text: str, *, top_k: int = 5) -> SurfaceResult:
         """Fuse vec + bm25 + graph + recency; return the top-k boundary-ready recalls."""
-        vec_ranked = await self._vec_search(text)
+        depth = max(_CHANNEL_DEPTH, top_k)
+        vec_ranked = await self._vec_search(text, depth)
         degraded = vec_ranked is None
         ranked_lists = [
-            await self._bm25_search(text),
-            await self._graph_search(text),
+            await self._bm25_search(text, depth),
+            await self._graph_search(text, depth),
         ]
         if self._use_recency:
-            ranked_lists.append(await self._recency_order())
+            ranked_lists.append(await self._recency_order(depth))
         if vec_ranked is not None:
             ranked_lists.extend([vec_ranked] * self._vector_weight)
 
@@ -285,43 +298,51 @@ class SurfaceIndex:
             self._emit_degraded(text)
         return SurfaceResult(recalls=recalls, degraded=degraded)
 
-    async def _vec_search(self, text: str) -> list[str] | None:
-        """Cosine search via the backend, scope-isolated; None when unavailable."""
+    async def _vec_search(self, text: str, top_k: int = _CHANNEL_DEPTH) -> list[str] | None:
+        """Top-k cosine search via the backend, scope-isolated; None when unavailable."""
         if not self._backend.vec_available:
             return None
         vectors = await embed_or_none(self._embedder, [text], operation="retrieve:surface")
         if not vectors:
             return None
-        return await self._backend.vec_search(self._scope.key, vectors[0])
+        return await self._backend.vec_search(self._scope.key, vectors[0], top_k)
 
-    async def _bm25_search(self, text: str) -> list[str]:
-        """FTS5/BM25 chunk ids for ``text`` (best match first), via the backend."""
+    async def _bm25_search(self, text: str, top_k: int = _CHANNEL_DEPTH) -> list[str]:
+        """Top-k FTS5/BM25 chunk ids for ``text`` (best match first), via the backend."""
         query = _fts_query(text)
         if not query:
             return []
-        return await self._backend.bm25_search(self._scope.key, query)
+        return await self._backend.bm25_search(self._scope.key, query, top_k)
 
-    async def _graph_search(self, text: str) -> list[str]:
-        """Chunks whose text mentions an entity the query activates (assoc signal)."""
-        vocab = self._vocabulary()
-        seeds = tag_entities(text, vocab)
+    async def _graph_search(self, text: str, top_k: int = _CHANNEL_DEPTH) -> list[str]:
+        """Chunks whose text mentions an entity the query activates (assoc signal).
+
+        Bounded: candidates are the chunks that lexically match the strongest
+        activated nodes (at most ``_GRAPH_CANDIDATES``), then scored exactly as
+        before — the summed activation of every node their text contains. Tagging,
+        the graph walk and scoring all run off the event loop.
+        """
+        seeds = await asyncio.to_thread(tag_entities, text, await self._vocabulary_off_loop())
         if not seeds:
             return []
-        activation = self._graph.spreading_activation(self._scope.key, dict.fromkeys(seeds, 1.0))
+        scope = self._scope.key
+        activation = await self._db.run(
+            lambda conn: self._graph.spreading_activation(
+                scope, dict.fromkeys(seeds, 1.0), conn=conn
+            )
+        )
         if not activation:
             return []
-        scored: list[tuple[float, str]] = []
-        for chunk_id, chunk_text in await self._backend.chunk_texts(self._scope.key):
-            lowered = chunk_text.lower()
-            hit = sum(act for node, act in activation.items() if node in lowered)
-            if hit > 0.0:
-                scored.append((hit, chunk_id))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
-        return [chunk_id for _, chunk_id in scored]
+        strongest = sorted(activation, key=lambda node: (-activation[node], node))
+        candidates = await self._backend.chunk_texts(
+            scope, terms=strongest[:_GRAPH_SEED_TERMS], limit=_GRAPH_CANDIDATES
+        )
+        ranked = await asyncio.to_thread(_rank_by_activation, candidates, activation)
+        return ranked[:top_k]
 
-    async def _recency_order(self) -> list[str]:
-        """All chunk ids, newest first — the recency ranked list (R-11), via the backend."""
-        return await self._backend.recency_order(self._scope.key)
+    async def _recency_order(self, limit: int = _CHANNEL_DEPTH) -> list[str]:
+        """The newest chunk ids — the recency ranked list (R-11), via the backend."""
+        return await self._backend.recency_order(self._scope.key, limit)
 
     async def _to_recall(self, chunk_id: str, score: float) -> Recall | None:
         """Hydrate a fused chunk id into a ``Recall`` (None if it vanished), via the backend."""
@@ -344,6 +365,10 @@ class SurfaceIndex:
     def _vocabulary(self) -> set[str]:
         """Tagging vocabulary: seed terms + slugs of existing entity files."""
         return entity_vocabulary(self._mem_dir, self._seed_vocab)
+
+    async def _vocabulary_off_loop(self) -> set[str]:
+        """``_vocabulary`` on a worker thread: it lists the entity directory."""
+        return await asyncio.to_thread(self._vocabulary)
 
     def _emit_index_failure(self, chunk_id: str, exc: Exception) -> None:
         """Record (loudly, never silently) that one chunk failed to index.
@@ -380,6 +405,20 @@ class SurfaceIndex:
             ),
             self._audit,
         )
+
+
+def _rank_by_activation(
+    candidates: list[tuple[str, str]], activation: dict[str, float]
+) -> list[str]:
+    """Candidate chunk ids ordered by the summed activation of nodes their text names."""
+    scored: list[tuple[float, str]] = []
+    for chunk_id, chunk_text in candidates:
+        lowered = chunk_text.lower()
+        hit = sum(act for node, act in activation.items() if node in lowered)
+        if hit > 0.0:
+            scored.append((hit, chunk_id))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [chunk_id for _, chunk_id in scored]
 
 
 def _established_date(mtime: float | None) -> str:

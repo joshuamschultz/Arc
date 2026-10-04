@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.doc_index import DocHit, doc_scope
-from arcmemory.index.backend import IndexBackend, open_index_backend
+from arcmemory.index.backend import IndexBackend, backend_for_scope
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _fts_query
@@ -368,7 +368,6 @@ class MemoryOperator:
         self._procedures = ProceduralStore(self._workspace)
         self._events = EventStore(self._workspace)
         self._daily = DailyNotesStore(self._workspace)
-        self._backend: IndexBackend = open_index_backend(self._cfg.index_backend, db=self._db)
 
     # -- reads -------------------------------------------------------------
 
@@ -781,7 +780,8 @@ class MemoryOperator:
         scope, freshen = self._chunk_scope(session_id, source_id)
         if freshen:
             await self._index_chunks(scope, embed=False)
-        ids = await self._backend.recency_order(scope.key)
+        # Unbounded on purpose: this browse reports ``total`` and pages by offset.
+        ids = await self._backend_for(scope.key).recency_order(scope.key, None)
         recalls, meta = await self._hydrate_chunks(scope.key, ids)
         kept = self._gate_chunks(recalls, clearance)
         page = kept[offset : offset + limit]
@@ -827,20 +827,21 @@ class MemoryOperator:
         actual_mode = "vector" if want_vector else "literal"
         ids: list[str] = []
         if want_vector:
-            vector_ready = self._backend.vec_available and self._embedder is not None
+            backend = self._backend_for(scope.key)
+            vector_ready = backend.vec_available and self._embedder is not None
             vectors = (
                 await embed_or_none(self._embedder, [query], operation="operator:search_chunks")
                 if vector_ready
                 else None
             )
             if vectors:
-                ids = await self._backend.vec_search(scope.key, vectors[0])
+                ids = await backend.vec_search(scope.key, vectors[0])
             else:
                 degraded = True
                 actual_mode = "literal"
         if actual_mode == "literal":
             fts = _fts_query(query)
-            ids = await self._backend.bm25_search(scope.key, fts) if fts else []
+            ids = await self._backend_for(scope.key).bm25_search(scope.key, fts) if fts else []
 
         recalls, meta = await self._hydrate_chunks(scope.key, ids)
         kept = self._gate_chunks(recalls, clearance)
@@ -897,9 +898,10 @@ class MemoryOperator:
         """
         recalls: list[Recall] = []
         meta_by_id: dict[str, tuple[str, float | None]] = {}
+        backend = self._backend_for(scope_key)
         for rank, chunk_id in enumerate(chunk_ids):
-            meta = await self._backend.chunk_meta(scope_key, chunk_id)
-            text = await self._backend.chunk_text(scope_key, chunk_id)
+            meta = await backend.chunk_meta(scope_key, chunk_id)
+            text = await backend.chunk_text(scope_key, chunk_id)
             if meta is None or text is None:
                 continue  # vanished between ranking and hydration — skip, don't fail
             source_path, classification, mtime = meta
@@ -1044,6 +1046,10 @@ class MemoryOperator:
             actor_did=actor_did,
             entry_id=entry_id,
         )
+
+    def _backend_for(self, scope_key: str) -> IndexBackend:
+        """The store holding ``scope_key``: doc pools in theirs, memory in the configured one."""
+        return backend_for_scope(scope_key, self._cfg, self._db)
 
     def _scope(self, session_id: str | None) -> Scope:
         return Scope(agent_did=self._agent_did, session_id=session_id)

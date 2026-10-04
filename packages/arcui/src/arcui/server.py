@@ -71,6 +71,7 @@ from arcui.routes import classifiers as classifiers_routes
 from arcui.routes import config as config_routes
 from arcui.routes import connected_data as connected_data_routes
 from arcui.routes import connected_explorer as connected_explorer_routes
+from arcui.routes import connector_bundles as connector_bundles_routes
 from arcui.routes import connectors as connectors_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import custody as custody_routes
@@ -434,6 +435,7 @@ def create_app(
         *ui_settings_routes.routes,
         *classifiers_routes.routes,
         *connectors_routes.routes,
+        *connector_bundles_routes.routes,
         *custody_routes.routes,
         *mcp_servers_routes.routes,
         *semantic_layer_routes.routes,

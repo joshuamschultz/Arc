@@ -95,7 +95,7 @@ class HostService:
         if op == "audit":
             self._record(args.get("event"))
             return None, b""
-        handler = self._row_ops.get(op)
+        handler = _ROW_OPS.get(op)
         if handler is None:
             raise RpcError("unknown_op", op)
         return await handler(self, args), b""
@@ -162,9 +162,7 @@ class HostService:
         return None
 
     async def _state_generation(self, args: dict[str, Any]) -> Any:
-        return await (await self._object_state(args)).source_generation(
-            str(args["connection_id"])
-        )
+        return await (await self._object_state(args)).source_generation(str(args["connection_id"]))
 
     async def _approvals(self) -> Any:
         from arcstore.approvals import ApprovalStore
@@ -204,17 +202,19 @@ class HostService:
         rows = await (await self._registry()).for_connection(str(args["connection_id"]))
         return [_subscription_json(row) for row in rows]
 
-    _row_ops: dict[str, Callable[[HostService, dict[str, Any]], Awaitable[Any]]] = {
-        "state.get": _state_get,
-        "state.put": _state_put,
-        "state.list": _state_list,
-        "state.clear": _state_clear,
-        "state.generation": _state_generation,
-        "approvals.list": _approvals_list,
-        "approvals.create": _approvals_create,
-        "subscriptions.get": _subscription_get,
-        "subscriptions.for_connection": _subscriptions_for,
-    }
+
+#: The arcstore row operations a worker may ask for, by op name.
+_ROW_OPS: dict[str, Callable[[HostService, dict[str, Any]], Awaitable[Any]]] = {
+    "state.get": HostService._state_get,
+    "state.put": HostService._state_put,
+    "state.list": HostService._state_list,
+    "state.clear": HostService._state_clear,
+    "state.generation": HostService._state_generation,
+    "approvals.list": HostService._approvals_list,
+    "approvals.create": HostService._approvals_create,
+    "subscriptions.get": HostService._subscription_get,
+    "subscriptions.for_connection": HostService._subscriptions_for,
+}
 
 
 def _okf_sign(root: Path, message: bytes) -> bytes:

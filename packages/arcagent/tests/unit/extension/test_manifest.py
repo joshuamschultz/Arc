@@ -458,7 +458,8 @@ class TestTierFloorRefusesButCannotRaise:
         #
         # ``connection_catalog.py`` copies the floor onto a catalog listing entry so
         # a surface can SHOW which bundles this deployment could run ("enterprise+")
-        # and takes no verdict from it. The MCP attachment also reads the floor to
+        # and takes no verdict from it; ``bundle_import.py`` does the same on the
+        # upload review screen (UJ-6). The MCP attachment also reads the floor to
         # select its process confinement policy. The set stays exact, so an
         # unexpected reader — or a policy resolver growing inside these readers —
         # still fails here.
@@ -473,6 +474,7 @@ class TestTierFloorRefusesButCannotRaise:
 
         assert readers == [
             Path("connection_catalog.py"),
+            Path("extension/bundle_import.py"),
             Path("extension/manifest.py"),
             Path("modules/connectors/attachments.py"),
         ]

@@ -115,7 +115,9 @@ class AgentConfigs:
             did = identity.get("did", "") if isinstance(identity, dict) else ""
             raw = agent.get("workspace", "./workspace") if isinstance(agent, dict) else ""
             workspace = Path(str(raw or "./workspace"))
-            resolved = (workspace if workspace.is_absolute() else path.parent / workspace).resolve()
+            resolved = (
+                workspace if workspace.is_absolute() else path.parent / workspace
+            ).resolve()
             cached = (mtime, str(did), resolved)
             self._cache[path] = cached
         return cached[2] if cached[1] == agent_did and agent_did else None
@@ -145,6 +147,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
             "reset_source",
             "purge_source",
             "adopt_documents",
+            "maintain_embeddings",
         }
     ),
     "subscriber": frozenset(
@@ -156,6 +159,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
             "refresh_operator_guide",
             "relayout_source",
             "reset_source",
+            "maintain_embeddings",
         }
     ),
     "migration": frozenset({"adopt_documents", "claim_profile", "require_approved_mapping"}),
@@ -239,7 +243,9 @@ class StoreWriters:
         adapter = ArcMemoryIngestAdapter(
             root,
             owner,
-            approval_store=HostApprovals(self._host, spec.agent_did) if spec.kind == "own" else None,
+            approval_store=HostApprovals(self._host, spec.agent_did)
+            if spec.kind == "own"
+            else None,
             object_state=HostObjectState(self._host, owner),
             embedder=self._embedder(spec),
             audit_sink=self._audit,
@@ -400,6 +406,12 @@ async def _adopt(
     return counts, b""
 
 
+async def _maintain(
+    writers: StoreWriters, store: _Store, args: dict[str, Any], body: bytes
+) -> tuple[Any, bytes]:
+    return await store.adapter.maintain_embeddings(), b""
+
+
 async def _claim(
     writers: StoreWriters, store: _Store, args: dict[str, Any], body: bytes
 ) -> tuple[Any, bytes]:
@@ -425,6 +437,7 @@ _METHODS: dict[str, _Method] = {
     "reset_source": _reset,
     "purge_source": _purge,
     "adopt_documents": _adopt,
+    "maintain_embeddings": _maintain,
     "claim_profile": _claim,
     "drop_store": _drop,
 }

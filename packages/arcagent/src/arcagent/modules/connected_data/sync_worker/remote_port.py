@@ -177,6 +177,10 @@ class RemoteIngestPort(IngestPort):
         )
         return _counts(counts)
 
+    async def maintain_embeddings(self) -> float:
+        """One bounded embed-backfill tick of this store (vectors only); seconds to wait next."""
+        return float(await self._write("maintain_embeddings", {}))
+
     async def claim_profile(self, profile: str) -> bool:
         """Claim (or compare) the shared store's embedding profile."""
         return bool(await self._write("claim_profile", {"profile": profile}))

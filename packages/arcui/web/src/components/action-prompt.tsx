@@ -3,6 +3,7 @@ import { KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CustodyRepairPanel } from '@/components/custody-repair-panel'
 import { RestartStackButton } from '@/components/restart-stack-button'
+import { ConnectorBundleSheet } from '@/components/connector-bundle-upload'
 import { ApiError } from '@/lib/api'
 import { useCustody } from '@/lib/queries'
 
@@ -12,20 +13,13 @@ import { useCustody } from '@/lib/queries'
  * command; this is the one place a code becomes words, so no page shows a
  * terminal instruction.
  *
- * `sign_bundle` has no button yet: signing an add-on from this page is a later
- * task, and a sentence that says so is the honest state.
+ * `sign_bundle` opens the connector package review, where the operator reads what
+ * the package does and signs it.
  */
 export function ActionPrompt({ code }: { code: string | undefined }) {
   if (code === 'restart_arc') return <RestartArcPrompt />
   if (code === 'reseal_credentials') return <ResealCredentialsPrompt />
-  if (code === 'sign_bundle') {
-    return (
-      <p data-action-prompt="sign_bundle" className="text-xs text-muted-foreground">
-        This add-on is not signed with your key yet, so Arc will not install it. Signing an add-on
-        from this page is not available yet.
-      </p>
-    )
-  }
+  if (code === 'sign_bundle') return <SignBundlePrompt />
   if (code === 'ask_administrator') {
     return (
       <p data-action-prompt="ask_administrator" className="text-xs text-muted-foreground">
@@ -77,6 +71,21 @@ function ResealCredentialsPrompt() {
           {open && <CustodyRepairPanel status={status} />}
         </>
       )}
+    </div>
+  )
+}
+
+function SignBundlePrompt() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div data-action-prompt="sign_bundle" className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted-foreground">
+        This connector package carries code, so Arc will not run it until you review and sign it.
+      </span>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Review and sign
+      </Button>
+      {open && <ConnectorBundleSheet open onOpenChange={setOpen} />}
     </div>
   )
 }

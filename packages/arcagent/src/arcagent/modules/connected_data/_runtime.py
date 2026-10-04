@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -47,16 +48,22 @@ class _State:
         self.credential_renewals = kwargs.get("credential_renewals")
         self.telemetry = kwargs.get("telemetry")
         supplied_factory = kwargs.get("ingest_port_factory")
-        self.ingest_port_factory: IngestPortFactory | None = (
-            supplied_factory
+        #: The agent's own document store (its workspace), read here and written
+        #: by the sync worker. ``None`` without arcstore or with a supplied factory.
+        self.own_store_opener: Callable[[], Awaitable[RemoteIngestPort]] | None = (
+            None
             if supplied_factory is not None
-            else _arc_memory_ingest_factory(
+            else _own_store_opener(
                 self.workspace,
                 self.config_path,
                 self.agent_did,
                 self.arcstore_opener,
                 self.telemetry,
             )
+        )
+        own = self.own_store_opener
+        self.ingest_port_factory: IngestPortFactory | None = (
+            supplied_factory if own is None else _factory_of(own)
         )
         #: One sync and one store per connection (P18-4); only with the default
         #: ArcMemory ingest and an ArcStore to hold the subscriptions.
@@ -134,9 +141,9 @@ def reset() -> None:
     _state_var.set(None)
 
 
-def _arc_memory_ingest_factory(
+def _own_store_opener(
     workspace: Path, config_path: Path, agent_did: str, arcstore_opener: Any, telemetry: Any
-) -> IngestPortFactory | None:
+) -> Callable[[], Awaitable[RemoteIngestPort]] | None:
     """Compose optional ArcMemory only through the injected ArcStore seam.
 
     The port reads the agent's own store here, read-only, and every write goes
@@ -146,7 +153,7 @@ def _arc_memory_ingest_factory(
     if arcstore_opener is None:
         return None
 
-    async def build(_: Any) -> RemoteIngestPort:
+    async def open_port() -> RemoteIngestPort:
         from arcagent.tools.approval_store import open_approval_store
 
         approval_store, backend = await open_approval_store(opener=arcstore_opener)
@@ -169,6 +176,15 @@ def _arc_memory_ingest_factory(
             embed=embed_settings(agent_did),
         )
         return RemoteIngestPort(local, store, default_channel(), audit_sink=sink)
+
+    return open_port
+
+
+def _factory_of(open_port: Callable[[], Awaitable[RemoteIngestPort]]) -> IngestPortFactory:
+    """The agent's own store, whichever source it is asked for (one store per agent)."""
+
+    async def build(_: Any) -> RemoteIngestPort:
+        return await open_port()
 
     return build
 

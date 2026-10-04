@@ -37,6 +37,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # TOCTOU: swapping runtime/current after boot never redirects an extension load.
         "packages/arctrust/tests/unit/test_runtime_extensions_pin.py",
     ),
+    "connector package uploaded from the browser (UJ-6)": (
+        # zip-slip and tar-slip, a symlink escaping the root, links and device files,
+        # a zip bomb by ratio and by size, more than 2000 entries, a manifest declaring
+        # tools its code lacks (and code offering undeclared tools), staged files
+        # swapped between review and approve (and between writing and signing), a
+        # file added after the publisher signed, federal refusing an unsigned or
+        # unknown publisher, and an update adding egress that needs re-approval.
+        "packages/arcagent/tests/security/test_bundle_import_abuse.py",
+        # A viewer cannot upload, approve or remove; refusals are audited.
+        "packages/arcui/tests/test_connector_bundles_routes.py",
+    ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
         # The refusal reaches the module's audit sink in production, not only a log.
@@ -781,6 +792,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # own approved shareable mapping; a failed read-back keeps the own copy.
         "packages/arcagent/tests/security/test_auto_migration_requires_grant.py",
         "tests/journeys/test_journey_shared_knowledge.py",
+        # The doc-pool embed backfill writes vectors into existing chunks only: a
+        # reader's or revoked subscriber's port writes none, a write for another
+        # scope (or for content that changed) is skipped, one agent's backfill never
+        # reaches another's pools or its own memory scope, and a second process is
+        # refused a store the service owns.
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill.py",
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill_operator.py",
     ),
     # SPEC-035 OQ-3 (Josh, 2026-10-03): an operator's "Always allow" on a trifecta
     # approval stands for that agent. A grant for combination A never satisfies a

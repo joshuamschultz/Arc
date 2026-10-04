@@ -160,3 +160,24 @@ export const apiPatch = <T>(path: string, body?: unknown) =>
 export const apiPut = <T>(path: string, body?: unknown) =>
   apiSend<T>('PUT', path, body)
 export const apiDelete = <T>(path: string, body?: unknown) => apiSend<T>('DELETE', path, body)
+
+/** POST a multipart form (a file upload). No Content-Type is set so the browser
+ *  adds the boundary. Failures become the same `ApiError` as every other call. */
+export async function apiPostForm<T>(path: string, form: FormData, timeoutMs = 120_000): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError(408, 'The upload took too long. Try again.')
+    }
+    throw error
+  }
+  if (!res.ok) throw await failedResponse(res)
+  return (await res.json()) as T
+}
