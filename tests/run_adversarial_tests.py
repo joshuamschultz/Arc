@@ -781,6 +781,13 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         # own approved shareable mapping; a failed read-back keeps the own copy.
         "packages/arcagent/tests/security/test_auto_migration_requires_grant.py",
         "tests/journeys/test_journey_shared_knowledge.py",
+        # The doc-pool embed backfill writes vectors into existing chunks only: a
+        # reader's or revoked subscriber's port writes none, a write for another
+        # scope (or for content that changed) is skipped, one agent's backfill never
+        # reaches another's pools or its own memory scope, and a second process is
+        # refused a store the service owns.
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill.py",
+        "packages/arcmemory/tests/unit/test_doc_embed_backfill_operator.py",
     ),
     # SPEC-035 OQ-3 (Josh, 2026-10-03): an operator's "Always allow" on a trifecta
     # approval stands for that agent. A grant for combination A never satisfies a

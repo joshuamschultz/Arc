@@ -439,6 +439,8 @@ default site when armed).
 | `arc memory status [--backend local\|provider\|none]` | Report whether semantic (vector) recall is live or degraded to BM25 + graph. Exit 1 when degraded |
 | `arc memory backend [--backend sqlite\|postgres] [--dsn ...]` | Report whether the configured index backend is reachable |
 | `arc memory okf-migrate [--apply] <workspace>...` | Re-render pre-OKF memory documents through the canonical OKF writer |
+| `arc memory embed-backfill [--agent <id>] [--shared] [<workspace>...]` | Per document pool: chunks embedded / total / pending, and which process owns the backfill. Read-only, safe while `arc ui` runs (the service backfills missing vectors in the background itself) |
+| `arc memory embed-backfill --agent <id> [--shared] --run` | Finish the backfill in this process, with progress and ETA. **Only with `arc ui` stopped**: refuses any store another process owns, since two writers of one `index.db` make the service rebuild its vector sidecar again and again |
 | `arc agent memory [--path <dir>] [--limit N] [--json]` | Read-only view of an agent's memory DB (episodic stream, counts, top graph associations). Opens the DB read-only; never writes |
 
 Every one of these delegates to `arcmemory` itself — no memory-maintenance logic lives in the
