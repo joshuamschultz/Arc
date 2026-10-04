@@ -353,6 +353,29 @@ def test_activate_runtime_rejects_a_traversing_version_name(arc_root: Path) -> N
             paths.activate_runtime(bad)
 
 
+def test_installed_runtime_versions_excludes_current_and_presymlink_copies(
+    arc_root: Path,
+) -> None:
+    """Only real, activatable version directories are offered, sorted by name."""
+    for version in ("1.1.0", "1.0.0"):
+        (arc_root / "runtime" / version).mkdir(parents=True)
+    (arc_root / "runtime" / "current").mkdir()
+    (arc_root / "runtime" / f"{paths.PRE_SYMLINK_PREFIX}abc").mkdir()
+    (arc_root / "runtime" / "stray.txt").write_text("x", encoding="utf-8")
+    assert [p.name for p in paths.installed_runtime_versions()] == ["1.0.0", "1.1.0"]
+
+
+def test_installed_runtime_versions_is_empty_without_a_runtime_root(arc_root: Path) -> None:
+    assert paths.installed_runtime_versions() == []
+
+
+def test_active_runtime_version_names_the_current_target(arc_root: Path) -> None:
+    (arc_root / "runtime" / "1.0.0").mkdir(parents=True)
+    assert paths.active_runtime_version() is None
+    paths.activate_runtime("1.0.0")
+    assert paths.active_runtime_version() == "1.0.0"
+
+
 def test_accessors_never_touch_the_real_home(arc_root: Path) -> None:
     """No accessor creates anything; resolution is pure."""
     for name in paths.__all__:

@@ -31,7 +31,12 @@ from arctrust import sign_control_actor_proof
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.agent_security import resolve_credential_cipher
-from arcagent.core.config import ModuleEntry, persist_module_enabled, restore_config
+from arcagent.core.config import (
+    ModuleEntry,
+    persist_module_disabled,
+    persist_module_enabled,
+    restore_config,
+)
 from arcagent.core.control_contract import (
     ControlActionProofSource,
     ControlActorEnrollment,
@@ -529,6 +534,27 @@ async def enable_module_persisted(agent: ArcAgent, name: str) -> str:
             restore_config(agent._config_path, original_config)
         except OSError:
             _logger.exception("Could not restore agent config after module activation failure")
+        raise
+
+
+async def disable_module_persisted(agent: ArcAgent, name: str) -> str:
+    """Disable a module live and persist the operator's choice.
+
+    The mirror of :func:`enable_module_persisted`: ``enabled = false`` is written
+    first, the live teardown follows, and a failed teardown puts the file and the
+    in-memory entry back so disk and process never disagree.
+    """
+    existing = agent._config.modules.get(name)
+    original_config = persist_module_disabled(agent._config_path, name)
+    try:
+        return await set_module_enabled(agent, name, enabled=False)
+    except Exception:
+        if existing is not None:
+            agent._config.modules[name] = existing
+        try:
+            restore_config(agent._config_path, original_config)
+        except OSError:
+            _logger.exception("Could not restore agent config after module disable failure")
         raise
 
 

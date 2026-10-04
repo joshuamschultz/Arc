@@ -26,6 +26,8 @@ dependencies = [
     "arc-agent>=0.2",
     "arcgateway>=0.2",
     "arcskill",
+    # Settings -> Maintenance verifies and installs staged module bundles itself.
+    "arcbundle",
     "croniter>=2.0",
     "arcstore",
     "arcteam>=0.1",

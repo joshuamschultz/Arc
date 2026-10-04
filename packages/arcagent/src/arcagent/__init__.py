@@ -64,7 +64,14 @@ from arcagent.connections import (
 )
 from arcagent.core.agent import MEMORY_PROMOTION_MAX_ITEMS, ArcAgent
 from arcagent.core.agent_security import operator_key_path
-from arcagent.core.config import ArcAgentConfig, SecurityConfig, deep_merge, load_config
+from arcagent.core.config import (
+    ArcAgentConfig,
+    SecurityConfig,
+    deep_merge,
+    load_config,
+    persist_module_disabled,
+    persist_module_enabled,
+)
 from arcagent.core.control_binding import build_control_artifact_authority
 from arcagent.core.control_contract import (
     ControlActionProofSource,
@@ -470,6 +477,8 @@ __all__ = [
     "next_check_time",
     "oauth_redirect_uri",
     "operator_key_path",
+    "persist_module_disabled",
+    "persist_module_enabled",
     "pin_name_for",
     "pulse_status",
     "read_capability_source",
