@@ -78,7 +78,7 @@ def test_apply_to_disk_merges_under_existing_preserving_identity(tmp_path: Path)
 
 def _packaged_blueprint_names() -> list[str]:
     """Every blueprint under the repo-root ``blueprints/`` — the shipped presets."""
-    from arccli.blueprints import builtin_blueprints_dir
+    from arcagent.blueprints import builtin_blueprints_dir
 
     return sorted(p.parent.name for p in builtin_blueprints_dir().glob("*/blueprint.toml"))
 

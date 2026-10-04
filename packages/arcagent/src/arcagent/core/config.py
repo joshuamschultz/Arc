@@ -861,6 +861,20 @@ def persist_module_enabled(path: Path, name: str) -> str:
     activation fails. The lifecycle owns that transaction; this helper owns only
     the safe configuration-path mutation.
     """
+    return _persist_module_flag(path, name, enabled=True)
+
+
+def persist_module_disabled(path: Path, name: str) -> str:
+    """Atomically persist ``enabled = false`` for a module, keeping its other settings.
+
+    The module's own ``[modules.NAME.config]`` is left as it is, so enabling it
+    again restores the operator's earlier choices. Returns the exact prior
+    document, as :func:`persist_module_enabled` does.
+    """
+    return _persist_module_flag(path, name, enabled=False)
+
+
+def _persist_module_flag(path: Path, name: str, *, enabled: bool) -> str:
     original = path.read_text(encoding="utf-8")
     try:
         document = tomlkit.parse(original)
@@ -888,7 +902,7 @@ def persist_module_enabled(path: Path, name: str) -> str:
             message="Agent module configuration is invalid",
             details={"path": str(path), "module": name},
         )
-    module["enabled"] = True
+    module["enabled"] = enabled
     rendered = tomlkit.dumps(document)
     try:
         tomllib.loads(rendered)

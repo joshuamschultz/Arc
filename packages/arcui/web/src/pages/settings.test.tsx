@@ -54,6 +54,18 @@ function stubFetch(agents: unknown[] = [{ agent_id: 'olivia', name: 'olivia', di
       if (path.includes('/api/settings/tls')) {
         return json({ configured: false, active: false, required: false, subject: null, not_after: null, dns_names: [] })
       }
+      if (path.includes('/api/maintenance/runtime')) {
+        return json({ active: null, versions: [], newer_available: false, note: 'Nothing newer.' })
+      }
+      if (path.includes('/api/maintenance/modules')) {
+        return json({ agents: [], modules: [] })
+      }
+      if (path.includes('/api/maintenance/blueprints')) {
+        return json({ blueprints: [] })
+      }
+      if (path.includes('/api/maintenance/team/members')) {
+        return json({ members: [] })
+      }
       if (path.includes('/api/classifiers/')) {
         return json({ classifier: 'jev', models: ['jev-1.13.0'] })
       }
@@ -130,5 +142,40 @@ describe('SettingsPage — People on a fresh install', () => {
 
     expect(await screen.findByRole('tab', { name: /people/i })).toBeTruthy()
     expect(screen.queryByText(/no scope selected/i)).toBeNull()
+  })
+})
+
+
+describe('SettingsPage — Maintenance tab', () => {
+  it('sits next to Access and People, in every scope', async () => {
+    stubFetch()
+    renderSettings()
+
+    expect(await screen.findByRole('tab', { name: 'Maintenance' })).toBeTruthy()
+    const names = screen.getAllByRole('tab').map((t) => t.textContent)
+    expect(names.indexOf('Maintenance')).toBe(names.indexOf('People') + 1)
+
+    await userEvent.click(screen.getByRole('combobox'))
+    await userEvent.click(await screen.findByRole('option', { name: /system/i }))
+    expect(screen.getByRole('tab', { name: 'Maintenance' })).toBeTruthy()
+  })
+
+  it('opens on the Maintenance tab when the link says ?tab=maintenance', async () => {
+    stubFetch()
+    renderSettings('/settings?tab=maintenance')
+
+    const tab = await screen.findByRole('tab', { name: 'Maintenance' })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+    expect(await screen.findByRole('heading', { name: 'Updates' })).toBeTruthy()
+    for (const title of ['Modules', 'Prompt history', 'Blueprints', 'Team members']) {
+      expect(screen.getByRole('heading', { name: title })).toBeTruthy()
+    }
+  })
+
+  it('says it is read-only until operator mode is on', async () => {
+    stubFetch()
+    renderSettings('/settings?tab=maintenance')
+
+    expect(await screen.findByText(/looking at this page read-only/i)).toBeTruthy()
   })
 })

@@ -2,7 +2,7 @@
 
 There is no ``tomli_w`` dependency in-tree, and several surfaces must render a
 config dict as TOML that ``tomllib`` round-trips to the same dict: materialized
-``arcagent.toml`` files (``arccli.blueprints``), ``gateway.toml`` platform blocks
+``arcagent.toml`` files (``arcagent.blueprints``), ``gateway.toml`` platform blocks
 (``arcgateway.connect``), and connector extension config.
 
 Shape: scalars before sub-tables, ``[a.b]`` headers for nesting, ``[[a.b]]``

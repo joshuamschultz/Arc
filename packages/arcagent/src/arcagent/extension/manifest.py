@@ -9,7 +9,7 @@ privilege-escalation form:
 * denied keys are **stripped**, not honoured — a manifest cannot reach the vault
   backend, native process tools, the tool preamble, the sandbox path floor, or
   identity key custody (the ``_DENIED_OVERLAY_PATHS`` precedent in
-  ``arccli/blueprints.py``).
+  ``arcagent/blueprints.py``).
 * an unbounded tool allowlist is refused above personal tier (REQ-268); omitting the
   allowlist is the same unbounded grant as asking for ``*``.
 * a third-party artifact is pinned to one exact version **and** a sha256 for every
@@ -47,7 +47,7 @@ from arcagent.tiers import tier_rank
 _logger = logging.getLogger("arcagent.extension.manifest")
 
 #: Trusted-admin-only config paths a manifest must never set. Mirrors
-#: ``_DENIED_OVERLAY_PATHS`` (``arccli/blueprints.py``): a lower-trust bundle must not
+#: ``_DENIED_OVERLAY_PATHS`` (``arcagent/blueprints.py``): a lower-trust bundle must not
 #: touch the vault backend, native tool execution, the tool preamble, the sandbox
 #: filesystem floor (SEC-18), or identity key custody.
 _DENIED_CONFIG_PATHS: tuple[tuple[str, ...], ...] = (

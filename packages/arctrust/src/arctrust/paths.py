@@ -585,6 +585,34 @@ def activate_runtime(version: str, base: Base = None) -> Path:
     return link
 
 
+def installed_runtime_versions(base: Base = None) -> list[Path]:
+    """Every installed runtime an operator may activate, sorted by name.
+
+    Excludes the ``current`` link, a plain ``current/`` directory left by a
+    pre-symlink install, and the copy :func:`activate_runtime` rescues from one:
+    offering any of those would invite activating a tree with no venv in it.
+    """
+    root = arc_runtime_root(base)
+    if not root.is_dir():
+        return []
+    return sorted(
+        entry
+        for entry in root.iterdir()
+        if entry.is_dir()
+        and not entry.is_symlink()
+        and entry.name != _CURRENT
+        and not entry.name.startswith(PRE_SYMLINK_PREFIX)
+    )
+
+
+def active_runtime_version(base: Base = None) -> str | None:
+    """The directory name ``current`` resolves to, or ``None`` when it is not a symlink."""
+    current = arc_runtime(base)
+    if not current.is_symlink():
+        return None
+    return current.resolve().name
+
+
 __all__ = [
     "ARC_CONFIG_DIR_ENV",
     "ARC_TEAM_ROOT_ENV",
@@ -592,6 +620,7 @@ __all__ = [
     "PRE_SYMLINK_PREFIX",
     "Base",
     "activate_runtime",
+    "active_runtime_version",
     "arc_config",
     "arc_home",
     "arc_runtime",
@@ -614,6 +643,7 @@ __all__ = [
     "gateway_pairing_db",
     "gateway_runtime_dir",
     "identity_dir",
+    "installed_runtime_versions",
     "module_root",
     "nats_dir",
     "operator_dir",

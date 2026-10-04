@@ -27,11 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import arcagent
 from arctrust import Signer as TrustSigner
 from arctrust import SignerError
 
-from arccli.blueprints import ResolvedBlueprint, apply_blueprint, dumps_toml
+import arcagent
+from arcagent.blueprints import ResolvedBlueprint, apply_blueprint, dumps_toml
 
 # (signer_did, ed25519_seed) — the raw 32-byte seed the signer holds.
 Signer = tuple[str, bytes]
@@ -166,8 +166,9 @@ def _sign_persona(
             "will refuse to run until you run 'arc prompt sign-workspace --agent <dir>'."
         )
         return
-    import arcagent
     from arctrust import ED25519, InProcessSigner
+
+    import arcagent
 
     did, seed = operator_signer
     arcagent.scaffold.sign_workspace_documents(
@@ -347,44 +348,9 @@ def _seed_schedules(
     result.schedules = len(entries)
 
 
-# ---------------------------------------------------------------------------
-# Signer resolution (shared by `arc init` and `arc blueprint apply --agent`)
-# ---------------------------------------------------------------------------
-
-
-def operator_signer_pair() -> Signer | None:
-    """Resolve the deployment operator key as ``(did, seed)`` — None if unavailable.
-
-    Prompt overlays are signed with the SAME operator key the agent's PromptResolver
-    pins and re-verifies at run start (parity with ``arc prompt edit``). None here makes
-    the materialize refuse a blueprint that ships overlays — fail loud, not silent.
-    """
-    try:
-        from arctrust import OperatorKey, default_operator_key_path
-        from arctrust.policy import OperatorApprovalAuthority
-
-        op = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
-    except (OSError, ValueError, RuntimeError):
-        return None
-    return OperatorApprovalAuthority(op.into_signer()).did, op.seed
-
-
-def operator_capability_signer() -> CapabilitySigner | None:
-    """Resolve the operator signer handle for capability signing — None if unavailable."""
-    from arccli.commands.operator import operator_signer_and_did
-
-    try:
-        did, signer = operator_signer_and_did()
-    except (OSError, ValueError, RuntimeError, SignerError):
-        return None
-    return CapabilitySigner(did=did, signer=signer)
-
-
 __all__ = [
     "CapabilitySigner",
     "MaterializeResult",
     "Signer",
     "materialize_blueprint",
-    "operator_capability_signer",
-    "operator_signer_pair",
 ]

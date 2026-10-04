@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+import arcagent
 from arctrust import (
     OperatorKey,
     RecordCipher,
@@ -143,6 +144,33 @@ def operator_signer_and_did(arc_dir: Path | None = None) -> tuple[str, Signer]:
     return OperatorApprovalAuthority(signer).did, signer
 
 
+def operator_signer_pair() -> tuple[str, bytes] | None:
+    """The deployment operator key as ``(did, seed)`` — ``None`` when unavailable.
+
+    Prompt overlays are signed with the SAME operator key the agent's PromptResolver
+    pins and re-verifies at run start (parity with ``arc prompt edit``). ``None``
+    makes a blueprint that ships overlays refuse — fail loud, not silent.
+    """
+    from arctrust.policy import OperatorApprovalAuthority
+
+    try:
+        key = OperatorKey.load(default_operator_key_path(), generate_if_absent=False)
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return OperatorApprovalAuthority(key.into_signer()).did, key.seed
+
+
+def operator_capability_signer() -> arcagent.blueprints_materialize.CapabilitySigner | None:
+    """The operator signer handle for capability signing — ``None`` when unavailable."""
+    from arctrust import SignerError
+
+    try:
+        did, signer = operator_signer_and_did()
+    except (OSError, ValueError, RuntimeError, SignerError):
+        return None
+    return arcagent.blueprints_materialize.CapabilitySigner(did=did, signer=signer)
+
+
 def resolve_record_cipher(arc_dir: Path | None = None) -> RecordCipher | None:
     """Resolve the at-rest seal for a CLI-written WORM chain (D-577).
 
@@ -183,8 +211,11 @@ def operator_worm_sink(arc_dir: Path | None, data_dir: Path) -> WormSink:
 __all__ = [
     "ensure_operator_key",
     "load_operator_key",
+    "operator_capability_signer",
     "operator_key_path",
     "operator_public_key",
+    "operator_signer_and_did",
+    "operator_signer_pair",
     "operator_worm_sink",
     "resolve_operator_signer",
 ]

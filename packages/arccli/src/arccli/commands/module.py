@@ -33,12 +33,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import os
 import shutil
 import sys
 import tempfile
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,16 +56,12 @@ from arccli.commands._shared import write as _out
 #: Where staged bundles live. ``module bundle`` writes here and ``module
 #: install <name>`` reads here, so the offline round trip needs no flags at all.
 BUNDLE_DIR = "bundles"
-BUNDLE_SUFFIX = ".arcbundle"
+BUNDLE_SUFFIX = arcbundle.BUNDLE_SUFFIX
 
 #: Env override for the module source catalog. Once modules leave the wheel
 #: (T-970) the catalog is a repository checkout rather than an installed
 #: package, and a build host needs to say where it is.
 _SOURCE_ENV = "ARC_MODULE_SOURCE"
-
-#: Increasing stringency. Used to take the stricter of two configured tiers —
-#: never to widen one.
-_TIER_ORDER = ("personal", "enterprise", "federal")
 
 # ---------------------------------------------------------------------------
 # Deployment locations
@@ -120,43 +114,20 @@ def _source_catalog() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _configured_tier(config_path: Path) -> str | None:
-    """Read ``[security].tier`` from a TOML file, or None when it says nothing.
-
-    A file that exists but cannot be parsed stops the command: guessing
-    ``personal`` for an unreadable federal config would verify a dev-signed
-    bundle on a box that forbids one.
-    """
-    if not config_path.is_file():
-        return None
-    try:
-        block = tomllib.loads(config_path.read_text(encoding="utf-8")).get("security", {})
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        _err(f"arc module: cannot read the security tier from {config_path}: {exc}")
-        sys.exit(1)
-    tier = block.get("tier") if isinstance(block, dict) else None
-    if tier is None:
-        return None
-    if tier not in _TIER_ORDER:
-        _err(f"arc module: {config_path} declares an unknown tier {tier!r}")
-        sys.exit(1)
-    return str(tier)
-
-
 def _verification_tier(agent_root: Path | None) -> str:
     """The stricter of the machine tier and the target agent's tier.
 
-    Bundle stringency is a property of the box, but an agent may be hardened
-    beyond it. Taking the maximum means installing for a federal agent applies
-    federal rules even when the machine config has not caught up.
+    The rule itself is :func:`arcbundle.verification_tier`, shared with the
+    dashboard; this wrapper only turns a refusal into this command's exit.
     """
-    candidates = [_configured_tier(config_file("arcagent.toml"))]
-    if agent_root is not None:
-        candidates.append(_configured_tier(agent_root / "arcagent.toml"))
-    found = [tier for tier in candidates if tier is not None]
-    if not found:
-        return "personal"
-    return max(found, key=_TIER_ORDER.index)
+    try:
+        return arcbundle.verification_tier(
+            config_file("arcagent.toml"),
+            None if agent_root is None else agent_root / "arcagent.toml",
+        )
+    except arcbundle.BundleTierError as exc:
+        _err(f"arc module: {exc}")
+        sys.exit(1)
 
 
 @dataclass(frozen=True)
@@ -254,53 +225,17 @@ def _operator_identity() -> tuple[str, bytes] | None:
         return None
 
 
-def _peek_issuer(bundle_root: Path) -> str:
-    """Read the issuer a bundle *claims*, only in order to look up a key for it.
-
-    Reading an unverified field is safe here and unavoidable everywhere: a name
-    is not a permission. An unknown name resolves to no key and the bundle is
-    refused; a known name still has to produce that issuer's signature. This is
-    the same order ``arcrun``'s manifest verifier already uses.
-    """
-    try:
-        data = json.loads((bundle_root / arcbundle.MANIFEST_NAME).read_bytes())
-    except (OSError, ValueError):
-        return ""
-    issuer = data.get("issuer") if isinstance(data, dict) else None
-    return issuer if isinstance(issuer, str) else ""
-
-
 def _trusted_issuers(bundle_root: Path) -> dict[str, bytes]:
-    """The issuer keys this deployment accepts for ``bundle_root``.
+    """The issuer keys this deployment accepts for ``bundle_root`` (shared rule).
 
-    Two sources, both explicit: the on-box operator key, and the claimed issuer's
-    entry in ``~/.arc/trust/issuers.toml``. A trust-store failure leaves the
-    issuer out of the mapping rather than raising — absence is refusal, which is
-    the fail-closed direction — but it is reported so an operator learns that a
-    permissions or syntax problem, not a policy decision, is what turned the
-    bundle away.
-
-    "No trust file" and "no entry for this issuer" are both policy, not fault:
-    a deployment that has never named a third-party issuer has no file, and a
-    ``--from-source`` bundle's key comes from the caller's ephemeral map rather
-    than from here. Reporting those as "trust store unusable" put a scary error
-    above every successful first install.
+    A trust-store fault is reported on stderr so an operator learns that a
+    permissions or syntax problem, not a policy decision, turned a bundle away.
     """
-    from arctrust.trust_store import TrustStoreError, load_issuer_pubkey
 
-    trusted: dict[str, bytes] = {}
-    operator = _operator_identity()
-    if operator is not None:
-        trusted[operator[0]] = operator[1]
+    def _report(issuer: str, exc: Exception) -> None:
+        _err(f"arc module: trust store unusable for issuer {issuer!r} — {exc}")
 
-    claimed = _peek_issuer(bundle_root)
-    if claimed and claimed not in trusted:
-        try:
-            trusted[claimed] = load_issuer_pubkey(claimed)
-        except TrustStoreError as exc:
-            if exc.code not in ("TRUST_STORE_DID_UNKNOWN", "TRUST_STORE_FILE_MISSING"):
-                _err(f"arc module: trust store unusable for issuer {claimed!r} — {exc}")
-    return trusted
+    return arcbundle.trusted_issuers(bundle_root, operator=_operator_identity(), on_fault=_report)
 
 
 def _operator_actor() -> str:
@@ -390,14 +325,7 @@ def _enabled_modules(config_path: Path) -> set[str]:
 
 def _staged_bundles() -> dict[str, Path]:
     """Bundle name to bundle path for everything in the staging directory."""
-    store = _bundle_store()
-    if not store.is_dir():
-        return {}
-    return {
-        path.name[: -len(BUNDLE_SUFFIX)]: path
-        for path in sorted(store.iterdir())
-        if path.is_dir() and path.name.endswith(BUNDLE_SUFFIX)
-    }
+    return {name: item.path for name, item in arcbundle.staged_bundles(_bundle_store()).items()}
 
 
 def _installed_modules() -> set[str]:
@@ -634,8 +562,9 @@ def _apply_verified(
     lines: list[str] = []
     for bundle in verified:
         module = bundle.manifest.module
-        installed = arcbundle.materialize(bundle, modules_root, sink=sink, actor_did=actor)
-        arcbundle.copy_capabilities(installed, agent_root, module=module)
+        installed = arcbundle.install_verified(
+            bundle, modules_root=modules_root, agent_root=agent_root, sink=sink, actor_did=actor
+        )
         config_path = agent_root / "arcagent.toml"
         trusted = arcagent.trust_bundled_capabilities(
             installed,

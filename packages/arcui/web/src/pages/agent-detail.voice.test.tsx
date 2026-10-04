@@ -80,25 +80,26 @@ describe('VoicePanel live status', () => {
     const status = await screen.findByRole('status', { name: 'Voice status' })
     expect(status.textContent).toContain('Listening')
     expect(screen.getByText('Gateway adapter')).toBeTruthy()
-    expect(screen.getByText('Mic client (arc-voice)')).toBeTruthy()
+    expect(screen.getByText('Mic app')).toBeTruthy()
     expect(screen.getByText('Speech engine')).toBeTruthy()
     expect(screen.getAllByText('Up')).toHaveLength(3)
   })
 
-  it('shows Offline with the plain reason and the command to run', async () => {
+  it('shows Offline with the plain reason and no command', async () => {
     stubFetch({
       live: live({
         state: 'offline',
         client_connected: false,
-        reason: 'No mic client is connected. Run arc-voice on the box with the microphone.',
+        reason: 'No mic app is connected. Start the Arc mic app on the computer with the microphone.',
         client: part(false, 'No mic client is connected.'),
       }),
     })
     renderPanel()
     const status = await screen.findByRole('status', { name: 'Voice status' })
     expect(status.textContent).toContain('Offline')
-    expect(screen.getAllByText(/No mic client is connected/).length).toBeGreaterThan(0)
-    expect(screen.getByText('systemctl --user enable --now arc-voice')).toBeTruthy()
+    expect(screen.getAllByText(/No mic app is connected/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Start it on the computer that has the microphone/)).toBeTruthy()
+    expect(screen.queryByText(/systemctl/)).toBeNull()
     expect(screen.getByText('Down')).toBeTruthy()
   })
 

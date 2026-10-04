@@ -40,7 +40,6 @@ const STATE_DOT: Record<string, string> = {
   speaking: 'bg-status-online',
 }
 
-const RUN_COMMAND = 'systemctl --user enable --now arc-voice'
 const CUSTOM_WORD_NOTE =
   'Any word works instantly. It is matched on a local transcript of what the mic box hears, ' +
   'not a trained wake-word model, so it uses a little CPU while people talk and a similar-sounding ' +
@@ -156,13 +155,13 @@ export function VoiceLive({
       {live.reason && <p className="text-muted-foreground">{live.reason}</p>}
       {!live.client.up && (
         <p className="text-xs text-muted-foreground">
-          On the mic box run <code className="font-mono">arc-voice</code>, or as a service:{' '}
-          <code className="select-all font-mono">{RUN_COMMAND}</code>
+          The Arc mic app is not running. Start it on the computer that has the microphone, and set
+          it to start by itself so it comes back after a restart.
         </p>
       )}
       <dl className="space-y-2">
         <PartRow label="Gateway adapter" part={live.adapter} />
-        <PartRow label="Mic client (arc-voice)" part={live.client} />
+        <PartRow label="Mic app" part={live.client} />
         <PartRow label="Speech engine" part={live.engine} />
       </dl>
       {live.client_connected && (

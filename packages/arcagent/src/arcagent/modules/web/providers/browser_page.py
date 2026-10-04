@@ -76,9 +76,8 @@ def build_browser_backend(*, cdp_url: str, tier: str) -> BrowserBackend:
     except ImportError as exc:
         raise ExtractFailed(
             "keyless web extraction needs the browser module, which is not "
-            "installed on this deployment — run `arc module install browser`, "
-            "or set [modules.web.config] extract_provider to a configured "
-            "provider with an API key",
+            "installed on this deployment — install the browser module in "
+            "Settings > Maintenance, or choose a web provider that has an API key",
             details={"provider": "browser", "missing_module": "arcagent.modules.browser"},
         ) from exc
 
