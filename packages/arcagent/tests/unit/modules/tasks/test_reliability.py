@@ -204,7 +204,7 @@ class TestStuckReclaim:
         task = await st.store.get("t1")
         assert task is not None
         assert task.status == "todo"  # reclaimed for re-dispatch
-        assert task.last_error and "stuck" in task.last_error
+        assert task.last_error and "service_restart_interrupted" in task.last_error
         assert st.reclaim_done is True
 
     async def test_steady_state_respects_threshold(self, state: Any) -> None:

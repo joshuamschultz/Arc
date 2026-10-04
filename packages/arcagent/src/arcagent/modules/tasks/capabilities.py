@@ -47,6 +47,12 @@ from pathlib import Path
 from typing import Any
 
 import arcrun
+from arcstore.tasks import (
+    ATTEMPT_LEASE_BEAT_S,
+    PROCESS_INSTANCE_ID,
+    RUN_ENDED_UNFINISHED,
+    SERVICE_RESTART_INTERRUPTED,
+)
 from arctrust import causal
 
 from arcagent.core.session_internal.capability_ledger import (
@@ -1150,7 +1156,11 @@ async def _dispatch_tick() -> None:
     attempt_key = None if node is None else attempt_key_for(node, picked.attempts + 1)
     run_id = str(uuid.uuid4()) if attempt_key is None else pinned_run_id(attempt_key)
     started, _reason = await st.store.start_task(
-        picked.id, self_did, run_id=run_id, attempt_key=attempt_key
+        picked.id,
+        self_did,
+        run_id=run_id,
+        attempt_key=attempt_key,
+        lease_owner=PROCESS_INSTANCE_ID,
     )
     if started is None or started.status != "in_progress":
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
@@ -1255,6 +1265,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
                 )
             )
         st.running[task.id] = run
+        beat = asyncio.create_task(_beat_attempt_lease(st, task, self_did))
         try:
             result = await _await_run(st, task, run, timeout, self_did)
             # The model path returns a RunResult; a loop the breaker halted
@@ -1265,9 +1276,37 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             if not is_script:
                 await _settle_capped_run(st, task.id, self_did, result)
         finally:
+            beat.cancel()
+            await asyncio.gather(beat, return_exceptions=True)
             st.running.pop(task.id, None)
     if node is not None and carrier is not None:
         await _persist_run_legs(st, task, node, carrier.snapshot(), self_did)
+
+
+async def _beat_attempt_lease(st: _runtime._State, task: Task, self_did: str) -> None:
+    """Renew the attempt's liveness lease for as long as its run is alive.
+
+    A workflow resume reclaims in-flight nodes; this beat is what tells it a
+    long node with no timeout is still running (here or, after a restart, not).
+    It runs beside the work on the event loop. A refused beat means the attempt
+    was reclaimed or re-claimed under us, so there is nothing left to renew. A
+    beat that raises is retried on the next interval; the lease only lapses
+    after several missed beats.
+    """
+    while True:
+        await asyncio.sleep(ATTEMPT_LEASE_BEAT_S)
+        try:
+            renewed = await st.store.beat_attempt(
+                task.id,
+                attempts=task.attempts,
+                lease_owner=PROCESS_INSTANCE_ID,
+                actor_did=self_did,
+            )
+        except Exception:  # reason: a blip is retried; the lease tolerates missed beats
+            _logger.warning("attempt lease renewal failed for task %s", task.id, exc_info=True)
+            continue
+        if not renewed:
+            return
 
 
 def _task_root(
@@ -1534,8 +1573,13 @@ async def _reliability_tick() -> None:
                 task.classification,
                 alert=True,
             )
+            reason = SERVICE_RESTART_INTERRUPTED if first_pass else RUN_ENDED_UNFINISHED
             await _handle_attempt_failure(
-                st, task.id, self_did, "stuck: no active run — reclaimed", reclaimed=True
+                st,
+                task.id,
+                self_did,
+                f"{reason}: no active run for this attempt — reclaimed",
+                reclaimed=True,
             )
     st.reclaim_done = True
     await _reconcile_parents(st, self_did)

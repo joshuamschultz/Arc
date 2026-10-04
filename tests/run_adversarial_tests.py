@@ -824,6 +824,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/test_scaffold.py",
         "tests/journeys/test_journey_first_run_in_browser.py",
     ),
+    # Provider errors quote the request: Authorization: Bearer, password=, token=
+    # query params, user:pass@ URLs, PEM blocks, AWS secrets, JWTs and Slack tokens
+    # are scrubbed before an error reaches the run detail API or a log, while
+    # ordinary prose is left readable. A live node is never reclaimed by resume
+    # (lease heartbeat); a dead owner or an expired node timeout still is.
+    "secret-bearing provider errors and stale-lease reclaim of workflow nodes": (
+        "packages/arctrust/tests/unit/test_sanitize_error_text.py",
+        "packages/arcui/tests/test_workflow_run_detail_failure.py",
+        "packages/arcteam/tests/unit/workflow/test_runner_reclaim_liveness.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_attempt_lease.py",
+    ),
 }
 
 

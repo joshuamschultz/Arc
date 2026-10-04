@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +67,12 @@ async def world(tmp_path: Path) -> Any:
     await backend.stop()
 
 
-async def _run_to_failure(world: Any, *, collect_output: dict[str, Any]) -> str:
+_PROMPT_TOO_LONG = "ArcLLMAPIError: prompt is too long: 1700000 tokens > 1000000"
+
+
+async def _run_to_failure(
+    world: Any, *, collect_output: dict[str, Any], last_error: str = _PROMPT_TOO_LONG
+) -> str:
     runner, plane, actor, tasks = world
     started = await plane.run_workflow("two-step", {}, actor=actor)
     run_id = started.value["run_id"]
@@ -82,7 +89,7 @@ async def _run_to_failure(world: Any, *, collect_output: dict[str, Any]) -> str:
         status="failed",
         resolution="node failed",
         actor_did=SALES,
-        last_error="ArcLLMAPIError: prompt is too long: 1700000 tokens > 1000000",
+        last_error=last_error,
     )
     await runner.advance(run_id)
     return run_id
@@ -114,3 +121,24 @@ async def test_run_detail_bounds_a_huge_node_output(world: Any) -> None:
     assert out["truncated"] is True
     assert out["size_bytes"] > 400_000
     assert len(out["preview"]) <= NODE_IO_LIMIT_BYTES
+
+
+async def test_a_bearer_token_in_a_provider_error_never_reaches_the_detail_or_the_logs(
+    world: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Abuse: an HTTP provider error quoting the request's Authorization header."""
+    _, plane, actor, _ = world
+    token = "ya29.a0AfH6SMBx7Qk2LmN9pZrT4vWc8dEeFgHiJkL"
+    caplog.set_level(logging.DEBUG)
+    run_id = await _run_to_failure(
+        world,
+        collect_output={},
+        last_error=f"HTTPError 401 sending Authorization: Bearer {token} to the provider",
+    )
+
+    detail = await plane.get_run(run_id, actor=actor)
+
+    rendered = json.dumps(detail, default=str)
+    assert token not in rendered, "the run detail API must not carry the token"
+    assert token not in caplog.text, "the token must not be logged either"
+    assert "HTTPError 401" in rendered, "the reason is still readable"

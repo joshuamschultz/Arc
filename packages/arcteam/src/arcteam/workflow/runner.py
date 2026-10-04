@@ -43,7 +43,7 @@ from uuid import uuid4
 
 import arcstore
 from arcstore.runs import NodeState
-from arcstore.tasks import Task
+from arcstore.tasks import PROCESS_INSTANCE_ID, Task
 from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
@@ -650,9 +650,27 @@ class WorkflowRunner:
                 "workflow.node.reclaimed",
                 target=f"{run.workflow_id}/{task.metadata.get('node_id', '')}",
                 outcome="reclaimed" if task.status == "todo" else "dead_lettered",
-                extra={"run_id": run.run_id, "task_id": task.id, "attempts": task.attempts},
+                extra={
+                    "run_id": run.run_id,
+                    "task_id": task.id,
+                    "attempts": task.attempts,
+                    "reason": (task.last_error or "").partition(":")[0],
+                },
             )
         await self._reconcile_node_states(await self._require_run(run.run_id))
+        await self._recheck_if_foreign_attempts_live(run.run_id)
+
+    async def _recheck_if_foreign_attempts_live(self, run_id: str) -> None:
+        """Come back for attempts another process owns: they are spared only while it beats.
+
+        A restart can happen inside the dead owner's lease window, so its node is
+        not yet provably dead. Leaving it unexamined would strand it until the
+        next restart; the next tick's resume re-judges it instead.
+        """
+        for row in await self._tasks.query_by_flow_run(run_id):
+            if row.status == "in_progress" and row.lease_owner not in (None, PROCESS_INSTANCE_ID):
+                self._resume_pending = True
+                return
 
     async def _advance_live(self, run: RunRecord) -> RunRecord:
         run_id = run.run_id

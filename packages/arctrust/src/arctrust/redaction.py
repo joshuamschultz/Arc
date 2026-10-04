@@ -371,6 +371,49 @@ def redact_text(text: str, matches: list[PiiMatch]) -> str:
 
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_VALUE = r"""(?:'[^'\n]*'|"[^"\n]*"|[^\s&,;'"]+)"""
+# Credential shapes the structured-prefix scanner cannot see because they have
+# no recognisable prefix. Each is anchored on a keyword so ordinary prose
+# ("the password field is required", "token limit exceeded") is left alone.
+# (pattern, replacement); group 1 survives so the log still says what was hidden.
+_ERROR_TEXT_CREDENTIALS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Authorization: Bearer|Basic|Token <credential>
+    (
+        re.compile(r"(\bauthorization\s*[:=]\s*(?:bearer|basic|token)\s+)[^\s,;'\"]{6,}", re.I),
+        r"\1[SECRET:AUTH_CREDENTIAL]",
+    ),
+    # bare `bearer <token>`: the token must carry a digit or token punctuation so
+    # a word following "bearer" in prose is not eaten.
+    (
+        re.compile(
+            r"(\bbearer\s+)(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}", re.I
+        ),
+        r"\1[SECRET:BEARER_TOKEN]",
+    ),
+    # password-family keys: `password=x`, `password: x`, `"passwd": "x"`
+    (
+        re.compile(
+            r"(\b(?:password|passwd|pwd|secret|client[_-]?secret|aws[_-]?secret[_-]?access[_-]?key)"
+            rf"[\"']?\s*[=:]\s*){_VALUE}",
+            re.I,
+        ),
+        r"\1[SECRET:CREDENTIAL]",
+    ),
+    # token-family keys, query-string or JSON form only (`token=x`, `"token": "x"`)
+    (
+        re.compile(
+            r"(\b(?:token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey)"
+            rf"(?:\s*=\s*|[\"']\s*:\s*)){_VALUE}",
+            re.I,
+        ),
+        r"\1[SECRET:CREDENTIAL]",
+    ),
+    # userinfo of any scheme: `ftp://user:pass@host`
+    (
+        re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s/:@]+:)[^\s/@]+(@)", re.I),
+        r"\1[SECRET:CREDENTIAL]\2",
+    ),
+)
 _WHITESPACE_RE = re.compile(r"\s+")
 _ERROR_DETECTOR = RegexPiiDetector()
 
@@ -386,6 +429,8 @@ def sanitize_error_text(text: str, *, limit: int = 300) -> str:
     if not text:
         return ""
     bounded = text[:MAX_REGEX_SCAN_LENGTH]
+    for pattern, replacement in _ERROR_TEXT_CREDENTIALS:
+        bounded = pattern.sub(replacement, bounded)
     redacted = redact_text(bounded, _ERROR_DETECTOR.detect(bounded))
     flat = _WHITESPACE_RE.sub(" ", _URL_RE.sub("[URL]", redacted)).strip()
     if len(flat) <= limit:

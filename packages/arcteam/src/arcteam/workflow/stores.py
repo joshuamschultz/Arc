@@ -27,7 +27,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -35,7 +35,16 @@ from uuid import uuid4
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState, PathEntry, Run, RunStore
-from arcstore.tasks import Task, TaskStore, _validate_free_text, reclaim_allowance_s
+from arcstore.tasks import (
+    ATTEMPT_LEASE_TTL_S,
+    NODE_TIMEOUT_EXCEEDED,
+    RECLAIM_MARGIN_S,
+    SERVICE_RESTART_INTERRUPTED,
+    Task,
+    TaskStore,
+    _validate_free_text,
+    reclaim_allowance_s,
+)
 from arctrust import sanitize_error_text
 from arctrust.audit import AuditSink
 
@@ -441,11 +450,19 @@ class WorkflowRunStore:
 class WorkflowTaskStore:
     """``WorkflowTaskStoreLike`` over ``arcstore.tasks.TaskStore``."""
 
-    def __init__(self, backend: Any, *, actor_did: str, sink: AuditSink | None = None) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        *,
+        actor_did: str,
+        sink: AuditSink | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self._backend = backend
         self._tasks = TaskStore(backend, sink=sink)
         self._actor_did = actor_did
         self._sink = sink
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def create_batch(
         self, tasks: Sequence[Task], *, actor_did: str, fence: RunnerFence | None = None
@@ -510,28 +527,42 @@ class WorkflowTaskStore:
     ) -> Sequence[Task]:
         """Return this run's dead in-flight attempts to the pool (crash resume).
 
-        A row ``in_progress`` past both its own timeout and ``stale_after_s``
-        has no live run behind it: the process that claimed it died. It goes
-        through the tasks reliability engine's own transitions — ``requeue``
-        while attempts remain, ``dead_letter`` once they are spent — each pinned
-        to the attempt read here, so an attempt that started since is never
-        touched. ``attempts`` is left as is: the next claim increments it, which
-        is what gives that claim a new attempt key.
+        Whether an attempt is dead is decided by :func:`_abandon_reason`: a
+        lease that is still being renewed is alive however long the node has
+        run; a lease that lapsed, or an attempt past its explicit timeout, is
+        not. A row with no lease at all (an executor that never beats) falls
+        back to ``stale_after_s``. Reclaim goes through the tasks reliability
+        engine's own transitions — ``requeue`` while attempts remain,
+        ``dead_letter`` once they are spent — each pinned to the attempt read
+        here, so an attempt that started since is never touched. ``attempts``
+        is left as is: the next claim increments it, which is what gives that
+        claim a new attempt key.
         """
-        now = datetime.now(UTC)
+        now = self._clock()
         reclaimed: list[Task] = []
         for row in await self.query_by_flow_run(flow_run_id):
-            if row.status != "in_progress" or not _attempt_expired(row, now, stale_after_s):
+            if row.status != "in_progress":
                 continue
-            moved = await self._reclaim_one(row, now=now, actor_did=actor_did, fence=fence)
+            reason = _abandon_reason(row, now, stale_after_s)
+            if reason is None:
+                continue
+            moved = await self._reclaim_one(
+                row, reason=reason, now=now, actor_did=actor_did, fence=fence
+            )
             if moved is not None:
                 reclaimed.append(moved)
         return reclaimed
 
     async def _reclaim_one(
-        self, row: Task, *, now: datetime, actor_did: str, fence: RunnerFence | None
+        self,
+        row: Task,
+        *,
+        reason: str,
+        now: datetime,
+        actor_did: str,
+        fence: RunnerFence | None,
     ) -> Task | None:
-        reason = "attempt abandoned: its process stopped mid-run (reclaimed on resume)"
+        why = f"{reason}: {_REASON_TEXT[reason]} (reclaimed on resume)"
         # A node executor reads this to refuse a blind re-run of a tool that
         # cannot dedupe its effect (the first attempt may have half-run).
         stamp = {"reclaimed_at": now.isoformat()}
@@ -540,7 +571,7 @@ class WorkflowTaskStore:
                 row.id,
                 actor_did=actor_did,
                 resolution=f"failed after {row.attempts} attempt(s) — last attempt abandoned",
-                last_error=reason,
+                last_error=why,
                 expected_attempts=row.attempts,
                 fence=fence,
                 metadata_patch=stamp,
@@ -548,7 +579,7 @@ class WorkflowTaskStore:
         return await self._tasks.requeue(
             row.id,
             actor_did=actor_did,
-            last_error=reason,
+            last_error=why,
             next_attempt_at=now.isoformat(),
             expected_attempts=row.attempts,
             fence=fence,
@@ -691,6 +722,45 @@ def _storable_error(reason: str | None) -> str | None:
     except ValueError:
         return "error detail withheld: rejected by the stored-text policy"
     return cleaned
+
+
+_REASON_TEXT = {
+    SERVICE_RESTART_INTERRUPTED: "the process running this attempt stopped mid-run",
+    NODE_TIMEOUT_EXCEEDED: "the attempt outlived its node timeout",
+}
+
+
+def _parse_instant(value: str | None) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value or "")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _abandon_reason(row: Task, now: datetime, stale_after_s: float) -> str | None:
+    """Why an in-flight attempt should be taken back, or ``None`` while it is alive.
+
+    Liveness is proved, not guessed. An attempt carries a lease (its owner
+    process and last beat). A fresh beat means the owner is alive — in this
+    process or another — and the attempt is left alone however long it has run;
+    that is what lets a no-timeout node run for half an hour across any number
+    of runner rebuilds. The attempt is taken back only when its lease lapsed
+    (the owner died: a crash or restart) or when it outlived its explicit
+    node timeout. A row with no lease cannot prove anything and keeps the
+    wall-clock bound.
+    """
+    if not row.lease_owner:
+        return SERVICE_RESTART_INTERRUPTED if _attempt_expired(row, now, stale_after_s) else None
+    started = _parse_instant(row.started_at)
+    timeout = row.timeout_seconds
+    if started is not None and timeout and timeout > 0:
+        if (now - started).total_seconds() >= timeout + RECLAIM_MARGIN_S:
+            return NODE_TIMEOUT_EXCEEDED
+    beat = _parse_instant(row.lease_beat_at)
+    if beat is None or (now - beat).total_seconds() >= ATTEMPT_LEASE_TTL_S:
+        return SERVICE_RESTART_INTERRUPTED
+    return None
 
 
 def _attempt_expired(row: Task, now: datetime, stale_after_s: float) -> bool:

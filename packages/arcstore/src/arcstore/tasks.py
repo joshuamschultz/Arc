@@ -12,8 +12,10 @@ contract.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
+import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
@@ -163,6 +165,11 @@ class Task(BaseModel):
     # No-write-down (SEC-F3): downstream notify propagates this so a task's
     # classification bounds where it can surface. Defaults to the lowest tier.
     classification: str = "UNCLASSIFIED"
+    # Liveness proof for an in-flight attempt: which process runs it and when it
+    # last said so. A reclaimer trusts a fresh beat over any wall-clock guess, so
+    # a node with no timeout is never killed while its owner is still alive.
+    lease_owner: str | None = None
+    lease_beat_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -349,6 +356,22 @@ class MutableTaskBackend(Protocol):
 # A live attempt may run to its own timeout; the reclaimer waits this much longer
 # so a turn finishing at its timeout is never reclaimed and double-run.
 RECLAIM_MARGIN_S = 60.0
+
+
+# An attempt's owner renews its lease this often; the lease is dead once it has
+# missed several beats. Four beats of slack absorbs a stalled loop or a slow write.
+ATTEMPT_LEASE_BEAT_S = 30.0
+ATTEMPT_LEASE_TTL_S = 4 * ATTEMPT_LEASE_BEAT_S
+
+# One id per OS process lifetime. A reclaimer that finds its own id on a fresh
+# lease knows the attempt is running in this very process.
+PROCESS_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex}"
+
+# Why an in-flight attempt was taken back. Stored as the row's ``last_error``
+# prefix so the operator sees the cause, not just "abandoned".
+SERVICE_RESTART_INTERRUPTED = "service_restart_interrupted"
+RUN_ENDED_UNFINISHED = "run_ended_unfinished"
+NODE_TIMEOUT_EXCEEDED = "node_timeout_exceeded"
 
 
 def reclaim_allowance_s(timeout_seconds: float | None, floor_s: float) -> float:
@@ -716,6 +739,7 @@ class TaskStore:
         *,
         run_id: str | None = None,
         attempt_key: str | None = None,
+        lease_owner: str | None = None,
     ) -> tuple[Task | None, str]:
         active_rows = await self._backend.mutable_query(
             self._COLLECTION, where={"owner_did": agent_did, "status": "in_progress"}
@@ -763,6 +787,11 @@ class TaskStore:
         }
         if run_id is not None:
             claim["run_id"] = run_id
+        if lease_owner is not None:
+            # The claim is the first beat: the attempt is provably live from the
+            # same write that makes it in_progress.
+            claim["lease_owner"] = lease_owner
+            claim["lease_beat_at"] = claim["started_at"]
         if attempt_key is not None:
             # The attempt identity travels with the single winning claim. The
             # patch is a top-level merge, so the node block is carried whole.
@@ -885,6 +914,32 @@ class TaskStore:
         if current is not None:
             patch["metadata"] = {**current.metadata, **metadata_patch}
 
+    async def beat_attempt(
+        self,
+        task_id: str,
+        *,
+        attempts: int,
+        lease_owner: str,
+        actor_did: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """Renew the liveness lease of one in-flight attempt.
+
+        Pinned to the attempt number and the owner that claimed it, so a beat
+        from an attempt that was reclaimed (or re-claimed by someone else) is a
+        no-op and returns False: the caller has lost the row and must stop.
+        Writes top-level fields only, so it can never clobber node metadata.
+        """
+        stamp = (now or datetime.now(UTC)).isoformat()
+        return await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {"lease_beat_at": stamp},
+            where={"status": "in_progress", "attempts": attempts, "lease_owner": lease_owner},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+
     async def fail_attempt(
         self,
         task_id: str,
@@ -952,6 +1007,8 @@ class TaskStore:
             "last_error": last_error,
             "next_attempt_at": next_attempt_at,
             "started_at": None,
+            "lease_owner": None,
+            "lease_beat_at": None,
         }
         await self._merge_metadata(task_id, patch, metadata_patch)
         won = await self._backend.update_if(
