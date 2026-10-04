@@ -41,6 +41,10 @@ DEFAULT_DIMS = 384
 
 _T = TypeVar("_T")
 
+#: A chunk whose vector is missing (never embedded) or stale (embedded for older
+#: content). Shared by the partial index and every query that must use it.
+PENDING_EMBED_SQL = "(embedded_hash IS NULL OR embedded_hash <> content_hash)"
+
 _VEC_MISSING = (
     "SEMANTIC RECALL IS OFF: the sqlite-vec package is not installed, so the vec0 "
     "table cannot exist and memory recall runs on BM25 + graph only. "
@@ -269,6 +273,16 @@ class MemoryDB:
         # do" instead of the lexical write's hash bump masking a pending embed.
         # The backfill this migration needs runs below, AFTER vec0 exists.
         chunks_columns_added = self._ensure_columns(conn, "chunks", {"embedded_hash": "TEXT"})
+        # Partial index of exactly the chunks whose vector is missing or stale,
+        # keyed for paging one scope at a time. The embed backfill reads its
+        # pages (and counts its backlog) from this index alone, so the cost
+        # follows the backlog, never the million already-embedded rows. The
+        # WHERE clause must match ``PENDING_EMBED_SQL`` verbatim or SQLite will
+        # not use the index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_embed_pending ON chunks(scope, chunk_id) "
+            f"WHERE {PENDING_EMBED_SQL}"
+        )
 
         # FTS5 keyword/BM25 mirror of chunk text.
         conn.execute(
@@ -436,4 +450,4 @@ class MemoryDB:
         return added
 
 
-__all__ = ["DEFAULT_DIMS", "MemoryDB", "open_db_connection"]
+__all__ = ["DEFAULT_DIMS", "PENDING_EMBED_SQL", "MemoryDB", "open_db_connection"]

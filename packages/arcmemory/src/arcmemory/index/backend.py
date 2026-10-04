@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from arcmemory.db import MemoryDB
+from arcmemory.db import PENDING_EMBED_SQL, MemoryDB
 from arcmemory.index import ann
 
 try:  # optional [vec] extra — guarded, mirrors db.py
@@ -57,6 +57,34 @@ _SQL_BATCH = 500
 #: score: ~50 ms of FTS5 work on a 2026 laptop core.
 _BM25_POSTINGS_BUDGET = 100_000
 
+# Embed-backfill queries. ``PENDING_EMBED_SQL`` is a module constant (no caller
+# data is ever interpolated), and must appear verbatim for SQLite to use the
+# ``idx_chunks_embed_pending`` partial index.
+_SQLITE_PENDING_COUNTS = (
+    "SELECT scope, COUNT(*) FROM chunks INDEXED BY idx_chunks_embed_pending "  # noqa: S608
+    f"WHERE substr(scope, 1, ?) = ? AND {PENDING_EMBED_SQL} GROUP BY scope"
+)
+# Page the partial index first, then fetch each row's text by its rowid: a plain
+# join would let the planner start from the FTS table instead.
+_SQLITE_PENDING_PAGE = (
+    "SELECT pending.chunk_id, pending.content_hash, fts_chunks.text FROM ("  # noqa: S608
+    "SELECT chunk_id, content_hash, fts_rowid FROM chunks "
+    f"WHERE scope=? AND chunk_id>? AND {PENDING_EMBED_SQL} "
+    "ORDER BY chunk_id LIMIT ?) AS pending "
+    "JOIN fts_chunks ON fts_chunks.rowid = pending.fts_rowid "
+    "ORDER BY pending.chunk_id"
+)
+_PG_EMBED_BACKLOG = (
+    "SELECT scope, COUNT(*) AS total, "  # noqa: S608
+    f"COUNT(*) FILTER (WHERE {PENDING_EMBED_SQL}) AS pending "
+    "FROM chunks WHERE left(scope, $1) = $2 GROUP BY scope"
+)
+_PG_PENDING_PAGE = (
+    "SELECT chunk_id, content_hash, text FROM chunks "  # noqa: S608
+    f"WHERE scope=$1 AND chunk_id > $2 AND {PENDING_EMBED_SQL} "
+    "ORDER BY chunk_id LIMIT $3"
+)
+
 
 @dataclass(frozen=True)
 class ChunkWrite:
@@ -69,6 +97,36 @@ class ChunkWrite:
     content_hash: str
     text: str
     embedding: list[float] | None
+
+
+@dataclass(frozen=True)
+class PendingEmbed:
+    """One chunk whose vector is missing or stale, as read for the embed backfill."""
+
+    chunk_id: str
+    content_hash: str
+    text: str
+
+
+@dataclass(frozen=True)
+class EmbeddingWrite:
+    """A vector for one EXISTING chunk, valid only for the content it was embedded from."""
+
+    chunk_id: str
+    content_hash: str
+    embedding: list[float]
+
+
+@dataclass(frozen=True)
+class EmbedBacklog:
+    """One scope's vector coverage: every chunk, and those still awaiting a vector."""
+
+    total: int
+    pending: int
+
+    @property
+    def embedded(self) -> int:
+        return self.total - self.pending
 
 
 @runtime_checkable
@@ -129,6 +187,32 @@ class IndexBackend(Protocol):
         (``embedding=None``) gets a ``content_hash`` but no ``embedded_hash`` entry
         here, so a caller can tell "fts is fresh" apart from "the vector is fresh"
         (H-REG-1's hash-gate trap) — the two channels are gated on separate hashes.
+        """
+        ...
+
+    async def embed_backlog(self, scope_prefix: str) -> dict[str, EmbedBacklog]:
+        """Vector coverage of every scope whose key starts with ``scope_prefix``.
+
+        Every such scope is listed, fully embedded ones too. A chunk is pending
+        when it has no vector or its vector was embedded for older content
+        (``embedded_hash`` absent or != ``content_hash``).
+        """
+        ...
+
+    async def pending_embeds(self, scope: str, *, after: str, limit: int) -> list[PendingEmbed]:
+        """At most ``limit`` pending chunks of ``scope`` with ``chunk_id > after``, in id order.
+
+        A keyset page: callers stream a million-chunk backlog without holding it.
+        """
+        ...
+
+    async def set_embeddings(self, scope: str, writes: Sequence[EmbeddingWrite]) -> int:
+        """Store vectors for existing chunks of ``scope``; return how many were written.
+
+        Writes ONLY the vector and ``embedded_hash``: text, FTS rows and provenance
+        are untouched. A write whose ``content_hash`` no longer matches the chunk
+        (its content changed while it was being embedded), or whose chunk is gone
+        or belongs to another scope, is skipped and the chunk stays pending.
         """
         ...
 
@@ -284,6 +368,57 @@ class SqliteIndexBackend:
                 )
             }
         )
+
+    async def embed_backlog(self, scope_prefix: str) -> dict[str, EmbedBacklog]:
+        def work(conn: sqlite3.Connection) -> dict[str, EmbedBacklog]:
+            params = (len(scope_prefix), scope_prefix)
+            pending = dict(
+                conn.execute(
+                    _SQLITE_PENDING_COUNTS,
+                    params,
+                ).fetchall()
+            )
+            totals = conn.execute(
+                "SELECT scope, COUNT(*) FROM chunks WHERE substr(scope, 1, ?) = ? GROUP BY scope",
+                params,
+            ).fetchall()
+            return {
+                str(scope): EmbedBacklog(total=int(total), pending=int(pending.get(scope, 0)))
+                for scope, total in totals
+            }
+
+        return await self._db.run(work)
+
+    async def pending_embeds(self, scope: str, *, after: str, limit: int) -> list[PendingEmbed]:
+        if limit <= 0:
+            return []
+        return await self._db.run(
+            lambda conn: [
+                PendingEmbed(chunk_id=str(row[0]), content_hash=str(row[1]), text=str(row[2]))
+                for row in conn.execute(
+                    _SQLITE_PENDING_PAGE,
+                    (scope, after, limit),
+                )
+            ]
+        )
+
+    async def set_embeddings(self, scope: str, writes: Sequence[EmbeddingWrite]) -> int:
+        if not self.vec_available or not writes:
+            return 0
+
+        def work(conn: sqlite3.Connection) -> int:
+            changes = _VectorChanges()
+            try:
+                written = sum(_write_embedding(conn, scope, write, changes) for write in writes)
+                deltas = changes.stamp(conn)
+            except BaseException:
+                conn.rollback()
+                raise
+            conn.commit()
+            ann.apply_deltas(self._db, deltas)
+            return written
+
+        return await self._db.run(work)
 
     async def delete_scope(self, scope: str) -> None:
         vec = self.vec_available
@@ -610,6 +745,24 @@ def _write_vector(
             changes.add(scope, key, bytes(row[0]))
 
 
+def _write_embedding(
+    conn: sqlite3.Connection, scope: str, write: EmbeddingWrite, changes: _VectorChanges
+) -> bool:
+    """Store one chunk's vector iff the chunk is still in ``scope`` with this content."""
+    row = conn.execute(
+        "SELECT rowid FROM chunks WHERE chunk_id=? AND scope=? AND content_hash=?",
+        (write.chunk_id, scope, write.content_hash),
+    ).fetchone()
+    if row is None:
+        return False
+    blob = sqlite_vec.serialize_float32(write.embedding)
+    conn.execute("DELETE FROM vec0 WHERE chunk_id=?", (write.chunk_id,))
+    conn.execute("INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)", (write.chunk_id, blob))
+    conn.execute("UPDATE chunks SET embedded_hash=? WHERE rowid=?", (write.content_hash, row[0]))
+    changes.add(scope, int(row[0]), blob)
+    return True
+
+
 def _chunk_key(conn: sqlite3.Connection, chunk_id: str) -> int:
     row = conn.execute("SELECT rowid FROM chunks WHERE chunk_id=?", (chunk_id,)).fetchone()
     return int(row[0])
@@ -858,6 +1011,57 @@ class PostgresIndexBackend:
             )
         return {str(row["chunk_id"]): str(row["embedded_hash"]) for row in rows}
 
+    async def embed_backlog(self, scope_prefix: str) -> dict[str, EmbedBacklog]:
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                _PG_EMBED_BACKLOG,
+                len(scope_prefix),
+                scope_prefix,
+            )
+        return {
+            str(row["scope"]): EmbedBacklog(total=int(row["total"]), pending=int(row["pending"]))
+            for row in rows
+        }
+
+    async def pending_embeds(self, scope: str, *, after: str, limit: int) -> list[PendingEmbed]:
+        if limit <= 0:
+            return []
+        pool = await self._pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                _PG_PENDING_PAGE,
+                scope,
+                after,
+                limit,
+            )
+        return [
+            PendingEmbed(
+                chunk_id=str(row["chunk_id"]),
+                content_hash=str(row["content_hash"]),
+                text=str(row["text"]),
+            )
+            for row in rows
+        ]
+
+    async def set_embeddings(self, scope: str, writes: Sequence[EmbeddingWrite]) -> int:
+        if not writes:
+            return 0
+        pool = await self._pool()
+        written = 0
+        async with pool.acquire() as conn, conn.transaction():
+            for write in writes:
+                status: str = await conn.execute(
+                    "UPDATE chunks SET embedding=$3, embedded_hash=$4 "
+                    "WHERE scope=$1 AND chunk_id=$2 AND content_hash=$4",
+                    scope,
+                    write.chunk_id,
+                    write.embedding,
+                    write.content_hash,
+                )
+                written += int(status.rsplit(" ", 1)[-1])
+        return written
+
     async def delete_scope(self, scope: str) -> None:
         pool = await self._pool()
         async with pool.acquire() as conn:
@@ -1069,7 +1273,10 @@ def _cosine(a: list[float], b: list[float]) -> float:
 __all__ = [
     "VEC_SEARCH_TOP_K",
     "ChunkWrite",
+    "EmbedBacklog",
+    "EmbeddingWrite",
     "IndexBackend",
+    "PendingEmbed",
     "PostgresIndexBackend",
     "SqliteIndexBackend",
     "open_index_backend",

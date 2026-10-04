@@ -46,7 +46,9 @@ from arcmemory.datastore import DatastoreOntology, DatastorePort, SqliteDatastor
 from arcmemory.db import MemoryDB
 from arcmemory.detectors import Decision, WindowDedup, WorkingSet, evaluate_moment
 from arcmemory.distill import Distiller
-from arcmemory.doc_index import DocHit, DocIndex
+from arcmemory.doc_index import DocHit, DocIndex, doc_scope
+from arcmemory.index.backend import EmbedBacklog
+from arcmemory.index.backfill import BackfillTick, DocEmbedBackfill
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
 from arcmemory.mapping import load_committed_mapping, stage_mapping_proposal
@@ -236,6 +238,9 @@ class ArcMemoryBrain:
         self._promotion_sweep = self._compose_promotion(
             promotion_config, promotion_classifier, promotion_publisher, promotion_signer
         )
+        # The document-pool embed backfill, built on first use and kept: it
+        # remembers how far its current pass has got.
+        self._doc_backfill: DocEmbedBackfill | None = None
 
     # -- Brain Protocol ----------------------------------------------------
 
@@ -490,6 +495,32 @@ class ArcMemoryBrain:
         """
         await self._drain_indexes()
         await self._bundle(session_id).retriever.index(embed=True)
+
+    async def backfill_doc_embeddings(self, *, max_batches: int) -> BackfillTick:
+        """Embed up to ``max_batches`` batches of this agent's doc-pool chunks lacking a vector.
+
+        Chunks a connected source wrote while the embedder could not serve are
+        stored lexical-only; this is their retry, run by a background maintainer
+        (never on a turn). Bounded per call, never raises on embedder trouble:
+        the returned tick says whether to keep going, idle, or back off.
+        """
+        return await self._doc_embed_backfill().run_batches(max_batches)
+
+    async def doc_embed_backlog(self) -> dict[str, EmbedBacklog]:
+        """Vector coverage of each of this agent's document pools (operator progress)."""
+        return await self._doc_embed_backfill().backlog()
+
+    def _doc_embed_backfill(self) -> DocEmbedBackfill:
+        if self._doc_backfill is None:
+            self._doc_backfill = DocEmbedBackfill(
+                self._db,
+                self._cfg,
+                self._embedder,
+                scope_prefix=doc_scope(self._agent_did, "").key,
+                actor_did=self._agent_did,
+                audit_sink=self._audit,
+            )
+        return self._doc_backfill
 
     async def _drain_indexes(self) -> None:
         """Settle every per-folder ``index.md``: drain pending folders, heal missing ones.
