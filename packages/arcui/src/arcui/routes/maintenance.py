@@ -8,10 +8,17 @@ from __future__ import annotations
 
 from starlette.routing import Route
 
-from arcui.routes import maintenance_modules, maintenance_runtime
+from arcui.routes import (
+    maintenance_blueprints,
+    maintenance_modules,
+    maintenance_runtime,
+    maintenance_team,
+)
 
 routes: list[Route] = [
     *maintenance_runtime.routes,
+    *maintenance_team.routes,
+    *maintenance_blueprints.routes,
     *maintenance_modules.routes,
 ]
 

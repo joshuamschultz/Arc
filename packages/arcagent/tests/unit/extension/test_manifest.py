@@ -10,7 +10,7 @@ document:
 * denied keys are STRIPPED — a manifest cannot reach the vault backend, process
   tools, the tool preamble, the sandbox path floor, or identity key custody
   (the ``_DENIED_OVERLAY_PATHS`` / ``_strip_denied`` precedent in
-  ``arccli/blueprints.py``).
+  ``arcagent/blueprints.py``).
 * an unbounded tool allowlist is refused above personal (REQ-268).
 * a third-party artifact without an exact version AND a per-platform sha256 is
   rejected (REQ-290) — a floating pin is a supply-chain hole, not a convenience,
@@ -87,7 +87,7 @@ default = "outbound"
 """
 
 # Trusted-admin-only config paths a manifest must never set. Mirrors
-# ``_DENIED_OVERLAY_PATHS`` (arccli/blueprints.py:73-83): the vault backend,
+# ``_DENIED_OVERLAY_PATHS`` (arcagent/blueprints.py:73-83): the vault backend,
 # native process tools, the tool preamble, the sandbox filesystem floor, and
 # identity key custody. Hard-coded here on purpose — a green implementation that
 # quietly shrinks the denylist must fail this test.

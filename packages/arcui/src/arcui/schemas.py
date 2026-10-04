@@ -843,6 +843,8 @@ class ProviderKeyStatus(BaseModel):
     env_var: str
     required: bool
     present: bool
+    # ``model`` = an AI provider, ``web`` = a web search / extract service.
+    kind: Literal["model", "web"] = "model"
 
 
 class ProviderKeysResponse(BaseModel):

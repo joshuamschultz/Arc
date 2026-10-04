@@ -69,7 +69,8 @@ def apply_to_disk(
     ``tier.relaxation_granted`` (per relaxed knob) and ``blueprint.applied`` — routed to
     the operator WORM sink at enterprise/federal, else a structured log.
     """
-    from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
+    from arcagent.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
+
     from arccli.commands.operator import operator_public_key
 
     blueprint = resolve_blueprint(
@@ -174,7 +175,8 @@ def _worm_sink(arc_dir: Path) -> Any:
 
 
 def _list(args: argparse.Namespace) -> None:
-    from arccli.blueprints import list_blueprints
+    from arcagent.blueprints import list_blueprints
+
     from arccli.commands.operator import operator_public_key
 
     arc_dir = Path(getattr(args, "config_dir", None) or operator_root())
@@ -195,7 +197,8 @@ def _signed_label(bp: Any) -> str:
 
 
 def _show(args: argparse.Namespace) -> None:
-    from arccli.blueprints import dumps_toml, resolve_blueprint
+    from arcagent.blueprints import dumps_toml, resolve_blueprint
+
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
@@ -206,7 +209,8 @@ def _show(args: argparse.Namespace) -> None:
 
 
 def _verify(args: argparse.Namespace) -> None:
-    from arccli.blueprints import resolve_blueprint
+    from arcagent.blueprints import resolve_blueprint
+
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
@@ -257,7 +261,7 @@ def _apply(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: {exc}\n")
         sys.exit(1)
 
-    from arccli.blueprints import dumps_toml
+    from arcagent.blueprints import dumps_toml
 
     if dry_run:
         _write(f"# --dry-run — merged config for {target} (not written):")
@@ -269,13 +273,14 @@ def _apply(args: argparse.Namespace) -> None:
 
 def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
     """Resolve + materialize a blueprint's full surface into an existing agent home."""
-    from arccli.blueprints import resolve_blueprint
-    from arccli.blueprints_materialize import (
-        materialize_blueprint,
+    from arcagent.blueprints import resolve_blueprint
+    from arcagent.blueprints_materialize import materialize_blueprint
+
+    from arccli.commands.operator import (
         operator_capability_signer,
+        operator_public_key,
         operator_signer_pair,
     )
-    from arccli.commands.operator import operator_public_key
 
     deployment_tier = _deployment_tier(agent_dir / "arcagent.toml", arc_dir)
     try:

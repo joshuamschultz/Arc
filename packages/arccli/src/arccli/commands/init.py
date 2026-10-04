@@ -229,12 +229,13 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
     (defaults win over the blueprint), the tier floored by stringency-max, and the apply
     audited. Written concretely (dict -> TOML) so the layered CLI/gateway load reads it.
     """
-    from arccli.blueprints import dumps_toml
+    from arcagent.blueprints import dumps_toml
 
     base = _arcagent_base_config(tier)
     effective = tier
     if blueprint_name:
-        from arccli.blueprints import apply_blueprint, resolve_blueprint
+        from arcagent.blueprints import apply_blueprint, resolve_blueprint
+
         from arccli.commands.blueprint import audit_apply
         from arccli.commands.operator import operator_public_key
 
@@ -333,7 +334,8 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     applies the blueprint config UNDER it and writes the persona to ``workspace/identity.md``.
     The agent keeps an isolated workspace; project access is granted at ``arc tui`` launch.
     """
-    from arccli.blueprints import resolve_blueprint
+    from arcagent.blueprints import resolve_blueprint
+
     from arccli.commands.agent.create import _create
 
     team: str = args.team
@@ -372,11 +374,9 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     # key, so re-minting here yields the SAME key to sign blueprint-shipped capabilities.
     result = None
     if bp is not None:
-        from arccli.blueprints_materialize import (
-            materialize_blueprint,
-            operator_capability_signer,
-            operator_signer_pair,
-        )
+        from arcagent.blueprints_materialize import materialize_blueprint
+
+        from arccli.commands.operator import operator_capability_signer, operator_signer_pair
 
         result = materialize_blueprint(
             bp,

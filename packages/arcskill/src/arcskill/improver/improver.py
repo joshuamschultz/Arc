@@ -836,8 +836,8 @@ class ArcSkillImprover:
             return None
         return (
             f"{len(judged)} judge_rubric case(s) require semantic judgment the auto gate "
-            f"cannot evaluate ({', '.join(judged)}) — run `arc skill evals judge <candidate>` "
-            "for the real pinned-judge verdicts"
+            f"cannot evaluate ({', '.join(judged)}) — a person has to read the candidate "
+            "and judge those cases before it is promoted"
         )
 
     async def _authorize(

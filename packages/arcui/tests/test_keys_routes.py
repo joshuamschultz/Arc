@@ -64,6 +64,7 @@ def test_get_reports_every_packaged_provider(client: TestClient) -> None:
         "env_var": _DECLARED,
         "required": True,
         "present": False,
+        "kind": "model",
     }
 
 
@@ -150,4 +151,37 @@ def test_a_viewer_may_read_but_never_write(client: TestClient) -> None:
 
 def test_a_viewer_refused_a_write_stores_nothing(client: TestClient, tmp_path: Path) -> None:
     _put(client, _DECLARED, _SENTINEL, token="viewer")
+    assert not default_env_file(tmp_path / "arc").exists()
+
+
+def test_get_lists_the_web_search_keys_as_their_own_family(client: TestClient) -> None:
+    keys = _get(client).json()["keys"]
+
+    web = {e["env_var"]: e for e in keys if e["kind"] == "web"}
+    assert set(web) == {"TAVILY_API_KEY", "FIRECRAWL_API_KEY", "PARALLEL_API_KEY"}
+    assert web["TAVILY_API_KEY"] == {
+        "provider": "tavily",
+        "env_var": "TAVILY_API_KEY",
+        "required": False,
+        "present": False,
+        "kind": "web",
+    }
+
+
+def test_a_web_key_is_stored_forgotten_and_never_echoed(client: TestClient) -> None:
+    put = _put(client, "TAVILY_API_KEY", _SENTINEL)
+    assert put.status_code == 200
+    assert put.json() == {"env_var": "TAVILY_API_KEY", "present": True}
+
+    listing = _get(client)
+    entry = next(e for e in listing.json()["keys"] if e["env_var"] == "TAVILY_API_KEY")
+    assert entry["present"] is True
+    assert _SENTINEL not in listing.text
+
+    gone = _delete(client, "TAVILY_API_KEY")
+    assert gone.json() == {"env_var": "TAVILY_API_KEY", "present": False, "removed": True}
+
+
+def test_a_viewer_cannot_set_a_web_key(client: TestClient, tmp_path: Path) -> None:
+    assert _put(client, "FIRECRAWL_API_KEY", _SENTINEL, token="viewer").status_code == 403
     assert not default_env_file(tmp_path / "arc").exists()

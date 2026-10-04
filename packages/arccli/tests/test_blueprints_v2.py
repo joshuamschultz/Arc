@@ -13,8 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from arccli import blueprints as bp
+from arcagent import blueprints as bp
 
 
 def _make_v2_blueprint(root: Path) -> Path:

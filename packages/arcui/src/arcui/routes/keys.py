@@ -76,6 +76,7 @@ async def get_keys(request: Request) -> JSONResponse:
                     env_var=status.env_var,
                     required=status.required,
                     present=status.present,
+                    kind=status.kind,
                 )
                 for status in statuses
             ]

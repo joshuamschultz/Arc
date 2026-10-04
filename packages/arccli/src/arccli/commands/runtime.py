@@ -17,6 +17,7 @@ name, which is what stops ``current`` being aimed at ``state/``.
 from __future__ import annotations
 
 import argparse
+
 from arctrust.paths import (
     activate_runtime,
     active_runtime_version,
