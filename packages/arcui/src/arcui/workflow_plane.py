@@ -122,7 +122,8 @@ def _snapshot_fields(state: NodeState) -> dict[str, Any]:
         "started_at": state.started_at,
         "completed_at": state.finished_at,
         "route": state.route,
-        "reason": state.reason,
+        # A cancel reason quotes the upstream node's raw error, so it is scrubbed too.
+        "reason": sanitize_error_text(state.reason or "", limit=500) or None,
     }
 
 
@@ -246,7 +247,7 @@ class DashboardWorkflowPlane:
         detail = _run_summary(run)
         detail["workflow_id"] = run.workflow_id
         detail["version"] = run.workflow_version
-        detail["last_error"] = run.last_error
+        detail["last_error"] = sanitize_error_text(run.last_error or "", limit=500) or None
         # Per-node state comes from the task rows — they carry the live status,
         # the row id a gate is resolved by, and the per-node run id that opens
         # the existing execution timeline. The Run's trace adds what has no row

@@ -213,3 +213,25 @@ async def test_retry_from_the_failed_node_completes_the_run(world: _World) -> No
     assert detail["failure_reason"] is None
     listed = (await world.client.get("/api/workflows/ingest/runs")).json()["runs"][0]
     assert listed["failure_reason"] is None
+
+
+async def test_a_secret_in_a_node_error_never_reaches_the_run_list_or_detail(
+    world: _World,
+) -> None:
+    """Abuse: a provider error echoing an API key must not leak through the new fields."""
+    secret = "sk-ant-api03-" + "A" * 40
+    started = await world.client.post("/api/workflows/ingest/run", json={})
+    run_id = str(started.json()["run_id"])
+    await world.finish(run_id, "collect")
+    row = node_task_id(run_id, "filter_new", 0)
+    await world.tasks.start_task(row, SALES)
+    await world.tasks.dead_letter(
+        row, actor_did=SALES, resolution="failed", last_error=f"ArcLLMAPIError: bad key {secret}"
+    )
+    await world.runner.advance(run_id)
+
+    listed = (await world.client.get("/api/workflows/ingest/runs")).text
+    detail = (await world.client.get(f"/api/workflow-runs/{run_id}")).text
+
+    assert secret not in listed and secret not in detail
+    assert "filter_new" in listed, "the reason still names the node"

@@ -149,6 +149,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcrun/tests/security/test_event_tampering.py",
         "packages/arcui/tests/test_session_replay_media.py",
         "packages/arcgateway/tests/unit/test_broker_bootstrap.py",
+        # A provider error echoing an API key never reaches the workflow run list
+        # or run detail: the failure reason, node error, cancel reason, run error.
+        "packages/arcui/tests/test_workflow_run_failure_route.py",
     ),
     # Item 20 audit causality: the actor on a record is the real initiator and
     # cannot be claimed. A causal context forged in tool arguments or an HTTP
