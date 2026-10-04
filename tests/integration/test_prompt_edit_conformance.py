@@ -465,9 +465,7 @@ def _memory_capabilities(agent: Any) -> Any:
         # access, which fails whenever an earlier test loaded it.
         namespace = vars(module)
         path = namespace.get("__file__") or ""
-        if "consolidate_poll_once" in namespace and Path(path).resolve().is_relative_to(
-            agent_dir
-        ):
+        if "consolidate_poll_once" in namespace and Path(path).resolve().is_relative_to(agent_dir):
             return module
     raise AssertionError(f"no memory capabilities loaded from {agent_dir}")
 
