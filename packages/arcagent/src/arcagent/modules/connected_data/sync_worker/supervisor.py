@@ -30,6 +30,7 @@ import logging
 import os
 import secrets
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -147,6 +148,8 @@ class SyncWorkerSupervisor:
         self._restarts = 0
         self._next_attempt: float | None = None
         self._start_lock = asyncio.Lock()
+        #: A worker has answered since ``start``: later writes fail fast while it restarts.
+        self._ever_up = False
 
     # -- what the rest of the process sees ---------------------------------
 
@@ -191,6 +194,7 @@ class SyncWorkerSupervisor:
             if self.running:
                 return
             self._stopping = False
+            self._ever_up = False
             self._dir = _runtime_dir()
             self._host_server = RpcServer(
                 path=self._dir / "host.sock",
@@ -212,9 +216,10 @@ class SyncWorkerSupervisor:
         while it restarts fails fast instead: the sync run defers and keeps its
         cursor rather than holding a page open through the backoff.
         """
-        if self.running:
+        if not self.running:
+            await self.start()
+        if self._ever_up:
             return
-        await self.start()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._ready.wait(), self._ready_timeout)
 
@@ -237,6 +242,23 @@ class SyncWorkerSupervisor:
         if self._dir is not None:
             shutil.rmtree(self._dir, ignore_errors=True)
             self._dir = None
+        self._state, self._detail = "down", "stopped"
+
+    def discard(self) -> None:
+        """Kill the child and remove the sockets without an event loop.
+
+        For a process whose loop is already gone (an interpreter exit, a test's
+        teardown): ``stop`` is the orderly path whenever a loop is running.
+        """
+        self._stopping = True
+        proc, self._proc = self._proc, None
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(proc.pid, signal.SIGKILL)
+        if self._dir is not None:
+            shutil.rmtree(self._dir, ignore_errors=True)
+            self._dir = None
+        self._task = None
         self._state, self._detail = "down", "stopped"
 
     async def kill_worker(self) -> None:
@@ -308,6 +330,7 @@ class SyncWorkerSupervisor:
             return
         self._client = client
         self._state, self._detail, self._next_attempt = "up", "", None
+        self._ever_up = True
         self._ready.set()
         _logger.info("sync worker up (pid %s)", proc.pid)
         await self._watch(client, proc)
@@ -432,12 +455,21 @@ async def shutdown_process_supervisor() -> None:
         await supervisor.stop()
 
 
+def discard_process_supervisor() -> None:
+    """Kill and forget this process's supervisor when no event loop is left to stop it."""
+    global _PROCESS_SUPERVISOR
+    supervisor, _PROCESS_SUPERVISOR = _PROCESS_SUPERVISOR, None
+    if supervisor is not None:
+        supervisor.discard()
+
+
 __all__ = [
     "DEFAULT_COMMAND",
     "SupervisedChannel",
     "SyncWorkerStatus",
     "SyncWorkerSupervisor",
     "WorkerState",
+    "discard_process_supervisor",
     "process_supervisor",
     "shutdown_process_supervisor",
 ]

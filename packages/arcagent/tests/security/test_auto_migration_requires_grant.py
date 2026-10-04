@@ -19,14 +19,14 @@ from arcstore.source_sync import InMemorySourceSyncStore
 
 from arcagent.connected_data import KnowledgeHome, MappingPlan, SyncLimits
 from arcagent.extension.source import SourceDescription
-from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connected_data.shared import SharedKnowledge
+from arcagent.modules.connected_data.sync_worker import RemoteIngestPort
 
 _DID = "did:arc:test:agent"
 
 
-class _OwnCopy(ArcMemoryIngestAdapter):
+class _OwnCopy(RemoteIngestPort):
     """An agent's own store holding documents, with whatever approval the test gives it."""
 
     def __init__(self, homes: tuple[KnowledgeHome, ...] | None) -> None:  # no real store
@@ -60,8 +60,11 @@ def _source() -> SourceDescription:
 )
 @pytest.mark.asyncio
 async def test_an_agent_without_an_approved_shareable_grant_is_never_auto_migrated(
-    tmp_path: Path, homes: tuple[KnowledgeHome, ...] | None
+    tmp_path: Path,
+    homes: tuple[KnowledgeHome, ...] | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
     backend = FakeBackend()
     events: list[str] = []
     writers: list[str] = []
@@ -74,7 +77,7 @@ async def test_an_agent_without_an_approved_shareable_grant_is_never_auto_migrat
         arcstore_opener=opener,
         embedder=lambda: None,
         profile=lambda: "lexical",
-        root=lambda: tmp_path / "shared",
+        embed=lambda: None,
     )
 
     async def spying_writer(connection_id: str, approval_id: str) -> Any:
@@ -105,6 +108,4 @@ async def test_an_agent_without_an_approved_shareable_grant_is_never_auto_migrat
 
     assert writers == []
     assert events == [], "a move that did not happen was audited as one"
-    assert not (tmp_path / "shared").exists(), (
-        "the shared store was created for an ungranted agent"
-    )
+    assert not shared.root("wiki").exists(), "the shared store was created for an ungranted agent"

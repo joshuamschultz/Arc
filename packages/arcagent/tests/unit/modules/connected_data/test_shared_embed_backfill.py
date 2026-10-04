@@ -1,11 +1,11 @@
-"""Shared knowledge stores get the doc-embed backfill too (P18-4 stores).
+"""Every store an agent writes or reads shared gets the doc-embed backfill.
 
 A connection's shared store is written by whichever subscriber holds its sync
 lease; chunks it wrote while the embedder could not serve stayed lexical-only
-forever. Each subscribed agent's connected-data service now drives a bounded
-backfill tick per shared store it subscribes to, through a WRITER port (so the
-subscriber's grant is re-checked first). arcmemory keeps it to one backfill per
-store at a time (a per-process pass flag plus a per-file cross-process claim).
+forever. Each agent's connected-data service drives a bounded backfill tick for
+its own store and per shared store it subscribes to. A tick writes vectors, so
+it runs in the sync worker, through a WRITER port (the subscriber's grant is
+re-checked first). arcmemory keeps it to one backfill per store at a time.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from arcagent.extension.source import SourceDescription
 from arcagent.modules.connected_data import service as service_module
 from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connected_data.shared import SharedKnowledge
+from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 _DID = "did:arc:test:agent"
 
@@ -73,18 +74,34 @@ def _source(connection_id: str = "wiki") -> SourceDescription:
     )
 
 
-def _service(tmp_path: Path, embedder: Any, shared: Any = None) -> ConnectedDataService:
-    backend = FakeBackend()
+#: The on-device embedder the memory module defaults to; the worker builds it too.
+_LOCAL_EMBED = ("local", "", "")
+
+
+@pytest.fixture(autouse=True)
+def _fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+
+
+def _service(
+    tmp_path: Path,
+    embedder: Any,
+    shared: Any = None,
+    *,
+    backend: FakeBackend | None = None,
+    own_store: Any = None,
+) -> ConnectedDataService:
+    store = backend or FakeBackend()
 
     async def opener() -> FakeBackend:
-        return backend
+        return store
 
     knowledge = shared or SharedKnowledge(
         agent_did=_DID,
         arcstore_opener=opener,
         embedder=lambda: embedder,
         profile=lambda: "lexical",
-        root=lambda: tmp_path,
+        embed=lambda: _LOCAL_EMBED,
     )
     service = ConnectedDataService(
         _Catalog(),  # type: ignore[arg-type]  # reason: snapshot is all these paths read
@@ -94,6 +111,7 @@ def _service(tmp_path: Path, embedder: Any, shared: Any = None) -> ConnectedData
         limits=SyncLimits(),
         global_concurrency=1,
         shared=knowledge,
+        own_store=own_store,
     )
     service._store = InMemorySourceSyncStore()
     return service
@@ -151,9 +169,11 @@ def _forget_vector_indexes() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_a_subscribed_store_is_backfilled_through_a_writer_port(tmp_path: Path) -> None:
-    embedder = _WideEmbedder()
-    service = _service(tmp_path, embedder)
+async def test_a_subscribed_store_is_backfilled_in_the_sync_worker(tmp_path: Path) -> None:
+    backend = FakeBackend()
+    serve_from(backend, _DID)
+    await approve_document_mapping(backend, _DID, approval_id="approval-1")
+    service = _service(tmp_path, None, backend=backend)
     lane = await service._lane_for("wiki", _source(), _Private())  # type: ignore[arg-type]  # reason: approved_mapping/documents_indexed are all a lane decision reads
     assert lane is not None
     root = service._shared.root("wiki")  # type: ignore[union-attr]  # reason: built with a store
@@ -162,8 +182,7 @@ async def test_a_subscribed_store_is_backfilled_through_a_writer_port(tmp_path: 
 
     delay = await service.embed_backfill_once()
 
-    assert _pending(root, scope) == 0
-    assert embedder.calls == 12
+    assert _pending(root, scope) == 0, "the worker embedded nothing"
     assert 0 < delay <= service_module._EMBED_BACKFILL_IDLE_SECONDS
 
 
@@ -221,6 +240,21 @@ async def test_each_lane_ticks_once_and_the_soonest_delay_wins(tmp_path: Path) -
     assert await service.embed_backfill_once() == 0.5
     assert shared.writers == [("a", "ap-a"), ("b", "ap-b")]
     assert all(port.ticks == 1 and port.closed for port in ports.values())
+
+
+@pytest.mark.asyncio
+async def test_the_agents_own_store_ticks_beside_its_shared_ones(tmp_path: Path) -> None:
+    own = _FakePort(delay=7.0)
+    ports = {"a": _FakePort(delay=300.0)}
+
+    async def open_own() -> _FakePort:
+        return own
+
+    service = _service(tmp_path, None, shared=_FakeShared(ports), own_store=open_own)
+    service._lanes = {"a": _Lane("ap-a")}  # type: ignore[dict-item]  # reason: only approval_id is read
+
+    assert await service.embed_backfill_once() == 7.0
+    assert own.ticks == 1 and own.closed and ports["a"].ticks == 1
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,10 @@ arcllm is a workspace-editable package whose source is in packages/arcllm/src.
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
+
+import pytest
 
 
 def _ensure_workspace_packages_on_path() -> None:
@@ -26,3 +29,18 @@ def _ensure_workspace_packages_on_path() -> None:
 
 
 _ensure_workspace_packages_on_path()
+
+
+@pytest.fixture(autouse=True)
+async def _no_sync_worker_outlives_its_test() -> AsyncIterator[None]:
+    """A test that wrote a connected store started a sync worker; it dies with the test."""
+    yield
+    from arcagent.modules.connected_data.sync_worker.supervisor import (
+        discard_process_supervisor,
+        shutdown_process_supervisor,
+    )
+
+    try:
+        await shutdown_process_supervisor()
+    except RuntimeError:  # started on a loop that is already gone
+        discard_process_supervisor()

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 
 def _jitter() -> float:
@@ -93,10 +93,16 @@ class SyncSchedule:
         self._failures.pop(connection_id, None)
         self._requested.discard(connection_id)
 
-    def seconds_until_next(self) -> float:
-        """How long the monitor may sleep before some source is due."""
+    def seconds_until_next(self, running: Collection[str] = ()) -> float:
+        """How long the monitor may sleep before some source is due.
+
+        A source in ``running`` is not waited for: it cannot start again until
+        its run ends, and the end of a run wakes the monitor itself. Counting it
+        made a source asked for during its own run read "due now" on every tick,
+        and the monitor spun on the event loop for the rest of the run.
+        """
         now = self._clock()
-        waits = [due - now for due in self._due.values()]
+        waits = [due - now for cid, due in self._due.items() if cid not in running]
         return max(0.0, min([self._interval, *waits]))
 
 

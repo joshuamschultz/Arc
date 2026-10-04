@@ -8,6 +8,7 @@ from typing import Any
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.modules.connected_data import _runtime
 from arcagent.modules.connected_data.service import CatalogEntry, ConnectedDataService
+from arcagent.modules.connected_data.sync_worker import process_supervisor
 from arcagent.tools._decorator import capability, hook
 
 _logger = logging.getLogger("arcagent.modules.connected_data.capabilities")
@@ -53,6 +54,11 @@ class ConnectedData:
             shared=state.shared_knowledge,
             own_store=state.own_store_opener,
         )
+        if state.own_store_opener is not None:
+            # The store writer is up before the first run decides anything, so a
+            # run never waits out a cold start (and an approval given meanwhile
+            # is seen by the run's lane decision, not only by its mapping check).
+            await _writer_ready()
         await state.service.start()
         self._service = state.service
 
@@ -106,6 +112,18 @@ def _catalog_line(entry: CatalogEntry) -> str:
     if entry.guide:
         line += f"\n  operator guide: {entry.guide}"
     return line
+
+
+#: How long an agent's start waits for the sync worker before it goes on without it.
+_WRITER_READY_SECONDS = 15.0
+
+
+async def _writer_ready() -> None:
+    """Start this process's sync worker (idempotent) and wait, bounded, for it to answer."""
+    supervisor = process_supervisor()
+    await supervisor.start()
+    if not await supervisor.wait_ready(_WRITER_READY_SECONDS):
+        _logger.warning("sync worker not up yet (%s); syncs wait for it", supervisor.status())
 
 
 def _health_reporter(state: Any) -> StoreHealthReporter | None:

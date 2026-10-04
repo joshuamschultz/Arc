@@ -14,7 +14,7 @@ spawn a real ``nats-server`` against the developer's JetStream store.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -87,3 +87,18 @@ def _isolated_arc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ``ARC_CONFIG_DIR`` still wins (its ``setenv`` lands after this one).
     """
     monkeypatch.setenv(ARC_CONFIG_DIR_ENV, str(tmp_path / "arc-home"))
+
+
+@pytest.fixture(autouse=True)
+async def _no_sync_worker_outlives_its_test() -> AsyncIterator[None]:
+    """A test that wrote a connected store started a sync worker; it dies with the test."""
+    yield
+    from arcagent.modules.connected_data.sync_worker.supervisor import (
+        discard_process_supervisor,
+        shutdown_process_supervisor,
+    )
+
+    try:
+        await shutdown_process_supervisor()
+    except RuntimeError:  # started on a loop that is already gone
+        discard_process_supervisor()

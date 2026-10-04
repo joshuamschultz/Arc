@@ -108,6 +108,13 @@ def _ui_handler(args: list[str]) -> None:
     ui_handler(args)
 
 
+def _sync_worker_handler(args: list[str]) -> None:
+    """The connected-data sync worker: spawned by ``arc ui start``, never by hand."""
+    from arcagent.modules.connected_data.sync_worker.worker import main
+
+    main(args)
+
+
 def _queue_handler(args: list[str]) -> None:
     """Dispatch queue operator commands."""
     from arccli.commands.queue import queue_handler
@@ -708,6 +715,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Tools & Skills",
         args_hint="<subcommand>",
         handler=_ui_handler,
+    ),
+    CommandDef(
+        name="sync-worker",
+        description="Connected-data sync worker (started and supervised by `arc ui start`)",
+        category="Tools & Skills",
+        cli_only=True,
+        handler=_sync_worker_handler,
     ),
     CommandDef(
         name="queue",

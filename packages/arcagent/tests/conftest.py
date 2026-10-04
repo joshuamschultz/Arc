@@ -68,3 +68,18 @@ def _isolate_arcstore_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     # ...and the fleet with it: an inherited ARC_TEAM_ROOT would put fleet-shared
     # state (connection stores, shared runs) in a directory every test shares.
     monkeypatch.delenv("ARC_TEAM_ROOT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+async def _no_sync_worker_outlives_its_test() -> AsyncIterator[None]:
+    """A test that wrote a connected store started a sync worker; it dies with the test."""
+    yield
+    from arcagent.modules.connected_data.sync_worker.supervisor import (
+        discard_process_supervisor,
+        shutdown_process_supervisor,
+    )
+
+    try:
+        await shutdown_process_supervisor()
+    except RuntimeError:  # started on a loop that is already gone
+        discard_process_supervisor()

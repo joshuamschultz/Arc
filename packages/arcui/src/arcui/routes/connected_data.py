@@ -561,7 +561,23 @@ async def migrate_shared(request: Request) -> JSONResponse:
     return JSONResponse({"dry_run": True, "items": items})
 
 
+async def sync_worker_status(request: Request) -> JSONResponse:
+    """The sync worker's health: ``up``, ``restarting`` (with why) or ``down``.
+
+    One worker writes every connected store for this deployment. While it is not
+    up, syncs pause (each run defers and keeps its cursor) and search keeps
+    working; the Knowledge Sources tab says so.
+    """
+    supervisor = getattr(request.app.state, "sync_worker", None)
+    if supervisor is None:
+        return JSONResponse(
+            {"state": "down", "pid": None, "restarts": 0, "detail": "not started"}
+        )
+    return JSONResponse(supervisor.status().as_dict())
+
+
 routes = [
+    Route("/api/knowledge/sync-worker", sync_worker_status, methods=["GET"]),
     Route(
         "/api/agents/{agent_id}/knowledge/connected-data/activate",
         activate_connected_data,
@@ -617,6 +633,7 @@ routes = [
 
 __all__ = [
     "activate_connected_data",
+    "sync_worker_status",
     "connected_data_service",
     "connected_sources",
     "get_mapping_proposal",

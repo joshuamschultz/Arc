@@ -19,6 +19,8 @@ from arcagent.connected_data import (
     IngestPort,
     KnowledgeHome,
     ListSourceResources,
+    MappingDeniedError,
+    MappingPendingError,
     SourceDescription,
     SyncError,
     SyncLimits,
@@ -121,6 +123,9 @@ _INTERRUPTED = "interrupted"
 
 #: The lane reason for an own copy the next sync moves into the shared store.
 _MIGRATION_PENDING = "migration_pending"
+
+#: The lane reason while the agent has no approved mapping of a connection yet.
+_MAPPING_NOT_APPROVED = "mapping_not_approved"
 
 
 class SourceRefusedError(RuntimeError):
@@ -937,7 +942,8 @@ class ConnectedDataService:
                 await self._emit("connected_data.sync.monitor_failed", {"error": _name(exc)})
             try:
                 await asyncio.wait_for(
-                    self._wake.wait(), timeout=self._timing.seconds_until_next()
+                    self._wake.wait(),
+                    timeout=self._timing.seconds_until_next(running=self._running_ids()),
                 )
             except TimeoutError:
                 pass
@@ -992,6 +998,9 @@ class ConnectedDataService:
             if not callable(maintain):
                 return _EMBED_BACKFILL_IDLE_SECONDS
             return float(await maintain())
+        except SyncWorkerUnavailableError as exc:
+            # The store's writer is restarting: try again when it should be back.
+            return exc.retry_after or _EMBED_BACKFILL_RETRY_SECONDS
         except Exception:  # reason: one store's failure must not stop the others
             _logger.warning("embed backfill of %s failed", label, exc_info=True)
             return _EMBED_BACKFILL_RETRY_SECONDS
@@ -1253,6 +1262,8 @@ class ConnectedDataService:
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         try:
             lane = await self._lane_for(connection_id, raw_description, ingest)
+            if lane is None and self._lane_waits.get(connection_id) == _MAPPING_NOT_APPROVED:
+                lane = await self._lane_once_approved(connection_id, raw_description, ingest)
             if lane is None:
                 return await self._run_with_port(
                     registration, raw_description, ingest, key=self._agent_did
@@ -1476,6 +1487,9 @@ class ConnectedDataService:
             )
         return settled
 
+    def _running_ids(self) -> frozenset[str]:
+        return frozenset(cid for cid, task in self._tasks.items() if not task.done())
+
     def _running_here(self, connection_id: str) -> bool:
         task = self._tasks.get(connection_id)
         return task is not None and not task.done()
@@ -1574,7 +1588,9 @@ class ConnectedDataService:
             description = await self._with_generation(raw_description, private)
             plan = await approved(description)
             reason = ""
-            if plan is None or set(plan.homes) != SHARED_HOMES:
+            if plan is None:
+                reason = _MAPPING_NOT_APPROVED
+            elif set(plan.homes) != SHARED_HOMES:
                 reason = "mapping_not_shared"
             elif await self._documents_indexed(private, description) > 0:
                 # The agent's own store still holds this connection: migrate it
@@ -1592,6 +1608,26 @@ class ConnectedDataService:
                 "connected-data shared store undecided: %s", connection_id, exc_info=True
             )
             return self._lanes.get(connection_id)
+
+    async def _lane_once_approved(
+        self, connection_id: str, raw_description: SourceDescription, ingest: IngestPort
+    ) -> KnowledgeSubscription | None:
+        """Decide the lane again if the operator approved the mapping since it was decided.
+
+        The lane was decided before the mapping was approved, and the run's own
+        mapping check comes later. An approval landing in between used to send a
+        shareable connection's first crawl into the agent's own store. Asking for
+        the mapping here (it stages the default proposal when none is approved)
+        closes that window: approved now means decide again; still pending means
+        the run goes on and ends awaiting the mapping, as before.
+        """
+        try:
+            await ingest.require_approved_mapping(
+                await self._with_generation(raw_description, ingest)
+            )
+        except (MappingPendingError, MappingDeniedError):
+            return None
+        return await self._lane_for(connection_id, raw_description, ingest)
 
     async def _stay_own(
         self, connection_id: str, raw_description: SourceDescription, reason: str
