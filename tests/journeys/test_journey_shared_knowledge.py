@@ -215,9 +215,7 @@ async def test_two_agents_syncing_at_once_crawl_the_account_once(
         account.release.set()
         for agent in (first, second):
             assert await _until(_completed(agent, "wiki")), await _row(agent, "wiki")
-        # One crawl. A sync asked for while it ran is honoured after it, as an
-        # incremental poll from the committed cursor, never as a second crawl.
-        assert account.checkpoints.count(None) == 1, account.checkpoints
+        assert account.checkpoints == [None], account.checkpoints
         assert account.fetched == {page.page_id: 1 for page in WIKI_PAGES}
         assert (await _row(second, "wiki")).documents_indexed == 3
     finally:

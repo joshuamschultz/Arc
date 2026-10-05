@@ -1353,6 +1353,9 @@ class ConnectedDataService:
             status="syncing",
             description=description,
         )
+        # The crawl starts now, so it answers every request made before this
+        # point, including one made while this run was still deciding its store.
+        self._timing.started(connection_id)
         coordinator = ConnectedDataCoordinator(
             registration.adapter,
             ingest,

@@ -472,7 +472,9 @@ class WorkerHandler:
         except Exception as exc:
             wire = error_to_wire(exc)
             wire.wire["audit"] = events
-            if not isinstance(exc, RpcError):
+            if wire.wire["type"] == "write_failed":
+                # Only an unexpected failure; a pending mapping or an unreadable
+                # object is an answer the caller acts on, not a fault.
                 _logger.warning("sync worker %s failed", method, exc_info=True)
             raise wire from exc
         finally:
