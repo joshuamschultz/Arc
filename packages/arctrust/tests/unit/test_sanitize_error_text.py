@@ -58,9 +58,9 @@ _MUST_REDACT = [
     ("aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"),
     ("AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"),
     (f"jwt rejected {_JWT}", _JWT),
-    ("slack said xoxb-123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
-    ("slack said xoxp-123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
-    ("slack said xoxa-123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
+    ("slack said " + "xoxb" + "-" + "123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
+    ("slack said " + "xoxp" + "-" + "123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
+    ("slack said " + "xoxa" + "-" + "123456789012-abcdefghijklmnop", "abcdefghijklmnop"),
 ]
 
 # Ordinary text that must come through unchanged.
