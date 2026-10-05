@@ -168,7 +168,8 @@ def select_candidates(
     Duplicates (same source, or same text) collapse onto the first seen. Each
     source kind is taken best score first, within its own top-k and token cap;
     a candidate with no relevance (score 0) or below its lane's floor is
-    dropped; the running total never passes ``total_tokens``. Profile facts and staged loop recalls are memory.
+    dropped; the running total never passes ``total_tokens``. Profile facts
+    and staged loop recalls are memory.
     """
     chosen: list[Candidate] = []
     items: list[dict[str, Any]] = []

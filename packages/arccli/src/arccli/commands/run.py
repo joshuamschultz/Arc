@@ -429,10 +429,15 @@ async def _execute_task(
     # The CLI plays the role of a thin agent here. Closure mutation lets nested
     # children inherit spawn_task too.
     if with_spawn:
+        base_prompt = system_prompt
+
+        async def child_system_prompt() -> str:
+            return base_prompt
+
         spawn_tool = arcagent.make_spawn_tool(
             model=llm,
             tools=tools,
-            system_prompt=system_prompt,
+            system_prompt_factory=child_system_prompt,
             root_token_budget=(
                 arcagent.RootTokenBudget(spawn_token_budget) if spawn_token_budget else None
             ),
