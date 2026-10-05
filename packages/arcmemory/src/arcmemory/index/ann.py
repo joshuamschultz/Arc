@@ -34,7 +34,10 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import functools
 import hashlib
+import importlib
+import importlib.util
 import json
 import logging
 import os
@@ -47,11 +50,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from usearch.index import Index
 
 from arcmemory.db import open_db_connection
 
 if TYPE_CHECKING:
+    from usearch.index import Index
+
     from arcmemory.db import MemoryDB
 
 _logger = logging.getLogger(__name__)
@@ -141,8 +145,32 @@ def _blobs_to_matrix(blobs: Sequence[bytes], dims: int) -> np.ndarray:
     return _unit_rows(np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(-1, dims))
 
 
+@functools.cache
+def _usearch_index_type() -> type[Index]:
+    """usearch's ``Index``, loaded only after torch's OpenMP runtime.
+
+    usearch's ``__init__`` loads NumKong's extension with ``RTLD_GLOBAL``, which
+    puts NumKong's bundled ``libgomp`` into the process-wide ELF symbol scope.
+    torch loads its own ``libgomp`` the same way (``libtorch_global_deps``).
+    Whichever arrives first answers every later OpenMP lookup, and torch's
+    ``libgomp``/``libtorch_cpu`` bound to NumKong's copy segfault inside torch's
+    import (the Azure ``arc ui`` crash loop, x86_64 glibc). Loaded the other way
+    round, NumKong uses torch's runtime and both work. So when torch is
+    installed it loads first, here, the single place usearch is imported
+    (enforced by ``tests/architecture/test_usearch_single_loader.py``).
+
+    Lazy, so importing arcmemory never pays for usearch or torch; a process
+    that builds an ANN index also embeds its queries, which loads torch anyway.
+    """
+    if importlib.util.find_spec("torch") is not None:
+        importlib.import_module("torch")
+    from usearch.index import Index
+
+    return Index
+
+
 def _new_index(dims: int) -> Index:
-    return Index(
+    return _usearch_index_type()(
         ndim=dims,
         metric="cos",
         dtype=_DTYPE,
