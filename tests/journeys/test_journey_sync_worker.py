@@ -36,7 +36,7 @@ from arcagent.extension.source import (
 )
 from arcagent.modules.connected_data.sync_worker import process_supervisor
 from arctrust.paths import connected_knowledge_dir
-from arcui.loop_lag import LagReport, LoopLagMonitor
+from arcui.loop_lag import LagReport, LoopLagMonitor, summarize
 
 from .conftest import OPERATOR_TOKEN, Deployment, ScriptedLLM
 from .test_journey_knowledge import (
@@ -291,7 +291,12 @@ async def test_a_worker_killed_mid_sync_restarts_and_the_run_resumes_from_its_cu
 _LARGE_PAGES = 240
 _PAGE_BYTES = 24_000
 #: The loop-lag budget the dashboard needs: chat, NATS and health all wait on it.
+#: It is extra lag the ingest may add over this run's own idle loop.
 _P99_BUDGET_MS = 50.0
+#: One freeze this long is a blocking call on the loop, whatever the p99 says.
+_MAX_BUDGET_MS = 500.0
+#: How long the idle loop is sampled before the sync, as the run's own baseline.
+_BASELINE_SECONDS = 2.0
 
 
 def _large_account() -> list[Page]:
@@ -327,16 +332,24 @@ async def test_the_agents_loop_stays_responsive_while_the_worker_ingests(
     rows = install_modules(deployment)
     assert not [row for row in rows if "REFUSED" in row], rows
     agent = await start_agent(deployment)
-    reports: list[LagReport] = []
+    # arcui's own monitor, one sample per report, so every sample is kept: the
+    # percentiles are taken over the whole ingest, not over half-second windows.
+    lag_ms: list[float] = []
     monitor = asyncio.create_task(
-        LoopLagMonitor(interval=0.01, report_every=0.5, report=reports.append).run()
+        LoopLagMonitor(
+            interval=0.01, report_every=0.0, report=lambda r: lag_ms.append(r.max_ms)
+        ).run()
     )
     try:
+        # The same process, on the same box, under the same load, before any sync.
+        await asyncio.sleep(_BASELINE_SECONDS)
+        baseline = summarize([ms / 1000 for ms in lag_ms])
         account = Provider("big", "confluence", "Large wiki", _large_account())
         proposal = await grant(agent, account)
-        await approve(agent, proposal.approval_id)
         service = sync_service(agent)
-        reports.clear()  # measure the ingest, not the agent's start-up
+        # The approval itself starts the first sync: measure from here to complete.
+        lag_ms.clear()
+        await approve(agent, proposal.approval_id)
         await service.sync_now("big")
 
         async def complete() -> bool:
@@ -349,6 +362,15 @@ async def test_the_agents_loop_stays_responsive_while_the_worker_ingests(
         monitor.cancel()
         await asyncio.gather(monitor, return_exceptions=True)
         await agent.shutdown()
-    assert len(reports) >= 2, "the ingest finished before the loop could be measured"
-    worst = max(report.p99_ms for report in reports)
-    assert worst < _P99_BUDGET_MS, [round(r.p99_ms, 1) for r in reports]
+    assert len(lag_ms) >= 100, "the ingest finished before the loop could be measured"
+    ingest = summarize([ms / 1000 for ms in lag_ms])
+    shown = f"ingest {_shown(ingest)}; idle baseline {_shown(baseline)}"
+    assert ingest.p99_ms < baseline.p99_ms + _P99_BUDGET_MS, shown
+    assert ingest.max_ms < baseline.max_ms + _MAX_BUDGET_MS, shown
+
+
+def _shown(report: LagReport) -> str:
+    return (
+        f"p50={report.p50_ms:.1f}ms p99={report.p99_ms:.1f}ms "
+        f"max={report.max_ms:.1f}ms n={report.samples}"
+    )

@@ -150,6 +150,8 @@ class SyncWorkerSupervisor:
         self._start_lock = asyncio.Lock()
         #: A worker has answered since ``start``: later writes fail fast while it restarts.
         self._ever_up = False
+        #: Each served agent's embed settings; every new worker loads them before "up".
+        self._warm_set: set[tuple[str, tuple[str, str, str]]] = set()
 
     # -- what the rest of the process sees ---------------------------------
 
@@ -232,6 +234,18 @@ class SyncWorkerSupervisor:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._ready.wait(), timeout)
         return self._state == "up"
+
+    async def warm(self, agent_did: str, embed: tuple[str, str, str], *, timeout: float) -> None:
+        """Have the worker load ``agent_did``'s embedding model before its first write.
+
+        Remembered, so every worker spawned later loads it again before it reports
+        up. Bounded: a load that outlasts ``timeout`` goes on in the worker, and the
+        first write waits for it there.
+        """
+        self._warm_set.add((agent_did, embed))
+        client = self._client
+        if client is not None and self._state == "up":
+            await _warm_one(client, agent_did, embed, timeout)
 
     async def stop(self) -> None:
         """Stop the worker and supervision; the worker is never left running."""
@@ -333,6 +347,10 @@ class SyncWorkerSupervisor:
         )
         if not await self._await_ready(client, proc):
             return
+        # A new worker holds no model: load what the served agents embed with
+        # before it is "up", so a run's first page never pays a cold load.
+        for agent_did, embed in sorted(self._warm_set):
+            await _warm_one(client, agent_did, embed, self._ready_timeout)
         self._client = client
         self._state, self._detail, self._next_attempt = "up", "", None
         self._ever_up = True
@@ -398,6 +416,16 @@ class SyncWorkerSupervisor:
 
     def _host_refused(self, reason: str) -> None:
         _logger.warning("sync worker host channel refused a request: %s", reason)
+
+
+async def _warm_one(
+    client: RpcClient, agent_did: str, embed: tuple[str, str, str], timeout: float
+) -> None:
+    """One warm request; a failure only costs the first write a cold load."""
+    try:
+        await client.call("warm", {"agent_did": agent_did, "embed": list(embed)}, timeout=timeout)
+    except (RpcUnavailableError, RemoteError) as exc:
+        _logger.warning("sync worker did not warm an embedder: %s", exc)
 
 
 class SupervisedChannel:

@@ -828,11 +828,15 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # A write to a shared store needs the writer's live subscription; a store still
     # read by an agent is never dropped. The main process signs the worker's seals
     # but only a canonical seal payload for that store under its pinned key, never
-    # arbitrary bytes (confused deputy).
+    # arbitrary bytes (confused deputy). The ``warm`` request that loads an
+    # agent's embedding model never calls a remote (provider) embedder, so an
+    # agent start spends no provider call and sends nothing off the box, and a
+    # malformed warm is refused.
     "sync worker — forged, replayed or foreign requests; stores outside the allowed set": (
         "packages/arcagent/tests/security/test_sync_worker_abuse.py",
         "packages/arcagent/tests/unit/modules/connected_data/test_sync_worker_protocol.py",
         "packages/arcagent/tests/unit/modules/connected_data/test_sync_worker_store_authority.py",
+        "packages/arcagent/tests/unit/modules/connected_data/test_sync_worker_warm.py",
         "packages/arcmemory/tests/security/test_okf_delegated_signing.py",
         "tests/journeys/test_journey_sync_worker.py",
     ),

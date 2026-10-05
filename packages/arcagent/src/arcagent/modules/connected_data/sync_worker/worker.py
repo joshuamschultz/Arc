@@ -190,6 +190,7 @@ class StoreWriters:
         self._audit = RequestAuditSink(host)
         self._stores: dict[str, _Store] = {}
         self._embedders: dict[tuple[str, tuple[str, str, str]], Any] = {}
+        self._warmed: dict[tuple[str, tuple[str, str, str]], bool] = {}
         self._held: dict[Path, tuple[str, Callable[[], None]]] = {}
 
     async def call(
@@ -312,12 +313,39 @@ class StoreWriters:
         self._held[root] = (spec.seal.public_key, release)
 
     def _embedder(self, spec: StoreSpec) -> Any | None:
-        if spec.embed is None:
-            return None
-        key = (spec.agent_did, spec.embed)
+        return None if spec.embed is None else self._embedder_for(spec.agent_did, spec.embed)
+
+    def _embedder_for(self, agent_did: str, embed: tuple[str, str, str]) -> Any | None:
+        key = (agent_did, embed)
         if key not in self._embedders:
-            self._embedders[key] = embedder_from(spec.agent_did, spec.embed)
+            self._embedders[key] = embedder_from(agent_did, embed)
         return self._embedders[key]
+
+    @property
+    def embedder_count(self) -> int:
+        """How many agents' embedders this worker holds (reported by ``ping``)."""
+        return len(self._embedders)
+
+    async def warm(self, agent_did: str, embed: tuple[str, str, str]) -> bool:
+        """Load one agent's local embedding model now, before its first write.
+
+        A cold load (torch plus weights) takes seconds, and inside a sync run it
+        would count against the run's stall budget as if the provider had hung.
+        Only the on-device backend is warmed: a remote one would be a provider
+        call (and egress) at every agent start, and has nothing to load.
+        """
+        if embed[0] != "local":
+            return False
+        key = (agent_did, embed)
+        warmed = self._warmed.get(key)
+        if warmed is None:
+            embedder = self._embedder_for(agent_did, embed)
+            if embedder is None:  # no arcmemory installed: the store is lexical only
+                return False
+            rebuild = import_module("arcmemory.index.rebuild")
+            vectors = await rebuild.embed_or_none(embedder, ["warm"], operation="embed:warm")
+            warmed = self._warmed[key] = vectors is not None
+        return warmed
 
 
 # -- the methods a request may call ------------------------------------------
@@ -447,7 +475,7 @@ _METHODS: dict[str, _Method] = {
 
 
 class WorkerHandler:
-    """Answer ``ping`` and ``write``; everything else is refused."""
+    """Answer ``ping``, ``warm`` and ``write``; everything else is refused."""
 
     def __init__(self, writers: StoreWriters) -> None:
         self._writers = writers
@@ -455,7 +483,13 @@ class WorkerHandler:
 
     async def __call__(self, op: str, args: dict[str, Any], body: bytes) -> tuple[Any, bytes]:
         if op == "ping":
-            return {"pid": os.getpid(), "started": self._started}, b""
+            return {
+                "pid": os.getpid(),
+                "started": self._started,
+                "embedders": self._writers.embedder_count,
+            }, b""
+        if op == "warm":
+            return {"warmed": await self._warm(args)}, b""
         if op != "write":
             raise RpcError("unknown_op", op)
         try:
@@ -480,6 +514,18 @@ class WorkerHandler:
         finally:
             stop_collecting(token)
         return {"value": value, "audit": events}, out
+
+    async def _warm(self, args: dict[str, Any]) -> bool:
+        agent_did, embed = args.get("agent_did"), args.get("embed")
+        if (
+            not isinstance(agent_did, str)
+            or not agent_did
+            or not isinstance(embed, list)
+            or len(embed) != 3
+            or not all(isinstance(part, str) for part in embed)
+        ):
+            raise RpcError("malformed_warm")
+        return await self._writers.warm(agent_did, (embed[0], embed[1], embed[2]))
 
 
 def _refusal_reporter(host: HostClient) -> Callable[[str], None]:

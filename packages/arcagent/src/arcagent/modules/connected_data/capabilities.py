@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from arcagent.extension.connection_health import StoreHealthReporter
 from arcagent.modules.connected_data import _runtime
+from arcagent.modules.connected_data.ingest import embed_settings
 from arcagent.modules.connected_data.service import CatalogEntry, ConnectedDataService
 from arcagent.modules.connected_data.sync_worker import process_supervisor
 from arcagent.tools._decorator import capability, hook
@@ -55,10 +57,11 @@ class ConnectedData:
             own_store=state.own_store_opener,
         )
         if state.own_store_opener is not None:
-            # The store writer is up before the first run decides anything, so a
-            # run never waits out a cold start (and an approval given meanwhile
-            # is seen by the run's lane decision, not only by its mapping check).
-            await _writer_ready()
+            # The store writer is up, with this agent's embedding model loaded,
+            # before the first run decides anything, so a run never waits out a
+            # cold start (and an approval given meanwhile is seen by the run's
+            # lane decision, not only by its mapping check).
+            await _writer_ready(state.agent_did)
         await state.service.start()
         self._service = state.service
 
@@ -118,16 +121,27 @@ def _catalog_line(entry: CatalogEntry) -> str:
     return line
 
 
-#: How long an agent's start waits for the sync worker before it goes on without it.
+#: How long an agent's start waits for the sync worker (and its embedding model)
+#: before it goes on without it.
 _WRITER_READY_SECONDS = 15.0
 
 
-async def _writer_ready() -> None:
-    """Start this process's sync worker (idempotent) and wait, bounded, for it to answer."""
+async def _writer_ready(agent_did: str) -> None:
+    """Start this process's sync worker (idempotent) and wait, bounded, until it can write.
+
+    "Can write" includes the agent's embedding model: the worker is a fresh
+    process, and a model loaded by its first write would count against that
+    sync run's stall budget as if the provider had hung.
+    """
     supervisor = process_supervisor()
     await supervisor.start()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _WRITER_READY_SECONDS
     if not await supervisor.wait_ready(_WRITER_READY_SECONDS):
         _logger.warning("sync worker not up yet (%s); syncs wait for it", supervisor.status())
+    embed = embed_settings(agent_did)
+    if embed is not None:
+        await supervisor.warm(agent_did, embed, timeout=max(0.1, deadline - loop.time()))
 
 
 def _health_reporter(state: Any) -> StoreHealthReporter | None:

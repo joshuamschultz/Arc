@@ -58,6 +58,13 @@ HostService       ◀── host.sock: sign a seal, ───────── 
   the parent closes stdin, sends SIGTERM and then SIGKILL after a grace period.
 * **Restart.** Capped exponential backoff with jitter (0.5 s doubling to 30 s).
   The backoff resets after the worker has been up for 60 s.
+* **Warm before the first write.** The worker is a fresh process, so its first
+  embed would load the embedding model (torch and weights, seconds) inside a
+  sync run's first page, where the stall guard would count it as a hung
+  provider. An agent's start asks the worker to load that agent's local model
+  (`warm`, bounded by the start's 15 s wait). The supervisor remembers each
+  agent's settings and warms every restarted worker before it reports `up`.
+  A remote (`provider`) embedder is never called to warm.
 * **Watchdog.** A ping every 5 s. Four missed pings in a row mean the worker is
   hung: it is killed and restarted.
 
@@ -126,8 +133,8 @@ asks the main process for over the `host` channel:
 * **A write that fails inside the worker** for another reason is reported to the
   coordinator as a typed error for that one object.
 * **Timeouts.** Connect 5 s. Ping 5 s. A write 600 s. A host call 30 s. An
-  agent's start waits up to 15 s for the worker, and the first write waits up to
-  60 s.
+  agent's start waits up to 15 s for the worker and its embedding model, and the
+  first write waits up to 60 s.
 * **Dashboard.** `GET /api/knowledge/sync-worker` returns `up`, `restarting`
   (with why) or `down`. The Knowledge Sources tab shows it.
 
@@ -145,8 +152,9 @@ The worker never sees a credential, so it cannot race either of them.
     `mode=ro`;
   * "Sync now" from the dashboard route reaches the worker;
   * a worker killed mid-sync restarts, and the run resumes from its cursor;
-  * the loop's p99 lag stays under 50 ms while the worker ingests a large
-    account.
+  * the loop's p99 lag, pooled over the whole ingest, stays within 50 ms of the
+    same run's idle baseline (and no single freeze passes 500 ms) while the
+    worker ingests a large account.
 * `packages/arcagent/tests/security/test_sync_worker_abuse.py`, together with
   the protocol, store-authority and delegated-signing tests, is in the
   adversarial battery.
