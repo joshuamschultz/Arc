@@ -422,10 +422,12 @@ def create_app(
         *cost_efficiency_routes.routes,
         *chat_ws_routes.routes,
         *attachments_routes.routes,
+        # connected_data owns the literal /api/knowledge/sync-worker, which the
+        # parameterised /api/knowledge/{agent_id} would otherwise swallow.
+        *connected_data_routes.routes,
         *knowledge_routes.routes,
         *knowledge_shared_routes.routes,
         *doc_repo_index_routes.routes,
-        *connected_data_routes.routes,
         *connected_explorer_routes.routes,
         *agents_routes.routes,
         *agent_sessions_routes.routes,

@@ -12,6 +12,7 @@ from arcagent.connected_data import (
     ObjectNotIngestibleError,
     SyncError,
 )
+from arcagent.extension.source import api_disabled_link
 from arcagent.modules.connected_data.sync_worker.rpc import RemoteError, RpcError
 
 
@@ -88,9 +89,18 @@ def error_to_wire(exc: BaseException) -> RpcError:
         return RpcError("mapping_denied", exc.public_message)
     if isinstance(exc, SyncError):
         return RpcError(
-            "sync_error", exc.public_message, code=exc.code, retry_after=exc.retry_after
+            "sync_error",
+            exc.public_message,
+            code=exc.code,
+            retry_after=exc.retry_after,
+            action_url=exc.action_url,
         )
     return RpcError("write_failed", type(exc).__name__)
+
+
+def _wire_link(value: Any) -> str | None:
+    """A link off the wire, kept only if it is still a Google console URL."""
+    return api_disabled_link(value) if isinstance(value, str) else None
 
 
 def raise_from_wire(error: RemoteError) -> NoReturn:
@@ -112,6 +122,7 @@ def raise_from_wire(error: RemoteError) -> NoReturn:
             message or "sync failed",
             code=str(wire.get("code", "")) or None,
             retry_after=float(retry) if isinstance(retry, (int, float)) else None,
+            action_url=_wire_link(wire.get("action_url")),
         ) from error
     if kind == "unavailable":
         raise SyncWorkerUnavailableError(message or "sync worker is unavailable") from error

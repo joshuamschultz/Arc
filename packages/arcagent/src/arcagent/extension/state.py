@@ -51,7 +51,7 @@ CONNECTION_COLLECTION = "connections"
 #: a stored value needs a write at run start and run end and a crash leaves it
 #: stuck forever.
 ConnectionStatus = Literal["unknown", "healthy", "needs_you", "error"]
-ConnectionAction = Literal["none", "reconnect", "approve", "install_host", "wait"]
+ConnectionAction = Literal["none", "reconnect", "approve", "install_host", "open_link", "wait"]
 CredentialCustody = Literal["arc", "host", "none"]
 ReasonCode = Literal[
     "auth_required",
@@ -65,6 +65,7 @@ ReasonCode = Literal[
     "token_expiring",
     "contract_changed",
     "host_missing",
+    "api_disabled",
     "renewer_unavailable",
     "custody_unavailable",
     "provider_unavailable",
@@ -135,6 +136,9 @@ class ConnectionRecord(BaseModel):
     reason_code: ReasonCode | None = None
     reason_text: str | None = None
     action: ConnectionAction = "none"
+    #: Where the ``open_link`` action goes: a Google Cloud console URL the sync
+    #: source already host-checked. ``None`` for every other action.
+    action_url: str | None = None
     last_checked_at: str | None = None
     last_success_at: str | None = None
     failing_since: str | None = None

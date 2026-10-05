@@ -163,6 +163,21 @@ const STATUS_LABEL: Record<ConnectionDisplayStatus, string> = {
 }
 
 // The one line under the chip, built only from the stored health row.
+// The server only ever sends a Google Cloud console link; check again here so a
+// tampered response can never turn the card's button into an open redirect.
+const CONSOLE_HOSTS = new Set(['console.developers.google.com', 'console.cloud.google.com'])
+
+function openConsoleLink(url: string | null): void {
+  if (!url) return
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' || !CONSOLE_HOSTS.has(parsed.hostname)) return
+    window.open(parsed.href, '_blank', 'noopener,noreferrer')
+  } catch {
+    // Not a URL: there is nothing to open.
+  }
+}
+
 function statusLine(inst: ConnectorInstance): string {
   switch (inst.display_status) {
     case 'healthy':
@@ -263,6 +278,7 @@ function ConnectionCard({
     reconnect,
     approve: () => approve.mutate(),
     install_host: () => togglePanel('doctor'),
+    open_link: () => openConsoleLink(inst.action_url),
   }
   const onPrimary = primaryClick[inst.action]
 
@@ -318,7 +334,7 @@ function ConnectionCard({
         </div>
         {operatorMode && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {onPrimary && inst.action_label && (
+            {onPrimary && inst.action_label && (inst.action !== 'open_link' || inst.action_url) && (
               <Button size="xs" disabled={busy} onClick={onPrimary}>
                 {inst.action_label}
               </Button>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -42,21 +43,34 @@ class SourceFailureCode(StrEnum):
     CHECKPOINT_INVALID = "checkpoint_invalid"
     TOO_LARGE = "too_large"
     NOT_FOUND = "not_found"
+    #: The provider's API is switched off for the operator's own cloud project. Only
+    #: the operator can enable it, so it is never retried.
+    API_DISABLED = "api_disabled"
     VERSION_CHANGED = "version_changed"
     UNSUPPORTED_CONTENT = "unsupported_content"
     TRANSIENT = "transient"
 
 
 class SourceError(RuntimeError):
-    """A typed source refusal with an optional safe retry delay."""
+    """A typed source refusal with an optional safe retry delay.
+
+    ``action_url`` is where an operator fixes it, when the provider named a place
+    we trust (see :func:`api_disabled_link`); never a URL taken on faith.
+    """
 
     def __init__(
-        self, code: SourceFailureCode, detail: str, *, retry_after: float | None = None
+        self,
+        code: SourceFailureCode,
+        detail: str,
+        *,
+        retry_after: float | None = None,
+        action_url: str | None = None,
     ) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail
         self.retry_after = retry_after
+        self.action_url = action_url
 
 
 #: What a vendor CLI or a provider says, in prose, when nobody is signed in. This
@@ -95,6 +109,43 @@ _RATE_STATUS = re.compile(r"(?<![\w-])429(?![\w-])")
 _RATE_MARKERS = ("rate limit", "ratelimitexceeded", "secondary rate")
 
 
+#: What a provider says when an API is off for the operator's project. Google's
+#: error reason is ``accessNotConfigured``; its message says "has not been used in
+#: project ... or it is disabled".
+_API_DISABLED_MARKERS = ("accessnotconfigured", "has not been used in project")
+#: The only hosts an "enable this API" link may point at. A provider error body is
+#: attacker-influenced text, and the link becomes a button an operator clicks.
+_CONSOLE_HOSTS = frozenset({"console.developers.google.com", "console.cloud.google.com"})
+_ANY_URL = re.compile(r"https?://[^\s<>\"']+")
+_API_NAME = re.compile(r"(Google [A-Za-z ]{2,40}? API)(?= has not been used| is not enabled)")
+
+
+def api_disabled_link(text: str) -> str | None:
+    """The Google Cloud console link in ``text``, only if it is a real console URL.
+
+    Anything else (another host, plain http, a look-alike host, userinfo, a
+    non-URL scheme) is dropped: the operator is told to enable the API, with no
+    link, rather than handed one a hostile error body chose.
+    """
+    for match in _ANY_URL.finditer(text):
+        candidate = match.group(0).rstrip(".,;:)]}")
+        parts = urlsplit(candidate)
+        if (
+            parts.scheme == "https"
+            and parts.hostname in _CONSOLE_HOSTS
+            and parts.username is None
+            and parts.port is None
+        ):
+            return candidate
+    return None
+
+
+def api_disabled_name(text: str) -> str:
+    """The API's name as the provider's sentence words it, or a generic fallback."""
+    found = _API_NAME.search(text)
+    return found.group(1) if found else "Google API"
+
+
 def source_error_from_renewal(exc: CredentialRenewalError) -> SourceError:
     """Map Arc's typed credential failure to a source failure, by type and not by prose.
 
@@ -117,6 +168,8 @@ def classify_cli_failure(detail: str) -> SourceFailureCode:
     Judge the WHOLE message; a vendor puts the reason at the end, after a URL.
     """
     lowered = detail.lower()
+    if any(marker in lowered for marker in _API_DISABLED_MARKERS):
+        return SourceFailureCode.API_DISABLED
     if any(marker in lowered for marker in _AUTH_MARKERS) or _AUTH_STATUS.search(lowered):
         return SourceFailureCode.AUTH_REQUIRED
     if any(marker in lowered for marker in _RATE_MARKERS) or _RATE_STATUS.search(lowered):
@@ -262,5 +315,7 @@ __all__ = [
     "SourceResource",
     "SyncSource",
     "SyncSourcePage",
+    "api_disabled_link",
+    "api_disabled_name",
     "classify_cli_failure",
 ]

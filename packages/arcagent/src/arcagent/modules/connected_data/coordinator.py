@@ -60,6 +60,7 @@ _OBJECT_SKIP_CODES = frozenset(
 _FATAL_SYNC_CODES = frozenset(
     {
         SourceFailureCode.AUTH_REQUIRED.value,
+        SourceFailureCode.API_DISABLED.value,
         SourceFailureCode.RATE_LIMITED.value,
         SourceFailureCode.CHECKPOINT_INVALID.value,
         SourceFailureCode.TRANSIENT.value,
@@ -678,7 +679,10 @@ class ConnectedDataCoordinator:
             except (TransientSyncError, SourceError) as exc:
                 if isinstance(exc, SourceError) and exc.code is not SourceFailureCode.TRANSIENT:
                     raise SyncError(
-                        str(exc), code=str(exc.code), retry_after=exc.retry_after
+                        str(exc),
+                        code=str(exc.code),
+                        retry_after=exc.retry_after,
+                        action_url=exc.action_url,
                     ) from exc
                 if attempt >= limits.retries:
                     raise TransientSyncError(str(exc), retry_after=exc.retry_after) from exc

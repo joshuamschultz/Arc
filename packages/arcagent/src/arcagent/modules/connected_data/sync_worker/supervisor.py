@@ -52,6 +52,7 @@ from arcagent.modules.connected_data.sync_worker.remote_port import replay_audit
 from arcagent.modules.connected_data.sync_worker.rpc import (
     RemoteError,
     RpcClient,
+    RpcConnectError,
     RpcServer,
     RpcUnavailableError,
 )
@@ -229,6 +230,26 @@ class SyncWorkerSupervisor:
             return
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._ready.wait(), self._ready_timeout)
+
+    async def await_responsive(self) -> bool:
+        """Wait (bounded by the ready timeout) until the live worker answers a ping.
+
+        For a caller whose connect failed before anything was sent: the worker may
+        be warming a model, or this process's own loop was starved at startup and
+        the connect timer fired late. ``False`` when the worker is not up or never
+        answered; the caller then defers, typed and retryable.
+        """
+        deadline = self._clock() + self._ready_timeout
+        while self._clock() < deadline:
+            client = self._client
+            if client is None or self._state != "up":
+                return False
+            try:
+                await client.call("ping", {}, timeout=self._heartbeat)
+                return True
+            except (RpcUnavailableError, RemoteError):
+                await asyncio.sleep(0.05)
+        return False
 
     async def wait_ready(self, timeout: float) -> bool:
         with contextlib.suppress(TimeoutError):
@@ -445,12 +466,9 @@ class SupervisedChannel:
     ) -> tuple[Any, bytes]:
         supervisor = self._supervisor
         await supervisor.ensure_started()
-        client = supervisor.client()
         request = {"store": store.model_dump(mode="json"), "method": method, "args": args}
         try:
-            result, out = await client.call(
-                "write", request, body, timeout=supervisor.write_timeout
-            )
+            result, out = await self._call_once_ready(request, body)
         except RpcUnavailableError as exc:
             raise SyncWorkerUnavailableError(
                 f"sync worker did not answer: {exc}", retry_after=supervisor.retry_after()
@@ -460,6 +478,25 @@ class SupervisedChannel:
             raise_from_wire(exc)
         replay_audit(result.get("audit") if isinstance(result, dict) else None, audit)
         return (result.get("value") if isinstance(result, dict) else None), out
+
+    async def _call_once_ready(self, request: dict[str, Any], body: bytes) -> tuple[Any, bytes]:
+        """Send the write; if the connect itself failed, wait for the worker, then send once more.
+
+        A connect failure sent nothing, so the retry cannot double-write. Any
+        failure after the request left (no answer) is never retried here: the
+        write may have landed, and the coordinator's own cursor decides.
+        """
+        supervisor = self._supervisor
+        try:
+            return await supervisor.client().call(
+                "write", request, body, timeout=supervisor.write_timeout
+            )
+        except RpcConnectError:
+            if not await supervisor.await_responsive():
+                raise
+        return await supervisor.client().call(
+            "write", request, body, timeout=supervisor.write_timeout
+        )
 
 
 # -- the one supervisor of this process --------------------------------------

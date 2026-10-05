@@ -1000,7 +1000,7 @@ class ConnectorCatalogResponse(BaseModel):
 
 ConnectionStatusName = Literal["unknown", "healthy", "needs_you", "error"]
 ConnectionDisplayStatus = Literal["unknown", "healthy", "needs_you", "error", "syncing"]
-ConnectionActionName = Literal["none", "reconnect", "approve", "install_host", "wait"]
+ConnectionActionName = Literal["none", "reconnect", "approve", "install_host", "open_link", "wait"]
 ConnectKind = Literal["oauth", "token", "host_login", "none"]
 
 
@@ -1049,6 +1049,8 @@ class ConnectionHealthView(BaseModel):
     reason_text: str | None = None
     action: ConnectionActionName = "none"
     action_label: str = ""
+    #: The Google Cloud console page an ``open_link`` action opens; ``None`` otherwise.
+    action_url: str | None = None
     last_checked_at: str | None = None
     last_success_at: str | None = None
     last_notice: LastNoticeView | None = None
