@@ -21,6 +21,7 @@ from arcagent.brain import NullBrain
 from arcagent.core import turn_context
 from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
+    ContextRetrieval,
     _agent_minute_offset,
     backfill_digest_from_holdings,
     capture_respond,
@@ -28,7 +29,6 @@ from arcagent.modules.memory.capabilities import (
     capture_user,
     consolidate_poll_once,
     inject_memory_disabled_note,
-    inject_recall,
     memory_search,
 )
 
@@ -54,7 +54,6 @@ class _SpyBrain:
     def __init__(self) -> None:
         self.captures: list[str] = []
         self.retrieves: list[str] = []
-        self.retrieve_index_flags: list[bool] = []
         self.consolidations = 0
         self.refreshes = 0
 
@@ -63,7 +62,6 @@ class _SpyBrain:
 
     async def retrieve(self, query: str, *, index: bool = True, **_: Any) -> str:
         self.retrieves.append(query)
-        self.retrieve_index_flags.append(index)
         return f"<memory-result>{query}</memory-result>"
 
     async def consolidate(self, **_: Any) -> dict[str, object]:
@@ -196,13 +194,14 @@ async def test_memory_less_is_silent_noop_and_writes_no_files(tmp_path: Path) ->
     assert isinstance(st.brain, NullBrain)
     assert st.active is False
 
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
+    retrieved = await ContextRetrieval().retrieve(
+        "who owns payments", memory_top_k=4, docs_top_k=3
+    )
     await capture_tool(_ctx({"tool": "bash", "result": "ok"}))
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "hi"}]}))
     ran = await consolidate_poll_once()
 
-    assert "recall" not in sections  # nothing injected
+    assert retrieved["candidates"] == []  # nothing retrieved
     assert ran is False
     assert not (tmp_path / "memory").exists(), "memory-less agent must write no files"
 
@@ -261,30 +260,17 @@ async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> No
     # Recall on a turn is query-only — it never EMBEDS the corpus — but it still
     # writes the cheap lexical (BM25) row synchronously (H-REG-1), so the
     # just-captured line is searchable on this very turn, with no background wait.
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
-    assert "recall" in sections, (
+    retrieved = await ContextRetrieval().retrieve(
+        "who owns payments", memory_top_k=4, docs_top_k=3
+    )
+    memory_texts = [c["text"] for c in retrieved["candidates"] if c["source_kind"] == "memory"]
+    assert any("payments" in text for text in memory_texts), (
         "a just-captured line must be BM25-searchable on the same turn, "
         "at zero embed cost (H-REG-1)"
     )
-    assert "payments" in sections["recall"]
 
 
 # -- Wiring behavior (spy brain) -----------------------------------------
-
-
-async def test_turn_recall_is_query_only_never_indexes_the_corpus() -> None:
-    """inject_recall must ask the Brain for a query-only retrieve (index=False).
-
-    The whole point of the fix: a person's turn embeds only its query, never the
-    corpus. If this ever passes index=True again, a whole-corpus embed is back on
-    the first-LLM-call path.
-    """
-    spy = _SpyBrain()
-    _configure_with(spy)
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))
-    assert spy.retrieve_index_flags == [False]
 
 
 async def test_background_refresh_warms_once_then_only_when_dirty() -> None:
@@ -303,18 +289,6 @@ async def test_background_refresh_warms_once_then_only_when_dirty() -> None:
     st.events_since_consolidate = 1  # a real capture landed
     await refresh_index_once()  # dirty → re-index the changed chunks
     assert spy.refreshes == 2
-
-
-async def test_recall_is_once_per_turn_across_spawn_double_assembly() -> None:
-    """Two identical-query assembles (spawn) trigger a single retrieve (cache)."""
-    spy = _SpyBrain()
-    _configure_with(spy)
-    s1: dict[str, str] = {}
-    s2: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": s1, "query": "same task"}))
-    await inject_recall(_ctx({"sections": s2, "query": "same task"}))
-    assert len(spy.retrieves) == 1
-    assert s1["recall"] == s2["recall"]
 
 
 async def test_capture_hooks_call_brain_and_count_events() -> None:
@@ -488,32 +462,12 @@ class _GatedSpyBrain(_SpyBrain):
         return self._allow
 
 
-async def test_acl_veto_blocks_recall_before_retrieve() -> None:
-    spy = _GatedSpyBrain(allow=False)
-    _configure_with(spy)
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "secret query"}))
-    assert spy.retrieves == []  # provider denied — brain never consulted
-    assert "recall" not in sections
-    assert spy.authorized == ["memory.search"]
-
-
 async def test_acl_veto_blocks_capture_before_brain() -> None:
     spy = _GatedSpyBrain(allow=False)
     _configure_with(spy)
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "secret"}]}))
     assert spy.captures == []  # capture denied before Brain.capture
     assert spy.authorized == ["memory.write"]
-
-
-async def test_acl_allow_asks_provider_then_retrieves() -> None:
-    spy = _GatedSpyBrain(allow=True)
-    _configure_with(spy)
-    sections: dict[str, str] = {}
-    await inject_recall(_ctx({"sections": sections, "query": "ok query"}))
-    assert spy.authorized == ["memory.search"]
-    assert spy.retrieves == ["ok query"]
-    assert "recall" in sections
 
 
 # -- Consolidation trigger (nightly window, per-agent offset) -------------

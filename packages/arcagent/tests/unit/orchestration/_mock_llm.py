@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _prompt(text: str):  # type: ignore[no-untyped-def]  # reason: test helper
+    """A spawn tool's base-prompt factory that answers ``text``."""
+
+    async def factory() -> str:
+        return text
+
+    return factory
+
+
 @dataclass
 class Usage:
     input_tokens: int = 10
@@ -119,7 +128,7 @@ def setup_spawn_tools(
     spawn_tool = make_spawn_tool(
         model=model,
         tools=tools,
-        system_prompt=system_prompt,
+        system_prompt_factory=_prompt(system_prompt),
         sandbox=sandbox,
         allowed_strategies=allowed_strategies,
         spawn_timeout_seconds=timeout_seconds,

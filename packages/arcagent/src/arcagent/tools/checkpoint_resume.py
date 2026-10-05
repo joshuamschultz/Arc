@@ -51,9 +51,12 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[a
     if signer is not None:
         verify_record(record, public_key=signer.public_key, algorithm=signer.algorithm)
 
-    _telemetry, bus, model, provider, prompt, bridge, prompt_source = await build_run_context(
-        agent, ""
-    )
+    # A resume continues the checkpoint's own strategy and turn: no new choice,
+    # no new retrieval, and no pre-model trace rows of its own.
+    run_ctx = await build_run_context(agent, "", run_id="", choose=False)
+    _telemetry, bus, model = run_ctx.telemetry, run_ctx.bus, run_ctx.model
+    provider, prompt, bridge = run_ctx.provider, run_ctx.prompt, run_ctx.bridge
+    prompt_source = run_ctx.prompt_source
     transcript = wire_messages(session.get_messages(), workspace=agent._workspace)
     # apply_checkpoint (in arcrun) replaces the loop's message list with this one,
     # so the freshly-assembled system prompt must lead it — the transcript on disk

@@ -394,7 +394,7 @@ Walkthrough: `walkthroughs/arcllm/04-agentic-loop.ipynb`.
 
 ### Cache control is confined to the Anthropic adapter
 
-`ProviderSettings.enable_prompt_caching` (default on) and `cache_ttl`
+`ProviderSettings.enable_prompt_caching` (default on) and `cache_ttl_system` / `cache_ttl_tail`
 (`"5m"` or `"1h"`) are read by every provider's config, but only
 `AnthropicAdapter` acts on them — it places up to three `cache_control`
 breakpoints (last tool, system block, rolling tail message) per ADR-025.

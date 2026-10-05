@@ -15,7 +15,11 @@ FAKE_MODEL = "claude-test-1"
 
 
 def _config(
-    *, enable_caching: bool = True, ttl: str = "5m", api_format: str = "anthropic"
+    *,
+    enable_caching: bool = True,
+    ttl: str = "1h",
+    tail_ttl: str = "5m",
+    api_format: str = "anthropic",
 ) -> ProviderConfig:
     return ProviderConfig(
         provider=ProviderSettings(
@@ -25,7 +29,8 @@ def _config(
             default_model=FAKE_MODEL,
             default_temperature=0.7,
             enable_prompt_caching=enable_caching,
-            cache_ttl=ttl,
+            cache_ttl_system=ttl,
+            cache_ttl_tail=tail_ttl,
         ),
         models={
             FAKE_MODEL: ModelMetadata(
@@ -71,10 +76,10 @@ class TestAnthropicBreakpoints:
 
         # system is a content-block list carrying a breakpoint
         assert isinstance(body["system"], list)
-        assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert body["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         # breakpoint on the LAST tool only
         assert "cache_control" not in body["tools"][0]
-        assert body["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert body["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         # breakpoint on the last block of the last message
         last_content = body["messages"][-1]["content"]
         assert isinstance(last_content, list)
@@ -89,11 +94,28 @@ class TestAnthropicBreakpoints:
         assert all("cache_control" not in t for t in body["tools"])
         assert isinstance(body["messages"][-1]["content"], str)
 
-    def test_one_hour_ttl_marker(self):
-        adapter = AnthropicAdapter(_config(enable_caching=True, ttl="1h"), FAKE_MODEL)
+    def test_default_tiering_is_one_hour_system_five_minute_tail(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
         messages, tools = self._messages_tools()
         body = adapter._build_request_body(messages, tools=tools)
         assert body["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+        tail = body["messages"][-1]["content"][-1]["cache_control"]
+        assert tail == {"type": "ephemeral"}  # no ttl key means the 5m default
+
+    def test_config_sets_both_ttls(self):
+        adapter = AnthropicAdapter(_config(ttl="1h", tail_ttl="1h"), FAKE_MODEL)
+        messages, tools = self._messages_tools()
+        body = adapter._build_request_body(messages, tools=tools)
+        assert body["system"][-1]["cache_control"]["ttl"] == "1h"
+        assert body["messages"][-1]["content"][-1]["cache_control"]["ttl"] == "1h"
+
+        adapter = AnthropicAdapter(_config(ttl="5m", tail_ttl="5m"), FAKE_MODEL)
+        body = adapter._build_request_body(messages, tools=tools)
+        assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_shorter_system_ttl_than_tail_is_rejected(self):
+        with pytest.raises(ValueError, match="longer"):
+            _config(ttl="5m", tail_ttl="1h")
 
     def test_no_tools_still_breaks_system_and_message(self):
         adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
@@ -103,7 +125,7 @@ class TestAnthropicBreakpoints:
         ]
         body = adapter._build_request_body(messages)
         assert "tools" not in body
-        assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert body["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
 
     def test_system_segments_each_get_a_breakpoint(self):
@@ -121,7 +143,9 @@ class TestAnthropicBreakpoints:
         body = adapter._build_request_body(messages)
 
         assert [b["text"] for b in body["system"]] == ["session-stable", "run-stable"]
-        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
+        assert all(
+            b["cache_control"] == {"type": "ephemeral", "ttl": "1h"} for b in body["system"]
+        )
 
     def test_system_segments_concatenate_when_caching_off(self):
         adapter = AnthropicAdapter(_config(enable_caching=False), FAKE_MODEL)
@@ -153,7 +177,9 @@ class TestAnthropicBreakpoints:
         assert len(body["system"]) == 2
         assert body["system"][0]["text"] == "a"
         assert body["system"][1]["text"] == "b\nc"
-        assert all(b["cache_control"] == {"type": "ephemeral"} for b in body["system"])
+        assert all(
+            b["cache_control"] == {"type": "ephemeral", "ttl": "1h"} for b in body["system"]
+        )
 
     def test_usage_reads_cache_tokens(self):
         adapter = AnthropicAdapter(_config(), FAKE_MODEL)
@@ -219,3 +245,67 @@ class TestOpenAICacheTelemetry:
         from arcllm.adapters.google import GoogleAdapter
 
         assert "_parse_usage" not in vars(GoogleAdapter)
+
+
+# --- Rolling breakpoint skips the per-call ephemeral message ----------------
+
+
+def _history_then_time(stamp: str) -> list[Message]:
+    return [
+        Message(role="system", content="sys"),
+        Message(role="user", content="First question"),
+        Message(role="assistant", content="First answer"),
+        Message(role="user", content="Second question"),
+        Message(role="user", content=f"Current date/time: {stamp}", ephemeral=True),
+    ]
+
+
+def _marked_indexes(body: dict) -> list[int]:
+    return [
+        i
+        for i, m in enumerate(body["messages"])
+        if isinstance(m["content"], list) and any("cache_control" in b for b in m["content"])
+    ]
+
+
+class TestRollingBreakpointSkipsEphemeral:
+    def test_breakpoint_lands_on_last_history_message_not_time_message(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        body = adapter._build_request_body(_history_then_time("2026-10-04 10:00 UTC"))
+
+        assert _marked_indexes(body) == [2]  # "Second question"
+        assert isinstance(body["messages"][-1]["content"], str)  # time text untouched
+
+    def test_prefix_through_breakpoint_is_byte_identical_across_calls(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        first = adapter._build_request_body(_history_then_time("2026-10-04 10:00 UTC"))
+        second = adapter._build_request_body(_history_then_time("2026-10-04 10:07 UTC"))
+
+        cut = _marked_indexes(first)[0] + 1
+        assert first["messages"][:cut] == second["messages"][:cut]
+        assert first["messages"][cut:] != second["messages"][cut:]
+
+    def test_only_ephemeral_messages_get_no_message_breakpoint(self):
+        adapter = AnthropicAdapter(_config(enable_caching=True), FAKE_MODEL)
+        body = adapter._build_request_body(
+            [Message(role="user", content="Current date/time: x", ephemeral=True)]
+        )
+        assert _marked_indexes(body) == []
+
+
+# --- Streaming usage carries cache tokens (G9) --------------------------------
+
+
+class TestStreamingCacheUsage:
+    def test_message_delta_usage_carries_cache_counts_from_message_start(self):
+        adapter = AnthropicAdapter(_config(), FAKE_MODEL)
+        delta = adapter._parse_stream_event(
+            "message_delta",
+            {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 7}},
+            100,
+            cache_read_tokens=60,
+            cache_write_tokens=30,
+        )
+        assert delta is not None and delta.usage is not None
+        assert delta.usage.cache_read_tokens == 60
+        assert delta.usage.cache_write_tokens == 30

@@ -276,6 +276,11 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
+    if name == "embed_profile_of":
+        # Which embedding profile an ``embed_*`` setting triple names (connected data).
+        from arcagent.modules.connected_data.ingest import profile_of
+
+        return profile_of
     if name in {"MemoryConfig", "MemoryPromotionConfig"}:
         # The memory module is removable; importing arcagent must never pull it.
         from arcagent.modules.memory import config as memory_config
@@ -472,6 +477,7 @@ __all__ = [
     "discover_modules",
     "dumps_toml",
     "edit_pulse_check",
+    "embed_profile_of",
     "find_secret",
     "generate_schedule_id",
     "global_capabilities_root",

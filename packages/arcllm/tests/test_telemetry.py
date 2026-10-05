@@ -782,6 +782,31 @@ class TestStreamingIsRecorded:
         assert recorded[0].prompt_tokens == 100
         assert recorded[0].completion_tokens == 50
 
+    async def test_invoke_stream_spool_row_carries_cache_tokens(self, messages):
+        async def _fake_stream(_msgs, _tools=None, **_kw):
+            yield Delta(
+                usage=Usage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    cache_read_tokens=60,
+                    cache_write_tokens=30,
+                ),
+                stop_reason="end_turn",
+            )
+
+        inner = _make_inner()
+        inner.invoke_stream = _fake_stream
+        module = TelemetryModule(_make_config(), inner)
+
+        recorded: list = []
+        with patch("arcllm.modules.telemetry._spool_record", recorded.append):
+            async for _ in module.invoke_stream(messages):
+                pass
+
+        assert recorded[0].cache_read_tokens == 60
+        assert recorded[0].cache_write_tokens == 30
+
 
 class TestAgentIdentityContextVar:
     @pytest.mark.asyncio

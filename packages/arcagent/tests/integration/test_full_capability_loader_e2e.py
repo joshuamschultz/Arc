@@ -178,8 +178,7 @@ async def test_full_loader_registers_builtins_and_modules(
     assert any(h.meta.name == "inject_policy_md" for h in policy_hooks)
 
     assert (await reg.get_tool("memory_search")) is not None  # thin memory tool
-    recall_hooks = await reg.get_hooks("agent:assemble_prompt")
-    assert any(h.meta.name == "inject_recall" for h in recall_hooks)
+    assert (await reg.get_capability("context_retrieval")) is not None  # turn retrieval
     capture_hooks = await reg.get_hooks("agent:post_tool")
     assert any(h.meta.name == "capture_tool" for h in capture_hooks)
 

@@ -44,6 +44,15 @@ ECHO_TOOL = Tool(
 )
 
 
+def _prompt(text: str):  # type: ignore[no-untyped-def]  # reason: test helper
+    """A spawn tool's base-prompt factory that answers ``text``."""
+
+    async def factory() -> str:
+        return text
+
+    return factory
+
+
 def _parent_state(*, actor_did: str | None = _PARENT_DID, depth: int = 0) -> RunState:
     bus = EventBus(run_id="parent-run", spool_actor_did=actor_did)
     reg = ToolRegistry(tools=[ECHO_TOOL], event_bus=bus)
@@ -247,7 +256,7 @@ async def test_make_spawn_tool_records_lineage_and_child_identity() -> None:
     tool = make_spawn_tool(
         model=MockModel([LLMResponse(content="ok", stop_reason="end_turn")]),
         tools=[ECHO_TOOL],
-        system_prompt="sys",
+        system_prompt_factory=_prompt("sys"),
     )
     parent = _parent_state()
     ctx = ToolContext(

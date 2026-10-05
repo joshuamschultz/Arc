@@ -28,7 +28,7 @@ import hashlib
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import arcrun
@@ -111,7 +111,7 @@ def make_spawn_tool(
     *,
     model: Any,
     tools: list[arcrun.Tool],
-    system_prompt: str,
+    system_prompt_factory: Callable[[], Awaitable[str]],
     sandbox: arcrun.SandboxConfig | None = None,
     allowed_strategies: list[str] | None = None,
     spawn_timeout_seconds: int = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
@@ -121,6 +121,11 @@ def make_spawn_tool(
     prompt_source: PromptSource | None = None,
 ) -> arcrun.Tool:
     """Create a spawn_task tool that starts a child run().
+
+    ``system_prompt_factory`` builds the children's base system prompt. It runs
+    only when the model actually spawns, once per tool (every child of the run
+    shares it), so a turn that never spawns never pays for a second prompt
+    assembly.
 
     State is read from ``ctx.parent_state`` at execute time, set by the
     arcrun executor.
@@ -138,6 +143,14 @@ def make_spawn_tool(
     """
     # Semaphore limits concurrent child runs (ASI-08, LLM10)
     spawn_semaphore = asyncio.Semaphore(max_concurrent_spawns)
+    base_prompt: list[str] = []
+    base_prompt_lock = asyncio.Lock()
+
+    async def _base_prompt() -> str:
+        async with base_prompt_lock:
+            if not base_prompt:
+                base_prompt.append(await system_prompt_factory())
+            return base_prompt[0]
 
     async def _execute(params: dict[str, Any], ctx: arcrun.ToolContext) -> str:
         run_state = ctx.parent_run
@@ -147,6 +160,7 @@ def make_spawn_tool(
             return "Error: spawn token budget exhausted for this run"
         requested_tools = params.get("tools")
         child_specialization = params.get("system_prompt")
+        system_prompt = await _base_prompt()
         if child_specialization:
             child_system_prompt = (
                 f"{system_prompt}\n\n--- Child Specialization ---\n{child_specialization}"

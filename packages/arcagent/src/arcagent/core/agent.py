@@ -284,6 +284,9 @@ class ArcAgent:
         # agent-side prompt consumer reads through. Stock until setup builds it.
         self._prompt_source: PromptSource = StockPromptSource()
         self._model: Any = None
+        # The small model that picks each turn's strategy ([arcrun] strategy_model);
+        # None until first use, and never built when that setting is empty.
+        self._strategy_model: Any = None
         self._trace_store: Any = None
         self._queue_coordinator = queue_coordinator
         self._queue_tenant_id = queue_tenant_id
@@ -647,6 +650,7 @@ class ArcAgent:
             self._policy_worm = None
         self._runtime_bindings.clear()
         self._model = None
+        self._strategy_model = None
 
     async def _startup_impl(self) -> None:
         """Initialize all components in dependency order.
@@ -923,6 +927,32 @@ class ArcAgent:
             self._model = model
             self._trace_store = trace_store
         return self._model
+
+    def _ensure_strategy_model(self) -> Any:
+        """The model that picks a turn's strategy: ``[arcrun] strategy_model``, else the agent's.
+
+        Selection is one short tool call on cheap inputs, so a deployment points it
+        at a small, fast model. Built once, on first use, with the same wiring as
+        the main model (telemetry, queue, witness); only the model id differs.
+        """
+        name = self._config.arcrun.strategy_model
+        if not name:
+            return self._ensure_model()
+        if self._strategy_model is None:
+            llm = self._config.llm.model_copy(update={"model": name})
+            model, _trace = ensure_model(
+                config=self._config.model_copy(update={"llm": llm}),
+                workspace=self._workspace,
+                bus=self._bus,
+                operator_signer=self._operator_signer,
+                actor_did=self._identity.did if self._identity is not None else "",
+                witness=self._witness,
+                record_cipher=self._record_cipher,
+                task_supervisor=self._background_tasks,
+                queue_coordinator=self._queue_coordinator,
+            )
+            self._strategy_model = model
+        return self._strategy_model
 
     def set_queue_coordinator(
         self,
@@ -1345,6 +1375,10 @@ class ArcAgent:
         started = asyncio.Event()
         terminal_sent = False
 
+        # Minted here, not in the dispatcher, so a turn abandoned before its run
+        # starts can still be closed on its own trace (``run.not_started``).
+        run_id = str(uuid.uuid4())
+
         async def pump() -> None:
             nonlocal terminal_sent
             cancelled = False
@@ -1354,6 +1388,7 @@ class ArcAgent:
                     self,
                     message,
                     session=session,
+                    run_id=run_id,
                     reply_target=reply_target,
                     reply_label=reply_label,
                     interactive=True,
@@ -1401,7 +1436,7 @@ class ArcAgent:
             self._delivery_stream_tasks.add(task)
             task.add_done_callback(self._delivery_stream_tasks.discard)
             _logger.info("Turn start: session=%s", session_key)
-            began = await self._await_turn_start(started, task, session_key)
+            began = await self._await_turn_start(started, task, session_key, run_id)
         if not began:
             # Yielded after the delivery lock is released, so a slow consumer
             # cannot hold the session closed.
@@ -1429,7 +1464,11 @@ class ArcAgent:
                         await task
 
     async def _await_turn_start(
-        self, started: asyncio.Event, pump: asyncio.Task[None], session_key: str
+        self,
+        started: asyncio.Event,
+        pump: asyncio.Task[None],
+        session_key: str,
+        run_id: str,
     ) -> bool:
         """Wait, bounded, for an interactive turn to reach its run.
 
@@ -1451,6 +1490,9 @@ class ArcAgent:
             pump.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pump
+            from arcagent.core.agent_dispatch import record_not_started
+
+            record_not_started(self, run_id, f"turn did not start within {bound:g}s")
             return False
         return True
 
@@ -1999,6 +2041,10 @@ class ArcAgent:
                 if model is not None:
                     await bounded("closing LLM model", model.close())
                 self._model = None
+                strategy_model = self._strategy_model
+                if strategy_model is not None:
+                    await bounded("closing strategy model", strategy_model.close())
+                self._strategy_model = None
             finally:
                 self._attached_extension_tools.clear()
                 self._runtime_bindings.clear()

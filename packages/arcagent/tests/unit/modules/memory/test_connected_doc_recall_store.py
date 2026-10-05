@@ -1,4 +1,4 @@
-"""Per-turn connected-document recall finds the agent's own pools on a Postgres Brain.
+"""Per-turn connected-document retrieval finds the agent's own pools on a Postgres Brain.
 
 Production (2026-10-04): the fleet runs the Brain's memory on Postgres, while every
 connected doc pool sits in the workspace SQLite index. Recall searched Postgres
@@ -83,6 +83,13 @@ async def test_recall_surfaces_own_connected_documents_on_a_postgres_brain(
         active=True,
     )
 
-    blocks = await cap._connected_doc_recall(state, "zephyr datacenter lease", "")
+    _runtime.bind(state)
+    try:
+        found = await cap.ContextRetrieval().retrieve(
+            "zephyr datacenter lease", memory_top_k=0, docs_top_k=3
+        )
+    finally:
+        _runtime.reset()
 
-    assert blocks and "zephyr datacenter lease" in blocks[0]
+    documents = [c for c in found["candidates"] if c["source_kind"] == "connection"]
+    assert documents and "zephyr datacenter lease" in documents[0]["text"]

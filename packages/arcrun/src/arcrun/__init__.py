@@ -97,7 +97,7 @@ from arcrun.model import (
 )
 from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.registry import ToolRegistry
-from arcrun.strategies import Strategy, available_strategies
+from arcrun.strategies import Strategy, StrategyChoice, available_strategies, choose_strategy
 from arcrun.streams import (
     RunResult,
     StreamEvent,
@@ -175,6 +175,7 @@ __all__ = [
     "StaticProvider",
     "StopReason",
     "Strategy",
+    "StrategyChoice",
     "StreamEvent",
     "StructuredCallError",
     "SystemPrompt",
@@ -200,6 +201,7 @@ __all__ = [
     "__version__",
     "apply_checkpoint",
     "available_strategies",
+    "choose_strategy",
     "classifier_models",
     "collect",
     "content_text",

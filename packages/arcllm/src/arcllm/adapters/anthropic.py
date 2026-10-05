@@ -141,12 +141,19 @@ class AnthropicAdapter(BaseAdapter):
     # an Anthropic wire specific and must not leak into shared arcllm types,
     # arcrun, or arcagent (SPEC-029 D-393).
 
-    def _cache_control(self) -> dict[str, str]:
-        """The ephemeral cache_control marker, honoring the configured TTL."""
+    @staticmethod
+    def _cache_control(ttl: str) -> dict[str, str]:
+        """The ephemeral cache_control marker; 5m is the API default, so no key."""
         marker: dict[str, str] = {"type": "ephemeral"}
-        if self._config.provider.cache_ttl == "1h":
+        if ttl == "1h":
             marker["ttl"] = "1h"
         return marker
+
+    def _system_cache_control(self) -> dict[str, str]:
+        return self._cache_control(self._config.provider.cache_ttl_system)
+
+    def _tail_cache_control(self) -> dict[str, str]:
+        return self._cache_control(self._config.provider.cache_ttl_tail)
 
     def _system_blocks(self, parts: list[str]) -> list[dict[str, Any]]:
         """One cached text block per system segment, in caller order.
@@ -164,23 +171,33 @@ class AnthropicAdapter(BaseAdapter):
             keep = parts[: _MAX_SYSTEM_SEGMENTS - 1]
             parts = [*keep, "\n".join(parts[_MAX_SYSTEM_SEGMENTS - 1 :])]
         return [
-            {"type": "text", "text": text, "cache_control": self._cache_control()}
+            {"type": "text", "text": text, "cache_control": self._system_cache_control()}
             for text in parts
         ]
 
-    def _apply_last_message_breakpoint(self, formatted: list[dict[str, Any]]) -> None:
-        """Mark the tail of the conversation as the rolling cache breakpoint.
+    def _apply_last_message_breakpoint(
+        self, formatted: list[dict[str, Any]], remaining: list[Message]
+    ) -> None:
+        """Mark the last stable history message as the rolling cache breakpoint.
 
-        String content is promoted to a one-block list so the marker can
-        attach; a block list gets the marker on its last block.
+        ``ephemeral`` messages (a loop's per-call context such as the current
+        time) change on every call, so a breakpoint on one would never hit; the
+        marker goes on the last non-ephemeral message and the ephemeral tail
+        rides after the cached prefix. String content is promoted to a
+        one-block list so the marker can attach; a block list gets the marker
+        on its last block.
         """
-        content = formatted[-1]["content"]
+        stable = [i for i, m in enumerate(remaining) if not m.ephemeral]
+        if not stable:
+            return
+        target = formatted[stable[-1]]
+        content = target["content"]
         if isinstance(content, str):
-            formatted[-1]["content"] = [
-                {"type": "text", "text": content, "cache_control": self._cache_control()}
+            target["content"] = [
+                {"type": "text", "text": content, "cache_control": self._tail_cache_control()}
             ]
         elif content:
-            content[-1] = {**content[-1], "cache_control": self._cache_control()}
+            content[-1] = {**content[-1], "cache_control": self._tail_cache_control()}
 
     def _build_request_body(
         self,
@@ -217,14 +234,14 @@ class AnthropicAdapter(BaseAdapter):
             if caching:
                 formatted_tools[-1] = {
                     **formatted_tools[-1],
-                    "cache_control": self._cache_control(),
+                    "cache_control": self._system_cache_control(),
                 }
             body["tools"] = formatted_tools
             tool_choice = kwargs.get("tool_choice")
             if tool_choice is not None:
                 body["tool_choice"] = tool_choice
         if caching and formatted:
-            self._apply_last_message_breakpoint(formatted)
+            self._apply_last_message_breakpoint(formatted, remaining)
         rf = self._validate_response_format(kwargs.get("response_format"))
         if rf is not None:
             self._apply_structured_output(body, rf, tools)
@@ -367,6 +384,8 @@ class AnthropicAdapter(BaseAdapter):
         body["stream"] = True
         url = f"{self._config.provider.base_url}/v1/messages"
         input_tokens = 0
+        cache_read_tokens: int | None = None
+        cache_write_tokens: int | None = None
         saw_stop = False
 
         async with self._client.stream(
@@ -401,10 +420,18 @@ class AnthropicAdapter(BaseAdapter):
                     usage = payload.get("message", {}).get("usage", {})
                     if isinstance(usage, dict):
                         input_tokens = usage.get("input_tokens", 0)
+                        cache_read_tokens = usage.get("cache_read_input_tokens")
+                        cache_write_tokens = usage.get("cache_creation_input_tokens")
                 elif event_name == "message_stop":
                     saw_stop = True
                 else:
-                    delta = self._parse_stream_event(event_name, payload, input_tokens)
+                    delta = self._parse_stream_event(
+                        event_name,
+                        payload,
+                        input_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                        cache_write_tokens=cache_write_tokens,
+                    )
                     if delta is not None:
                         yield delta
                 event_name = None
@@ -412,7 +439,13 @@ class AnthropicAdapter(BaseAdapter):
             raise ArcLLMStreamProtocolError("stream ended before message_stop")
 
     def _parse_stream_event(
-        self, event_name: str, payload: dict[str, Any], input_tokens: int
+        self,
+        event_name: str,
+        payload: dict[str, Any],
+        input_tokens: int,
+        *,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
     ) -> Delta | None:
         """Normalize one public Anthropic SSE event or safely ignore it."""
         if event_name in {"ping", "message_start"}:
@@ -464,6 +497,10 @@ class AnthropicAdapter(BaseAdapter):
                     input_tokens=usage_data.get("input_tokens", input_tokens),
                     output_tokens=output_tokens,
                     total_tokens=usage_data.get("input_tokens", input_tokens) + output_tokens,
+                    cache_read_tokens=usage_data.get("cache_read_input_tokens", cache_read_tokens),
+                    cache_write_tokens=usage_data.get(
+                        "cache_creation_input_tokens", cache_write_tokens
+                    ),
                 ),
                 stop_reason=stop_reason,
             )

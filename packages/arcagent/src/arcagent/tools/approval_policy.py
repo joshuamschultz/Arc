@@ -217,6 +217,7 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
         # Loop mechanics (arcrun.toml). Behaviour-preserving defaults: max_turns=25,
         # tool_timeout=None, allowed_strategies=None, sandbox=None (full-allow).
         "max_turns": run_cfg.max_turns,
+        "max_tool_result_tokens": run_cfg.max_tool_result_tokens,
         "tool_timeout": run_cfg.tool_timeout,
         "allowed_strategies": resolve_allowed_strategies(run_cfg.allowed_strategies, sec.tier),
         "sandbox": sandbox,

@@ -1,29 +1,19 @@
-"""SPEC-071 T-986 (RED) — ``agent:moment`` emission at the real loop sites.
+"""SPEC-071 — ``agent:moment`` emission at the real loop sites.
 
-Detected-moment proactive recall (SPEC-071) needs the loop to announce
-candidate moments over the module bus so a Brain (arcmemory) can decide
-whether to fire a proactive recall. T-987 adds the emits; this file proves
-they do not exist yet by driving the REAL sites and watching for the event.
-
-Two complementary levels, per the shared brief's "Phase 3 FINAL emission
-wiring" section:
+Loop sites announce candidate moments over the module bus so a Brain (arcmemory)
+can decide whether to stage a proactive recall. The user's own turn is NOT a moment
+site: its retrieval is Context prep's single pass.
 
 1. **User-turn (real dispatch)** — boots a real :class:`ArcAgent` (SPEC-066
    signed-bundle install, exactly as ``test_live_modules_e2e.py`` does),
    subscribes a recorder to the agent's live :class:`ModuleBus` for
    ``agent:moment``, and drives one real turn via ``agent.run(...)``. Only the
-   LLM (``arcrun.run_stream``) is stubbed — identity, bundle verification,
-   module wiring, and dispatch are all real.
+   LLM (``arcrun.run_stream``) is stubbed. The recorder must see nothing.
 2. **task_start (focused)** — configures the tasks module's runtime exactly as
    ``tests/unit/modules/tasks/test_dispatch.py`` does, drives the real
    ``_dispatch_tick`` -> ``_run_task`` path with a fake ``agent_run_fn``, and
    asserts ordering: the ``task_start`` moment must be observed before the
    run callback is invoked.
-
-RED discipline: both cases must fail because the recorder saw ZERO
-``agent:moment`` events — not because the harness itself is broken. The
-turn/task run completing normally (with ``events``/``after status`` sane) is
-what proves that.
 """
 
 from __future__ import annotations
@@ -58,17 +48,15 @@ class _MomentRecorder:
         self.events.append(ctx)
 
 
-async def test_user_turn_emits_entity_seen_and_topic_shift_agent_moment(
+async def test_user_turn_emits_no_agent_moment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A real turn over real dispatch must announce candidate moments.
+    """A real turn over real dispatch retrieves once, in Context prep, and emits no moment.
 
-    Per the orchestrator-fixed "Phase 3 FINAL emission wiring" note: the
-    emit belongs in ``core/agent_dispatch.py`` ``build_run_context``,
-    immediately BEFORE ``context.assemble_system_prompt(...)`` is awaited —
-    so a moment fired this turn can still be drained into THIS turn's
-    prompt. Today nothing emits ``agent:moment`` at all, so the recorder
-    below must see exactly zero events.
+    The dispatcher used to emit ``entity_seen`` + ``topic_shift`` before assembly,
+    each a retrieval pass on the first-model-call path. The request's cues now seed
+    the one ``ContextRetrieval`` pass; loop sites (``task_start``, ``decision_point``)
+    still emit moments.
     """
     deployment = _deployment(tmp_path, monkeypatch)
     _install(deployment, ("memory",), tmp_path)
@@ -82,30 +70,14 @@ async def test_user_turn_emits_entity_seen_and_topic_shift_agent_moment(
         session = await agent.session("moment-user-turn")
         events = [event async for event in agent.run("Ada owns payments", session=session)]
 
-    # Harness sanity: the turn itself must have actually completed. If this
-    # fails, the RED reason would be a broken harness, not a missing feature.
+    # Harness sanity: the turn itself must have completed, or "no moment" proves nothing.
     assert events, "the turn produced no stream events at all"
     assert isinstance(events[-1], TurnEndEvent), (
         f"the real dispatch path did not complete a turn: {events[-1]!r}"
     )
-
-    assert recorder.events, (
-        "no agent:moment event was emitted for a text-bearing user turn — "
-        "the entity_seen/topic_shift emit at agent_dispatch.build_run_context "
-        "does not exist yet (T-987)"
+    assert recorder.events == [], (
+        f"a user turn still emits agent:moment: {[c.data.get('kind') for c in recorder.events]}"
     )
-
-    kinds = {ctx.data.get("kind") for ctx in recorder.events}
-    assert kinds == {"entity_seen", "topic_shift"}, (
-        f"expected exactly entity_seen + topic_shift, got kinds={sorted(kinds)}"
-    )
-    for ctx in recorder.events:
-        data = ctx.data
-        assert data.get("text") == "Ada owns payments", data
-        cues = data.get("cues")
-        assert isinstance(cues, list) and cues, f"cues must be a non-empty list, got {cues!r}"
-        assert all(isinstance(c, str) for c in cues)
-        assert "session_id" in data, "payload must carry a session_id key"
 
 
 # --------------------------------------------------------------------------

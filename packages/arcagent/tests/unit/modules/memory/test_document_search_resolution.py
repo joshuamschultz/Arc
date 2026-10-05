@@ -2,8 +2,8 @@
 
 The model sees display names ("gmail", "Team wiki"), never the sha256 source
 ids the document pools are keyed by. The tool must map one to the other, fan
-out when no source is named, render provenance, and recall connected documents
-proactively without repeating a document the memory recall already holds.
+out when no source is named, render provenance. (Connected-document recall for the turn is
+``ContextRetrieval``, tested in test_context_retrieval.py.)
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 
 from arcagent.modules.connected_data import _runtime as connected_runtime
 from arcagent.modules.memory import _runtime
-from arcagent.modules.memory.capabilities import document_search, inject_recall
+from arcagent.modules.memory.capabilities import document_search
 
 _DID = "did:arc:test-agent"
 _WIKI_ID = "a" * 64
@@ -150,34 +150,3 @@ async def test_hits_render_title_kind_link_and_updated_time() -> None:
 
     for expected in ("Q3 Plan", "confluence", "https://wiki.example.com/p/1", "2026-09-30"):
         assert expected in out
-
-
-async def test_proactive_recall_surfaces_connected_documents_once() -> None:
-    brain = _Brain(
-        [
-            _Hit("memory/connected/x/1.md", "the plan", title="Q3 Plan"),
-            _Hit("memory/connected/x/2.md", "the other", title="Other"),
-        ]
-    )
-    _install(brain)
-    ctx = SimpleNamespace(data={"query": "what is the plan", "sections": {}})
-
-    await inject_recall(ctx)
-    await inject_recall(ctx)
-
-    assert len(brain.calls) == 1, "the same query in one turn must not search twice"
-    recall = ctx.data["sections"]["recall"]
-    assert "Q3 Plan" in recall
-    assert recall.count("memory/connected/x/1.md") == 1
-
-
-async def test_proactive_recall_is_bounded() -> None:
-    hits = [_Hit(f"memory/connected/x/{n}.md", f"doc {n}", title=f"T{n}") for n in range(20)]
-    brain = _Brain(hits)
-    _install(brain)
-    ctx = SimpleNamespace(data={"query": "anything", "sections": {}})
-
-    await inject_recall(ctx)
-
-    assert brain.calls[0]["top_k"] <= 5
-    assert ctx.data["sections"]["recall"].count("memory/connected/x/") <= 5

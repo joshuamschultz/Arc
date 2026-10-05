@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -214,16 +217,7 @@ async def select_strategy(
     intended trade: a run that would benefit from fanning out should not be
     forced through a single linear chain because nobody edited a config file.
     """
-    if not STRATEGIES:
-        _load_strategies()
-
-    if allowed is None:
-        allowed = [name for name, s in STRATEGIES.items() if s.auto_selectable]
-    if not allowed:
-        raise ValueError("allowed_strategies is empty; a run must permit at least one strategy")
-    unknown = [s for s in allowed if s not in STRATEGIES]
-    if unknown:
-        raise ValueError(f"unknown strategies: {unknown}. available: {list(STRATEGIES)}")
+    allowed = _allowed_or_default(allowed)
     if len(allowed) == 1:
         return allowed[0]
 
@@ -243,20 +237,7 @@ async def select_strategy(
         },
     )
 
-    import arcllm
-
-    select_tool = arcllm.Tool(
-        name="select_strategy",
-        description="Select the best execution strategy for this task",
-        parameters={
-            "type": "object",
-            "properties": {
-                "strategy": {"type": "string", "enum": allowed},
-                "reasoning": {"type": "string"},
-            },
-            "required": ["strategy"],
-        },
-    )
+    select_tool = _select_tool(allowed)
 
     # The task is untrusted content: it rides the user turn, never the
     # instruction channel (LLM01).
@@ -308,6 +289,11 @@ async def select_strategy(
 
 
 def _selection_system_text(allowed: list[str], state: RunState) -> str:
+    """The selection call's instructions for a run already under way."""
+    return _selection_text(allowed, state.prompt_source, state.registry.names())
+
+
+def _selection_text(allowed: list[str], source: PromptSource, tool_names: Iterable[str]) -> str:
     """The selection call's instructions: ``strategy_select`` plus what is on the table.
 
     Every word comes through the run's ``PromptSource`` — the operator-editable
@@ -315,9 +301,117 @@ def _selection_system_text(allowed: list[str], state: RunState) -> str:
     ``strategy_<name>_description``. The tool names are listed so the model can
     rule out a strategy whose tools this run does not have.
     """
-    source = state.prompt_source
     listing = "\n".join(f"- {name}: {strategy_description(name, source)}" for name in allowed)
-    tools = ", ".join(state.registry.names()) or "none"
+    tools = ", ".join(tool_names) or "none"
     parts = [source.resolve("arcrun", "strategy_select"), f"Strategies:\n{listing}"]
     parts.append(f"Tools: {tools}")
     return "\n\n".join(parts)
+
+
+@dataclass(frozen=True)
+class StrategyChoice:
+    """Which strategy a run will use, and why — for the run trace.
+
+    ``selected_by`` is ``"only"`` (one strategy allowed, no model call),
+    ``"model"`` (the selection call chose it) or ``"fallback"`` (the call failed
+    or chose nothing usable, so ``react``).
+    """
+
+    name: str
+    reason: str
+    selected_by: str
+    latency_ms: float
+
+
+#: Earlier messages the selector sees (the last two exchanges). Cheap inputs
+#: only: the request plus a little recent context, never retrieval.
+_RECENT_TURNS = 4
+#: Characters kept per earlier turn shown to the selector.
+_RECENT_CHARS = 600
+
+
+async def choose_strategy(
+    allowed: list[str] | None,
+    model: Any,
+    *,
+    task: str,
+    recent: Sequence[str] = (),
+    tool_names: Iterable[str] = (),
+    prompt_source: PromptSource | None = None,
+    timeout: float | None = None,
+) -> StrategyChoice:
+    """Pick a run's strategy BEFORE the run is assembled, from cheap inputs only.
+
+    A host calls this first, then retrieves context and assembles the prompt for
+    the strategy it got, then starts the run pinned to it (``allowed_strategies=
+    [choice.name]``, which makes no second selection call). The selector sees
+    the request and the last few turns (``recent``), never retrieved memory, so
+    retrieval cannot sway or slow the choice. Same rules as in-run selection:
+    one allowed means take it; a failed or slower-than-``timeout`` call falls
+    back to ``react``.
+    """
+    from arcrun._messages import system_message, user_message
+
+    started = time.monotonic()
+    allowed = _allowed_or_default(allowed)
+    if len(allowed) == 1:
+        return StrategyChoice(allowed[0], "only strategy allowed", "only", 0.0)
+    source = prompt_source or StockPromptSource()
+    selection_system = _selection_text(allowed, source, tool_names)
+    earlier = [turn[:_RECENT_CHARS] for turn in recent[-_RECENT_TURNS:] if turn]
+    request = (
+        task
+        if not earlier
+        else "Earlier turns:\n" + "\n---\n".join(earlier) + (f"\n\nCurrent request:\n{task}")
+    )
+
+    try:
+        async with asyncio.timeout(timeout):
+            response = await model.invoke(
+                [system_message(selection_system), user_message(request)],
+                tools=[_select_tool(allowed)],
+            )
+        if response.tool_calls:
+            chosen = response.tool_calls[0].arguments.get("strategy")
+            reasoning = str(response.tool_calls[0].arguments.get("reasoning", ""))
+            if chosen in allowed:
+                return StrategyChoice(str(chosen), reasoning, "model", _ms_since(started))
+        reason = "the selection call chose no allowed strategy"
+    except Exception as exc:  # reason: fail-open; a broken selector must not block the turn
+        reason = f"the selection call failed ({type(exc).__name__})"
+    return StrategyChoice("react", reason, "fallback", _ms_since(started))
+
+
+def _ms_since(started: float) -> float:
+    return round((time.monotonic() - started) * 1000.0, 1)
+
+
+def _allowed_or_default(allowed: list[str] | None) -> list[str]:
+    """``allowed`` validated, or every auto-selectable strategy when ``None``."""
+    if not STRATEGIES:
+        _load_strategies()
+    if allowed is None:
+        allowed = [name for name, s in STRATEGIES.items() if s.auto_selectable]
+    if not allowed:
+        raise ValueError("allowed_strategies is empty; a run must permit at least one strategy")
+    unknown = [s for s in allowed if s not in STRATEGIES]
+    if unknown:
+        raise ValueError(f"unknown strategies: {unknown}. available: {list(STRATEGIES)}")
+    return allowed
+
+
+def _select_tool(allowed: list[str]) -> Any:
+    import arcllm
+
+    return arcllm.Tool(
+        name="select_strategy",
+        description="Select the best execution strategy for this task",
+        parameters={
+            "type": "object",
+            "properties": {
+                "strategy": {"type": "string", "enum": allowed},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["strategy"],
+        },
+    )

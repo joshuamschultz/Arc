@@ -845,6 +845,32 @@ data: {\"type\":\"message_stop\"}
         ]
 
     @pytest.mark.asyncio
+    async def test_stream_usage_carries_cache_tokens_from_message_start(self):
+        from arcllm import StreamAccumulator
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        body = """event: message_start
+data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-test-1\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0,\"cache_read_input_tokens\":60,\"cache_creation_input_tokens\":30}}}
+
+event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}
+
+event: message_delta
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}
+
+event: message_stop
+data: {\"type\":\"message_stop\"}
+
+"""
+        deltas = await self._stream(AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL), body)
+        accumulator = StreamAccumulator(model=FAKE_MODEL)
+        for delta in deltas:
+            accumulator.add(delta)
+        usage = accumulator.build().usage
+        assert usage.cache_read_tokens == 60
+        assert usage.cache_write_tokens == 30
+
+    @pytest.mark.asyncio
     async def test_ignores_ping_unknown_and_private_thinking_frames(self):
         from arcllm.adapters.anthropic import AnthropicAdapter
 

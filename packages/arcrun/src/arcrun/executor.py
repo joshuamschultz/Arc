@@ -87,6 +87,26 @@ def _mark_outcome_unknown(
     )
 
 
+_CHARS_PER_TOKEN = 4
+
+
+def _cap_result(result: str, cap: int | None, tool_name: str) -> tuple[str, int | None]:
+    """Cut ``result`` to ``cap`` estimated tokens, ending in a re-read marker.
+
+    Returns the text the model sees and the original token count when it was
+    cut (``None`` when untouched).
+    """
+    total = -(-len(result) // _CHARS_PER_TOKEN)
+    if cap is None or total <= cap:
+        return result, None
+    marker = (
+        f"[truncated: {total - cap} tokens omitted of {total} total. "
+        f"Call {tool_name} again with a narrower request "
+        "(e.g. offset/limit or a more specific query) to read more.]"
+    )
+    return f"{result[: cap * _CHARS_PER_TOKEN]}\n{marker}", total
+
+
 async def execute_tool_call(
     tc: Any,
     state: RunState,
@@ -390,7 +410,12 @@ async def _execute_tool_call(
     # dict the spool always keeps (it is signal, not a body).
     if ctx.tool_extra:
         end_data["tool_extra"] = dict(ctx.tool_extra)
+    visible, original_tokens = _cap_result(result, state.max_tool_result_tokens, tc.name)
+    if original_tokens is not None:
+        end_data["truncated"] = True
+        end_data["original_tokens"] = original_tokens
+        end_data["original_length"] = len(result)
     bus.emit("tool.end", end_data)
 
     state.tool_calls_made += 1
-    return tool_result(tc.id, result), True
+    return tool_result(tc.id, visible), True

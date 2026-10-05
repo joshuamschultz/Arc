@@ -11,9 +11,11 @@ import {
   ChevronRight,
   PanelRight,
   Sparkles,
+  Layers,
 } from 'lucide-react'
-import { mergeTimeline, describeAction, type Item } from '@/lib/run-timeline'
+import { mergeTimeline, describeAction, cacheSummary, type Item } from '@/lib/run-timeline'
 import { StatusChip } from '@/components/ai'
+import { ContextPrepGroup } from '@/components/context-prep-group'
 import { SignedSeal } from '@/components/hitl'
 import { LoadingRows, EmptyState } from '@/components/states'
 import { JsonBlock } from '@/components/json-block'
@@ -40,6 +42,7 @@ import type { RunSummary, Trace } from '@/lib/types'
 function StepIcon({ item }: { item: Item }) {
   const c = 'size-3.5'
   if (item.kind === 'llm') return <Bot className={c} />
+  if (item.kind === 'context') return <Layers className={c} />
   if (item.kind === 'run') return <MessageSquare className={c} />
   if (item.kind === 'spawn') return <GitBranch className={c} />
   const n = item.name.toLowerCase()
@@ -302,9 +305,9 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
   const summary = isTool
     ? toolSummary(item.input)
     : isLlm && (item.tokensIn || item.tokensOut)
-      ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out`
+      ? `${fmtNumber(item.tokensIn)} in / ${fmtNumber(item.tokensOut)} out · ${cacheSummary(item)}`
       : null
-  const status = isTool ? item.status : undefined
+  const status = isTool ? item.status : item.kind === 'run' ? (item.outcome ?? undefined) : undefined
   const held = isTool && (item.status === 'running' || item.status === 'stale')
   const latency = isTool || isLlm ? item.latency_ms : undefined
   const clickable = isTool || isLlm
@@ -327,6 +330,9 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
         <StepIcon item={item} />
       </span>
       <div className="min-w-0 flex-1">
+        {item.kind === 'context' ? (
+          <ContextPrepGroup item={item} />
+        ) : (
         <button
           type="button"
           disabled={!clickable}
@@ -376,6 +382,7 @@ function RiverStep({ item, last }: { item: Item; last: boolean }) {
             </span>
           )}
         </button>
+        )}
         {open && isTool && (
           <div className="ml-[22px] mt-2 rounded-lg border border-border bg-muted/20 p-3">
             <ToolDetail item={item} />

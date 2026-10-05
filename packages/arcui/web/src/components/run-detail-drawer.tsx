@@ -7,11 +7,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { ContextPrepGroup } from '@/components/context-prep-group'
 import { JsonBlock } from '@/components/json-block'
 import { LoadingRows, EmptyState } from '@/components/states'
 import { StatusText } from '@/components/status-badge'
 import { TraceDrawer } from '@/components/trace-drawer'
-import { mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
+import { cacheSummary, mergeTimeline, type Item, type ToolItem } from '@/lib/run-timeline'
 import { SignedMark } from '@/components/audit/ledger'
 import { useRunAudit, useRunRecalls, useRunTimeline } from '@/lib/queries'
 import { fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
@@ -116,6 +117,13 @@ function ToolRow({ item }: { item: ToolItem }) {
 
 function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId: string) => void }) {
   if (item.kind === 'tool') return <ToolRow item={item} />
+  if (item.kind === 'context') {
+    return (
+      <div className="px-3 py-1.5">
+        <ContextPrepGroup item={item} />
+      </div>
+    )
+  }
   if (item.kind === 'llm') {
     const traceId = item.traceId
     const inner = (
@@ -128,6 +136,7 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
             {fmtNumber(item.tokensIn)} in / {fmtNumber(item.tokensOut)} out tok
           </span>
         )}
+        <span className="tabular-nums text-muted-foreground">{cacheSummary(item)}</span>
         {item.latency_ms != null && (
           <span className="tabular-nums text-muted-foreground">{fmtLatency(item.latency_ms)}</span>
         )}
@@ -151,6 +160,7 @@ function TimelineItem({ item, onOpenTrace }: { item: Item; onOpenTrace: (traceId
       <span className="w-12 shrink-0 tabular-nums">{fmtTime(item.ts)}</span>
       <Circle className="size-2.5 shrink-0" />
       <span>
+        {item.kind === 'run' && item.outcome === 'failed' && <StatusText value="failed" />}{' '}
         {item.kind === 'spawn'
           ? `Spawned sub-agent ${(item.childDid.split('/').pop() ?? '').slice(0, 8)}`
           : item.name}

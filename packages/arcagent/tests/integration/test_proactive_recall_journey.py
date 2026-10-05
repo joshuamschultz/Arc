@@ -2,7 +2,7 @@
 
 The anti-dead-producer proof for the whole chain. Every earlier task proved one
 link in isolation (the emit fires, ``on_moment`` gates, the detector decides,
-``inject_recall`` merges, the audit carries a trigger). None proved the links
+``ContextRetrieval`` drains, the audit carries a trigger). None proved the links
 are *connected* on the real path: a detected moment, over the real module bus,
 through the real signed memory bundle and real :class:`~arcmemory.brain.ArcMemoryBrain`,
 puts a gated, bounded, deduped card into the recall material the model receives.
@@ -21,8 +21,8 @@ The chain under test:
         -> memory ``on_agent_moment`` subscriber
         -> ``brain.on_moment`` (deterministic detector gate + no-read-up recall + dedup)
         -> ``_State.proactive_buffer``
-        -> ``inject_recall`` drains into ``sections["recall"]``
-        -> the ``turn`` tier attached to the user message the model receives
+        -> ``ContextRetrieval`` drains it into candidates (Context prep)
+        -> the ``<agent-context>`` block attached to the user message the model receives
 
 Isolation matters here, and it is the whole reason tests 1-4 fire the moment and
 then drain it under an EMPTY query. A live user turn always assembles with
@@ -327,26 +327,25 @@ async def _proactive_recall_section(
     kind: str = "entity_seen",
     session_id: str | None = None,
 ) -> str:
-    """Fire ONE real detected moment and drain it into a query-LESS assembly.
+    """Fire ONE real detected moment and drain it through the real Context prep.
 
     This is the isolated proactive proof. Both steps ride the real module bus and
-    the real registered subscribers — nothing is stubbed, faked, or bypassed:
+    the real registered subscribers; nothing is stubbed, faked, or bypassed:
 
     * ``agent:moment`` reaches the real ``on_agent_moment`` -> ``brain.on_moment``
       (real deterministic detector, real no-read-up recall, real dedup) -> the real
       ``_State.proactive_buffer``;
-    * ``agent:assemble_prompt`` with an EMPTY query reaches the real ``inject_recall``,
-      which drains the buffer into ``sections["recall"]`` while the query path stays
-      dormant.
+    * the real ``ContextRetrieval`` capability, resolved from the agent's registry,
+      drains the buffer into candidates.
 
-    The empty query is the whole point. A live dispatch always assembles with
-    ``query=task``, and query-conditioned recall on that same text surfaces the same
-    card, so a card in a live turn's prompt is NOT attributable to the proactive
-    producer (verified: with ``proactive_enabled=False`` the card still lands via
-    query recall). Draining the buffer under an empty query removes that confound, so
-    text in ``sections["recall"]`` here can ONLY have come through the proactive chain.
+    Only the STAGED candidates (``source`` ``proactive:N``) are returned. The Brain's
+    own query recall always answers something, and on the moment's text it surfaces
+    the same card, so a card in a live turn is NOT attributable to the proactive
+    producer; the staged candidates can ONLY have come through the proactive chain.
     """
-    assert agent._bus is not None
+    from arcagent.modules.memory import _runtime as memory_runtime
+
+    assert agent._bus is not None and agent._identity is not None
     payload = {
         "kind": kind,
         "cues": cues if cues is not None else moment_cues(text),
@@ -354,17 +353,20 @@ async def _proactive_recall_section(
         "session_id": session_id,
     }
     await agent._bus.emit("agent:moment", payload)
-    sections: dict[str, str] = {}
-    await agent._bus.emit("agent:assemble_prompt", {"sections": sections, "query": ""})
-    return sections.get("recall", "")
+    memory_runtime.bind(memory_runtime.state_for(agent._identity.did))
+    entry = await agent._capability_registry.get_capability("context_retrieval")
+    assert entry is not None, "the memory module registered no context_retrieval capability"
+    found = await entry.instance.retrieve("what is the status", memory_top_k=4, docs_top_k=3)
+    staged = [c["text"] for c in found["candidates"] if str(c["source"]).startswith("proactive:")]
+    return "\n".join(staged)
 
 
 async def _drive_turn(agent: ArcAgent, recorders: Recorders, text: str, *, key: str) -> str:
     """Run one real end-to-end turn; return the full model input, flattened.
 
-    The whole dispatch runs unstubbed: the pre-assembly ``agent:moment`` emits, the
-    memory subscriber, ``on_moment``, the buffer, ``inject_recall``, and the wiring of
-    the ``turn`` tier onto the user message. Only the model at the end is the recorder.
+    The whole dispatch runs unstubbed: Context prep, ``ContextRetrieval``, the real
+    brain, and the wiring of the ``<agent-context>`` block onto the user message. Only
+    the model at the end is the recorder.
     """
     session = await agent.session(key)
     events = [event async for event in agent.run(text, session=session)]
@@ -406,7 +408,7 @@ async def test_a_detected_entity_injects_its_bounded_card_into_the_recall_sectio
 
     assert any(marker in recall for marker in markers), (
         "no seeded Kestrel card reached the recall section — a producer in "
-        "emit -> on_moment -> buffer -> inject_recall is dead"
+        "emit -> on_moment -> buffer -> ContextRetrieval is dead"
     )
     blocks = recall.count("<memory-result")
     assert 0 < blocks <= bound, (
@@ -533,22 +535,19 @@ async def test_the_same_entity_twice_in_a_session_injects_its_card_once(
 
 
 # --------------------------------------------------------------------------
-# 5. The live dispatch emits the moment AND the audit records its trigger
+# 5. A live turn retrieves ONCE, in Context prep, and no longer emits user-turn moments
 # --------------------------------------------------------------------------
 
 
-async def test_a_live_turn_emits_the_moment_and_audits_its_trigger(
+async def test_a_live_turn_delivers_the_card_without_user_turn_moments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A real turn naming an entity fires the proactive chain and audits its trigger.
+    """A real turn naming an entity gets its card from Context prep alone.
 
-    Tests 1-4 fire the moment themselves to isolate the chain; this one proves the
-    producer is actually wired into live dispatch. Driving a genuine ``agent.run``
-    turn that names Kestrel emits ``agent:moment`` from the dispatcher, so a
-    ``memory.recall_attributed`` audit carrying ``extra["trigger"] == "entity_seen"``
-    can only appear if the live emit reached ``on_moment`` — query recall shares the
-    action but never sets a trigger. The turn's recall also reaches the model input,
-    confirming the end-to-end read path (query + proactive both live) delivers.
+    The dispatcher used to emit ``entity_seen`` and ``topic_shift`` moments before
+    assembly, a second and third retrieval pass on the first-model-call path. Now the
+    request's cues seed the one ``ContextRetrieval`` pass, so the card reaches the
+    model input while no user-turn moment fires and no proactive recall is attributed.
     """
     deployment = _deployment(tmp_path, monkeypatch)
     _install(deployment, ("memory",), tmp_path)
@@ -557,18 +556,21 @@ async def test_a_live_turn_emits_the_moment_and_audits_its_trigger(
         brain = _memory_brain(agent)
         _seed_entity(agent, brain, "Kestrel")
         await _seed_fact(brain, "The Kestrel deployment root for Arc modules is XYZZY42QUUX.")
+        moments: list[Any] = []
+
+        async def _record(ctx: Any) -> None:
+            moments.append(ctx)
+
+        assert agent._bus is not None
+        agent._bus.subscribe("agent:moment", _record, module_name="test-recorder")
 
         model_input = await _drive_turn(
             agent, recorders, "give me the kestrel deployment root please", key="j5"
         )
 
     assert "XYZZY42QUUX" in model_input, "the turn's recall never reached the model input"
-    attributions = recorders.proactive_attributions()
-    assert attributions, (
-        "a live turn naming a known entity produced no proactive recall attribution — "
-        "the dispatcher's agent:moment emit is not wired to on_moment"
-    )
-    triggers = {e.extra.get("trigger") for e in attributions}
-    assert triggers == {"entity_seen"}, (
-        f"proactive attribution carried the wrong trigger kind: {triggers}"
+    assert moments == [], "the dispatcher emitted a user-turn agent:moment again"
+    assert not recorders.proactive_attributions(), (
+        "a live turn produced a proactive attribution: "
+        f"{[e.extra for e in recorders.proactive_attributions()]}"
     )
