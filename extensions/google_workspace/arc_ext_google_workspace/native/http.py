@@ -18,6 +18,7 @@ from typing import Any, Final
 from urllib.parse import quote
 
 import httpx
+from arcagent.extension.source import api_disabled_link, api_disabled_name
 
 _TIMEOUT: Final = httpx.Timeout(30, connect=10)
 _LIMITS: Final = httpx.Limits(max_connections=10)
@@ -25,6 +26,10 @@ _MAX_ATTEMPTS: Final = 3
 _MAX_RETRY_AFTER_SECONDS: Final = 10.0
 _BACKOFF_SECONDS: Final = 0.5
 _MESSAGE_CAP: Final = 200
+#: How much of Google's message is read, so the console link inside a long
+#: "API not enabled" sentence is found before the text is cut for display.
+_MESSAGE_READ_CAP: Final = 2000
+_REASON_API_DISABLED: Final = "accessNotConfigured"
 
 #: What Google's error body omits, by status, so the text always names a reason.
 _DEFAULT_REASON: Final = {
@@ -163,7 +168,23 @@ def _api_error(response: httpx.Response) -> GoogleApiError:
     if google_status and google_status.casefold() != reason.casefold():
         parts.append(google_status)
     text = " ".join(parts)
+    if reason == _REASON_API_DISABLED:
+        return GoogleApiError(status, _api_disabled_text(text, message))
+    message = message[:_MESSAGE_CAP]
     return GoogleApiError(status, f"Google API error {text}: {message}" if message else text)
+
+
+def _api_disabled_text(text: str, message: str) -> str:
+    """One short sentence that keeps the console link whole, or no link at all.
+
+    Google's own sentence is long enough that the display cap cut the link off, and
+    a link from any host but Google's console is dropped here, so the text an agent
+    reads never carries a URL a hostile error body chose.
+    """
+    name = api_disabled_name(message)
+    link = api_disabled_link(message)
+    where = f"; enable it at {link}" if link else ""
+    return f"Google API error {text}: {name} is not enabled for this project{where}"
 
 
 def _error_fields(response: httpx.Response) -> tuple[str, str, str]:
@@ -181,7 +202,7 @@ def _error_fields(response: httpx.Response) -> tuple[str, str, str]:
     reason = ""
     if isinstance(details, list) and details and isinstance(details[0], dict):
         reason = str(details[0].get("reason") or "")
-    message = str(error.get("message") or "")[:_MESSAGE_CAP]
+    message = str(error.get("message") or "")[:_MESSAGE_READ_CAP]
     return reason, str(error.get("status") or ""), message
 
 

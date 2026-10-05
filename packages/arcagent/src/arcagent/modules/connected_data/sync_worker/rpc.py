@@ -48,6 +48,10 @@ class RpcUnavailableError(Exception):
     """The other process could not be reached, timed out or hung up."""
 
 
+class RpcConnectError(RpcUnavailableError):
+    """The connection could not be made, so nothing was sent and a retry is safe."""
+
+
 class RemoteError(Exception):
     """The other process answered with a typed error."""
 
@@ -202,7 +206,7 @@ class RpcClient:
                 asyncio.open_unix_connection(str(self._path)), self._connect_timeout
             )
         except (OSError, TimeoutError) as exc:
-            raise RpcUnavailableError(f"cannot connect: {type(exc).__name__}") from exc
+            raise RpcConnectError(f"cannot connect: {type(exc).__name__}") from exc
         try:
             self._check_server(writer.get_extra_info("socket"))
             await write_frame(writer, request)

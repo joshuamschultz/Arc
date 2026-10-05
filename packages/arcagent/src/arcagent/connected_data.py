@@ -126,11 +126,14 @@ class SyncError(Exception):
         *,
         code: str | None = None,
         retry_after: float | None = None,
+        action_url: str | None = None,
     ) -> None:
         super().__init__(message[:256])
         self.public_message = message[:256]
         if code:
             self.code = code
+        #: Where an operator fixes it (already host-checked by the source), or ``None``.
+        self.action_url = action_url
         self.retry_after: float | None = None if retry_after is None else max(0.0, retry_after)
 
 

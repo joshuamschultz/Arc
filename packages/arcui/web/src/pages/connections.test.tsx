@@ -48,7 +48,7 @@ const row = (over: Partial<ConnectorInstance> = {}): ConnectorInstance => ({
   instance: 'gmail-olivia', extension: 'google_workspace', extension_display_name: 'Google Workspace',
   knowledge_mode: 'source', knowledge_reason: '', approval: 'ask', agents: [],
   status: 'healthy', display_status: 'healthy', reason_code: null, reason_text: null,
-  action: 'none', action_label: '', last_checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+  action: 'none', action_label: '', action_url: null, last_checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
   last_success_at: null, last_notice: null, connect_kind: 'oauth', oauth_provider: 'google', app_missing: false, knowledge_sync: [],
   ...over,
 })
@@ -385,6 +385,44 @@ describe('Reconnect by connection kind (J-U6, J-U9)', () => {
     ])
     await userEvent.click(within(card).getByRole('button', { name: 'Approve new or changed tools' }))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/approve'))).toBe(true))
+  })
+})
+
+describe('a disabled provider API (api_disabled)', () => {
+  const disabled = (url: string | null) =>
+    needsYou({
+      reason_code: 'api_disabled',
+      reason_text: 'Enable the Google Drive API for your Google Cloud project',
+      action: 'open_link',
+      action_label: 'Open Google Cloud console',
+      action_url: url,
+    })
+  const LINK = 'https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=1'
+
+  it('says what to enable and opens the console link in a new tab', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { card } = await renderCard([disabled(LINK)])
+    expect(
+      within(card).getByText(/Needs you: Enable the Google Drive API for your Google Cloud project/),
+    ).toBeTruthy()
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Open Google Cloud console' }))
+
+    expect(open).toHaveBeenCalledWith(LINK, '_blank', 'noopener,noreferrer')
+    open.mockRestore()
+  })
+
+  it('offers no button when the server sent no link', async () => {
+    const { card } = await renderCard([disabled(null)])
+    expect(within(card).queryByRole('button', { name: 'Open Google Cloud console' })).toBeNull()
+  })
+
+  it('never opens a link that is not on the Google console', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { card } = await renderCard([disabled('https://evil.example/enable')])
+    await userEvent.click(within(card).getByRole('button', { name: 'Open Google Cloud console' }))
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
   })
 })
 

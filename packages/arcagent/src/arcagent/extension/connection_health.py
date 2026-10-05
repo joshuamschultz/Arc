@@ -33,7 +33,12 @@ from arctrust.audit import AuditEvent, AuditSink, emit
 from arctrust.secrets import SECRET_PATTERNS
 
 from arcagent.extension.manifest import ExtensionManifest, HealthProbe
-from arcagent.extension.source import SourceFailureCode, classify_cli_failure
+from arcagent.extension.source import (
+    SourceFailureCode,
+    api_disabled_link,
+    api_disabled_name,
+    classify_cli_failure,
+)
 from arcagent.extension.state import (
     ConnectionAction,
     ConnectionRecord,
@@ -115,6 +120,12 @@ REASONS: Final[Mapping[ReasonCode, ReasonSpec]] = {
     ),
     "host_missing": ReasonSpec(
         "terminal", "needs_you", "install_host", "{detail} is not installed on this computer"
+    ),
+    # The provider's API is off for the operator's own cloud project; only they can
+    # switch it on. Settles at once and is never retried: ``{detail}`` is the API's
+    # name (as the provider words it), and the button opens the console page that enables it.
+    "api_disabled": ReasonSpec(
+        "terminal", "needs_you", "open_link", "Enable the {detail} for your Google Cloud project"
     ),
     "renewer_unavailable": ReasonSpec(
         "counted", "error", "wait", "Credential renewal is not running"
@@ -239,6 +250,8 @@ def classify(code: str | None, text: str) -> ReasonCode:
     if any(marker in lowered for marker in _SYNC_MARKERS):
         return "sync_failed"
     verdict = classify_cli_failure(text)
+    if verdict is SourceFailureCode.API_DISABLED:
+        return "api_disabled"
     if verdict is SourceFailureCode.AUTH_REQUIRED:
         return "auth_required"
     if verdict is SourceFailureCode.RATE_LIMITED:
@@ -284,6 +297,8 @@ def action_label(action: ConnectionAction, *, provider: str = "", detail: str = 
         return "Approve new or changed tools"
     if action == "install_host":
         return f"Install {detail}".strip() if detail else "Show install steps"
+    if action == "open_link":
+        return "Open Google Cloud console"
     return ""
 
 
@@ -298,6 +313,9 @@ class HealthSignal:
     detail: str = ""
     provider: str = ""
     credential_generation: int | None = None
+    #: Where the operator fixes it (``open_link``). Re-checked here against the
+    #: Google console hosts, so no writer can put another host on a card.
+    action_url: str | None = None
 
     def __post_init__(self) -> None:
         if not self.ok and self.reason_code is None:
@@ -455,6 +473,7 @@ def _on_success(record: ConnectionRecord, signal: HealthSignal, stamp: str) -> d
         "reason_code": None,
         "reason_text": None,
         "action": "none",
+        "action_url": None,
     }
 
 
@@ -490,16 +509,23 @@ def _on_failure(record: ConnectionRecord, signal: HealthSignal, now: datetime) -
 
 def _settled(signal: HealthSignal, spec: ReasonSpec, now: datetime, since: str) -> dict[str, Any]:
     code = _reason_of(signal)
+    detail = api_disabled_name(signal.detail) if code == "api_disabled" else signal.detail
+    link = (
+        api_disabled_link(signal.action_url)
+        if spec.action == "open_link" and signal.action_url
+        else None
+    )
     return {
         "status": spec.status,
         "reason_code": code,
         "reason_text": reason_text(
             code,
             provider=signal.provider,
-            detail=signal.detail,
+            detail=detail,
             duration=_humanize(now - parse_time(since)),
         ),
         "action": spec.action,
+        "action_url": link,
     }
 
 

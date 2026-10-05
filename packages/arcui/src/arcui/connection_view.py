@@ -106,6 +106,7 @@ def health_view(
         "reason_text": record.reason_text,
         "action": record.action,
         "action_label": arcagent.action_label(record.action, provider=provider),
+        "action_url": record.action_url,
         "last_checked_at": record.last_checked_at,
         "last_success_at": record.last_success_at,
         "last_notice": (

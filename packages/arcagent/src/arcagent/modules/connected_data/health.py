@@ -37,7 +37,13 @@ REPEATED_FAILURES = "repeated_failures"
 
 #: Sync failure codes only a human can clear. A source that hits one is backed
 #: off until an operator explicitly acts (resume / reindex / sync-now / revoke).
-TERMINAL_SYNC_CODES = frozenset({SourceFailureCode.AUTH_REQUIRED.value, REPEATED_FAILURES})
+TERMINAL_SYNC_CODES = frozenset(
+    {
+        SourceFailureCode.AUTH_REQUIRED.value,
+        SourceFailureCode.API_DISABLED.value,
+        REPEATED_FAILURES,
+    }
+)
 
 
 def is_terminal_sync_failure(code: str | None) -> bool:

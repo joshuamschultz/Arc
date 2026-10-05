@@ -128,3 +128,77 @@ async def test_a_503_from_google_still_retries() -> None:
     with pytest.raises(TransientSyncError):
         await _run(source, "did:a", InMemorySourceSyncStore())
     assert calls > 1
+
+
+_DRIVE_ENABLE_URL = (
+    "https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=123"
+)
+
+
+def _api_disabled_answer(link: str) -> Any:
+    """Google's real 403 for an API the project never enabled."""
+    calls: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": 403,
+                    "message": (
+                        "Google Drive API has not been used in project 123 before or it is "
+                        f"disabled. Enable it by visiting {link} then retry. If you "
+                        "enabled this API recently, wait a few minutes for the action to "
+                        "propagate to our systems and retry."
+                    ),
+                    "status": "PERMISSION_DENIED",
+                    "errors": [{"reason": "accessNotConfigured", "domain": "usageLimits"}],
+                }
+            },
+        )
+
+    answer.calls = calls  # type: ignore[attr-defined] # reason: test probe on a local function
+    return answer
+
+
+class _GoodToken:
+    async def bearer(self) -> Secret:
+        return Secret("t")
+
+    async def invalidate(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_google_api_is_a_typed_needs_you_with_its_link_and_no_retry() -> None:
+    answer = _api_disabled_answer(_DRIVE_ENABLE_URL)
+    source = _drive(_GoodToken(), httpx.MockTransport(answer))
+
+    with pytest.raises(SyncError) as caught:
+        await _run(source, "did:a", InMemorySourceSyncStore())
+
+    assert not isinstance(caught.value, TransientSyncError)
+    assert caught.value.code == "api_disabled"
+    assert caught.value.action_url == _DRIVE_ENABLE_URL
+    assert len(answer.calls) == 1, "an API nobody enabled is not retried"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://evil.example.com/apis/api/drive.googleapis.com/overview?project=1",
+        "https://console.developers.google.com.evil.example/overview",
+        "http://console.developers.google.com/apis/api/drive.googleapis.com/overview",
+        "javascript:alert(1)",
+    ],
+)
+async def test_a_disabled_api_link_off_the_google_console_is_dropped(link: str) -> None:
+    source = _drive(_GoodToken(), httpx.MockTransport(_api_disabled_answer(link)))
+
+    with pytest.raises(SyncError) as caught:
+        await _run(source, "did:a", InMemorySourceSyncStore())
+
+    assert caught.value.code == "api_disabled"
+    assert caught.value.action_url is None

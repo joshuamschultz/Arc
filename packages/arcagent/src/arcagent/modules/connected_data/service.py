@@ -1083,7 +1083,12 @@ class ConnectedDataService:
             if exc.code in _DEFERRING_CODES:
                 await self._run_deferred(connection_id, exc.code, exc.retry_after)
             elif is_terminal_sync_failure(exc.code):
-                await self._mark_needs_attention(connection_id, exc.code or "auth_required")
+                await self._mark_needs_attention(
+                    connection_id,
+                    exc.code or "auth_required",
+                    text=exc.public_message,
+                    action_url=exc.action_url,
+                )
                 self._timing.completed(connection_id, more_work=False)
             else:
                 await self._run_failed(connection_id, "crashed", exc.code or "", exc)
@@ -2238,10 +2243,17 @@ class ConnectedDataService:
             documents_indexed=previous.documents_indexed if previous is not None else 0,
         )
 
-    async def _mark_needs_attention(self, connection_id: str, reason: str) -> None:
+    async def _mark_needs_attention(
+        self,
+        connection_id: str,
+        reason: str,
+        *,
+        text: str = "",
+        action_url: str | None = None,
+    ) -> None:
         """Back a source off and tell the health authority; it owns the one notice."""
         self._health.note_terminal_failure(connection_id)
-        await self._report(connection_id, ok=False, code=reason)
+        await self._report(connection_id, ok=False, code=reason, text=text, action_url=action_url)
         if is_terminal_sync_failure(reason):
             # Durable, so the next process knows without being told again.
             await self._record_failure(connection_id, reason, force=True)
@@ -2253,7 +2265,13 @@ class ConnectedDataService:
         )
 
     async def _report(
-        self, connection_id: str, *, ok: bool, code: str | None = None, text: str = ""
+        self,
+        connection_id: str,
+        *,
+        ok: bool,
+        code: str | None = None,
+        text: str = "",
+        action_url: str | None = None,
     ) -> None:
         """Tell the shared health record what this run found, keyed by the instance.
 
@@ -2270,6 +2288,7 @@ class ConnectedDataService:
             reason_code=None if ok else classify(code, text),
             detail=text or (code or ""),
             provider=provider,
+            action_url=action_url,
         )
         await self._reporter.report(_instance_of(connection_id), signal)
 

@@ -1403,6 +1403,8 @@ export interface ConnectorInstance {
   reason_text: string | null
   action: ConnectionAction
   action_label: string
+  /** The Google Cloud console page an `open_link` action opens; null otherwise. */
+  action_url: string | null
   last_checked_at: string | null
   last_success_at: string | null
   last_notice: ConnectionNotice | null
@@ -1417,7 +1419,13 @@ export interface ConnectorInstance {
 
 export type ConnectionStatus = 'unknown' | 'healthy' | 'needs_you' | 'error'
 export type ConnectionDisplayStatus = ConnectionStatus | 'syncing'
-export type ConnectionAction = 'none' | 'reconnect' | 'approve' | 'install_host' | 'wait'
+export type ConnectionAction =
+  | 'none'
+  | 'reconnect'
+  | 'approve'
+  | 'install_host'
+  | 'open_link'
+  | 'wait'
 export type ConnectionConnectKind = 'oauth' | 'token' | 'host_login' | 'none'
 
 export interface ConnectionNotice {
@@ -1611,6 +1619,7 @@ export interface ConnectorProbeResponse {
   reason_text: string | null
   action: ConnectionAction
   action_label: string
+  action_url: string | null
   last_checked_at: string | null
   last_success_at: string | null
 }

@@ -6,7 +6,12 @@ import json
 from typing import Any
 
 from arcagent.extension.attachment import ToolResult
-from arcagent.extension.source import SourceError, SourceFailureCode, classify_cli_failure
+from arcagent.extension.source import (
+    SourceError,
+    SourceFailureCode,
+    api_disabled_link,
+    classify_cli_failure,
+)
 
 
 class CredentialFailureResult(ToolResult):
@@ -35,7 +40,9 @@ def tool_payload(result: Any, label: str, *, list_key: str) -> dict[str, Any]:
         # detail cut "invalid_grant" off, so a revoked token classified as
         # transient and was retried every cycle forever.
         full = str(result.content)
-        raise SourceError(classify_cli_failure(full), full[:256])
+        code = classify_cli_failure(full)
+        link = api_disabled_link(full) if code is SourceFailureCode.API_DISABLED else None
+        raise SourceError(code, full[:256], action_url=link)
     try:
         parsed = json.loads(result.content)
     except json.JSONDecodeError as exc:

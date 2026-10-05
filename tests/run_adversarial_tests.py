@@ -679,6 +679,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/security/test_connection_health_abuse.py",
         "packages/arcui/tests/security/test_connections_card_abuse.py",
         "packages/arcagent/tests/unit/extension/test_connection_health_cas.py",
+        # A provider error body may name a link for the operator to click; only
+        # Google's own console is ever shown as one, and the API is never retried.
+        "packages/arcagent/tests/modules/connected_data/test_api_disabled_needs_you.py",
         "tests/architecture/test_connection_health_single_writer.py",
     ),
     # P20-5: the audit trail is evidence, so a read must not write to it (a viewer
