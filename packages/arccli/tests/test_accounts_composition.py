@@ -194,3 +194,11 @@ def test_a_lease_error_reopens_the_authority_once():
     assert factory() == "store"
     assert stale.closed
     assert factory._authority is fresh
+
+
+def test_local_config_errors_are_authority_errors_so_arcui_answers_503() -> None:
+    from arctrust.authority import AccountAuthorityError
+
+    from arccli.commands._accounts import AccountsConfigError
+
+    assert issubclass(AccountsConfigError, AccountAuthorityError)

@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 from arctrust import AuditEvent, AuditSink, UserStore
-from arctrust.authority import AccountAuthority, open_account_authority
+from arctrust.authority import AccountAuthority, AccountAuthorityError, open_account_authority
 from arctrust.authority_config import DeploymentAuthorityConfig
 from arctrust.identity import did_from_public_key
 from arctrust.transit_cipher import TransitUnavailableError
@@ -38,8 +38,12 @@ _ACCOUNT_CAPABILITIES = (Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR
 _BOOTSTRAP_MARKER = "users-bootstrap.once"
 
 
-class AccountsConfigError(RuntimeError):
-    """``[security.accounts]`` is present but cannot produce a working authority."""
+class AccountsConfigError(AccountAuthorityError):
+    """``[security.accounts]`` is present but cannot produce a working authority.
+
+    An :class:`AccountAuthorityError`, so arcui answers it with the same 503 as
+    every other unreachable-authority case instead of a 500.
+    """
 
 
 # --------------------------------------------------------------------------- files
