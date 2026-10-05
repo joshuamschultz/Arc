@@ -451,7 +451,7 @@ async def test_delivery_stream_backpressures_and_cancellation_releases_pump(
     producer_finished = asyncio.Event()
 
     async def slow_stream(*_: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
-        kwargs["on_handle"](MagicMock())
+        kwargs["on_live"]()
         yield TokenEvent(text="one", run_id="run-1", sequence=1)
         yield TokenEvent(text="two", run_id="run-1", sequence=2)
         yield TurnEndEvent(final_text="onetwo", run_id="run-1", sequence=3)

@@ -98,6 +98,7 @@ from arcrun.model import (
 from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.registry import ToolRegistry
 from arcrun.spill import prune_spills
+from arcrun.state import Injection
 from arcrun.strategies import Strategy, StrategyChoice, available_strategies, choose_strategy
 from arcrun.streams import (
     RunResult,
@@ -139,6 +140,7 @@ __all__ = [
     "EventBus",
     "ExecutionIsolationError",
     "ImageBlock",
+    "Injection",
     "LLMProvider",
     "LLMResponse",
     "LoopCheckpoint",

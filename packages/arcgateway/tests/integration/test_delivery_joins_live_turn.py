@@ -393,6 +393,56 @@ async def test_gateway_passes_no_run_decision_across_the_seam(harness: _Harness)
     )
 
 
+async def test_message_during_context_prep_joins_the_turn_and_reaches_the_loop(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A turn is live from the moment it starts, not from its first model call.
+
+    Context prep is held open here (the model has not been called, no loop and
+    no RunHandle exist). A second message arriving now must join the turn — not
+    wait on the delivery lock, not open a second turn — and when prep ends the
+    message must be in the loop's own follow-up queue, under one registered run.
+    """
+    import arcagent.core.agent_dispatch as dispatch
+    from arcagent.core.context_prep import ContextPrep
+    from arcagent.core.pending_turn import PendingTurn
+
+    prep_gate = asyncio.Event()
+
+    async def held_prepare(agent: ArcAgent, query: str) -> ContextPrep:
+        await prep_gate.wait()
+        return ContextPrep()
+
+    async def no_strategy(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(dispatch, "prepare_context", held_prepare)
+    monkeypatch.setattr(dispatch, "_choose_strategy", no_strategy)
+
+    await harness.router.handle(harness.inbound("first"))
+    preparing = await _wait_for_run(harness.agent, harness.session_key)
+    assert isinstance(preparing, PendingTurn), "the loop must not exist during prep"
+    assert harness.model.turns == [], "no model call may have happened yet"
+
+    await harness.router.handle(harness.inbound("while you were preparing"))
+    await _settle()
+    assert _pending_injections(preparing) == 1
+    assert harness.agent._active_runs.get(harness.session_key) is preparing
+
+    prep_gate.set()
+    await _wait_until(
+        lambda: not isinstance(harness.agent._active_runs.get(harness.session_key), PendingTurn),
+        what="the loop's handle to replace the preparing turn",
+    )
+    live = harness.agent._active_runs[harness.session_key]
+    assert live is not preparing
+    assert _pending_injections(preparing) == 0, "held messages must move to the loop"
+    assert live.state.followup_queue.qsize() == 1, (
+        "the message sent during prep never reached the loop's follow-up queue"
+    )
+    assert live.state.steer_queue.qsize() == 0
+
+
 # ---------------------------------------------------------------------------
 # T-931 — background runs are never injection targets (REQ-303)
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ fails closed with no grant.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,6 +73,13 @@ class _FakeResult:
 
 class _FakeHandle:
     """Stands in for an arcrun RunHandle so the finalizer can await result()."""
+
+    def __init__(self) -> None:
+        self.state = MagicMock(
+            steer_queue=asyncio.Queue(),
+            followup_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
 
     async def result(self) -> _FakeResult:
         return _FakeResult()

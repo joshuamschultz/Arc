@@ -74,7 +74,7 @@ from arcagent.core.run_contract import (
     RunTriggerIssuer,
 )
 from arcagent.core.runtime_dependencies import RuntimeBinding, RuntimeDependencies
-from arcagent.core.session_coordination import SessionRunCoordinator
+from arcagent.core.session_coordination import LiveRun, SessionRunCoordinator
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
@@ -1392,7 +1392,7 @@ class ArcAgent:
                     reply_target=reply_target,
                     reply_label=reply_label,
                     interactive=True,
-                    on_handle=lambda _handle: started.set(),
+                    on_live=started.set,
                     on_behalf_of=caller_did,
                 ):
                     projection = _delivery_projection(event)
@@ -1496,7 +1496,7 @@ class ArcAgent:
             return False
         return True
 
-    def active_run(self, session_key: str) -> arcrun.RunHandle | None:
+    def active_run(self, session_key: str) -> LiveRun | None:
         """Return the live steerable run for ``session_key``, or None if idle."""
         return self._run_coordinator.active(session_key)
 

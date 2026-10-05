@@ -420,7 +420,6 @@ def track_active_run(
     session_id: str,
     *,
     interactive: bool = False,
-    handle_observer: Callable[[arcrun.RunHandle], None] | None = None,
 ) -> tuple[Callable[[arcrun.RunHandle], None], Callable[[], None]]:
     """Register a streaming run's live handle so the operator kill-switch can reach it.
 
@@ -441,8 +440,6 @@ def track_active_run(
     def on_handle(handle: arcrun.RunHandle) -> None:
         registered.append(handle)
         agent._run_coordinator.register(session_id, handle, interactive=interactive)
-        if handle_observer is not None:
-            handle_observer(handle)
 
     def untrack() -> None:
         if registered:
@@ -495,7 +492,7 @@ async def dispatch_stream(
     reply_label: str | None = None,
     allowed_strategies: list[str] | None = None,
     interactive: bool = False,
-    on_handle: Callable[[arcrun.RunHandle], None] | None = None,
+    on_live: Callable[[], None] | None = None,
     content: list[dict[str, Any]] | None = None,
     on_behalf_of: str | None = None,
 ) -> AsyncGenerator[arcrun.StreamEvent, None]:
@@ -511,6 +508,10 @@ async def dispatch_stream(
     that need to force a tool call on the first turn (e.g. orchestrators
     chaining stages through a ``signals_completion`` tool) can pin behavior
     without reaching into arcrun.
+
+    ``on_live`` is called once, as soon as the turn is registered as live (before
+    Context prep), so a delivery can release its decision lock and the next
+    message joins this turn instead of waiting for the loop to exist.
 
     Emits ``agent:pre_respond`` (via ``build_run_context``) before the loop and
     ``agent:post_respond`` after the stream is fully consumed.
@@ -542,7 +543,7 @@ async def dispatch_stream(
                     reply_label=reply_label,
                     allowed_strategies=allowed_strategies,
                     interactive=interactive,
-                    on_handle=on_handle,
+                    on_live=on_live,
                     content=content,
                     on_behalf_of=on_behalf_of,
                 )
@@ -588,7 +589,7 @@ async def _dispatch_stream_locked(
     reply_label: str | None,
     allowed_strategies: list[str] | None,
     interactive: bool,
-    on_handle: Callable[[arcrun.RunHandle], None] | None,
+    on_live: Callable[[], None] | None,
     content: list[dict[str, Any]] | None,
     overheard: bool = False,
     on_behalf_of: str | None = None,
@@ -604,9 +605,16 @@ async def _dispatch_stream_locked(
     # run's trace as the reads that follow it. arcrun reuses this id when handed in,
     # so the two halves share one timeline instead of assembly falling outside it.
     run_id = run_id or str(uuid.uuid4())
-    with turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of):
+    with (
+        turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of),
+        # Live from the first await: a message arriving during Context prep joins
+        # this turn (and a cancel reaches it) rather than waiting for the loop.
+        agent._run_coordinator.preparing(session.session_id, run_id, interactive=interactive),
+    ):
         # The person's words are durable before recall or any model call, so a
         # reader who returns mid-turn finds their own message in the history.
+        if on_live is not None:
+            on_live()
         await session.append_message({"role": "user", "content": content or input_text})
         controls = narrowed_loop_controls(agent, session, allowed_strategies)
         try:
@@ -641,7 +649,7 @@ async def _dispatch_stream_locked(
         final_text = ""
         # Expose the streaming run's handle so the operator kill-switch can cancel it.
         on_handle, untrack_run = track_active_run(
-            agent, session.session_id, interactive=interactive, handle_observer=on_handle
+            agent, session.session_id, interactive=interactive
         )
         # Bind the session id for this dispatch so the capability ledger (and the
         # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
@@ -771,6 +779,9 @@ async def start_tracked_run(
         with (
             turn_root(_agent_did(agent), run_id, on_behalf_of=on_behalf_of),
             agent._queue_run_context(session.session_id, run_id),
+            # Live from the first await: a message arriving during Context prep
+            # joins this turn rather than waiting for the loop to exist.
+            agent._run_coordinator.preparing(coordination_key, run_id, interactive=True),
         ):
             await session.append_message({"role": "user", "content": content or input_text})
             controls = narrowed_loop_controls(agent, session, None)
@@ -818,10 +829,12 @@ async def start_tracked_run(
                 )
             finally:
                 reset_session_id(session_token)
+            # Swaps the stand-in for the loop's handle and hands it the messages
+            # that arrived while the turn was preparing.
+            agent._run_coordinator.register(coordination_key, handle, interactive=True)
     except BaseException:
         agent._run_coordinator.release_turn(coordination_key)
         raise
-    agent._run_coordinator.register(coordination_key, handle, interactive=True)
     finalizer = agent._background_tasks.create(
         _finalize_tracked_run(agent, handle, session, coordination_key, input_text, run_id),
         name=f"run_finalizer:{coordination_key}",

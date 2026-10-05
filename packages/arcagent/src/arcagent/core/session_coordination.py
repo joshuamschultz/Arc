@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 
 import arcrun
+
+from arcagent.core.pending_turn import PendingTurn
+
+#: What a live-run registry holds: the loop's handle, or the turn's stand-in
+#: while it is still preparing and no loop exists yet.
+LiveRun = arcrun.RunHandle | PendingTurn
 
 
 class SessionRunCoordinator:
@@ -31,8 +37,8 @@ class SessionRunCoordinator:
         self._locks: dict[str, asyncio.Lock] = {}
         self._holders: dict[str, str] = {}
         self._delivery_locks: dict[str, asyncio.Lock] = {}
-        self.active_runs: dict[str, arcrun.RunHandle] = {}
-        self._injection_targets: dict[str, arcrun.RunHandle] = {}
+        self.active_runs: dict[str, LiveRun] = {}
+        self._injection_targets: dict[str, LiveRun] = {}
 
     def _lock(self, session_key: str) -> asyncio.Lock:
         return self._locks.setdefault(session_key, asyncio.Lock())
@@ -81,6 +87,25 @@ class SessionRunCoordinator:
         async with self._delivery_locks.setdefault(session_key, asyncio.Lock()):
             yield
 
+    @contextmanager
+    def preparing(
+        self, session_key: str, run_id: str, *, interactive: bool
+    ) -> Iterator[PendingTurn]:
+        """Make a turn live from its first await, before any model loop exists.
+
+        Entered before the turn does anything that suspends (history write,
+        Context prep, strategy pick), so a message arriving in that window joins
+        the turn and a cancel reaches it. :meth:`register` swaps the stand-in for
+        the loop's handle and hands over what it held; leaving the block removes
+        the stand-in if no handle ever replaced it (a failed or cancelled prep).
+        """
+        pending = PendingTurn(run_id)
+        self._put(session_key, pending, interactive=interactive)
+        try:
+            yield pending
+        finally:
+            self.unregister(session_key, pending)
+
     def register(self, session_key: str, handle: arcrun.RunHandle, *, interactive: bool) -> None:
         """Track a live run. ``interactive`` runs are the only injection targets.
 
@@ -88,22 +113,32 @@ class SessionRunCoordinator:
         — schedules, consolidation, task dispatch, resumed checkpoints — is
         background: it is registered so it can be observed and cancelled, never
         so a message can be injected into it.
-        """
-        self.active_runs[session_key] = handle
-        if interactive:
-            self._injection_targets[session_key] = handle
 
-    def unregister(self, session_key: str, handle: arcrun.RunHandle) -> None:
+        A registered :class:`PendingTurn` for the session is replaced here and
+        its held messages move onto the loop's own queues, with no suspension
+        between the two so none can land on the stand-in afterwards.
+        """
+        held = self.active_runs.get(session_key)
+        if isinstance(held, PendingTurn):
+            held.hand_over(handle)
+        self._put(session_key, handle, interactive=interactive)
+
+    def _put(self, session_key: str, run: LiveRun, *, interactive: bool) -> None:
+        self.active_runs[session_key] = run
+        if interactive:
+            self._injection_targets[session_key] = run
+
+    def unregister(self, session_key: str, handle: LiveRun) -> None:
         """Remove only the registration owned by ``handle``."""
         if self.active_runs.get(session_key) is handle:
             del self.active_runs[session_key]
         if self._injection_targets.get(session_key) is handle:
             del self._injection_targets[session_key]
 
-    def active(self, session_key: str) -> arcrun.RunHandle | None:
+    def active(self, session_key: str) -> LiveRun | None:
         return self.active_runs.get(session_key)
 
-    def injection_target(self, session_key: str) -> arcrun.RunHandle | None:
+    def injection_target(self, session_key: str) -> LiveRun | None:
         """The live run a delivered message may join, or None.
 
         None while the session is idle *and* while its only run is background
