@@ -38,6 +38,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 import tomlkit
 from arctrust import ValidatorsConfig, VaultTransitConfig
@@ -455,6 +456,57 @@ class SpawnConfig(BaseModel):
     )
 
 
+_SOURCE_REF = (  # where a bootstrap value is read from; never the value
+    r"^(credential:[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+    r"|env:[A-Z_][A-Z0-9_]{0,127}|fd:[0-9]+|file:/.+)$"
+)
+
+
+class AccountsConfig(BaseModel):
+    """``[security.accounts]``: the Vault/OpenBao account authority (every tier).
+
+    Secret-free by construction: each ``*_secret`` is a secret SOURCE
+    (``credential:<name>`` | ``env:<VAR>`` | ``fd:<n>`` | ``file:/abs``), never
+    the AppRole secret itself. Trust (operator public key) comes from operator
+    custody, not from this block. See ``docs/runbooks/operate/openbao-accounts.md``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    vault_url: str = Field(description="https://openbao.example:8200 (TLS is mandatory)")
+    ca_file: str = Field(min_length=1, description="PEM CA bundle; its sha256 is pinned in config")
+    deployment_id: str = Field(pattern=r"^[a-z][a-z0-9-]{1,31}$")
+    tenant_id: str = Field(pattern=r"^[a-z][a-z0-9-]{1,31}$")
+    authority_config: str = Field(min_length=1, description="Operator-signed authority config")
+    grants_file: str = Field(min_length=1, description="Operator-signed capability grants")
+    config_reader_role_id: str = Field(min_length=1, max_length=256)
+    config_reader_secret: str = Field(pattern=_SOURCE_REF)
+    issuer_role_id: str = Field(min_length=1, max_length=256)
+    issuer_secret: str = Field(pattern=_SOURCE_REF)
+    cipher_role_id: str = Field(min_length=1, max_length=256)
+    cipher_secret: str = Field(pattern=_SOURCE_REF)
+    anchor_role_id: str = Field(min_length=1, max_length=256)
+    anchor_secret: str = Field(pattern=_SOURCE_REF)
+
+    @field_validator("vault_url")
+    @classmethod
+    def _https_origin(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+            or parts.path not in ("", "/")
+        ):
+            raise ValueError(
+                "[security.accounts] vault_url must be a credential-free https origin"
+            )
+        return value.rstrip("/")
+
+
 class SecurityConfig(BaseModel):
     """Security and tier configuration.
 
@@ -564,6 +616,15 @@ class SecurityConfig(BaseModel):
             "(operator signing + connector credential sealing by reference). "
             "Absent → the local notary. Implies custody='vault_transit'. See "
             "docs/runbooks/operate/vault-transit.md."
+        ),
+    )
+    accounts: AccountsConfig | None = Field(
+        default=None,
+        description=(
+            "[security.accounts]: the Vault/OpenBao account authority behind "
+            "`arc ui` people management and `arc user`. Absent -> accounts are "
+            "unavailable (503), never a local-file fallback. See "
+            "docs/runbooks/operate/openbao-accounts.md."
         ),
     )
     require_fips: bool = Field(

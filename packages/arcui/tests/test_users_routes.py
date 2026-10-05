@@ -375,3 +375,36 @@ def test_a_link_for_one_kind_cannot_be_used_after_the_person_is_removed(client, 
 
     assert resp.status_code == 404
     assert factory().get("watcher@example.com") is None
+
+
+def _authority_down():
+    from arctrust.monotonic import AnchorUnavailableError
+
+    def factory():
+        raise AnchorUnavailableError("Vault anchor read unavailable")
+
+    return factory
+
+
+@pytest.mark.parametrize("store_factory", [None, _authority_down()], ids=["unwired", "down"])
+def test_an_unavailable_authority_is_a_503_on_every_people_route(store_factory):
+    app = create_app(
+        auth_config=AuthConfig({"viewer_token": VIEW_TOKEN, "operator_token": OP_TOKEN}),
+        user_store_factory=store_factory,
+    )
+    client = TestClient(app)
+    body = {"email": "a@example.com", "role": "viewer", "password": PASSWORD}
+    calls = [
+        ("get", "/api/users", None),
+        ("post", "/api/users", body),
+        ("post", "/api/users/invites", {"email": "a@example.com", "role": "viewer"}),
+        ("post", "/api/users/a@example.com/reset-link", None),
+        ("put", "/api/users/a@example.com/role", {"role": "viewer"}),
+        ("post", "/api/users/a@example.com/disable", None),
+        ("post", "/api/users/a@example.com/enable", None),
+    ]
+    for method, path, payload in calls:
+        kwargs = {"json": payload} if payload else {}
+        resp = getattr(client, method)(path, headers=_op(), **kwargs)
+        assert resp.status_code == 503, (path, resp.status_code, resp.text)
+        assert resp.json()["error"].startswith("Account authority is unavailable")

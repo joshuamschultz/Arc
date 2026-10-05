@@ -56,6 +56,7 @@ instead of silently reducing coverage.
 | Browser sign-in abuse (pasted callback, argv injection, out-of-order steps) | consent-host pinning, loopback/path/query checks on the pasted address, strict account shape, one waiting sign-in per binary, spent-code refusal, step timeout, code never written by Arc |
 | Shared-knowledge demote and decision forgery (alpha-2 item 16) | operator-key-anchored signed tombstones bound to their identifier, retired (never erased) bytes, refusal of re-promotion into a demoted identifier, signed ledger operator rows, sticky demote in the agent sweep, secret gate with no operator override, operator-derived decider on share |
 | Multi-account confused deputy (one tool name, several granted accounts) | selector resolved only against the calling agent's grants (NFKC+casefold, no aliases or whitespace), grant re-read per call, smuggled account/client/home flags refused, read-only sign-in enforced, page/output/download bounds, audit names the real connection |
+| Account authority forgery (tampered or replayed config, forged grants) | operator-signed authority config pinned to the anchored revision (edit, other signer, replayed older revision, symlink), operator-signed capability grants (other signer, swapped capability, expired, wrong token policy, unpinned CA), durable audit append required for every mutation |
 
 The manifest is intentionally curated. Package-local security suites remain
 broader; this battery is the fast release gate for the hostile-insider threat

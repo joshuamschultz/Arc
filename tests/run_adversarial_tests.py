@@ -56,6 +56,17 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcagent/tests/unit/core/test_context_prep_select.py",
         "packages/arcagent/tests/unit/core/test_turn_start_bound.py",
     ),
+    "account authority forgery (tampered or replayed config, forged grants)": (
+        # The Vault-backed account authority opens only from an operator-signed
+        # config that matches the anchored revision and operator-signed grants:
+        # an edited config, one signed by another key, a replayed older revision,
+        # grants signed by another key or for another capability, a symlinked
+        # config, a wrong token policy, an expired grant and an unpinned CA are
+        # all refused before any account is read; a failed durable audit append
+        # refuses the mutation.
+        "packages/arccli/tests/test_accounts_forgery.py",
+        "packages/arccli/tests/test_accounts_composition.py",
+    ),
     "host-installed CLI binary swapped after install": (
         "packages/arcagent/tests/security/test_host_binary_tamper_abuse.py",
         # The refusal reaches the module's audit sink in production, not only a log.
